@@ -582,3 +582,64 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   const capAfter = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
   assert.strictEqual(capAfter, capBefore, 'the connection went back with the cap it came with');
 });
+
+// ---------------------------------------------------------------------------
+// 5. The fill's open share reads the same weekly rows (2026-10-30)
+// ---------------------------------------------------------------------------
+// loadBusyNow decides which fill cities a run reaches first, so its query is
+// pinned against real rows: a venue counts only when its own weekly row at its
+// city's local day and hour is above zero on the venue_local axis, and only
+// when the venue is active and has a BestTime id. A fixed instant keeps the
+// wall clock out of it: 12:30 UTC on Friday 30 October 2026 is Friday 19:30 in
+// Bangkok and Friday 12:30 in London, day 5 by config.getLocalTime.
+
+test('loadBusyNow returns each fill city\'s venues busy at its own local day and hour, and nothing else', async () => {
+  const at = new Date('2026-10-30T12:30:00Z');
+  const venue = async (place, city, { active = true, besttime = true } = {}) => {
+    const { rows } = await pool.query(
+      `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                              venue_category, timezone, is_active)
+       VALUES ($1, $2, $1, $3, 0, 0, 'bar', $4, $5)
+       RETURNING id`,
+      [place, besttime ? 'bt_' + place : null, city, realConfig.CITIES[city].tz, active]
+    );
+    return rows[0].id;
+  };
+  const row = (venueId, day, hour, busyness, { mode = 'weekly', axis = 'venue_local' } = {}) => pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct)
+     VALUES ($1, $2, $3, $4, $5, 'bar', $6)`,
+    [venueId, mode, axis, day, hour, busyness]
+  );
+  const ids = {
+    busy: await venue('ChIJfillBusyBangkok1', 'bangkok'),
+    zero: await venue('ChIJfillZeroBangkok1', 'bangkok'),
+    thursday: await venue('ChIJfillThurBangkok1', 'bangkok'),
+    hourEarlier: await venue('ChIJfillHr18Bangkok1', 'bangkok'),
+    inactive: await venue('ChIJfillGoneBangkok1', 'bangkok', { active: false }),
+    noBestTime: await venue('ChIJfillNoBtBangkok1', 'bangkok', { besttime: false }),
+    liveOnly: await venue('ChIJfillLiveBangkok1', 'bangkok'),
+    oldAxis: await venue('ChIJfillAxisBangkok1', 'bangkok'),
+    london: await venue('ChIJfillBusyLondon01', 'london'),
+    londonAt19: await venue('ChIJfillLon19London1', 'london'),
+  };
+  await row(ids.busy, 5, 19, 40);
+  await row(ids.zero, 5, 19, 0);
+  await row(ids.thursday, 4, 19, 40);
+  await row(ids.hourEarlier, 5, 18, 40);
+  await row(ids.inactive, 5, 19, 40);
+  await row(ids.noBestTime, 5, 19, 40);
+  await row(ids.liveOnly, 5, 19, 55, { mode: 'realtime', axis: null });
+  await row(ids.oldAxis, 5, 19, 40, { axis: 'besttime_index' });
+  await row(ids.london, 5, 12, 30);
+  // Busy at Bangkok's hour, which is not London's.
+  await row(ids.londonAt19, 5, 19, 30);
+
+  const busy = await collectRealtime.loadBusyNow(['bangkok', 'london', 'seoul', 'atlantis'], { at, db: pool });
+  // A name config.js does not know is left out; a known city with nothing busy is an empty set.
+  assert.deepStrictEqual([...busy.keys()], ['bangkok', 'london', 'seoul']);
+  assert.deepStrictEqual([...busy.get('bangkok')], [ids.busy]);
+  assert.deepStrictEqual([...busy.get('london')], [ids.london]);
+  assert.deepStrictEqual([...busy.get('seoul')], []);
+  assert.deepStrictEqual([...(await collectRealtime.loadBusyNow([], { at, db: pool })).keys()], []);
+});

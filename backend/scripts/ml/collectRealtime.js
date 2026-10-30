@@ -511,17 +511,112 @@ function parseFillCities(argv, { cityScope, allCities, holdout = {} }) {
   };
 }
 
+// THE FILL'S ORDER (2026-10-30). The budget cuts the fill after a few cities,
+// so which cities come first decides how many live rows the hour yields. Of the
+// calls the first three fill runs spent, the share that came back with a live
+// reading ran from 9% (saopaulo at 07:00 local) and 16-22% (nola and nashville
+// at 05:00) to 80-84% (capetown, delhi, dubai, amsterdam, bangkok and berlin,
+// between 13:00 and 19:00), and it followed the local hour. The open-hours skip
+// cannot see that: it calls a venue busy within two hours either side on any
+// day of the week, so at 07:00 it calls the venues that open at 09:00.
+//
+// So when the weekly curves are read, each fill city gets an OPEN SHARE: of
+// the venues the skip would call this hour, the share whose own weekly curve
+// is busy at this local day and hour (fillOpenShares, from loadBusyNow's one
+// query). Fill blocks go highest share first. Near-equal shares still trade
+// places, so the same few cities do not take every hour: each share is divided
+// by FILL_SHARE_SPREAD and given Gumbel noise, under which two cities 5 points
+// apart swap about a quarter of the time, 10 points apart one time in eight,
+// and 20 points apart about one time in 55. A city with no curve to count
+// takes the mean of the others. Without shares (no fill, the open-hours filter
+// off or failed, or the share lookup failed) the fill starts from a random
+// city, as it did before.
+const FILL_SHARE_SPREAD = 0.05;
+
 // The order the city blocks are swept in. The main scope's first, in the
 // query's alphabetical order or its reverse at random, so neither end of it is
-// always last; then the fill blocks from a random first one, so the fill
-// cities the budget leaves behind are a different few each hour.
-function orderCityBlocks(byCity, fillCities = [], random = Math.random) {
+// always last; then the fill blocks, by open share when there are shares (see
+// FILL_SHARE_SPREAD) and otherwise from a random first one, so the fill cities
+// the budget leaves behind are a different few each hour.
+function orderCityBlocks(byCity, fillCities = [], random = Math.random, fillShares = null) {
   const fill = new Set(fillCities);
   const order = Object.entries(byCity).filter(([city]) => !fill.has(city));
   if (order.length > 1 && random() < 0.5) order.reverse();
   const fillOrder = Object.entries(byCity).filter(([city]) => fill.has(city));
+  const known = fillShares
+    ? fillOrder.map(([city]) => fillShares.get(city)).filter((share) => Number.isFinite(share))
+    : [];
+  if (known.length) {
+    const mean = known.reduce((sum, share) => sum + share, 0) / known.length;
+    const keyed = fillOrder.map((entry) => {
+      const share = fillShares.get(entry[0]);
+      const u = Math.min(Math.max(random(), 1e-12), 1 - 1e-12);
+      return { entry, key: (Number.isFinite(share) ? share : mean) / FILL_SHARE_SPREAD - Math.log(-Math.log(u)) };
+    });
+    keyed.sort((a, b) => b.key - a.key);
+    return order.concat(keyed.map(({ entry }) => entry));
+  }
   if (fillOrder.length > 1) fillOrder.push(...fillOrder.splice(0, Math.floor(random() * fillOrder.length)));
   return order.concat(fillOrder);
+}
+
+// Each fill city's open share at `at` (see FILL_SHARE_SPREAD): of its venues
+// the open-hours skip would call at the city's local hour, the share in
+// `busyNow`. Venues with no mask are called whatever the hour and are left out
+// of both counts; a city with nothing to count gets null.
+function fillOpenShares(byCity, fillCities, openHourMasks, busyNow, at = new Date()) {
+  const shares = new Map();
+  for (const city of fillCities) {
+    let open = 0;
+    let busy = 0;
+    if (CITIES[city]) {
+      const { hour } = getLocalTime(CITIES[city].tz, at);
+      const busyHere = busyNow.get(city) || new Set();
+      for (const venue of byCity[city] || []) {
+        const mask = openHourMasks.get(venue.id);
+        if (mask === undefined || !isOpenAtHour(mask, hour)) continue;
+        open++;
+        if (busyHere.has(venue.id)) busy++;
+      }
+    }
+    shares.set(city, open ? busy / open : null);
+  }
+  return shares;
+}
+
+// The venues of each fill city whose weekly curve is above zero at the city's
+// local day and hour at `at`, as city -> Set of ml_venues ids. One query over
+// the weekly rows loadOpenHourMasks reads; day_of_week is config.getLocalTime's,
+// the one storeReading's baseline lookup matches weekly rows on.
+async function loadBusyNow(fillCities, { at = new Date(), db = pool } = {}) {
+  const cities = [];
+  const days = [];
+  const hours = [];
+  for (const city of fillCities) {
+    if (!CITIES[city]) continue;
+    const { dayOfWeek, hour } = getLocalTime(CITIES[city].tz, at);
+    cities.push(city);
+    days.push(dayOfWeek);
+    hours.push(hour);
+  }
+  const busy = new Map(cities.map((city) => [city, new Set()]));
+  if (!cities.length) return busy;
+  const { rows } = await db.query(
+    `SELECT v.city, t.venue_id
+       FROM unnest($2::text[], $3::int[], $4::int[]) AS s(city, day_of_week, hour)
+       JOIN ml_venues v ON v.city = s.city
+       JOIN ml_training_data t ON t.venue_id = v.id
+                              AND t.day_of_week = s.day_of_week
+                              AND t.hour = s.hour
+      WHERE t.collection_mode = 'weekly'
+        AND t.hour_axis = $1
+        AND t.busyness_pct > 0
+        AND v.is_active = true
+        AND v.besttime_venue_id IS NOT NULL`,
+    [HOUR_AXIS_VENUE_LOCAL, cities, days, hours]
+  );
+  for (const row of rows) busy.get(row.city).add(row.venue_id);
+  return busy;
 }
 
 // THE GATE every call starts through. Three rules, all checked with nothing
@@ -1809,7 +1904,26 @@ async function collectRealtime() {
     const off = rest.length ? Math.floor(Math.random() * rest.length) : 0;
     byCity[k] = demanded.concat(rest.slice(off), rest.slice(0, off));
   }
-  const cityOrder = orderCityBlocks(byCity, fillCities);
+  // The fill's order (see FILL_SHARE_SPREAD), read only when there is a fill
+  // and an open-hours map to judge it by. A failed read costs no reading: the
+  // fill starts from a random city, as it did before shares.
+  let fillShares = null;
+  if (fillCities.length && openHourMasks.size) {
+    try {
+      const at = new Date();
+      fillShares = fillOpenShares(byCity, fillCities, openHourMasks, await loadBusyNow(fillCities, { at }), at);
+    } catch (err) {
+      console.error(`[ML:Realtime] Fill open shares could not be read (${describeDbError(err)}); `
+        + 'the fill starts from a random city.');
+    }
+  }
+  const cityOrder = orderCityBlocks(byCity, fillCities, Math.random, fillShares);
+  if (fillShares) {
+    const shareOf = (city) => (Number.isFinite(fillShares.get(city))
+      ? `${Math.round(fillShares.get(city) * 100)}%` : 'no curve');
+    console.log(`[ML:Realtime] Fill order by open share this hour: ${cityOrder
+      .filter(([city]) => fillSet.has(city)).map(([city]) => `${city} ${shareOf(city)}`).join(', ')}.`);
+  }
 
   // One per sweep, so a city's or a cell's Ticketmaster list is shared within
   // this run and never outlives it.
@@ -2150,6 +2264,7 @@ module.exports = {
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   FILL_EARLY_STOP_MS, parseFillCities, orderCityBlocks,
+  FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading

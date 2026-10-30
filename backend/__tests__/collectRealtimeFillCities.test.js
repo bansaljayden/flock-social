@@ -7,6 +7,11 @@
 //   * the flag is checked and refused when it cannot mean what it says;
 //   * fill blocks always come after every main block, so the budget reaches
 //     them first, and they start from a different city each hour;
+//   * with open shares from the weekly curves the fill goes highest share
+//     first, near-equal shares trade places at the rate FILL_SHARE_SPREAD sets,
+//     and fillOpenShares counts what the open-hours skip would call at each
+//     city's own local hour (loadBusyNow's query is pinned against a real
+//     Postgres in mlOpenHoursSkip.test.js);
 //   * on a simulated clock, a fill that cannot fit never costs a main venue
 //     its call, fill calls stop FILL_EARLY_STOP_MS before the budget, and a
 //     fill block reached after that is skipped without a weather call;
@@ -47,6 +52,7 @@ stubModule('../scripts/ml/eventService', {
 
 const {
   sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, LABEL_LIVE,
+  FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
 
@@ -130,6 +136,91 @@ test('without fill cities the order is the old one: the query order, or its reve
   const byCity = byCityOf(['chicago', 'denver', 'philly']);
   assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, [], () => 0.9)), ['chicago', 'denver', 'philly']);
   assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, [], () => 0.1)), ['philly', 'denver', 'chicago']);
+});
+
+test('with open shares the fill goes highest share first, still after every main block', () => {
+  const byCity = byCityOf(['bangkok', 'berlin', 'chicago', 'london', 'philly', 'saopaulo']);
+  const fill = ['bangkok', 'berlin', 'london', 'saopaulo'];
+  // The first three fill runs' live share of calls, 2026-10-30.
+  const shares = new Map([['bangkok', 0.81], ['berlin', 0.84], ['london', 0.63], ['saopaulo', 0.09]]);
+  // A constant draw gives every city the same noise, so the order is the shares'.
+  assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, fill, () => 0.9, shares)),
+    ['chicago', 'philly', 'berlin', 'bangkok', 'london', 'saopaulo']);
+  assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, fill, () => 0.1, shares)),
+    ['philly', 'chicago', 'berlin', 'bangkok', 'london', 'saopaulo']);
+});
+
+test('a city with no curve takes the mean share, and with no share at all the fill keeps its random start', () => {
+  const byCity = byCityOf(['bangkok', 'chicago', 'london', 'seoul']);
+  const fill = ['bangkok', 'london', 'seoul'];
+  // seoul has nothing to count, so it takes (0.8 + 0.3) / 2 = 0.55, between the two.
+  assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, fill, () => 0.9,
+    new Map([['bangkok', 0.8], ['london', 0.3], ['seoul', null]]))), ['chicago', 'bangkok', 'seoul', 'london']);
+  // Every share null, an empty map, or none passed: the rotation from floor(0.9 * 3) = 2.
+  for (const shares of [new Map([['bangkok', null], ['london', null], ['seoul', null]]), new Map(), null, undefined]) {
+    assert.deepStrictEqual(keysOf(orderCityBlocks(byCity, fill, () => 0.9, shares)),
+      ['chicago', 'seoul', 'bangkok', 'london']);
+  }
+});
+
+// mulberry32: a small seeded generator, so the counts below are the same on
+// every run of the suite.
+function seeded(seed) {
+  let a = seed;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('near-equal shares trade places at the rate FILL_SHARE_SPREAD sets; far-apart ones never do', () => {
+  const random = seeded(20261030);
+  const byCity = byCityOf(['amsterdam', 'berlin', 'chicago', 'nola']);
+  const fill = ['amsterdam', 'berlin', 'nola'];
+  const shares = new Map([['amsterdam', 0.75], ['berlin', 0.80], ['nola', 0.10]]);
+  const RUNS = 4000;
+  let amsterdamFirst = 0;
+  for (let i = 0; i < RUNS; i++) {
+    const order = keysOf(orderCityBlocks(byCity, fill, random, shares));
+    assert.strictEqual(order[0], 'chicago');
+    assert.strictEqual(order[3], 'nola', `a city 65 points behind did not come last: ${order}`);
+    if (order[1] === 'amsterdam') amsterdamFirst++;
+  }
+  // Five points apart: the noise is Gumbel, so the difference of two cities'
+  // noise is logistic and the 0.75 city comes first 1 / (1 + e^(0.05 / 0.05)),
+  // 26.9% of the time.
+  assert.strictEqual(FILL_SHARE_SPREAD, 0.05);
+  const expected = 1 / (1 + Math.exp(0.05 / FILL_SHARE_SPREAD));
+  assert.ok(Math.abs(amsterdamFirst / RUNS - expected) < 0.03,
+    `amsterdam first ${amsterdamFirst} of ${RUNS} times, expected about ${Math.round(expected * RUNS)}`);
+});
+
+test('fillOpenShares counts what the open-hours skip would call, at each city\'s own local hour', () => {
+  // 12:30 UTC on Friday 30 October 2026 is 19:30 in Bangkok and 12:30 in London.
+  const at = new Date('2026-10-30T12:30:00Z');
+  const masks = new Map([
+    [1, buildOpenHourMask([19])], [2, buildOpenHourMask([21])], [3, buildOpenHourMask([3])],
+    [5, buildOpenHourMask([12])], [6, buildOpenHourMask([12])],
+  ]);
+  const byCity = {
+    bangkok: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+    london: [{ id: 5 }, { id: 6 }],
+    seoul: [{ id: 7 }],
+  };
+  const busyNow = new Map([['bangkok', new Set([1, 99])], ['london', new Set([5, 6])], ['seoul', new Set([7])]]);
+  const shares = fillOpenShares(byCity, ['bangkok', 'london', 'seoul', 'nyc'], masks, busyNow, at);
+  // bangkok at 19: venue 1 is open, venue 2 by the two hours' padding, venue 3
+  // is shut and venue 4 has no curve, so neither is counted; of the two, venue
+  // 1 is busy. 99 is busy but not in this run.
+  assert.strictEqual(shares.get('bangkok'), 0.5);
+  // london at 12, not 19: both its venues are open and busy.
+  assert.strictEqual(shares.get('london'), 1);
+  // seoul's one venue has no curve to count; nyc has no venue in this run.
+  assert.strictEqual(shares.get('seoul'), null);
+  assert.strictEqual(shares.get('nyc'), null);
+  assert.deepStrictEqual([...shares.keys()], ['bangkok', 'london', 'seoul', 'nyc']);
 });
 
 // ===========================================================================
@@ -225,7 +316,10 @@ test('run() parses the flag, reads the fill with the main scope, orders it last 
   assert.match(src, /const queryScope = cityScope \? cityScope\.concat\(fillCities\) : null;/);
   assert.match(src, /queryScope \? \[queryScope\] : \[\]/);
   assert.match(src, /openHourMasks = await loadOpenHourMasks\(queryScope\);/);
-  assert.match(src, /const cityOrder = orderCityBlocks\(byCity, fillCities\);/);
+  assert.match(src, /if \(fillCities\.length && openHourMasks\.size\) \{\n {4}try \{\n {6}const at = new Date\(\);\n {6}fillShares = fillOpenShares\(byCity, fillCities, openHourMasks, await loadBusyNow\(fillCities, \{ at \}\), at\);/);
+  assert.match(src, /Fill open shares could not be read \(\$\{describeDbError\(err\)\}\); /);
+  assert.match(src, /const cityOrder = orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\);/);
+  assert.match(src, /Fill order by open share this hour: /);
   assert.match(src, /fillCities: fillSet,\n {2}\}\);/);
   // The main scope must hold venues on its own: a run of fill cities alone is
   // not the run that was asked for.
