@@ -5705,6 +5705,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             lsSet('flock_user_lat', latitude.toString());
             lsSet('flock_user_lng', longitude.toString());
             setLocationError('');
+            // The venues come with the fix. Discover's Continue buttons and a
+            // settings pull turn Location on through here, and without a load
+            // the map sat under "Finding venues near you." until the person
+            // left Discover and came back.
+            loadVenuesAtLocationRef.current(latitude, longitude);
           },
           (err) => {
             if (ask !== locationAskRef.current) return;
@@ -10154,6 +10159,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venuesToMapPins, requestCrowdScores]);
+  // toggleLocation, far above, starts this when Location is turned on, so it
+  // reads it through a ref (it is declared after toggleLocation).
+  const loadVenuesAtLocationRef = useRef(loadVenuesAtLocation);
+  loadVenuesAtLocationRef.current = loadVenuesAtLocation;
 
   // Write freshly landed batch scores back into the pin list. Without this,
   // scores that resolved AFTER venuesToMapPins ran stayed in crowdPredictions

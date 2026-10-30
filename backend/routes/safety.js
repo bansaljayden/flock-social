@@ -2382,6 +2382,9 @@ router.post('/share-location', authenticate, async (req, res) => {
 
     let emailsSent = 0;
     let emailsSkipped = 0;
+    // Refused by the recipient's own "Stop location emails": the list working,
+    // not a failure a retry could clear.
+    let emailsStopped = 0;
 
     // Same fan-out as /alert (round 12), and the same reachability question.
     // The callback is async so that a throw while building one recipient's
@@ -2397,6 +2400,7 @@ router.post('/share-location', authenticate, async (req, res) => {
     );
     for (const outcome of settled) {
       if (outcome.status === 'fulfilled' && outcome.value?.sent) emailsSent++;
+      else if (outcome.status === 'fulfilled' && outcome.value?.suppressed) emailsStopped++;
       else if (outcome.status === 'rejected') console.error('[Safety] Share email threw:', outcome.reason?.message);
     }
 
@@ -2406,6 +2410,17 @@ router.post('/share-location', authenticate, async (req, res) => {
     // had. /alert was fixed for exactly this in the 2026-08-12 audit; the
     // sibling route kept the bug. A failure is a failure, and it gives the
     // ten-minute window back so the retry is possible.
+    // Every mailable contact has turned location emails off: a retry can never
+    // reach them, so this says so instead of inviting one, and names nobody.
+    // The window is still given back, for a share after adding someone else.
+    if (emailsSent === 0 && withEmail.length > 0 && emailsStopped === withEmail.length) {
+      shareCooldowns.set(req.user.id, last);
+      return res.status(409).json({
+        success: false,
+        error: "None of your trusted contacts get location emails from Flock right now. Add another contact, or send them your location yourself.",
+        canRetry: false,
+      });
+    }
     if (emailsSent === 0) {
       shareCooldowns.set(req.user.id, last);
       return res.status(502).json({

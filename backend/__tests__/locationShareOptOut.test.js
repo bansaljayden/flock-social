@@ -346,6 +346,33 @@ test('the stop link stops later location emails to that address, and only that a
   } finally { cap.restore(); r.restore(); }
 });
 
+test('when every contact has stopped location emails, the share says so, offers no retry and names nobody', async () => {
+  resetWorld();
+  const r = stubResend();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_API_KEY: 'k' }, async () => {
+      const first = await share();
+      assert.strictEqual(first.status, 200, JSON.stringify(first.body));
+      for (const to of ['mum@example.com', 'dad@example.com']) {
+        const stop = stopPathIn(r.sends.find((s) => s.to === to));
+        const done = await callStopPage('POST', stop.path, {
+          headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: '',
+        });
+        assert.strictEqual(done.status, 200);
+      }
+      r.sends.length = 0;
+      const second = await share();
+      assert.strictEqual(second.status, 409, JSON.stringify(second.body));
+      assert.strictEqual(second.body.success, false);
+      assert.strictEqual(second.body.canRetry, false);
+      assert.match(second.body.error, /None of your trusted contacts get location emails/);
+      assert.ok(!/mum|dad|example\.com/i.test(second.body.error), 'the refusal named who turned emails off');
+      assert.deepStrictEqual(r.sends, []);
+    });
+  } finally { cap.restore(); r.restore(); }
+});
+
 test("a mail client's one-click POST works: no Origin, the fixed RFC 8058 body", async () => {
   resetWorld();
   const token = unsub.mintUnsubscribeToken('dad@example.com');
