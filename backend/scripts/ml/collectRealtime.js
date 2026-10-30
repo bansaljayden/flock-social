@@ -448,6 +448,82 @@ const MAX_IN_FLIGHT_CEILING = 10;
 const MIN_START_INTERVAL_MS = 500;
 const MAX_START_INTERVAL_MS = 60000;
 
+// FILL CITIES (2026-10-30). The main scope is what every run must cover, and
+// at the faster pace it finishes well inside the budget: 17 minutes at 4 AM
+// Eastern, when most of its venues are shut, and the rest of the hour went
+// unused. --fill-cities=a,b names cities swept AFTER the main scope, in the
+// time left. The open-hours skip passes their shut venues without a call, so a
+// US night's spare minutes go to cities where it is midday, and a US
+// afternoon's to Europe's evening. Their blocks always come last, so the time
+// budget reaches them before it can reach any main-scope venue.
+//
+// They stop starting calls FILL_EARLY_STOP_MS before the budget. A run that
+// uses all fifty minutes ends about 54 minutes after its container starts
+// (2026-10-29 logs: the budget, then about three minutes of baselines and the
+// offsets), and containers started as late as :11:54, so a full run ended near
+// :06 with the next trigger at :07. A cron trigger is skipped while the
+// previous run is still going. Spare minutes are what fill cities are for, and
+// they are not worth an hour.
+const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
+
+// What --fill-cities asks for, checked. Refused like the other flags when it
+// cannot mean what it says: a name that is not a city in config.js (a typo
+// should fail the cron, not quietly fill nothing), the flag beside
+// --all-cities (every city is already in scope), or the holdout city (filling
+// it would collect it outside the hours its holdout is defined by). In a
+// holdout hour the run stays the holdout city alone. A city already in the
+// main scope is dropped from the fill list rather than refused: it is swept
+// either way.
+function parseFillCities(argv, { cityScope, allCities, holdout = {} }) {
+  const arg = argv.find((a) => a.startsWith('--fill-cities='));
+  const asked = arg
+    ? [...new Set(arg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean))]
+    : [];
+  if (asked.length === 0) {
+    return {
+      fillCities: [], refusal: null,
+      note: arg ? 'none (the flag named no city)' : 'none (no --fill-cities flag reached this process)',
+    };
+  }
+  if (allCities) {
+    return { fillCities: [], refusal: '--fill-cities cannot be combined with --all-cities, which already sweeps every city.' };
+  }
+  const unknown = asked.filter((c) => !Object.prototype.hasOwnProperty.call(CITIES, c));
+  if (unknown.length > 0) {
+    return {
+      fillCities: [],
+      refusal: `--fill-cities names ${unknown.join(', ')}, not ${unknown.length === 1 ? 'a city' : 'cities'} in scripts/ml/config.js.`,
+    };
+  }
+  if (holdout.city && asked.includes(holdout.city)) {
+    return {
+      fillCities: [],
+      refusal: `--fill-cities includes the holdout city ${holdout.city}, which is collected only in its holdout hours.`,
+    };
+  }
+  if (holdout.active) {
+    return { fillCities: [], refusal: null, note: 'none this run (a holdout hour collects the holdout city alone)' };
+  }
+  const fillCities = asked.filter((c) => !(cityScope || []).includes(c));
+  return {
+    fillCities, refusal: null,
+    note: fillCities.length ? null : 'none (every city named is already in the main scope)',
+  };
+}
+
+// The order the city blocks are swept in. The main scope's first, in the
+// query's alphabetical order or its reverse at random, so neither end of it is
+// always last; then the fill blocks from a random first one, so the fill
+// cities the budget leaves behind are a different few each hour.
+function orderCityBlocks(byCity, fillCities = [], random = Math.random) {
+  const fill = new Set(fillCities);
+  const order = Object.entries(byCity).filter(([city]) => !fill.has(city));
+  if (order.length > 1 && random() < 0.5) order.reverse();
+  const fillOrder = Object.entries(byCity).filter(([city]) => fill.has(city));
+  if (fillOrder.length > 1) fillOrder.push(...fillOrder.splice(0, Math.floor(random() * fillOrder.length)));
+  return order.concat(fillOrder);
+}
+
 // THE GATE every call starts through. Three rules, all checked with nothing
 // awaited between the last check and the start, so an answer cannot go stale:
 //   * at most one start per `intervalMs`, measured start to start;
@@ -591,14 +667,18 @@ function createCallGate({
 // Split out of collectRealtime so the pacing, the in-flight bound, the breakers
 // and the budget can be driven on a simulated clock (`now`, `pause`), with a
 // fake BestTime (`fetchLive`) and a fake write, by
-// __tests__/collectRealtimeConcurrency.test.js. Production passes none of those
-// and gets Date.now, config.sleep, bestTimeService and weatherService.
+// __tests__/collectRealtimeConcurrency.test.js. Production gets Date.now,
+// config.sleep and weatherService, and bestTimeService's live call wrapped
+// only to count the calls each city takes.
 // ---------------------------------------------------------------------------
 async function sweepVenues(cityOrder, {
   store,
   openHourMasks = new Map(),
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
   startIntervalMs = START_INTERVAL_MS,
+  // City keys whose blocks are fill (FILL CITIES, above): they stop starting
+  // calls FILL_EARLY_STOP_MS before the budget.
+  fillCities = new Set(),
   fetchLive = fetchLiveBusyness,
   weatherFor = getWeather,
   now = Date.now,
@@ -801,6 +881,19 @@ async function sweepVenues(cityOrder, {
       if (aborted || gate.stopped) break;
       const cityConfig = CITIES[cityKey];
       if (!cityConfig) continue;
+      const fillBlock = fillCities.has(cityKey);
+      const blockBudgetMs = fillBlock ? RUN_TIME_BUDGET_MS - FILL_EARLY_STOP_MS : RUN_TIME_BUDGET_MS;
+      // A fill block reached after its time is counted whole and skipped,
+      // weather call and all: none of its venues could start.
+      if (fillBlock && (budgetHit || now() - runClockStart > blockBudgetMs)) {
+        if (!budgetHit) {
+          console.warn(`[ML:Realtime] Fill time reached after ${called} calls (fill cities stop `
+            + `${FILL_EARLY_STOP_MS / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
+        }
+        budgetHit = true;
+        leftForNextRun += cityVenues.length;
+        continue;
+      }
 
       // One weather call per city, REFRESHED WHEN THE HOUR TURNS.
       //
@@ -853,7 +946,12 @@ async function sweepVenues(cityOrder, {
         // all read at the moment the call would start. A closed venue passes the
         // gate and starts nothing, so the next venue finds it still open: the
         // skip costs no time it would not have spent anyway.
-        if (!budgetHit && (await readyToCall(runClockStart + RUN_TIME_BUDGET_MS)) === false) break;
+        if (!budgetHit && (await readyToCall(runClockStart + blockBudgetMs)) === false) break;
+        if (fillBlock && !budgetHit && now() - runClockStart > blockBudgetMs) {
+          console.warn(`[ML:Realtime] Fill time reached after ${called} calls (fill cities stop `
+            + `${FILL_EARLY_STOP_MS / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
+          budgetHit = true;
+        }
         if (budgetHit || now() - runClockStart > RUN_TIME_BUDGET_MS) {
           if (!budgetHit) console.warn(`[ML:Realtime] Time budget reached after ${called} calls; the rest of this sweep is left for the next run.`);
           budgetHit = true;
@@ -1382,7 +1480,8 @@ async function collectRealtime() {
   // restores the old global sweep as a deliberate act rather than a default.
   // Since 2026-10-27 the Railway service passes --cities=philly,lehigh,la,seattle,chicago,denver
   // with --max-credits=12000: live calls are unlimited on the plan, and the hourly runs
-  // were finishing in 6-20 of their 50 minutes.
+  // were finishing in 6-20 of their 50 minutes. Since 2026-10-30 --fill-cities (FILL
+  // CITIES, above) spends the minutes the six leave.
   // Both spellings: --cities=a,b (this script) and --city=x (the singular
   // collectWeekly has always taken, which the clock-axis suite and muscle
   // memory both use). Either one overrides the PA default.
@@ -1417,6 +1516,15 @@ async function collectRealtime() {
   if (HOLDOUT.active) {
     console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} instead of the training cities.`);
   }
+  const fill = parseFillCities(process.argv, { cityScope, allCities, holdout: HOLDOUT });
+  if (fill.refusal) {
+    await pool.end();
+    throw new Error(`REFUSED: ${fill.refusal} Exiting non-zero so the scheduler records a failure rather than guessing.`);
+  }
+  const { fillCities } = fill;
+  const fillSet = new Set(fillCities);
+  // What the run reads: the main scope and the fill, or every city.
+  const queryScope = cityScope ? cityScope.concat(fillCities) : null;
   // `demand_serves` is how many times a REAL USER has been shown a crowd card
   // for this venue. It decides collection order below, and nothing else: no
   // venue is excluded by it and no extra call is made because of it.
@@ -1433,13 +1541,20 @@ async function collectRealtime() {
           GROUP BY venue_place_id
        ) d ON d.venue_place_id = v.google_place_id
       WHERE v.is_active = true AND v.besttime_venue_id IS NOT NULL`
-    + (cityScope ? ' AND v.city = ANY($1)' : '')
+    + (queryScope ? ' AND v.city = ANY($1)' : '')
     + ' ORDER BY v.city, v.id',
-    cityScope ? [cityScope] : []
+    queryScope ? [queryScope] : []
   );
   console.log(`[ML:Realtime] City scope: ${cityScope ? cityScope.join(', ') : 'ALL CITIES (explicit --all-cities)'}`);
-  const demandedCount = venues.filter((v) => v.demand_serves > 0).length;
-  console.log(`[ML:Realtime] ${demandedCount} of ${venues.length} venues have been served to a real user; `
+  // Stated every run, like the holdout config, with each fill city's venue
+  // count, so "did the flag arrive, and what did it bring" is one line.
+  const mainVenues = fillSet.size ? venues.filter((v) => !fillSet.has(v.city)) : venues;
+  console.log(`[ML:Realtime] Fill cities: ${fillCities.length
+    ? `${fillCities.map((c) => `${c} ${venues.filter((v) => v.city === c).length}`).join(', ')} `
+      + `(${venues.length - mainVenues.length} venues), swept after the main scope in the time it leaves`
+    : fill.note}.`);
+  const demandedCount = mainVenues.filter((v) => v.demand_serves > 0).length;
+  console.log(`[ML:Realtime] ${demandedCount} of ${mainVenues.length} venues have been served to a real user; `
     + `those are collected first every run, so the time budget cannot cut them.`);
 
   // THE CREDIT BUDGET. The old Railway cron's mental model was "run until the
@@ -1478,7 +1593,8 @@ async function collectRealtime() {
   }
   console.log(`[ML:Realtime] Credit budget: ~${venues.length} of ${maxCredits} allowed this run.`);
 
-  if (venues.length === 0) {
+  // The MAIN scope must hold venues: fill cities alone are not the run asked for.
+  if (mainVenues.length === 0) {
     await pool.end();
     // ALSO THROWN (2026-09-05), for the same reason as the ceiling above. An
     // empty scope is not a quiet no-op: with the default cities there are
@@ -1528,7 +1644,7 @@ async function collectRealtime() {
   let openHourMasks = new Map();
   if (openHoursFilter) {
     try {
-      openHourMasks = await loadOpenHourMasks(cityScope);
+      openHourMasks = await loadOpenHourMasks(queryScope);
       console.log(`[ML:Realtime] Open hours: ${openHourMasks.size} of ${venues.length} venues have a `
         + `weekly curve to judge by (+/-${OPEN_HOUR_PAD}h); the rest are called unconditionally.`);
     } catch (err) {
@@ -1572,17 +1688,35 @@ async function collectRealtime() {
     const off = rest.length ? Math.floor(Math.random() * rest.length) : 0;
     byCity[k] = demanded.concat(rest.slice(off), rest.slice(0, off));
   }
-  const cityOrder = Object.entries(byCity);
-  if (cityOrder.length > 1 && Math.random() < 0.5) cityOrder.reverse();
+  const cityOrder = orderCityBlocks(byCity, fillCities);
 
   // One per sweep, so a cell's Ticketmaster list is shared within this run
   // and never outlives it.
   const events = createEventLookup();
+  // Calls and live rows per city, for the line after the summary: what each
+  // city gives back for the calls spent on it. A fill city whose venues seldom
+  // have a live reading is time better spent on another.
+  const perCity = new Map();
+  const tally = (city, key) => {
+    const row = perCity.get(city) || { calls: 0, live: 0 };
+    row[key]++;
+    perCity.set(city, row);
+  };
+  const cityOfVendorId = new Map(venues.map((v) => [v.besttime_venue_id, v.city]));
   const {
     totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
     aborted, abortReason, budgetHit, leftForNextRun, peakInFlight,
   } = await sweepVenues(cityOrder, {
-    openHourMasks, maxInFlight, startIntervalMs, store: (venue, at, live) => storeReading(venue, at, live, events.lookup),
+    openHourMasks, maxInFlight, startIntervalMs, store: async (venue, at, live) => {
+      const outcome = await storeReading(venue, at, live, events.lookup);
+      if (outcome === LABEL_LIVE) tally(venue.city, 'live');
+      return outcome;
+    },
+    fetchLive: (vendorId) => {
+      tally(cityOfVendorId.get(vendorId), 'calls');
+      return fetchLiveBusyness(vendorId);
+    },
+    fillCities: fillSet,
   });
 
   // Their own lines, so the summary below keeps the exact shape monitoring reads.
@@ -1614,6 +1748,12 @@ async function collectRealtime() {
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}`
     + `${vanished > 0 ? `, ${vanished} venues retired or unmapped by the venue repair mid-sweep` : ''}`
     + `${budgetHit ? `, ${leftForNextRun} venues left for the next run (time budget)` : ''}.`);
+  const cityTally = (keys) => keys.map((c) => {
+    const row = perCity.get(c) || { calls: 0, live: 0 };
+    return `${c} ${row.live}/${row.calls}`;
+  }).join(', ');
+  console.log(`[ML:Realtime] Live rows / calls by city: ${cityTally(cityScope || [...perCity.keys()].sort())}`
+    + `${fillCities.length ? `; fill: ${cityTally(fillCities)}` : ''}.`);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
 
@@ -1882,6 +2022,7 @@ module.exports = {
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
+  FILL_EARLY_STOP_MS, parseFillCities, orderCityBlocks,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading
   // whose call started before the hour turned.
