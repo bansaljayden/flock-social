@@ -470,10 +470,10 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // cannot mean what it says: a name that is not a city in config.js (a typo
 // should fail the cron, not quietly fill nothing), the flag beside
 // --all-cities (every city is already in scope), or the holdout city (filling
-// it would collect it outside the hours its holdout is defined by). In a
-// holdout hour the run stays the holdout city alone. A city already in the
-// main scope is dropped from the fill list rather than refused: it is swept
-// either way.
+// it would collect it outside the hours its holdout is defined by). A holdout
+// hour takes the fill too, after the holdout city and the main scope. A city
+// already in the main scope is dropped from the fill list rather than refused:
+// it is swept either way.
 function parseFillCities(argv, { cityScope, allCities, holdout = {} }) {
   const arg = argv.find((a) => a.startsWith('--fill-cities='));
   const asked = arg
@@ -500,9 +500,6 @@ function parseFillCities(argv, { cityScope, allCities, holdout = {} }) {
       fillCities: [],
       refusal: `--fill-cities includes the holdout city ${holdout.city}, which is collected only in its holdout hours.`,
     };
-  }
-  if (holdout.active) {
-    return { fillCities: [], refusal: null, note: 'none this run (a holdout hour collects the holdout city alone)' };
   }
   const fillCities = asked.filter((c) => !(cityScope || []).includes(c));
   return {
@@ -558,6 +555,14 @@ function orderCityBlocks(byCity, fillCities = [], random = Math.random, fillShar
   }
   if (fillOrder.length > 1) fillOrder.push(...fillOrder.splice(0, Math.floor(random() * fillOrder.length)));
   return order.concat(fillOrder);
+}
+
+// The holdout city's block first in its hour, as when it ran alone (THE
+// HOLDOUT CITY GETS A FEW NAMED HOURS, below): its readings keep the top of the
+// hour, and the budget reaches every training city before it could reach them.
+function holdoutFirst(cityOrder, city) {
+  const at = city ? cityOrder.findIndex(([c]) => c === city) : -1;
+  return at > 0 ? [cityOrder[at], ...cityOrder.slice(0, at), ...cityOrder.slice(at + 1)] : cityOrder;
 }
 
 // Each fill city's open share at `at` (see FILL_SHARE_SPREAD): of its venues
@@ -1711,12 +1716,14 @@ async function collectRealtime() {
       + 'Without it the holdout city would either never run, or silently take every hour away from '
       + 'the training cities. Exiting non-zero rather than guessing which was meant.');
   }
+  const trainingScope = citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
+    : cityArg ? [cityArg.split('=')[1].trim()]
+    : ['philly', 'lehigh'];
+  // A holdout hour collects the holdout city first and the training cities
+  // after it (THE HOLDOUT CITY GETS A FEW NAMED HOURS, below).
   const cityScope = allCities
     ? null
-    : (HOLDOUT.active ? [HOLDOUT.city]
-      : citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
-      : cityArg ? [cityArg.split('=')[1].trim()]
-      : ['philly', 'lehigh']);
+    : (HOLDOUT.active ? [HOLDOUT.city, ...trainingScope.filter((c) => c !== HOLDOUT.city)] : trainingScope);
   /* THE HOLDOUT CONFIG IS LOGGED EVERY RUN, not only on the hours it fires.
      On 2026-09-05 the service was given --holdout-city=miami and the flags
      never reached the process, because a start-command change does not apply
@@ -1730,7 +1737,7 @@ async function collectRealtime() {
     ? `city=${HOLDOUT.city} hours=${HOLDOUT.hours.join(',')} activeThisRun=${HOLDOUT.active}`
     : 'none (no --holdout-city flag reached this process)'}`);
   if (HOLDOUT.active) {
-    console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} instead of the training cities.`);
+    console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} first, then the training cities.`);
   }
   const fill = parseFillCities(process.argv, { cityScope, allCities, holdout: HOLDOUT });
   if (fill.refusal) {
@@ -1917,7 +1924,8 @@ async function collectRealtime() {
         + 'the fill starts from a random city.');
     }
   }
-  const cityOrder = orderCityBlocks(byCity, fillCities, Math.random, fillShares);
+  const cityOrder = holdoutFirst(orderCityBlocks(byCity, fillCities, Math.random, fillShares),
+    HOLDOUT.active ? HOLDOUT.city : null);
   if (fillShares) {
     const shareOf = (city) => (Number.isFinite(fillShares.get(city))
       ? `${Math.round(fillShares.get(city) * 100)}%` : 'no curve');
@@ -2123,11 +2131,20 @@ async function auditProvenance(runStartedAt, expected) {
 // exists to prevent, so the safer shape is the one service that already has its
 // variables spending a named hour on a different city.
 //
-// The cost is those hours of Pennsylvania collection, which is the corpus the
+// The cost was those hours of Pennsylvania collection, which is the corpus the
 // 50,000 row training floor is counted from. Two hours in twenty four is about
 // eight per cent. The hours are named rather than random so the holdout gets
 // more than one time of day in it: a holdout that only ever saw six in the
 // evening would not test a model that has to answer at noon.
+//
+// SINCE 2026-10-30 THE HOUR IS NOT GIVEN UP. At the faster pace the holdout
+// city alone took six minutes (the 15:00 UTC run that day: miami's 737 venues,
+// 685 calls, 418 rows) and the rest of the hour went unused, so the training
+// cities had no reading at 15:00 or 23:00 UTC on any day, and 23:00 UTC is
+// seven in the evening in Philadelphia. A holdout hour now sweeps the holdout
+// city first, at the top of the hour as before (holdoutFirst), then the main
+// scope and the fill in the time left, and refreshes the baselines and
+// offsets like any other hour.
 //
 // Resolved once, at load, because a sweep runs for the better part of an hour
 // and must not change which city it is collecting halfway through.
@@ -2201,9 +2218,9 @@ async function run() {
     // clock keeps ticking. A holdout-city collector therefore passes
     // --no-baseline-refresh and leaves the rebuild to the hourly PA run, which
     // already covers every city because the statement is not city-scoped.
-    // A holdout hour skips it too. The rebuild is corpus-wide and not city
-    // scoped, so the training-city runs either side of this one cover it.
-    const skipBaselines = process.argv.includes('--no-baseline-refresh') || HOLDOUT.active;
+    // A holdout hour used to skip it too, when it collected the holdout city
+    // alone. It collects the training cities as well now, so it refreshes.
+    const skipBaselines = process.argv.includes('--no-baseline-refresh');
     if (skipBaselines) {
       console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
     }
@@ -2264,7 +2281,7 @@ module.exports = {
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   FILL_EARLY_STOP_MS, parseFillCities, orderCityBlocks,
-  FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow,
+  FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading

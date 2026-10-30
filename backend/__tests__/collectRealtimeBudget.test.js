@@ -16,7 +16,8 @@ const svc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'bestTim
 // a card for any place id, so most served venues are never polled.
 test('the README describes the venues the collector actually polls', () => {
   const readme = fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8').replace(/\s+/g, ' ');
-  assert.match(collect, /: \['philly', 'lehigh'\]\);/);
+  // The default scope, which a holdout hour sweeps after the holdout city.
+  assert.match(collect, /const trainingScope = [^;]*: \['philly', 'lehigh'\];/);
   assert.match(collect, /WHERE v\.is_active = true AND v\.besttime_venue_id IS NOT NULL/);
   assert.ok(!/every hour for the venues the app serves/.test(readme), 'the README says the collector reads every venue the app serves');
   assert.ok(readme.includes('The hourly collector now asks for that reading for the venues it can poll in Philadelphia and the Lehigh Valley, served venues first, and stores it when the vendor has one'),

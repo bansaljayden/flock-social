@@ -52,7 +52,7 @@ stubModule('../scripts/ml/eventService', {
 
 const {
   sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, LABEL_LIVE,
-  FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask,
+  FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask, holdoutFirst,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
 
@@ -86,16 +86,26 @@ test('beside --all-cities the flag is refused: every city is already in scope', 
   assert.match(r.refusal, /cannot be combined with --all-cities/);
 });
 
-test('the holdout city is refused, and a holdout hour runs the holdout city alone', () => {
+test('the holdout city is refused as a fill city, and a holdout hour takes the fill after the main scope', () => {
   const holdout = { city: 'miami', active: false };
   const refused = parseFillCities(['--fill-cities=seoul,miami'], { cityScope: MAIN, allCities: false, holdout });
   assert.match(refused.refusal, /includes the holdout city miami/);
-  const hour = parseFillCities(['--fill-cities=seoul'], {
-    cityScope: ['miami'], allCities: false, holdout: { city: 'miami', active: true },
+  // Since 2026-10-30 a holdout hour sweeps the holdout city first and the
+  // training cities after it, so its scope holds both and the fill still runs.
+  const hour = parseFillCities(['--fill-cities=seoul,philly'], {
+    cityScope: ['miami', ...MAIN], allCities: false, holdout: { city: 'miami', active: true },
   });
-  assert.deepStrictEqual(hour.fillCities, []);
+  assert.deepStrictEqual(hour.fillCities, ['seoul']);
   assert.strictEqual(hour.refusal, null);
-  assert.match(hour.note, /holdout hour/);
+});
+
+test('in its hour the holdout city is swept first, wherever the order put it', () => {
+  const order = [['chicago', [1]], ['philly', [2]], ['miami', [3]], ['seoul', [4]]];
+  assert.deepStrictEqual(keysOf(holdoutFirst(order, 'miami')), ['miami', 'chicago', 'philly', 'seoul']);
+  // Any other hour, or a holdout city with no venues this run: the order stands.
+  assert.strictEqual(holdoutFirst(order, null), order);
+  assert.strictEqual(holdoutFirst(order, 'tokyo'), order);
+  assert.strictEqual(holdoutFirst([['miami', [3]], ['philly', [2]]], 'miami')[0][0], 'miami');
 });
 
 test('repeats and cities already in the main scope are dropped, in the order given', () => {
@@ -318,7 +328,7 @@ test('run() parses the flag, reads the fill with the main scope, orders it last 
   assert.match(src, /openHourMasks = await loadOpenHourMasks\(queryScope\);/);
   assert.match(src, /if \(fillCities\.length && openHourMasks\.size\) \{\n {4}try \{\n {6}const at = new Date\(\);\n {6}fillShares = fillOpenShares\(byCity, fillCities, openHourMasks, await loadBusyNow\(fillCities, \{ at \}\), at\);/);
   assert.match(src, /Fill open shares could not be read \(\$\{describeDbError\(err\)\}\); /);
-  assert.match(src, /const cityOrder = orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\);/);
+  assert.match(src, /const cityOrder = holdoutFirst\(orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\),\n {4}HOLDOUT\.active \? HOLDOUT\.city : null\);/);
   assert.match(src, /Fill order by open share this hour: /);
   assert.match(src, /fillCities: fillSet,\n {2}\}\);/);
   // The main scope must hold venues on its own: a run of fill cities alone is

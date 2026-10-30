@@ -20,7 +20,7 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectRealtime.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('the flag exists, is read from argv, and gates the refresh as a branch', () => {
-  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\) \|\| HOLDOUT\.active;/);
+  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);/);
   assert.match(src, /if \(!skipBaselines\) \{\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
   // A thrown sentinel would swallow real refresh errors; the branch must not
   // be reintroduced that way.
@@ -93,10 +93,14 @@ test('the holdout city is resolved once, at load, from named UTC hours', () => {
     'HOLDOUT must resolve before run()');
 });
 
-test('a holdout hour replaces the training cities, says so, and skips the corpus rebuild', () => {
-  assert.match(src, /\? \[HOLDOUT\.city\]/);
-  assert.match(src, /Holdout hour: this run collects \$\{HOLDOUT\.city\} instead of the training cities/);
-  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\) \|\| HOLDOUT\.active;/);
+test('a holdout hour sweeps the holdout city first, then the training cities, says so, and refreshes', () => {
+  // Since 2026-10-30: the holdout city alone took six minutes at the faster
+  // pace, and the training cities never had a reading at either holdout hour.
+  assert.match(src, /\(HOLDOUT\.active \? \[HOLDOUT\.city, \.\.\.trainingScope\.filter\(\(c\) => c !== HOLDOUT\.city\)\] : trainingScope\)/);
+  assert.match(src, /Holdout hour: this run collects \$\{HOLDOUT\.city\} first, then the training cities\./);
+  assert.match(src, /const cityOrder = holdoutFirst\(orderCityBlocks\(/);
+  // The refresh is no longer skipped for the hour: it wrote training rows too.
+  assert.ok(!/skipBaselines = [^;]*HOLDOUT/.test(src), 'a holdout hour must not skip the refresh any more');
 });
 
 test('half a holdout flag is refused, not guessed at', () => {
