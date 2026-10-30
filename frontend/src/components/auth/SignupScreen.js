@@ -337,27 +337,39 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   if (awaitingVerification) {
     return (
-      <AuthShell hero={(
-        <>
-          <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
-          <h1 className="auth-h1">Confirm your email</h1>
-          {linkSent
-            ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
-            : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
-        </>
-      )}>
+      <AuthShell
+        hero={(
+          <>
+            <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
+            <h1 className="auth-h1">Confirm your email</h1>
+            {linkSent
+              ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+              : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
+          </>
+        )}
+        /* The way forward is the filled button, in the actions bar with every
+           other auth screen's. It was an outlined button under a filled "Send
+           the link again", so the screen's loudest control sent mail again
+           when the person had already clicked it. */
+        actions={(
+          <button type="button" onClick={handleConfirmed} disabled={confirmChecking} className="auth-primary">
+            {confirmChecking ? 'Checking' : 'I opened the link, continue'}
+          </button>
+        )}
+      >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
             ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.'
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
+        {/* The second thing this screen offers, outlined. The filled button
+            in the actions bar is the way forward, I opened the link. */}
         <button
           type="button"
           onClick={handleResend}
           disabled={resendCooldown > 0 || mailRefused}
-          className="auth-primary"
-          style={{ opacity: (resendCooldown > 0 || mailRefused) ? 0.5 : 1, cursor: (resendCooldown > 0 || mailRefused) ? 'not-allowed' : 'pointer' }}
+          className="auth-secondary"
         >
           {/* "again" is a claim too. Nothing was sent the first time when
               linkSent is false, and a button that says otherwise repeats the
@@ -365,15 +377,6 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           {resendCooldown > 0
             ? `Try again in ${resendCooldown}s`
             : (linkSent ? 'Send the link again' : 'Send the link')}
-        </button>
-        <button
-          type="button"
-          onClick={handleConfirmed}
-          disabled={confirmChecking}
-          className="auth-provider"
-          style={{ marginTop: '10px', opacity: confirmChecking ? 0.6 : 1 }}
-        >
-          {confirmChecking ? 'Checking' : 'I opened the link, continue'}
         </button>
         {/* The forward door. What an unverified account cannot do is said
             above and enforced by the server (UNVERIFIED_DENY), and each of
@@ -399,13 +402,14 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   // Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at on
   // EVERY signup path (email, Google, Apple), so the agreement has to be on
-  // this screen before any of those buttons is hit. On the web it sits
-  // directly under Create account and above the Google button, so it covers
-  // both without scrolling. On iOS, where the providers come first, it sits
-  // above them, which puts it above everything that creates an account. The
-  // Terms page carries the zero-tolerance-for-objectionable-content language
-  // Apple's 1.2 template requires. One paragraph, drawn in one of the two
-  // places, never both.
+  // this screen before any of those buttons is hit. On the web it closes the
+  // form, above the Google button, and ahead of Create account, which is in
+  // the actions bar after the sheet. On iOS, where the providers come first,
+  // it sits above them, which puts it above everything that creates an
+  // account. Either way it stays in the sheet, so it cannot move the bar's
+  // button. The Terms page carries the zero-tolerance-for-objectionable-content
+  // language Apple's 1.2 template requires. One paragraph, drawn in one of the
+  // two places, never both.
   const consent = (
         <p className="auth-legal">
           Creating an account means you agree to the{' '}
@@ -433,8 +437,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           Turning the browser's validation off makes handleSubmit the only gate,
           and handleSubmit always renders a message through AuthError, which
           announces itself and scrolls into view. The rule is that this button
-          must never be tappable without something happening. */}
-      <form onSubmit={handleSubmit} noValidate>
+          must never be tappable without something happening. The button is
+          Create account in AuthShell's actions bar, which names this form by
+          id. */}
+      <form id="signup-form" onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         <div className="auth-field-row">
@@ -479,7 +485,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           />
         )}
 
-        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+        <div className="auth-field-row">
           <label className="auth-label" htmlFor="signup-password">Password</label>
           <div className="auth-pw-wrap">
             <input
@@ -534,10 +540,6 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           </ul>
         </div>
 
-        <button type="submit" className="auth-primary" disabled={loading}>
-          {loading ? 'Creating account…' : 'Create account'}
-        </button>
-
         {/* The consent paragraph, here on the web; see `consent` above. */}
         {!providersFirst && consent}
       </form>
@@ -591,9 +593,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         </button>
   );
 
-  // The Google step in the Google button's place, with Continue, while the
-  // server is waiting on a year for a Google sheet already done; otherwise
-  // the button. The same step as Apple's, with its own field id.
+  // The Google step in the Google button's place while the server is waiting
+  // on a year for a Google sheet already done, its Continue in the actions
+  // bar; otherwise the button. The same step as Apple's, with its own field id.
   const googleBlock = googleButton && (
     <>
       {google.step && (
@@ -605,9 +607,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           onChange={(v) => { setBirthYear(v); google.setError(''); }}
         />
       )}
-      {google.step === 'resume'
-        ? <AppleStepContinue busy={google.busy} busyLabel="Creating account…" onClick={() => google.continueWith(birthYear)} />
-        : googleButton}
+      {google.step !== 'resume' && googleButton}
     </>
   );
 
@@ -674,8 +674,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       />
   );
 
-  // The Apple step in the Apple button's place, with Continue, while the
-  // server is waiting on a year for a sheet already done; otherwise the button.
+  // The Apple step in the Apple button's place while the server is waiting on
+  // a year for a sheet already done, its Continue in the actions bar;
+  // otherwise the button.
   const appleBlock = (
     <>
       {apple.step && (
@@ -686,9 +687,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           onChange={(v) => { setBirthYear(v); apple.setError(''); }}
         />
       )}
-      {apple.step === 'resume'
-        ? <AppleStepContinue busy={apple.busy} busyLabel="Creating account…" onClick={() => apple.continueWith(birthYear)} />
-        : appleButton}
+      {apple.step !== 'resume' && appleButton}
     </>
   );
 
@@ -699,32 +698,51 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       </p>
   );
 
+  // While either step is open the email form steps aside, in either order:
+  // one year field on screen and one thing to tap, the same rule the sign-in
+  // screen's step keeps. Leaving drops the held credentials; a later provider
+  // tap simply opens a new sheet.
+  const emailInstead = (
+    <button
+      type="button"
+      className="auth-textbtn"
+      onClick={() => { leaveSteps(); clearErrors(); }}
+      style={{ display: 'block', margin: '16px auto 0' }}
+    >
+      Sign up with email instead
+    </button>
+  );
+
+  // THE ONE FILLED BUTTON, in AuthShell's actions bar: a held step's Continue,
+  // otherwise Create account, which submits the form by its id. A step that
+  // has lost its hold leaves the bar empty; the provider's button in the sheet
+  // is the way on then.
+  let actions = null;
+  if (apple.step === 'resume') {
+    actions = <AppleStepContinue busy={apple.busy} busyLabel="Creating account…" onClick={() => apple.continueWith(birthYear)} />;
+  } else if (google.step === 'resume') {
+    actions = <AppleStepContinue busy={google.busy} busyLabel="Creating account…" onClick={() => google.continueWith(birthYear)} />;
+  } else if (!stepOpen) {
+    actions = (
+      <button type="submit" form="signup-form" className="auth-primary" disabled={loading}>
+        {loading ? 'Creating account…' : 'Create account'}
+      </button>
+    );
+  }
+
   if (providersFirst) {
     return (
-      <AuthShell hero={hero}>
+      <AuthShell hero={hero} actions={actions}>
         {/* The legal line's own margin is for sitting under a button; here
             it sits over one, so the gap goes below it instead. */}
         <div style={{ marginBottom: '16px' }}>{consent}</div>
         <AuthError>{providerError}</AuthError>
         {appleBlock}
-        {/* Wrapped for its gap: under the Apple button the stylesheet's
-            .auth-provider + .auth-provider rule would give one, but under the
-            step's Continue nothing would. */}
+        {/* Wrapped for its gap: the stylesheet's .auth-provider +
+            .auth-provider rule needs the two buttons to be siblings, and the
+            Apple step puts its field between them. */}
         {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
-        {/* While either step is open the email form steps aside: one year
-            field on screen and one thing to tap, the same rule the sign-in
-            screen's step keeps. Leaving drops the held credentials; a later
-            provider tap simply opens a new sheet. */}
-        {stepOpen ? (
-          <button
-            type="button"
-            className="auth-textbtn"
-            onClick={() => { leaveSteps(); clearErrors(); }}
-            style={{ display: 'block', margin: '16px auto 0' }}
-          >
-            Sign up with email instead
-          </button>
-        ) : (
+        {stepOpen ? emailInstead : (
           <>
             <AuthRule label="or sign up with email" />
             {form}
@@ -736,14 +754,18 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   }
 
   return (
-    <AuthShell hero={hero}>
-      {form}
-
-      <AuthRule label="or sign up with" />
+    <AuthShell hero={hero} actions={actions}>
+      {!stepOpen && (
+        <>
+          {form}
+          <AuthRule label="or sign up with" />
+        </>
+      )}
 
       {googleBlock}
       {appleBlock}
 
+      {stepOpen && emailInstead}
       {foot}
     </AuthShell>
   );

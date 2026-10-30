@@ -410,15 +410,22 @@ describe('the signup screen on iOS puts the providers first', () => {
     expect(noGoogle.container.querySelector('.auth-sub').textContent).toBe('Use Apple, or sign up with your email.');
   });
 
-  it('on the web the layout is the one it was: the form, then the consent line, then Google', () => {
+  it('on the web the form comes first, then the consent line, then Google, with Create account in the actions bar', () => {
     delete window.Capacitor;
     const utils = openSignup();
     expect(appleButton(utils)).toBeNull();
+    const password = utils.getByLabelText('Password');
     const create = utils.getByRole('button', { name: 'Create account' });
     const consent = utils.container.querySelector('.auth-legal');
     const google = utils.getByRole('button', { name: /continue with google/i });
-    expect(before(create, consent)).toBe(true);
+    expect(before(password, consent)).toBe(true);
     expect(before(consent, google)).toBe(true);
+    // Create account moved from under the form to the actions bar after the
+    // sheet (AuthShell.js). The agreement is still ahead of it, as it is ahead
+    // of Google, and it stays in the sheet, so it cannot move the button.
+    expect(before(consent, create)).toBe(true);
+    expect(create.closest('.auth-actions')).not.toBeNull();
+    expect(consent.closest('.auth-actions')).toBeNull();
     expect(utils.container.querySelector('.auth-sub').textContent).toBe('Four fields, then one link in your inbox.');
     expect(utils.getByText('or sign up with')).toBeTruthy();
   });

@@ -104,15 +104,19 @@ const VerifyEmailPage = () => {
           <p className="auth-sub">One button and you are done.</p>
         </>
       )}
+      /* In the actions bar, where every auth screen keeps its one filled
+         button; the error stays in the sheet above it. */
+      actions={(
+        <button type="button" className="auth-primary" onClick={confirm} disabled={sending}>
+          {sending ? 'Confirming…' : 'Confirm my email'}
+        </button>
+      )}
     >
       <p className="auth-sub" style={{ margin: '0 0 20px', maxWidth: 'none' }}>
         This confirms the Flock account that was made with this address. If you did not
         sign up for Flock, close this page and nothing will happen.
       </p>
       <AuthError>{error}</AuthError>
-      <button type="button" className="auth-primary" onClick={confirm} disabled={sending}>
-        {sending ? 'Confirming…' : 'Confirm my email'}
-      </button>
     </AuthShell>
   );
 };

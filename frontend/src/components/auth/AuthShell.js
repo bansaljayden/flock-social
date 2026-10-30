@@ -174,11 +174,36 @@ export const AuthLabelRow = ({ children }) => (
    than on a seam. The headline and its line sit on it directly: cream on this
    navy is 15.9:1 and the second line 10.3:1.
 
+   .auth-root: scroll-padding-bottom is the room the actions bar takes at the
+   bottom of the scroller (more while the keyboard is up). A field or an error
+   that a screen focuses scrolls into view above the bar instead of under it.
+
    .auth-col: The analytics bar publishes its footprint as --cb-height while it
    is open and removes it when answered. Padding by it keeps "Create an account"
    / "Sign in" above the bar rather than under it. --kb-pad is the keyboard's
    own footprint, quantized so the QuickType bar cannot move it (see
    useKeyboardPad). Both are zero most of the time.
+
+   .auth-sheet: its bottom padding leaves out the home indicator strip, because
+   the actions bar under it carries that inset. A screen with no actions bar
+   (the reset link being checked) ends on the sheet, so :last-child puts the
+   inset back.
+
+   .auth-actions: THE PRIMARY BUTTON IS IN THE SAME PLACE ON EVERY SCREEN. Each
+   screen hands AuthShell its one filled button as `actions`, and it is drawn
+   here, after the sheet, stuck to the bottom of the scroller: on a short screen
+   it sits under the sheet, on a long one it stays on screen while the sheet
+   scrolls under it. Before this the button sat wherever each screen's content
+   ended: under consent, Apple, Google, a divider and two fields on Sign in;
+   under a password checklist on Create account, below the fold; above the
+   keyboard only after a scroll. Errors and links stay in the sheet, so a
+   message appearing cannot push the button down. It rides the keyboard by
+   --kb-pad. That number is rounded DOWN to an 80px step (KB_STEP), so the top
+   of the keys can sit up to 79px above the bar's bottom edge; while the
+   keyboard is up --kb-slack is that step, and the padding under the button
+   grows by it so the whole button stays above the keys. The keys cover the
+   home indicator strip, so the safe inset is not added then. ::before fades the
+   sheet into the bar, so text scrolling under it does not end on a hard cut.
 
    .auth-sub: 13.5em holds the line to its own sentence, so it breaks after the
    full stop instead of orphaning two words onto line two.
@@ -223,10 +248,14 @@ export const AuthLabelRow = ({ children }) => (
    pushing the field down (the pseudo-element does not affect layout).
 
    .auth-apple-step: The Apple step (AppleYearStep.js, on the sign-in and
-   sign-up screens): the year field and a Continue button in the place the Apple
-   button was, after Apple's sheet has already been done once. It sits among the
-   provider buttons, so it gets the same gap they have from each other, and a
-   line that says what is being asked.
+   sign-up screens): the year field in the place the Apple button was, after
+   Apple's sheet has already been done once, with its Continue in the actions
+   bar. It sits among the provider buttons, so it gets the same gap they have
+   from each other, and a line that says what is being asked.
+
+   .auth-secondary: the outlined button for the second thing a screen offers
+   ("Send the link again" on the confirm screen), so it never reads as a second
+   primary next to the filled one in the actions bar.
 
    .auth-legal a: nowrap so "Privacy Policy" and "Community Guidelines" never
    split across two lines: a half-underlined document name reads like two links.
@@ -244,6 +273,7 @@ const AUTH_CSS = `
   height: 100dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scroll-padding-bottom: calc(var(--kb-pad, 0px) + 160px);
   background: #080d18;
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
@@ -287,7 +317,21 @@ const AUTH_CSS = `
   background: rgba(11,18,32,0.97);
   border-top: 1px solid rgba(244,239,227,0.18);
   border-radius: 26px 26px 0 0;
-  padding: 26px 22px calc(var(--safe-bottom) + 24px);
+  padding: 26px 22px 24px;
+}
+.auth-sheet:last-child { padding-bottom: calc(var(--safe-bottom) + 24px); }
+
+.auth-actions {
+  position: sticky;
+  bottom: calc(var(--cb-height, 0px) + var(--kb-pad, 0px));
+  z-index: 2;
+  padding: 12px 22px max(calc(var(--safe-bottom) + 16px), calc(var(--kb-slack, 0px) + 12px));
+  background: ${AUTH.sheet};
+}
+.auth-actions::before {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 100%; height: 16px;
+  background: linear-gradient(to top, ${AUTH.sheet}, rgba(11,18,32,0));
+  pointer-events: none;
 }
 
 .auth-field-row { margin-bottom: 16px; }
@@ -361,6 +405,18 @@ const AUTH_CSS = `
 .auth-provider:hover:not(:disabled) { filter: brightness(0.96); }
 .auth-provider:active:not(:disabled) { transform: scale(0.985); }
 .auth-provider:disabled { opacity: 0.6; cursor: progress; }
+
+.auth-secondary {
+  width: 100%; min-height: 48px; padding: 0 16px;
+  border: 1px solid rgba(244,239,227,0.38); border-radius: 12px;
+  background: none; color: ${AUTH.cream};
+  font-size: 15px; font-weight: 600; font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.auth-secondary:hover:not(:disabled) { background: rgba(244,239,227,0.08); }
+.auth-secondary:active:not(:disabled) { transform: scale(0.985); }
+.auth-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .auth-rule { display: flex; align-items: center; gap: 12px; margin: 24px 0 14px; }
 .auth-rule::before, .auth-rule::after {
@@ -464,8 +520,8 @@ const AUTH_CSS = `
 .auth-venue:hover span { text-decoration-color: ${AUTH.cream2}; }
 
 @keyframes authRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.auth-hero, .auth-sheet { animation: authRise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.auth-sheet { animation-delay: 0.06s; }
+.auth-hero, .auth-sheet, .auth-actions { animation: authRise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.auth-sheet, .auth-actions { animation-delay: 0.06s; }
 
 @media (max-height: 700px) {
   .auth-hero { min-height: 0; padding-top: calc(var(--safe-top) + 22px); padding-bottom: 22px; }
@@ -520,11 +576,22 @@ const useKeyboardPad = () => {
   return pad;
 };
 
-const AuthShell = ({ hero, children }) => {
+/* `actions` is the screen's one filled button, drawn in the bar at the bottom
+   (.auth-actions in the notes above AUTH_CSS). A submit button there names its
+   form with form="...", which also keeps Enter in a field submitting it. A
+   screen with nothing to press passes none and ends on the sheet. The bar sits
+   inside <main> with the sheet, so the landmark holds the form and the button
+   that sends it. The keyboard's two numbers go on the scroller, which reads
+   one of them itself (scroll-padding-bottom); the column and the bar inherit
+   them. */
+const AuthShell = ({ hero, children, actions }) => {
   const keyboardPad = useKeyboardPad();
   return (
-  <div className="auth-root">
-    <div className="auth-col" style={{ '--kb-pad': `${keyboardPad}px` }}>
+  <div
+    className="auth-root"
+    style={{ '--kb-pad': `${keyboardPad}px`, '--kb-slack': keyboardPad ? `${KB_STEP}px` : '0px' }}
+  >
+    <div className="auth-col">
       {/* The picture is sized to the hero, not to the window. A full-screen
           cover of a 16:9 clip on a 19.5:9 phone puts the skyline behind the
           sheet and leaves nothing but sky on screen, and upscales the source
@@ -534,7 +601,10 @@ const AuthShell = ({ hero, children }) => {
         <AuthBackdrop />
         {hero}
       </header>
-      <main className="auth-sheet">{children}</main>
+      <main className="auth-main">
+        <div className="auth-sheet">{children}</div>
+        {actions ? <div className="auth-actions">{actions}</div> : null}
+      </main>
     </div>
     <style>{AUTH_CSS}</style>
   </div>

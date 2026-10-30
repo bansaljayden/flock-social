@@ -91,16 +91,21 @@ export const ForgotPasswordScreen = ({ onBack, initialEmail = '' }) => {
     }
   };
 
+  // Every screen in this file hands its one filled button to AuthShell as
+  // `actions`, so it sits in the bar at the bottom where every auth screen
+  // keeps it; the submit buttons name their form by id.
   if (sent) {
     return (
-      <AuthShell hero={heroOf('Check your email', "If there's an account for that address, we sent a link.")}>
+      <AuthShell
+        hero={heroOf('Check your email', "If there's an account for that address, we sent a link.")}
+        actions={<button type="button" className="auth-primary" onClick={onBack}>Back to sign in</button>}
+      >
         <AuthNotice>Sent to {email}, if that address has an account.</AuthNotice>
         <p className="auth-sub" style={{ margin: '0 0 20px', maxWidth: 'none' }}>
           The link works once and stops working after an hour. If nothing lands in a couple of
           minutes, look in your spam folder. Accounts created with Google or Apple have no
           password to reset, so those get an email saying which button to press instead.
         </p>
-        <button type="button" className="auth-primary" onClick={onBack}>Back to sign in</button>
         <p className="auth-foot">
           Wrong address?
           <button type="button" className="auth-textbtn" onClick={() => { setSent(false); setError(''); }}>
@@ -112,12 +117,19 @@ export const ForgotPasswordScreen = ({ onBack, initialEmail = '' }) => {
   }
 
   return (
-    <AuthShell hero={heroOf('Forgot your password?', 'Give us the address you sign in with.')}>
+    <AuthShell
+      hero={heroOf('Forgot your password?', 'Give us the address you sign in with.')}
+      actions={(
+        <button type="submit" form="forgot-form" className="auth-primary" disabled={loading}>
+          {loading ? 'Sending…' : 'Send me a link'}
+        </button>
+      )}
+    >
       {/* noValidate: see the signup screen. handleSubmit is the only gate. */}
-      <form onSubmit={handleSubmit} noValidate>
+      <form id="forgot-form" onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
-        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+        <div className="auth-field-row">
           <label className="auth-label" htmlFor="forgot-email">Email</label>
           <input
             id="forgot-email"
@@ -137,10 +149,6 @@ export const ForgotPasswordScreen = ({ onBack, initialEmail = '' }) => {
             use this screen to find out who is on Flock.
           </p>
         </div>
-
-        <button type="submit" className="auth-primary" disabled={loading}>
-          {loading ? 'Sending…' : 'Send me a link'}
-        </button>
       </form>
 
       <p className="auth-foot">
@@ -288,7 +296,13 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
 
   if (phase === 'done') {
     return (
-      <AuthShell hero={heroOf('Password updated', 'Sign in with the new one.')}>
+      <AuthShell
+        hero={heroOf('Password updated', 'Sign in with the new one.')}
+        /* The only caller that reports a change. Every other route to the
+           sign-in screen passes nothing, so the screen underneath cannot end
+           up claiming a password was updated when it was not. */
+        actions={<button type="button" className="auth-primary" onClick={() => onSignIn({ updated: true })}>Sign in</button>}
+      >
         <AuthNotice>Your password is set.</AuthNotice>
         <p className="auth-sub" style={{ margin: '0 0 20px', maxWidth: 'none' }}>
           Every device that was signed in to this account has been signed out, this one
@@ -300,10 +314,6 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
             your own in Settings after you sign in.
           </p>
         )}
-        {/* The only caller that reports a change. Every other route to the
-            sign-in screen passes nothing, so the screen underneath cannot end
-            up claiming a password was updated when it was not. */}
-        <button type="button" className="auth-primary" onClick={() => onSignIn({ updated: true })}>Sign in</button>
       </AuthShell>
     );
   }
@@ -311,9 +321,11 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
   const dead = DEAD_LINK_COPY[phase];
   if (dead) {
     return (
-      <AuthShell hero={heroOf(dead.title, dead.sub)}>
+      <AuthShell
+        hero={heroOf(dead.title, dead.sub)}
+        actions={<button type="button" className="auth-primary" onClick={onRequestNew}>Send me a new link</button>}
+      >
         <p className="auth-sub" style={{ margin: '0 0 20px', maxWidth: 'none' }}>{dead.body}</p>
-        <button type="button" className="auth-primary" onClick={onRequestNew}>Send me a new link</button>
         <p className="auth-foot">
           Know your password?
           <button type="button" className="auth-textbtn" onClick={() => onSignIn()}>Sign in</button>
@@ -323,9 +335,16 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
   }
 
   return (
-    <AuthShell hero={heroOf('Set a new password', 'Pick one you have not used anywhere else.')}>
+    <AuthShell
+      hero={heroOf('Set a new password', 'Pick one you have not used anywhere else.')}
+      actions={(
+        <button type="submit" form="reset-form" className="auth-primary" disabled={phase === 'saving'}>
+          {phase === 'saving' ? 'Saving…' : 'Save new password'}
+        </button>
+      )}
+    >
       {/* noValidate: see the signup screen. handleSubmit is the only gate. */}
-      <form onSubmit={handleSubmit} noValidate>
+      <form id="reset-form" onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         {/* THE USERNAME THIS PASSWORD BELONGS TO, so a manager has something
@@ -384,7 +403,7 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
           )}
         </div>
 
-        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+        <div className="auth-field-row">
           <label className="auth-label" htmlFor="reset-confirm">Type it again</label>
           <input
             id="reset-confirm"
@@ -400,10 +419,6 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
             <p className="auth-hint" style={{ color: AUTH.red }}>These do not match yet.</p>
           )}
         </div>
-
-        <button type="submit" className="auth-primary" disabled={phase === 'saving'}>
-          {phase === 'saving' ? 'Saving…' : 'Save new password'}
-        </button>
       </form>
 
       <p className="auth-hint" style={{ textAlign: 'center', marginTop: '14px' }}>

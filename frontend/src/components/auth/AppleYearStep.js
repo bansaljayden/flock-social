@@ -10,8 +10,9 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 // completed, held in a closure, ready to be sent again with a year (the reason
 // that is allowed, and the rules for holding them, are written out above
 // makeResume in AppleSignInButton.js). This is what a screen does with it:
-// the year field and a Continue button take the place of the Apple button,
-// and Continue posts the same credentials with the year. No second sheet.
+// the year field takes the place of the Apple button, Continue becomes the
+// screen's one filled button in AuthShell's actions bar, and Continue posts
+// the same credentials with the year. No second sheet.
 //
 // It was written inside LoginScreen for App Review's new-user path and moved
 // here so the sign-up screen can finish a new Apple account the same way.
@@ -163,8 +164,9 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
 }
 
 // The step itself: what is being asked, and the field to answer it in. The
-// screen draws it where the provider's button is and puts Continue (below) in
-// the button's place while the step is 'resume'. `idPrefix` keeps the screens'
+// screen draws it where the provider's button is and, while the step is
+// 'resume', hides that button and hands Continue (below) to AuthShell as its
+// `actions`. `idPrefix` keeps the screens'
 // ids apart and `provider` the two providers' on one screen:
 // `${idPrefix}-${provider}-year` is the field, `signup-apple-year` say.
 // `hint` replaces the field's own line where a screen needs a different one;
@@ -192,8 +194,11 @@ export default function AppleYearStep({ idPrefix, provider = 'apple', error, val
   );
 }
 
-// Continue, in the Apple button's place. `busyLabel` because the same tap
-// signs an existing account in on one screen and creates one on the other.
+// Continue, the screen's one filled button while the step holds a sign-in. The
+// screens pass it to AuthShell as `actions`, so it sits in the bar at the
+// bottom where every auth screen keeps that button, not wherever the step
+// happens to end. `busyLabel` because the same tap signs an existing account
+// in on one screen and creates one on the other.
 export function AppleStepContinue({ busy, busyLabel, onClick }) {
   return (
     <button type="button" className="auth-primary" disabled={busy} onClick={onClick}>

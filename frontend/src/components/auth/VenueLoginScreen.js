@@ -386,15 +386,35 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
   if (awaitingVerification) {
     return (
-      <AuthShell hero={(
-        <>
-          <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
-          <h1 className="auth-h1">Confirm your email</h1>
-          {linkSent
-            ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
-            : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
-        </>
-      )}
+      <AuthShell
+        hero={(
+          <>
+            <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
+            <h1 className="auth-h1">Confirm your email</h1>
+            {linkSent
+              ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+              : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
+          </>
+        )}
+        /* The screen's one filled button, in the actions bar where every auth
+           screen keeps it. The notes about the send stay in the sheet. */
+        actions={(
+          <button
+            type="button"
+            onClick={handleResend}
+            disabled={resendCooldown > 0 || mailRefused}
+            className="auth-primary"
+            style={{ opacity: (resendCooldown > 0 || mailRefused) ? 0.5 : 1, cursor: (resendCooldown > 0 || mailRefused) ? 'not-allowed' : 'pointer' }}
+          >
+            {/* "again" is a claim too. Nothing was sent the first time when
+                linkSent is false. */}
+            {mailRefused
+              ? 'We cannot mail that address'
+              : resendCooldown > 0
+                ? `Try again in ${resendCooldown}s`
+                : (linkSent ? 'Send the link again' : 'Send the link')}
+          </button>
+        )}
       >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
@@ -405,21 +425,6 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'}</p>
         )}
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
-        <button
-          type="button"
-          onClick={handleResend}
-          disabled={resendCooldown > 0 || mailRefused}
-          className="auth-primary"
-          style={{ opacity: (resendCooldown > 0 || mailRefused) ? 0.5 : 1, cursor: (resendCooldown > 0 || mailRefused) ? 'not-allowed' : 'pointer' }}
-        >
-          {/* "again" is a claim too. Nothing was sent the first time when
-              linkSent is false. */}
-          {mailRefused
-            ? 'We cannot mail that address'
-            : resendCooldown > 0
-              ? `Try again in ${resendCooldown}s`
-              : (linkSent ? 'Send the link again' : 'Send the link')}
-        </button>
         <p className="auth-foot">
           Already confirmed?
           <button type="button" className="auth-textbtn" onClick={() => { setAwaitingVerification(false); setIsSignup(false); }}>Sign in</button>
@@ -443,8 +448,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const form = (
     <>
       {/* noValidate: see the signup screen. iOS shows no validation bubble, so
-          `required` here meant the button silently refused to submit. */}
-      <form onSubmit={handleSubmit} noValidate>
+          `required` here meant the button silently refused to submit. The
+          button is in AuthShell's actions bar and names this form by id. */}
+      <form id="venue-form" onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         {isSignup && (
@@ -562,7 +568,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           />
         </div>
 
-        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+        <div className="auth-field-row">
           {/* Beside the password label, which is where people look for it, and
               only on the sign-in half: an account being created has no
               password to have forgotten. It carries whatever is already in the
@@ -633,22 +639,18 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           )}
         </div>
 
-        <button type="submit" className="auth-primary" disabled={loading}>
-          {loading
-            ? (isSignup ? 'Creating account…' : 'Signing in…')
-            : (isSignup ? 'Create account' : 'Sign in')}
-        </button>
-
         {/* Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at on
             every signup path, so the agreement has to be on screen before any
-            of the three buttons below is pressed. The sign-in half creates an
-            account too: its Google and Apple buttons make one for anyone who
-            has none, once the server has asked for a date of birth, so the
-            line shows there from the moment needsDob is set. A first tap is
-            always answered needsDob before a row is written, and an existing
-            account signs in without seeing it. That holds on the website. The
-            iPhone app is never answered needsDob, so there a first provider tap
-            creates the account at once and the line shows from the start. */}
+            of the three buttons is pressed: Google and Apple below, and Create
+            account in the actions bar after the sheet. The sign-in half
+            creates an account too: its Google and Apple buttons make one for
+            anyone who has none, once the server has asked for a date of birth,
+            so the line shows there from the moment needsDob is set. A first
+            tap is always answered needsDob before a row is written, and an
+            existing account signs in without seeing it. That holds on the
+            website. The iPhone app is never answered needsDob, so there a
+            first provider tap creates the account at once and the line shows
+            from the start. */}
         {!providersFirst && (isSignup || needsDob || !askAge) && consent}
       </form>
     </>
@@ -659,7 +661,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
           when the button could not work by any route. On web it always shows.
           While a new Google account's year is being asked, the Google step
-          and its Continue take the button's place. */}
+          takes the button's place and its Continue is the actions bar's
+          button. */}
       {google.step && (
         <AppleYearStep
           idPrefix="venue"
@@ -670,13 +673,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           hint="Yours, not the venue's. We use it to check your age."
         />
       )}
-      {google.step === 'resume' ? (
-        <AppleStepContinue
-          busy={google.busy}
-          busyLabel={isSignup ? 'Creating account…' : 'Signing in…'}
-          onClick={() => google.continueWith(birthYear)}
-        />
-      ) : (
+      {google.step !== 'resume' && (
         <button
           type="button"
           className="auth-provider"
@@ -743,7 +740,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           screens had already fixed.
 
           A new Apple ID's year is asked in this button's place (see THE APPLE
-          STEP above), with the owner's hint rather than the consumer one. */}
+          STEP above), with the owner's hint rather than the consumer one, and
+          its Continue is the actions bar's button. */}
       {appleStep && (
         <AppleYearStep
           idPrefix="venue"
@@ -754,13 +752,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         />
       )}
 
-      {appleStep === 'resume' ? (
-        <AppleStepContinue
-          busy={apple.busy}
-          busyLabel={isSignup ? 'Creating account…' : 'Signing in…'}
-          onClick={() => apple.continueWith(birthYear)}
-        />
-      ) : (
+      {appleStep !== 'resume' && (
       <AppleSignInButton
         onSuccess={(user) => { leaveSteps(); onLoginSuccess(user); }}
         onError={(m, err, resume) => {
@@ -801,10 +793,6 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         }}
         dob={askAge ? dob : undefined}
         dobGranularity={askAge && askYearOnly ? 'year' : undefined}
-        /* Under the Google step's Continue the stylesheet's provider-to-
-           provider gap does not apply, so the gap is given here. Apple
-           sits under Google only where the form comes first. */
-        style={!providersFirst && google.step === 'resume' ? { marginTop: '10px' } : undefined}
         beforeAuthorize={() => {
           if (dobNeedsCheck) {
             setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
@@ -843,11 +831,31 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     </>
   );
 
+  // THE ONE FILLED BUTTON, in AuthShell's actions bar with every auth
+  // screen's: a held step's Continue, otherwise the form's own button, which
+  // submits it by its id. A step that has lost its hold leaves the bar empty;
+  // the provider's button in the sheet is the way on then.
+  const busyLabel = isSignup ? 'Creating account…' : 'Signing in…';
+  let actions = null;
+  if (appleStep === 'resume') {
+    actions = <AppleStepContinue busy={apple.busy} busyLabel={busyLabel} onClick={() => apple.continueWith(birthYear)} />;
+  } else if (google.step === 'resume') {
+    actions = <AppleStepContinue busy={google.busy} busyLabel={busyLabel} onClick={() => google.continueWith(birthYear)} />;
+  } else if (!stepOpen) {
+    actions = (
+      <button type="submit" form="venue-form" className="auth-primary" disabled={loading}>
+        {loading ? busyLabel : (isSignup ? 'Create account' : 'Sign in')}
+      </button>
+    );
+  }
+
   return (
-    <AuthShell hero={hero}>
+    <AuthShell hero={hero} actions={actions}>
       {/* THE ORDER (providersFirst above): Apple, Google, then the email
-          form wherever Apple is offered; the form on top where it is not. */}
-      {!providersFirst && (
+          form wherever Apple is offered; the form on top where it is not.
+          Either way the form steps aside while a provider's year step is
+          open (below). */}
+      {!providersFirst && !stepOpen && (
         <>
           {form}
           <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
@@ -864,8 +872,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       {providersFirst ? (
         <>
           {appleBlock}
-          {/* Wrapped for its gap: under the Apple step's Continue the
-              stylesheet's provider-to-provider rule gives none. */}
+          {/* Wrapped for its gap: the stylesheet's provider-to-provider rule
+              needs the two buttons to be siblings, and the Apple step puts
+              its field between them. */}
           {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
         </>
       ) : (
@@ -878,9 +887,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       {providersFirst && !isSignup && askAge && needsDob && consent}
 
       {/* Under the providers, the form; while a provider's year step is
-          open it steps aside, so there is one year field and one thing to
-          tap, as on the consumer screens. */}
-      {providersFirst && (stepOpen ? (
+          open it steps aside, in either order, so there is one year field
+          and one thing to tap, as on the consumer screens. */}
+      {stepOpen ? (
         <button
           type="button"
           className="auth-textbtn"
@@ -889,18 +898,18 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         >
           {isSignup ? 'Sign up with email instead' : 'Sign in with email instead'}
         </button>
-      ) : (
+      ) : providersFirst && (
         <>
           <AuthRule label={isSignup ? 'or sign up with email' : 'or sign in with email'} />
           {form}
         </>
-      ))}
+      )}
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts (answering that turns login into an account enumeration
           oracle), so the hint stands here for everyone, same as the consumer
           login screen, and names only the buttons this screen has. */}
-      {!isSignup && (!providersFirst || !stepOpen) && (
+      {!isSignup && !stepOpen && (
         <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
           {isAppleSignInAvailable()
             ? 'Signed up with Google or Apple? Use that button.'

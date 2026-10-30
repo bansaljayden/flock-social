@@ -102,8 +102,8 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // the credentials from that sheet can be sent again with it (the reason is
   // written out above makeResume in AppleSignInButton.js). While that is true
   // the year field moves down to where the Apple button was, which is where
-  // the person is looking at 375x667, and a Continue button takes the place of
-  // the Apple button. The step's states and its Continue live in
+  // the person is looking at 375x667, and a Continue in the actions bar takes
+  // over from the Apple button. The step's states and its Continue live in
   // AppleYearStep.js, shared with the sign-up screen; this screen decides only
   // when to open it and what to show around it.
   const apple = useAppleYearStep({ fieldId: 'login-apple-year', onSuccess: onLoginSuccess });
@@ -313,8 +313,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           turned Sign in into a button that refused the submit and displayed
           nothing at all. Production PostHog recorded dead clicks on this
           screen's email and password fields too. handleSubmit is now the only
-          gate and it always renders a message through AuthError. */}
-      <form onSubmit={handleSubmit} noValidate>
+          gate and it always renders a message through AuthError. Its Sign in
+          button is in AuthShell's actions bar and names this form by id. */}
+      <form id="login-form" onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
         <AuthNotice>{notice}</AuthNotice>
 
@@ -411,7 +412,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           />
         </div>
 
-        <div className="auth-field-row" style={{ marginBottom: '24px' }}>
+        <div className="auth-field-row">
           {/* The way back in for anyone who cannot remember it. It sits on the
               password label's line, which is where people look for it, and it
               carries whatever is already typed in the email field so the next
@@ -441,10 +442,6 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
             <PasswordEye shown={showPassword} onToggle={() => setShowPassword(!showPassword)} />
           </div>
         </div>
-
-        <button type="submit" className="auth-primary" disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign in'}
-        </button>
       </form>
     </>
   );
@@ -454,7 +451,8 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
           when the button could not work by any route. On web it always shows.
           While a new Google account's year is being asked, the Google step
-          and its Continue take the button's place (THE GOOGLE STEP above). */}
+          takes the button's place and its Continue is the actions bar's
+          button (THE GOOGLE STEP above). */}
       {google.step && (
         <AppleYearStep
           idPrefix="login"
@@ -464,9 +462,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           onChange={(v) => { setBirthYear(v); google.setError(''); }}
         />
       )}
-      {google.step === 'resume' ? (
-        <AppleStepContinue busy={google.busy} busyLabel="Signing in…" onClick={() => google.continueWith(birthYear)} />
-      ) : (
+      {google.step !== 'resume' && (
         <button
           type="button"
           className="auth-provider"
@@ -506,9 +502,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           the app.
 
           That first 403 is now finished in place (see THE APPLE STEP above):
-          the year field and a Continue button appear where this button was,
-          and Continue sends the same Apple credentials again with the year.
-          No second Apple sheet. */}
+          the year field appears where this button was, a Continue is the
+          actions bar's button, and Continue sends the same Apple credentials
+          again with the year. No second Apple sheet. */}
       {appleStep && (
         <AppleYearStep
           idPrefix="login"
@@ -518,17 +514,11 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         />
       )}
 
-      {appleStep === 'resume' ? (
-        <AppleStepContinue busy={apple.busy} busyLabel="Signing in…" onClick={() => apple.continueWith(birthYear)} />
-      ) : (
+      {appleStep !== 'resume' && (
       <AppleSignInButton
         onSuccess={(user) => { leaveSteps(); onLoginSuccess(user); }}
         dob={needsDob && dobToSend ? dobToSend : undefined}
         dobGranularity={askYearOnly ? 'year' : undefined}
-        /* Under the Google step's Continue the stylesheet's provider-to-
-           provider gap does not apply, so the gap is given here. Apple
-           sits under Google only where the form comes first. */
-        style={!providersFirst && google.step === 'resume' ? { marginTop: '10px' } : undefined}
         /* Returning false stops the native sheet before it opens. Apple's flow
            is the one path that cannot be re-entered from a confirmation panel,
            because the sheet needs this button's own tap, so the guard has to
@@ -573,12 +563,32 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     </>
   );
 
+  // THE ONE FILLED BUTTON, in AuthShell's actions bar, where it is on every
+  // auth screen. While a provider's step holds a sign-in it is that step's
+  // Continue. While a step has lost its hold ('retap') the provider's own
+  // button in the sheet is the way on, so the bar is left empty rather than
+  // offering a second thing to press. Otherwise it is Sign in, which submits
+  // the email form by its id.
+  let actions = null;
+  if (appleStep === 'resume') {
+    actions = <AppleStepContinue busy={apple.busy} busyLabel="Signing in…" onClick={() => apple.continueWith(birthYear)} />;
+  } else if (google.step === 'resume') {
+    actions = <AppleStepContinue busy={google.busy} busyLabel="Signing in…" onClick={() => google.continueWith(birthYear)} />;
+  } else if (!stepOpen) {
+    actions = (
+      <button type="submit" form="login-form" className="auth-primary" disabled={loading}>
+        {loading ? 'Signing in…' : 'Sign in'}
+      </button>
+    );
+  }
+
   return (
-    <AuthShell hero={hero}>
+    <AuthShell hero={hero} actions={actions}>
       {/* THE ORDER (providersFirst above): Apple, Google, then the email
           form wherever Apple is offered; the form on top and the providers
-          under it where it is not. */}
-      {!providersFirst && (
+          under it where it is not. Either way the form steps aside while a
+          provider's year step is open (below). */}
+      {!providersFirst && !stepOpen && (
         <>
           {form}
           <AuthRule label="or continue with" />
@@ -597,9 +607,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       {providersFirst ? (
         <>
           {appleBlock}
-          {/* Wrapped for its gap: under the Apple button the stylesheet's
-              .auth-provider + .auth-provider rule would give one, but under
-              the Apple step's Continue nothing would. */}
+          {/* Wrapped for its gap: the stylesheet's .auth-provider +
+              .auth-provider rule needs the two buttons to be siblings, and
+              the Apple step puts its field between them. */}
           {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
         </>
       ) : (
@@ -621,11 +631,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       {askAge && needsDob && consent}
 
       {/* Under the providers, the email form; while a provider's year step
-          is open it steps aside, as on the sign-up screen: one year field on
-          screen and one thing to tap (fewer choices at the moment of
-          deciding). Leaving drops the held sign-in, and a later provider
-          tap opens a new sheet. */}
-      {providersFirst && (stepOpen ? (
+          is open it steps aside, in either order, as on the sign-up screen:
+          one year field on screen and one thing to tap (fewer choices at the
+          moment of deciding), and the bar's button is the step's Continue.
+          Leaving drops the held sign-in, and a later provider tap opens a new
+          sheet. */}
+      {stepOpen ? (
         <button
           type="button"
           className="auth-textbtn"
@@ -634,12 +645,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         >
           Sign in with email instead
         </button>
-      ) : (
+      ) : providersFirst && (
         <>
           <AuthRule label="or sign in with email" />
           {form}
         </>
-      ))}
+      )}
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts, because answering that turns login into an account
@@ -649,7 +660,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           only the buttons this screen has. Apple is one of them in the
           iPhone app and on flockcorp.com, and an Apple ID made on either
           signs in on the other as the same account. */}
-      {(!providersFirst || !stepOpen) && (
+      {!stepOpen && (
         <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
           {isAppleSignInAvailable()
             ? 'Signed up with Google or Apple? Use that button.'
