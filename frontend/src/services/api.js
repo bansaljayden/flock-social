@@ -1532,6 +1532,24 @@ function buildHttpError(res, data, endpoint, hadToken) {
   // real hand-written sentence (venue search says "hit a problem on our side")
   // keeps it.
   if (res.status === 500 && message === 'Server error') message = null;
+  // The same goes for the other internal wordings a server failure carries.
+  // About 150 route catch blocks answer a 5xx with "Failed to <step>", and the
+  // global handler with "Internal server error": words naming the failed step
+  // for a log, not sentences for a person. They reached the screen word for
+  // word ("Failed to get flocks" on the Nest after a database blip), in place
+  // of the caller's own copy.
+  if (res.status >= 500 && typeof message === 'string'
+      && (/^Failed to\b/.test(message) || message === 'Internal server error')) message = null;
+  // A path this build calls that the server no longer has. The iOS bundle is
+  // fixed at build time while the API deploys on every push, so an older app
+  // can ask for a route that has moved; "Route not found" is the server's
+  // word for that, and the person's way out is an update.
+  if (res.status === 404 && message === 'Route not found') {
+    message = 'This part of Flock needs an update. Update the app and try again.';
+  }
+  // express-validator's own default for a check that names no message.
+  const invalidDefault = typeof message === 'string' && /^Invalid value\.?$/.test(message);
+  if (invalidDefault) message = null;
   const expired = res.status === 401 && handleSessionExpiry(endpoint, hadToken, data);
   if (expired) {
     message = SESSION_EXPIRED_COPY;
@@ -1544,14 +1562,39 @@ function buildHttpError(res, data, endpoint, hadToken) {
   // Carry the machine-readable bits: callers key off err.code (e.g.
   // 'UPGRADE_REQUIRED' from the Birdie free-tier meter) and err.status. The
   // message alone is display copy and not a stable contract.
-  const err = new Error(message || 'Something went wrong on our end. Try again.');
+  const err = new Error(message
+    || (invalidDefault ? "That didn't look right. Check it and try again." : 'Something went wrong on our end. Try again.'));
   err.status = res.status;
+  // Whether err.message is a sentence written for this person (the server's
+  // own, or one chosen above for the case) rather than a generic line. A
+  // caller with better copy of its own hands it to userMessage(), which uses
+  // the caller's copy whenever this is false.
+  err.userFacing = Boolean(message);
   if (expired) err.sessionExpired = true;
   if (data && typeof data === 'object') {
     err.code = data.code;
     err.data = data;
   }
   return err;
+}
+
+/**
+ * WHAT A PERSON SEES WHEN SOMETHING FAILS.
+ *
+ * A catch block that shows err.message trusts that the error came from this
+ * file, and many do not: a TypeError thrown inside the same try, a native
+ * plugin's rejection, a socket refusal. Those carry text written for a log
+ * ("undefined is not an object (evaluating ...)", "AuthorizationError error
+ * 1000"). userMessage(err, fallback) returns the error's own message only when
+ * this file built it as display copy (a sentence the server wrote for people,
+ * one of the network lines above, the session-expired line), and otherwise
+ * logs the error and returns the caller's fallback.
+ */
+export function userMessage(err, fallback) {
+  const fromHere = Boolean(err) && (err.userFacing === true || err.isNetworkError === true || err.sessionExpired === true);
+  if (fromHere && typeof err.message === 'string' && err.message) return err.message;
+  if (err) console.warn('[flock] error kept off the screen:', err && err.message ? err.message : err);
+  return fallback;
 }
 
 async function request(endpoint, options = {}) {

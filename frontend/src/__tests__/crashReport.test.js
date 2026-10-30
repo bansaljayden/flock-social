@@ -186,6 +186,19 @@ describe('the crash screen', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Sent' })).toBeTruthy());
   });
 
+  test("the crash screen never prints the error's own text", () => {
+    // 2026-10-30, from a UX review of app basics: errors are caught and
+    // explained, never shown. The text still reaches the console, Sentry and
+    // the report button.
+    render(
+      <ErrorBoundary label="app-root">
+        <Boom error={new TypeError('votes is undefined')} />
+      </ErrorBoundary>,
+    );
+    expect(screen.queryByText(/votes is undefined/)).toBeNull();
+    expect(screen.queryByText('Unknown error')).toBeNull();
+  });
+
   test('a download that died gets no button: that is the network, not a bug', () => {
     const chunk = new Error('Loading chunk 42 failed.');
     chunk.name = 'ChunkLoadError';

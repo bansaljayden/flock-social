@@ -737,7 +737,7 @@ function pageErrorFallback({ error, eventId, reload }) {
           <button type="button" onClick={reload}>Reload the page</button>
           <a href="/">Go to flockcorp.com</a>
         </div>
-        <p className="page-error-detail">{(error && error.message) || 'Unknown error'}</p>
+        {/* The error's own text stays in the console and Sentry, off the page. */}
         {eventId && <p className="page-error-detail">Reference {eventId}</p>}
       </div>
     </div>

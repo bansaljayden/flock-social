@@ -390,6 +390,10 @@ test('the launch email is marketing-category, honest about place in line, and em
   assert.match(fn, /category: 'marketing'/, 'the do-not-mail list and unsubscribe apply');
   assert.match(fn, /List-Unsubscribe/);
   assert.match(fn, /APP_STORE_URL/, 'points at the store once that env var exists');
-  assert.match(fn, /your spot counts from the day you joined the list/);
+  // No promise the product does not keep: nothing gives a waitlisted address
+  // priority, so the email says thanks and nothing about a place in line
+  // (2026-10-30; routes/auth.js only links the row for the admin counts).
+  assert.match(fn, /Thanks for signing up early/);
+  assert.doesNotMatch(fn, /first in line|spot counts/);
   assert.ok(!fn.includes('—'), 'no em dashes in anything a user reads');
 });

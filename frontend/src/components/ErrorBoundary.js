@@ -221,9 +221,9 @@ class ErrorBoundary extends React.Component {
           </div>
           {worthReporting(error) && <p style={styles.detail}>{CRASH_REPORT_NOTE}</p>}
 
-          <p style={styles.detail}>
-            {error && error.message ? error.message : 'Unknown error'}
-          </p>
+          {/* The error's own text ("Cannot read properties of undefined") is
+              for us, not the person: it goes to the console, to Sentry and
+              into "Send this to Flock", and never onto this screen. */}
           {eventId && <p style={styles.detail}>Reference {eventId}</p>}
           {/* Something to do while you wait for a reload. Collapsed by
               default so the failure and the reference id are read first. */}

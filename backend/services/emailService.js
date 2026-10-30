@@ -1207,7 +1207,7 @@ async function sendWaitlistLaunchEmail({ to }) {
     text: [
       "You're off the waitlist.",
       '',
-      'Flock is out. You signed up early, so you are first in line: create your account with this email address and your spot counts from the day you joined the list.',
+      'Flock is out, and you can make your account now. Thanks for signing up early.',
       '',
       `Get Flock: ${getUrl}`,
       '',
@@ -1224,7 +1224,7 @@ async function sendWaitlistLaunchEmail({ to }) {
         </div>
         <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're off the waitlist.</h1>
         <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-          Flock is out. You signed up early, so you are first in line: create your account with this email address and your spot counts from the day you joined the list.
+          Flock is out, and you can make your account now. Thanks for signing up early.
         </p>
         <div style="text-align: center; margin-bottom: 32px;">
           <a href="${escapeHtml(getUrl)}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 14px 28px; border-radius: 12px;">Get Flock</a>
