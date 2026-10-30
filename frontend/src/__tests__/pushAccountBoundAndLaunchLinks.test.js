@@ -259,7 +259,10 @@ describe('App.js', () => {
     const GUARD = 'if (launchChoseScreenRef.current || gen !== venueRouteGenRef.current) return;';
     expect(saved.indexOf(GUARD)).toBeGreaterThan(-1);
     expect(saved.indexOf(GUARD)).toBeLessThan(saved.indexOf("setCurrentScreen('venueDashboard');"));
-    expect(saved).toContain('.catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });');
+    expect(saved).toContain('.catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); })');
+    // An answer either way takes down the dashboard's shapes the cold start
+    // held up in place of the Nest; it moves nobody (skeletonScreens.test.js).
+    expect(saved).toMatch(/setShowVenueOnboarding\(true\); \}\)\s*(?:\/\/[^\n]*\s*)?\.finally\(\(\) => setVenueBootHold\(false\)\);/);
     const login = APP.slice(APP.indexOf('// If user came from venue login'), APP.indexOf('}, [venueLoginFlag]);'));
     expect(login.indexOf(GUARD)).toBeGreaterThan(-1);
     expect(login.indexOf(GUARD)).toBeLessThan(login.indexOf("setCurrentScreen('venueDashboard');"));
