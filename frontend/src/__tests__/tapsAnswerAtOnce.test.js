@@ -19,7 +19,7 @@
  *   cd frontend && CI=true npx react-scripts test tapsAnswerAtOnce --watchAll=false
  */
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 const fs = require('fs');
 const path = require('path');
@@ -709,7 +709,6 @@ describe('pinning a message changes the bar on the tap', () => {
 // handleTogglePhoneDiscovery, answerBirdieConsent)
 // ---------------------------------------------------------------------------
 describe('a server-backed switch moves on the tap, dims while saving, and snaps back on a refusal', () => {
-  const { fireEvent } = require('@testing-library/react');
   const babel = require('@babel/core');
   const toggleSrc = [
     statementAt(APP, 'const PendingSwitchesContext = '),
