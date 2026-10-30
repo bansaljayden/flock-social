@@ -28,6 +28,8 @@ const { render, screen, fireEvent, waitFor, act, cleanup } = require('@testing-l
 
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The real one: it decides which error text a person sees.
+  userMessage: (...args) => jest.requireActual('../services/api').userMessage(...args),
   // The chat header's offline read (api.js isOffline). Online here.
   isOffline: () => false,
   BASE_URL: 'http://test.invalid',
@@ -288,7 +290,7 @@ describe('the bill sheet', () => {
   });
 
   test('a reminder that already went out this hour reads as sent, with what the server said', async () => {
-    api.sendBillReminder.mockRejectedValue(Object.assign(new Error('You already sent a reminder in the last hour. Try again later.'), { status: 429 }));
+    api.sendBillReminder.mockRejectedValue(Object.assign(new Error('You already sent a reminder in the last hour. Try again later.'), { status: 429, userFacing: true }));
     const p = chatProps({ billSplit: bill() });
     render(React.createElement(ChatDetail, p));
     fireEvent.click(screen.getByRole('button', { name: REMIND }));
@@ -297,11 +299,11 @@ describe('the bill sheet', () => {
   });
 
   test('a reminder that failed says so and can be tried again', async () => {
-    api.sendBillReminder.mockRejectedValue(Object.assign(new Error('Network down'), { status: 0 }));
+    api.sendBillReminder.mockRejectedValue(Object.assign(new Error("Couldn't reach Flock. Give it a second and try again."), { isNetworkError: true }));
     const p = chatProps({ billSplit: bill() });
     render(React.createElement(ChatDetail, p));
     fireEvent.click(screen.getByRole('button', { name: REMIND }));
-    await waitFor(() => expect(p.showToast).toHaveBeenCalledWith('Network down', 'error'));
+    await waitFor(() => expect(p.showToast).toHaveBeenCalledWith("Couldn't reach Flock. Give it a second and try again.", 'error'));
     expect(screen.getByRole('button', { name: REMIND })).not.toBeDisabled();
   });
 

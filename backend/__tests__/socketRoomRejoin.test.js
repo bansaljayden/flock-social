@@ -775,7 +775,7 @@ test('a refused promotion or event save keeps the form open instead of faking su
     const end = dashboard.indexOf('/>', dashboard.indexOf('onSave=', start));
     assert.ok(end > start, `${modal} has no closing tag after its onSave`);
     const block = dashboard.slice(start, end);
-    assert.ok(/showToast\(e\?\.message \|\|/.test(block), `${modal} save swallows the refusal`);
+    assert.ok(/showToast\((?:e\?\.message \|\||userMessage\(e,)/.test(block), `${modal} save swallows the refusal`);
     assert.ok(/catch \(e\) \{[\s\S]*?return;/.test(block),
       `${modal} closes on failure, so a rejected save looks identical to a successful one`);
   }

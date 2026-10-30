@@ -1728,10 +1728,10 @@ export default function ChatDetail({
       } catch (err) {
         if (err?.status === 429) {
           setBillRemind(prev => ({ ...prev, [id]: 'sent' }));
-          showToast(err.message || 'A reminder already went out in the last hour.');
+          showToast(userMessage(err, 'A reminder already went out in the last hour.'));
         } else {
           setBillRemind(prev => { const next = { ...prev }; delete next[id]; return next; });
-          showToast(err?.message || 'The reminder did not send. Try again.', 'error');
+          showToast(userMessage(err, 'The reminder did not send. Try again.'), 'error');
         }
       } finally {
         if (billRemindingRef.current === id) billRemindingRef.current = null;
@@ -2986,7 +2986,7 @@ export default function ChatDetail({
         url = (await createFlockInviteLink(selectedFlockId, true))?.url || null;
       } catch (err) {
         setNewLinkStep('confirm');
-        if (!err?.sessionExpired) showToast(err?.message || "Couldn't make a new link. Try again.", 'error');
+        if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't make a new link. Try again."), 'error');
         return;
       }
       if (!url) {
@@ -4237,7 +4237,7 @@ export default function ChatDetail({
                               await resetBudget(selectedFlockId);
                               setBudgetStatus(prev => ({ ...prev, budgetLocked: false, ceiling: null, submissionCount: 0, isReady: false, skipCount: null, userSubmitted: false, userAmount: null, userSkipped: false }));
                               showToast('Budget cleared. Everyone can answer again.');
-                            } catch (err) { showToast(err.message, 'error'); }
+                            } catch (err) { showToast(userMessage(err, "The budget didn't clear. Try again."), 'error'); }
                           }}
                           style={{ background: 'none', border: 'none', padding: 0, color: budgetResetArmed ? 'var(--accent-red-text)' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}
                         >
@@ -4411,7 +4411,7 @@ export default function ChatDetail({
                             if (fresh?.bill) { setBillSplit(fresh.bill); setShowCreateBill(false); }
                           } catch { /* the toast below still says what the server said */ }
                         }
-                        showToast(err.message, 'error');
+                        showToast(userMessage(err, "That bill didn't save. Try again."), 'error');
                       } finally {
                         billCreatingRef.current = false;
                         setBillCreating(false);

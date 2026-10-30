@@ -85,6 +85,7 @@ function harness({ flocks = [], bills = {}, billSplit = null, hold = false } = {
     setBillSplit: setter('billSplit'),
     getBudgetStatus: jest.fn(() => Promise.resolve({ budgetEnabled: false })),
     getBillSplit,
+    userMessage: jest.requireActual('../services/api').userMessage,
   };
   // eslint-disable-next-line no-new-func
   const load = new Function(...Object.keys(scope), `${LOAD_SRC}\nreturn loadMoneyState;`)(...Object.values(scope));
@@ -125,7 +126,7 @@ describe('the bill is read whatever the plan status says', () => {
 
   test('a refused read is said, not drawn as a plan with no bill', async () => {
     const h = harness({ flocks: [{ id: 5, status: 'voting' }] });
-    h.getBillSplit.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('Server is down'), { status: 503 })));
+    h.getBillSplit.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('Server is down'), { status: 503, userFacing: true })));
     h.load(5);
     await settle();
     expect(h.state.billSplit).toBeNull();

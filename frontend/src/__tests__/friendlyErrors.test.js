@@ -89,7 +89,9 @@ test("App.js puts no error's own text on screen: every catch that shows one goes
   const path = require('path');
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
   const lines = app.split('\n');
-  const OWNED_ELSEWHERE = new Set(['loadMoneyState', 'handleRequestVerification', 'handleSetBusyNow', 'handleClearBusyNow', 'handleVenueLogoPick']);
+  // The money loader and the venue owner's handlers followed the same day,
+  // so nothing is exempt now.
+  const OWNED_ELSEWHERE = new Set();
   const shown = /\b(?:showToast|set[A-Z]\w*(?:Error|Note))\((?:serverSaid \|\| )?(?:err|e)\??\.message \|\|/;
   const offenders = [];
   let owner = null;

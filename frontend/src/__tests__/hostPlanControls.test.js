@@ -56,6 +56,8 @@ const { act, render, screen, fireEvent, waitFor, within } = require('@testing-li
 
 jest.mock('../services/api', () => ({
   __esModule: true,
+  // The real one: it decides which error text a person sees.
+  userMessage: (...args) => jest.requireActual('../services/api').userMessage(...args),
   // The chat header's offline read (api.js isOffline). Online here.
   isOffline: () => false,
   BASE_URL: 'http://test.invalid',
@@ -509,7 +511,7 @@ describe('Make a new link, in the invite sheet', () => {
   });
 
   test('a refusal is said, the dialog stays, and no link is put on screen', async () => {
-    api.createFlockInviteLink.mockRejectedValue(new Error('This plan is finished and cannot accept new invites'));
+    api.createFlockInviteLink.mockRejectedValue(Object.assign(new Error('This plan is finished and cannot accept new invites'), { status: 409, userFacing: true }));
     const { p } = openSheet();
     fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
     fireEvent.click(within(dialogTitled('Make a new link?')).getByRole('button', { name: 'Make a new link' }));
@@ -795,7 +797,7 @@ describe('Share invite link, in the invite sheet', () => {
   });
 
   test('a refused fetch on the tap is said, and nothing goes on show', async () => {
-    api.createFlockInviteLink.mockRejectedValue(new Error('This plan is finished and cannot accept new invites'));
+    api.createFlockInviteLink.mockRejectedValue(Object.assign(new Error('This plan is finished and cannot accept new invites'), { status: 409, userFacing: true }));
     const { p } = openSheet();
     await linkHeld();
     fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));

@@ -1961,7 +1961,7 @@ export default function VenueDashboard({
               } catch (e) {
                 console.error('Post deal failed:', e);
                 setDealDescription(text);
-                showToast(e?.message || "That deal didn't post. Try again.", 'error');
+                showToast(userMessage(e, "That deal didn't post. Try again."), 'error');
               }
             }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim() || !quickDealTimeSlot(dealTimeSlot, dealCustomTime)}>
               Post Deal
@@ -2665,7 +2665,7 @@ export default function VenueDashboard({
                           setVenueIntakeDraft(null);
                           showToast('Saved.', 'success');
                         } catch (e) {
-                          showToast(e?.message || "That didn't save. Try again.", 'error');
+                          showToast(userMessage(e, "That didn't save. Try again."), 'error');
                         } finally {
                           setSavingVenueIntake(false);
                         }
@@ -3316,7 +3316,7 @@ export default function VenueDashboard({
                     setPromotions(prev => [created, ...prev]);
                   }
                 } catch (e) {
-                  showToast(e?.message || "That promotion couldn't be saved. Try again.", 'error');
+                  showToast(userMessage(e, "That promotion couldn't be saved. Try again."), 'error');
                   if (e?.code === 'CONTENT_HIDDEN' && editingPromo) markPromoTakenDown(editingPromo.id);
                   return;
                 }
@@ -3357,7 +3357,7 @@ export default function VenueDashboard({
                     setVenueEventsList(prev => [toRow(created), ...prev]);
                   }
                 } catch (e) {
-                  showToast(e?.message || "That event couldn't be saved. Try again.", 'error');
+                  showToast(userMessage(e, "That event couldn't be saved. Try again."), 'error');
                   if (e?.code === 'CONTENT_HIDDEN' && editingEvent) markEventTakenDown(editingEvent.id);
                   return;
                 }

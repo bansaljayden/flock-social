@@ -11917,7 +11917,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => {
         if (!current()) return;
         setBudgetStatus(null);
-        if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
+        if (err?.status !== 404) setMoneyError(userMessage(err, 'The money side of this plan did not load.'));
       });
     /* THE BILL IS ASKED FOR ON EVERY OPEN, WHATEVER STATE THE PLAN IS IN.
        This used to ask only on a confirmed, completed or locked flock, on the
@@ -11944,7 +11944,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => {
         if (!current()) return;
         setBillSplit(null);
-        if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
+        if (err?.status !== 404) setMoneyError(userMessage(err, 'The money side of this plan did not load.'));
       });
   }, []);
 
@@ -18648,7 +18648,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       await requestVerificationNow();
     } catch (err) {
       if (needsEmailVerification(err, 'request verification')) return;
-      setVerificationRequestError(err?.message || 'The request did not go through. Try again.');
+      setVerificationRequestError(userMessage(err, 'The request did not go through. Try again.'));
     } finally {
       setVerificationRequestBusy(false);
     }
@@ -18690,7 +18690,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       refreshOwnerPublishedScore();
       showToast('Live. Users see your number now.');
     } catch (e) {
-      showToast(e?.message || "That didn't save. Try again.", 'error');
+      showToast(userMessage(e, "That didn't save. Try again."), 'error');
     } finally {
       setVenueBusySaving(false);
     }
@@ -18706,7 +18706,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       refreshOwnerPublishedScore();
       showToast('Cleared. Users see the forecast again.');
     } catch (e) {
-      showToast(e?.message || "Couldn't clear it. It expires on its own.", 'error');
+      showToast(userMessage(e, "Couldn't clear it. It expires on its own."), 'error');
     } finally {
       setVenueBusySaving(false);
     }
@@ -18775,7 +18775,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       console.error('Logo save failed:', err);
       setVenueLogoUrl(previousLogo);
-      showToast(err?.message || "That logo didn't save. Try again.", 'error');
+      showToast(userMessage(err, "That logo didn't save. Try again."), 'error');
     } finally {
       setVenueLogoUploading(false);
     }
