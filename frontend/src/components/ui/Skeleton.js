@@ -213,7 +213,7 @@ export function EventCardSkeleton() {
           <SkeletonBar width={44} height={14} />
         </div>
         <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-          <SkeletonBar width="auto" height={34} radius={10} style={{ flex: 1 }} />
+          <SkeletonBar width="auto" height={34} radius={10} style={{ flexGrow: 1 }} />
           <SkeletonBar width={84} height={34} radius={10} />
         </div>
       </div>
