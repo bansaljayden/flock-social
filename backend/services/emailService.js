@@ -686,16 +686,17 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <soci
   // The do-not-mail list, consulted HERE rather than in each caller, because a
   // suppression list every sender has to remember to check is a suppression
   // list. A hard bounce or a spam complaint blocks every category except
-  // 'emergency'; an unsubscribe blocks marketing and leaves a password reset
-  // alone. 'emergency' is the SOS alert in routes/safety.js and nothing else,
-  // and the argument for why a bounce must not swallow one is written out at
-  // EMERGENCY_CATEGORY in services/emailSuppression.js. See the same file for
-  // why this fails open.
+  // 'emergency'; an unsubscribe blocks the optional ones (marketing and the
+  // share-my-location email) and leaves a password reset alone. 'emergency' is
+  // the SOS alert in routes/safety.js and nothing else, and the argument for
+  // why a bounce must not swallow one is written out at EMERGENCY_CATEGORY in
+  // services/emailSuppression.js. See the same file for why this fails open.
   const allowed = await suppression.checkSendAllowed(recipient, category);
   if (allowed.blocked) {
     health.suppressed += 1;
     console.warn('[email] suppressed, not sending to', maskAddress(recipient), `(${allowed.reason})`);
-    // A MARKETING message stopped by this list is the list working. A
+    // An OPTIONAL message (marketing, a location share) stopped by this list is
+    // the list working: neither one is how anybody gets into their account. A
     // TRANSACTIONAL one stopped by it is a person who cannot confirm their
     // address and cannot recover their password, on an account whose only
     // identifier is that address, and nothing in this codebase can take a row
@@ -703,7 +704,7 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <soci
     // line it produced a console.warn indistinguishable from a suppressed
     // digest. It is named, at alarm level, once per address per day, because
     // an operator has to know WHICH address to act on.
-    if (category !== 'marketing') {
+    if (!suppression.OPTIONAL_CATEGORIES.has(category)) {
       raiseEmailAlarm(
         `locked-out:${recipient.toLowerCase()}`,
         `${maskAddress(recipient)} is on the do-not-mail list (${allowed.reason}) and a ${category} message was just refused for it. `
@@ -1122,6 +1123,18 @@ function unsubscribeUrl(address) {
   return `${baseApiUrl()}/api/unsubscribe?token=${encodeURIComponent(token)}`;
 }
 
+// The stop link in the share-my-location email (routes/safety.js). The same
+// signed token and the same write as unsubscribeUrl, on a page whose words are
+// about location emails rather than announcements: a person who was added as
+// somebody's trusted contact and never joined any list should not land on a
+// page about a waitlist. Null without JWT_SECRET, exactly like unsubscribeUrl,
+// so the caller prints the reply-to-stop sentence instead of a dead link.
+function locationShareStopUrl(address) {
+  const token = mintUnsubscribeToken(address);
+  if (!token) return null;
+  return `${baseApiUrl()}/api/unsubscribe/location-share?token=${encodeURIComponent(token)}`;
+}
+
 async function sendWaitlistConfirmation({ to }) {
   // Built from the recipient, which sendEmail is about to re-check; a missing
   // JWT_SECRET yields no link rather than a broken one, and the body then says
@@ -1265,6 +1278,7 @@ module.exports = {
   safeTextBody,
   maskAddress,
   unsubscribeUrl,
+  locationShareStopUrl,
   PER_RECIPIENT_DAILY_CAP,
   resetRecipientBudget,
   escapeHtml,

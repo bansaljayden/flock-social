@@ -1077,6 +1077,25 @@ test('the confirm button works from the page: Origin null and the API origin bot
   }
 });
 
+test("the location email's stop button gets past the same cors mount: it lives under /api/unsubscribe/", async () => {
+  // routes/unsubscribe.js /location-share, the link every share-my-location
+  // email carries (routes/safety.js). Its page posts to itself exactly like the
+  // waitlist page, so it needs the same exemption, which covers the prefix and
+  // anything under it and nothing that only starts with the same letters.
+  for (const headers of [
+    { ...FORM, origin: 'null' },
+    { ...FORM, host: 'api.flockcorp.com', origin: 'https://api.flockcorp.com' },
+  ]) {
+    resetWorld();
+    const token = unsub.mintUnsubscribeToken('contact@example.com');
+    const res = await request(appBehindServerCors(), 'POST',
+      `/api/unsubscribe/location-share?token=${encodeURIComponent(token)}`, { headers, body: '' });
+    assert.strictEqual(res.status, 200, `origin ${headers.origin} answered ${res.status} ${res.text}`);
+    assert.match(res.text, /Location emails are off/);
+    assert.strictEqual(suppressionRows.get('contact@example.com'), 'unsubscribe');
+  }
+});
+
 test('the digest opt-out button reaches its router through the same cors mount', async () => {
   const cap = silence();
   try {

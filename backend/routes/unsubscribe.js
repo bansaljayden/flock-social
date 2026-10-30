@@ -22,6 +22,19 @@
 //
 // Unsubscribing twice is a success, not an error: the write is an upsert with
 // no predicate on the old value.
+//
+// TWO PAGES, ONE WRITE.
+//
+//   /api/unsubscribe                 the waitlist mail's link.
+//   /api/unsubscribe/location-share  the share-my-location email's link
+//                                    (routes/safety.js).
+//
+// Same token, same two verbs, same 'unsubscribe' row. Only the words differ:
+// somebody who was added as a trusted contact and never joined a list should
+// read about location emails, not about an announcement list. The row stops
+// every optional email to the address and never a password reset or an SOS
+// (services/emailSuppression.js, OPTIONAL_CATEGORIES), so both pages say that,
+// in plain words, with no plea to stay.
 // ---------------------------------------------------------------------------
 const express = require('express');
 const router = express.Router();
@@ -46,10 +59,10 @@ function page(title, body, action = '') {
 // `formAction` is built from the request's own path, not from the Host header
 // and not from PUBLIC_API_URL, so it is correct behind any mount and any proxy
 // without trusting a header to build it.
-function confirmForm(formAction) {
+function confirmForm(formAction, label) {
   return `
     <form method="post" action="${escapeHtml(formAction)}" style="margin-top: 24px;">
-      <button type="submit" style="font: inherit; font-size: 15px; background: #1a2b4a; color: #ffffff; border: 0; border-radius: 8px; padding: 12px 20px; cursor: pointer;">Take me off the list</button>
+      <button type="submit" style="font: inherit; font-size: 15px; background: #1a2b4a; color: #ffffff; border: 0; border-radius: 8px; padding: 12px 20px; cursor: pointer;">${escapeHtml(label)}</button>
     </form>`;
 }
 
@@ -67,69 +80,105 @@ const BAD_TOKEN = [
   'This unsubscribe link did not check out. Open the link from the email again, or reply to the email and we will take you off the list by hand.',
 ];
 
-const DONE = [
-  'You are off the list',
-  'This address will not get Flock announcements again. Emails you ask for yourself, like a password reset, still work.',
-];
+// WHAT EACH PAGE SAYS. `ask` is what the emailed link opens, `done` is what the
+// button answers and what any later visit shows once the address is on the
+// list, `button` is the button, and `detail` is what the row records about
+// where the request came from.
+//
+// The waitlist page used to end "Nothing else changes". Since the same row now
+// stops the share-my-location email too (services/emailSuppression.js,
+// OPTIONAL_CATEGORIES), that sentence would be false for an address that is
+// also somebody's trusted contact, so both pages name what stops and what
+// still arrives.
+const ANNOUNCEMENTS = {
+  ask: [
+    'Stop Flock emails to this address?',
+    'This takes the address off the Flock announcement list and stops any other optional Flock email to it. A password reset you ask for still arrives, and so does an SOS alert from someone who named this address as a trusted contact.',
+  ],
+  button: 'Take me off the list',
+  done: [
+    'You are off the list',
+    'This address will not get Flock announcements or other optional Flock email again. A password reset you ask for still arrives, and so does an SOS alert from someone who named this address as a trusted contact.',
+  ],
+  detail: 'unsubscribe link',
+};
+
+const LOCATION_SHARE = {
+  ask: [
+    'Stop location emails to this address?',
+    'Flock emails this address when someone who added it as a trusted contact shares their location. This stops those emails and any other optional Flock email to it. An SOS alert from someone who named this address as a trusted contact still arrives.',
+  ],
+  button: 'Stop location emails',
+  done: [
+    'Location emails are off',
+    'This address will not get location emails or other optional Flock email again. An SOS alert from someone who named this address as a trusted contact still arrives, and so does a password reset you ask for.',
+  ],
+  detail: 'location share stop link',
+};
 
 // The page deliberately does NOT print the address. Anyone holding the link
 // already knows it, so showing it buys nothing, and a page that echoes an
 // address is a page that turns a forwarded email into a way to confirm one.
-router.get('/', tokenValidator, async (req, res) => {
-  try {
-    if (!validationResult(req).isEmpty()) {
-      return res.status(400).type('html').send(page(...MISSING_TOKEN));
-    }
-    const address = verifyUnsubscribeToken(req.query.token);
-    if (!address) {
-      return res.status(400).type('html').send(page(...BAD_TOKEN));
-    }
-    if (await suppressionReason(address)) {
-      return res.status(200).type('html').send(page(...DONE));
-    }
-    const action = `${req.baseUrl}${req.path}?token=${encodeURIComponent(req.query.token)}`;
-    return res.status(200).type('html').send(page(
-      'Stop Flock emails to this address?',
-      'This takes the address off the Flock announcement list. Nothing else changes, and messages you ask for yourself still arrive.',
-      confirmForm(action)
-    ));
-  } catch (err) {
-    console.error('Unsubscribe page error:', err.message);
-    return res.status(500).type('html').send(page(
-      'Something went wrong',
-      'We could not load this link. Try again in a minute, or reply to the email and we will take you off the list by hand.'
-    ));
-  }
-});
-
-router.post('/', tokenValidator, async (req, res) => {
-  try {
-    if (!validationResult(req).isEmpty()) {
-      return res.status(400).type('html').send(page(...MISSING_TOKEN));
-    }
-    const address = verifyUnsubscribeToken(req.query.token);
-    if (!address) {
-      return res.status(400).type('html').send(page(...BAD_TOKEN));
-    }
-    const ok = await suppress(address, 'unsubscribe', 'unsubscribe link');
-    if (!ok) {
-      // The write is the whole point of this verb, so a failed one must not
-      // answer with the page that says it worked. The address is masked in the
-      // log for the same reason it is everywhere else in this codebase.
-      console.error('[unsubscribe] could not record the opt-out for', maskAddress(address));
+function showPage(copy) {
+  return async (req, res) => {
+    try {
+      if (!validationResult(req).isEmpty()) {
+        return res.status(400).type('html').send(page(...MISSING_TOKEN));
+      }
+      const address = verifyUnsubscribeToken(req.query.token);
+      if (!address) {
+        return res.status(400).type('html').send(page(...BAD_TOKEN));
+      }
+      if (await suppressionReason(address)) {
+        return res.status(200).type('html').send(page(...copy.done));
+      }
+      const action = `${req.baseUrl}${req.path}?token=${encodeURIComponent(req.query.token)}`;
+      return res.status(200).type('html').send(page(...copy.ask, confirmForm(action, copy.button)));
+    } catch (err) {
+      console.error('Unsubscribe page error:', err.message);
       return res.status(500).type('html').send(page(
-        'We could not save that',
-        'The request did not go through. Try again in a minute, or reply to the email and we will take you off the list by hand.'
+        'Something went wrong',
+        'We could not load this link. Try again in a minute, or reply to the email and we will take you off the list by hand.'
       ));
     }
-    return res.status(200).type('html').send(page(...DONE));
-  } catch (err) {
-    console.error('Unsubscribe error:', err.message);
-    return res.status(500).type('html').send(page(
-      'Something went wrong',
-      'We could not process this link. Try again in a minute, or reply to the email and we will take you off the list by hand.'
-    ));
-  }
-});
+  };
+}
+
+function recordOptOut(copy) {
+  return async (req, res) => {
+    try {
+      if (!validationResult(req).isEmpty()) {
+        return res.status(400).type('html').send(page(...MISSING_TOKEN));
+      }
+      const address = verifyUnsubscribeToken(req.query.token);
+      if (!address) {
+        return res.status(400).type('html').send(page(...BAD_TOKEN));
+      }
+      const ok = await suppress(address, 'unsubscribe', copy.detail);
+      if (!ok) {
+        // The write is the whole point of this verb, so a failed one must not
+        // answer with the page that says it worked. The address is masked in the
+        // log for the same reason it is everywhere else in this codebase.
+        console.error('[unsubscribe] could not record the opt-out for', maskAddress(address));
+        return res.status(500).type('html').send(page(
+          'We could not save that',
+          'The request did not go through. Try again in a minute, or reply to the email and we will take you off the list by hand.'
+        ));
+      }
+      return res.status(200).type('html').send(page(...copy.done));
+    } catch (err) {
+      console.error('Unsubscribe error:', err.message);
+      return res.status(500).type('html').send(page(
+        'Something went wrong',
+        'We could not process this link. Try again in a minute, or reply to the email and we will take you off the list by hand.'
+      ));
+    }
+  };
+}
+
+router.get('/', tokenValidator, showPage(ANNOUNCEMENTS));
+router.post('/', tokenValidator, recordOptOut(ANNOUNCEMENTS));
+router.get('/location-share', tokenValidator, showPage(LOCATION_SHARE));
+router.post('/location-share', tokenValidator, recordOptOut(LOCATION_SHARE));
 
 module.exports = router;

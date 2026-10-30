@@ -23,10 +23,10 @@ const pool = require('../config/database');
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 5000;
 
-// Reasons that stop everything, versus the one that stops marketing only. An
-// address that does not exist cannot receive a password reset either; an
-// address whose owner unsubscribed from the waitlist still needs to be able to
-// reset their password.
+// Reasons that stop everything, versus the one that stops optional mail only
+// (OPTIONAL_CATEGORIES below). An address that does not exist cannot receive a
+// password reset either; an address whose owner unsubscribed from the waitlist
+// still needs to be able to reset their password.
 const HARD_REASONS = new Set(['bounce', 'complaint']);
 const VALID_REASONS = new Set(['bounce', 'complaint', 'unsubscribe']);
 
@@ -55,8 +55,8 @@ const VALID_REASONS = new Set(['bounce', 'complaint', 'unsubscribe']);
 // THE BOUNDARY IS DELIBERATELY NARROW. 'emergency' is the SOS route in
 // routes/safety.js and nothing else. Not the safety test email, not the
 // share-my-location email, not password reset, not verification. Everything
-// else stays 'transactional' and keeps obeying a hard bounce, because the
-// argument above is an argument about an emergency and generalises to nothing.
+// else keeps obeying a hard bounce, because the argument above is an argument
+// about an emergency and generalises to nothing.
 // If a second caller ever wants this category, it needs the same argument made
 // about it in writing, here, first.
 //
@@ -98,6 +98,37 @@ const VALID_REASONS = new Set(['bounce', 'complaint', 'unsubscribe']);
 // (website/PrivacyPolicy.js, "Email, and how to stop it"). If this constant
 // changes, that page changes in the same commit.
 const EMERGENCY_CATEGORY = 'emergency';
+
+// OPTIONAL MAIL, WHICH AN UNSUBSCRIBE STOPS.
+//
+// The privacy policy defines it by what it is not: "Transactional email keeps
+// your account working: the verification link at sign-up, a password reset you
+// asked for, and SOS alerts to your trusted contacts." Everything else is
+// optional, and "every message carries an unsubscribe link that works without
+// signing in" (website/PrivacyPolicy.js, "Email, and how to stop it").
+//
+// 'marketing' is the waitlist mail and the Monday digest. 'location_share' is
+// the share-my-location email in routes/safety.js, which went out as
+// 'transactional': an address somebody typed into their Safety screen got mail
+// about that person's whereabouts with no way to stop it, and an unsubscribe
+// could not reach it because an unsubscribe only ever stopped marketing. That
+// email now carries a stop link (routes/unsubscribe.js, /location-share), and
+// this list is what makes the link mean something on the next send.
+//
+// ONE ROW STOPS BOTH, DELIBERATELY. The stop link writes the same 'unsubscribe'
+// row the waitlist link writes, so the waitlist link now stops location emails
+// too and the location link stops announcements, and both pages say so. That is
+// the policy's own model: unsubscribing writes the address to the do-not-mail
+// list, and the only things it does not stop are "a password reset or an SOS
+// alert, because those are not lists you are on". A second record per kind of
+// email would be a second table holding a third party's address, one the
+// delete-account page and the policy do not name, to keep a distinction the
+// policy never promised.
+//
+// An SOS is never optional. checkSendAllowed answers 'emergency' before it
+// reads this list at all.
+const LOCATION_SHARE_CATEGORY = 'location_share';
+const OPTIONAL_CATEGORIES = new Set(['marketing', LOCATION_SHARE_CATEGORY]);
 
 // One normalisation for the read and the write, so "Jay@Example.com " and
 // "jay@example.com" cannot end up as two rows, one of which is never matched.
@@ -155,9 +186,11 @@ async function suppressionReason(addr) {
 }
 
 // The question the send path actually asks. `category` is 'marketing' for the
-// Monday digest and the waitlist confirmation, 'emergency' for the SOS alert
-// and nothing else, and 'transactional' for everything in between
-// (verification, password reset, share-location, moderation alerts).
+// Monday digest and the waitlist mail, 'location_share' for the
+// share-my-location email, 'emergency' for the SOS alert and its stand-down and
+// nothing else, and 'transactional' for everything in between (verification,
+// password reset, moderation alerts). A hard bounce or a complaint blocks every
+// category but 'emergency'; an unsubscribe blocks the optional ones.
 //
 // Returns { blocked: false } or { blocked: true, reason }.
 async function checkSendAllowed(addr, category = 'transactional') {
@@ -169,7 +202,7 @@ async function checkSendAllowed(addr, category = 'transactional') {
   const reason = await suppressionReason(addr);
   if (!reason) return { blocked: false };
   if (HARD_REASONS.has(reason)) return { blocked: true, reason };
-  if (category === 'marketing') return { blocked: true, reason };
+  if (OPTIONAL_CATEGORIES.has(category)) return { blocked: true, reason };
   return { blocked: false };
 }
 
@@ -268,5 +301,7 @@ module.exports = {
   HARD_REASONS,
   VALID_REASONS,
   EMERGENCY_CATEGORY,
+  LOCATION_SHARE_CATEGORY,
+  OPTIONAL_CATEGORIES,
   CACHE_TTL_MS,
 };

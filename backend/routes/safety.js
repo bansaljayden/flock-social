@@ -53,7 +53,7 @@ const { stripHtml } = require('../utils/sanitize');
 // in the log.
 const emailService = require('../services/emailService');
 const { escapeHtml, isMailableAddress, maskAddress } = emailService;
-const { suppressionReason, EMERGENCY_CATEGORY } = require('../services/emailSuppression');
+const { suppressionReason, HARD_REASONS, EMERGENCY_CATEGORY } = require('../services/emailSuppression');
 // The one push this file sends. See alertFlockMembers: pushAlways rather than
 // pushIfOffline, because being in the app is not a reason to stay quiet about
 // somebody pressing SOS on the plan you are both on. newerSosAlarmReached is
@@ -95,7 +95,8 @@ const SAFETY_FROM = 'Flock <alerts@flockcorp.com>';
 //
 // The test email and the share-my-location email deliberately do NOT get this.
 // Neither is an emergency, and on both of them a suppression is doing exactly
-// the job it was built for.
+// the job it was built for. The share-my-location email has a sender of its
+// own, below, because it is optional mail and carries a way to stop it.
 async function sendAlertEmail(to, subject, htmlBody, { category = 'transactional' } = {}) {
   const result = await emailService.sendEmail({
     to, subject, html: htmlBody, from: SAFETY_FROM, category,
@@ -104,6 +105,41 @@ async function sendAlertEmail(to, subject, htmlBody, { category = 'transactional
     console.warn('[Safety] alert NOT sent to', maskAddress(to), ': RESEND_API_KEY is not set');
   } else if (!result.sent) {
     console.error('[Safety] alert NOT sent to', maskAddress(to), ':', result.error);
+  }
+  return result;
+}
+
+// THE SHARE-MY-LOCATION EMAIL IS OPTIONAL MAIL, so it is sent as
+// 'location_share' and the do-not-mail list is asked about it before every
+// send (services/emailSuppression.js, OPTIONAL_CATEGORIES). The privacy policy
+// names three kinds of transactional email, the verification link, a password
+// reset and an SOS alert, and promises that everything else "carries an
+// unsubscribe link that works without signing in". This email went out as
+// 'transactional' with no link, no List-Unsubscribe header, and no word about
+// who had put the address on a Safety screen, so a stranger typed in as a
+// trusted contact had no way to learn why the mail came or to stop it.
+//
+// `stopUrl` is the recipient's own stop link (emailService
+// locationShareStopUrl). The RFC 8058 pair goes with it, as on the waitlist
+// mail, so a mail client can offer its own one-tap unsubscribe; that POST lands
+// on the same route as the link's button. Without JWT_SECRET there is no link,
+// so no header either, and the body says to reply instead.
+async function sendShareEmail(to, subject, htmlBody, stopUrl) {
+  const result = await emailService.sendEmail({
+    to, subject, html: htmlBody, from: SAFETY_FROM, category: 'location_share',
+    ...(stopUrl ? {
+      headers: {
+        'List-Unsubscribe': `<${stopUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    } : {}),
+  });
+  if (result.suppressed) {
+    console.warn('[Safety] location share NOT sent to', maskAddress(to), ': the address is on the do-not-mail list');
+  } else if (result.skipped) {
+    console.warn('[Safety] location share NOT sent to', maskAddress(to), ': RESEND_API_KEY is not set');
+  } else if (!result.sent) {
+    console.error('[Safety] location share NOT sent to', maskAddress(to), ':', result.error);
   }
   return result;
 }
@@ -238,6 +274,16 @@ function readAccuracy(value) {
 // mother told us and not them. What the user needs is "this address is not
 // working, fix it", which the boolean carries in full.
 //
+// AN UNSUBSCRIBE IS NOT A FAILING ADDRESS. Only the two hard reasons render as
+// false. An 'unsubscribe' row is a person who used a stop link, the waitlist's
+// or the one every location email now carries, and mail to that address is
+// arriving: the row stops optional mail and an SOS still reaches it. Read as
+// "not deliverable", any unsubscribe, and now one tap on "Stop location
+// emails", would put "Mail to this address has been failing" beside a working
+// contact, which is false and sends the user off to replace an address that
+// works. Whether the person behind it stopped location emails is theirs to
+// tell, the same as the reason above.
+//
 // The lookups are per contact and there are at most MAX_TRUSTED_CONTACTS of
 // them, each answered from the module's five-minute cache after the first.
 // suppressionReason never throws and answers null on a database error, so a
@@ -252,7 +298,7 @@ router.get('/contacts', authenticateAllowBanned, async (req, res) => {
     const contacts = await Promise.all(result.rows.map(async (c) => ({
       ...c,
       email_deliverable: isMailableAddress(c.contact_email)
-        ? !(await suppressionReason(c.contact_email))
+        ? !HARD_REASONS.has(await suppressionReason(c.contact_email))
         : false,
     })));
     res.json({ contacts });
@@ -2308,7 +2354,17 @@ router.post('/share-location', authenticate, async (req, res) => {
     try { time = new Date().toLocaleString('en-US', { timeZone: tz, timeZoneName: 'short' }); }
     catch { time = `${new Date().toLocaleString('en-US', { timeZone: 'UTC' })} UTC`; }
 
-    const htmlBody = `
+    // ONE BODY PER RECIPIENT, because each carries that recipient's own stop
+    // link. The footer says who put the address on a Safety screen, which the
+    // contact is told nowhere else (adding a contact mails nobody), and how to
+    // stop these emails without signing in. See sendShareEmail for why this is
+    // optional mail, and the stop page (routes/unsubscribe.js) for what the
+    // link does. An SOS is not stopped by it, and the footer says that too.
+    const shareBody = (stopUrl) => {
+      const stop = stopUrl
+        ? `<a href="${escapeHtml(stopUrl)}" style="color:#6b7280">Stop location emails to this address</a>.`
+        : 'Reply to this message and we will stop location emails to this address.';
+      return `
       <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px">
         <div style="background:#e0f2fe;border-radius:12px;padding:20px;text-align:center;margin-bottom:20px">
           <h1 style="color:#0369a1;margin:0 0 8px;font-size:22px">Location Shared</h1>
@@ -2319,17 +2375,25 @@ router.post('/share-location', authenticate, async (req, res) => {
         <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
         <p style="color:#6b7280;font-size:12px">Shared at ${time}</p>
-        <p style="color:#9ca3af;font-size:11px">This is an automated message from the Flock app.</p>
+        <p style="color:#9ca3af;font-size:11px">${safeName} added you as a trusted contact on Flock, so Flock emails you when they share their location. This is an automated message from the Flock app. Replying to it does not reach ${safeName}.</p>
+        <p style="color:#9ca3af;font-size:11px">${stop} SOS alerts from ${safeName} still reach you.</p>
       </div>`;
+    };
 
     let emailsSent = 0;
     let emailsSkipped = 0;
 
     // Same fan-out as /alert (round 12), and the same reachability question.
+    // The callback is async so that a throw while building one recipient's
+    // link is that recipient's rejected send, not the whole share's 500.
     const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
     emailsSkipped = contacts.rows.length - withEmail.length;
+    const subject = `📍 ${safeSubjectText(userName)} shared their location with you`;
     const settled = await Promise.allSettled(
-      withEmail.map((c) => sendAlertEmail(c.contact_email, `📍 ${safeSubjectText(userName)} shared their location with you`, htmlBody))
+      withEmail.map(async (c) => {
+        const stopUrl = emailService.locationShareStopUrl(c.contact_email);
+        return sendShareEmail(c.contact_email, subject, shareBody(stopUrl), stopUrl);
+      })
     );
     for (const outcome of settled) {
       if (outcome.status === 'fulfilled' && outcome.value?.sent) emailsSent++;
