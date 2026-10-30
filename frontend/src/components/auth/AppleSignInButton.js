@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { appleLogin, getAppleNonce } from '../../services/api';
+import { appleLogin, getAppleNonce, userMessage } from '../../services/api';
 
 // Sign in with Apple button, wired to backend POST /api/auth/apple
 // (JWKS-verified). It draws in two places, and nowhere else:
@@ -57,6 +57,20 @@ export const isAppleSignInAvailable = () => Boolean(isNativeIos() || appleWebHos
 const APPLE_WEB_LOAD_FAILED = "Apple sign-in didn't load. Check your connection, then tap Continue with Apple again.";
 const APPLE_WEB_DID_NOT_OPEN = "Apple's sign-in window didn't open. If your browser blocked it, allow pop-ups for this site, then tap Continue with Apple again.";
 const APPLE_WEB_NOT_FINISHED = "Apple sign-in didn't finish. Tap Continue with Apple again.";
+
+// Those three are written for people, so they are thrown marked as such and
+// userMessage (services/api.js) lets them through to the screen.
+const webError = (message) => Object.assign(new Error(message), { userFacing: true });
+
+// What any other failure says. The native sheet rejects with Apple's own text,
+// "The operation couldn't be completed. (com.apple.AuthenticationServices.
+// AuthorizationError error 1000.)" and the like, which is written for a log and
+// was shown word for word under the button. A failure that is neither the
+// server's own sentence nor one of the lines above gets this one, and its
+// detail goes to the console. The delete and export dialogs (reconfirm) have no
+// email form to point at, so theirs stops at "Try again."
+const APPLE_DID_NOT_FINISH = "Apple sign-in didn't finish. Try again, or use email.";
+const APPLE_RECONFIRM_DID_NOT_FINISH = "Apple sign-in didn't finish. Try again.";
 
 // Apple delivers the person's name exactly once per Apple ID, on the first
 // sheet that completes, and never again unless they revoke the app in
@@ -126,11 +140,13 @@ const isCancelled = (err) => APPLE_WEB_DISMISSALS.includes(err?.error)
   || /cancel|1001/i.test(String(err?.message || err));
 
 // Apple's JS rejects with { error: '<code>' } and no message. A code that is
-// not a dismissal means the window did not do its job.
-const failureMessage = (err) => {
-  if (err?.message) return String(err.message);
-  if (err?.error) return APPLE_WEB_DID_NOT_OPEN;
-  return String(err || '') || 'Apple sign-in failed';
+// not a dismissal means the window did not do its job. Anything else is shown
+// only when it was written for people (the server's sentence, an under-13
+// refusal among them, or one of the website's lines above); userMessage
+// decides that and logs what it keeps off the screen.
+const failureMessage = (err, fallback) => {
+  if (err && !err.message && err.error) return APPLE_WEB_DID_NOT_OPEN;
+  return userMessage(err, fallback);
 };
 
 // The native sheet, and what it handed over.
@@ -170,8 +186,8 @@ const loadAppleJs = () => {
       const script = document.createElement('script');
       script.src = APPLE_JS_SRC;
       script.async = true;
-      script.onload = () => (window.AppleID?.auth ? resolve(window.AppleID) : reject(new Error(APPLE_WEB_LOAD_FAILED)));
-      script.onerror = () => { script.remove(); reject(new Error(APPLE_WEB_LOAD_FAILED)); };
+      script.onload = () => (window.AppleID?.auth ? resolve(window.AppleID) : reject(webError(APPLE_WEB_LOAD_FAILED)));
+      script.onerror = () => { script.remove(); reject(webError(APPLE_WEB_LOAD_FAILED)); };
       document.head.appendChild(script);
     });
     appleJsLoading.catch(() => { appleJsLoading = null; });
@@ -198,7 +214,7 @@ const fetchNonce = () => {
   if (!nonceFetching) {
     nonceFetching = getAppleNonce()
       .then((data) => {
-        if (!data?.nonce) throw new Error(APPLE_WEB_NOT_FINISHED);
+        if (!data?.nonce) throw webError(APPLE_WEB_NOT_FINISHED);
         heldNonce = { value: data.nonce, at: Date.now() };
         return heldNonce;
       })
@@ -270,7 +286,7 @@ const openWebAppleSheet = async () => {
   }
   const auth = response?.authorization || {};
   // The state goes out with the popup and has to come back with its answer.
-  if (!auth.id_token || auth.state !== state) throw new Error(APPLE_WEB_NOT_FINISHED);
+  if (!auth.id_token || auth.state !== state) throw webError(APPLE_WEB_NOT_FINISHED);
   const n = response.user?.name;
   const delivered = (n?.firstName || n?.lastName)
     ? { givenName: n.firstName || '', familyName: n.lastName || '' }
@@ -406,7 +422,6 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
       //
       // The third argument is `resume`, and only on the creation 403 that asks
       // for a year: see makeResume above. Every other refusal gets none.
-      const msg = failureMessage(err);
       const resume = held && err?.data?.needsDob && err.data.dobGranularity === 'year'
         ? makeResume(held)
         : undefined;
@@ -415,7 +430,10 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
       // code has run out (PAST THE CODE'S FEW MINUTES), and that tap should
       // find a nonce ready, so one is fetched while the year is typed.
       if (resume && onWebsite) fetchNonce().catch(() => {});
-      if (!isCancelled(err)) onError?.(msg || 'Apple sign-in failed', err, resume);
+      if (isCancelled(err)) return;
+      // The message is worked out only for a real failure, so a dismissed
+      // sheet is not logged as one.
+      onError?.(failureMessage(err, reconfirm ? APPLE_RECONFIRM_DID_NOT_FINISH : APPLE_DID_NOT_FINISH), err, resume);
     } finally {
       setBusy(false);
     }

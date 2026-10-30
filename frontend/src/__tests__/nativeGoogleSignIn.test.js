@@ -48,6 +48,8 @@ const { render, fireEvent, waitFor, screen } = require('@testing-library/react')
 // Mocks. CRA ships resetMocks: true, so implementations are set per test.
 // ---------------------------------------------------------------------------
 jest.mock('../services/api', () => ({
+  // The real one, so the sign-in buttons choose their words as in the app.
+  userMessage: jest.requireActual('../services/api').userMessage,
   // The auth screens report their own arrival (auth_screen_viewed, added
   // 2026-08-27); a factory that omits the tracker crashes the mount effect.
   trackAuthScreen: jest.fn(),
@@ -260,12 +262,19 @@ describe('the native token reaches the endpoint that already exists', () => {
 
     const Screen = loadLoginScreen({ ios: 'ios-client-id.apps.googleusercontent.com' });
     const onLoginSuccess = jest.fn();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
     render(React.createElement(Screen, { onLoginSuccess }));
     clickGoogle();
 
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/did not return a token/));
+    // The hook's "did not return a token" is a detail for the console; the
+    // screen says what happened in words for people (didNotFinish in
+    // useGoogleAuth.js).
+    await waitFor(() => expect(screen.getByRole('alert').textContent)
+      .toBe("Google sign-in didn't finish. Try again, or use email."));
+    expect(warn).toHaveBeenCalledWith('[flock] error kept off the screen:', 'Google sign-in did not return a token');
     expect(onLoginSuccess).not.toHaveBeenCalled();
     expect(api.googleLogin).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   test('a dismissed sheet is not reported as a failure', async () => {

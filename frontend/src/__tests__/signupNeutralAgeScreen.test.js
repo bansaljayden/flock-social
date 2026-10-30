@@ -53,6 +53,8 @@ const React = require('react');
 const { render, fireEvent, waitFor } = require('@testing-library/react');
 
 jest.mock('../services/api', () => ({
+  // The real one, so the sign-in buttons choose their words as in the app.
+  userMessage: jest.requireActual('../services/api').userMessage,
   // The auth screens report their own arrival (auth_screen_viewed, added
   // 2026-08-27); a factory that omits the tracker crashes the mount effect.
   trackAuthScreen: jest.fn(),
@@ -100,7 +102,9 @@ const UNDERAGE_MSG = (() => {
   return m[1];
 })();
 
-const refusal = () => Object.assign(new Error(UNDERAGE_MSG), { status: 403, data: {} });
+// Shaped as services/api.js throws it: the server's sentence is marked
+// userFacing, which is what lets userMessage show it word for word.
+const refusal = () => Object.assign(new Error(UNDERAGE_MSG), { status: 403, data: {}, userFacing: true });
 
 // The field takes a YEAR now, and the screen derives December 31 of it before
 // anything is sent. These two helpers keep the tests written in the units a

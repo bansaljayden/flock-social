@@ -27,6 +27,8 @@ const React = require('react');
 const { render, fireEvent, waitFor, act } = require('@testing-library/react');
 
 jest.mock('../services/api', () => ({
+  // The real one, so the sign-in buttons choose their words as in the app.
+  userMessage: jest.requireActual('../services/api').userMessage,
   trackAuthScreen: jest.fn(),
   login: jest.fn(),
   signup: jest.fn(),

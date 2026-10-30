@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import { useGoogleLogin } from '@react-oauth/google';
-import { googleLogin, googleLoginWithToken } from '../../services/api';
+import { googleLogin, googleLoginWithToken, userMessage } from '../../services/api';
 
 /**
  * "Continue with Google", on both platforms, from one place.
@@ -147,6 +147,17 @@ async function nativeGoogleIdToken() {
 const isCancellation = (err) =>
   err?.code === 'USER_CANCELLED' || /cancel/i.test(String(err?.message || ''));
 
+// What a failure says when it is not the server's own sentence. The native
+// SDK rejects with text written for a log ("No presenting view controller
+// found" reached the sign-in screen as it was), and so does a sheet that hands
+// back no token; userMessage (services/api.js) shows a message only when it
+// was written for people, logs the rest and uses this line instead. A
+// dismissed sheet still says nothing. The delete and export dialogs
+// (reconfirm) have no email form to point at, so theirs stops at "Try again."
+const didNotFinish = (reconfirm) => (reconfirm
+  ? "Google sign-in didn't finish. Try again."
+  : "Google sign-in didn't finish. Try again, or use email.");
+
 // FINISHING A NEW ACCOUNT WITHOUT A SECOND SHEET.
 //
 // A brand-new Google account that arrives with no birth year is answered
@@ -271,7 +282,7 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
       const data = await post(dobRef.current, dobGranularityRef.current);
       ok?.(data.user);
     } catch (err) {
-      const message = err?.message || 'Google sign-in failed';
+      const message = userMessage(err, didNotFinish(handlers.current.reconfirm));
       if (err?.data?.needsDob && err.data.dobGranularity === 'year') fail?.(message, err, makeResume(post, reopen));
       else fail?.(message, err);
     } finally {
@@ -303,7 +314,12 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
     onSuccess: (tokenResponse) =>
       exchange((dob, dobGranularity) => googleLoginWithToken(tokenResponse.access_token, dob,
         ...loginOpts(dobGranularity))),
-    onError: () => handlers.current.onError?.('Google sign-in failed'),
+    // GIS answers with an OAuth error code (access_denied and the like): a
+    // detail for the console, not a sentence for the screen.
+    onError: (response) => {
+      console.warn('[flock] Google sign-in did not finish:', response?.error || response);
+      handlers.current.onError?.(didNotFinish(handlers.current.reconfirm));
+    },
   });
   const startWeb = startWebGoogle || (() => handlers.current.onError?.('Google sign-in is not set up in this build.'));
 
@@ -330,8 +346,9 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
           idToken = await nativeGoogleIdToken();
         } catch (err) {
           // A dismissed sheet is not a failure to report, same rule as
-          // AppleSignInButton.
-          if (!isCancellation(err)) fail?.(err?.message || 'Google sign-in failed', err);
+          // AppleSignInButton. Anything else is the SDK's own words, which are
+          // logged rather than shown (didNotFinish above).
+          if (!isCancellation(err)) fail?.(userMessage(err, didNotFinish(handlers.current.reconfirm)), err);
           return;
         } finally {
           busy?.(false);
