@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BirdieStill, BirdNote } from './ui/BirdieBird';
+import { SkeletonBar } from './ui/Skeleton';
 import { signInKey } from '../lib/sessionIdentity';
 import { isNativeShell } from '../lib/nativeShell';
 
@@ -1103,11 +1104,16 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
     );
   }
 
+  // The card's name line and a line under it, in the global skeleton (the
+  // sweep and its reduced-motion rule live in index.css). They were two flat
+  // grey bars in --border-light that never moved and that no screen reader
+  // heard as a wait.
   if (state === 'loading') {
     return (
       <div style={CARD_STYLE} aria-busy="true">
-        <div style={{ height: 14, width: 90, borderRadius: 4, backgroundColor: 'var(--border-light)' }} />
-        <div style={{ height: 12, width: '70%', borderRadius: 4, backgroundColor: 'var(--border-light)', marginTop: 10 }} />
+        <span className="sr-only" role="status">{`Loading ${ADVISOR_NAME}`}</span>
+        <SkeletonBar width={90} height={14} />
+        <SkeletonBar width="70%" height={12} style={{ marginTop: '10px' }} />
       </div>
     );
   }

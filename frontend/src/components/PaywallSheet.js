@@ -6,6 +6,7 @@ import { yearlySavingsPercent, planSavingsPercent, perMonthLabel, storePerMonthL
 import { birdieBackText, forecastBackText } from '../lib/meterResets';
 import { isNativeShell } from '../lib/nativeShell';
 import useSheetDrag from '../hooks/useSheetDrag';
+import { SkeletonBar } from './ui/Skeleton';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
 // (overlay, 440px max, 20px top radius, a grabber that pulls it closed,
@@ -557,6 +558,26 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
   );
   const cta = { width: '100%', padding: '15px', borderRadius: '14px', fontSize: '15px', fontWeight: '700', fontFamily: FONT };
 
+  // WHILE THE STORE OR STRIPE ANSWERS: the two plan cards and the button, in
+  // planCard's and cta's own sizes, with no price in them, because none has
+  // been read. "Loading plans..." used to sit alone where both go, and the
+  // sheet grew by their height when they landed.
+  const plansSkeleton = (
+    <div aria-busy="true">
+      <p className="sr-only" role="status">Loading plans</p>
+      <div aria-hidden="true" style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+        {[96, 56].map((w) => (
+          <div key={w} style={{ flex: 1, minWidth: 0, height: '92px', boxSizing: 'border-box', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
+            <SkeletonBar width={w} height={13} style={{ margin: '2px 0 9px' }} />
+            <SkeletonBar width="72%" height={20} radius={5} style={{ marginBottom: '7px' }} />
+            <SkeletonBar width="58%" height={10} />
+          </div>
+        ))}
+      </div>
+      <SkeletonBar height={49} radius={14} />
+    </div>
+  );
+
   // The CTA says what it charges, and follows the plan selected.
   const nativePrice = selectedPkg?.product?.priceString || '';
   const nativeCta = busy
@@ -646,9 +667,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
             </>
           )}
 
-          {native && loadState === 'loading' && (
-            <p style={quiet} role="status">Loading plans…</p>
-          )}
+          {native && loadState === 'loading' && plansSkeleton}
 
           {/* The server says this account has Pro, wherever it was bought, so
               there is nothing here to buy (the effect above says why it asks). */}
@@ -667,9 +686,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
           {native && loadState === 'unavailable' && isPurchasesAvailable() && restoreButton}
 
           {/* ---------------- web: Stripe ---------------- */}
-          {!native && loadState === 'web-loading' && (
-            <p style={quiet} role="status">Loading plans…</p>
-          )}
+          {!native && loadState === 'web-loading' && plansSkeleton}
 
           {!native && loadState === 'web-ready' && (
             <>
