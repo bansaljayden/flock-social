@@ -1549,7 +1549,10 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 // PUT /api/flocks/:id - Update a flock (creator only)
 router.put('/:id',
   [
-    param('id').isInt({ min: 1, max: INT4_MAX }),
+    // Every check here names its message. One that does not answers
+    // express-validator's "Invalid value", which the app prints as it is: an
+    // edit whose event time did not parse was answered exactly that.
+    param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
     // Same sanitizer, same lengths, same order as POST / above. These three
     // used to be a bare `.trim()`: a flock created clean could be renamed into
     // stored markup one request later, and the column kept it. Rename is not a
@@ -1562,16 +1565,17 @@ router.put('/:id',
     // sources the known-venue check reads, and it used to accept any string of
     // any length, including one long enough to overflow the column.
     scalarOnly(body('venue_id').optional({ checkFalsy: true }), 'venue id').trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
-    scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat(),
-    scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat(),
+    scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat().withMessage('Invalid latitude'),
+    scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat().withMessage('Invalid longitude'),
     // 0 to 5, the scale every rating here comes from. flocks.venue_rating is
     // NUMERIC(2,1), so 10 or more overflowed it and answered 500, not 400.
-    scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }),
+    scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
     scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
-    scalarOnly(body('event_time').optional(), 'event time').isISO8601(),
+    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
     // isIn() coerces too — `{"status": ["planning"]}` passed it and then went
     // into the column as an array. scalarOnly settles that before isIn looks.
-    scalarOnly(body('status').optional(), 'status').isIn(['planning', 'confirmed', 'completed', 'cancelled']),
+    scalarOnly(body('status').optional(), 'status').isIn(['planning', 'confirmed', 'completed', 'cancelled'])
+      .withMessage('Status must be planning, confirmed, completed, or cancelled'),
   ],
   async (req, res) => {
     try {

@@ -106,11 +106,14 @@ router.post('/',
   // handler below already reads a falsy note as "no note". freeText() also adds
   // the trailing trim the old chain lacked, so a markup-only note ("<b> </b>")
   // is measured after sanitizing and stored as NULL rather than as a space.
-  freeText(body('note').optional({ nullable: true }), 'note').isLength({ max: 80 }),
+  //
+  // The length names its message, like the status above: without one, a note
+  // past 80 characters was answered "Invalid value".
+  freeText(body('note').optional({ nullable: true }), 'note').isLength({ max: 80 }).withMessage('Keep the note under 80 characters'),
   // clampExpiry() already coerces anything unusable to a default, so a
   // non-scalar here was inert rather than dangerous — but it was inert by
   // accident, and `null` (which clampExpiry handles) was refused by isISO8601.
-  scalarOnly(body('expires_at').optional({ nullable: true }), 'expiry').isISO8601(),
+  scalarOnly(body('expires_at').optional({ nullable: true }), 'expiry').isISO8601().withMessage('Invalid expiry time'),
   async (req, res) => {
     try {
       const errors = validationResult(req);

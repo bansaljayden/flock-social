@@ -266,9 +266,18 @@ router.get('/', [
   }
 });
 
+// What the create and edit chains answer, one wording for both. A check with no
+// message of its own answers express-validator's "Invalid value", which is what
+// an edit that blanked the title, or a time label past 20 characters, was
+// answered, and the app prints whatever it is answered.
+const TITLE_REQUIRED = 'Title is required';
+const TITLE_TOO_LONG = 'Keep the title under 120 characters';
+const TIME_TOO_LONG = 'Keep the time under 20 characters';
+const COLOR_TOO_LONG = 'Keep the color under 30 characters';
+
 // POST /api/calendar — create an event
 router.post('/', [
-  scalarOnly(body('title'), 'title').trim().notEmpty().withMessage('Title is required').isLength({ max: 120 }).withMessage('Keep the title under 120 characters'),
+  scalarOnly(body('title'), 'title').trim().notEmpty().withMessage(TITLE_REQUIRED).isLength({ max: 120 }).withMessage(TITLE_TOO_LONG),
   // Round 20 established that `date` must be settled as a STRING as well as a
   // scalar: `{"date": 20260901}` is a scalar, and a number has no `.slice`.
   // Round 21 added the day itself — see calendarDate() above. Both live in the
@@ -276,8 +285,8 @@ router.post('/', [
   // a plain YYYY-MM-DD and needs no slicing of its own.
   calendarDate(body('date'), 'date'),
   scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }).withMessage('Keep the place under 200 characters'),
-  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
-  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
+  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }).withMessage(TIME_TOO_LONG),
+  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }).withMessage(COLOR_TOO_LONG),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -305,11 +314,11 @@ router.put('/:id', [
   // `date ? … : null`) while `optional()` skips only `undefined` — so a partial
   // update that spelled an untouched field as null was refused by the chain
   // rather than served.
-  scalarOnly(body('title').optional({ nullable: true }), 'title').trim().notEmpty().isLength({ max: 120 }),
+  scalarOnly(body('title').optional({ nullable: true }), 'title').trim().notEmpty().withMessage(TITLE_REQUIRED).isLength({ max: 120 }).withMessage(TITLE_TOO_LONG),
   calendarDate(body('date').optional({ nullable: true }), 'date'),
   scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }).withMessage('Keep the place under 200 characters'),
-  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
-  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
+  scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }).withMessage(TIME_TOO_LONG),
+  scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }).withMessage(COLOR_TOO_LONG),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);

@@ -935,7 +935,10 @@ router.get('/flocks/:id/messages',
 // POST /api/flocks/:id/messages - Send a message to a flock
 router.post('/flocks/:id/messages',
   [
-    param('id').isInt({ min: 1, max: INT4_MAX }),
+    // Every check on this route and on its DM twin names its message: one that
+    // does not answers express-validator's "Invalid value", which the app
+    // prints as it is.
+    param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
     // Round 19 (shape sweep). `message_text: ["<b>hi</b>"]` was the worst case
     // in this file: stripHtml returns a non-string untouched, rejectIfProfane
     // does the same (utils/moderation.js moderateText answers allowed:true for
@@ -948,10 +951,10 @@ router.post('/flocks/:id/messages',
     // absent field, so a cross-field rule cannot live on it either.
     freeText(body('message_text').optional({ values: 'null' }), 'message')
       .isLength({ max: 5000 }).withMessage('Message is too long (max 5000 characters)'),
-    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']),
+    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']).withMessage('Invalid message type'),
     // venue_data is LEGITIMATELY an object, so it gets isObject() (which already
     // rejects an array) plus sanitizeVenueData, never a scalar guard.
-    body('venue_data').optional({ values: 'null' }).isObject(),
+    body('venue_data').optional({ values: 'null' }).isObject().withMessage('Invalid venue card'),
     scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
       .custom(isChatImageUrl).withMessage(IMAGE_FORMAT_MESSAGE),
     // No format rejection for the thumb: readImageThumb drops anything
@@ -960,7 +963,7 @@ router.post('/flocks/:id/messages',
     // messages.reply_to_id is int4 (migration 066), and the DM twin's warning
     // further down this file applies here word for word: `[5]` passes isInt
     // and then reaches the query as an array. scalarOnly is what stops that.
-    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }),
+    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid reply target'),
   ],
   async (req, res) => {
     try {
@@ -2102,7 +2105,7 @@ router.get('/dm/:userId',
 // POST /api/dm/:userId - Send a DM (supports text, venue_card, image)
 router.post('/dm/:userId',
   [
-    param('userId').isInt({ min: 1, max: INT4_MAX }),
+    param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID'),
     // Same shape rules as the flock-message twin above, for the same reasons.
     // Optional here, and "must carry something" is enforced in the handler —
     // see messageBody above. A `min: 1` on this field alone cannot express
@@ -2110,8 +2113,8 @@ router.post('/dm/:userId',
     // absent field, so a cross-field rule cannot live on it either.
     freeText(body('message_text').optional({ values: 'null' }), 'message')
       .isLength({ max: 5000 }).withMessage('Message is too long (max 5000 characters)'),
-    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']),
-    body('venue_data').optional({ values: 'null' }).isObject(),
+    scalarOnly(body('message_type').optional({ values: 'null' }), 'message type').isIn(['text', 'venue_card', 'image']).withMessage('Invalid message type'),
+    body('venue_data').optional({ values: 'null' }).isObject().withMessage('Invalid venue card'),
     // data: URLs only — a sender-controlled https image is a tracking pixel
     // aimed at every recipient (round 7); the socket path already refuses them.
     scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
@@ -2120,7 +2123,7 @@ router.post('/dm/:userId',
     // direct_messages.reply_to_id is int4: `[5]` passed isInt and then reached
     // the reply-scope lookup as '{5}', which is 22P02 — a 500 rather than the
     // 400 an unusable reply target deserves.
-    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }),
+    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid reply target'),
   ],
   async (req, res) => {
     try {
