@@ -39,9 +39,11 @@
  *
  * The body is the old block verbatim, including its original four-space
  * indentation, so it diffs against the deleted lines character for character.
- * This screen reads no hooks of its own: it is a pure function of its props.
+ * The one thing it holds of its own is the guard on Launch Dashboard (a ref
+ * and a state, beside handleNext); everything else is a pure function of its
+ * props.
  */
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } from '../services/api';
 import { lsSet } from '../lib/storage';
 import { queueSync } from '../services/userSettings';
@@ -90,10 +92,21 @@ export default function VenueOnboarding({
   venueWeekdays,
 }) {
 
+    // Launch Dashboard creates the venue profile, and nothing stopped a second
+    // tap while that request was out from sending a second create. The ref
+    // stops it at once, before a render could disable the button; the state
+    // draws the pending label and keeps the button disabled.
+    const launchingRef = useRef(false);
+    const [launching, setLaunching] = useState(false);
+
+    // Every step starts at the top, under the progress bar. Steps 0 to 5 were
+    // centred and 6 to 11 top-aligned, so the heading sat at a different
+    // height on each step and jumped on Continue. A step taller than the room
+    // above the footer (the keyboard is up, say) scrolls inside itself.
     const steps = [
       // Step 0: Welcome
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '24px', textAlign: 'center' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px', textAlign: 'center' }}>
           <img src="/flock-logo.png" alt="Flock" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', marginBottom: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }} />
           <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: '#f0ead8', margin: '0 0 8px' }}>Welcome to Flock for Venues</h1>
           {/* Was "so you can start reaching customers and tracking
@@ -116,7 +129,7 @@ export default function VenueOnboarding({
       //
       // So the pick is now required, and canAdvance() below enforces it.
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Find your venue</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Pick it from the list. That is how we match you to the crowd history we already hold for your address.</p>
           {venueOnboardingData.googlePlaceId ? (
@@ -223,7 +236,19 @@ export default function VenueOnboarding({
               </div>
             )}
             {venueSearchState === 'searching' && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.6)', margin: '10px 0 0' }}>Looking...</p>
+              /* Two result rows drawn in outline while the search runs, in
+                 the skeleton's dark tone for this navy (.skeleton-dark,
+                 index.css), where a grey "Looking..." used to sit. The words
+                 are for a screen reader; the shapes say it to the eye. */
+              <div role="status" style={{ margin: '10px 0 0', display: 'grid', gap: '8px' }}>
+                <span className="sr-only">Searching for your venue</span>
+                {[0, 1].map((i) => (
+                  <div key={i} aria-hidden="true" style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(148,163,184,0.08)' }}>
+                    <div className="skeleton skeleton-dark" style={{ width: '55%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
+                    <div className="skeleton skeleton-dark" style={{ width: '80%', height: '11px', borderRadius: '4px' }} />
+                  </div>
+                ))}
+              </div>
             )}
             {venueSearchState === 'none' && !venueSearchError && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', margin: '10px 0 0' }}>
@@ -239,7 +264,7 @@ export default function VenueOnboarding({
       ),
       // Step 2: Category
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What type of venue?</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick the best fit. You can change this later.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -253,7 +278,7 @@ export default function VenueOnboarding({
       ),
       // Step 3: Location
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Where are you located?</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>City or full address, so nearby customers can find you.</p>
           {/* maxLength mirrors the server's bounds (venueProfile.js: location
@@ -269,7 +294,7 @@ export default function VenueOnboarding({
       ),
       // Step 4: Goals
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What are your goals?</h2>
           {/* "We'll customize your dashboard" was a promise nothing keeps.
               backend/routes/venueProfile.js says it in its own header: goals
@@ -295,7 +320,7 @@ export default function VenueOnboarding({
       ),
       // Step 5: Quick description
       () => (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
           <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} initialValue={venueOnboardingData.description} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, description: v }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
@@ -481,6 +506,10 @@ export default function VenueOnboarding({
         // marched on to the dashboard, wrote the "onboarding complete" flag,
         // and the owner never learned their profile had not saved. The server
         // validates and bounds these fields, so a rejection is a real outcome.
+        // One create at a time (launchingRef, at the top).
+        if (launchingRef.current) return;
+        launchingRef.current = true;
+        setLaunching(true);
         let created = null;
         try {
           created = await createVenueProfile(venueOnboardingData);
@@ -490,6 +519,9 @@ export default function VenueOnboarding({
           setVenueOnboardingError(err?.data?.emailVerificationRequired
             ? 'Confirm your email first. Open the link we sent to your inbox, then finish this step. Every answer here is kept.'
             : (err?.message || "That didn't save. Check your details and try again."));
+          // Refused, so the button is the owner's again.
+          launchingRef.current = false;
+          setLaunching(false);
           return; // stay on the last step with every answer still filled in
         }
         setVenueOnboardingError('');
@@ -554,20 +586,28 @@ export default function VenueOnboarding({
             CTA inside the strip iOS reserves for the swipe-up gesture. Adding
             var(--safe-bottom) keeps the same visual gap on every device and
             collapses to the original 24px on the web (SAFE-AREA CONTRACT,
-            index.css). */}
-        <div style={{ padding: '16px 24px calc(24px + var(--safe-bottom))', flexShrink: 0 }}>
+            index.css).
+            THE KEYBOARD. The WebView does not resize for it (resize: 'none',
+            capacitor.config.ts), so the keys covered Continue on every step
+            with a field. The footer also pads by --kb-inset, the keyboard's
+            height less the home indicator strip the inset above already
+            clears (index.css, written by useKeyboardInset in the signed-in
+            shell), which puts Continue 24px above the keys; the step above
+            shrinks and scrolls. Same curve as .kb-lift. Zero on the web. */}
+        <div style={{ padding: '16px 24px calc(24px + var(--safe-bottom) + var(--kb-inset, 0px))', flexShrink: 0, transition: 'padding-bottom 250ms cubic-bezier(0.38, 0.7, 0.125, 1)' }}>
           {venueOnboardingError && (
             <p role="alert" style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: '#fca5a5', margin: '0 0 10px', lineHeight: 1.5 }}>{venueOnboardingError}</p>
           )}
-          <button className="hit44" onClick={handleNext} disabled={!canAdvance()} style={{
+          <button className="hit44" onClick={handleNext} disabled={!canAdvance() || launching} aria-busy={launching || undefined} style={{
             width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
             background: canAdvance() ? 'linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%)' : 'rgba(148,163,184,0.1)',
             color: canAdvance() ? '#1a2744' : 'rgba(148,163,184,0.3)',
-            fontSize: 'var(--t-body)', fontWeight: '600', cursor: canAdvance() ? 'pointer' : 'not-allowed',
+            fontSize: 'var(--t-body)', fontWeight: '600', cursor: launching ? 'progress' : canAdvance() ? 'pointer' : 'not-allowed',
             boxShadow: canAdvance() ? '0 4px 16px rgba(240,234,216,0.15)' : 'none',
+            opacity: launching ? 0.7 : 1,
             transition: 'all 0.2s', letterSpacing: '0.3px',
           }}>
-            {venueOnboardingStep === steps.length - 1 ? 'Launch Dashboard' : venueOnboardingStep === 0 ? "Let's Go" : 'Continue'}
+            {venueOnboardingStep === steps.length - 1 ? (launching ? 'Launching…' : 'Launch Dashboard') : venueOnboardingStep === 0 ? "Let's Go" : 'Continue'}
           </button>
         </div>
       </div>
