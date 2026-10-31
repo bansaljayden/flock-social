@@ -394,7 +394,7 @@ test('run() parses the flag, reads the fill with the main scope, orders it last 
   assert.match(src, /if \(fill\.refusal\) \{\n {4}await pool\.end\(\);\n {4}throw new Error\(`REFUSED: \$\{fill\.refusal\}/);
   assert.match(src, /const queryScope = cityScope \? cityScope\.concat\(fillCities\) : null;/);
   assert.match(src, /queryScope \? \[queryScope\] : \[\]/);
-  assert.match(src, /openHourMasks = await loadOpenHourMasks\(queryScope\);/);
+  assert.match(src, /openHourMasks = await loadOpenHourMasks\(queryScope, \{ weekDays \}\);/);
   assert.match(src, /if \(fillCities\.length && openHourMasks\.size\) \{\n {4}try \{\n {6}const at = new Date\(\);\n {6}fillShares = fillOpenShares\(byCity, fillCities, openHourMasks, await loadBusyNow\(fillCities, \{ at \}\), at\);/);
   assert.match(src, /Fill open shares could not be read \(\$\{describeDbError\(err\)\}\); /);
   assert.match(src, /const cityOrder = holdoutFirst\(orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\),\n {4}HOLDOUT\.active \? HOLDOUT\.city : null\);/);

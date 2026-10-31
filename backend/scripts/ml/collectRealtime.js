@@ -339,14 +339,21 @@ async function ensureHolidayColumns() {
 // One query per run, not one per venue. It reads the same weekly rows the
 // baseline lookup below already reads, scoped to the venues this run will
 // consider, and returns venue_id -> open-hour bitmask. A venue absent from the
-// map has no weekly evidence and is therefore always called.
-async function loadOpenHourMasks(cityScope) {
+// map has no weekly evidence and is therefore always called. Given a
+// `weekDays` map it also fills that with each judged venue's busy hours by
+// weekday (weekDayMasks), for the narrower rules' counts below.
+async function loadOpenHourMasks(cityScope, { weekDays = null, db = pool } = {}) {
   const params = [HOUR_AXIS_VENUE_LOCAL];
   if (cityScope) params.push(cityScope);
-  const { rows } = await pool.query(
+  const { rows } = await db.query(
     `SELECT t.venue_id,
             COUNT(DISTINCT t.hour) AS hours_covered,
-            array_agg(DISTINCT t.hour) FILTER (WHERE t.busyness_pct > 0) AS busy_hours
+            array_agg(DISTINCT t.hour) FILTER (WHERE t.busyness_pct > 0) AS busy_hours`
+    // Not DISTINCT: a slot written twice sets the same bit twice, and the
+    // sort DISTINCT needs is time the sweep does not get back.
+    + (weekDays ? `,
+            array_agg(t.day_of_week * 24 + t.hour) FILTER (WHERE t.busyness_pct > 0) AS busy_slots` : '')
+    + `
        FROM ml_training_data t
        JOIN ml_venues v ON v.id = t.venue_id
       WHERE t.collection_mode = 'weekly'
@@ -368,8 +375,86 @@ async function loadOpenHourMasks(cityScope) {
     // one way this filter could invent a closure.
     if (Number(row.hours_covered) !== 24) continue;
     masks.set(row.venue_id, buildOpenHourMask(row.busy_hours || []));
+    if (weekDays) weekDays.set(row.venue_id, weekDayMasks(row.busy_slots || []));
   }
   return masks;
+}
+
+// NARROWER OPEN-HOURS RULES, COUNTED ON EVERY CALL (2026-10-31). The rule
+// above was measured on the 1,198 live readings there were on 2026-09-03. The
+// sweep now makes about 5,800 calls an hour and over a third come back with no
+// live reading; in the US small hours three in four of the main scope's do
+// (the 06:07 EDT run of 2026-10-31: 343 live of 1,454 calls there, against
+// 3,332 of 4,364 in the fill). Whether a narrower rule would save those calls
+// without costing readings is counted here, on the calls themselves: for each
+// call to a venue whose weekly curve covers the day, would each rule below
+// have made it, and did it come back live. They only count. What is called is
+// still decided by the rule above, and nothing here can fail a call.
+const NARROWER_OPEN_HOUR_RULES = [
+  { label: 'same weekday +/-1h', sameDay: true, pad: 1 },
+  { label: 'same weekday +/-2h', sameDay: true, pad: 2 },
+  { label: 'week-wide +/-1h', sameDay: false, pad: 1 },
+];
+
+// A venue's busy hours as seven 24-bit masks, indexed by config.getLocalTime's
+// dayOfWeek (Sunday 0), from weekly slots numbered day_of_week * 24 + hour.
+function weekDayMasks(slots) {
+  const days = [0, 0, 0, 0, 0, 0, 0];
+  for (const raw of slots || []) {
+    // array_agg keeps a NULL (a row with no day or hour), and Number(null) is 0.
+    if (raw === null || raw === undefined) continue;
+    const slot = Number(raw);
+    if (!Number.isInteger(slot) || slot < 0 || slot >= 168) continue;
+    days[Math.floor(slot / 24)] |= 1 << (slot % 24);
+  }
+  return days;
+}
+
+// Would `rule` call a venue with these day masks at local (dayOfWeek, hour)?
+// A same-weekday band runs into the day either side across midnight, so a
+// venue busy at 23:00 on Friday is in band at 00:00 on Saturday.
+function narrowRuleCalls(days, dayOfWeek, hour, { sameDay, pad }) {
+  const anyDay = sameDay ? 0 : days.reduce((all, mask) => all | mask, 0);
+  for (let d = -pad; d <= pad; d++) {
+    const slot = (((dayOfWeek * 24 + hour + d) % 168) + 168) % 168;
+    const bit = 1 << (slot % 24);
+    if ((sameDay ? days[Math.floor(slot / 24)] : anyDay) & bit) return true;
+  }
+  return false;
+}
+
+// The counts, kept apart for the main scope and the fill: onCall when a call
+// starts and onLive when its reading is stored live, each with the call's own
+// local clock. Venues without day masks (no full curve) are left out of both,
+// since every rule calls them. line() is null when nothing was counted.
+function createNarrowRuleTally(weekDays, fillCities = new Set(), rules = NARROWER_OPEN_HOUR_RULES) {
+  const blank = () => ({ calls: 0, live: 0, rules: rules.map(() => ({ calls: 0, live: 0 })) });
+  const scopes = { main: blank(), fill: blank() };
+  const count = (venue, obs, key) => {
+    const days = weekDays.get(venue.id);
+    if (!days || !obs) return;
+    const scope = fillCities.has(venue.city) ? scopes.fill : scopes.main;
+    scope[key]++;
+    rules.forEach((rule, i) => {
+      if (!narrowRuleCalls(days, obs.dayOfWeek, obs.hour, rule)) scope.rules[i][key]++;
+    });
+  };
+  const part = (name, s) => `${name}, ${s.calls} calls (${s.live} live): `
+    + rules.map((rule, i) => `${rule.label} ${s.rules[i].calls} (${s.rules[i].live} live)`).join(', ');
+  return {
+    scopes,
+    onCall: (venue, obs) => count(venue, obs, 'calls'),
+    onLive: (venue, obs) => count(venue, obs, 'live'),
+    line() {
+      const parts = [];
+      if (scopes.main.calls) parts.push(part('main scope', scopes.main));
+      if (scopes.fill.calls) parts.push(part('fill', scopes.fill));
+      return parts.length
+        ? '[ML:Realtime] Narrower open-hours rules on this run\'s calls to venues with a full curve '
+          + `(calls each would not have made, live readings among them): ${parts.join('; ')}.`
+        : null;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1907,13 +1992,17 @@ async function collectRealtime() {
   // reading.
   const openHoursFilter = !process.argv.includes('--no-open-hours');
   let openHourMasks = new Map();
+  // Each judged venue's busy hours by weekday, for the counts of NARROWER
+  // OPEN-HOURS RULES; filled by the same query, empty when it fails.
+  const weekDays = new Map();
   if (openHoursFilter) {
     try {
-      openHourMasks = await loadOpenHourMasks(queryScope);
+      openHourMasks = await loadOpenHourMasks(queryScope, { weekDays });
       console.log(`[ML:Realtime] Open hours: ${openHourMasks.size} of ${venues.length} venues have a `
         + `weekly curve to judge by (+/-${OPEN_HOUR_PAD}h); the rest are called unconditionally.`);
     } catch (err) {
       openHourMasks = new Map();
+      weekDays.clear();
       console.error(`[ML:Realtime] Open-hours lookup failed (${describeDbError(err)}) — calling every venue.`);
     }
   } else {
@@ -1988,6 +2077,12 @@ async function collectRealtime() {
     perCity.set(city, row);
   };
   const cityOfVendorId = new Map(venues.map((v) => [v.besttime_venue_id, v.city]));
+  // NARROWER OPEN-HOURS RULES: counted on each call and each live reading,
+  // never decided on, so a failure to count is swallowed rather than becoming
+  // a failed call.
+  const narrowTally = createNarrowRuleTally(weekDays, fillSet);
+  const venueOfVendorId = new Map(venues.map((v) => [v.besttime_venue_id, v]));
+  const countNarrow = (fn) => { try { fn(); } catch (_) { /* a count, nothing more */ } };
   // When the fill stops (FILL_EARLY_STOP_NO_REBUILD_MS): later when this run's
   // tail has no baseline rebuild. Asked before the sweep; the tail asks again.
   // A failure to read the stamps keeps the early stop, the old behaviour.
@@ -2012,11 +2107,18 @@ async function collectRealtime() {
   } = await sweepVenues(cityOrder, {
     openHourMasks, maxInFlight, startIntervalMs, store: async (venue, at, live) => {
       const outcome = await storeReading(venue, at, live, events.lookup);
-      if (outcome === LABEL_LIVE) tally(venue.city, 'live');
+      if (outcome === LABEL_LIVE) {
+        tally(venue.city, 'live');
+        countNarrow(() => narrowTally.onLive(venue, at.obs));
+      }
       return outcome;
     },
     fetchLive: (vendorId) => {
       tally(cityOfVendorId.get(vendorId), 'calls');
+      countNarrow(() => {
+        const venue = venueOfVendorId.get(vendorId);
+        if (venue) narrowTally.onCall(venue, getLocalTime(venue.timezone || CITIES[venue.city].tz, new Date()));
+      });
       return fetchLiveBusyness(vendorId);
     },
     fillCities: fillSet,
@@ -2064,6 +2166,8 @@ async function collectRealtime() {
   }).join(', ');
   console.log(`[ML:Realtime] Live rows / calls by city: ${cityTally(cityScope || [...perCity.keys()].sort())}`
     + `${fillCities.length ? `; fill: ${cityTally(fillCities)}` : ''}.`);
+  const narrowLine = narrowTally.line();
+  if (narrowLine) console.log(narrowLine);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
 
@@ -2354,7 +2458,8 @@ async function run() {
 
 module.exports = {
   run, classifyReading, liveAnswerColumns, LIVE_LOCAL_TIME_MAX, eventFeatureColumns, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
-  buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
+  buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD, loadOpenHourMasks,
+  NARROWER_OPEN_HOUR_RULES, weekDayMasks, narrowRuleCalls, createNarrowRuleTally,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, runTimeBudgetMs, parseFillCities, orderCityBlocks,

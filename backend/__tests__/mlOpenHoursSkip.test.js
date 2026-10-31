@@ -242,7 +242,16 @@ test('no evidence means call: an unknown never costs a reading', () => {
 
 test('the sweep calls the open venue and the unknown one, and never calls the shut one', async () => {
   CALLED = [];
-  await freshCollector().run();
+  const lines = [];
+  const log = console.log;
+  console.log = (...a) => { lines.push(a.join(' ')); };
+  let fresh;
+  try {
+    fresh = freshCollector();
+    await fresh.run();
+  } finally {
+    console.log = log;
+  }
 
   assert.ok(CALLED.includes('bt_' + OPEN_PLACE),
     'the venue whose own weekly curve is busy at this local hour must be called');
@@ -254,6 +263,21 @@ test('the sweep calls the open venue and the unknown one, and never calls the sh
     `the venue whose curve is busy only at ${(nowHour + 12) % 24}:00 local was called at `
     + `${nowHour}:00 local; that call can only ever return "no live data"`);
   assert.strictEqual(CALLED.length, 3, 'exactly three of the four venues are worth a call right now');
+
+  // NARROWER OPEN-HOURS RULES, counted on these calls: only the open venue has
+  // a full curve to judge by (Wednesday, busy at nowHour), and it came back
+  // live. The week-wide band keeps it; a same-weekday band keeps it only on a
+  // Wednesday (or across midnight into one), so the expectation is computed
+  // on the venue's local clock as the run ends.
+  const { NARROWER_OPEN_HOUR_RULES, narrowRuleCalls, weekDayMasks } = fresh;
+  const local = getLocalTime(TZ);
+  const days = weekDayMasks([3 * 24 + nowHour]);
+  const skipped = NARROWER_OPEN_HOUR_RULES.map((rule) => (narrowRuleCalls(days, local.dayOfWeek, local.hour, rule) ? 0 : 1));
+  assert.strictEqual(skipped[2], 0, 'the week-wide band covers the hour the venue is busy at');
+  assert.ok(lines.includes('[ML:Realtime] Narrower open-hours rules on this run\'s calls to venues with a full curve '
+    + '(calls each would not have made, live readings among them): main scope, 1 calls (1 live): '
+    + NARROWER_OPEN_HOUR_RULES.map((rule, i) => `${rule.label} ${skipped[i]} (${skipped[i]} live)`).join(', ') + '.'),
+  `no narrower-rules line for the one judged call: ${lines.filter((l) => /Narrower/.test(l)).join(' | ') || 'none printed'}`);
 });
 
 test('the row the open venue produced is unchanged by the filter', async () => {
@@ -642,6 +666,37 @@ test('loadBusyNow returns each fill city\'s venues busy at its own local day and
   assert.deepStrictEqual([...busy.get('london')], [ids.london]);
   assert.deepStrictEqual([...busy.get('seoul')], []);
   assert.deepStrictEqual([...(await collectRealtime.loadBusyNow([], { at, db: pool })).keys()], []);
+});
+
+test('loadOpenHourMasks also gives each judged venue its busy hours by weekday, when asked', async () => {
+  const { loadOpenHourMasks, buildOpenHourMask } = collectRealtime;
+  const { rows: [{ id: weekly }] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, timezone, is_active)
+     VALUES ('ChIJnarrowRulesWeek1', 'bt_ChIJnarrowRulesWeek1', 'Weekday Bar', $1, 39.95, -75.16, 'bar', $2, true)
+     RETURNING id`, [CITY, TZ]);
+  // A full Wednesday curve busy at 22:00, and one Friday hour at 01:00. Its
+  // week-wide mask has both hours; its weekday masks keep them apart.
+  for (let hour = 0; hour < 24; hour++) {
+    await pool.query(
+      `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct)
+       VALUES ($1, 'weekly', 'venue_local', 3, $2, 'bar', $3)`, [weekly, hour, hour === 22 ? 40 : 0]);
+  }
+  await pool.query(
+    `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct)
+     VALUES ($1, 'weekly', 'venue_local', 5, 1, 'bar', 20)`, [weekly]);
+
+  const weekDays = new Map();
+  const masks = await loadOpenHourMasks([CITY], { weekDays, db: pool });
+  assert.strictEqual(masks.get(weekly), buildOpenHourMask([22, 1]));
+  assert.deepStrictEqual(weekDays.get(weekly), [0, 0, 0, 1 << 22, 0, 1 << 1, 0]);
+  // Every judged venue gets both, and a venue with a partial curve neither.
+  assert.deepStrictEqual([...weekDays.keys()].sort(), [...masks.keys()].sort());
+  assert.ok(!masks.has(venueIds.partial) && !weekDays.has(venueIds.partial));
+  assert.deepStrictEqual(weekDays.get(venueIds.closed), [0, 0, 0, 1 << ((nowHour + 12) % 24), 0, 0, 0]);
+  // Not asked: the same masks, and the query has no slots to read.
+  const plain = await loadOpenHourMasks([CITY], { db: pool });
+  assert.deepStrictEqual([...plain.entries()].sort(), [...masks.entries()].sort());
 });
 
 // buildBaselines.collectedBaselinesDue decides whether the hourly run's tail
