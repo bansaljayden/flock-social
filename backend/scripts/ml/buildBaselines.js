@@ -185,8 +185,12 @@ async function refreshCollectedBaselines(pool) {
   return withCorpusWriteLock(pool, async (client) => {
     // The mark is read BEFORE the rebuild's own statements: a write that
     // commits between the two lands in the rebuild but not in the mark, and
-    // costs one extra rebuild next hour rather than one missed.
-    const { rows: [{ corpus_at: corpusAt }] } = await client.query(CORPUS_STAMP_SQL);
+    // costs one extra rebuild next hour rather than one missed. Read as text
+    // and written back as text: a stamp from NOW() keeps microseconds, a JS
+    // Date keeps milliseconds, and a mark that passed through one never
+    // equalled its stamp (every hour read "due", 2026-10-31 00:07 EDT).
+    const { rows: [{ corpus_at: corpusAt }] } = await client.query(
+      `SELECT corpus_at::text AS corpus_at FROM (${CORPUS_STAMP_SQL}) c`);
     const { rows: [{ undeclared }] } = await client.query(UNDECLARED_WEEKLY_SQL);
     if (undeclared) {
       return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
@@ -195,7 +199,7 @@ async function refreshCollectedBaselines(pool) {
     const del = await client.query(DELETE_STALE_SQL);
     const up = await client.query(UPSERT_SQL);
     await client.query(
-      `INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1, NOW())
+      `INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
        ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at`,
       [corpusAt]
     );

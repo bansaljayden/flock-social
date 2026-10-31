@@ -728,9 +728,21 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
     `SELECT COUNT(*)::int AS n FROM ml_venue_baselines WHERE google_place_id = 'ChIJbaselineDueWeek2'`);
   assert.strictEqual(n, 168, 'the week written after the mark was not rebuilt');
 
+  // Production's stamps come from NOW(), which keeps microseconds, and a mark
+  // that passed through a JS Date (milliseconds) never equalled one: the
+  // first night read "due" every hour (2026-10-31 00:07 EDT). A stamp with
+  // microseconds, rebuilt, must read as caught up.
+  await writeWeek('ChIJbaselineMicroStmp', at(120 * 1000));
+  await pool.query(`UPDATE ml_venues SET last_collected_at = $1::timestamptz + interval '0.000123 seconds'
+                     WHERE google_place_id = 'ChIJbaselineMicroStmp'`, [at(120 * 1000)]);
+  assert.strictEqual((await due()).due, true);
+  await rebuild();
+  const micro = await due();
+  assert.strictEqual(micro.due, false, micro.reason);
+
   // A repair that clears the newest venue's stamp moves the newest stamp
   // backwards: the baselines may have changed, so that is due too.
-  await pool.query(`UPDATE ml_venues SET last_collected_at = NULL WHERE google_place_id = 'ChIJbaselineDueWeek2'`);
+  await pool.query(`UPDATE ml_venues SET last_collected_at = NULL WHERE google_place_id = 'ChIJbaselineMicroStmp'`);
   const moved = await due();
   assert.strictEqual(moved.due, true, moved.reason);
   assert.match(moved.reason, /^the newest weekly stamp moved from .+ to .+ since the last rebuild$/);
