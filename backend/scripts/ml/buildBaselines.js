@@ -43,6 +43,19 @@ const CREATE_TABLE_SQL = `
   );
 `;
 
+// THE REBUILD'S MARK (2026-10-31): the newest venue stamp the last rebuild
+// saw, one row, written in the rebuild's own transaction. collectedBaselinesDue
+// compares the corpus's stamps with it. Created here, beside the table it
+// describes, for the same reason that one is.
+const MARK_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS ml_baseline_marks (
+    id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    corpus_at TIMESTAMPTZ,
+    rebuilt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+`;
+const CORPUS_STAMP_SQL = 'SELECT MAX(last_collected_at) AS corpus_at FROM ml_venues';
+
 // Is there a weekly row whose hour column is not a venue-local hour (or does
 // not say)? EXISTS, not COUNT: ml_training_data is ~4M rows and this runs at
 // the end of every realtime cron.
@@ -164,11 +177,16 @@ const UPSERT_SQL = `
 // part in the race.
 async function refreshCollectedBaselines(pool) {
   await pool.query(CREATE_TABLE_SQL);
+  await pool.query(MARK_TABLE_SQL);
   // Both columns are created by migration 023 on a booted server; these scripts
   // also run against databases that have not booted the current server.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
 
   return withCorpusWriteLock(pool, async (client) => {
+    // The mark is read BEFORE the rebuild's own statements: a write that
+    // commits between the two lands in the rebuild but not in the mark, and
+    // costs one extra rebuild next hour rather than one missed.
+    const { rows: [{ corpus_at: corpusAt }] } = await client.query(CORPUS_STAMP_SQL);
     const { rows: [{ undeclared }] } = await client.query(UNDECLARED_WEEKLY_SQL);
     if (undeclared) {
       return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
@@ -176,6 +194,11 @@ async function refreshCollectedBaselines(pool) {
 
     const del = await client.query(DELETE_STALE_SQL);
     const up = await client.query(UPSERT_SQL);
+    await client.query(
+      `INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1, NOW())
+       ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at`,
+      [corpusAt]
+    );
     return { ok: true, undeclared: false, deleted: del.rowCount, upserted: up.rowCount };
   });
 }
@@ -189,58 +212,70 @@ async function refreshCollectedBaselines(pool) {
 // cities stop early to leave free, so the hourly run now asks this first.
 //
 // The stamps say whether anything moved. Every writer of weekly rows stamps
-// the venue's last_collected_at in the same transaction as the rows
-// (collectWeekly.js, harvestVenueFilter.js; NOW() is the transaction's clock,
-// so the stamp equals the rows' collected_at), and a rebuild stamps each
-// baseline with the newest collected_at under it (UPSERT_SQL). After a
-// rebuild the newest baseline stamp therefore equals the newest venue stamp,
-// and a weekly write after it shows as a venue stamped later than any
-// baseline. discoverBestTime.js stamps just after its rows, so after one of
-// its runs this answers "due" every hour until a later write: the old three
-// minutes, nothing worse.
+// the venue's last_collected_at with its rows (collectWeekly.js and
+// harvestVenueFilter.js in the rows' own transaction), and every rebuild
+// records the newest stamp it saw (ml_baseline_marks, read under the corpus
+// lock before the rebuild's statements). So a rebuild is due exactly when the
+// newest stamp is not the one the last rebuild recorded: a write since then
+// raises it, and a repair that clears the newest venue's stamp lowers it.
+//
+// STAMPS AGAINST THE MARK, NOT AGAINST THE BASELINES' OWN DATES. The first
+// version compared the newest stamp with the newest baseline date (the newest
+// collected_at under a baseline), and the first hourly run with it
+// (2026-10-31 01:07 UTC) read 2026-10-07T00:05:12.757Z against
+// 00:05:12.262Z: the 10-06 refresh ran while collectWeekly still stamped the
+// venue in a separate UPDATE after COMMIT, 0.495 s after the rows, and no
+// rebuild can close that, so every hour read "due". A five second tolerance
+// fixed that and broke the other side: a week written seconds after a rebuild
+// read as nothing new (mlClockAxisBackfill.test.js caught it). A stamp
+// compared with a stamp has neither problem.
 //
 // What the stamps cannot show is a weekly row DELETED or a venue's place id
-// REMAPPED (repairBestTimeDiscoveredVenues.js): the baselines change with no
-// newer stamp. Run this file after a repair, as before; and the hourly run
-// rebuilds once a day whatever the stamps say (DAILY_REBUILD_UTC_HOUR), so
-// nothing stays stale for more than a day. A missing stamp is "due", and the
-// caller treats a failure to read them as "due" too.
+// REMAPPED with the newest stamp untouched (repairBestTimeDiscoveredVenues.js):
+// the baselines change and nothing marks it. Run this file after a repair, as
+// before; and the hourly run rebuilds once a day whatever the stamps say
+// (DAILY_REBUILD_UTC_HOUR), so nothing stays stale for more than a day. No
+// mark yet means due, and the caller treats a failure to read as due too.
 const DAILY_REBUILD_UTC_HOUR = 9;
-// A STAMP A MOMENT LATE IS NOT A NEW WEEK. The first hourly run with this
-// check (2026-10-31 01:07 UTC) read the newest venue stamp as
-// 2026-10-07T00:05:12.757Z and the newest baseline as 00:05:12.262Z, 0.495 s
-// apart: the 10-06 refresh ran before collectWeekly moved the stamp into the
-// rows' transaction, when it was a separate UPDATE after COMMIT, and no
-// rebuild can close that gap, so every hour read "due". A stamp counts as a
-// newer write only when it is more than this past the newest baseline. A real
-// write after a rebuild lands minutes or hours later; the one a few seconds
-// could hide is the last write of a burst that straddles a rebuild, and the
-// daily rebuild takes that.
-const STAMP_TOLERANCE_SECONDS = 5;
 // Compared in SQL, at the columns' microseconds: a JS Date keeps milliseconds.
-const STAMPS_SQL = `
-  SELECT corpus_at, baselines_at, corpus_at > baselines_at + make_interval(secs => $1) AS behind
-    FROM (SELECT (SELECT MAX(last_collected_at) FROM ml_venues) AS corpus_at,
-                 (SELECT MAX(updated_at) FROM ml_venue_baselines WHERE source = 'collected') AS baselines_at) s
+const DUE_SQL = `
+  SELECT c.corpus_at, m.corpus_at AS mark_at, m.rebuilt_at,
+         c.corpus_at IS DISTINCT FROM m.corpus_at AS moved,
+         c.corpus_at > m.corpus_at AS newer
+    FROM (${CORPUS_STAMP_SQL}) c
+    LEFT JOIN ml_baseline_marks m ON m.id = 1
 `;
+const UNDEFINED_TABLE = '42P01';
 
 async function collectedBaselinesDue(db, { at = new Date() } = {}) {
   if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
     return { due: true, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
   }
-  const { rows: [stamps] } = await db.query(STAMPS_SQL, [STAMP_TOLERANCE_SECONDS]);
-  if (!stamps.corpus_at || !stamps.baselines_at) {
-    return { due: true, reason: 'no weekly or baseline stamp to compare' };
+  let stamps;
+  try {
+    ({ rows: [stamps] } = await db.query(DUE_SQL));
+  } catch (err) {
+    if (err && err.code === UNDEFINED_TABLE) return { due: true, reason: 'no rebuild has recorded a mark yet' };
+    throw err;
   }
-  const corpusAt = new Date(stamps.corpus_at);
-  const baselinesAt = new Date(stamps.baselines_at);
-  if (stamps.behind) {
+  const iso = (v) => (v ? new Date(v).toISOString() : 'none');
+  if (!stamps.rebuilt_at) return { due: true, reason: 'no rebuild has recorded a mark yet' };
+  if (stamps.newer) {
     return {
       due: true,
-      reason: `a weekly curve was written at ${corpusAt.toISOString()}, after the newest baseline (${baselinesAt.toISOString()})`,
+      reason: `a weekly curve was written at ${iso(stamps.corpus_at)}, after the last rebuild's mark (${iso(stamps.mark_at)})`,
     };
   }
-  return { due: false, reason: `no weekly curve written since the newest baseline (${baselinesAt.toISOString()})` };
+  if (stamps.moved) {
+    return {
+      due: true,
+      reason: `the newest weekly stamp moved from ${iso(stamps.mark_at)} to ${iso(stamps.corpus_at)} since the last rebuild`,
+    };
+  }
+  return {
+    due: false,
+    reason: `no weekly curve written since the last rebuild (${iso(stamps.rebuilt_at)}, mark ${iso(stamps.mark_at)})`,
+  };
 }
 
 const REFUSAL_MESSAGE =
@@ -283,7 +318,7 @@ module.exports = {
   refreshCollectedBaselines,
   collectedBaselinesDue,
   DAILY_REBUILD_UTC_HOUR,
-  STAMP_TOLERANCE_SECONDS,
+  MARK_TABLE_SQL,
   REFUSAL_MESSAGE,
   HOUR_AXIS_VENUE_LOCAL,
   DELETE_STALE_SQL,
