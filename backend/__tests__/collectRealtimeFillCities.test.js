@@ -52,6 +52,7 @@ stubModule('../scripts/ml/eventService', {
 
 const {
   sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, LABEL_LIVE,
+  runTimeBudgetMs,
   FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask, holdoutFirst,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
@@ -244,8 +245,8 @@ function venuesFor(city, n, firstId) {
   }));
 }
 
-async function sweepWithFill(cityOrder, fillCities, extra = {}) {
-  const clock = virtualClock(START);
+async function sweepWithFill(cityOrder, fillCities, { start = START, ...extra } = {}) {
+  const clock = virtualClock(start);
   const calls = [];
   const weatherCalls = [];
   const lines = [];
@@ -322,6 +323,42 @@ test('with no baseline rebuild in the tail, the fill stops three minutes early i
   assert.strictEqual(fillLines.length, 1);
   assert.strictEqual(fillLines[0].text, `[ML:Realtime] Fill time reached after ${result.called} calls (fill cities stop `
     + '3 minutes before the budget); the rest of the fill is left for the next run.');
+});
+
+// THE BUDGET RUNS FROM :12: Railway starts the :07 trigger's container up to
+// five minutes late, and the fifty minutes are sized for the latest start.
+test('a sweep started between :07 and :12 gets the minutes it started before :12, and no other does', () => {
+  const at = (m, s = 0) => Date.UTC(2026, 9, 31, 8, m, s);
+  // Every start inside the window ends its budget where a start at :12 does.
+  for (const [m, s] of [[7, 0], [7, 30], [9, 39], [11, 59]]) {
+    assert.strictEqual(at(m, s) + runTimeBudgetMs(at(m, s), BUDGET_MS), at(12) + BUDGET_MS, `a start at :${m}:${s}`);
+  }
+  assert.strictEqual(runTimeBudgetMs(at(7, 30), BUDGET_MS), BUDGET_MS + 4.5 * MINUTE);
+  // From :12 on, and before :07 (a run by hand, or a schedule moved), the fifty.
+  for (const [m, s] of [[12, 0], [12, 20], [30, 0], [59, 59], [0, 0], [6, 59]]) {
+    assert.strictEqual(runTimeBudgetMs(at(m, s), BUDGET_MS), BUDGET_MS, `a start at :${m}:${s}`);
+  }
+});
+
+test('a sweep started at :08 stops its fill four minutes later, where one started at :12 stops it', async () => {
+  const main = venuesFor('philly', 100, 1);
+  const london = venuesFor('london', 1000, 1001);
+  const start = START + 8 * MINUTE;
+  const { result, calls, lines } = await sweepWithFill(
+    [['philly', main], ['london', london]], ['london'], { fillEarlyStopMs: FILL_EARLY_STOP_NO_REBUILD_MS, start });
+
+  // :12 plus the fifty, less the three: :59, where the fifty alone stop it at :55.
+  const fillEnd = START + 12 * MINUTE + BUDGET_MS - FILL_EARLY_STOP_NO_REBUILD_MS;
+  const lastStart = Math.max(...calls.map((c) => c.startAt));
+  assert.ok(lastStart <= fillEnd, `a fill call started ${(lastStart - fillEnd) / SECOND} s after :59`);
+  assert.ok(lastStart > fillEnd - MINUTE, `the fill stopped at ${new Date(lastStart).toISOString()}, before its extra minutes`);
+  assert.strictEqual(result.budgetHit, true);
+  assert.strictEqual(result.leftForNextRun, main.length + london.length - result.called);
+  assert.ok(lines.some((l) => l.text === '[ML:Realtime] Time budget 54.0 minutes: the fifty, plus the 4.0 this sweep started before :12.'),
+    'the extended budget was not reported');
+  // A sweep started on the hour, like every other test here, prints no such line.
+  const onTheHour = await sweepWithFill([['philly', venuesFor('philly', 5, 1)]], []);
+  assert.ok(!onTheHour.lines.some((l) => /Time budget \d/.test(l.text)), 'a start on the hour reported an extended budget');
 });
 
 test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {

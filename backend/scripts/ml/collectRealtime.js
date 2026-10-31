@@ -476,6 +476,29 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // container started at :11:54.
 const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 
+// THE BUDGET RUNS FROM :12 (2026-10-31). The cron fires at :07 (`7 * * * *`,
+// set in the BESTTIME service's settings, not in this repository) and Railway
+// starts the container any time in the five minutes after it: of the 105 runs
+// from 2026-10-27 to 10-31 the earliest started at :07:03 and the latest at
+// :11:57, median :09:39, spread evenly between. The fifty minutes and both
+// early stops are sized for the latest, so a run that started early also ended
+// early and left the hour's last minutes unused, about two of them at the
+// median and nearly five at the earliest. A sweep whose clock starts between
+// :07 and :12 now gets the minutes it started before :12 on top of the fifty,
+// so its budget and its fill's end where a sweep started at :12 ends them.
+// That is no later than the latest start's ended before (its sweep clock
+// starts about :12:20, after the container's half minute of reads), so no run
+// ends later than one already could. A sweep started at any other minute, by
+// hand or after the schedule moves, gets the fifty minutes exactly as before.
+const TRIGGER_MINUTE = 7;
+const LATEST_START_MINUTE = 12;
+
+function runTimeBudgetMs(startedAt, budgetMs) {
+  const intoHour = startedAt % (60 * 60 * 1000);
+  const earlyByMs = LATEST_START_MINUTE * 60 * 1000 - intoHour;
+  return intoHour >= TRIGGER_MINUTE * 60 * 1000 && earlyByMs > 0 ? budgetMs + earlyByMs : budgetMs;
+}
+
 // What --fill-cities asks for, checked. Refused like the other flags when it
 // cannot mean what it says: a name that is not a city in config.js (a typo
 // should fail the cron, not quietly fill nothing), the flag beside
@@ -860,9 +883,10 @@ async function sweepVenues(cityOrder, {
   // running, which is what happened at 02:07 on 2026-09-04 after the 01:07
   // sweep took 58 minutes (1 s pace, ~1 s BestTime latency, and a burst of
   // 30 s timeouts). Fifty minutes leaves the slot free by the next trigger
-  // (:07 fires ~:08:30). What is not reached is counted and reported, not
-  // silently dropped, and the random start above gives it a different tail
-  // next time.
+  // (the :07 trigger's container starts between :07 and :12; a sweep that
+  // starts early gets the difference, THE BUDGET RUNS FROM :12 above). What
+  // is not reached is counted and reported, not silently dropped, and the
+  // random start above gives it a different tail next time.
   //
   // It bounds STARTS, and it is looked at the moment it runs out, not only when
   // the gate next opens: the gate cuts a wait for the pace or for a hold at the
@@ -878,6 +902,12 @@ async function sweepVenues(cityOrder, {
   // call in flight answers.
   const RUN_TIME_BUDGET_MS = 50 * 60 * 1000;
   const runClockStart = now();
+  // Plus the minutes this sweep started before :12 (THE BUDGET RUNS FROM :12).
+  const runBudgetMs = runTimeBudgetMs(runClockStart, RUN_TIME_BUDGET_MS);
+  if (runBudgetMs !== RUN_TIME_BUDGET_MS) {
+    console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the fifty, plus the `
+      + `${((runBudgetMs - RUN_TIME_BUDGET_MS) / 60000).toFixed(1)} this sweep started before :12.`);
+  }
   let budgetHit = false;
   let leftForNextRun = 0;
 
@@ -994,7 +1024,7 @@ async function sweepVenues(cityOrder, {
       const cityConfig = CITIES[cityKey];
       if (!cityConfig) continue;
       const fillBlock = fillCities.has(cityKey);
-      const blockBudgetMs = fillBlock ? RUN_TIME_BUDGET_MS - fillEarlyStopMs : RUN_TIME_BUDGET_MS;
+      const blockBudgetMs = fillBlock ? runBudgetMs - fillEarlyStopMs : runBudgetMs;
       // A fill block reached after its time is counted whole and skipped,
       // weather call and all: none of its venues could start.
       if (fillBlock && (budgetHit || now() - runClockStart > blockBudgetMs)) {
@@ -1064,7 +1094,7 @@ async function sweepVenues(cityOrder, {
             + `${fillEarlyStopMs / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
           budgetHit = true;
         }
-        if (budgetHit || now() - runClockStart > RUN_TIME_BUDGET_MS) {
+        if (budgetHit || now() - runClockStart > runBudgetMs) {
           if (!budgetHit) console.warn(`[ML:Realtime] Time budget reached after ${called} calls; the rest of this sweep is left for the next run.`);
           budgetHit = true;
           leftForNextRun++;
@@ -2327,7 +2357,7 @@ module.exports = {
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
-  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, parseFillCities, orderCityBlocks,
+  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, runTimeBudgetMs, parseFillCities, orderCityBlocks,
   FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,

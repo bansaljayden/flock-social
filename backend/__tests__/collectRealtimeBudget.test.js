@@ -30,7 +30,11 @@ test('a sweep stops calling after fifty minutes and says what it left', () => {
   // collectRealtimeConcurrency.test.js, which drives this exact check through a
   // fifty-minute sweep and pins that no call starts after it.
   assert.match(collect, /const runClockStart = now\(\);/);
-  assert.match(collect, /if \(budgetHit \|\| now\(\) - runClockStart > RUN_TIME_BUDGET_MS\) \{/);
+  // Fifty minutes, plus what a sweep started between :07 and :12 started
+  // before :12 (runTimeBudgetMs, driven in collectRealtimeFillCities.test.js).
+  assert.match(collect, /const runBudgetMs = runTimeBudgetMs\(runClockStart, RUN_TIME_BUDGET_MS\);/);
+  assert.match(collect, /if \(budgetHit \|\| now\(\) - runClockStart > runBudgetMs\) \{/);
+  assert.match(collect, /const blockBudgetMs = fillBlock \? runBudgetMs - fillEarlyStopMs : runBudgetMs;/);
   assert.match(collect, /leftForNextRun\+\+;/);
   assert.match(collect, /venues left for the next run \(time budget\)/);
   // Calls already in flight when the budget runs out are waited for and counted
