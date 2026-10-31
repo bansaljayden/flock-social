@@ -647,15 +647,23 @@ test('loadBusyNow returns each fill city\'s venues busy at its own local day and
 // buildBaselines.collectedBaselinesDue decides whether the hourly run's tail
 // rebuilds the baselines, and so when its fill stops, so it is pinned against
 // real rows: due while a weekly write is stamped after the newest baseline,
-// not due once a rebuild has caught up, due again after the next write, and
-// due at the daily hour whatever the stamps say.
-test('collectedBaselinesDue: a weekly write after the newest baseline is due; a caught-up rebuild is not', async () => {
-  const { collectedBaselinesDue, refreshCollectedBaselines, DAILY_REBUILD_UTC_HOUR } = require('../scripts/ml/buildBaselines');
+// not due once a rebuild has caught up, not due for a stamp a moment late
+// (production's own case, 0.495 s), due again after a real write, and due at
+// the daily hour whatever the stamps say. Explicit instants, an hour ahead of
+// anything the tests above seeded, keep the order independent of how fast
+// this runs.
+test('collectedBaselinesDue: a weekly write after the newest baseline is due; a caught-up rebuild or a late stamp is not', async () => {
+  const {
+    collectedBaselinesDue, refreshCollectedBaselines, DAILY_REBUILD_UTC_HOUR, STAMP_TOLERANCE_SECONDS,
+  } = require('../scripts/ml/buildBaselines');
   const offHour = new Date(Date.UTC(2026, 9, 30, (DAILY_REBUILD_UTC_HOUR + 6) % 24, 30, 0));
   const dailyHour = new Date(Date.UTC(2026, 9, 30, DAILY_REBUILD_UTC_HOUR, 30, 0));
-  // A week stamped the way collectWeekly.js stamps one: the rows and the
-  // venue's last_collected_at in one transaction, on its one NOW().
-  const writeWeek = async (place) => {
+  const base = Date.now() + 3600 * 1000;
+  const at = (ms) => new Date(base + ms);
+  // A week written the way the weekly writers write one: the rows, and the
+  // venue's last_collected_at, in one transaction. `stampAt` defaults to the
+  // rows' own instant, which is what one NOW() gives.
+  const writeWeek = async (place, rowsAt, stampAt = rowsAt) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -667,9 +675,9 @@ test('collectedBaselinesDue: a weekly write after the newest baseline is due; a 
       await client.query(
         `INSERT INTO ml_training_data
            (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
-         SELECT $1, 'weekly', 'venue_local', d, h, 'bar', 30, NOW()
-           FROM generate_series(0, 6) d, generate_series(0, 23) h`, [id]);
-      await client.query('UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1', [id]);
+         SELECT $1, 'weekly', 'venue_local', d, h, 'bar', 30, $2
+           FROM generate_series(0, 6) d, generate_series(0, 23) h`, [id, rowsAt]);
+      await client.query('UPDATE ml_venues SET last_collected_at = $2 WHERE id = $1', [id, stampAt]);
       await client.query('COMMIT');
     } catch (err) {
       await client.query('ROLLBACK');
@@ -678,27 +686,40 @@ test('collectedBaselinesDue: a weekly write after the newest baseline is due; a 
       client.release();
     }
   };
+  const due = async () => collectedBaselinesDue(pool, { at: offHour });
 
   // The loadBusyNow fixture above leaves a weekly row on the old axis, which
   // the rebuild refuses to average (REFUSAL_MESSAGE); it has served its test.
   await pool.query(`DELETE FROM ml_training_data
                      WHERE collection_mode = 'weekly' AND hour_axis IS DISTINCT FROM 'venue_local'`);
-  await writeWeek('ChIJbaselineDueWeek1');
-  const first = await collectedBaselinesDue(pool, { at: offHour });
+  await writeWeek('ChIJbaselineDueWeek1', at(0));
+  const first = await due();
   assert.strictEqual(first.due, true, first.reason);
   assert.match(first.reason, /^(a weekly curve was written at .+, after the newest baseline|no weekly or baseline stamp to compare)/);
 
   assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
-  const caughtUp = await collectedBaselinesDue(pool, { at: offHour });
+  const caughtUp = await due();
   assert.strictEqual(caughtUp.due, false, caughtUp.reason);
-  assert.match(caughtUp.reason, /^no weekly curve written since the newest baseline \(\d{4}-\d{2}-\d{2}T/);
+  assert.strictEqual(caughtUp.reason, `no weekly curve written since the newest baseline (${at(0).toISOString()})`);
   // The daily hour rebuilds whatever the stamps say.
   assert.strictEqual((await collectedBaselinesDue(pool, { at: dailyHour })).due, true);
 
-  await writeWeek('ChIJbaselineDueWeek2');
-  const again = await collectedBaselinesDue(pool, { at: offHour });
-  assert.strictEqual(again.due, true, again.reason);
-  assert.match(again.reason, /^a weekly curve was written at .+, after the newest baseline/);
+  // Production on 2026-10-31: rows at one instant, the stamp 0.495 s after
+  // them (a stamp written after COMMIT). Before a rebuild it is a new week;
+  // after one, the half second it can never close is not.
+  assert.strictEqual(STAMP_TOLERANCE_SECONDS, 5);
+  await writeWeek('ChIJbaselineLateStamp', at(60 * 1000), at(60 * 1000 + 495));
+  assert.strictEqual((await due()).due, true);
   assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
-  assert.strictEqual((await collectedBaselinesDue(pool, { at: offHour })).due, false);
+  const late = await due();
+  assert.strictEqual(late.due, false, late.reason);
+
+  // A real write after that rebuild is due again, and caught up by the next.
+  await writeWeek('ChIJbaselineDueWeek2', at(120 * 1000));
+  const again = await due();
+  assert.strictEqual(again.due, true, again.reason);
+  assert.strictEqual(again.reason, `a weekly curve was written at ${at(120 * 1000).toISOString()}, `
+    + `after the newest baseline (${at(60 * 1000).toISOString()})`);
+  assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
+  assert.strictEqual((await due()).due, false);
 });

@@ -206,9 +206,20 @@ async function refreshCollectedBaselines(pool) {
 // nothing stays stale for more than a day. A missing stamp is "due", and the
 // caller treats a failure to read them as "due" too.
 const DAILY_REBUILD_UTC_HOUR = 9;
+// A STAMP A MOMENT LATE IS NOT A NEW WEEK. The first hourly run with this
+// check (2026-10-31 01:07 UTC) read the newest venue stamp as
+// 2026-10-07T00:05:12.757Z and the newest baseline as 00:05:12.262Z, 0.495 s
+// apart: the 10-06 refresh ran before collectWeekly moved the stamp into the
+// rows' transaction, when it was a separate UPDATE after COMMIT, and no
+// rebuild can close that gap, so every hour read "due". A stamp counts as a
+// newer write only when it is more than this past the newest baseline. A real
+// write after a rebuild lands minutes or hours later; the one a few seconds
+// could hide is the last write of a burst that straddles a rebuild, and the
+// daily rebuild takes that.
+const STAMP_TOLERANCE_SECONDS = 5;
 // Compared in SQL, at the columns' microseconds: a JS Date keeps milliseconds.
 const STAMPS_SQL = `
-  SELECT corpus_at, baselines_at, corpus_at > baselines_at AS behind
+  SELECT corpus_at, baselines_at, corpus_at > baselines_at + make_interval(secs => $1) AS behind
     FROM (SELECT (SELECT MAX(last_collected_at) FROM ml_venues) AS corpus_at,
                  (SELECT MAX(updated_at) FROM ml_venue_baselines WHERE source = 'collected') AS baselines_at) s
 `;
@@ -217,7 +228,7 @@ async function collectedBaselinesDue(db, { at = new Date() } = {}) {
   if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
     return { due: true, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
   }
-  const { rows: [stamps] } = await db.query(STAMPS_SQL);
+  const { rows: [stamps] } = await db.query(STAMPS_SQL, [STAMP_TOLERANCE_SECONDS]);
   if (!stamps.corpus_at || !stamps.baselines_at) {
     return { due: true, reason: 'no weekly or baseline stamp to compare' };
   }
@@ -272,6 +283,7 @@ module.exports = {
   refreshCollectedBaselines,
   collectedBaselinesDue,
   DAILY_REBUILD_UTC_HOUR,
+  STAMP_TOLERANCE_SECONDS,
   REFUSAL_MESSAGE,
   HOUR_AXIS_VENUE_LOCAL,
   DELETE_STALE_SQL,
