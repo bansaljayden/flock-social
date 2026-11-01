@@ -707,6 +707,26 @@ function fillOpenShares(byCity, fillCities, openHourMasks, busyNow, at = new Dat
   return shares;
 }
 
+// Which of `venueIds` already hold a realtime row for `local`'s day, hour and
+// date (config.getLocalTime's, the clock storeReading files the row under), as
+// a Set of ml_venues ids: the rows the unique key would refuse a second time
+// (ALREADY RECORDED THIS HOUR, in sweepVenues). One query per city block, on
+// migration 024's realtime index.
+async function loadRecordedThisHour(venueIds, local, { db = pool } = {}) {
+  if (!venueIds.length) return new Set();
+  const { rows } = await db.query(
+    `SELECT DISTINCT venue_id
+       FROM ml_training_data
+      WHERE collection_mode = 'realtime'
+        AND observed_date = $1::date
+        AND day_of_week = $2
+        AND hour = $3
+        AND venue_id = ANY($4::int[])`,
+    [local.dateStr, local.dayOfWeek, local.hour, venueIds]
+  );
+  return new Set(rows.map((row) => row.venue_id));
+}
+
 // The venues of each fill city whose weekly curve is above zero at the city's
 // local day and hour at `at`, as city -> Set of ml_venues ids. One query over
 // the weekly rows loadOpenHourMasks reads; day_of_week is config.getLocalTime's,
@@ -899,6 +919,10 @@ async function sweepVenues(cityOrder, {
   // when the run's tail has no baseline rebuild).
   fillCities = new Set(),
   fillEarlyStopMs = FILL_EARLY_STOP_MS,
+  // ALREADY RECORDED THIS HOUR (below): (cityKey, venues, local) resolves to
+  // the ids of this block's venues that already have a realtime row for the
+  // block's local day, hour and date. Null asks nothing and calls as before.
+  recordedThisHour = null,
   fetchLive = fetchLiveBusyness,
   weatherFor = getWeather,
   now = Date.now,
@@ -911,6 +935,9 @@ async function sweepVenues(cityOrder, {
   // their own local hour. Counted separately from `skipped`, which keeps its
   // old meaning exactly: a venue that WAS called and had nothing to say.
   let closedSkips = 0;
+  // Venues never called because their row for this local hour is already in
+  // the table, so an answer could only be dropped by the unique key.
+  let recordedSkips = 0;
   // Venues actually asked about. Counted rather than derived, so an aborted run
   // reports what it spent instead of what it planned to.
   let called = 0;
@@ -1146,6 +1173,34 @@ async function sweepVenues(cityOrder, {
       console.log(`\n[ML:Realtime] ${cityConfig.name} (${local.dateStr} ${local.hour}:00 local)`
         + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
 
+      // ALREADY RECORDED THIS HOUR (2026-11-01). A realtime row is keyed on
+      // the venue's local day, hour and date (migration 024; storeReading's ON
+      // CONFLICT ... DO NOTHING), so a second answer in the same local hour is
+      // thrown away, and the call that bought it was sweep time another venue
+      // could have had. That happens whenever a city is swept twice inside one
+      // local hour: India's half-hour offset puts Delhi and Mumbai in the same
+      // IST hour in consecutive runs (Delhi 0 live of 516 calls at 08:07 UTC
+      // on 2026-10-31 and 0 of 525 at 10:07 UTC on 11-01, every answer a
+      // duplicate), and the repeated 1 AM at the end of daylight saving did the
+      // same to all six US cities on 11-01 (1,745 calls, no row). So each block
+      // asks once which of its venues already hold this hour's row and does
+      // not call them. Only while a venue's own clock still reads the hour the
+      // block asked about: once the hour turns, or for a venue on another
+      // clock, it is called as before. A failed lookup asks nothing and calls
+      // everything, the old behaviour.
+      let recorded = null;
+      if (recordedThisHour) {
+        try {
+          recorded = await recordedThisHour(cityKey, cityVenues, local);
+        } catch (err) {
+          recorded = null;
+          console.error(`[ML:Realtime] Rows already recorded this hour could not be read for ${cityConfig.name} `
+            + `(${describeError(err)}); calling every venue.`);
+        }
+      }
+      const sameSlot = (obs) => obs.dateStr === local.dateStr && obs.dayOfWeek === local.dayOfWeek
+        && obs.hour === local.hour;
+
       // Waits until the gate lets one more call start, refreshing this city's
       // weather first when the hour has turned. It loops rather than refreshing
       // and returning because the refetch takes time, in which a completion can
@@ -1224,6 +1279,10 @@ async function sweepVenues(cityOrder, {
           closedSkips++;
           continue;
         }
+        if (recorded && recorded.has(venue.id) && sameSlot(obs)) {
+          recordedSkips++;
+          continue;
+        }
 
         called++;
         // EVERYTHING THE ROW NEEDS FROM THIS MOMENT TRAVELS WITH THE CALL: its
@@ -1256,7 +1315,7 @@ async function sweepVenues(cityOrder, {
   if (sweepError) throw sweepError;
 
   return {
-    totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
+    totalRows, skipped, closedSkips, recordedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
     aborted, abortReason, budgetHit, leftForNextRun, peakInFlight: gate.peak,
   };
 }
@@ -2102,7 +2161,7 @@ async function collectRealtime() {
       + `(${fillEarlyStopMs === FILL_EARLY_STOP_MS ? 'a baseline rebuild is due' : 'no baseline rebuild'}).`);
   }
   const {
-    totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
+    totalRows, skipped, closedSkips, recordedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
     aborted, abortReason, budgetHit, leftForNextRun, peakInFlight,
   } = await sweepVenues(cityOrder, {
     openHourMasks, maxInFlight, startIntervalMs, store: async (venue, at, live) => {
@@ -2121,6 +2180,7 @@ async function collectRealtime() {
       });
       return fetchLiveBusyness(vendorId);
     },
+    recordedThisHour: (cityKey, cityVenues, local) => loadRecordedThisHour(cityVenues.map((v) => v.id), local),
     fillCities: fillSet,
     fillEarlyStopMs,
   });
@@ -2156,6 +2216,7 @@ async function collectRealtime() {
   console.log(`\n[ML:Realtime] ${aborted ? 'ABORTED EARLY' : 'Done'}. ${totalRows} rows inserted `
     + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped`
     + `, ${closedSkips} venues not called (closed at their local hour)`
+    + `${recordedSkips > 0 ? `, ${recordedSkips} not called (already recorded this local hour)` : ''}`
     + `, ${called} calls spent of ${venues.length} venues in scope`
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}`
     + `${vanished > 0 ? `, ${vanished} venues retired or unmapped by the venue repair mid-sweep` : ''}`
@@ -2226,7 +2287,7 @@ async function collectRealtime() {
   // every night. The invariant is unchanged — every venue in scope must be
   // accounted for by SOME skip before an empty run is allowed to pass. A venue
   // the repair retired mid-sweep is accounted for the same way.
-  if (totalRows === 0 && duplicateRows === 0 && skipped + closedSkips + vanished < venues.length) {
+  if (totalRows === 0 && duplicateRows === 0 && skipped + closedSkips + recordedSkips + vanished < venues.length) {
     throw new Error(
       `REFUSED: the run completed without aborting and wrote 0 rows, having skipped ${skipped} `
       + `of the ${called} venues it called (and left ${closedSkips} of ${venues.length} uncalled as `
@@ -2463,7 +2524,7 @@ module.exports = {
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, runTimeBudgetMs, parseFillCities, orderCityBlocks,
-  FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, holdoutFirst,
+  FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, loadRecordedThisHour, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading

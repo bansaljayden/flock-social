@@ -361,6 +361,63 @@ test('a sweep started at :08 stops its fill four minutes later, where one starte
   assert.ok(!onTheHour.lines.some((l) => /Time budget \d/.test(l.text)), 'a start on the hour reported an extended budget');
 });
 
+// ALREADY RECORDED THIS HOUR: a venue whose row for this local hour is in the
+// table is not called, since the unique key would drop its answer.
+test('venues already recorded this local hour are not called; the rest of the block is', async () => {
+  const main = venuesFor('philly', 10, 1);
+  const asked = [];
+  const { result, calls } = await sweepWithFill([['philly', main]], [], {
+    recordedThisHour: async (cityKey, venues, local) => {
+      asked.push({ cityKey, n: venues.length, local });
+      return new Set([2, 5, 9]);
+    },
+  });
+  assert.deepStrictEqual(calls.map((c) => c.vendorId).sort(),
+    main.filter((v) => ![2, 5, 9].includes(v.id)).map((v) => v.besttime_venue_id).sort());
+  assert.strictEqual(result.recordedSkips, 3);
+  assert.strictEqual(result.called, 7);
+  // Asked once for the block, with the block's own local clock.
+  assert.strictEqual(asked.length, 1);
+  assert.strictEqual(asked[0].cityKey, 'philly');
+  assert.strictEqual(asked[0].n, 10);
+  assert.deepStrictEqual([asked[0].local.dateStr, asked[0].local.hour], ['2026-09-25', 19]);
+});
+
+test('a venue on another clock than the block asked about is called even when listed', async () => {
+  // Same id as a recorded one, but its own clock is Pacific: its slot is not
+  // the one the block looked up, so its answer would not be a duplicate.
+  const main = venuesFor('philly', 3, 1).map((v) => (v.id === 2 ? { ...v, timezone: 'America/Los_Angeles' } : v));
+  const { result, calls } = await sweepWithFill([['philly', main]], [], {
+    recordedThisHour: async () => new Set([1, 2]),
+  });
+  assert.deepStrictEqual(calls.map((c) => c.vendorId).sort(), ['bt_philly_2', 'bt_philly_3']);
+  assert.strictEqual(result.recordedSkips, 1);
+});
+
+test('a lookup that fails calls every venue, as before, and says so', async () => {
+  const main = venuesFor('philly', 4, 1);
+  const { result, calls, lines } = await sweepWithFill([['philly', main]], [], {
+    recordedThisHour: async () => { throw new Error('connection reset'); },
+  });
+  assert.strictEqual(calls.length, 4);
+  assert.strictEqual(result.recordedSkips, 0);
+  assert.ok(lines.some((l) => l.level === 'error'
+    && /Rows already recorded this hour could not be read for Philadelphia \(.*connection reset.*\); calling every venue\./.test(l.text)));
+  // And with no lookup at all nothing is skipped.
+  const plain = await sweepWithFill([['philly', venuesFor('philly', 4, 1)]], []);
+  assert.strictEqual(plain.calls.length, 4);
+  assert.strictEqual(plain.result.recordedSkips, 0);
+});
+
+test('run() asks per block, reports the skips, and counts them before refusing an empty run', () => {
+  const src = SRC.replace(/\r\n/g, '\n');
+  assert.match(src, /recordedThisHour: \(cityKey, cityVenues, local\) => loadRecordedThisHour\(cityVenues\.map\(\(v\) => v\.id\), local\),/);
+  assert.match(src, /\$\{recordedSkips > 0 \? `, \$\{recordedSkips\} not called \(already recorded this local hour\)` : ''\}/);
+  assert.match(src, /skipped \+ closedSkips \+ recordedSkips \+ vanished < venues\.length/);
+  // Only while the venue's own clock still reads the hour the block asked about.
+  assert.match(src, /if \(recorded && recorded\.has\(venue\.id\) && sameSlot\(obs\)\) \{\n {10}recordedSkips\+\+;\n {10}continue;/);
+});
+
 test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {
   const src = SRC.replace(/\r\n/g, '\n');
   assert.match(src, /let fillEarlyStopMs = FILL_EARLY_STOP_MS;/);

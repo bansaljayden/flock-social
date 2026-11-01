@@ -304,16 +304,34 @@ test('the row the open venue produced is unchanged by the filter', async () => {
 });
 
 test('--no-open-hours calls everything, so the filter can always be stood down', async () => {
-  CALLED = [];
-  process.argv.push('--no-open-hours');
-  try {
-    await freshCollector().run();
-  } finally {
-    process.argv.splice(process.argv.indexOf('--no-open-hours'), 1);
-  }
+  // The sweep above recorded this hour's rows, and a venue that already holds
+  // its row for the hour is not called again (ALREADY RECORDED THIS HOUR), so
+  // the hour starts clean here: this test is about the open-hours filter.
+  const fixtures = [venueIds.open, venueIds.closed, venueIds.blind, venueIds.partial];
+  await pool.query(`DELETE FROM ml_training_data WHERE collection_mode = 'realtime' AND venue_id = ANY($1::int[])`, [fixtures]);
+  const sweepNoFilter = async () => {
+    CALLED = [];
+    process.argv.push('--no-open-hours');
+    try {
+      await freshCollector().run();
+    } finally {
+      process.argv.splice(process.argv.indexOf('--no-open-hours'), 1);
+    }
+  };
+  await sweepNoFilter();
   assert.strictEqual(CALLED.length, 4,
     'with the filter off every venue in scope is called, including the shut one');
   assert.ok(CALLED.includes('bt_' + CLOSED_PLACE));
+
+  // Swept again inside the same local hour, every venue already holds the
+  // row its answer would make, so none is called, and a run that wrote
+  // nothing for that reason is not refused as empty. (If the hour turned
+  // between the two sweeps they are new rows, and the second sweep calls.)
+  const hourBefore = getLocalTime(TZ).hour;
+  await sweepNoFilter();
+  if (getLocalTime(TZ).hour === hourBefore) {
+    assert.deepStrictEqual(CALLED, [], 'a venue already recorded this local hour was called again');
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -697,6 +715,43 @@ test('loadOpenHourMasks also gives each judged venue its busy hours by weekday, 
   // Not asked: the same masks, and the query has no slots to read.
   const plain = await loadOpenHourMasks([CITY], { db: pool });
   assert.deepStrictEqual([...plain.entries()].sort(), [...masks.entries()].sort());
+});
+
+// ALREADY RECORDED THIS HOUR: the lookup returns exactly the venues whose
+// realtime row for that local day, hour and date exists, which are exactly
+// the rows storeReading's ON CONFLICT would refuse a second time.
+test('loadRecordedThisHour finds the venues holding this local hour\'s realtime row, and nothing else', async () => {
+  const { loadRecordedThisHour } = collectRealtime;
+  const venue = async (place) => (await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, timezone, is_active)
+     VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, true) RETURNING id`,
+    [place, 'bt_' + place, CITY, TZ])).rows[0].id;
+  const row = (venueId, mode, day, hour, date) => pool.query(
+    `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                   busyness_pct, observed_date, label_source)
+     VALUES ($1, $2, 'venue_local', $3, $4, 'bar', 40, $5, $6)`,
+    [venueId, mode, day, hour, date, mode === 'realtime' ? 'live' : null]);
+  const ids = {
+    now: await venue('ChIJrecordedNow00001'),
+    otherHour: await venue('ChIJrecordedHour0001'),
+    otherDate: await venue('ChIJrecordedDate0001'),
+    weeklyOnly: await venue('ChIJrecordedWeekly01'),
+    never: await venue('ChIJrecordedNever001'),
+  };
+  // Sunday 2026-11-01, 01:00 local: the repeated hour at the end of DST.
+  const local = { dateStr: '2026-11-01', dayOfWeek: 0, hour: 1 };
+  await row(ids.now, 'realtime', 0, 1, '2026-11-01');
+  await row(ids.otherHour, 'realtime', 0, 2, '2026-11-01');
+  await row(ids.otherDate, 'realtime', 0, 1, '2026-10-25');
+  await row(ids.weeklyOnly, 'weekly', 0, 1, null);
+
+  const all = Object.values(ids);
+  const recorded = await loadRecordedThisHour(all, local, { db: pool });
+  assert.deepStrictEqual([...recorded], [ids.now]);
+  // Only the venues asked about, and an empty list asks nothing.
+  assert.deepStrictEqual([...(await loadRecordedThisHour([ids.never, ids.otherHour], local, { db: pool }))], []);
+  assert.deepStrictEqual([...(await loadRecordedThisHour([], local, { db: pool }))], []);
 });
 
 // buildBaselines.collectedBaselinesDue decides whether the hourly run's tail

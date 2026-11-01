@@ -655,8 +655,9 @@ test('both collectors re-resolve the venue inside the lock, immediately before t
   assert.match(collect, /let vanished = 0;/);
   assert.match(collect, /vanished\+\+;/);
   // A retired venue is accounted for in the empty-run refusal, or an hour in
-  // which the repair retired every venue in scope would exit non-zero.
-  assert.match(collect, /skipped \+ closedSkips \+ vanished < venues\.length/);
+  // which the repair retired every venue in scope would exit non-zero. So is a
+  // venue left uncalled because this local hour's row is already recorded.
+  assert.match(collect, /skipped \+ closedSkips \+ recordedSkips \+ vanished < venues\.length/);
   // Weekly: the id may have been learned this iteration, so it is the claimed
   // id, and NULL on both sides must still match.
   const wkCheck = weekly.indexOf("'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id IS NOT DISTINCT FROM $2'");
