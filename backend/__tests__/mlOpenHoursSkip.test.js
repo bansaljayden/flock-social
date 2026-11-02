@@ -318,6 +318,8 @@ test('--no-open-hours calls everything, so the filter can always be stood down',
       process.argv.splice(process.argv.indexOf('--no-open-hours'), 1);
     }
   };
+  const slot = () => { const t = getLocalTime(TZ); return `${t.dateStr} ${t.hour}`; };
+  const slotBefore = slot();
   await sweepNoFilter();
   assert.strictEqual(CALLED.length, 4,
     'with the filter off every venue in scope is called, including the shut one');
@@ -325,12 +327,18 @@ test('--no-open-hours calls everything, so the filter can always be stood down',
 
   // Swept again inside the same local hour, every venue already holds the
   // row its answer would make, so none is called, and a run that wrote
-  // nothing for that reason is not refused as empty. (If the hour turned
-  // between the two sweeps they are new rows, and the second sweep calls.)
-  const hourBefore = getLocalTime(TZ).hour;
-  await sweepNoFilter();
-  if (getLocalTime(TZ).hour === hourBefore) {
-    assert.deepStrictEqual(CALLED, [], 'a venue already recorded this local hour was called again');
+  // nothing for that reason is not refused as empty. (If the hour turned at
+  // any point across the two sweeps the rows can be in different hours, and
+  // the second sweep rightly calls.)
+  try {
+    await sweepNoFilter();
+    if (slot() === slotBefore) {
+      assert.deepStrictEqual(CALLED, [], 'a venue already recorded this local hour was called again');
+    }
+  } finally {
+    // The next section tests the closed-hours path alone, with no rows in
+    // the way.
+    await pool.query(`DELETE FROM ml_training_data WHERE collection_mode = 'realtime' AND venue_id = ANY($1::int[])`, [fixtures]);
   }
 });
 
@@ -744,7 +752,8 @@ test('loadRecordedThisHour finds the venues holding this local hour\'s realtime 
   await row(ids.now, 'realtime', 0, 1, '2026-11-01');
   await row(ids.otherHour, 'realtime', 0, 2, '2026-11-01');
   await row(ids.otherDate, 'realtime', 0, 1, '2026-10-25');
-  await row(ids.weeklyOnly, 'weekly', 0, 1, null);
+  // The same day, hour and date, but a weekly row: only the mode keeps it out.
+  await row(ids.weeklyOnly, 'weekly', 0, 1, '2026-11-01');
 
   const all = Object.values(ids);
   const recorded = await loadRecordedThisHour(all, local, { db: pool });

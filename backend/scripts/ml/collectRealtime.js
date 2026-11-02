@@ -2291,8 +2291,9 @@ async function collectRealtime() {
     throw new Error(
       `REFUSED: the run completed without aborting and wrote 0 rows, having skipped ${skipped} `
       + `of the ${called} venues it called (and left ${closedSkips} of ${venues.length} uncalled as `
-      + 'closed). That is not a plausible outcome of a healthy run. If every venue was genuinely '
-      + 'already recorded for this venue-hour-date, the duplicate counter would say so; it says 0.');
+      + `closed and ${recordedSkips} as already recorded this local hour). That is not a plausible outcome `
+      + 'of a healthy run. If every venue was genuinely already recorded for this venue-hour-date, the '
+      + 'duplicate counter or the already-recorded count would cover them all; together they do not.');
   }
 }
 
