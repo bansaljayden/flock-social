@@ -390,6 +390,24 @@ async function loadOpenHourMasks(cityScope, { weekDays = null, db = pool } = {})
 // call to a venue whose weekly curve covers the day, would each rule below
 // have made it, and did it come back live. They only count. What is called is
 // still decided by the rule above, and nothing here can fail a call.
+//
+// WHAT 33 HOURS OF THEM SAID (2026-10-31 12:00 UTC to 11-01 21:00 UTC, a
+// Saturday and most of a Sunday in the US). Main scope, 99,275 calls to
+// venues with a full curve, 65,085 live:
+//     same weekday +/-1h ... 16,034 calls not made, 538 of them live (0.8%)
+//     same weekday +/-2h ...  4,918 calls not made, 192 of them live
+//     week-wide +/-1h ...... 11,255 calls not made, 299 of them live
+// In the US small hours (00-06 local) the main scope's live share is 31%, and
+// same weekday +/-1h would have skipped 36% of its calls for 3.6% of its live
+// readings. Every call the sweep does not make goes to the fill city the
+// budget cut, live about three times in four, so over those 33 runs
+// same weekday +/-1h comes to about 11,600 more rows and week-wide +/-1h about
+// 8,000. The main scope's 233 venues without a full curve (the same 233 every
+// run, called whatever the hour) gave 2,338 live of 7,689 calls, 1.7% at
+// night. No rule has been switched on: what a narrower rule gives up is the
+// venue open when its curve says shut, which is the deviation the model most
+// needs to see (MODEL-METRICS.md section 4), so the trade is a decision, not
+// a fix.
 const NARROWER_OPEN_HOUR_RULES = [
   { label: 'same weekday +/-1h', sameDay: true, pad: 1 },
   { label: 'same weekday +/-2h', sameDay: true, pad: 2 },
@@ -1187,7 +1205,9 @@ async function sweepVenues(cityOrder, {
       // not call them. Only while a venue's own clock still reads the hour the
       // block asked about: once the hour turns, or for a venue on another
       // clock, it is called as before. A failed lookup asks nothing and calls
-      // everything, the old behaviour.
+      // everything, the old behaviour. Its first twenty runs (to 2026-11-02
+      // 21:00 UTC) left 427, 415 and 396 calls unmade in three of them, none
+      // in the rest, with no lookup failing and no duplicate written.
       let recorded = null;
       if (recordedThisHour) {
         try {
