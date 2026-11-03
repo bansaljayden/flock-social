@@ -411,6 +411,29 @@ test('a verb in its base form right after the room doing it is a reading, and a 
   }
 });
 
+test('one day or the room doing it, in the third person or the past, is a reading too', () => {
+  // Third round, 2026-11-03: CLAIM_VERB holds "sees" and "fills" but not
+  // "draws", "sells", "packs" or "lets", and "drew" and "sent" were no verb
+  // in the past at all.
+  for (const claim of [
+    'Your Friday draws 300 people.',
+    'Your Friday drew 300 people.',
+    'Friday drew a crowd of 300.',
+    'Your bar sells 400 drinks on Fridays.',
+    'Your room packs in 300 people on Saturdays.',
+    'Your door lets in 300 people on Fridays.',
+    'Your Friday crowd tops out at 300.',
+    'Your Friday crowd spends $40 a head.',
+    'Your kitchen sent out 200 plates last night.',
+    'Your Saturday welcomed 250 guests.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" is a reading nobody measured`);
+  for (const fine of [
+    'Make the Friday special $12 and keep it on the board for 6 weeks.',
+    'Your menu needs 3 fewer items.',
+    'Give your bar 2 wells at the peak.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
+});
+
 test('a report in the past is a reading whatever its verb, and a rule about other rooms in the past is not', () => {
   // Third round, 2026-11-03: "complained", "left", "ordered", "comped" and
   // "rated" are not claim verbs, and "guests" is not the venue, so all of

@@ -547,7 +547,12 @@ const BASE_VERB = /(?:see|serve|pour|sell|seat|host|draw|pull|bring|fill|do|get|
 const DOER = /(?:(?:you|we|they)(?:['’]ll|\s+will)?|(?:mon|tues|wednes|thurs|fri|satur|sun)days|weekends|weekdays|nights|evenings|mornings|afternoons|lunches|dinners|brunches|guests|customers|regulars|diners|visitors|patrons|servers|bartenders|staff|crowds|reviews|reviewers|people)/;
 const OFTEN = /(?:usually|typically|often|normally|always|still|also|only|generally|regularly|reliably|consistently|routinely|easily|already)/;
 const VERB_TO_NUMBER = /(?:\s+(?!(?:and|but|or|so|then|if|when|whether|because|which|who|whom|that|while|why|how|what|where)\b)[^\s,;:.!?]+){0,3}\s*$/;
-const DOES = `${DOER.source}\\s+(?:${OFTEN.source}\\s+)?${BASE_VERB.source}\\b${VERB_TO_NUMBER.source}`;
+// And one day or the room itself doing it, in the third person ("your Friday
+// draws 300 people", "your bar sells 400 drinks", "your door lets in 300"):
+// the same list with its "-s", which CLAIM_VERB holds only some of.
+const ONE_DOER = /(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day|(?:the|your|our)\s+(?:\w+\s+)?(?:room|bar|kitchen|floor|door|crowd|patio|place|venue|line|team|menu|special|night|week|weekend|brunch|lunch|dinner|service|rush|peak|day|event))/;
+const BASE_VERB_S = /(?:sees|serves|pours|sells|seats|hosts|draws|pulls|brings|fills|does|gets|averages|reaches|tops|books|welcomes|packs|handles|counts|logs|records|posts|rings|grosses|nets|takes|makes|earns|holds|attracts|runs|hits|turns|peaks|lands|opens|closes|starts|ends|stays|sits|waits|visits|orders|rates|mentions|returns|arrives|comes|walks|leaves|shows|spends|lets)/;
+const DOES = `(?:${DOER.source}\\s+(?:${OFTEN.source}\\s+)?${BASE_VERB.source}|${ONE_DOER.source}\\s+(?:${OFTEN.source}\\s+)?${BASE_VERB_S.source})\\b${VERB_TO_NUMBER.source}`;
 const DOER_THEN_BASE = new RegExp(`\\b${DOES}`, 'i');
 // A target or a condition in front of the doer is not a reading: "make sure
 // you get 2 servers on", "until you fill 40 seats", "once you hit 100 covers".
@@ -671,7 +676,10 @@ const NARRATOR = /\b(?:i|we|they|he|she|it|someone|somebody|everyone|everybody|n
 const PAST_TENSE = /\b(?:\w{2,}(?<!e)ed|fell|rose|grew|went|came|took|got|ran|saw|made|had|was|were|did|found|left|lost|spent|brought|bought|sold|paid|kept|led|said|told|knew|thought)\b/i;
 // The room doing something in the past, right in front of its verb, with the
 // number within three words after it: a report with or without a time word.
-const DOER_IN_THE_PAST = new RegExp(`\\b${DOER.source}\\s+(?:${OFTEN.source}\\s+)?${PAST_TENSE.source}${VERB_TO_NUMBER.source}`, 'i');
+// A few verbs in the past that PAST_TENSE does not hold are read here only
+// ("your Friday drew 300", "your kitchen sent out 200 plates").
+const PAST_TOO = /\b(?:drew|sent|held|gave|won|rang|began|ate|drank|sat|stood|fed|let)\b/;
+const DOER_IN_THE_PAST = new RegExp(`\\b(?:${DOER.source}|${ONE_DOER.source})\\s+(?:${OFTEN.source}\\s+)?(?:${PAST_TENSE.source}|${PAST_TOO.source})${VERB_TO_NUMBER.source}`, 'i');
 // Where a narrative or a claim can start inside the sentence: a colon (or a
 // letter that looks like one), a semicolon, a bracket, a second sentence, or
 // a word that opens a clause of its own.
