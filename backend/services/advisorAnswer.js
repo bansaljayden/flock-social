@@ -246,30 +246,20 @@ const PROHIBITED_ADVICE = [
   },
 ];
 
-// TWO WORDS THAT VOIDED GOOD ANSWERS IN THE 2026-11-03 LIVE EVAL, read the
-// way the answer used them. "Release unpaid or unconfirmed tables 15 minutes
-// past the booking time" (a club, on no-shows) was voided as an employment
-// instruction, and "only if you can rope it off without choking the room" (a
-// bar, on bottle service) as a medical one; the owner got the playbook's
-// answer instead of the one written for their question.
-//
-// Narrow on purpose. "Unpaid" is set aside only where it qualifies a guest's
-// money (a table, a deposit, a tab, a bill) in a sentence that names no one on
-// staff and no one's pay, so "make the bartender cover unpaid tabs from their
-// tips" is still void. "Choking" is set aside only where its object is a part
-// of the room ("choking the door"); a person choking, or choking on anything,
-// is still void.
-const GUEST_MONEY_UNPAID = /\bunpaid((?:\s+(?:or|and)\s+[a-z]+)?\s+(?:tables?|deposits?|bookings?|reservations?|tabs?|bills?|checks?|cheques?|invoices?|orders?|balances?)\b)/gi;
-const STAFF_OR_PAY = /\b(?:staff|server|servers|bartenders?|baristas?|cooks?|chefs?|hosts?|hostess|crew|team|employees?|workers?|closers?|openers?|runners?|barbacks?|managers?|porters?|dishwashers?|security|door\s+staff|tips?|wages?|pay|paycheck|paychecks|salary|payroll|shifts?|rota)\b/i;
-const ROOM_CHOKING = /\bchoking(\s+(?:the|your|our|their|a)?\s*(?:room|floor|doors?|entrance|entry|line|lines|queue|bar|aisles?|flow|walkway|space|service|kitchen|pass|traffic|counter|register|till|dance\s+floor)\b)/gi;
-function asMeant(text) {
-  return splitSentences(text)
-    .map((s) => (STAFF_OR_PAY.test(s) ? s : s.replace(GUEST_MONEY_UNPAID, 'open$1')).replace(ROOM_CHOKING, 'crowding$1'))
-    .join(' ');
-}
-
 /**
  * The reason the whole answer is void, or null.
+ *
+ * NO WORD IS READ IN ITS INNOCENT SENSE, ON PURPOSE (2026-11-03). The live
+ * eval lost two good answers to a word read the other way: "Release unpaid or
+ * unconfirmed tables" (a club, on no-shows) as an employment instruction and
+ * "without choking the room" (a bar, on bottle service) as a medical one.
+ * Setting those words aside when they named a guest's money or a part of the
+ * room was tried the same night, and an adversarial review got real
+ * instructions through it: "Make the waiter cover unpaid tabs out of pocket",
+ * "Ask new hires to work two unpaid tables as a trial", "If a guest starts
+ * choking the floor staff should stand behind them and pull sharply in and up
+ * under the ribs". The check stays strict, and the contract asks the model to
+ * keep both words for their one sense (advisorPrompt, STYLE).
  *
  * NO REFERRAL EXEMPTION, ON PURPOSE (2026-10-28 night). "Talk to an
  * accountant or a lawyer about debts, the lease or winding down" voided a
@@ -283,9 +273,8 @@ function asMeant(text) {
 function wholeAnswerVeto(text) {
   if (UPSELL.test(text)) return 'upsell';
   if (PROMPT_LEAK.test(text)) return 'prompt leak';
-  const meant = asMeant(text);
   for (const { reason, re } of PROHIBITED_ADVICE) {
-    if (re.test(meant)) return reason;
+    if (re.test(text)) return reason;
   }
   return null;
 }
