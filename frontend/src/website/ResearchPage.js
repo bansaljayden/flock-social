@@ -146,7 +146,7 @@ export default function ResearchPage() {
                 </picture>
               </a>
               <div>
-                <p className="rs-paper-kicker">Research summary &middot; October 2026 &middot; {SUMMARY_PAGES} pages</p>
+                <p className="rs-paper-kicker">Research summary &middot; November 2026 &middot; {SUMMARY_PAGES} pages</p>
                 <p className="rs-paper-title">Forecasting How Busy a Venue Will Be, and Counting How Many People Are There</p>
                 <p className="rs-paper-by">Jayden Bansal, Flock Social LLC</p>
                 <div className="rs-paper-actions">
