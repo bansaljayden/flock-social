@@ -42,7 +42,9 @@ const PAPER_PAGES = 30;
 // owl-5's exam is the paper's Section 14.7 and Table 22: the gate's 1,593
 // frames and their 333 with three or more people, and the three benchmark
 // sets it lost more than 2 points on (PUT -3.1, OpenThermalPose2 -3.4, IISER
-// -6.0). The forecast's retrain is Section 7.2's: late November, thresholds
+// -6.0). owl-5 runs on Flux from 2026-11-03 by the owner's decision although
+// that exam failed (paper Sections 14.7 and 18). The forecast's retrain is
+// Section 7.2's: late November, thresholds
 // committed on 25 and 26 September. It "ships only if it passes them", not
 // "if it beats today's numbers": production has served v2.6.0 in model mode
 // since 2026-11-01, and the gate compares against rule (b), the rule served
@@ -228,12 +230,13 @@ export default function ResearchPage() {
                 libraries. The counter has been tested on six research datasets
                 and in sixteen sealed tests on public footage, including a café
                 and a restaurant, and not yet inside a working venue. Its
-                November retrain, owl-5, beat owl-4.9, the version running in
-                Flux, on 1,593 frames neither had trained on: 37.2% counted
-                exactly against 31.5%, and 9.3 points more on frames of three or
-                more people. It lost 3 to 6 points on three of the six benchmark
-                sets, so it failed a test fixed before it trained, and owl-4.9
-                stays.
+                November retrain, owl-5, has run in Flux since 3 November: on
+                1,593 frames neither version had trained on, it counted 37.2%
+                exactly against owl-4.9's 31.5%, and 9.3 points more on frames of
+                three or more people. It lost 3 to 6 points on three of the six
+                benchmark sets, so it failed the test fixed before it trained;
+                Flock put it on Flux anyway, and its successor, owl-5.1,
+                replaces it only after a new untouched test.
               </p>
             </div>
             <div>
@@ -244,7 +247,7 @@ export default function ResearchPage() {
                 saw, against thresholds set in September, and ships only if it
                 passes them. Owl's next test is a recording on Flux's own camera
                 of a real room with one to fifteen people, counted as it is
-                filmed and kept unseen until both versions are scored on it.
+                filmed and kept unseen until owl-5 and owl-5.1 are scored on it.
                 After that, the plan is to put a Flux sensor in a venue Flock
                 already reads and compare its counts with the forecast hour by
                 hour.
