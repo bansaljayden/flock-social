@@ -408,9 +408,16 @@ describe('llms.txt stays true to the shipped model', () => {
     // pre-upgrade figures are on the whole set, as /about now says too.
     expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 119,939 readings did`);
     expect(flat).toContain('119,939 real live readings at venues in Philadelphia, the Lehigh Valley and Miami');
-    // The horizon and the target are stated with the figures.
-    expect(flat).toContain('How the crowd numbers in the app perform one hour ahead');
+    // The horizon and the target are stated with the figures, in the past
+    // tense, because they measure the forecast as it was served that month.
+    expect(flat).toContain('How the crowd numbers in the app performed one hour ahead');
     expect(flat).toContain("relative 0 to 100 scores, not headcounts");
+    // Held out of the forecast as it was served then, and of no other: the
+    // nowcast weights served since 2026-10-14 were chosen on these same
+    // readings (backend/scripts/ml/MODEL-METRICS.md), the reason the
+    // research page's chart note says the same thing in the same words.
+    expect(flat).toContain('from September 9 to October 8, 2026, none of which was used to set the forecast as it was served then');
+    expect(flat).not.toMatch(/held out from September/);
   });
 
   // A venue with no pattern is answered by the rule engine, and one with a
