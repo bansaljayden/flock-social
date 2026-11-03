@@ -244,9 +244,40 @@ test('a weekday may stand beside its date, and two numbers with a space between 
   // Refused by the substitution itself, whatever the claim check makes of it.
   const value = (id) => ({ a: '1', b: '500', weekday: 'Tuesday', date: 'Oct 27' })[id];
   const { substituteFacts } = phrasing.internals;
-  assert.strictEqual(substituteFacts('{{fact:a}} {{fact:b}}', value).error, 'two facts side by side read as one number');
+  assert.strictEqual(substituteFacts('{{fact:a}} {{fact:b}}', value).error, 'two hands side by side read as one number');
   assert.strictEqual(substituteFacts('{{fact:a}}{{fact:b}}', value).error, 'two placeholders with nothing between them');
   assert.strictEqual(substituteFacts('{{fact:weekday}} {{fact:date}}', value).rendered, 'Tuesday Oct 27');
+});
+
+// AN ADVERSARIAL REVIEW (2026-11-03) found numbers that look like one figure
+// on screen and read as two to the checks. None may render.
+test('no number the owner reads can be assembled from two hands, however the gap between them is written', () => {
+  const { substituteFacts } = phrasing.internals;
+  const value = (id) => ({ a: '1', b: '500', neg: '-18', four: '4', ten: '10', day: '27', reading: '8', weekday: 'Tuesday', date: 'Oct 27', hour: '8 PM', score: '84' })[id];
+  for (const draft of [
+    // A sign the fact carries, or the model wrote, between two numbers.
+    'Yesterday came in at {{fact:reading}} {{fact:neg}} points under your usual.',
+    'Your Friday was {{fact:a}} -{{fact:b}} points under.',
+    // A model digit beside a fact, with only a space between.
+    'Last week you served 1 {{fact:b}} covers.',
+    'At {{fact:four}} 5 tables were waiting.',
+    // Invisible characters between two placeholders.
+    '{{fact:a}}​{{fact:b}}', '{{fact:a}}‌{{fact:b}}', '{{fact:a}}⁠{{fact:b}}', '{{fact:a}}­{{fact:b}}', '{{fact:a}}͏{{fact:b}}', '{{fact:a}}⁢{{fact:b}}',
+    // Marks that look like a decimal point, a comma or a Swiss apostrophe.
+    '{{fact:a}}․{{fact:b}}', '{{fact:a}}．{{fact:b}}', '{{fact:a}}·{{fact:b}}', '{{fact:a}}，{{fact:b}}', '{{fact:a}}‚{{fact:b}}', '{{fact:a}}’{{fact:b}}',
+    // A digit from another script glued to a fact, and a date from two counts.
+    '{{fact:four}}５ guests', 'On {{fact:ten}}/{{fact:day}}',
+  ]) assert.strictEqual(substituteFacts(draft, value).rendered, null, JSON.stringify(draft));
+  // What still renders: words between, a unit between, a sentence apart.
+  for (const [draft, shown] of [
+    ['{{fact:weekday}} {{fact:date}}', 'Tuesday Oct 27'],
+    ['at {{fact:hour}} {{fact:score}} on the index', 'at 8 PM 84 on the index'],
+    ['{{fact:a}} in {{fact:b}}', '1 in 500'],
+    ['{{fact:reading}}, {{fact:score}}', '8, 84'],
+  ]) assert.strictEqual(substituteFacts(draft, value).rendered, shown, draft);
+  // And the whole answer check reads the draft without its invisible characters.
+  const facts = [{ id: 'a', value: 1, source: 'owner_report', asOf: '2026-11-02' }, { id: 'b', value: 500, source: 'owner_report', asOf: '2026-11-02' }];
+  assert.strictEqual(freeText.applyAdviceValve('Last week you served 1​500 covers.', facts), null);
 });
 
 // ── 3e. A vendor's string is not a number the server computed ──────────────

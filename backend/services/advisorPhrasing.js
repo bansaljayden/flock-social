@@ -1612,8 +1612,37 @@ function hasBannedDash(text) {
 // and forge a region boundary.
 const SENTINEL_OPEN = '\u0001';
 const SENTINEL_CLOSE = '\u0002';
-// A run of digits and the separators a written number is allowed to contain.
-const NUMERIC_RUN = /[0-9](?:[.,:٫٬']?[0-9])*/g;
+// A run of digits and the separators a written number is allowed to contain,
+// read on the folded copy below (every digit a 0, every joiner a full stop).
+// A slash joins too: two facts either side of one read as a date or a ratio
+// nobody computed ("10/27").
+const NUMERIC_RUN = /[0-9](?:[.,:٫٬'/]?[0-9])*/g;
+
+// WHAT THE OWNER SEES IS WHAT THE CHECKS READ (adversarial review,
+// 2026-11-03). Three ways a number could look like one figure on screen and
+// read as two to the checks:
+//   * an invisible character between two digits: "1​500" shows as 1500.
+//     They have no place in an answer and are taken out of every draft before
+//     anything reads it (checkAnswer, and again here);
+//   * a digit from another script beside an ASCII one ("4５" shows as 45),
+//     so every decimal digit reads as one;
+//   * a mark that looks like a decimal point, a thousands comma or a Swiss
+//     apostrophe ("1․500", "1’500"), so each reads as a joiner.
+const INVISIBLE = /[\p{Cf}­͏ᅟᅠ឴឵ㅤﾠ]/gu;
+function stripInvisible(text) {
+  return String(text).replace(INVISIBLE, '');
+}
+const LOOKALIKE_JOINER = /[․‧﹒．·∙⋅﹐，‚’ʼ﹕：∶／∕⁄]/;
+const SIGN = /[-+−‐‑﹣－＋]/;
+function foldForNumbers(text) {
+  let out = '';
+  for (const ch of text) {
+    if (/\p{Nd}/u.test(ch)) out += '0'.repeat(ch.length);
+    else if (LOOKALIKE_JOINER.test(ch)) out += '.';
+    else out += ch;
+  }
+  return out;
+}
 // Two placeholders with NOTHING between them. With a space between them they
 // may stand side by side ("on {{fact:weekday}} {{fact:date}}" is "on Tuesday
 // Oct 27"), as long as no digit faces a digit across the gap: see
@@ -1628,7 +1657,8 @@ const ADJACENT_PLACEHOLDERS = /\}\}\{\{/;
  * block does not carry.
  * @returns {{rendered: string|null, error: string|null}}
  */
-function substituteFacts(text, resolve) {
+function substituteFacts(draft, resolve) {
+  const text = stripInvisible(draft);
   if (ADJACENT_PLACEHOLDERS.test(text)) {
     return { rendered: null, error: 'two placeholders with nothing between them' };
   }
@@ -1660,9 +1690,10 @@ function substituteFacts(text, resolve) {
   // since 2026-10-28, and those are judged by the claim check before this
   // runs; what can never happen is a single number that two facts, or a fact
   // and the model, wrote between them ("{{fact:a}}5" is a 45 nobody computed).
+  const probe = foldForNumbers(rendered);
   NUMERIC_RUN.lastIndex = 0;
   let run;
-  while ((run = NUMERIC_RUN.exec(rendered)) !== null) {
+  while ((run = NUMERIC_RUN.exec(probe)) !== null) {
     const first = region[run.index];
     for (let i = run.index; i < run.index + run[0].length; i++) {
       if (region[i] === first) continue;
@@ -1674,14 +1705,16 @@ function substituteFacts(text, resolve) {
       };
     }
   }
-  // Two facts with only a space between them never read as one number: "4 5"
-  // and "1 500" are refused, "Tuesday Oct 27" and "9 PM Friday" are not.
-  for (let i = 0; i < rendered.length; i++) {
-    if (region[i] === 0 || region[i + 1] === region[i] || !/[0-9]/.test(rendered[i])) continue;
+  // Nor with only a space between two hands: "4 5", "1 500" and "8 -18" are
+  // refused, whether two facts or a fact and the model wrote the halves;
+  // "Tuesday Oct 27" and "8 PM 84" are not, because no digit faces a digit.
+  for (let i = 0; i < probe.length; i++) {
+    if (probe[i] !== '0' || !/\s/.test(probe[i + 1] || '')) continue;
     let j = i + 1;
-    while (j < rendered.length && region[j] === 0 && /\s/.test(rendered[j])) j++;
-    if (j > i + 1 && j < rendered.length && region[j] !== 0 && /[0-9]/.test(rendered[j])) {
-      return { rendered: null, error: 'two facts side by side read as one number' };
+    while (j < probe.length && /\s/.test(probe[j])) j++;
+    const facing = probe[j] === '0' ? j : (SIGN.test(probe[j] || '') && probe[j + 1] === '0' ? j + 1 : -1);
+    if (facing >= 0 && region[facing] !== region[i] && (region[i] !== 0 || region[facing] !== 0)) {
+      return { rendered: null, error: 'two hands side by side read as one number' };
     }
   }
   return { rendered, error: null };
@@ -1729,7 +1762,9 @@ function valveReject(reason) {
  */
 function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [], reject = valveReject } = {}) {
   if (typeof raw !== 'string') return reject('model returned no text');
-  const parsed = advisorAnswer.parseAnswer(advisorAnswer.repairDashes(raw));
+  // An invisible character can join two digits on screen that every check
+  // below would read apart ("1​500" shows as 1500), so none survives.
+  const parsed = advisorAnswer.parseAnswer(advisorAnswer.repairDashes(stripInvisible(raw)));
   if (!parsed) return reject('empty');
   if (!parsed.structured && parsed.answer.length > advisorAnswer.MAX_PLAIN_SENTENCES) {
     return reject(`too long, ${parsed.answer.length} sentences`);
