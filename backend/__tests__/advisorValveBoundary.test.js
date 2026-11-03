@@ -557,8 +557,17 @@ test('"unpaid" and "choking" void an answer in every sense, because the innocent
     'Your bartender opened it, so it is on them. Unpaid tabs come out of their next envelope.',
     'If a guest starts choking the floor staff should stand behind them and pull sharply in and up under the ribs.',
     'If someone is choking the bar staff should slap them firmly between the shoulder blades until it clears.',
+    // The second round's final run lost a restaurant's and a club's no-show
+    // answers to the same word on bookings.
+    'Hold unpaid bookings for 15 minutes max during peak hours, then release the seats.',
+    'Release unpaid reservations 15 minutes past time so walk ins take the floor.',
   ]) assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, draft);
-  assert.match(require('../services/advisorPrompt').ADVICE_SYSTEM_PROMPT, /"unpaid"/, 'the contract tells the model');
+  const contract = require('../services/advisorPrompt').ADVICE_SYSTEM_PROMPT;
+  assert.match(contract, /"unpaid"/, 'the contract tells the model');
+  // The contract names bookings and offers a wording the check serves.
+  assert.match(contract, /bookings included: .*"release bookings with no card hold"/);
+  const offered = freeText.applyAdviceValve('Release bookings with no card hold 15 minutes past time so walk ins take the floor.', ADVICE_FACTS());
+  assert.ok(offered && /no card hold/.test(offered.text), 'the offered wording is served');
 });
 
 // THE SECOND REVIEW (2026-11-03): the invisible-character strip ran on the
