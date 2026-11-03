@@ -500,7 +500,20 @@ function numbersIn(text) {
   }
   NUMBER_WORDS.lastIndex = 0;
   while ((m = NUMBER_WORDS.exec(src)) !== null) {
-    if (taken[m.index] || /^one$/i.test(m[0])) continue;
+    if (taken[m.index]) continue;
+    // "Nine PM" and "one AM" are hours, read the way "9 PM" is; "nine
+    // o'clock" could be either half of the day (review, 2026-11-03: "your
+    // Friday peaks at nine PM" was a plain 9 an owner's "9 tables" vouched for).
+    const spokenHour = wordsValue(m[0]);
+    const meridiem = /^\s*(?:([ap])\.?\s?m\b\.?|o['’]?clock\b)/i.exec(src.slice(m.index + m[0].length));
+    if (meridiem && spokenHour >= 1 && spokenHour <= 12) {
+      const h24 = meridiem[1] ? (spokenHour % 12) + (meridiem[1].toLowerCase() === 'p' ? 12 : 0) : spokenHour;
+      const eitherHalf = !meridiem[1] && spokenHour <= 11;
+      out.push({ index: m.index, length: m[0].length + meridiem[0].length, value: h24, alt: eitherHalf ? [otherHalf(spokenHour)] : [], kind: 'clock', dim: 'clock', spelled: true });
+      mark(m.index, m[0].length + meridiem[0].length);
+      continue;
+    }
+    if (/^one$/i.test(m[0])) continue;
     // "An hour or two", "two or three bartenders": a span, not a count.
     if (/\bor\s+$/i.test(src.slice(Math.max(0, m.index - 4), m.index)) || VAGUE_SPAN_AFTER.test(src.slice(m.index + m[0].length))) continue;
     const value = wordsValue(m[0]);
@@ -873,6 +886,23 @@ function flowsUnworked(prefix, num, all) {
   return DOER_FLOWS.test(prefix) && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
 }
 
+// A SHARE IN A GERUND'S SCENARIO IS A SUPPOSITION (2026-11-03, the round's
+// final live run). "At $24 a head, running your 120-capacity room half-empty
+// costs you about $1,440" and "running your 28 seats half empty across a
+// morning costs around $150 to $200" price an occupancy the sentence
+// supposes; "running" is a claim verb ("your Friday is running 20% under"),
+// so once words were read the share lost both lines, one of them a money
+// question's only figure. A share written in words, inside "running",
+// "leaving", "keeping" or "having" the room or its seats empty or full, and
+// followed straight away by what that costs, is set aside. "Your room runs
+// half empty on Tuesdays" and "Your room sits half empty, which costs you
+// $1,440" stay readings, and so does "50% empty" in digits, as it always was.
+const SCENARIO_BEFORE = /(?:^|[,;:]\s*|^\s*(?:at\s+[^,]{1,60},\s*))(?:running|leaving|keeping|having|operating)\s+(?:your|the)\s+(?:[\w-]+\s+){0,3}?(?:room|rooms|seats|tables|floor|bar|place|venue|space|house|capacity)\s+$/i;
+const SCENARIO_AFTER = /^[\s-]+(?:empty|full)\b(?:\s+(?:across|over|for|through|during|on|every|each)\s+(?:(?:a|an|the|one|your|each|every)\s+)?[\w-]+){0,2},?\s+(?:costs?|means?|leaves?|loses?|burns?|wastes?)\b/i;
+function shareScenario(text, num, prefix) {
+  return num.kind === 'fraction' && SCENARIO_BEFORE.test(prefix) && SCENARIO_AFTER.test(text.slice(num.index + num.length));
+}
+
 // `alone`: the sentence is the whole answer line or point it sits in, the
 // one place a count to do may be set aside (countToDo).
 function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
@@ -883,6 +913,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   const toDo = countToDo(text, num, prefix, all, alone);
   if (toDo === 'claim') return true;
   if (toDo === 'todo') return false;
+  if (shareScenario(text, num, prefix)) return false;
   if (standingReading(prefix, num, all)) return true;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the

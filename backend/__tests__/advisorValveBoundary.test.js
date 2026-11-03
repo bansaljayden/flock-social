@@ -173,6 +173,30 @@ test('a number written as a word is read the way its digits are, and a share of 
   assert.ok(freeText.applyAdviceValve('Nearly half of your reviews mention the wait.', facts, { texts: ['nearly half my reviews mention the wait, what do i do'] }));
 });
 
+test('an hour in words is an hour, and a share a gerund supposes for a cost is a supposition', () => {
+  // Review of the third round, 2026-11-03: "nine PM" was a plain 9, which an
+  // owner's "we have 9 tables" vouched for.
+  const ten = [{ id: 'peak_hour', value: 22, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' }];
+  assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at nine PM.', ten, { texts: ['we have 9 tables'] }), null);
+  assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at ten AM.', ten), null);
+  assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at one AM.', ten), null);
+  assert.ok(freeText.applyAdviceValve('Your Friday peaks at ten PM.', ten));
+  assert.ok(freeText.applyAdviceValve('Your Friday peaks at ten o’clock.', ten), 'an hour with no AM or PM can be either half');
+  assert.ok(freeText.applyAdviceValve('Put the headline set on at eleven PM.', ten));
+  // The round's final live run: a cost priced on an occupancy the sentence
+  // supposes. In words and inside the gerund, with its cost right after, it
+  // is a supposition; stated, or in digits, it is what it always was.
+  const bar = [...ten, { id: 'intake_typical_spend_per_person', value: 24, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }, { id: 'intake_capacity', value: 120, source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  const cafe = [...ten, { id: 'intake_typical_spend_per_person', value: 11, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }, { id: 'intake_capacity', value: 28, source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  assert.ok(freeText.applyAdviceValve('At {{fact:intake_typical_spend_per_person}} a head, running your {{fact:intake_capacity}}-capacity room half-empty costs you about $1,440 in lost drink spend alone every Tuesday.', bar));
+  assert.ok(freeText.applyAdviceValve('At {{fact:intake_typical_spend_per_person}} a head, running your {{fact:intake_capacity}} seats half empty across a morning costs around $150 to $200 in gross margin on top of fixed wages.', cafe));
+  for (const claim of [
+    'Your room runs half empty on Tuesdays.',
+    'Your room sits half empty, which costs you $1,440.',
+    'At {{fact:intake_typical_spend_per_person}} a head, running your {{fact:intake_capacity}}-capacity room 50% empty costs you about $1,440 in lost drink spend alone every Tuesday.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, bar), null, claim);
+});
+
 test('a number written as a word is checked, never worked with, and a word in a label or an owner\'s count vouches for nothing', () => {
   // Review of the third round, 2026-11-03: once words were read, "two
   // bartenders" and "a dozen tables" became operands, an owner's "forty seats"
