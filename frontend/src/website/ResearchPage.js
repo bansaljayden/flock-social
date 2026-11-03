@@ -38,7 +38,15 @@ const PAPER_PAGES = 30;
 // two- and three-hour nowcast weights set to zero"), so of today's forecast
 // the unqualified sentence would not be true. The
 // counter's figures are owl-4.9 and the heat rule as deployed on the six real
-// benchmark sets, which also guided Owl's development (paper Table 6).
+// benchmark sets, which also guided Owl's development (paper Table 17).
+// owl-5's exam is the paper's Section 14.7 and Table 22: the gate's 1,593
+// frames and their 333 with three or more people, and the three benchmark
+// sets it lost more than 2 points on (PUT -3.1, OpenThermalPose2 -3.4, IISER
+// -6.0). The forecast's retrain is Section 7.2's: late November, thresholds
+// committed on 25 and 26 September. It "ships only if it passes them", not
+// "if it beats today's numbers": production has served v2.6.0 in model mode
+// since 2026-11-01, and the gate compares against rule (b), the rule served
+// from 13 October (backend/scripts/ml/RETRAIN.md, 2026-11-02).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -217,20 +225,29 @@ export default function ResearchPage() {
                 headcounts, and the live test covers one month. Its findings were
                 tested on 6.5 million public hourly counts from 32 sources in
                 15 countries, including people counted inside rooms and
-                libraries. The counter has
-                been tested on six research datasets and in fifteen sealed tests on
-                public footage, including a café and a restaurant, and not yet
-                inside a working venue.
+                libraries. The counter has been tested on six research datasets
+                and in sixteen sealed tests on public footage, including a café
+                and a restaurant, and not yet inside a working venue. Its
+                November retrain, owl-5, beat owl-4.9, the version running in
+                Flux, on 1,593 frames neither had trained on: 37.2% counted
+                exactly against 31.5%, and 9.3 points more on frames of three or
+                more people. It lost 3 to 6 points on three of the six benchmark
+                sets, so it failed a test fixed before it trained, and owl-4.9
+                stays.
               </p>
             </div>
             <div>
               <h2>What's next</h2>
               <p>
-                A retrain of the crowd model is scored in early November against
-                thresholds and held-out days written down before their data existed,
-                and it ships only if it beats today's numbers on days it never saw. After that, the plan is to put
-                a Flux sensor in a venue Flock already reads and compare its counts
-                with the forecast hour by hour.
+                Owl's retrain is done and in the paper. The crowd forecast's
+                retrain runs in late November. It is scored on 14 days it never
+                saw, against thresholds set in September, and ships only if it
+                passes them. Owl's next test is a recording on Flux's own camera
+                of a real room with one to fifteen people, counted as it is
+                filmed and kept unseen until both versions are scored on it.
+                After that, the plan is to put a Flux sensor in a venue Flock
+                already reads and compare its counts with the forecast hour by
+                hour.
               </p>
             </div>
           </div>
