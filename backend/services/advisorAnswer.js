@@ -1472,7 +1472,13 @@ function workedFrom(num, support, inPlay, all) {
   for (const e of support.base) {
     if (e.arith !== false && !e.owner && [...e.ids].some((id) => ids.has(id))) take(e);
   }
-  const pool = [...operands, ...operands.filter((e) => e.dim === 'duration').map((e) => ({ ...e, dim: 'plain' }))];
+  // `src` is the operand itself: a duration's plain copy is the same operand,
+  // so "4 staff work 4 hours, that is 64 hours" cannot square the 4 hours
+  // through its copy (re-check of the third round, 2026-11-03).
+  const pool = [
+    ...operands.map((e, src) => ({ ...e, src })),
+    ...operands.map((e, src) => ({ ...e, src, dim: 'plain' })).filter((e, src) => operands[src].dim === 'duration'),
+  ];
   // Within 5%, since a worked figure is said rounded ("$110 less 25 to 30% is
   // about $75 to $80"); the wrong product this exists for is far off ($4,000
   // for $3,040).
@@ -1480,7 +1486,7 @@ function workedFrom(num, support, inPlay, all) {
     && (close(num.value, d.value) || Math.abs(num.value - d.value) <= Math.abs(d.value) * 0.05);
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = 0; j < pool.length; j += 1) {
-      if (i === j) continue;
+      if (pool[i].src === pool[j].src) continue;
       // A share of a base: the one first step whose base may come back.
       const shareOfBase = pool[j].dim === 'pct' && pool[i].dim !== 'pct';
       for (const r of workedSteps(pool[i], pool[j])) {
@@ -1490,7 +1496,7 @@ function workedFrom(num, support, inPlay, all) {
           // is kept of $110 after 30% is 110 less 30% of 110. Any other reuse
           // squares a count, and "if you add 10 covers at $38, that is $3,800"
           // passed as 10 x 10 x 38 (re-check of the third round, 2026-11-03).
-          if (k === i || k === j) {
+          if (pool[k].src === pool[i].src || pool[k].src === pool[j].src) {
             if (k === i && shareOfBase && [pool[i].value + r.value, Math.abs(pool[i].value - r.value)]
               .some((value) => matches({ value, dim: pool[i].dim }))) return true;
             continue;

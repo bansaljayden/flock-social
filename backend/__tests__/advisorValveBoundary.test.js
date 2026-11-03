@@ -490,7 +490,10 @@ test('a worked figure takes an operand twice only as the base a share was taken 
     'If 20 guests pay $38 each, that is $15,200.',
     'Say a server costs $15 an hour: 4 hours is $240.',
     'If 80 guests pay $38 each, that is $250,000.',
+    // A duration and its plain copy are one operand.
+    'If 4 staff work 4 hours, that is 64 hours.',
   ]) assert.strictEqual(freeText.applyAdviceValve(wrong, facts), null, wrong);
+  assert.ok(freeText.applyAdviceValve('If 4 staff work 4 hours, that is 16 hours.', facts));
   for (const right of [
     'If you add 10 covers at {{fact:intake_typical_spend_per_person}}, that is $380 a week.',
     'On a $20 order with a 25% app cut, you keep $15.',
