@@ -1061,6 +1061,74 @@ function yearOf(num, text, support, inPlay) {
   return null;
 }
 
+// A WORKED FIGURE IN A SUPPOSITION MUST ADD UP (third round, 2026-11-03).
+// "If", "say" and "suppose" set every number after them aside, and that set
+// aside the RESULT of the arithmetic too: "If 80 guests pay $38 each, that is
+// $4,000" reached the owner, a wrong product dressed as a worked example. The
+// operands are the supposition's own (80 guests is not a reading), so the
+// figure it works out is checked against the numbers its sentence shows, its
+// facts and the owner's numbers, worked one or two steps ("say 10 tables of 6
+// turn once more at $45 a head: that is $2,700"). A worked figure is one
+// written right after "that is", "comes to", "adds up to", "works out to",
+// "equals" or "=", or after "is" where a quantity stands in front of it ("4
+// hours is $60"; "if your food cost is 38%" sets a number and works out none).
+// Only in a supposition: outside one, the recorded runs state correct yearly
+// and weekly figures whose working sits in the line before ("Over a year,
+// those 10 weekly covers add up to $19,760"), and a sentence-by-sentence check
+// cannot see it.
+const SUPPOSING = /\b(?:if|say|suppose|supposing|imagine|assuming|assume|for\s+example|for\s+instance)\b/i;
+const RESULT_MARK = /(?:\b(?:that\s+is|that['’]s|that\s+(?:comes|adds\s+up|works\s+out)\s+to|that\s+would\s+be|that['’]d\s+be|which\s+is|which\s+(?:comes|adds\s+up|works\s+out)\s+to|for\s+a\s+total\s+of|equals|(?:comes?|adds?\s+up|works?\s+out)\s+to)|=)\s*(?:about|roughly|around|nearly|almost|close\s+to|just\s+over|just\s+under|over|under|some)?\s*$/i;
+const IS_MARK = /\b(?:is|are)\s+(?:(?:about|roughly|around|nearly|almost|close\s+to|just\s+over|just\s+under|over|under|some)\s+)?$/i;
+// The working is shown when at least two operands stand in front of the
+// figure, numbers or placeholders: "If 20 guests order the special, that is
+// $240" works from a price stated in another line, and is not judged here.
+const OPERAND_SHOWN = /x{10,}/g;
+function workedResult(text, num, all) {
+  const before = text.slice(0, num.index);
+  if (!SUPPOSING.test(before)) return false;
+  const shown = all.filter((n) => n !== num && n.index < num.index && n.dim !== 'date' && !n.word).length
+    + (before.match(OPERAND_SHOWN) || []).length;
+  if (shown < 2) return false;
+  if (RESULT_MARK.test(before)) return true;
+  if (!IS_MARK.test(before)) return false;
+  const clauseAt = Math.max(before.lastIndexOf(','), before.lastIndexOf(';'), before.lastIndexOf(':')) + 1;
+  return all.some((n) => n !== num && n.index >= clauseAt && n.index < num.index && n.dim !== 'date')
+    || /x{10,}/.test(before.slice(clauseAt));
+}
+// Generous on purpose: it can only take away a line no other rule reads, so a
+// rate times hours ("$15 an hour: 4 hours is $60"), a rate per hour ("$1,800
+// over 40 labor hours is $45 per labor hour", the playbook's own example) and
+// a gap in points ("from 38% to 35% is 3 points") count too.
+function workedSteps(a, b) {
+  const out = derived(a, b);
+  if (b.value !== 0 && (b.dim === 'plain' || b.dim === 'duration') && ['money', 'plain', 'duration'].includes(a.dim)) {
+    out.push({ value: a.value / b.value, dim: a.dim });
+  }
+  return out;
+}
+function workedFrom(num, support, inPlay, all) {
+  const ids = inPlay.ids instanceof Set ? inPlay.ids : new Set();
+  const operands = [
+    ...support.base.filter((e) => e.arith !== false && (e.owner || [...e.ids].some((id) => ids.has(id)))),
+    ...all.filter((n) => n !== num && n.dim !== 'date' && !n.word).map((n) => ({ value: n.value, ids: new Set(), dim: n.dim })),
+  ];
+  const pool = [...operands, ...operands.filter((e) => e.dim === 'duration').map((e) => ({ ...e, dim: 'plain' }))];
+  const matches = (d) => (acceptsDim(num, d.dim) || (num.dim === 'plain' && d.dim === 'pct')) && close(num.value, d.value);
+  for (let i = 0; i < pool.length; i += 1) {
+    for (let j = 0; j < pool.length; j += 1) {
+      if (i === j) continue;
+      for (const r of workedSteps(pool[i], pool[j])) {
+        if (matches(r)) return true;
+        for (let k = 0; k < pool.length; k += 1) {
+          if (k === i || k === j) continue;
+          if (workedSteps(r, pool[k]).some(matches) || workedSteps(pool[k], r).some(matches)) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 function checkSentenceNumbers(sentence, support, { alone = false } = {}) {
   const inPlay = inPlayFor([sentence]);
   // Folded the way numbersIn folds it, so the positions it reports are
@@ -1072,7 +1140,14 @@ function checkSentenceNumbers(sentence, support, { alone = false } = {}) {
   const ids = new Set();
   const all = numbersIn(text);
   for (const num of all) {
-    if (!isReadingSlot(text, num, all, alone)) continue;
+    if (!isReadingSlot(text, num, all, alone)) {
+      // A worked figure inside a supposition still adds up.
+      if (workedResult(text, num, all) && !supportFor(num, support, inPlay)
+        && !yearOf(num, text, support, inPlay) && !workedFrom(num, support, inPlay, all)) {
+        return { ok: false, ids, number: text.slice(num.index, num.index + num.length) };
+      }
+      continue;
+    }
     const from = supportFor(num, support, inPlay) || yearOf(num, text, support, inPlay);
     const written = text.slice(num.index, num.index + num.length);
     if (!from) return { ok: false, ids, number: written };

@@ -256,6 +256,47 @@ test('arithmetic shown in its own sentence passes, and the same figure with noth
   );
 });
 
+test('a worked figure inside a supposition must add up, whatever the supposition sets aside', () => {
+  // Third round, 2026-11-03: "if" and "say" set every number after them
+  // aside, the product included, so a wrong one reached the owner.
+  const facts = [
+    { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' },
+    { id: 'intake_capacity', value: 70, source: 'intake', asOf: 'owner-set 2026-10-01' },
+  ];
+  for (const wrong of [
+    'If 80 guests pay $38 each, that is $4,000.',
+    'If 80 guests pay $38 each, that comes to $4,000 a night.',
+    'Say 40 guests who were coming anyway each save $5: that is $300 given away for no extra sale.',
+    'If 10 tables of 6 turn 1 more time at {{fact:intake_typical_spend_per_person}} a head, that is $3,000.',
+    'Say a server costs $15 an hour: 4 hours is $80.',
+    'For example, 30 covers at $25 is $900.',
+    'Suppose 20 more covers come in at {{fact:intake_typical_spend_per_person}} each, which adds up to $1,000.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(wrong, facts), null, `"${wrong}" does not add up`);
+  for (const right of [
+    'If 80 guests pay $38 each, that is $3,040.',
+    'If 80 guests pay $38 each, that is about $3,000.',
+    'Say a server costs $15 an hour: 4 hours is $60, paid back by 2 extra covers.',
+    'If a crew of 2 works 5 hours at $15 an hour, that is $150.',
+    'If 10 tables of 6 turn 1 more time at {{fact:intake_typical_spend_per_person}} a head, that is $2,280.',
+    'If you go from 38% to 35%, that is 3 points, which is $3 back on every $100 of food you sell.',
+    'For example, 30 covers at $25 is $750.',
+    'If it adds 10 covers a week at {{fact:intake_typical_spend_per_person}}, that is $380 a week, about $19,760 a year.',
+    // A rate per hour, the playbook's own worked example.
+    'If lunch brings $1,800 in sales over 40 labor hours, that is $45 per labor hour.',
+    // A supposition that sets a number and works none out is untouched, and
+    // so is a figure whose working sits in another line (the special's price).
+    'If your food cost is 38%, aim for 30%.',
+    'If 20 guests order the special, that is $240.',
+  ]) {
+    const out = freeText.applyAdviceValve(right, facts);
+    assert.ok(out, right);
+  }
+  // Outside a supposition a figure worked in the line before is not judged
+  // sentence by sentence (the recorded runs' "Over a year, those 10 weekly
+  // covers add up to $19,760" is right, and its working is a line up).
+  assert.ok(freeText.applyAdviceValve('Over a year, those 10 weekly covers add up to $19,760 in revenue.', facts));
+});
+
 // ── 3. One bad sentence costs its own line ─────────────────────────────────
 
 test('a made-up point is dropped and the rest of the answer stands', () => {
