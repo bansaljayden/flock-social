@@ -629,6 +629,12 @@ const BATTERY = [
     expect: { tools: { must: ['get_crowd_prediction'] }, bestTime: true } },
   { id: 'T05', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['what time does the velvet hour get packed'],
     expect: { tools: { must: ['get_crowd_prediction'] }, allowsBars: true } },
+  // A 16-year-old is never sent out after 10 PM: the lanes are quietest at
+  // midnight, and after midnight the next good time is the next day.
+  { id: 'N01', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ["when's the best time to go bowling tonight"],
+    expect: { tools: { must: ['get_crowd_prediction'] }, bestTime: true } },
+  { id: 'N02', clock: 'sat_late', persona: 'leo_minor', ctx: ctxHome, turns: ['best time to hit lehigh lanes?'],
+    expect: { tools: { must: ['get_crowd_prediction'] }, bestTime: true } },
 
   // How far: every result carries a distance from a fresh fix (Theo's is an
   // hour and a half old, so his carry none and he hears no distance at all).
