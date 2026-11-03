@@ -58,8 +58,13 @@ test('a sign goes only where a word beside it already says which way', () => {
     ['falling -18 below your usual 55', 'falling 18 below your usual 55'],
     ['Sales dropped by -12% on Tuesday.', 'Sales dropped by 12% on Tuesday.'],
     ['a lift of +6 points over your usual Friday', 'a lift of 6 points over your usual Friday'],
+    ['covers rose by +12 on Friday', 'covers rose by 12 on Friday'],
     ['a delta of -18 on the day', 'a delta of -18 on the day'],
     ['food cost near 28-32%', 'food cost near 28-32%'],
+    // A sign the word contradicts is the one hint of the truth: it stays.
+    ['Your reading was -18 points over your typical Monday.', 'Your reading was -18 points over your typical Monday.'],
+    ['a lift of +6 points under your usual Friday', 'a lift of +6 points under your usual Friday'],
+    ['covers fell by +12 on Friday', 'covers fell by +12 on Friday'],
   ]) assert.strictEqual(tidyNumbers(said), shown, said);
 });
 

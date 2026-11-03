@@ -157,8 +157,16 @@ const MONEY_UNGROUPED = /\$(\d{4,})(?!\d|,\d)/g;
 const PLAIN_UNGROUPED = /(?<![\w$.,:/-])(\d{5,})(?!\w|,\d|\.\d)/g;
 const TIDY_CLOCK_24 = /(?<![\d:$.,])\b(\d{1,2}):([0-5]\d)(?![\d:])(?!\s*(?:[aApP]\.?\s?[mM]\b))/g;
 const TIDY_CLOCK_AMPM = /\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])(\.\s?[mM]\.|\s?[mM]\b)(?![a-zA-Z])/g;
-const SIGN_THEN_WAY = /(?<![\w$.,])[-+−](\d+(?:\.\d+)?)(?=(?:%|\s?percent|\s+points?)?\s+(?:under|below|behind|short\s+of|less|fewer|lower|down|over|above|ahead|more|higher|up)\b)/g;
-const WAY_THEN_SIGN = /\b(fell|falling|falls|dropped|dropping|drops|slipped|slipping|declined|declining|trailed|trailing|down|rose|rising|rises|climbed|climbing|up)(\s+(?:by\s+)?)[-+−](?=\d)/gi;
+// The sign goes only when the word agrees with it: a minus beside "under",
+// "below" or "fell", a plus beside "over", "above" or "rose". A minus beside
+// "over" is a sentence that contradicts its own number, and dropping the sign
+// would make it say the wrong thing cleanly, so it is left for the owner to
+// see as written.
+const AFTER_SIGN = '(?=(?:%|\\s?percent|\\s+points?)?\\s+(?:WAYS)\\b)';
+const MINUS_THEN_DOWN = new RegExp(`(?<![\\w$.,])[-−](\\d+(?:\\.\\d+)?)${AFTER_SIGN.replace('WAYS', 'under|below|behind|short\\s+of|less|fewer|lower|down')}`, 'g');
+const PLUS_THEN_UP = new RegExp(`(?<![\\w$.,])\\+(\\d+(?:\\.\\d+)?)${AFTER_SIGN.replace('WAYS', 'over|above|ahead|more|higher|up')}`, 'g');
+const DOWN_THEN_MINUS = /\b(fell|falling|falls|dropped|dropping|drops|slipped|slipping|declined|declining|trailed|trailing|down)(\s+(?:by\s+)?)[-−](?=\d)/gi;
+const UP_THEN_PLUS = /\b(rose|rising|rises|climbed|climbing|up)(\s+(?:by\s+)?)\+(?=\d)/gi;
 
 function groupThousands(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -188,8 +196,10 @@ function tidyNumbers(text) {
       const stop = tail.endsWith('.') && (rest === '' || /^\s+[A-Z]/.test(rest)) ? '.' : '';
       return `${hour}${mm && mm !== '00' ? `:${mm}` : ''} ${half.toUpperCase()}M${stop}`;
     })
-    .replace(SIGN_THEN_WAY, '$1')
-    .replace(WAY_THEN_SIGN, '$1$2')
+    .replace(MINUS_THEN_DOWN, '$1')
+    .replace(PLUS_THEN_UP, '$1')
+    .replace(DOWN_THEN_MINUS, '$1$2')
+    .replace(UP_THEN_PLUS, '$1$2')
     .replace(WEEKDAY_THEN_DATE, '$1, $2');
 }
 
