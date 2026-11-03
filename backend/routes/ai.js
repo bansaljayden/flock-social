@@ -1090,12 +1090,40 @@ const LOCKED_FORECAST_NOTE_NO_SALES = 'This venue is past this account\'s limit 
 // and the crowd corpus holds no zone for, asked about on a turn without the
 // user's clock, is scored on UTC: the server's clock, and the one in Birdie's
 // Now line. Its hours are then UTC hours and its number is the current UTC
-// hour's, so the result says so in words the model reads, instead of letting
-// either pass as the time there. Addressed to the model, like the locked notes.
-// SERVER_CLOCK is also the IANA zone that venue is handed to the predictor in,
-// so the predictor reads its hours as UTC hours on any host.
+// hour's. SERVER_CLOCK is also the IANA zone that venue is handed to the
+// predictor in, so the predictor reads its hours as UTC hours on any host.
+//
+// NONE OF THAT REACHES THE MODEL (2026-11-03). It used to, with a note saying
+// the hours were UTC hours, and on the Birdie eval every answer about such a
+// venue misled: a night market at its Friday peak was "basically empty at 2"
+// (the UTC hour's number, for an hour it was shut) or "typically quiet around
+// this hour", and the honest version, "at 12 AM UTC", means nothing to the
+// person asking. A UTC hour's number is never how busy it is there, and the
+// card already refuses to show one, so the model gets no number, no level, no
+// best time, no peak and no hour list for it, and a note saying why. The
+// venue's own live report is the one number that needs no clock, and stays.
 const SERVER_CLOCK = 'UTC';
-const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so this was worked out as if the venue kept UTC, the clock in your Now line. Every hour in best_time, peak_hours and hourly_forecast is a UTC hour, and "now" in any of them means the current UTC hour, which may not be the hour it is at the venue. Unless crowd_source is "owner_report", crowd_score is the number for that current UTC hour too. Never present any of these hours as the venue\'s local time, or any of these numbers as how busy it is there right now. If you give one of those hours, say it is UTC.';
+const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so it has no crowd level, best time, peak hours or hour-by-hour forecast for it: any of them would be for the wrong hour. Say you don\'t have a read on how busy it is right now. Do not guess, and give no number, crowd level or hour for it.';
+const SERVER_CLOCK_OWNER_NOTE = 'Flock does not know the local time at this venue, so it has no best time, peak hours or hour-by-hour forecast for it. crowd_score is the venue\'s own live report for right now, which needs no clock: say it is theirs, using crowd_attribution, and give no hour for it.';
+// What a crowd lookup on the server clock hands the model: the venue's own
+// live report when there is one, else no reading at all. In place.
+function serverClockResult(result, { ownerReading = false } = {}) {
+  delete result.best_time;
+  delete result.best_time_note;
+  delete result.peak_hours;
+  delete result.hourly_forecast;
+  if (!ownerReading) {
+    delete result.crowd_score;
+    delete result.crowd_label;
+    delete result.crowd_source;
+    delete result.crowd_method;
+    delete result.confidence;
+    delete result.confidence_measurement;
+  }
+  result.clock = SERVER_CLOCK;
+  result.clock_note = ownerReading ? SERVER_CLOCK_OWNER_NOTE : SERVER_CLOCK_NOTE;
+  return result;
+}
 // The one hour a venue cannot be scored at: an hour on its clock, whichever
 // clock that is, that this process's own clock skips (ONE TIMESTAMP, BUILT ONE
 // WAY, in the tool). Production's host keeps UTC and skips none; a host in New
@@ -1755,8 +1783,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // 2026-08-30 sports ablation found no crowd effect to stand behind.
         ...(gameNightResult(gameNight) ? { game_night: gameNightResult(gameNight) } : {}),
         // Scored on UTC because nothing knew the time at the venue (WHOSE
-        // CLOCK, above): the hours below are UTC hours, and the note says so.
-        // A locked result carries neither, and lockForecastResult removes both.
+        // CLOCK, above). The note says the model gets no reading for it, and
+        // serverClockResult takes the numbers out before it is returned. A
+        // locked result carries neither, and lockForecastResult removes both.
         ...(onServerClock ? { clock: SERVER_CLOCK, clock_note: SERVER_CLOCK_NOTE } : {}),
       };
       // How far it is from the person asking, when the turn may say (HOW FAR
@@ -1911,6 +1940,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       } else {
         lockForecastResult(result, { salesOff: opts.salesOff === true });
       }
+      // Scored on UTC because nothing knew the time there: the model gets no
+      // number and no hour for it, only the venue's own report if it has one
+      // (NONE OF THAT REACHES THE MODEL, above). A locked result has already
+      // lost all of it, the note included.
+      if (onServerClock && opts.includeForecast) serverClockResult(result, { ownerReading: Boolean(ownerLive) });
       return result;
     }
 

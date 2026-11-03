@@ -551,9 +551,10 @@ const ctxFlock = (persona, flockId) => {
 //                                them (21 and over only; under 21 never)
 //   honesty {venue, kind}        kind: locked (no crowd reading, the month
 //                                is spent), noReading (no reading at all),
-//                                utc (hours on UTC), category (typical for
-//                                that kind of place), owner (the venue's own
-//                                report)
+//                                utc (nothing knows the time there, so no
+//                                reading, no hour and no talk of UTC),
+//                                category (typical for that kind of place),
+//                                owner (the venue's own report)
 //   salesOff                     no plan, upgrade or price talk
 //   bestTime                     a when-to-go ask: an hour named must be the
 //                                tool's best time, its peak, now, or theirs

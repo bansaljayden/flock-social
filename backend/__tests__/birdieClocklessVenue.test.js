@@ -14,7 +14,9 @@
 //   1. a turn whose zone Birdie may not read (a yes to the earlier question,
 //      an installed build that sends no zone, a turn with no zone at all)
 //      never scores that venue on the phone's hour or day. It is scored on
-//      UTC, and the result says its hours are UTC hours.
+//      UTC, and the model is handed no number and no hour for it, with a note
+//      saying there is no reading (since 2026-11-03: a UTC hour's number read
+//      to a teenager as how busy a market was, at its peak).
 //   2. a yes to the question that names the zone, with the zone sent, still
 //      scores it on the phone's clock.
 //   3. a venue the crowd corpus holds a zone for is scored on that zone.
@@ -217,8 +219,6 @@ function crowdToolResult() {
   return null;
 }
 
-const namesHour = (text, h) => new RegExp(`(^|\\D)${label(h)}(?!\\w)`).test(String(text || ''));
-
 function assertScoredOnUtc(out, utc, phone, what) {
   assert.ok(out, `${what}: the crowd tool never answered`);
   const hour = utc.getUTCHours();
@@ -226,19 +226,17 @@ function assertScoredOnUtc(out, utc, phone, what) {
   assert.strictEqual(strips[0]?.startHour, hour, `${what}: the strip was asked for hour ${strips[0]?.startHour}`);
   assert.strictEqual(scored[0].ts.getHours(), hour, `${what}: the headline was scored at hour ${scored[0].ts.getHours()}`);
   assert.strictEqual(scored[0].ts.getDay(), utc.getUTCDay(), `${what}: the headline was scored on weekday ${scored[0].ts.getDay()}`);
-  // And Gemini was handed nothing on the phone's clock.
-  assert.strictEqual(out.hourly_forecast[0].hour, label(hour));
-  for (const h of out.hourly_forecast) {
-    assert.notStrictEqual(h.hour, label(phone.localHour), `${what}: the forecast carries the phone's hour ${h.hour}`);
+  // And Gemini was handed nothing on the phone's clock, nor anything on UTC's:
+  // a UTC hour's number is not how busy it is there, and its hours are not the
+  // venue's (routes/ai.js, NONE OF THAT REACHES THE MODEL).
+  for (const field of ['hourly_forecast', 'best_time', 'peak_hours', 'crowd_score', 'crowd_label', 'crowd_method', 'confidence']) {
+    assert.ok(!(field in out), `${what}: ${field} went to the model: ${JSON.stringify(out[field])}`);
   }
-  assert.ok(!namesHour(out.best_time, phone.localHour), `${what}: best_time names the phone's hour: ${out.best_time}`);
-  assert.ok(!namesHour(out.peak_hours, phone.localHour), `${what}: peak_hours names the phone's hour: ${out.peak_hours}`);
-  // The result says its hours are UTC hours, in words the model reads.
-  assert.strictEqual(out.clock, 'UTC', `${what}: the result does not say its hours are UTC hours`);
-  assert.match(out.clock_note, /does not know the local time at this venue/);
-  assert.match(out.clock_note, /is a UTC hour, and "now" in any of them means the current UTC hour/);
-  assert.match(out.clock_note, /crowd_score is the number for that current UTC hour too/);
-  assert.match(out.clock_note, /Never present any of these hours as the venue's local time, or any of these numbers as how busy it is there right now/);
+  assert.ok(!JSON.stringify(out).includes(label(phone.localHour)), `${what}: the result names the phone's hour`);
+  // The result says why there is no reading, in words the model reads.
+  assert.strictEqual(out.clock, 'UTC');
+  assert.match(out.clock_note, /does not know the local time at this venue, so it has no crowd level, best time, peak hours or hour-by-hour forecast for it/);
+  assert.match(out.clock_note, /Say you don't have a read on how busy it is right now\. Do not guess, and give no number, crowd level or hour for it\./);
 }
 
 test("a yes to the earlier question keeps the phone's hour and day out of the crowd tool", async () => {
@@ -363,6 +361,23 @@ test('a number scored on UTC never goes on a venue card; one on the user\'s cloc
   const named = await chat(askingTurn(phoneClockFor(new Date())));
   assert.strictEqual(named.status, 200, named.text);
   assert.strictEqual(named.body.venues.find((v) => v.place_id === PLACE_ID).crowd, 55);
+});
+
+test('with no clock, the venue\'s own live report is still its number now, and nothing else is', async () => {
+  const ownerReports = require('../services/ownerReports');
+  const real = ownerReports.getLiveOwnerReports;
+  ownerReports.getLiveOwnerReports = async () => ({
+    [PLACE_ID]: { id: null, busy_percent: 80, created_at: new Date(Date.now() - 10 * 60000), retracted: false, diverged: false, profile_category: null },
+  });
+  try {
+    const out = await executeTool('get_crowd_prediction', { place_id: PLACE_ID }, CURRENT_USER.id, { includeForecast: true });
+    assert.strictEqual(out.crowd_score, 80);
+    assert.strictEqual(out.crowd_source, 'owner_report');
+    for (const field of ['hourly_forecast', 'best_time', 'peak_hours']) assert.ok(!(field in out), `${field}: ${JSON.stringify(out[field])}`);
+    assert.match(out.clock_note, /crowd_score is the venue's own live report for right now, which needs no clock/);
+  } finally {
+    ownerReports.getLiveOwnerReports = real;
+  }
 });
 
 test('a locked result carries no note about hours it does not have', async () => {

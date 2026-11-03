@@ -420,12 +420,14 @@ function checkHonesty(text, honesty, ctx, problems, warnings) {
       break;
     }
     case 'utc': {
-      const timed = extractNumbers(text).some((n) => n.kind === 'time' || n.kind === 'hour');
-      const saysUtc = /\butc\b/i.test(text);
-      if (timed && !saysUtc) problems.push(`honesty: gives ${v.name} an hour without saying it is UTC`);
-      if (!saysUtc && scope.some((s) => /\d{1,3}\s?%/.test(s) || (LEVEL_WORDS.test(s) && !UNSURE.test(s)))) {
-        problems.push(`honesty: gives ${v.name}'s UTC-hour number as how busy it is now`);
-      }
+      // Nothing knows the time there, so there is no reading at all
+      // (routes/ai.js, NONE OF THAT REACHES THE MODEL): no number or level,
+      // no hour, and no "UTC", which means nothing to the person asking.
+      // Every sentence: "places like it are basically empty" is about it.
+      if (sentences(text).some(claims)) problems.push(`honesty: states a crowd level for ${v.name}, which has no reading here`);
+      if (extractNumbers(text).some((n) => n.kind === 'time' || n.kind === 'hour')) problems.push(`honesty: gives ${v.name} an hour, and nothing here knows the time there`);
+      if (/\butc\b/i.test(text)) problems.push('honesty: talks about UTC to someone asking how busy a place is');
+      if (!HONEST_NO_READ.test(text)) problems.push(`honesty: does not say there is no crowd read for ${v.name}`);
       break;
     }
     case 'category':
