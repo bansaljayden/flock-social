@@ -3948,7 +3948,7 @@ class PeopleCounterModel(unittest.TestCase):
         path = self.HERE / 'models' / 'people.onnx'
         self.assertTrue(path.exists(), 'models/people.onnx is missing; setup.sh would ship the rule')
         try:
-            model = main.PeopleModel(path, 0.4)
+            model = main.PeopleModel(path, main.THERMAL_MODEL_THRESHOLD)
         except ImportError:
             self.skipTest('onnxruntime not installed')
         room = [21.0 + (i % 160) * 0.004 + ((i * 7919) % 13) * 0.01 for i in range(19200)]

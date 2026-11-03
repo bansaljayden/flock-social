@@ -216,7 +216,8 @@ DEFAULTS = {
     # been still and the camera has seen nobody for this many minutes. Raise
     # it for a room where people sit out of the camera's view for long spells.
     'OCCUPANCY_EMPTY_MINUTES': '20',
-    'THERMAL_MODEL_THRESHOLD': '0.4',
+    # owl-5's, chosen with PeopleModel.CROWD_AT on its validation frames.
+    'THERMAL_MODEL_THRESHOLD': '0.35',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
@@ -323,7 +324,7 @@ if THERMAL_MODEL not in ('auto', 'off'):
     print(f'Config THERMAL_MODEL={THERMAL_MODEL!r} is not auto or off; using auto',
           file=sys.stderr)
     THERMAL_MODEL = 'auto'
-THERMAL_MODEL_THRESHOLD = _cfg_number('THERMAL_MODEL_THRESHOLD', float, 0.1, 0.95, 0.4)
+THERMAL_MODEL_THRESHOLD = _cfg_number('THERMAL_MODEL_THRESHOLD', float, 0.1, 0.95, 0.35)
 PEOPLE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people.onnx'
 # A second, finer-grid counter for crowds. Optional: see PeopleModel.CROWD_AT.
 PEOPLE_FINE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people-fine.onnx'
@@ -1781,7 +1782,7 @@ class PeopleModel:
 
     STRIDE = 4          # owl-4's output grid is a quarter of the frame's resolution;
                         # read() takes the real one from the model's output, so a
-                        # finer-grid model (owl-5: 80 x 60, stride 2) works unchanged
+                        # finer-grid model (80 x 60, stride 2, tried in September) works unchanged
 
     def __init__(self, path, threshold):
         import numpy as np
@@ -1822,13 +1823,14 @@ class PeopleModel:
     # From this many people the crowd model (models/people-fine.onnx), when
     # installed, counts the frame too, and the highest count stands. The main
     # model merges heads a few pixels apart, which is how a crowd reads short.
-    # The crowd model shipped now is owl-4.9-crowd, whose density head's total
-    # does not fall when heads merge; it is a little less sure in a small room,
-    # so it is only asked where crowds are. On IISER Bhopal's real classroom
-    # crowds on this camera the pair counts rooms of six to ten within one 96%
-    # of the time. Asking it from three people or four instead of five was
-    # tried on the same frames and was worse.
-    CROWD_AT = 5
+    # The crowd model shipped now is owl-5's, whose density head's total does
+    # not fall when heads merge. owl-5 asks it from four people and counts at
+    # a threshold of 0.35. Both were chosen on 12,597 validation frames from
+    # owl-5's training sets that it never trained on: there owl-5's pair
+    # counted 69.2% of frames exactly at four and 0.35, and 68.7% at owl-4.9's
+    # settings of five and 0.4. owl-4.9 stayed at five because three and four
+    # counted IISER Bhopal's classroom crowds worse for its own pair.
+    CROWD_AT = 4
     fine = None
 
     # Things a person is easily mistaken for. Where one of these is surer

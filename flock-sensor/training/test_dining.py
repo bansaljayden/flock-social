@@ -4,7 +4,7 @@
     python flock-sensor/training/test_dining.py measure 200        Owl's finding rate on 200 dining frames
 
 The Owl test runs models/people.onnx through main.PeopleModel exactly as the box does and reports what it finds. That
-is a measurement, not a gate: owl-4.9 never saw a frame from this angle.
+is a measurement, not a gate: no Owl version has trained on these generated dining frames.
 """
 import hashlib
 import json
