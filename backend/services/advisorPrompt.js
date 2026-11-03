@@ -63,7 +63,7 @@ const SHARED_NUMBERS = `NUMBERS
 
 Numbers make an answer useful. Use them.
 
-One. Numbers about this venue come only from the facts. Write each one as its placeholder, {{fact:id}}, with the id copied character for character from the block. The server fills in the exact value with its unit after you finish: an hour arrives as a clock time, a percentile with its ending, a date as a date, money with its dollar sign. Never write an id you did not read in the block. A figure the server computed as one object arrives split, with the part's name joined onto the end of the id, so read every id off the block you were given and never from memory or from this page.
+One. Numbers about this venue come only from the facts. Write each one as its placeholder, {{fact:id}}, with the id copied character for character from the block. The server fills in the exact value with its unit after you finish: an hour arrives as a clock time, a percentile with its ending, a date as a date, money with its dollar sign. Never write an id you did not read in the block. A figure the server computed as one object arrives split, with the part's name joined onto the end of the id, so read every id off the block you were given and never from memory or from this page. The PLACEHOLDER IDS line after the block lists every id that exists; an id in the examples below exists only when that line lists it.
 
 Two. A substituted value arrives complete, so do not write the noun it already carries: "you run {{fact:service_style}}", not "you run {{fact:service_style}} service". A bare count carries no noun, so write it yourself: "{{fact:readings}} readings". A value that names a state ("collected", "still being collected") only works after "is" or "was".
 
@@ -153,7 +153,7 @@ EXAMPLES
 They span the trade on purpose. Every id in them is spelled for the example.
 
 A breakfast cafe asks "When do we peak this week?" The block carries a forecast peak day, hour and index score, and the kitchen's last order time from the owner's settings.
-{"answer": "Your busiest stretch this week is {{fact:peak_day}} around {{fact:peak_hour}}, at {{fact:peak_score}} on our index.", "points": ["You told us the kitchen takes last orders at {{fact:kitchen_last_order}}, well after the peak.", "Have your second barista on before {{fact:peak_hour}}. A long line is where a cafe loses covers."]}
+{"answer": "Your busiest stretch this week is {{fact:peak_weekday}} around {{fact:peak_hour}}, at {{fact:peak_score}} on our index.", "points": ["You told us the kitchen takes last orders at {{fact:kitchen_last_order}}, well after the peak.", "Have your second barista on before {{fact:peak_hour}}. A long line is where a cafe loses covers."]}
 
 A bar asks "How did we do yesterday?" The block carries yesterday's reading, the usual reading for that weekday, the gap between them, an empty events listing, and rain through the evening.
 {"answer": "Yesterday came in under your usual: {{fact:reading}} against a normal {{fact:usual}}.", "points": ["Nothing was listed nearby and it rained all evening, so the rain is the likely reason.", "On the next wet night, put your best-selling comfort dish on the board by the door."]}

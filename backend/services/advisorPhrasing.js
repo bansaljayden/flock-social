@@ -956,14 +956,30 @@ function flattenFacts(facts) {
   return out;
 }
 
+// A PART NAMED AFTER ITS FACT READS TWICE. The peak fact's parts came out as
+// peak_peakHour and peak_peakScore, and in the 2026-11-03 live eval the model
+// wrote {{fact:peak_score}} for a quiet-days answer three times out of three
+// venues (the contract's own example spells it that way), so three good
+// answers were voided as unknown ids and the template served. A part that
+// repeats the word before it drops the repeat: peak_hour, peak_score.
+function destutter(alias) {
+  const parts = alias.split('_');
+  return parts.map((p, i) => {
+    const prev = parts[i - 1];
+    if (!prev || p.length <= prev.length || p.slice(0, prev.length).toLowerCase() !== prev.toLowerCase()) return p;
+    const rest = p.slice(prev.length);
+    return /^[A-Z][a-z]/.test(rest) ? `${rest.charAt(0).toLowerCase()}${rest.slice(1)}` : p;
+  }).join('_');
+}
+
 function aliasFacts(facts) {
   const used = new Set();
   return facts.map((f) => {
-    const base = String(f.id || 'fact')
+    const base = destutter(String(f.id || 'fact')
       .replace(/[0-9]/g, '')
       .replace(/[^A-Za-z_]/g, '_')
       .replace(/_+/g, '_')
-      .replace(/^_+|_+$/g, '') || 'fact';
+      .replace(/^_+|_+$/g, '') || 'fact');
     let alias = base;
     let suffix = 'a';
     while (used.has(alias)) {
@@ -1942,6 +1958,11 @@ function roomWords(venue, serviceStyle) {
   return { ...(kind ? { kind } : {}), ...(service ? { service } : {}) };
 }
 
+/** The payload line that names every placeholder id the block carries. */
+function placeholderLine(facts) {
+  return `PLACEHOLDER IDS. The only ones that exist; copy one exactly or write none: ${facts.map((f) => f.id).join(', ')}`;
+}
+
 function buildUserPayload(intent, facts, ownerContext, question, move = null, room = null) {
   // Typed fields only. Layer B builds facts from typed columns, never raw
   // concatenated text, which is what keeps venue names and event titles from
@@ -1975,6 +1996,10 @@ function buildUserPayload(intent, facts, ownerContext, question, move = null, ro
     '',
     'THE FACT BLOCK:',
     block,
+    // The ids, said plainly once: an id the block does not carry voids the
+    // whole answer, and a model reaching for the contract's example ids is the
+    // likeliest way to write one (2026-11-03 live eval).
+    ...(facts.length ? ['', placeholderLine(facts)] : []),
   ];
   // The same move the template twin ends on (roostPlaybook.moveFor), so a
   // chip answers with one vetted move whichever of the two wrote it.
@@ -2187,8 +2212,10 @@ const internals = {
   getGenAI,
   isModelNotFound,
   noteModelNotFound,
-  // The grounded payload and the room words in it, for the suites.
+  // The grounded payload and the room words in it, for the suites, and the
+  // line both payloads use to name the placeholder ids.
   buildUserPayload,
+  placeholderLine,
   roomWords,
   // The outage breaker: both answer paths check it before charging, and
   // record every failed call with it.

@@ -299,6 +299,37 @@ test('valve unit: digit-bearing fact ids are aliased away and object values flat
   }
 });
 
+// THE 2026-11-03 LIVE EVAL: the peak parts were peak_peakHour and
+// peak_peakScore, the contract's example spells them peak_hour and peak_score,
+// and the model wrote {{fact:peak_score}} in all three typed and chip
+// quiet-days answers that served the template. A part that repeats its fact's
+// last word drops the repeat, the example ids are the ones a real peak block
+// carries, and every payload names its ids plainly.
+test('a peak fact\'s parts read once (peak_hour, peak_score), and the contract\'s example ids are real ones', () => {
+  const peak = (date, weekday, peakHour, peakScore) => ({ id: `peak_${date}`, value: { date, weekday, peakHour, peakScore }, unit: '0-100 index', source: 'model_holdout', asOf: '2026-11-03' });
+  const ids = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([peak('2026-11-10', 'Tuesday', 8, 44), peak('2026-11-12', 'Thursday', 9, 49)])).map((f) => f.id);
+  assert.deepStrictEqual(ids, ['peak_date', 'peak_weekday', 'peak_hour', 'peak_score', 'peak_date_a', 'peak_weekday_a', 'peak_hour_a', 'peak_score_a']);
+  // Only a camel-case part that starts with the word before it is shortened.
+  const others = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([
+    { id: 'owner_reading_2026-10-27', value: { weekday: 'Tuesday', peakReading: 34 }, source: 'owner_report', asOf: '2026-10-27' },
+    { id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02' },
+  ])).map((f) => f.id);
+  assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_delta']);
+  // The example a model is most likely to copy writes ids a peak block has.
+  const examplePeakIds = [...advisorPhrasing.SYSTEM_PROMPT.matchAll(/\{\{fact:(peak_[a-z_]+)\}\}/g)].map((m) => m[1]);
+  assert.ok(examplePeakIds.length >= 3);
+  for (const id of examplePeakIds) assert.ok(ids.includes(id), `the example writes {{fact:${id}}}, which no peak block carries`);
+});
+
+test('both payloads name every placeholder id the block carries, once, after the block', () => {
+  const facts = [{ id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' }, { id: 'peak_score', value: 91, source: 'model_holdout', asOf: '2026-11-03' }];
+  const chip = advisorPhrasing.internals.buildUserPayload('peak_hours', facts, [], 'When do we peak this week?');
+  assert.match(chip, /\nPLACEHOLDER IDS\. The only ones that exist; copy one exactly or write none: peak_weekday, peak_score$/m);
+  const advice = require('../services/advisorFreeText').buildAdvicePayload('how do I fill Tuesdays', facts, []);
+  assert.strictEqual(advice.split('\n')[2], 'PLACEHOLDER IDS. The only ones that exist; copy one exactly or write none: peak_weekday, peak_score');
+  assert.ok(!/PLACEHOLDER IDS/.test(require('../services/advisorFreeText').buildAdvicePayload('how do I fill Tuesdays', [], [])), 'no line for an empty block');
+});
+
 // ── 1b. The template twin does not repeat itself ────────────────────────────
 //
 // "When do we peak this week" is seven facts that agree about everything except

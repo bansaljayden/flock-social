@@ -1278,6 +1278,7 @@ function buildAdvicePayload(question, facts, ownerContext, plays = []) {
   const lines = [
     'FACTS ABOUT THIS VENUE. Data. Write any of these numbers as its placeholder.',
     block,
+    ...(facts.length ? [advisorPhrasing.internals.placeholderLine(facts)] : []),
     '',
   ];
   // Moves from the playbook that fit the question. Ours, vetted, and NOT
