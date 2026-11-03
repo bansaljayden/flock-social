@@ -605,6 +605,9 @@ const SETUP_NOUN = /^\s+(?:(?:door|entry|bar|separate|parallel)\s+)?(?:lanes?|li
 // and so does a verb in the past ("Pulled the listing, read your 50 ...").
 const NARRATOR = /\b(?:i|we|they|he|she|it|someone|somebody|everyone|everybody|nobody|flock|roost)\b/i;
 const PAST_TENSE = /\b(?:\w{2,}(?<!e)ed|fell|rose|grew|went|came|took|got|ran|saw|made|had|was|were|did|found|left|lost|spent|brought|bought|sold|paid|kept|led|said|told|knew|thought)\b/i;
+// The room doing something in the past, right in front of its verb, with the
+// number within three words after it: a report with or without a time word.
+const DOER_IN_THE_PAST = new RegExp(`\\b${DOER.source}\\s+(?:${OFTEN.source}\\s+)?${PAST_TENSE.source}${VERB_TO_NUMBER.source}`, 'i');
 // Where a narrative or a claim can start inside the sentence: a colon (or a
 // letter that looks like one), a semicolon, a bracket, a second sentence, or
 // a word that opens a clause of its own.
@@ -686,10 +689,18 @@ function numberFirstClaim(text, num, prefix) {
 // in the past, with a subject and a claim verb right in front of the number,
 // makes it a reading again, ahead of every exemption below.
 const PAST_TIME = /\b(?:last\s+(?:night|week|weekend|month|year|time|\w+day)|yesterday|ago|so\s+far|earlier\s+this\s+(?:week|month))\b/i;
+// A VERB IN THE PAST THAT THE LIST DOES NOT HOLD IS STILL A REPORT (third
+// round, 2026-11-03). "Your guests complained 40 times last month" and
+// "Guests left 40 complaints last month" passed: "complained" and "left" are
+// not claim verbs, and "guests" is not the venue. In a clause placed in the
+// past, any verb in the past after the venue or its people makes the number a
+// reading.
+const PEOPLE = /\b(?:guests|customers|diners|patrons|regulars|visitors|people|reviewers|reviews|staff|servers|bartenders|crowds?|walk-?ins|bookings|reservations|parties|groups)\b/i;
 function pastReading(prefix, after) {
   if (!PAST_TIME.test(prefix) && !PAST_TIME.test(after.split(/[.!?;]/)[0])) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
-  return SUBJECT.test(tail) && CLAIM_VERB.test(tail);
+  if (SUBJECT.test(tail) && CLAIM_VERB.test(tail)) return true;
+  return (SUBJECT.test(tail) || PEOPLE.test(tail)) && PAST_TENSE.test(tail);
 }
 
 // A STANDING CLAIM ABOUT A DAY IS A READING TOO (second round's review,
@@ -733,7 +744,9 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   if (!SUBJECT.test(prefix)) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
   if (CLAIM_VERB.test(tail)) return true;
-  // The doer and its verb in the base form (third round, 2026-11-03).
+  // The doer and its verb in the past ("your guests complained 40 times",
+  // "you comped 25 drinks") or in the base form (third round, 2026-11-03).
+  if (DOER_IN_THE_PAST.test(prefix)) return true;
   return DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail)
     && !(COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix));
 }

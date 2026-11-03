@@ -324,6 +324,35 @@ test('a verb in its base form right after the room doing it is a reading, and a 
   }
 });
 
+test('a report in the past is a reading whatever its verb, and a rule about other rooms in the past is not', () => {
+  // Third round, 2026-11-03: "complained", "left", "ordered", "comped" and
+  // "rated" are not claim verbs, and "guests" is not the venue, so all of
+  // these passed with nothing behind them.
+  for (const claim of [
+    'Your guests complained 40 times last month.',
+    'Guests left 40 complaints last month.',
+    'Last month your guests complained 40 times.',
+    'Diners ordered 300 cocktails last weekend.',
+    'Last weekend customers waited about 40 minutes for a table.',
+    'Your servers comped 25 drinks last Friday.',
+    'Since last month, reviewers rated you 3 stars.',
+    // And with no time word, right after the room doing it.
+    'Your guests complained 40 times.',
+    'You comped 25 drinks on Friday.',
+    'We went through your 50 most recent reviews, which all mention slow service.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" reports something nobody measured`);
+  for (const fine of [
+    'Operators who raised prices 5% last year kept their regulars.',
+    'Say 50 of 70 deal guests were coming anyway and each saved $5: you gave away $250 for no extra sale.',
+    'You told us {{fact:intake_capacity}} seats, so 2 turns is 140 covers.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, [...ADVICE_FACTS(), { id: 'intake_capacity', value: 70, source: 'intake', asOf: 'owner-set 2026-10-01' }]);
+    assert.ok(out, fine);
+  }
+  // The owner's own count is theirs to have quoted back.
+  assert.ok(freeText.applyAdviceValve('Your guests complained 40 times last month.', ADVICE_FACTS(), { texts: ['my guests complained 40 times last month, what do I do'] }));
+});
+
 test('a number that opens its clause as the subject of a claim is read as one, and a target or a rule of thumb that opens on a number is not', () => {
   // Never read at all before 2026-11-03: the rules look for a subject in front
   // of a number, and here the number is the subject.
