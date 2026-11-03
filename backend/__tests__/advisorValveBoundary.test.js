@@ -84,6 +84,35 @@ test('a claim the facts DO hold renders, written as a placeholder or as digits',
     'and the facts it came from are still the answer\'s sources');
 });
 
+test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1st too, never waved through as a nought or a one', () => {
+  // Until 2026-11-03 "12 AM" (hour 0), "1 AM" (hour 1) and "Nov 1" (day 1)
+  // passed as "nought and one", and "midnight" and "noon" were not read at all.
+  for (const draft of [
+    'Your Friday peaks at 12 AM.',
+    'Your Friday peaks at midnight.',
+    'Your Friday peaks at 1 AM.',
+    'Your kitchen closes at noon.',
+    'Your Saturday peak lands at 12 PM.',
+    'Your busiest night was Nov 1.',
+  ]) {
+    assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, `"${draft}" is an hour or a date nobody measured`);
+  }
+  // The same hours render when a fact holds them, in either spelling.
+  const hour = (value) => [{ id: 'peak_hour', value, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' }];
+  for (const [value, draft] of [[0, 'Your Friday peaks at midnight.'], [0, 'Your Friday peaks at 12 AM.'], [1, 'Your Friday peaks at 1 AM.'], [12, 'Your Saturday peaks at noon.']]) {
+    const out = freeText.applyAdviceValve(draft, hour(value));
+    assert.ok(out, `"${draft}" is the fact`);
+    assert.strictEqual(out.text, draft);
+  }
+  // The owner's own hour is theirs, and an hour said as a suggestion is not a claim.
+  assert.ok(freeText.applyAdviceValve('Your crowd is gone by midnight, so put the headline set on at 11 PM.', [], { texts: ['people leave at midnight'] }));
+  for (const fine of ['Put the headline set on at midnight.', 'Holding 50 guests past midnight at $45 a head is $2,250.', 'Open the patio from noon on hot days.']) {
+    const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine);
+  }
+});
+
 // ── 2. The numbers an owner needs ──────────────────────────────────────────
 
 test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {

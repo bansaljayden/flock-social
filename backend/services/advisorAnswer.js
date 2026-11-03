@@ -331,6 +331,13 @@ const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})(?:T[\d:.]+Z?)?/g;
 const MONTH_DAY = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?/gi;
 const CLOCK_TIME = /\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s?([ap])\.?\s?m\b\.?/gi;
 const CLOCK_24 = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
+// MIDNIGHT AND NOON ARE CLOCK TIMES WRITTEN AS WORDS (2026-11-03). A claim
+// can carry the hour as a word, and a word this check did not read was a
+// claim it never checked: "your Friday peaks at midnight" passed with nothing
+// behind it. They are read as the hours they name, the way "12 AM" and
+// "12 PM" are. "Midday" is a part of the day, not a time, and stays prose.
+const CLOCK_WORD = /\b(midnight|noon)\b/gi;
+const CLOCK_WORD_HOUR = Object.freeze({ midnight: 0, noon: 12 });
 const NUMBER = /(\$\s?)?\b(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:(st|nd|rd|th)\b)?(\s?(?:%|percent\b|per\s+cent\b))?/gi;
 
 /**
@@ -373,6 +380,12 @@ function numbersIn(text) {
     const h = Number(m[1]);
     const min = Number(m[2]);
     out.push({ index: m.index, length: m[0].length, value: h + min / 60, alt: [(h % 12 || 12) + min / 60], kind: 'clock', dim: 'clock' });
+    mark(m.index, m[0].length);
+  }
+  CLOCK_WORD.lastIndex = 0;
+  while ((m = CLOCK_WORD.exec(src)) !== null) {
+    const h = CLOCK_WORD_HOUR[m[1].toLowerCase()];
+    out.push({ index: m.index, length: m[0].length, value: h, alt: [12], kind: 'clock', dim: 'clock' });
     mark(m.index, m[0].length);
   }
   NUMBER.lastIndex = 0;
@@ -647,9 +660,14 @@ function supportFor(num, support, inPlay = {}) {
   const ids = inPlay.ids instanceof Set ? inPlay.ids : new Set();
   const literals = Array.isArray(inPlay.literals) ? inPlay.literals : [];
   const targets = [num.value, ...(num.alt || [])];
-  // Nought and one are never a fabricated reading of any consequence, and
+  // Nought and one are never a fabricated count of any consequence, and
   // positions ("your 2nd busiest day") are rankings the owner can check.
-  if (targets.some((t) => t === 0 || t === 1)) return new Set();
+  // A CLOCK TIME OR A DATE IS NOT A COUNT (2026-11-03): "12 AM" is hour 0,
+  // "1 AM" is hour 1 and "Nov 1" is day 1, and all three were waved through
+  // here, so "your Friday peaks at 1 AM" passed with nothing behind it. Those
+  // are claims about the venue's clock and calendar and are checked like any
+  // other.
+  if (num.dim !== 'clock' && num.dim !== 'date' && targets.some((t) => t === 0 || t === 1)) return new Set();
   if (num.kind === 'ordinal' && num.value <= 10) return new Set();
 
   // A percentage may also be a share the facts hold as a fraction (0.42 is
