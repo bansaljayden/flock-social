@@ -116,9 +116,11 @@ const ROUTER_REPLY = /^\s*\{\s*"mode"\s*:\s*"(?:grounded|advice|refused)"/;
 // so each item key holds its rows in the order the earlier run asked them.
 // A draft written before 2026-11-03 spells a peak part peak_peakScore, and is
 // read in today's spelling (peak_score), the one its block now carries; the
-// verdict's signed delta is now handed over as its gap.
+// verdict's signed delta (or the gap of the run that followed) is now handed
+// over as pointsBelow, which is what it is for every verdict this battery
+// stubs (each is a below day).
 const replayed = new Map();
-const todaysIds = (raw) => String(raw || '').replace(/\{\{fact:([A-Za-z_]+)\}\}/g, (m, id) => `{{fact:${advisorPhrasing.internals.destutter(id).replace(/^last_day_verdict_delta(_[a-z]+)?$/, 'last_day_verdict_gap$1')}}}`);
+const todaysIds = (raw) => String(raw || '').replace(/\{\{fact:([A-Za-z_]+)\}\}/g, (m, id) => `{{fact:${advisorPhrasing.internals.destutter(id).replace(/^last_day_verdict_(?:delta|gap)(_[a-z]+)?$/, 'last_day_verdict_pointsBelow$1')}}}`);
 if (args.replay) {
   for (const row of JSON.parse(fs.readFileSync(path.resolve(String(args.replay)), 'utf8'))) {
     const asked = row.kind === 'chip' ? row.intentId : row.q;
