@@ -20,8 +20,14 @@ import { shareThisPage } from './shareCard';
 //   Starling: XGBoost, 800 trees; reads time, weather, events, the venue's
 //     own pattern; tested on three cities it never trained on    C-035, C-036, C-042
 //   the readings are 0 to 100 estimates, not head counts          C-058
-//   on live readings the learned layer adds little over the
-//     venue's usual week                                          C-055
+//   where Flock knows the venue's usual week, the card's number is
+//     Starling's forecast, moved by the venue's newest live reading:
+//     CROWD_SERVE_MODE=model and CROWD_NOWCAST_ENABLED=true since the
+//     evening of 2026-11-01, on 2.6.0-starling, the artifact the nowcast
+//     weights were fitted on (NOWCAST_MODEL_FITTED_ON in
+//     backend/services/mlPredictor.js). The delta model cannot score a
+//     venue with no usual week; that venue gets its kind's pattern or the
+//     rule engine
 //   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
 //     it lasts 90 minutes                                         C-131
 //   Owl: runs on the Pi; generated frames and six public
@@ -155,9 +161,9 @@ export default function AiPage() {
               </p>
               <p>
                 The live readings it learns from are estimates on that 0 to 100
-                scale, not head counts. On them, its learned layer adds little over
-                a venue’s usual week, so where Flock knows that week, the number on
-                the venue’s card starts from it and moves with the latest readings.
+                scale, not head counts. Where Flock knows a venue’s usual week, the
+                number on its card is Starling’s forecast, moved by the venue’s
+                latest live reading when there is one.
                 The <a href="/research">research page</a> has the numbers.
               </p>
             </div>

@@ -433,14 +433,19 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(flat).not.toMatch(/held out from September/);
   });
 
-  // A venue with no pattern is answered by the rule engine, and one with a
-  // pattern but no live readings is its pattern alone, so neither sentence
-  // that describes every venue's number may say it moves with live readings.
+  // A venue with no pattern is answered by its kind's pattern or the rule
+  // engine, and one with a pattern but no live reading is Starling's forecast
+  // alone, so neither sentence that describes every venue's number may say it
+  // moves with live readings. Production has served the model since the
+  // evening of 2026-11-01 (CROWD_SERVE_MODE=model, the nowcast on), so the
+  // pattern-plus-live-readings sentence is the forecast the figures above
+  // measured, in the past tense, and never what a venue's number is now.
   test('the crowd sentences limit live readings to the venues Flock has them for', () => {
     const flat = llms.replace(/\s+/g, ' ');
     expect(flat).not.toMatch(/Each venue's number/);
-    expect(flat).toContain("A venue's number is its own usual pattern for that hour, moved by its newest live readings where Flock has them.");
-    expect(flat).toContain('moved by its newest live readings where Flock has them, so a group can see how packed somewhere is before leaving. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.');
+    expect(flat).toContain("Where Flock knows a venue's usual pattern, the number is Starling's forecast, moved by the venue's latest live reading when there is one. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.");
+    expect(flat).toContain("In that period a venue's number was its own usual pattern for that hour, moved by its newest live readings where Flock had them.");
+    expect(flat).not.toMatch(/A venue's number is its own usual pattern/);
   });
 
   // AUDIT 2026-08-26. The five figures above were pinned; the sentence that
