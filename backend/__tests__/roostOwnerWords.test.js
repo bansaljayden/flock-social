@@ -458,3 +458,15 @@ test('a word that is also an object property is just a word: "constructor" answe
   assert.doesNotThrow(() => pb.followUpFor(pb.find(said, { venue }), venue, said));
   assert.strictEqual(pb.restates('What about the constructor?', 'constructor hours'), true);
 });
+
+test('"no X please" rules X out the way "no X, what else" does, and a complaint that opens on "no" still does not', () => {
+  // Review, 2026-11-03: "No happy hour please, how do I get people in before
+  // 7pm" led with the happy hour move for a bar and a restaurant.
+  const BAR = { kind: 'bar', alcohol: true };
+  for (const q of ['No happy hour please, how do I get people in before 7pm', 'no happy hour pls. how do i get people in before 7pm', 'No happy hour, please. How do I get people in before 7pm?']) {
+    const ids = pb.find(q, { venue: BAR, limit: 5 }).map((t) => t.id);
+    assert.ok(!ids.includes('slow_hours_happy_hour'), `${q}: ${ids}`);
+  }
+  assert.ok(pb.find('No reservations please, we are walk in only. How do I stop the line?', { venue: BAR, limit: 5 }).every((t) => t.topic !== 'reservations'));
+  assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('no regulars anymore, how do I get them back')).spans, []);
+});

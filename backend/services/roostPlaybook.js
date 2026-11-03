@@ -361,7 +361,9 @@ function refusedFrom(tokens, i, asksElse) {
   // ("no happy hour, what else"), since "no regulars anymore" is a complaint.
   if (w === 'no' && next && !SPAN_STOP.has(next)) {
     if (before === 'but' || before === 'with') return i + 1;
-    if ((i === 0 || before === ',') && asksElse) return i + 1;
+    // "No happy hour please" refuses too, the way "no happy hour, what else"
+    // does: a please or thanks before the clause ends (review, 2026-11-03).
+    if ((i === 0 || before === ',') && (asksElse || politeUntilClauseEnd(tokens, i + 1))) return i + 1;
     return null;
   }
   let at = null;
@@ -386,6 +388,14 @@ function refusedFrom(tokens, i, asksElse) {
   return from;
 }
 const NOT_YET = new Set(['yet', 'until', 'till', 'til', 'before', 'after']);
+const POLITE = new Set(['please', 'pls', 'plz', 'thanks', 'thank']);
+function politeUntilClauseEnd(tokens, from) {
+  for (let k = from; k < tokens.length && k < from + 8; k += 1) {
+    if (CLAUSE_END.has(tokens[k]) || tokens[k] === ',') return POLITE.has(tokens[k + 1] || '');
+    if (POLITE.has(tokens[k])) return true;
+  }
+  return false;
+}
 const LIMIT_START = /^(?:more|extra|additional|much|any|big|new|hiring|adding|spending|paying|raising|a\s+big)$/;
 const NOTICING = /^(?:noticing|complaining|knowing|minding|leaving|caring|realizing|seeing)$/;
 
