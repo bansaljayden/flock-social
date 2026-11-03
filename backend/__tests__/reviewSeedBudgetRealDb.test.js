@@ -16,13 +16,13 @@ const assert = require('node:assert');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const express = require('express');
 
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('reviewSeedBudgetRealDb');
 const DB_NAME = 'flock_review_seed_budget_test';
@@ -64,7 +64,7 @@ test.after(async () => {
   if (server) await new Promise((r) => server.close(r));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'reviewSeedBudgetRealDb');
 });
 
 async function call(method, url, token, body) {

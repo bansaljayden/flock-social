@@ -47,6 +47,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('migrationBootSafety');
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
@@ -104,7 +105,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'migrationBootSafety');
 });
 
 // ---------------------------------------------------------------------------

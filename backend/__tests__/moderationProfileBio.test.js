@@ -26,7 +26,6 @@
 // them out-of-band instead; this file gives that verification somewhere to live.
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { Pool } = require('pg');
@@ -35,6 +34,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const { CONTENT_TEXT_SQL } = require('../routes/admin').__test;
 
@@ -99,7 +99,7 @@ test.before(async () => {
 test.after(async () => {
   if (pool) await pool.end().catch(() => {});
   if (pg) await pg.stop().catch(() => {});
-  try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (_) {}
+  removeTempDir(dataDir, 'moderationProfileBio');
 });
 
 test('users.bio exists, so the comment that denied it cannot be restored', async () => {

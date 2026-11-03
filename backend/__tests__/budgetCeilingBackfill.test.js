@@ -47,6 +47,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const { bandCeiling } = require('../routes/budget');
 
@@ -153,17 +154,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  // Tolerated, unlike the sibling migration suites: under the FULL suite this
-  // file runs alongside the other embedded-Postgres tests, and Windows was
-  // observed still holding a handle on the data directory after pg.stop()
-  // returned — an EPERM here failed a file whose nine assertions had all
-  // passed. A leftover temp directory is an untidy machine, not a broken
-  // migration, and `persistent: false` means the next run makes its own.
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
-  } catch (err) {
-    console.warn('[budgetCeilingBackfill] could not remove %s: %s', dataDir, err.message);
-  }
+  removeTempDir(dataDir, 'budgetCeilingBackfill');
 });
 
 test('027 exists at its number, and carries no directive line (default = one transaction)', () => {

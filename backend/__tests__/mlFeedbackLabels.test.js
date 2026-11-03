@@ -40,6 +40,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 // This suite boots its own embedded Postgres, so its port must be distinct from
 // e2e-local.js's 59595 and from every sibling suite that does the same. It used
@@ -378,10 +379,10 @@ test.after(async () => {
   if (pool) await pool.end();
   // pg.stop() removes the data directory itself, and on Windows the postgres
   // process can still hold a handle to it for a moment after it reports exit,
-  // so that rmdir raises EBUSY. The rmSync below was already guarded for this;
+  // so that rmdir raises EBUSY. The removal below was already guarded for this;
   // stop() was not, so the throw came from the line above the guard and failed
   // a suite whose assertions had all passed. Nothing after this point is a
-  // result: it is a temp directory under os.tmpdir() that the OS will reap.
+  // result: it is a temp directory under os.tmpdir() that the sweep will reap.
   // A cleanup that cannot delete a scratch folder must never be able to fail a
   // green test, because a red suite that means nothing trains everybody to
   // ignore a red suite.
@@ -390,11 +391,7 @@ test.after(async () => {
   } catch (err) {
     console.warn(`[mlFeedbackLabels] could not stop postgres cleanly: ${err.message}`);
   }
-  try {
-    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-  } catch (err) {
-    console.warn(`[mlFeedbackLabels] could not remove ${dataDir}: ${err.message}`);
-  }
+  removeTempDir(dataDir, 'mlFeedbackLabels');
 });
 
 // 2026-05-08 01:00Z is 2026-05-07 21:00 in America/New_York — a Thursday. The

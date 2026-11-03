@@ -55,6 +55,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('accountDeletionSurface');
 const REPO = path.join(__dirname, '..', '..');
@@ -84,17 +85,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  // Swallowed on purpose. On Windows the postmaster's file handles outlive
-  // pg.stop() by a moment, so rmSync throws EPERM often enough to turn a suite
-  // whose assertions all passed into a red file, which is what happened to
-  // migrationSearchPath in the run that added this one. A leftover temp
-  // directory is a tidiness problem; the OS clears it. A failed cleanup must
-  // never be reported as a failed test.
-  if (dataDir) {
-    try {
-      fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch (_) { /* the OS will get it */ }
-  }
+  removeTempDir(dataDir, 'accountDeletionSurface');
 });
 
 const DELETE_ACTION = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' };

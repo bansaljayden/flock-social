@@ -52,6 +52,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const { findMissingRequirements } = require('../db/migrate');
 
@@ -85,7 +86,7 @@ test.before(async () => {
 test.after(async () => {
   if (client) await client.end().catch(() => {});
   if (pg) await pg.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
+  removeTempDir(dataDir, 'migrationSearchPath');
 });
 
 test('the premise: current_schema() is not where an unqualified name resolves', async () => {

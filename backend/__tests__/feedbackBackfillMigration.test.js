@@ -47,6 +47,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const MIGRATION_FILE = '021_backfill_feedback_local_buckets.sql';
 const MIGRATION_PATH = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
@@ -178,7 +179,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'feedbackBackfillMigration');
 });
 
 test('021 exists at its number, and carries no directive line (default = one transaction)', () => {

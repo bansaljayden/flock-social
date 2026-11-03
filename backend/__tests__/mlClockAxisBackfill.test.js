@@ -49,6 +49,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const MIGRATION_FILE = '023_backfill_ml_weekly_local_hours.sql';
 const MIGRATION_PATH = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
@@ -269,17 +270,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  // Guarded for the same reason stop() is guarded above it: on Windows the
-  // postgres process can still hold a handle to its data directory just after
-  // it reports exit, so this rmdir raises EBUSY under a parallel run. This is a
-  // scratch directory under os.tmpdir() and nothing reads it again, so failing
-  // to delete it is not a result. Leaving it unguarded meant a suite whose
-  // every assertion passed reported red on the weather.
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch (err) {
-    console.warn(`[mlClockAxisBackfill] could not remove ${dataDir}: ${err.message}`);
-  }
+  removeTempDir(dataDir, 'mlClockAxisBackfill');
 });
 
 test('023 exists at its number and declares @noTransaction (the DO block COMMITs)', () => {

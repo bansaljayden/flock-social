@@ -61,6 +61,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('dumpLiteralRestore');
 
@@ -126,15 +127,7 @@ test.before(async () => {
 test.after(async () => {
   if (client) await client.end().catch(() => {});
   if (pg) await pg.stop().catch(() => {});
-  // The tests have passed by now. A handle some other process still holds on
-  // the directory (EPERM under load, pre-push of 2026-11-03) is not a failure
-  // of this suite, and helpers/sweepOrphans.js removes the stale directory on
-  // the next run, as in sensorIngestStatement.test.js.
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch (err) {
-    console.warn(`[dumpLiteralRestore] temp data directory left for the sweep: ${err.code || err.message}`);
-  }
+  removeTempDir(dataDir, 'dumpLiteralRestore');
 });
 
 // Round-trip one value through one real column type, the way a dump does it:

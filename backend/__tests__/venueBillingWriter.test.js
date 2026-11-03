@@ -14,7 +14,6 @@
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -22,6 +21,7 @@ const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const subs = {};
 // Every read, in order: the id, the status Stripe answered with, and the
@@ -354,7 +354,7 @@ test.after(async () => {
   for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await testPool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'venueBillingWriter');
 });
 
 let n = 0;

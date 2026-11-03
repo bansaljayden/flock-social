@@ -54,6 +54,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const MIGRATION_FILE = '024_ml_training_data_unique_slot.sql';
 const MIGRATION_PATH = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
@@ -320,7 +321,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'mlCorpusDedupe');
 });
 
 test('024 exists at its number, is the only file there, and declares @noTransaction', () => {

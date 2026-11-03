@@ -43,7 +43,6 @@
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
@@ -55,6 +54,7 @@ const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'venue-current-owner-test-secret';
 // Billing off: every venue acts Roost, so the Roost surfaces answer and what
@@ -120,9 +120,7 @@ test.after(async () => {
   appPool.connect = realConnect;
   await testPool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) {
-    try { fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (_) { /* the OS will get it */ }
-  }
+  removeTempDir(dataDir, 'venueCurrentOwner');
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────────

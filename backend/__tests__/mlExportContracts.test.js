@@ -42,6 +42,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 // This suite boots its own embedded Postgres, so its port must be distinct from
 // e2e-local.js's 59595 and from every sibling suite that does the same. It used
@@ -415,15 +416,13 @@ test.after(async () => {
   if (roPool) await roPool.end();
   if (pool) await pool.end();
   if (pg) await pg.stop();
-  // Windows holds the cluster's files open for a moment after pg_ctl returns,
-  // so a plain rmSync races it and throws EPERM. Retry, and never let cleanup
-  // of a temp directory be the thing that fails a test run.
-  for (const dir of [dataDir, outDir]) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-    } catch (err) {
-      console.warn(`[mlExportContracts] could not remove ${dir}: ${err.message}`);
-    }
+  removeTempDir(dataDir, 'mlExportContracts');
+  // The export's output directory is scratch too: never let its cleanup be
+  // the thing that fails a test run.
+  try {
+    fs.rmSync(outDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (err) {
+    console.warn(`[mlExportContracts] could not remove ${outDir}: ${err.message}`);
   }
 });
 

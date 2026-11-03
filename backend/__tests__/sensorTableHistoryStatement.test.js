@@ -19,7 +19,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
@@ -28,6 +27,7 @@ const express = require('express');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('sensorTableHistoryStatement');
 const DB_NAME = 'flock_sensor_table_history_test';
@@ -103,16 +103,7 @@ test.after(async () => {
   if (server) await new Promise((r) => server.close(r));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  // The tests have passed by now. pg.stop() already removed the directory
-  // patiently (helpers/embeddedPgPort.js); a handle some other process still
-  // holds on it (seen under load on 2026-11-02, EPERM after the tests passed)
-  // is not a failure of this suite, and helpers/sweepOrphans.js removes the
-  // stale directory on the next run.
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch (err) {
-    console.warn(`[sensorTableHistoryStatement] temp data directory left for the sweep: ${err.code || err.message}`);
-  }
+  removeTempDir(dataDir, 'sensorTableHistoryStatement');
 });
 
 const settle = () => require('../services/sensorTables')._settled();

@@ -27,6 +27,7 @@ const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
@@ -83,7 +84,7 @@ test.after(async () => {
   for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   await testPool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'roostNotice');
 });
 
 test.beforeEach(async () => {

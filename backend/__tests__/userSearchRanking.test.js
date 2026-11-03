@@ -62,6 +62,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('userSearchRanking');
 
@@ -135,7 +136,7 @@ test.after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
   if (client) await client.end().catch(() => {});
   if (pg) await pg.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true });
+  removeTempDir(dataDir, 'userSearchRanking');
   await pool.end().catch(() => {});
 });
 

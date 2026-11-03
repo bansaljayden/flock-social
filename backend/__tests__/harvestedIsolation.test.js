@@ -38,6 +38,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('harvestedIsolation');
 const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_harvested_test`;
@@ -167,7 +168,8 @@ test.after(async () => {
   await roPool?.end().catch(() => {});
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  for (const d of [dataDir, ...outDirs]) {
+  removeTempDir(dataDir, 'harvestedIsolation');
+  for (const d of outDirs) {
     try {
       if (d) fs.rmSync(d, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch (err) {

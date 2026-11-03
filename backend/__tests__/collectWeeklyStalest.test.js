@@ -17,7 +17,6 @@
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -28,6 +27,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('collectWeeklyStalest');
 const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_stalest_test`;
@@ -109,7 +109,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'collectWeeklyStalest');
 });
 
 // One piece: a fresh copy of the collector (run() ends its pool) run with

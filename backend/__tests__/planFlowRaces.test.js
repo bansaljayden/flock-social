@@ -51,7 +51,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
@@ -62,6 +61,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 // Synchronous and before config/database is required anywhere: that module
 // builds its Pool from DATABASE_URL at require time, and backend/.env points at
@@ -222,11 +222,7 @@ test.after(async () => {
   await new Promise((r) => (server ? server.close(r) : r()));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
-  } catch (err) {
-    console.warn('[planFlowRaces] could not remove %s: %s', dataDir, err.message);
-  }
+  removeTempDir(dataDir, 'planFlowRaces');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

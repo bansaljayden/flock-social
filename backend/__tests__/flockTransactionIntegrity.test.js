@@ -64,6 +64,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 // Synchronous, and before config/database is required anywhere: that module
 // builds its Pool from DATABASE_URL at require time, and backend/.env points at
@@ -120,9 +121,7 @@ test.after(async () => {
   if (server) await new Promise((r) => server.close(r));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch (_) { /* a leftover temp directory is not a failed test */ }
+  removeTempDir(dataDir, 'flockTransactionIntegrity');
 });
 
 async function call(method, p, { token, body } = {}) {

@@ -24,6 +24,7 @@ const express = require('express');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const { pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('friendWithdrawnRealDb');
 const DB_NAME = 'flock_friend_withdrawn_test';
@@ -66,7 +67,7 @@ test.after(async () => {
   if (server) await new Promise((r) => server.close(r));
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'friendWithdrawnRealDb');
 });
 
 async function user(name) {

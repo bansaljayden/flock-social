@@ -47,6 +47,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 // Synchronous, before the requires below: scripts/ml/* call dotenv on
 // backend/.env, and only a variable already set keeps them off it.
@@ -311,11 +312,7 @@ test.before(async () => {
 test.after(async () => {
   await pool?.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  try {
-    if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch (err) {
-    console.warn(`[harvestVenueFilter] could not remove ${dataDir}: ${err.message}`);
-  }
+  removeTempDir(dataDir, 'harvestVenueFilter');
 });
 
 // ---------------------------------------------------------------------------

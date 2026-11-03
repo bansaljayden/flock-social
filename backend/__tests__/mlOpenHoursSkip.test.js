@@ -31,7 +31,6 @@
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -41,6 +40,7 @@ const EmbeddedPostgres = EP.default || EP;
 const {
   pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('./helpers/embeddedPgPort');
+const { removeTempDir } = require('./helpers/removeTempDir');
 
 const PG_PORT = pickEmbeddedPgPort('mlOpenHoursSkip');
 const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_openhours_test`;
@@ -189,7 +189,7 @@ test.after(async () => {
   const shared = require.cache[require.resolve('../config/database')];
   if (shared) await shared.exports.end().catch(() => {});
   await pg?.stop().catch(() => {});
-  if (dataDir) fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  removeTempDir(dataDir, 'mlOpenHoursSkip');
 });
 
 // ---------------------------------------------------------------------------
