@@ -312,6 +312,14 @@ const FABRICATED_SOURCE = /\b(stud(?:y|ies)\s+(?:show|shows|showed|found|find|fi
 // A sentence that also carries one of the venue's own facts is reading those
 // facts out, which is fine.
 const FALSE_MEASUREMENT = /\b((?:our|the)\s+(?:data|numbers|measurements?|model|analysis|corpus)\s+(?:shows?|says?|said|found|indicates?|suggests?)|we\s+(?:measured|counted|observed|tracked|analy[sz]ed)\b|venues?\s+(?:like\s+yours|in\s+your\s+area)\s+(?:saw|see|report|reported|averaged?|earn|earned|make|made))/i;
+// MISSING DATA IS NOT AN EMPTY ROOM (2026-11-03). A club asking about a second
+// barista on Saturday mornings was told "Saturday mornings carry no recorded
+// traffic for your room, so adding morning staff is unneeded payroll": the
+// block simply held no morning hours. "No recorded traffic" turns what we do
+// not have into a claim that nobody came. "We have no reading for Saturday
+// mornings" is the true sentence, and a point about the data itself ("no
+// recorded sales data") is not touched.
+const NO_DATA_AS_EMPTY = /\b(?:no|zero)\s+(?:recorded|measured|logged|tracked|reported|registered)\s+(?:foot\s*traffic|traffic|activity|visits?|visitors|customers|guests|covers|demand|crowds?)\b(?!\s+(?:data|figures|numbers|readings|records|history|counts?)\b)/i;
 
 // ── Numbers ──────────────────────────────────────────────────────────────────
 
@@ -778,6 +786,7 @@ function inPlayFor(sentences) {
 /** The reason one sentence must go, or null. */
 function sentenceVeto(sentence, { mode } = {}) {
   if (FABRICATED_SOURCE.test(sentence)) return 'a study or survey nobody can find';
+  if (NO_DATA_AS_EMPTY.test(sentence)) return 'missing data read as an empty room';
   if (mode === 'advice' && FALSE_MEASUREMENT.test(sentence) && !/\{\{fact:/.test(sentence)) {
     return 'general advice dressed as our measurement';
   }
@@ -809,4 +818,5 @@ module.exports = {
   PROMPT_LEAK,
   FABRICATED_SOURCE,
   FALSE_MEASUREMENT,
+  NO_DATA_AS_EMPTY,
 };

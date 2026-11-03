@@ -178,6 +178,32 @@ test('a made-up point is dropped and the rest of the answer stands', () => {
   ].join('\n'));
 });
 
+test('missing data is never read as an empty room, and saying we have no reading still is', () => {
+  // A club asking about a second barista on Saturday mornings (2026-11-03).
+  const out = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'We have no reading for Saturday mornings, so start with what your nights tell you.',
+    points: [
+      'Saturday mornings carry no recorded traffic for your room, so adding morning staff is unneeded payroll.',
+      'Your Mondays show no recorded visitors.',
+      'Keep your labour on the nights you know are busy.',
+      'We have no recorded sales data for mornings, so log a week of them first.',
+    ],
+  }), ADVICE_FACTS());
+  assert.ok(out);
+  assert.strictEqual(out.text, [
+    'We have no reading for Saturday mornings, so start with what your nights tell you.',
+    '• Keep your labour on the nights you know are busy.',
+    '• We have no recorded sales data for mornings, so log a week of them first.',
+  ].join('\n'));
+  // In a grounded answer too, where the answer line falling means the template serves.
+  assert.strictEqual(phrasing.applyValve('{{fact:peak_day}} mornings carry zero logged activity.', BLOCK()), null);
+  const { SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
+  for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
+    assert.match(prompt, /No reading is not an empty room\./);
+    assert.match(prompt, /a few minutes saved on each table is never "another full seating"/);
+  }
+});
+
 test('when the answer line itself fails in advice, the first good point stands in for it', () => {
   const out = freeText.applyAdviceValve(JSON.stringify({
     answer: 'You had 140 covers last Friday.',
