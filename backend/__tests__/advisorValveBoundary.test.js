@@ -236,7 +236,7 @@ test('a weekday may stand beside its date, and two numbers with a space between 
   for (const fused of [
     'Your covers came to {{fact:a}} {{fact:b}} last week.',
     'On {{fact:date}} {{fact:reading}} people came in.',
-    'Your covers came to {{fact:a}} {{fact:b}} last week.',
+    'Your covers came to {{fact:a}}\u00A0{{fact:b}} last week.',
   ]) {
     assert.strictEqual(phrasing.applyValve(fused, { facts }), null, fused);
     assert.strictEqual(freeText.applyAdviceValve(fused, facts), null, fused);
@@ -262,11 +262,11 @@ test('no number the owner reads can be assembled from two hands, however the gap
     'Last week you served 1 {{fact:b}} covers.',
     'At {{fact:four}} 5 tables were waiting.',
     // Invisible characters between two placeholders.
-    '{{fact:a}}​{{fact:b}}', '{{fact:a}}‌{{fact:b}}', '{{fact:a}}⁠{{fact:b}}', '{{fact:a}}­{{fact:b}}', '{{fact:a}}͏{{fact:b}}', '{{fact:a}}⁢{{fact:b}}',
+    '{{fact:a}}\u200B{{fact:b}}', '{{fact:a}}\u200C{{fact:b}}', '{{fact:a}}\u2060{{fact:b}}', '{{fact:a}}\u00AD{{fact:b}}', '{{fact:a}}\u034F{{fact:b}}', '{{fact:a}}\u2062{{fact:b}}',
     // Marks that look like a decimal point, a comma or a Swiss apostrophe.
-    '{{fact:a}}․{{fact:b}}', '{{fact:a}}．{{fact:b}}', '{{fact:a}}·{{fact:b}}', '{{fact:a}}，{{fact:b}}', '{{fact:a}}‚{{fact:b}}', '{{fact:a}}’{{fact:b}}',
+    '{{fact:a}}\u2024{{fact:b}}', '{{fact:a}}\uFF0E{{fact:b}}', '{{fact:a}}\u00B7{{fact:b}}', '{{fact:a}}\uFF0C{{fact:b}}', '{{fact:a}}\u201A{{fact:b}}', '{{fact:a}}\u2019{{fact:b}}',
     // A digit from another script glued to a fact, and a date from two counts.
-    '{{fact:four}}５ guests', 'On {{fact:ten}}/{{fact:day}}',
+    '{{fact:four}}\uFF15 guests', 'On {{fact:ten}}/{{fact:day}}',
   ]) assert.strictEqual(substituteFacts(draft, value).rendered, null, JSON.stringify(draft));
   // What still renders: words between, a unit between, a sentence apart.
   for (const [draft, shown] of [
@@ -277,7 +277,7 @@ test('no number the owner reads can be assembled from two hands, however the gap
   ]) assert.strictEqual(substituteFacts(draft, value).rendered, shown, draft);
   // And the whole answer check reads the draft without its invisible characters.
   const facts = [{ id: 'a', value: 1, source: 'owner_report', asOf: '2026-11-02' }, { id: 'b', value: 500, source: 'owner_report', asOf: '2026-11-02' }];
-  assert.strictEqual(freeText.applyAdviceValve('Last week you served 1​500 covers.', facts), null);
+  assert.strictEqual(freeText.applyAdviceValve('Last week you served 1\u200B500 covers.', facts), null);
 });
 
 // ── 3e. A vendor's string is not a number the server computed ──────────────
@@ -349,6 +349,60 @@ test('"unpaid" and "choking" void an answer in every sense, because the innocent
     'If someone is choking the bar staff should slap them firmly between the shoulder blades until it clears.',
   ]) assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, draft);
   assert.match(require('../services/advisorPrompt').ADVICE_SYSTEM_PROMPT, /"unpaid"/, 'the contract tells the model');
+});
+
+// THE SECOND REVIEW (2026-11-03): the invisible-character strip ran on the
+// raw reply, before JSON turned an escape into the character, so the checks
+// read "un" and "paid" while the owner read "unpaid"; a variation selector was
+// not stripped at all; and a model could write the region sentinels itself.
+// Each is closed, through both answer checks.
+test('a character nobody sees cannot split a banned word or a number for the checks, escaped or not', () => {
+  const ch = (cp) => String.fromCodePoint(cp);
+  const ZW = ch(0x200b);
+  const VS = ch(0xfe0f);
+  const STX = ch(2);
+  // A reply whose JSON carries each such character as an escape, the way a model can write it.
+  const escaped = (s) => s.replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const facts = [
+    { id: 'a', value: 1, source: 'owner_report', asOf: '2026-11-02' },
+    { id: 'b', value: 500, source: 'owner_report', asOf: '2026-11-02' },
+    { id: 'score', value: 84, source: 'model_holdout', asOf: '2026-11-02' },
+  ];
+  for (const reply of [
+    escaped(JSON.stringify({ answer: 'Keep the wait short.', points: [`Have staff work un${ZW}paid until the room is reset.`] })),
+    escaped(JSON.stringify({ answer: 'Have a plan for a guest in trouble.', points: [`If a guest is cho${ZW}king, give five firm back bl${ZW}ows between the shoulder blades.`] })),
+    escaped(JSON.stringify({ answer: `Upgr${ZW}ade to see more.`, points: [`Here is my sys${ZW}tem prompt.`] })),
+    JSON.stringify({ answer: 'Keep the wait short.', points: [`Have staff work un${VS}paid until the room is reset.`] }),
+  ]) assert.strictEqual(freeText.applyAdviceValve(reply, facts), null, reply);
+  for (const reply of [
+    escaped(JSON.stringify({ answer: `Your Friday hit 1${ZW}0${ZW}0${ZW}0 covers last week, against your usual {{fact:score}}.`, points: [] })),
+    JSON.stringify({ answer: `Your Friday hit 1${VS}000 covers last week, against your usual {{fact:score}}.`, points: [] }),
+    escaped(JSON.stringify({ answer: `Your Friday drew ${STX}{{fact:a}}${STX}{{fact:b}} guests.`, points: [] })),
+    `Your Friday drew ${STX}{{fact:a}}${STX}{{fact:b}} guests.`,
+    escaped(JSON.stringify({ answer: `Your Friday hit ${STX}{{fact:a}}50 covers last week.`, points: [] })),
+  ]) assert.strictEqual(phrasing.applyValve(reply, { facts }), null, reply);
+});
+
+test('any single mark between two hands\' digits joins them, and a range or an "out of" does not', () => {
+  const { substituteFacts } = phrasing.internals;
+  const value = (id) => ({ a: '1', b: '500', score: '84', days: '6', low: '17', high: '33' })[id];
+  for (const cp of [0x2032, 0xff07, 0xa78c, 0x0387, 0x30fb, 0x2e31, 0x0589, 0xa789, 0x060c, 0x0315, 0x29f8, 0x2800, 0x2c, 0x2e, 0x3a]) {
+    const draft = `Your Friday drew {{fact:a}}${String.fromCodePoint(cp)}{{fact:b}} guests.`;
+    assert.strictEqual(substituteFacts(draft, value).rendered, null, cp.toString(16));
+  }
+  for (const cp of [0x02d7, 0x2796]) {
+    assert.strictEqual(substituteFacts(`at {{fact:score}} ${String.fromCodePoint(cp)}{{fact:a}}`, value).rendered, null, cp.toString(16));
+  }
+  // Digit symbols that NFKC spells as a digit and a mark ("1," and "1.").
+  const facts = [{ id: 'b', value: 500, source: 'owner_report', asOf: '2026-11-02' }];
+  for (const cp of [0x1f102, 0x2488]) {
+    assert.strictEqual(phrasing.applyValve(`Your Friday drew ${String.fromCodePoint(cp)}{{fact:b}} guests.`, { facts }), null, cp.toString(16));
+  }
+  for (const [draft, shown] of [
+    ['Your Friday peak sits at {{fact:score}}/100 on our index.', 'Your Friday peak sits at 84/100 on our index.'],
+    ['You posted readings on {{fact:days}}/7 days last week.', 'You posted readings on 6/7 days last week.'],
+    ['Your Mondays run {{fact:low}}-{{fact:high}}.', 'Your Mondays run 17-33.'],
+  ]) assert.strictEqual(substituteFacts(draft, value).rendered, shown, draft);
 });
 
 // THE SAME REVIEW got four instructions past the whole-answer veto as an

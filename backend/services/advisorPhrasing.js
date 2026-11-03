@@ -1622,27 +1622,35 @@ function hasBannedDash(text) {
 const SENTINEL_OPEN = '\u0001';
 const SENTINEL_CLOSE = '\u0002';
 // A run of digits and the separators a written number is allowed to contain,
-// read on the folded copy below (every digit a 0, every joiner a full stop).
-// A slash joins too: two facts either side of one read as a date or a ratio
-// nobody computed ("10/27").
-const NUMERIC_RUN = /[0-9](?:[.,:٫٬'/]?[0-9])*/g;
+// read on the folded copy below (every digit a 0, every look-alike joiner a
+// full stop).
+const NUMERIC_RUN = /[0-9](?:[.,:\u066B\u066C']?[0-9])*/g;
 
-// WHAT THE OWNER SEES IS WHAT THE CHECKS READ (adversarial review,
-// 2026-11-03). Three ways a number could look like one figure on screen and
-// read as two to the checks:
-//   * an invisible character between two digits: "1​500" shows as 1500.
-//     They have no place in an answer and are taken out of every draft before
-//     anything reads it (checkAnswer, and again here);
-//   * a digit from another script beside an ASCII one ("4５" shows as 45),
-//     so every decimal digit reads as one;
-//   * a mark that looks like a decimal point, a thousands comma or a Swiss
-//     apostrophe ("1․500", "1’500"), so each reads as a joiner.
-const INVISIBLE = /[\p{Cf}­͏ᅟᅠ឴឵ㅤﾠ]/gu;
+// WHAT THE OWNER SEES IS WHAT THE CHECKS READ (two adversarial reviews,
+// 2026-11-03). Ways a number could look like one figure on screen and read as
+// two to the checks, and what closes each:
+//   * a character nobody can see between two digits ("1\u200B500" shows as
+//     1500), including a variation selector and a control character; a
+//     control character could also forge the region sentinels below. None
+//     survives: they are taken out of the raw reply AND of every sentence
+//     after JSON has turned a "\u200b" escape into the character itself
+//     (checkAnswer), and again here;
+//   * a digit symbol from another script, or one NFKC spells as a digit and
+//     a comma ("\u{1F102}" is "1,"): every sentence is NFKC folded before the
+//     checks read it, and every decimal digit reads as one here;
+//   * any single mark between two hands' digits ("1\u2032500", "1\u00B7500"),
+//     which joins them: see substituteFacts.
+const INVISIBLE = /[\p{Cf}\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u3164\uFE00-\uFE0F\uFFA0\u{E0100}-\u{E01EF}]/gu;
 function stripInvisible(text) {
   return String(text).replace(INVISIBLE, '');
 }
-const LOOKALIKE_JOINER = /[․‧﹒．·∙⋅﹐，‚’ʼ﹕：∶／∕⁄]/;
-const SIGN = /[-+−‐‑﹣－＋]/;
+// One sentence as the owner will see it: nothing invisible, compatibility
+// forms folded, and the braille blank (which shows as a space) as a space.
+function asDisplayed(sentence) {
+  return stripInvisible(stripInvisible(sentence).normalize('NFKC')).replace(/\u2800/g, ' ').replace(/\s+/g, ' ').trim();
+}
+const LOOKALIKE_JOINER = /[\u2024\u2027\uFE52\uFF0E\u00B7\u2219\u22C5\uFE50\uFF0C\u201A\u2019\u02BC\uFE55\uFF1A\u2236\uFF0F\u2215\u2044]/;
+const SIGN = /[\p{Pd}+\u2212\u02D7\u2796\uFE62\uFF0B]/u;
 function foldForNumbers(text) {
   let out = '';
   for (const ch of text) {
@@ -1714,6 +1722,21 @@ function substituteFacts(draft, resolve) {
       };
     }
   }
+  // Nor with any single mark between two hands' digits, whatever it looks
+  // like ("1\u2032500", "1\u00B7500", "1\u2E31500", a combining mark): it joins
+  // them on screen. A hyphen reads as a range ("17-33") and is left alone, and
+  // so is a slash with the model's own number on one side ("84/100", "6/7
+  // days"); a slash between two facts is a date or a ratio nobody computed.
+  for (let k = 1; k < probe.length - 1; k++) {
+    if (probe[k - 1] !== '0' || probe[k + 1] !== '0') continue;
+    const a = region[k - 1];
+    const b = region[k + 1];
+    // Only a plain letter or a space keeps them apart: a letter from another
+    // script can look like an apostrophe (U+A78C reads "1'500").
+    if (a === b || (a === 0 && b === 0) || /[A-Za-z\s]/.test(probe[k]) || probe[k] === '-') continue;
+    if (probe[k] === '/' && (a === 0 || b === 0)) continue;
+    return { rendered: null, error: 'one number assembled out of two hands' };
+  }
   // Nor with only a space between two hands: "4 5", "1 500" and "8 -18" are
   // refused, whether two facts or a fact and the model wrote the halves;
   // "Tuesday Oct 27" and "8 PM 84" are not, because no digit faces a digit.
@@ -1772,9 +1795,17 @@ function valveReject(reason) {
 function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [], reject = valveReject } = {}) {
   if (typeof raw !== 'string') return reject('model returned no text');
   // An invisible character can join two digits on screen that every check
-  // below would read apart ("1​500" shows as 1500), so none survives.
+  // below would read apart ("1\u200B500" shows as 1500), so none survives.
   const parsed = advisorAnswer.parseAnswer(advisorAnswer.repairDashes(stripInvisible(raw)));
   if (!parsed) return reject('empty');
+  // AND AGAIN SENTENCE BY SENTENCE, after JSON has turned an escape in the
+  // reply into the character itself: a draft that wrote "un" + an escaped
+  // zero-width space + "paid" read as two words to the veto and as "unpaid" to
+  // the owner (second adversarial review, 2026-11-03). Every check below, and
+  // the owner, read the sentence as asDisplayed leaves it.
+  parsed.answer = parsed.answer.map((s) => advisorAnswer.repairDashes(asDisplayed(s))).filter(Boolean);
+  parsed.points = parsed.points.map((s) => advisorAnswer.repairDashes(asDisplayed(s))).filter(Boolean);
+  if (parsed.answer.length === 0 && parsed.points.length === 0) return reject('empty');
   if (!parsed.structured && parsed.answer.length > advisorAnswer.MAX_PLAIN_SENTENCES) {
     return reject(`too long, ${parsed.answer.length} sentences`);
   }
