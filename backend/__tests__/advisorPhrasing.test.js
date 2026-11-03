@@ -321,6 +321,35 @@ test('a peak fact\'s parts read once (peak_hour, peak_score), and the contract\'
   for (const id of examplePeakIds) assert.ok(ids.includes(id), `the example writes {{fact:${id}}}, which no peak block carries`);
 });
 
+// "Shaving 10 minutes off a about 74 minutes turn", "before 20" for 8 PM, and
+// "a 28 seat counter order cafe" were live answers (2026-11-03): the model
+// wrote around values it could not see. Every payload fact now says what its
+// placeholder turns into, and only where that differs from the stored value.
+test('each payload fact carries the words its placeholder becomes, where they differ from the stored value', () => {
+  const F = (id, value, unit) => ({ id, value, unit, source: 'intake', asOf: 'owner-set 2026-10-01' });
+  const facts = [
+    F('peak_hour', 20, 'hour'), F('tables_friday_turnMinutes', 74, 'minutes'), F('intake_service_style', 'counter_order'),
+    F('intake_typical_spend_per_person', 38, 'usd'), F('intake_kitchen_last_order', '14:30'), F('owner_reading_date', '2026-10-27'),
+    F('peak_score', 91), F('peak_weekday', 'Saturday'),
+  ];
+  const reads = Object.fromEntries(facts.map(advisorPhrasing.internals.payloadFact).map((f) => [f.id, f.reads]));
+  assert.deepStrictEqual(reads, {
+    peak_hour: '8 PM',
+    tables_friday_turnMinutes: 'about 74 minutes',
+    intake_service_style: 'counter service',
+    intake_typical_spend_per_person: '$38',
+    intake_kitchen_last_order: '2:30 PM',
+    owner_reading_date: 'Oct 27',
+    peak_score: undefined,
+    peak_weekday: undefined,
+  });
+  // Both payloads carry it, and the value beside it is untouched.
+  const chip = advisorPhrasing.internals.buildUserPayload('peak_hours', facts, [], 'When do we peak this week?');
+  assert.match(chip, /\{"id":"peak_hour","value":20,"reads":"8 PM","unit":"hour"/);
+  const advice = require('../services/advisorFreeText').buildAdvicePayload('how do I turn tables faster', facts, []);
+  assert.match(advice, /"id":"tables_friday_turnMinutes","value":74,"reads":"about 74 minutes"/);
+});
+
 test('both payloads name every placeholder id the block carries, once, after the block', () => {
   const facts = [{ id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' }, { id: 'peak_score', value: 91, source: 'model_holdout', asOf: '2026-11-03' }];
   const chip = advisorPhrasing.internals.buildUserPayload('peak_hours', facts, [], 'When do we peak this week?');

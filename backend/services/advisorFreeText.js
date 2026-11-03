@@ -1270,7 +1270,9 @@ const TRADE_SOURCE = Object.freeze({ id: 'trade_practice', source: 'trade_practi
 
 function buildAdvicePayload(question, facts, ownerContext, plays = []) {
   const block = JSON.stringify({
-    facts: facts.map((f) => ({ id: f.id, value: f.value, unit: f.unit, source: f.source, asOf: f.asOf, note: f.note })),
+    // Each with `reads`, the words its placeholder turns into
+    // (advisorPhrasing.internals.payloadFact).
+    facts: facts.map(advisorPhrasing.internals.payloadFact),
     // A SEPARATE KEY, WITH NO IDS IN IT. Owner prose arrives as context the
     // model may read and quote, never as an id it may splice.
     ...(Array.isArray(ownerContext) && ownerContext.length ? { ownerContext } : {}),

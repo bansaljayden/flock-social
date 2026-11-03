@@ -1963,6 +1963,31 @@ function roomWords(venue, serviceStyle) {
   return { ...(kind ? { kind } : {}), ...(service ? { service } : {}) };
 }
 
+// WHAT A PLACEHOLDER WILL SAY, SHOWN BESIDE IT (2026-11-03). The model wrote
+// sentences around values it could not see: "a {{fact:..._turnMinutes}} turn"
+// came out "a about 74 minutes turn", a stored hour of 20 became "before 20",
+// and a stored "counter_order" became "a 28 seat counter order cafe" (live
+// eval). Each fact in a payload carries `reads`, the exact words its
+// placeholder turns into, wherever those differ from the stored value. It is
+// display only: the value, the id and the check are unchanged.
+function payloadFact(f) {
+  let reads = null;
+  try {
+    reads = formatFactValue(f);
+  } catch {
+    reads = null;
+  }
+  return {
+    id: f.id,
+    value: f.value,
+    ...(typeof reads === 'string' && reads !== String(f.value) ? { reads } : {}),
+    unit: f.unit,
+    source: f.source,
+    asOf: f.asOf,
+    note: f.note,
+  };
+}
+
 /** The payload line that names every placeholder id the block carries. */
 function placeholderLine(facts) {
   return `PLACEHOLDER IDS. The only ones that exist; copy one exactly or write none: ${facts.map((f) => f.id).join(', ')}`;
@@ -1975,14 +2000,7 @@ function buildUserPayload(intent, facts, ownerContext, question, move = null, ro
   // second layer, this is the first.
   const block = JSON.stringify({
     intent,
-    facts: facts.map((f) => ({
-      id: f.id,
-      value: f.value,
-      unit: f.unit,
-      source: f.source,
-      asOf: f.asOf,
-      note: f.note,
-    })),
+    facts: facts.map(payloadFact),
     // The owner's own typed text, when they have any. A SEPARATE key from
     // `facts` on purpose: nothing in here carries a placeholder id, because
     // nothing in here is a number the server computed. Section 10 of the
@@ -2221,6 +2239,7 @@ const internals = {
   // line both payloads use to name the placeholder ids.
   buildUserPayload,
   placeholderLine,
+  payloadFact,
   // How a placeholder id is spelled since 2026-11-03 (peak_score, not
   // peak_peakScore), for the eval's replay of drafts written before then.
   destutter,
