@@ -177,6 +177,39 @@ test('AM and PM are two different hours: a fact in one half of the day never vou
   );
 });
 
+test('an ordinal that names a day of the month is a date the facts must hold, and a position is still a position', () => {
+  // Third round, 2026-11-03: positions up to the 10th passed as rankings, so a
+  // made-up day of the month did too. ADVICE_FACTS were measured on Aug 19.
+  for (const claim of [
+    'Your busiest night was the 4th.',
+    'Your peak lands on the 7th.',
+    'Your peak lands on Friday the 7th.',
+    'Your peak lands on Friday, the 7th, around 9 PM.',
+    'Your best night this month was the 4th, at 9 PM.',
+    'Your busiest night was the 4th of this month.',
+    'Your Friday peak lands the 6th of November.',
+    'Your busiest night was the 25th.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" names a day nobody measured`);
+  assert.strictEqual(phrasing.applyValve('Your index peaks on {{fact:peak_day}} the 7th.', BLOCK()), null);
+  const dated = [...ADVICE_FACTS(), { id: 'peak_date', value: '2026-11-06', source: 'model_holdout', asOf: '2026-11-03' }];
+  for (const [fine, facts] of [
+    ['Your peak lands on Friday the 6th.', dated],
+    ['Your peak lands on the 6th.', dated],
+    ['Your busiest night was the 19th.', ADVICE_FACTS()],
+    ['Friday is your 2nd busiest night.', ADVICE_FACTS()],
+    ['Put a 2nd barista on from an hour before your peak.', ADVICE_FACTS()],
+    ['Your 3rd Friday this month peaks at 9 PM.', ADVICE_FACTS()],
+    ['Run the special into a 3rd week before you judge it.', ADVICE_FACTS()],
+  ]) {
+    const out = freeText.applyAdviceValve(fine, facts);
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine);
+  }
+  assert.ok(phrasing.applyValve('Your index peaks on {{fact:peak_day}}, your 2nd busiest night.', BLOCK()));
+  // The owner's own date is theirs to have quoted back.
+  assert.ok(freeText.applyAdviceValve('Your busiest night was the 4th.', ADVICE_FACTS(), { texts: ['the 4th was huge, how do I repeat it'] }));
+});
+
 // ── 2. The numbers an owner needs ──────────────────────────────────────────
 
 test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {

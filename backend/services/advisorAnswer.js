@@ -356,6 +356,14 @@ const CLOCK_24 = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
 const CLOCK_WORD = /\b(midnight|noon)\b/gi;
 const CLOCK_WORD_HOUR = Object.freeze({ midnight: 0, noon: 12 });
 const NUMBER = /(\$\s?)?\b(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:(st|nd|rd|th)\b)?(\s?(?:%|percent\b|per\s+cent\b))?/gi;
+// AN ORDINAL THAT NAMES A DAY OF THE MONTH IS A DATE (third round,
+// 2026-11-03). Positions up to the 10th pass as rankings the owner can check
+// ("your 2nd busiest night"), and that let "your busiest night was the 3rd"
+// and "your peak lands on Friday the 7th" through with no date behind them.
+// An ordinal is a date when nothing it could rank follows it (the clause ends,
+// or "of" a month does), or when "on the" or a weekday stands right before it.
+const ORDINAL_DATE_BEFORE = /(?:\bon\s+the|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day,?(?:\s+the)?)\s+$/i;
+const ORDINAL_DATE_AFTER = /^(?:\s*(?:[.,;:!?)\]]|$)|\s+of\s+(?:(?:this|the|next|last)\s+month\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b))/i;
 
 // AM AND PM ARE TWO DIFFERENT HOURS (2026-11-03, third round). A clock time
 // used to carry its 12-hour reading beside its 24-hour one, and so did every
@@ -439,6 +447,11 @@ function numbersIn(text) {
     if (!Number.isFinite(value)) continue;
     const kind = m[5] ? 'percent' : m[1] ? 'money' : m[4] ? 'ordinal' : 'number';
     const after = src.slice(m.index + m[0].length, m.index + m[0].length + 16);
+    if (kind === 'ordinal' && value >= 1 && value <= 31
+      && (ORDINAL_DATE_AFTER.test(src.slice(m.index + m[0].length)) || ORDINAL_DATE_BEFORE.test(src.slice(Math.max(0, m.index - 24), m.index)))) {
+      out.push({ index: m.index, length: m[0].length, value, alt: [], kind, dim: 'date' });
+      continue;
+    }
     let dim = kind === 'percent' ? 'pct' : kind === 'money' ? 'money' : 'plain';
     if (dim === 'plain' && /^\s*(?:minutes?|mins?|hours?|hrs?)\b/i.test(after)) dim = 'duration';
     if (dim === 'plain' && /^\s*(?:dollars?|bucks)\b/i.test(after)) dim = 'money';
@@ -692,6 +705,13 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
 
 // ── What the venue's numbers support ────────────────────────────────────────
 
+// The owner's "the 4th was huge" and a label's "the 3rd" may name a day of
+// the month even where a word follows them, and both are trusted, so an
+// ordinal there also vouches for that date.
+function dayOfMonthToo(n) {
+  return n.kind === 'ordinal' && n.dim !== 'date' && Number.isInteger(n.value) && n.value >= 1 && n.value <= 31;
+}
+
 function addValue(list, value, ids, { owner = false, arith = true, dim = 'plain' } = {}) {
   if (!Number.isFinite(value)) return;
   list.push({ value, ids, owner, arith, dim });
@@ -758,6 +778,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
         const opts = { arith: n.dim !== 'date' && !n.word, dim: n.dim === 'plain' ? dim : n.dim };
         addValue(base, n.value, ids, opts);
         for (const a of n.alt) addValue(base, a, ids, { ...opts, arith: false });
+        if (dayOfMonthToo(n)) addValue(base, n.value, ids, { arith: false, dim: 'date' });
       }
     }
     // When a fact was measured is a date the answer may name, never a number
@@ -780,6 +801,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
       const opts = { owner: true, arith: n.dim !== 'date' && !n.word, dim: n.dim };
       addValue(base, n.value, new Set(), opts);
       for (const a of n.alt) addValue(base, a, new Set(), { ...opts, arith: false });
+      if (dayOfMonthToo(n)) addValue(base, n.value, new Set(), { owner: true, arith: false, dim: 'date' });
     }
   }
   return { base };
@@ -873,7 +895,8 @@ function supportFor(num, support, inPlay = {}) {
   // are claims about the venue's clock and calendar and are checked like any
   // other.
   if (num.dim !== 'clock' && num.dim !== 'date' && targets.some((t) => t === 0 || t === 1)) return new Set();
-  if (num.kind === 'ordinal' && num.value <= 10) return new Set();
+  // A position, never a day of the month (numbersIn reads those as dates).
+  if (num.kind === 'ordinal' && num.dim !== 'date' && num.value <= 10) return new Set();
 
   // A percentage may also be a share the facts hold as a fraction (0.42 is
   // 42%), matched at the fraction's own scale: "82%" is not "about 1".
