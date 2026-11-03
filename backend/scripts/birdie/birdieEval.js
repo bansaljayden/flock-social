@@ -31,6 +31,16 @@
 //   ... --gemini-deadline=MS    a measurement: Birdie's per-call deadline is
 //                               replaced in this process only, to see how long
 //                               a call the real one cuts off would have taken
+//   ... --model=NAME            a measurement: Birdie runs on this Gemini model
+//                               in this process only (BIRDIE_MODEL is never
+//                               changed anywhere else), with the same settings
+//   ... --retry-probe=MS        a measurement: a model call still running at
+//                               MS gets one identical request sent beside it,
+//                               and how long that took, what it cost and
+//                               whether it answered is recorded on the call
+//                               (retryProbe). The route never sees it: this is
+//                               what one retry after a stall would have done,
+//                               without changing the rule that there is none
 //   node scripts/birdie/birdieEval.js --fixtures [--as=persona]
 //                               what every tool answers, at every clock, with
 //                               no model and no key
@@ -79,6 +89,8 @@ const kept = {};
 for (const k of KEEP) if (process.env[k] !== undefined) kept[k] = process.env[k];
 for (const k of Object.keys(process.env)) if (SENSITIVE.test(k)) delete process.env[k];
 Object.assign(process.env, kept);
+// --model: this process only, set before the route reads it at load.
+if (args.model && !REPLAY && !RESCORE) process.env.BIRDIE_MODEL = String(args.model);
 if (REPLAY) {
   // The recorded run's switches, so the prompt and the tool results are the
   // ones its replies were written against.
@@ -370,6 +382,11 @@ mlPredictor.agreeWithStrip = async (headline) => headline;
 
 const genaiMod = require('@google/genai');
 const RealGenAI = genaiMod.GoogleGenAI;
+// --retry-probe=MS (a measurement; see the usage above). The probe gets a
+// minute to answer, so a slow one is timed rather than cut.
+const PROBE_AFTER_MS = !REPLAY && !RESCORE && Number(args['retry-probe']) > 0 ? Number(args['retry-probe']) : 0;
+const PROBE_DEADLINE_MS = 60000;
+const pendingProbes = [];
 const stripSignatures = (value) => JSON.parse(JSON.stringify(value, (k, v) => (k === 'thoughtSignature' ? '[sig]' : v)));
 genaiMod.GoogleGenAI = function EvalGenAI(opts) {
   const client = new RealGenAI(REPLAY ? { apiKey: 'replay-no-network' } : opts);
@@ -399,6 +416,25 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
       return JSON.parse(JSON.stringify(recorded.response));
     }
     const t0 = RealDate.now();
+    // --retry-probe: a call still running at the mark gets one identical
+    // request beside it, on a deadline of its own, and the route never sees
+    // it. What it took, cost and answered is recorded on this call.
+    const probeTimer = PROBE_AFTER_MS > 0 ? setTimeout(() => {
+      const p0 = RealDate.now();
+      const probe = { atMs: PROBE_AFTER_MS, ms: null, tokens: null, answered: null, error: null };
+      record.retryProbe = probe;
+      const probeReq = { ...req, config: { ...(req.config || {}), abortSignal: AbortSignal.timeout(PROBE_DEADLINE_MS) } };
+      pendingProbes.push(realGenerate(probeReq).then((resp) => {
+        probe.ms = RealDate.now() - p0;
+        const u = resp && resp.usageMetadata ? resp.usageMetadata : {};
+        probe.tokens = { prompt: u.promptTokenCount || 0, output: u.candidatesTokenCount || 0, thoughts: u.thoughtsTokenCount || 0, total: u.totalTokenCount || 0 };
+        const parts = (resp && resp.candidates && resp.candidates[0] && resp.candidates[0].content && resp.candidates[0].content.parts) || [];
+        probe.answered = parts.some((x) => x.text || x.functionCall);
+      }, (err) => {
+        probe.ms = RealDate.now() - p0;
+        probe.error = `${err.status || err.name || ''} ${String(err.message || '').slice(0, 160)}`.trim();
+      }));
+    }, PROBE_AFTER_MS) : null;
     try {
       const resp = await realGenerate(req);
       record.ms = RealDate.now() - t0;
@@ -413,6 +449,8 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
       record.ms = RealDate.now() - t0;
       record.error = `${err.status || err.name || ''} ${String(err.message || '').slice(0, 200)}`.trim();
       throw err;
+    } finally {
+      if (probeTimer) clearTimeout(probeTimer);
     }
   };
   return client;
@@ -658,6 +696,11 @@ function summarize(results, meta) {
   }
   const calls = turns.flatMap((t) => t.calls);
   const sum = (f) => calls.reduce((n, c) => n + ((c.tokens && c.tokens[f]) || 0), 0);
+  // Calls past Birdie's real per-call deadline (a stall, which production
+  // cuts off), and what the retry probes, if any, did about them.
+  const deadline = require(path.join(B, 'utils', 'upstream')).UPSTREAM_TIMEOUT_MS.gemini;
+  const stalls = calls.filter((c) => c.ms > deadline || (c.error && /abort|timed? ?out/i.test(c.error) && c.ms >= deadline - 50));
+  const probes = calls.map((c) => c.retryProbe).filter(Boolean);
   const ms = calls.filter((c) => c.ms).map((c) => c.ms).sort((a, z) => a - z);
   const turnMs = turns.map((t) => t.ms).sort((a, z) => a - z);
   const pct = (arr, p) => (arr.length ? arr[Math.min(arr.length - 1, Math.floor(p * arr.length))] : 0);
@@ -677,6 +720,12 @@ function summarize(results, meta) {
     turnLatencyMs: { p50: pct(turnMs, 0.5), p90: pct(turnMs, 0.9), max: turnMs[turnMs.length - 1] || 0 },
     modelErrors: errors.length,
     modelErrorSamples: [...new Set(errors)].slice(0, 4),
+    stalls: { deadlineMs: deadline, calls: stalls.length },
+    retryProbes: {
+      count: probes.length,
+      answeredInTime: probes.filter((p) => p.answered && p.ms <= deadline).length,
+      tokens: probes.reduce((n, p) => n + ((p.tokens && p.tokens.total) || 0), 0),
+    },
     http: turns.reduce((m, t) => ({ ...m, [t.status]: (m[t.status] || 0) + 1 }), {}),
     lowercaseStarts: turns.filter((t) => t.info && t.info.lowercaseStart).length,
     blockedNetworkCalls: [...new Set(blocked)],
@@ -690,6 +739,7 @@ function summarize(results, meta) {
   console.log(`tokens: ${summary.tokens.total} total (prompt ${summary.tokens.prompt}, cached ${summary.tokens.cached}, output ${summary.tokens.output}, thinking ${summary.tokens.thoughts}) over ${summary.modelCalls} model calls`);
   console.log(`latency per model call p50 ${summary.callLatencyMs.p50} ms, p90 ${summary.callLatencyMs.p90} ms, max ${summary.callLatencyMs.max} ms; per answer p50 ${summary.turnLatencyMs.p50} ms, p90 ${summary.turnLatencyMs.p90} ms`);
   console.log(`http: ${JSON.stringify(summary.http)}; model errors: ${summary.modelErrors}${summary.modelErrors ? ` (${summary.modelErrorSamples.join(' | ')})` : ''}`);
+  console.log(`calls past the ${deadline} ms deadline: ${stalls.length} of ${calls.length}${probes.length ? `; retry probes ${probes.length}, answered inside the deadline ${summary.retryProbes.answeredInTime}, probe tokens ${summary.retryProbes.tokens}` : ''}`);
   console.log(`answers starting lowercase: ${summary.lowercaseStarts} of ${summary.turns}`);
   if (summary.blockedNetworkCalls.length) console.log(`REFUSED network calls: ${summary.blockedNetworkCalls.join(', ')}`);
   if (summary.unexpectedSql.length) console.log(`unanswered queries: ${summary.unexpectedSql.length}`);
@@ -755,6 +805,8 @@ async function previewFixtures() {
     setClock(cases.CLOCKS[clock]);
     results.push(...await inParallel(group, meta.concurrency, runItem));
   }
+  // Every retry probe has its answer before anything is counted or written.
+  await Promise.all(pendingProbes);
   process.stdout.write('\n\n');
   const order = new Map(items.map((i, n) => [i.id, n]));
   results.sort((a, z) => order.get(a.id) - order.get(z.id));
