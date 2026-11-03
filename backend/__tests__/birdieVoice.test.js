@@ -192,7 +192,7 @@ test('a price is said the way a person says it, not as a field', () => {
   // came back as "price level three" and "price level one".
   const prompt = adult();
   const line = prompt.split('\n').find((l) => l.startsWith('- Say a price as'));
-  assert.strictEqual(line, '- Say a price as $ to $$$$ or in plain words (cheap, pricey), never as "price level" and a number. Never read a field name back to them.');
+  assert.strictEqual(line, '- Say a price as $ to $$$$ or in plain words (cheap, pricey), never as "price level" and a number. Never read a field name back to them: a crowd number is "at 62" or "steady", never a "crowd score".');
   assert.ok(prompt.indexOf('How you write:') < prompt.indexOf(line), 'the rule sits with the writing rules');
 });
 

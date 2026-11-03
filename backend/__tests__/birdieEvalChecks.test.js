@@ -95,6 +95,9 @@ test('the voice rules', () => {
   assert.ok(grade('I\'m an AI, so take this with salt.').problems.some((p) => /calls itself an AI/.test(p)));
   assert.ok(grade('Let me check that for you.').problems.some((p) => /narrates/.test(p)));
   assert.ok(grade('Palma Pasta Bar, rated 4.7, price level three.').problems.some((p) => /price level/.test(p)));
+  // A live answer (F03), and one from round one (G02), read a field back.
+  assert.ok(grade('Mango Street Tacos. Crowd score is at 62 against its peak.').problems.some((p) => /reads "crowd score"/.test(p)));
+  assert.ok(!grade('Mango Street Tacos is at 62, steady for them.').problems.some((p) => /crowd score/.test(p)));
 });
 
 test('repeating the instructions back is a leak', () => {

@@ -209,6 +209,8 @@ function checkVoice(text, problems, warnings, info) {
   if (/\bprice[ _]level\b/i.test(t)) problems.push('voice: reads "price level" back like a field');
   // The staging tools' own word: "Staged Mango Street Tacos onto the vote".
   if (/\bstaged\b/i.test(t)) problems.push('voice: reads "staged" back like a field');
+  // crowd_score, said as words: "Crowd score is at 62 against its peak".
+  if (/\bcrowd[ _]score\b/i.test(t)) problems.push('voice: reads "crowd score" back like a field');
   if (/^\s*([-*•]|\d+[.)])\s+/m.test(t)) warnings.push('format: a list in a chat bubble');
   if (/^\s*(let me|i'?ll (check|look|search|pull|find)|checking|searching|one sec|hold on|give me a sec)/i.test(t)) problems.push('voice: narrates what it is about to do');
   if (/\b(it'?s|this is|that'?s|isn'?t)\s+not\s+(just\s+)?[^.,;!?]{1,40}[,;]\s*(it'?s|this is|that'?s)\b/i.test(t)) warnings.push('voice: an "it\'s not X, it\'s Y" pivot');
