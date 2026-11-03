@@ -392,6 +392,13 @@ test('a quiet or seat-now ask is decided by the crowd numbers it already has', (
   assert.match(adult(), /When they want it quiet, chill, or a seat right now, the crowd numbers and open tables you have decide the pick: never send them to the busier of two spots you checked\./);
 });
 
+test('"is it busy" with no place named is asked back, never guessed', () => {
+  // On the Birdie eval "is it busy", asked from the home screen with nothing
+  // before it, was answered by searching, picking a venue and checking its
+  // crowd, which also spends one of the month's crowd lookups on a guess.
+  assert.match(adult(), /"Is it busy", "how packed is it", "when should we go" with no place named: if neither the conversation nor what they are looking at says which place "it" is, ask which spot they mean before you look anything up\. Never pick one for them and check it\./);
+});
+
 test('the slang decoder survives intact', () => {
   const prompt = adult();
   for (const term of ['the move', 'pull up', 'dead', 'poppin', 'lowkey', 'bet', 'no cap']) {
