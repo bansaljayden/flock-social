@@ -406,7 +406,11 @@ function numbersIn(text) {
     // never noon, and an alternate 12 here let a "midnight" anywhere in the
     // owner's words or a label vouch for "your Friday peaks at 12 PM"
     // (2026-11-03 review).
-    out.push({ index: m.index, length: m[0].length, value: h, alt: [], kind: 'clock', dim: 'clock' });
+    // `word`: matched as the hour it names, never an operand of arithmetic.
+    // The owner's "stay open till midnight" beside a 9 PM peak made "21 hours
+    // before closing" (|21 - 0|) look worked out (2026-11-03 review); "12 AM"
+    // typed as digits always did that, and a word now does not.
+    out.push({ index: m.index, length: m[0].length, value: h, alt: [], kind: 'clock', dim: 'clock', word: true });
     mark(m.index, m[0].length);
   }
   NUMBER.lastIndex = 0;
@@ -572,16 +576,20 @@ function countToDo(text, num, prefix, all, alone) {
 // line set aside as a count to do could carry one in its next sentence. Read
 // as a claim when nothing but "and", "so" or "then" stands before the number
 // in its clause and what follows says it is a share of a group ("of them",
-// "of your") or what that many people did, or what reviews say; a target or
-// a hypothetical after it ("should", "would", "aim") keeps it a suggestion.
+// "of your") or what that many people did, or what reviews say. A target, a
+// hypothetical or a worked example after it ("should", "would", "is the
+// goal", "a sensible ceiling", "is $1,000") keeps it a suggestion, unless the
+// clause puts it in the past ("140 covers came in last Friday, which is
+// $5,320" is still a reading).
 const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?$/i;
 const NUMBER_FIRST_CLAIM = /^\s*(?:%|percent|per\s+cent)?\s*(?:of\s+(?:them|those|these|your|our)\b|(?:[a-z'-]+\s+){0,3}(?:mentioned|came|walked|left|waited|ordered|booked|visited|complained|said|named|showed|stayed|spent|paid|returned|went|rated|gave|praised|asked|cancell?ed|arrived|turned|sat|ate|drank|bought|tipped|joined|mention|mentions|names|says|complain|complains|praise|praises|cites)\b)/i;
-const NUMBER_FIRST_SUGGESTION = /\b(?:should|would|could|can|might|may|aim|target|needs?\s+to|to\s+be|if|when)\b/i;
+const NUMBER_FIRST_SUGGESTION = /\b(?:should|would|could|can|might|may|aim|aims|target|goal|ceiling|cap|limit|plenty|enough|sensible|healthy|ideal|needs?\s+to|to\s+be|if|when|equals|adds?\s+up\s+to|comes?\s+to)\b|\bis\s+(?:about\s+|roughly\s+|around\s+)?\$|=/i;
 function numberFirstClaim(text, num, prefix) {
   const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
   if (!NUMBER_FIRST_LEAD.test(stretch)) return false;
   const after = text.slice(num.index + num.length).split(/[.!?;]/)[0];
-  return NUMBER_FIRST_CLAIM.test(after) && !NUMBER_FIRST_SUGGESTION.test(after);
+  if (!NUMBER_FIRST_CLAIM.test(after)) return false;
+  return PAST_TIME.test(after) || !NUMBER_FIRST_SUGGESTION.test(after);
 }
 
 // A SUGGESTION WORD EARLIER IN THE CLAUSE DOES NOT MAKE A PAST READING A
@@ -686,7 +694,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
     for (const s of [f.label, f.note]) if (typeof s === 'string') written.push(s);
     for (const s of written) {
       for (const n of numbersIn(s)) {
-        const opts = { arith: n.dim !== 'date', dim: n.dim === 'plain' ? dim : n.dim };
+        const opts = { arith: n.dim !== 'date' && !n.word, dim: n.dim === 'plain' ? dim : n.dim };
         addValue(base, n.value, ids, opts);
         for (const a of n.alt) addValue(base, a, ids, { ...opts, arith: false });
       }
@@ -708,7 +716,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
   for (const t of texts) {
     if (typeof t !== 'string') continue;
     for (const n of numbersIn(t)) {
-      const opts = { owner: true, arith: n.dim !== 'date', dim: n.dim };
+      const opts = { owner: true, arith: n.dim !== 'date' && !n.word, dim: n.dim };
       addValue(base, n.value, new Set(), opts);
       for (const a of n.alt) addValue(base, a, new Set(), { ...opts, arith: false });
     }
@@ -820,7 +828,7 @@ function supportFor(num, support, inPlay = {}) {
   const others = [
     ...anchored,
     ...literals
-      .filter((l) => l.value !== num.value && l.dim !== 'date')
+      .filter((l) => l.value !== num.value && l.dim !== 'date' && !l.word)
       .map((l) => ({ value: l.value, ids: new Set(), dim: l.dim })),
   ];
   const matches = (d) => acceptsDim(num, d.dim) && close(num.value, d.value);

@@ -115,8 +115,10 @@ test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1
   const event = [...ADVICE_FACTS(), { id: 'event_friday', value: 'yes', source: 'events', asOf: '2026-08-19', label: 'Midnight Madness at the arena on Friday.' }];
   assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at 12 PM.', event), null);
   // And a 12-hour reading of an hour is matched, never worked with: 9 (for a
-  // 9 PM fact) minus the owner's midnight is no gap anybody measured.
+  // 9 PM fact) minus the owner's midnight is no gap anybody measured, and
+  // neither is 21 minus it, since a clock word is never an operand.
   assert.strictEqual(freeText.applyAdviceValve('Your {{fact:peak_hour}} peak is 9 hours before closing.', ADVICE_FACTS(), asked), null);
+  assert.strictEqual(freeText.applyAdviceValve('Your {{fact:peak_hour}} peak is 21 hours before closing.', ADVICE_FACTS(), asked), null);
   assert.ok(freeText.applyAdviceValve('Your peak lands at 9 PM.', ADVICE_FACTS()), 'the 12-hour reading still matches the fact it reads');
   for (const fine of ['Put the headline set on at midnight.', 'Holding 50 guests past midnight at $45 a head is $2,250.', 'Open the patio from noon on hot days.']) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
@@ -200,11 +202,18 @@ test('a number that opens its clause as the subject of a claim is read as one, a
     '10 of your 28 seats sit empty at 3 PM.',
     'And 30 guests walked out before ordering.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  // A worked example after a past figure does not make it a suggestion.
+  assert.strictEqual(freeText.applyAdviceValve('140 covers came in last Friday, which is $5,320.', ADVICE_FACTS()), null);
   for (const fine of [
     '38% of your sales should come from drinks.',
     '20 extra covers come in when the patio opens.',
     'If 20 guests order the special, that is $240.',
     '2 servers can cover 40 seats on a quiet night.',
+    // Targets and worked examples that open on a number (third review).
+    '30% of your sales is a sensible ceiling for labour.',
+    '80% of your tables full by 8 PM is the goal.',
+    '25 of those covers at $40 is $1,000 a week.',
+    '20 guests who ordered the $12 special is $240.',
   ]) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
     assert.ok(out, fine);
