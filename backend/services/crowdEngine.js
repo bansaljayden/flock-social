@@ -1634,6 +1634,18 @@ function nowCopy(currentScore, rushAhead, restLevels = []) {
   return 'Now is good';
 }
 
+// THE HOURS A TIME MAY BE SUGGESTED AT when a caller sets the latest one
+// (recommendBestTime's `latestHour`): from 6 AM up to and including that hour,
+// on the venue's clock. The small hours before 6 count as late, not early:
+// 1 AM is the end of a night out, never the start of a day. Every hour counts
+// when no latest hour is set.
+const EARLIEST_SUGGESTED_HOUR = 6;
+function suggestableHour(hour, latestHour) {
+  if (latestHour == null) return true;
+  const h = ((Math.trunc(hour) % 24) + 24) % 24;
+  return h >= EARLIEST_SUGGESTED_HOUR && h <= latestHour;
+}
+
 // Structured answer: the copy plus which forecast entry it points at, so a
 // chart can highlight the same hour the sentence names.
 //
@@ -1685,6 +1697,19 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
 
   const nowEntry = hourlyForecast[Math.max(0, nowIdx)];
 
+  // THE LAST HOUR A TIME MAY BE SUGGESTED AT (2026-11-03), for an account
+  // whose stored date of birth says it is under 18 (routes/ai.js). The quietest
+  // hour of a bowling night is often midnight or 1 AM, and Birdie relayed it to
+  // a 16-year-old as the time to go. With `latestHour` set, no hour after it,
+  // and none in the small hours before EARLIEST_SUGGESTED_HOUR, is a
+  // candidate, and "now" is not the answer once the venue's hour has reached
+  // it: the best time is chosen from the same forecast, among the hours left.
+  // The words about now still come from the same score, "the rest of the day"
+  // still means every open hour, and a caller that does not pass it gets
+  // exactly the decision it always got.
+  const latestHour = Number.isInteger(options.latestHour) ? options.latestHour : null;
+  const nowSuggestable = suggestableHour(nowHour, latestHour) && (latestHour == null || nowHour < latestHour);
+
   const ahead = [];
   for (let i = nowIdx + 1; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
@@ -1692,6 +1717,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     if (!openAt(h, calendarOffset)) continue;
     ahead.push({
       index: i,
+      hour: h,
       score: hourlyForecast[i].score,
       baselineScore: hourlyForecast[i].baselineScore,
       // Which arithmetic made the hour, so orderingAxis can read the shift.
@@ -1701,13 +1727,17 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
       inPeak: peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx,
     });
   }
+  // The hours a time may be suggested at: every open hour ahead, unless a
+  // latest hour is set.
+  const candidates = ahead.filter((e) => suggestableHour(e.hour, latestHour));
 
   // One axis for the whole decision, chosen over the hours it will actually
   // compare. When the venue is shut, "now" is neither a candidate nor a
   // comparison point, and including it would drag the whole decision back onto
   // model scores: a closed hour has no collected baseline, so it fails the
   // all-or-nothing test on its own and takes every open hour down with it.
-  const axis = orderingAxis(openNow === false ? ahead : [nowEntry, ...ahead]);
+  // The same goes for a "now" past the latest hour a time may be named at.
+  const axis = orderingAxis(openNow === false || !nowSuggestable ? candidates : [nowEntry, ...candidates]);
   const rank = axis.valueOf;
   // What "now" is worth on the ordering axis. On the model fallback that is
   // the calibrated score the card prints, which is what this function has
@@ -1726,9 +1756,12 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
       : rank(nowEntry));
 
   const quietest = (list) => list.reduce((a, b) => (rank(b) < rank(a) ? b : a), list[0]);
-  const openToday = ahead.filter(e => e.dayOffset === 0);
+  // Every open hour left today, for what "the rest of the day" claims, and
+  // the ones a time may be suggested at, for the decision.
+  const restOfToday = ahead.filter(e => e.dayOffset === 0);
+  const openToday = candidates.filter(e => e.dayOffset === 0);
   const todayPicks = openToday.filter(e => !e.inPeak);
-  const laterPicks = ahead.filter(e => e.dayOffset > 0 && !e.inPeak);
+  const laterPicks = candidates.filter(e => e.dayOffset > 0 && !e.inPeak);
   const pick = (e) => ({
     text: withDayPrefix(e.label, e.dayOffset),
     hourLabel: e.label,
@@ -1738,7 +1771,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     orderingMinGap: HOUR_ORDERING_MIN_GAP,
   });
   const stayPut = (rushAhead) => ({
-    text: nowCopy(currentScore, rushAhead, openToday.map((e) => e.score)),
+    text: nowCopy(currentScore, rushAhead, restOfToday.map((e) => e.score)),
     hourLabel: null,
     index: Math.max(0, nowIdx),
     dayOffset: 0,
@@ -1771,8 +1804,9 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     return pick(best);
   };
 
-  // Shut right now: "now" can never be the answer.
-  if (openNow === false) {
+  // Shut right now, or past the latest hour a time may be named at: "now" can
+  // never be the answer.
+  if (openNow === false || !nowSuggestable) {
     return nameQuietest(todayPicks.length ? todayPicks : laterPicks);
   }
 
@@ -2246,6 +2280,10 @@ module.exports = {
   // Round 13: same decision as findBestTime, but it also hands back WHICH
   // forecast entry it named so a chart can highlight that exact bar.
   recommendBestTime,
+  // Which hours a time may be suggested at under recommendBestTime's
+  // `latestHour`, so a caller that trims a forecast to them uses the same rule.
+  suggestableHour,
+  EARLIEST_SUGGESTED_HOUR,
   findPeakTime,
   // DEAD, AND DELIBERATELY LEFT THAT WAY. Zero callers as of 2026-09-06, and
   // the reason is round 14: "Less crowded nearby" used to be scored by THIS

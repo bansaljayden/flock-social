@@ -13,6 +13,11 @@ const { getWeather } = require('../services/weatherService');
 const {
   findBestTime,
   findPeakTime,
+  // Which hours a time may be suggested at for someone under 18, and the
+  // structured best time that says which hour an answer names (THE EVENING,
+  // FOR SOMEONE UNDER 18).
+  suggestableHour,
+  recommendBestTime,
   getLabel,
   publishedLabel,
   describePredictionSupport,
@@ -1096,6 +1101,24 @@ const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so 
 // WAY, in the tool). Production's host keeps UTC and skips none; a host in New
 // York skips one a year. An error like the tool's others.
 const NO_READING_THIS_HOUR = 'There is no crowd reading for this venue right now. Do not guess how busy it is.';
+// THE EVENING, FOR SOMEONE UNDER 18 (2026-11-03). The best time the crowd
+// engine names can be midnight or 1 AM, and on the Birdie eval a 16-year-old
+// asking about bowling was told "midnight is your best shot". For an account
+// whose stored date of birth makes it under 18 (never the no-age bracket: the
+// iPhone app asks no date of birth and many of those accounts are adults), the
+// best time is chosen from the same forecast among the hours up to 10 PM
+// (crowdEngine recommendBestTime's `latestHour`), "now" is not offered once it
+// is past 10 PM, and the hour-by-hour list stops before the first later hour,
+// so no later hour is there to be named. When that moves the answer, the note
+// below tells the model to give it plainly, with no later hour and no reason.
+const MINOR_LAST_SUGGESTED_HOUR = 22;
+const MINOR_BEST_TIME_NOTE = 'This venue\'s best time to go is later than 10 PM, so best_time is the best time at or before 10 PM. Give that one plainly, and do not name a later hour or say why.';
+// An hour label ("9 PM") as a 24-hour number, or null.
+function hourOfLabel(label) {
+  const m = /^(\d{1,2})\s*(AM|PM)$/i.exec(String(label || '').trim());
+  if (!m || Number(m[1]) < 1 || Number(m[1]) > 12) return null;
+  return (Number(m[1]) % 12) + (/pm/i.test(m[2]) ? 12 : 0);
+}
 // A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
 // (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
 // level as well as the forecast, for any venue not already opened this month.
@@ -1786,21 +1809,43 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // calls carry the venue's weekday, as the card's do; without it every
         // hour was tested against one window instead of the per-day map.
         const peakResult = findPeakTime(next12, venue, { startDay: localDay });
-        result.best_time = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, {
+        const bestTimeOptions = {
           currentHour: localHour,
           currentDay: localDay,
           // The score this result publishes, which is the owner's reading when
           // one is live. The words about now are chosen from it; chosen from
           // the model's 40 they said "Now is good" beside the owner's Packed.
           currentScore: result.crowd_score,
-        });
+        };
+        // Under 18 by their date of birth: the evening only (THE EVENING, FOR
+        // SOMEONE UNDER 18, above).
+        const latestHour = opts.eveningOnly === true ? MINOR_LAST_SUGGESTED_HOUR : null;
+        result.best_time = findBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen,
+          latestHour == null ? bestTimeOptions : { ...bestTimeOptions, latestHour });
+        if (latestHour != null) {
+          // The note only when the answer anyone else would get is a later
+          // hour, or "now" once it is past 10 PM.
+          const anyHour = recommendBestTime(fullDay, venue, peakResult.startIdx, peakResult.endIdx, venue.isOpen, bestTimeOptions);
+          const lateAnswer = anyHour.hourLabel != null
+            ? !suggestableHour(hourOfLabel(anyHour.hourLabel) ?? -1, latestHour)
+            : /^Now\b/.test(anyHour.text) && !(suggestableHour(localHour, latestHour) && localHour < latestHour);
+          if (lateAnswer && anyHour.text !== result.best_time) result.best_time_note = MINOR_BEST_TIME_NOTE;
+        }
         result.peak_hours = peakResult.text;
+        // For them the list stops before the first hour after 10 PM, so there
+        // is no later hour in it to name. The first entry is the current hour,
+        // the headline, and stays whatever the time.
+        let shownHours = next12;
+        if (latestHour != null) {
+          const cut = next12.findIndex((h, i) => i > 0 && !suggestableHour(hourOfLabel(h.hour) ?? -1, latestHour));
+          if (cut > 0) shownHours = next12.slice(0, cut);
+        }
         // Same array the recommendation came from, so the two can't disagree.
         // Each hour is hedged by the rule the headline uses and says which
         // engine scored it. The hours are narrated too, and a flat "Busy" read
         // off a category curve claimed more than the "Usually busy" headline
         // above it for the same venue.
-        result.hourly_forecast = next12.map((h) => ({
+        result.hourly_forecast = shownHours.map((h) => ({
           hour: h.hour,
           label: publishedLabel(h.score, describePredictionSupport(h.predictionMethod, 0)),
           score: h.score,
@@ -2273,7 +2318,7 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = fal
   // age is held to exactly what a known minor is, said as what it is (an
   // unknown age that may be 13), not as a claim that the user is a minor.
   const ageLine = ageBracket === 'minor'
-    ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh. A direct ask to drink, get served or get past an ID is not steered silently: it gets the plain no in the hard rules.`
+    ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh. A direct ask to drink, get served or get past an ID is not steered silently: it gets the plain no in the hard rules. Suggest times to go only up to 10 PM: never tell them to go after 10 PM, or that it gets quieter after 10 PM. Their \`best_time\` is already picked that way, and when \`best_time_note\` says a venue's best time is later, give \`best_time\` plainly and leave the later hours and the reason out.`
     : ageBracket === 'under21'
       ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities. Never help anyone get served underage. Keep it clean: no profanity, nothing sexual. An ask to drink, get served or get past an ID gets the plain no in the hard rules.`
       : ageBracket === 'adult'
@@ -3044,6 +3089,9 @@ router.post('/chat',
               searchedPlaces,
               timeZone: userZone,
               distanceFrom,
+              // A known minor only, never an unknown age (THE EVENING, FOR
+              // SOMEONE UNDER 18).
+              eveningOnly: ageBracket === 'minor',
             };
             // The exact string the tool fetches, so the meter and Google agree
             // on which venue this is. No id means every lookup counts, which is
