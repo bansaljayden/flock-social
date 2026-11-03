@@ -478,4 +478,9 @@ test('"no X please" rules X out the way "no X, what else" does, and a complaint 
   assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('No happy hour please, how do I get people in before 7pm')).spans, [['happy', 'hour']]);
   const ids = pb.find('No happy hour please help me get people in before 7pm', { venue: BAR, limit: 5 }).map((t) => t.id);
   assert.ok(!ids.includes('slow_hours_happy_hour') && ids.length > 0, String(ids));
+  // An interjection stands alone: "no rush pricing" and "no rush hour
+  // discounts" still refuse (re-check of the round).
+  assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('We get slammed at peak, but no rush pricing. How do we handle it?')).spans, [['rush', 'pricing']]);
+  assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('How do we handle the Friday rush? No rush hour discounts, thanks')).spans, [['rush', 'hour', 'discounts']]);
+  assert.ok(pb.find('We get slammed at peak, but no rush pricing. How do we handle it?', { venue: BAR, limit: 5 }).every((t) => t.id !== 'pricing_small_steps'));
 });

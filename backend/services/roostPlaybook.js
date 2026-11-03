@@ -365,8 +365,11 @@ function refusedFrom(tokens, i, asksElse) {
   // ("no happy hour, what else"), since "no regulars anymore" is a complaint.
   // "No problem", "no worries" and "no rush" refuse nothing (re-check of the
   // third round, 2026-11-03: "No problem, please help me fill Tuesdays" ruled
-  // out every move for Tuesdays).
-  if (w === 'no' && next && !SPAN_STOP.has(next) && !NO_INTERJECTION.has(next)) {
+  // out every move for Tuesdays), standing alone before a comma, the clause's
+  // end or a please; "no rush pricing" and "no rush hour discounts" still do.
+  const interjection = NO_INTERJECTION.has(next)
+    && (i + 2 >= tokens.length || tokens[i + 2] === ',' || CLAUSE_END.has(tokens[i + 2]) || POLITE.has(tokens[i + 2]));
+  if (w === 'no' && next && !SPAN_STOP.has(next) && !interjection) {
     if (before === 'but' || before === 'with') return i + 1;
     // "No happy hour please" refuses too, the way "no happy hour, what else"
     // does: a please or thanks before the clause ends (review, 2026-11-03).
