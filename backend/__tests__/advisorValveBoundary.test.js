@@ -278,6 +278,9 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     'First, read your 30 latest Google reviews.',
     'Before you change anything, go through your 20 newest reviews.',
     'At the rush, divide the bar into 3 stations.',
+    // The second round's final run: the same command with another verb after it.
+    'Read through your 50 most recent reviews and pinpoint the single bottleneck people name most often.',
+    'Read your 50 most recent reviews, isolate the slowest step, and fix it first.',
   ]) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
     assert.ok(out, fine);
@@ -326,6 +329,13 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     'Read your 50 most recent reviews, staff complaints doubled, time to seat fell.',
     'Read your 50 most recent reviews and fix the wait. every one names it.',
     'Read your 50 most recent reviews꞉ all but 1 mention the wait.',
+    // The verbs added for the second round's final run, in the past or
+    // carrying a figure of their own, are still reports.
+    'Read your 50 most recent reviews and pinpointed the wait as the top complaint.',
+    'Read your 50 most recent reviews and spotted the wait in every one.',
+    'Read your 50 most recent reviews and identify the 40 that mention the wait.',
+    'We read your 50 most recent reviews and pinpoint the wait.',
+    'Read your 50 most recent reviews and single out the wait, which 40 of them name.',
   ]) {
     assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" carries a venue figure nobody measured`);
   }

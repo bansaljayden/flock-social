@@ -541,7 +541,8 @@ const PAST_TENSE = /\b(?:\w{2,}(?<!e)ed|fell|rose|grew|went|came|took|got|ran|sa
 // a word that opens a clause of its own.
 const CLAIM_OPENING = /[:;()[\]꞉ː∶։׃]|[.!?]\s+\S|\b(?:which|who|whom|whose|where|but|because|since|whereas)\b/i;
 // What may follow the count: another command, or (lanes) what each lane is for.
-const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill)\b/i;
+// The bare verb only: "pinpointed" or "spotted" is a report, and fails here.
+const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill|pinpoint|isolate|identify|spot|single\s+out|figure\s+out)\b/i;
 const LANE_DETAIL = /^(?:(?:1|one)\s+for\b|with\b)/i;
 function countToDo(text, num, prefix, all, alone) {
   if (!alone || num.dim !== 'plain') return false;
