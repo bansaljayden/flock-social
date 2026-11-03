@@ -670,6 +670,9 @@ test('a rate per thing is a price or a cut, and money flowing over the venue\'s 
     'You save about $3 a case on Mondays.',
     'You pay $2 per order in card fees.',
     'You pay $15 an hour for a barback.',
+    'You lose 20 minutes a table on slow nights.',
+    'You keep 2 servers on until close.',
+    'You save 2 hours a week by batching the prep.',
   ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
   for (const claim of [
     'You lose $40 a night on Tuesdays.',
@@ -677,6 +680,20 @@ test('a rate per thing is a price or a cut, and money flowing over the venue\'s 
     'You lose $500 a Tuesday.',
     'You spend $2,000 a pay period on labor.',
     'You spend $4,000 every fortnight on labor.',
+    // An occasion is the venue's time too, a possessive does not hide the
+    // day, and a count of the room, the staff lost or the time lost flows
+    // (review of the round's fixes, 2026-11-03).
+    'You lose $500 every time it rains.',
+    'You lose $3,000 a holiday.',
+    'You give away $900 a happy hour.',
+    'You lose $1,200 a home game.',
+    'We lose $800 on every concert.',
+    'You lose 20% of every Tuesday\'s sales.',
+    'You lose 30% of each weekend\'s revenue to comps.',
+    'You lose 40 covers every Tuesday to the game.',
+    'We give away 30 free drinks every Friday.',
+    'You lose 6 cooks a year to turnover.',
+    'You lose 2 hours a night to slow tickets.',
     'You keep 70% of your revenue after costs.',
     'You lose 30% of your Tuesday covers to the bar next door.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);

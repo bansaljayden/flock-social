@@ -620,7 +620,7 @@ const AND_THE_DOER = new RegExp(`\\band\\s+(?:then\\s+)?${DOES}`, 'i');
 // room's own guests ("your guests spend $40"), never after "you" or "we",
 // whose spending is what a worked example adds up.
 const DOER_SPENDS = /\b(?:you|we)(?:['’]ll|\s+will)?\s+(?:\w+\s+)?spend\b/i;
-const DOER_FLOWS = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(?:spend|pay|lose|keep|save|owe|give\\s+(?:up|away))\\b${VERB_TO_NUMBER.source}`, 'i');
+const DOER_FLOWS = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(spend|pay|lose|keep|save|owe|give\\s+(?:up|away))\\b${VERB_TO_NUMBER.source}`, 'i');
 // The words that end what a number counts or is a rate of: "$3 a case on
 // Mondays", "2 registers at 5 PM".
 const AFTER_COUNT_STOP = /^(?:at|on|in|by|from|to|for|of|with|over|across|during|through|per|a|an|the|each|every|and|but|or|so|then|than|before|after|until|till|around|about|this|that|last|next|tonight|today|yesterday|is|are|was|were|will|would|can|could|should|costs?|means?|leaves?|which|who)$/i;
@@ -712,19 +712,35 @@ function ownerActs(text, num, prefix) {
 // money rule reads stay readings: "$2,000 a week", "$500 every Tuesday", "$3,000
 // a month in rent".
 const PERIOD_WORD = /^(?:nights?|days?|weeks?|weekends?|weeknights?|weekdays?|fortnights?|months?|years?|seasons?|quarters?|periods?|cycles?|terms?|semesters?|payrolls?|stretch(?:es)?|shifts?|mornings?|afternoons?|evenings?|lunch(?:es)?|dinners?|brunch(?:es)?|services?|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|tonight|today|yesterday)$/i;
+// An occasion is a stretch of the venue's time too: "every time it rains", "a
+// holiday", "a home game", "on every concert", "a happy hour" (review of the
+// round's fixes, 2026-11-03).
+const OCCASION_WORD = /^(?:times?|occasions?|holidays?|games?|match(?:es)?|concerts?|shows?|gigs?|events?|festivals?|parades?|storms?|snowstorms?|rainstorms?|heatwaves?|rains?|happy)$/i;
 const RATE_RIGHT_AFTER = /^\s*(?:a|an|per|each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
 const RATE_IN_CLAUSE = /\b(?:on|for|from|of|in|with)\s+(?:each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
+// What follows a number past its own unit or the room it counts: "20 minutes
+// a table" and "2 covers per table" are rates per table too.
+function pastTheCount(text, num) {
+  const rest = text.slice(num.index + num.length);
+  if (num.dim === 'duration') return rest.replace(/^\s*(?:minutes?|mins?|hours?|hrs?)\b/i, '');
+  if (num.dim !== 'plain') return rest;
+  const counted = (w) => ROOM_COUNTS.test(w) || STAFF.test(w);
+  const two = /^\s*[A-Za-z'’-]+\s+([A-Za-z'’-]+)/.exec(rest);
+  if (two && counted(two[1])) return rest.slice(two[0].length);
+  const one = /^\s*([A-Za-z'’-]+)/.exec(rest);
+  return one && counted(one[1]) ? rest.slice(one[0].length) : rest;
+}
 function perThing(text, num) {
-  const rest = text.slice(num.index + num.length).split(/[.;:!?]|,\s+(?=(?:but|and|so|while|which|then)\b)/)[0];
+  const rest = pastTheCount(text, num).split(/[.;:!?]|,\s+(?=(?:but|and|so|while|which|then)\b)/)[0];
   // The noun phrase only, up to its first linking word: "$3 a case on Mondays"
-  // is a rate per case.
+  // is a rate per case. "Every Tuesday's sales" is Tuesday's.
   const thing = (words) => {
     const list = [];
     for (const w of words.trim().split(/\s+/)) {
       if (!w || AFTER_COUNT_STOP.test(w)) break;
-      list.push(w);
+      list.push(w.replace(/['’]s$/i, ''));
     }
-    return list.length > 0 && !list.some((w) => PERIOD_WORD.test(w));
+    return list.length > 0 && !list.some((w) => PERIOD_WORD.test(w) || OCCASION_WORD.test(w));
   };
   const right = RATE_RIGHT_AFTER.exec(rest);
   if (right && thing(right[1])) return true;
@@ -1025,10 +1041,25 @@ function standingReading(text, prefix, num, all) {
 }
 
 // Money flowing with no other figure in its sentence to work it from, and no
-// thing it is a rate of (perThing).
+// thing it is a rate of (perThing). A count flows too when it counts the room
+// ("you lose 40 covers every Tuesday", "we give away 30 free drinks every
+// Friday") or the staff the venue loses ("you lose 6 cooks a year"), and time
+// when it is lost ("you lose 2 hours a night"), never what the owner keeps on
+// or saves ("you keep 2 servers on until close", review of the round's fixes).
 function flowsUnworked(text, prefix, num, all) {
-  return (num.dim === 'money' || num.dim === 'pct') && DOER_FLOWS.test(prefix) && !perThing(text, num)
-    && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
+  const m = DOER_FLOWS.exec(prefix);
+  if (!m) return false;
+  const verb = m[1].toLowerCase();
+  let flows = num.dim === 'money' || num.dim === 'pct';
+  if (num.dim === 'duration') flows = verb === 'lose';
+  if (num.dim === 'plain') {
+    const words = countedWords(text, num);
+    for (let k = 0; k < Math.min(3, words.length) && !flows; k += 1) {
+      if (ROOM_COUNTS.test(words[k]) || (verb === 'lose' && staffCounted(words, k))) flows = true;
+      else if (AFTER_COUNT_STOP.test(words[k])) break;
+    }
+  }
+  return flows && !perThing(text, num) && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
 }
 
 // A SHARE IN A GERUND'S SCENARIO IS A SUPPOSITION (2026-11-03, the round's
