@@ -76,7 +76,9 @@ test('a sign goes only from a points gap under or over the venue\'s own usual, a
     ['moved to -12 under the new scoring', 'moved to -12 under the new scoring'],
     ['Plan for 40 +10 more covers on game nights.', 'Plan for 40 +10 more covers on game nights.'],
     ['Yesterday came in at 8 -18 points under your usual 26.', 'Yesterday came in at 8 -18 points under your usual 26.'],
-    ['falling -18 below your usual 55', 'falling -18 below your usual 55'],
+    // The other two live phrasings.
+    ['falling -18 below your usual 55', 'falling 18 below your usual 55'],
+    ['putting yesterday -18 points under typical levels', 'putting yesterday 18 points under typical levels'],
   ]) assert.strictEqual(tidyNumbers(said), shown, said);
 });
 

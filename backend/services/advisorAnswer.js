@@ -169,10 +169,10 @@ const NOT_A_DURATION = '(?![\\d:])(?!\\s*(?:[aApP]\\.?\\s?[mM]|minutes?|mins?|ho
 const CLOCK_WORD_24 = new RegExp(`(?<=\\b(?:at|before|after|until|till|around|from|between|opens?|opening|closes?|closing|doors?)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'gi');
 const RANGE_END_24 = new RegExp(`(?<=\\b\\d{1,2}(?::[0-5]\\d)?\\s[AP]M\\s+(?:and|to|until|till|through|-)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'g');
 const TIDY_CLOCK_AMPM = /\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])(\.\s?[mM]\.|\s?[mM]\b)(?![a-zA-Z])/g;
-const USUAL = '\\s+(?:your|the|their|our)\\s+(?:usual|typical|normal|own|baseline|median|middle|average|regular)\\b';
+const USUAL = '\\s+(?:(?:your|the|their|our)\\s+)?(?:usual|typical|normal|own|baseline|median|middle|average|regular)\\b';
 const NOT_IN_A_RANGE = '(?<![\\d.,]\\s*)(?<![\\w$.,])(?<!\\b(?:from|to|and|through|between)\\s+)';
-const MINUS_UNDER_USUAL = new RegExp(`${NOT_IN_A_RANGE}[-−](\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)\\s+(?:under|below|behind|short\\s+of)${USUAL})`, 'g');
-const PLUS_OVER_USUAL = new RegExp(`${NOT_IN_A_RANGE}\\+(\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)\\s+(?:over|above|ahead\\s+of)${USUAL})`, 'g');
+const MINUS_UNDER_USUAL = new RegExp(`${NOT_IN_A_RANGE}[-−](\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:under|below|behind|short\\s+of)${USUAL})`, 'g');
+const PLUS_OVER_USUAL = new RegExp(`${NOT_IN_A_RANGE}\\+(\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:over|above|ahead\\s+of)${USUAL})`, 'g');
 
 function groupThousands(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
