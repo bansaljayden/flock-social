@@ -358,6 +358,13 @@ test('the rules about WHEN to call a tool survive', () => {
     'the crowd-translation rule is gone');
 });
 
+test('a quiet or seat-now ask is decided by the crowd numbers it already has', () => {
+  // On the Birdie eval, "somewhere ... with a chill vibe" checked two spots
+  // and sent them to the one at 79 over the one at 68, and "hungry. cheap.
+  // now." picked 79 over 62 with two tables open.
+  assert.match(adult(), /When they want it quiet, chill, or a seat right now, the crowd numbers and open tables you have decide the pick: never send them to the busier of two spots you checked\./);
+});
+
 test('the slang decoder survives intact', () => {
   const prompt = adult();
   for (const term of ['the move', 'pull up', 'dead', 'poppin', 'lowkey', 'bet', 'no cap']) {
