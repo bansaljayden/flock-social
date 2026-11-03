@@ -1264,7 +1264,10 @@ function yearOf(num, text, support, inPlay) {
 // those 10 weekly covers add up to $19,760"), and a sentence-by-sentence check
 // cannot see it.
 const SUPPOSING = /\b(?:if|say|suppose|supposing|imagine|assuming|assume|for\s+example|for\s+instance)\b/i;
-const RESULT_MARK = /(?:\b(?:that\s+is|that['’]s|that\s+(?:comes|adds\s+up|works\s+out)\s+to|that\s+would\s+be|that['’]d\s+be|which\s+is|which\s+(?:comes|adds\s+up|works\s+out)\s+to|for\s+a\s+total\s+of|equals|(?:comes?|adds?\s+up|works?\s+out)\s+to)|=)\s*(?:about|roughly|around|nearly|almost|close\s+to|just\s+over|just\s+under|over|under|some)?\s*$/i;
+// And the supposition's outcome said as what the owner takes or gives
+// ("If 80 guests pay $38 each, you clear $4,000", "...that totals $4,000"),
+// which a review of the round found unread (2026-11-03).
+const RESULT_MARK = /(?:\b(?:that\s+is|that['’]s|that\s+(?:comes|adds\s+up|works\s+out)\s+to|that\s+would\s+be|that['’]d\s+be|which\s+is|which\s+(?:comes|adds\s+up|works\s+out)\s+to|for\s+a\s+total\s+of|equals|(?:comes?|adds?\s+up|works?\s+out)\s+to|(?:that|which|it)\s+totals|totall?ing|you(?:['’]d|['’]ll|\s+would|\s+will)?\s+(?:clear|make|net|gross|take\s+in|bring\s+in|earn|pocket|keep|save|lose|give\s+(?:up|away)))|=)\s*(?:about|roughly|around|nearly|almost|close\s+to|just\s+over|just\s+under|over|under|some)?\s*$/i;
 const IS_MARK = /\b(?:is|are)\s+(?:(?:about|roughly|around|nearly|almost|close\s+to|just\s+over|just\s+under|over|under|some)\s+)?$/i;
 // The working is shown when at least two operands stand in front of the
 // figure, numbers or placeholders: "If 20 guests order the special, that is
@@ -1317,14 +1320,18 @@ function workedFrom(num, support, inPlay, all) {
     if (e.arith !== false && !e.owner && [...e.ids].some((id) => ids.has(id))) take(e);
   }
   const pool = [...operands, ...operands.filter((e) => e.dim === 'duration').map((e) => ({ ...e, dim: 'plain' }))];
-  const matches = (d) => (acceptsDim(num, d.dim) || (num.dim === 'plain' && d.dim === 'pct')) && close(num.value, d.value);
+  // Within 5%, since a worked figure is said rounded ("$110 less 25 to 30% is
+  // about $75 to $80"); the wrong product this exists for is far off ($4,000
+  // for $3,040). The second step may take an operand again: what is kept of
+  // $110 after 30% is 110 less 30% of 110.
+  const matches = (d) => (acceptsDim(num, d.dim) || (num.dim === 'plain' && d.dim === 'pct'))
+    && (close(num.value, d.value) || Math.abs(num.value - d.value) <= Math.abs(d.value) * 0.05);
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = 0; j < pool.length; j += 1) {
       if (i === j) continue;
       for (const r of workedSteps(pool[i], pool[j])) {
         if (matches(r)) return true;
         for (let k = 0; k < pool.length; k += 1) {
-          if (k === i || k === j) continue;
           if (workedSteps(r, pool[k]).some(matches) || workedSteps(pool[k], r).some(matches)) return true;
         }
       }

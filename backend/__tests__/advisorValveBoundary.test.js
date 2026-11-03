@@ -423,6 +423,22 @@ test('a worked figure inside a supposition must add up, whatever the supposition
   // sentence by sentence (the recorded runs' "Over a year, those 10 weekly
   // covers add up to $19,760" is right, and its working is a line up).
   assert.ok(freeText.applyAdviceValve('Over a year, those 10 weekly covers add up to $19,760 in revenue.', facts));
+  // The outcome said as what the owner takes or gives is a worked figure too
+  // (review of the round), and a rounded one that holds still renders.
+  for (const wrong of [
+    'If 80 guests pay $38 each, you clear $4,000.',
+    'If 80 guests pay $38 each, that totals $4,000.',
+    'If 80 guests pay $38 each, you would bring in $4,000.',
+    'Say 30 guests who were coming anyway each save $4: you give away $150 a night.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(wrong, facts), null, wrong);
+  for (const right of [
+    'If 80 guests pay $38 each, you clear $3,040.',
+    'If 30 guests who were coming anyway each save $4, you give away $120 a night.',
+    'If you sell a $20 order at a 25% cut, you keep $15.',
+    // Two recorded runs: $110 less 25 to 30% is $77 to $82.50.
+    'If ingredient costs run around 25 to 30%, you keep about $77 to $82 of that $110 each week before fixed overhead.',
+    'Assuming typical cafe margins keep food and drink costs near 25 to 30%, you keep about $75 to $80 of that $110 as gross profit each week.',
+  ]) assert.ok(freeText.applyAdviceValve(right, facts), right);
 });
 
 test('owner text full of numbers cannot make the worked-figure search hold the server', () => {
