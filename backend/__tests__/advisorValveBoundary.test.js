@@ -661,6 +661,39 @@ test('a rate per thing is a price or a cut, and money flowing over the venue\'s 
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
 });
 
+test('what the owner does or sets out is advice, and what the room does after the owner\'s verb is still a reading', () => {
+  // Re-check of the third round, 2026-11-03: the base verbs after "you" made
+  // readings of the owner's own posts, registers, bookings and orders.
+  for (const fine of [
+    'Every week you post 3 times on Instagram, then check which post drew the most comments.',
+    'Every shift you open 2 registers at 5 PM.',
+    'You post 3 times a week on Instagram.',
+    'You open 2 more tables on the patio at 8 PM.',
+    'You close the patio at 10 PM on weeknights.',
+    'You order 3 cases of limes every Monday.',
+    'Every Thursday you host 2 trivia rounds.',
+    'You book 2 DJs a month.',
+    'Every Friday you hold 2 tables for walk-ins.',
+    'Every shift you spend 30 minutes prepping.',
+    'You take 2 hours to plan the specials.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
+  for (const claim of [
+    'Every Friday you see 300 people.',
+    'On Fridays you see 300.',
+    'On Fridays you see 300 new guests.',
+    'On Fridays you see 300 more than on Mondays.',
+    'On Fridays you see 3 times the traffic of a Monday.',
+    'You sell out 3 times a month.',
+    'Every Friday you see 2 rushes.',
+    'On Fridays you see the rush at 11 PM.',
+    'You open at 7 AM.',
+    'You book 40 tables on Fridays.',
+    'Every Friday you host 300 guests.',
+    'You hold 120 people on a Friday.',
+    'You average 45 minutes a table.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+});
+
 test('one day or the room doing it, in the third person or the past, is a reading too', () => {
   // Third round, 2026-11-03: CLAIM_VERB holds "sees" and "fills" but not
   // "draws", "sells", "packs" or "lets", and "drew" and "sent" were no verb

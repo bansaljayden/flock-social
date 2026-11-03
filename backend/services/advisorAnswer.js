@@ -607,6 +607,54 @@ const DOER_FLOWS = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN
 // Mondays", "2 registers at 5 PM".
 const AFTER_COUNT_STOP = /^(?:at|on|in|by|from|to|for|of|with|over|across|during|through|per|a|an|the|each|every|and|but|or|so|then|than|before|after|until|till|around|about|this|that|last|next|tonight|today|yesterday|is|are|was|were|will|would|can|could|should|costs?|means?|leaves?|which|who)$/i;
 
+// WHAT THE OWNER DOES IS ADVICE, NOT A READING (re-check of the third round,
+// 2026-11-03). After "you" or "we" the base verbs read the room ("you see 300
+// people", "we pour 400 drinks"), and they made readings of what the owner
+// does or sets out too: "Every week you post 3 times on Instagram", "you open
+// 2 registers at 5 PM", "you book 2 DJs a month", "you order 3 cases of
+// limes". After the owner's own verb, a plain count is a reading when it
+// counts the room or stands alone ("you see 300", "you fill 40 seats", "we do
+// 300 on a Friday", "you see 3 times the traffic"); a count of anything else
+// is what the owner does. A clock after a verb the owner operates something
+// with ("open", "close", "start", "book") is a reading when only a timing word
+// stands between ("you open at 7 AM"), never the time an object is opened at.
+const OWNER_DOES = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(${BASE_VERB.source})\\b((?:\\s+[^\\s,;:.!?]+){0,3})\\s*$`, 'i');
+const OWNER_OPERATES = /^(?:open|close|start|end|post|book|order|host|run|hold)$/i;
+const ROOM_COUNTS = /^(?:people|persons?|guests?|customers?|diners?|visitors?|patrons?|regulars?|walk-?ins?|heads?|covers?|seats?|tables?|tops|parties|party|groups?|bookings?|reservations?|orders?|checks?|tickets?|sales?|transactions?|visits?|turns?|seatings?|sittings?|drinks?|cocktails?|pints?|beers?|glasses|bottles?|shots?|coffees?|cups?|lattes?|plates?|meals?|dishes|entrees?|mains?|desserts?|pastries|loaves|items?|units?|reviews?|ratings?|stars?|complaints?|mentions?|deliveries|calls?|views?|clicks?|likes?|followers?|impressions?|comments?|lookups?|searches|nights?|rushes|rush|peaks?|waves?|spikes?|crowds?|lines?|percent|points?)$/i;
+// What the owner opens, closes, holds or runs: "you hold 2 tables for
+// walk-ins" sets two aside, where "you book 40 tables" counts bookings.
+const OWNER_RESOURCE = /^(?:tables?|seats?|sections?|stations?|registers?|tills?|lanes?|lines?|rooms?|areas?|tops|bars?|patios?|windows?)$/i;
+// Words between a count and what it counts: "2 more tables", "300 new guests".
+const COUNT_MODIFIER = /^(?:more|fewer|less|extra|new|additional|other|regular|full|empty|busy|slow|small|big|large)$/i;
+const TIMING_WORD = /^(?:at|by|around|from|until|till|about|roughly|near|nearly|before|after|as|early|late|again|usually|only|still|always|up|back|right|just)$/i;
+function ownerActs(text, num, prefix) {
+  const m = OWNER_DOES.exec(prefix);
+  if (!m) return false;
+  const verb = m[1].toLowerCase();
+  if (num.dim === 'clock') {
+    return OWNER_OPERATES.test(verb) && m[2].trim().split(/\s+/).filter(Boolean).some((w) => !TIMING_WORD.test(w));
+  }
+  // The owner's own time: "you take 2 hours to plan the specials".
+  if (num.dim === 'duration') return verb === 'take';
+  if (num.dim !== 'plain') return false;
+  const operates = OWNER_OPERATES.test(verb) && verb !== 'book';
+  const words = text.slice(num.index + num.length).split(/[,;:.!?()]/)[0].trim().split(/\s+/).filter(Boolean).slice(0, 3);
+  let named = false;
+  for (let k = 0; k < words.length; k += 1) {
+    const w = words[k].replace(/[^A-Za-z'’-]/g, '');
+    if (operates && OWNER_RESOURCE.test(w)) return true;
+    if (ROOM_COUNTS.test(w)) return false;
+    // How often: what the owner does ("you post 3 times a week") after a verb
+    // they operate with, what the room does ("you sell out 3 times a month",
+    // "3 times the traffic") after any other.
+    if (/^(?:times|x)$/i.test(w)) return OWNER_OPERATES.test(verb) && !/^(?:the|as|more|your|our|that|what)$/i.test(words[k + 1] || '');
+    if (COUNT_MODIFIER.test(w)) continue;
+    if (AFTER_COUNT_STOP.test(w)) return named;
+    named = true;
+  }
+  return named;
+}
+
 // A RATE PER THING IS A PRICE OR A CUT, NEVER THE VENUE'S TAKINGS (re-check
 // of the third round, 2026-11-03): "you keep about 70% of each delivery
 // order", "you pay roughly 30% to the delivery apps on every order", "you pay
@@ -918,9 +966,12 @@ function standingReading(text, prefix, num, all) {
   // And with the doer and its verb in the base form or the past, or money
   // flowing with no working shown (review of the third round, 2026-11-03):
   // "Every Friday you see 300 people", "Most Fridays you pour 400 drinks",
-  // "Every week you lose $500 to no-shows".
-  return (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix)) || DOER_IN_THE_PAST.test(prefix)
-    || flowsUnworked(text, prefix, num, all);
+  // "Every week you lose $500 to no-shows". What the owner does in the habit
+  // is advice ("Every week you post 3 times", "Every shift you open 2
+  // registers at 5 PM", "Every shift you spend 30 minutes prepping"), as it is
+  // outside one (re-check of the round).
+  return (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail) && !ownerActs(text, num, prefix))
+    || DOER_IN_THE_PAST.test(prefix) || flowsUnworked(text, prefix, num, all);
 }
 
 // Money flowing with no other figure in its sentence to work it from, and no
@@ -999,8 +1050,11 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   // answer gave ("Fill 15 early seats and you bring in roughly $450"); "Keep
   // doing what works and you see 300 people on Fridays" says what the room
   // does now (review of the third round, 2026-11-03).
+  // What the owner does or sets out is advice ("you post 3 times a week", "you
+  // open 2 registers at 5 PM"; ownerActs).
   if (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail)
-    && !(num.dim === 'money' && COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix))) return true;
+    && !(num.dim === 'money' && COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix))
+    && !ownerActs(text, num, prefix)) return true;
   // MONEY THAT FLOWS WITH NO WORKING SHOWN IS A READING. The flows a worked
   // example ends on ("you keep $15 of a $20 order", "you spend $250 for 50
   // flyers") stay set aside, and "You spend $2,000 a week on labor", "You
