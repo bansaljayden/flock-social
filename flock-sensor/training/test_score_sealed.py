@@ -208,12 +208,18 @@ class ScoreSealedTest(unittest.TestCase):
         from frames import read_session
         _, frames = read_session(next(folder.glob('*.frames')))
         main = ss.sensor()
-        fresh = main.PeopleModel(self.models / 'people.onnx', 0.4)
-        fresh.fine = main.PeopleModel(self.models / 'people-fine.onnx', 0.4)
+        fresh = main.PeopleModel(self.models / 'people.onnx', main.THERMAL_MODEL_THRESHOLD)
+        fresh.fine = main.PeopleModel(self.models / 'people-fine.onnx', main.THERMAL_MODEL_THRESHOLD)
         for it in items:
             c = frames[it['frame']][1]
             self.assertEqual(it['owl'], fresh.read_crowd(c)[2])
             self.assertEqual(it['rule'], main.count_thermal_clusters(c))
+
+    def test_owl_is_scored_at_the_sensors_shipped_settings(self):
+        main = ss.sensor()
+        self.assertEqual(ss.owl_settings(), (main.THERMAL_MODEL_THRESHOLD, main.PeopleModel.CROWD_AT))
+        owl = ss.load_owl(self.models)
+        self.assertEqual(owl.CROWD_AT, main.PeopleModel.CROWD_AT)
 
     def test_second_run_refuses_without_a_reason(self):
         self.batch()

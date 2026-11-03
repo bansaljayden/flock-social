@@ -283,11 +283,19 @@ def sensor():
     return _SENSOR
 
 
+def owl_settings():
+    """The threshold and crowd hand-off main.py ships with, read from its own defaults so each
+    model is scored as the sensor runs it, and nothing set on this computer can change them."""
+    s = sensor()
+    return float(s.DEFAULTS['THERMAL_MODEL_THRESHOLD']), s.PeopleModel.CROWD_AT
+
+
 def load_owl(models):
     s = sensor()
-    m = s.PeopleModel(Path(models) / 'people.onnx', 0.4)
-    m.fine = s.PeopleModel(Path(models) / 'people-fine.onnx', 0.4)
-    m.CROWD_AT = 5
+    threshold, crowd_at = owl_settings()
+    m = s.PeopleModel(Path(models) / 'people.onnx', threshold)
+    m.fine = s.PeopleModel(Path(models) / 'people-fine.onnx', threshold)
+    m.CROWD_AT = crowd_at
     return m
 
 
@@ -580,6 +588,7 @@ def main(argv=None):
     uncertain = {s for s, c in clocks.items() if c['clock_uncertain']}
     report = {'graded_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
               'scorer_sha256': checked['hashes']['score_sealed.py'], 'hashes_checked': checked['hashes'],
+              'owl_settings': dict(zip(('THERMAL_MODEL_THRESHOLD', 'CROWD_AT'), owl_settings())),
               'rerun_reason': a.rerun_reason or None, 'steps': steps, 'clocks': clocks,
               'summary': summary(items), 'bars': bars(items), 'sensitivity': sensitivity(items, uncertain)}
     write_outputs(out, items, report)
