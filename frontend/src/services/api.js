@@ -3799,9 +3799,13 @@ export async function getActivityFeed() {
 // the reply, not the location the request carries: backend/routes/ai.js
 // already refuses to send conversation content to PostHog and says why at
 // length, and this is the same boundary from the other side.
-export async function sendAiChat(messages, location, currentContext) {
+export async function sendAiChat(messages, location, currentContext, locationAgeSec = null) {
   let data;
   const body = { messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() };
+  // How old `location` is, when the app knows (lib/birdieLocation.js). The
+  // server says how far a venue is only from a fix this tells it is fresh
+  // (backend routes/ai.js, HOW FAR A VENUE IS); without it, no distance.
+  if (location && Number.isInteger(locationAgeSec) && locationAgeSec >= 0) body.locationAgeSec = locationAgeSec;
   // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing, so it
   // tells Birdie to leave every plan, upgrade and price out of what it says.
   // The server only ever removes wording on this; it grants nothing

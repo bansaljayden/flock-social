@@ -66,6 +66,8 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // When a member's live pin comes off this device, and the emit interval the
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
+// How old the position Birdie is sent is, when it is a device fix.
+import { birdieLocationAgeSec } from './lib/birdieLocation';
 import { foldSensorReading } from './lib/sensorHistory';
 import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
@@ -10964,6 +10966,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const ctx = birdieContextRef.current || {};
       const loc = ctx.userLocation;
       const location = loc ? { lat: loc.lat, lng: loc.lng } : null;
+      // How old that position is, when it is a fix the device answered, so
+      // Birdie says how far a venue is only from where the person actually is
+      // (lib/birdieLocation.js). Null for a position restored from an earlier
+      // session.
+      const locationAgeSec = birdieLocationAgeSec(location, deviceFixRef.current);
 
       // Snapshot of where the user is in the app right now — lets Birdie answer
       // questions like "is this place busy?" or "who's in this flock?"
@@ -10979,7 +10986,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       let response;
       try {
-        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
+        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext, locationAgeSec);
       } catch (err) {
         // The server can still refuse for length if the two halves ever
         // disagree about the cap: a lowered server limit, or an older bundle
@@ -10998,7 +11005,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (err?.code !== 'CONVERSATION_TOO_LONG'
           || !Number.isInteger(serverMax) || serverMax < 1 || serverMax >= outgoing.length) throw err;
         outgoing = trimAiHistory(outgoing, serverMax);
-        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
+        response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext, locationAgeSec);
       }
       if (typeof response.remaining === 'number') {
         setAiRemaining(response.remaining);
