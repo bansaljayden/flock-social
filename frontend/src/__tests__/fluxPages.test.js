@@ -333,7 +333,7 @@ describe('what the two pages say', () => {
   test('the "106 inputs" line stays out, and Owl on the Pi keeps its limits', () => {
     // Owl runs on the Pi inside Flux as of the sensor log of 2026-10-21 (10:21
     // EDT), so both pages say so; it has not run in a venue, and both say that
-    // too. Its training data is the six public sets in models/NOTICE.md.
+    // too. Its training data is the 28 public sets in models/NOTICE.md.
     // "Runs on the sensor", the figure line C-112 ruled out, stays out.
     expect(flux).toContain('It runs on the Raspberry Pi inside Flux, so each frame is counted on the box that took it.');
     // The meter is bought and designed in, and not yet plugged in (checked on
@@ -345,8 +345,8 @@ describe('what the two pages say', () => {
       expect(text).not.toMatch(/runs on the sensor/i);
       expect(text).toMatch(/runs on\s+the Raspberry Pi inside/);
       expect(text).toContain('It hasn’t run in a venue yet.');
-      expect(text).toContain('six public thermal datasets');
-      expect(text).not.toMatch(/five public/);
+      expect(text).toContain('28 public thermal datasets');
+      expect(text).not.toMatch(/(five|six) public/);
     }
   });
 

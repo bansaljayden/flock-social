@@ -18,7 +18,7 @@ import { shareThisPage } from './shareCard';
 //   the doorway sensor is wired and reading; not tested on real walkers
 //   noise is a relative level from the mic; the dB meter isn't fitted C-118
 //   Owl runs on the Pi; not yet run in a venue                  C-112 (out of date)
-//   Owl's training data: generated frames and six public sets      models/NOTICE.md
+//   Owl's training data: generated frames and 28 public sets       models/NOTICE.md
 //   counts every 30 s over Wi-Fi or Ethernet; no images, video or
 //   identities leave the box; the case is a design, not printed    sensor work
 // Tables (the tables work, 2026-10-23): one box over the door sees most of a
@@ -182,7 +182,7 @@ export default function FluxPage() {
                   the box.
                 </p>
                 <p>
-                  We trained it on generated thermal frames and six public thermal
+                  We trained it on generated thermal frames and 28 public thermal
                   datasets, never on anything a Flux unit recorded, then tested it
                   on footage it had never seen. It hasn’t run in a venue yet. The
                   results are on the <a href="/research">research page</a>.

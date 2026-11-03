@@ -30,7 +30,7 @@ import { shareThisPage } from './shareCard';
 //     rule engine
 //   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
 //     it lasts 90 minutes                                         C-131
-//   Owl: runs on the Pi; generated frames and six public
+//   Owl: runs on the Pi; generated frames and 28 public
 //     datasets; not yet in a venue        models/NOTICE.md, C-112 (out of date)
 //   Roost's advisor: numbers about the venue are filled in from
 //     its measured facts, and a number it states about the venue
@@ -223,7 +223,7 @@ export default function AiPage() {
                 warmth. The count leaves the sensor. The frame stays behind.
               </p>
               <p>
-                It was trained on generated frames and six public thermal datasets,
+                It was trained on generated frames and 28 public thermal datasets,
                 then tested on footage it never saw. It hasn’t run in a venue yet.
               </p>
             </div>
