@@ -480,10 +480,15 @@ async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
   if (baselineKind === 'same_weekday' && trailing.length >= MIN_TRAILING_DAYS) {
     const pooled = trailing.map((h) => h.peak);
     const mid = Math.round(median(pooled));
-    const gap = Math.abs(Math.round(today.peak - mid));
+    // Signed in the value, as the verdict's delta is: the phrasing layer names a
+    // gap's part by its sign (pointsBelow, pointsAbove, pointsApart), so an
+    // unsigned gap reached the model as pointsAbove on a day under the middle.
+    // The label says over or under in words and prints the size.
+    const signedGap = Math.round(today.peak - mid);
+    const gap = Math.abs(signedGap);
     out.push(makeFact({
       id: `owner_trailing_baseline_${date}`,
-      value: { days: trailing.length, middleReading: mid, windowDays: TRAILING_DAYS, gap },
+      value: { days: trailing.length, middleReading: mid, windowDays: TRAILING_DAYS, gap: signedGap },
       source: 'owner_report',
       asOf: date,
       label: gap === 0

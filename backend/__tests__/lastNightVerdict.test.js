@@ -450,6 +450,12 @@ test('the pooled trailing typical rides along as context, never as a rival verdi
   assert.match(pooled.label, /not just Fridays/);
   assert.match(pooled.label, /a second look rather than a second verdict/);
   assert.ok(!pooled.value.verdict, 'the second yardstick carries no verdict of its own');
+  // The gap is signed like the verdict's delta, so the phrasing layer names it
+  // pointsBelow on a day under the middle and pointsAbove on one over it.
+  if (/ under that/.test(pooled.label)) assert.ok(pooled.value.gap < 0, `an under day carries a negative gap, got ${pooled.value.gap}`);
+  if (/ over that/.test(pooled.label)) assert.ok(pooled.value.gap > 0, `an over day carries a positive gap, got ${pooled.value.gap}`);
+  if (/exactly where this day landed/.test(pooled.label)) assert.strictEqual(pooled.value.gap, 0);
+  assert.ok(/ under that| over that|exactly where this day landed/.test(pooled.label), 'the label says which side of the middle the day sat');
 });
 
 // ── 7. No column values in the copy ─────────────────────────────────────────
