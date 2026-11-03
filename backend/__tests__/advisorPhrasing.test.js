@@ -315,10 +315,17 @@ test('a peak fact\'s parts read once (peak_hour, peak_score), and the contract\'
     { id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02' },
   ])).map((f) => f.id);
   assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_pointsBelow']);
-  // The example a model is most likely to copy writes ids a peak block has.
+  // The example a model is most likely to copy writes ids a week's peak block
+  // has: the busiest day, Saturday, is the fifth day of seven, so its ids end
+  // in _d (__tests__/roostPromptExamples.test.js holds every example id to a
+  // payload the real routes build).
+  const week = ['Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday', 'Monday']
+    .map((weekday, i) => peak(`2026-11-${String(3 + i).padStart(2, '0')}`, weekday, 9, weekday === 'Saturday' ? 91 : 50 + i));
+  const weekIds = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts(week)).map((f) => f.id);
+  assert.strictEqual(weekIds.filter((id) => /^peak_weekday/.test(id))[4], 'peak_weekday_d');
   const examplePeakIds = [...advisorPhrasing.SYSTEM_PROMPT.matchAll(/\{\{fact:(peak_[a-z_]+)\}\}/g)].map((m) => m[1]);
   assert.ok(examplePeakIds.length >= 3);
-  for (const id of examplePeakIds) assert.ok(ids.includes(id), `the example writes {{fact:${id}}}, which no peak block carries`);
+  for (const id of examplePeakIds) assert.ok(weekIds.includes(id), `the example writes {{fact:${id}}}, which no peak block carries`);
 });
 
 // "Shaving 10 minutes off a about 74 minutes turn", "before 20" for 8 PM, and

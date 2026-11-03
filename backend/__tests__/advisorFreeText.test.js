@@ -995,7 +995,9 @@ test('both answer contracts model the shape they ask for: JSON with an answer an
     }
     assert.ok(!p.includes('—') && !p.includes('–'), 'no em or en dash anywhere in the contract');
   }
-  assert.match(advisorPrompt.ADVICE_SYSTEM_PROMPT, /At \{\{fact:spend\}\} a head, 20 extra covers a week is \$700/);
+  // Under the id a real advice payload carries for the spend per head
+  // (__tests__/roostPromptExamples.test.js holds every example id to one).
+  assert.match(advisorPrompt.ADVICE_SYSTEM_PROMPT, /At \{\{fact:intake_typical_spend_per_person\}\} a head, 20 extra covers a week is \$700/);
   assert.match(advisorPrompt.SYSTEM_PROMPT, /MAKE MORE MONEY/);
 });
 
@@ -1367,12 +1369,15 @@ test('every router refusal keeps its word, "tell us a little more" included', as
 // contract describes, whole: a lunch-special price (2026-11-03, where the live
 // answer gave a method and no dollar figure), a verdict, a money line.
 test('every worked example in both contracts passes the answer check with nothing dropped', () => {
+  // Under the ids real payloads carry; __tests__/roostPromptExamples.test.js
+  // runs each example against the payload it is drawn from as well.
   const F = (id, value, unit, source = 'model_holdout') => ({ id, value, unit, source, asOf: '2026-11-03' });
   const facts = [
-    F('quiet_day', 'Tuesday'), F('spend', 35, 'usd', 'intake'), F('peak_hour', 20, 'hour'),
-    F('waited_share', 18, 'percent', 'table_sensor'), F('peak_weekday', 'Saturday'), F('peak_score', 91),
-    F('kitchen_last_order', '14:30', undefined, 'intake'), F('reading', 41, undefined, 'owner_report'),
-    F('usual', 55, undefined, 'owner_report'), F('capacity', 60, undefined, 'intake'), F('people_at_peak', 40),
+    F('peak_weekday', 'Tuesday'), F('intake_typical_spend_per_person', 35, 'usd', 'intake'),
+    F('peak_weekday_d', 'Saturday'), F('peak_hour_d', 9, 'hour'), F('peak_score_d', 91),
+    F('tables_turn_friday_waitedPercent', 18, 'percent', 'table_sensor'),
+    F('owner_reading_peakReading', 41, undefined, 'owner_report'), F('owner_weekday_baseline_middleReading', 55, undefined, 'owner_report'),
+    F('intake_capacity', 60, undefined, 'intake'), F('capacity_at_projected_peak_approxPeople', 40, undefined, 'arithmetic'),
   ];
   for (const [prompt, check] of [
     [advisorPrompt.SYSTEM_PROMPT, (o) => advisorPhrasing.applyValve(o, { facts })],
