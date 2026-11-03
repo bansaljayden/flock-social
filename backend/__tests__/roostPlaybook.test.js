@@ -440,6 +440,56 @@ test('a move\'s follow-up is offered when it fits this kind of room or carries o
     .some((f) => f.kind === 'question' && f.text === 'How do I fill Tuesdays?'));
 });
 
+test('the move the owner\'s words name leads over the moves that only share the routed topic', () => {
+  // 2026-11-03: "how do I get people in before 7pm" routed to peak hours led
+  // with the prep pars move at every venue, and offered "How do I set prep
+  // pars?" next, because the topic outscored the words.
+  const VENUES = {
+    cafe: { kind: 'cafe', alcohol: false },
+    restaurant: { kind: 'full_service', alcohol: false },
+    bar: { kind: 'bar', alcohol: true },
+    club: { kind: 'club', alcohol: true },
+  };
+  const LEAD = { cafe: 'slow_hours_happy_hour', restaurant: 'slow_hours_happy_hour', bar: 'slow_hours_happy_hour', club: 'slow_hours_early_arrival' };
+  const NEXT_ASKED = {
+    cafe: 'What should go on a happy hour menu?',
+    restaurant: 'What should go on a happy hour menu?',
+    bar: 'What should go on a happy hour menu?',
+    club: 'How do I keep people from leaving at midnight?',
+  };
+  const early = 'how do I get people in before 7pm';
+  for (const [name, venue] of Object.entries(VENUES)) {
+    for (const intentId of ['peak_hours', null]) {
+      const ranked = pb.ranked(early, { intentId, venue, limit: 5 });
+      assert.strictEqual(ranked[0].t.id, LEAD[name], `${name} ${intentId}`);
+      // Every move the owner's words name comes before the routed topic's.
+      const firstRouted = ranked.findIndex((x) => x.cues === 0);
+      if (firstRouted >= 0) assert.ok(ranked.slice(firstRouted).every((x) => x.cues === 0), `${name}: ${ranked.map((x) => x.t.id)}`);
+      const plays = pb.find(early, { intentId, venue, limit: 5 }).filter((t, i) => i === 0 || pb.forThisKind(t, venue)).slice(0, 3);
+      assert.strictEqual(pb.followUpFor(plays, venue, early), NEXT_ASKED[name], name);
+    }
+  }
+  // The same ask in other words, and a morning, which is not it.
+  for (const q of ['how can we get a crowd in before 6', 'how do I bring people in by 7 pm', 'how do I fill the room earlier in the evening', 'how do i get more people in before dinner']) {
+    assert.strictEqual(pb.find(q, { intentId: 'peak_hours', venue: VENUES.bar })[0].id, 'slow_hours_happy_hour', q);
+  }
+  assert.strictEqual(pb.trafficView('how do i get people in before 7am').earlyEvening, false);
+  assert.strictEqual(pb.trafficView('how do i get people in before 10pm').earlyEvening, false);
+  // A question no phrase of the owner's matches is ranked as before: the
+  // routed topic's moves, in the order they had.
+  assert.deepStrictEqual(pb.find('when are we busiest this week', { intentId: 'peak_hours', venue: VENUES.restaurant }).map((t) => t.id),
+    ['rush_short_menu', 'rush_prep_to_par', 'rush_batch_drinks']);
+  // A move written for another kind of room does not take the room's own
+  // moves away: a bar asking to turn tables faster keeps its staffing moves
+  // and a follow-up written for a bar.
+  const tables = 'how do I turn tables faster';
+  const barPlays = pb.find(tables, { intentId: 'tables_service', venue: VENUES.bar, limit: 5 })
+    .filter((t, i) => i === 0 || pb.forThisKind(t, VENUES.bar)).slice(0, 3);
+  assert.strictEqual(pb.followUpFor(barPlays, VENUES.bar, tables), 'How many staff do I need per shift?');
+  // And a phrase that names a counter's move puts it ahead of the topic's filler.
+  assert.deepStrictEqual(pb.find('how can i increase foot traffic', { intentId: 'money_move', venue: VENUES.cafe }).map((t) => t.id).slice(0, 2), ['slow_day_recurring_reason', 'mkt_sampling']);
+});
+
 test('a day whose peak is after midnight is named for its night, in the playbook\'s lead and in the contract', () => {
   const DAY = (weekday, peakHour, peakScore, afterMidnight) => ({ id: `peak_${weekday}`, value: { weekday, peakHour, peakScore, ...(afterMidnight ? { afterMidnight: true } : {}) } });
   const week = [DAY('Thursday', 23, 55), DAY('Friday', 1, 92, true), DAY('Saturday', 1, 96, true)];

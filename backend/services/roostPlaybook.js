@@ -197,6 +197,22 @@ const DAYPART_PHRASE = Object.freeze({
   lunch: 'lunch crowd', lunchtime: 'lunch crowd',
 });
 const DAYPART_TOPICS = Object.freeze(['dayparts', 'fill_slow_days']);
+// "GET PEOPLE IN BEFORE 7PM" ASKS FOR AN EARLIER CROWD (2026-11-03). The
+// router sent it to peak hours, and every venue was answered with the rush
+// moves and offered "How do I set prep pars?" next: no word of it named the
+// early evening that the happy hour and early arrival moves are cued on. A
+// growth word with an evening hour, dinner or the rush after "before" or "by",
+// or "early in the evening", is read as that ask, and ranked() says it in the
+// cues of the draw that fits the room: a club fills early with an early
+// arrival offer at the door, every other room with a happy hour style draw.
+// "Before 7 AM" is a morning and is left alone.
+const EARLY_EVENING = new RegExp([
+  "\\b(?:get(?:ting)?|bring(?:ing)?|draw(?:ing)?|pull(?:ing)?|fill(?:ing)?|pack(?:ing)?|attract(?:ing)?|more)\\b[^.?!]{0,30}?\\b(?:before|by)\\s+(?:[5-8](?::[0-5]\\d)?(?:\\s*(?:pm|p\\.m\\.|o'?clock))?(?![\\d:]|\\s*(?:am|a\\.m\\.))|dinner(?:\\s+rush)?|the\\s+(?:dinner\\s+)?rush)\\b",
+  '\\bearl(?:y|ier)\\s+(?:in\\s+the\\s+)?(?:evenings?|nights?)\\b',
+].join('|'));
+function earlyEveningPhrase(venue) {
+  return venue && venue.kind === 'club' ? 'early crowd' : 'early evening';
+}
 
 /**
  * The question with its speed complaints taken out of the traffic words.
@@ -223,7 +239,10 @@ function trafficView(text) {
     traffic = traffic.replace(growth[0], ` ${growth[2]}${growth[3]}`);
     phrases.push(DAYPART_PHRASE[growth[3]]);
   }
-  return { text: traffic, speed: [...new Set(speed)], phrases: [...new Set(phrases)], lull, daypart: lull || Boolean(growth) };
+  return {
+    text: traffic, speed: [...new Set(speed)], phrases: [...new Set(phrases)], lull, daypart: lull || Boolean(growth),
+    earlyEvening: EARLY_EVENING.test(traffic),
+  };
 }
 
 // ── What the owner already ruled out ────────────────────────────────────────
@@ -478,6 +497,7 @@ function readQuestion(question) {
     ruled: out.spans.map((s) => stems(s.join(' '))),
     lull: view.lull,
     daypart: view.daypart,
+    earlyEvening: view.earlyEvening,
     drinks: DRINK_WORDS.test(view.text),
   };
 }
@@ -623,15 +643,21 @@ function topicLean(qSet) {
 // answerFrom reads to decide whether a runner-up is worth an "Another option".
 function score(t, qStems, qSet, topics, venue, lean) {
   let cues = 0;
+  // Whether a cue of more than one word was found in the owner's words: the
+  // owner named this move, not just its subject (ranked, below).
+  let phrase = false;
   t.cueStems.forEach((cue, i) => {
-    if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) cues += t.cueWeights[i];
+    const hit = cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue);
+    if (!hit) return;
+    cues += t.cueWeights[i];
+    if (cue.length > 1) phrase = true;
   });
   const ownKind = forThisKind(t, venue);
-  if (!ownKind && cues < NAMED_MIN) return { s: 0, cues };
+  if (!ownKind && cues < NAMED_MIN) return { s: 0, cues, phrase, routed: 0 };
   let s = cues + Math.min(TOPIC_WORD_CAP, (lean.get(t.topic) || 0) * TOPIC_WORD_WEIGHT);
-  if (topics[0] === t.topic) s += 1.5;
-  else if (topics[1] === t.topic) s += 1;
-  if (s === 0) return { s: 0, cues };
+  const routed = topics[0] === t.topic ? 1.5 : topics[1] === t.topic ? 1 : 0;
+  s += routed;
+  if (s === 0) return { s: 0, cues, phrase, routed };
   let shared = 0;
   for (const w of qSet) if (t.textStems.has(w)) shared += 1;
   s += Math.min(TEXT_CAP, shared * TEXT_WEIGHT);
@@ -640,7 +666,30 @@ function score(t, qStems, qSet, topics, venue, lean) {
   // topic alone ("how do I make more money"), it put a move written for one
   // kind of venue ahead of the topic's general lead, so it waits for a cue.
   else if (cues > 0 && venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
-  return { s, cues };
+  return { s, cues, phrase, routed };
+}
+
+// A MOVE THE OWNER'S WORDS NAME OUTRANKS ONE THAT ONLY SHARES THE ROUTED
+// TOPIC (2026-11-03). The routed topic's lean is how a question no cue phrase
+// matches still lands on its subject ("when do we peak" on the rush moves).
+// It was also outscoring the moves the owner's words did name: "how do I get
+// people in before 7pm", routed to peak hours, led with the prep pars move
+// (1.5 for the topic and nothing from the words) ahead of the early evening
+// and the "get people in" moves, at every venue. When a phrase of the owner's
+// matches a move written for this kind of room, no move that only shares the
+// routed topic (no cue of the owner's at all) is ranked above it: those keep
+// their order among themselves and follow it, so the named move leads the
+// answer and its follow-up is the one offered. A move another kind of room
+// was written for changes nothing: a bar asking to turn tables faster keeps
+// its own staffing moves and a follow-up written for a bar. A question no
+// phrase matches is ranked exactly as before.
+function wordsOverRoute(scored, venue) {
+  const named = scored.filter((x) => x.phrase && x.s >= MIN_SCORE && forThisKind(x.t, venue));
+  if (!named.length) return scored;
+  const floor = Math.min(...named.map((x) => x.s));
+  const routedOnly = (x) => x.cues === 0 && x.routed > 0 && x.s >= floor;
+  const highest = Math.max(floor, ...scored.filter(routedOnly).map((x) => x.s));
+  return scored.map((x) => (routedOnly(x) ? { ...x, s: floor - 0.001 - (highest - x.s) * 1e-6 } : x));
 }
 
 // The floor a tactic has to clear to be offered at all: a cue nobody else
@@ -670,9 +719,13 @@ function createPlaybook(tactics) {
     // than a slow day.
     if (q.daypart && (!topics.length || topics[0] === 'fill_slow_days')) topics = q.lull ? LULL_TOPICS : DAYPART_TOPICS;
     const lean = topicLean(q.qSet);
-    const rank = (onTopics) => compiled
+    // An early evening asked for, in the cues of the draw that fits the room.
+    const early = q.earlyEvening ? earlyEveningPhrase(venue) : null;
+    const qStems = early ? [...q.qStems, '|', ...stems(early)] : q.qStems;
+    const qSet = early ? new Set([...q.qSet, ...stems(early).filter((w) => !STOP.has(w))]) : q.qSet;
+    const rank = (onTopics) => wordsOverRoute(compiled
       .filter((t) => !exclude.includes(t.id) && !ruled.has(t.id) && fits(t, venue, q.drinks))
-      .map((t) => ({ t, ...score(t, q.qStems, q.qSet, onTopics, venue, lean) }))
+      .map((t) => ({ t, ...score(t, qStems, qSet, onTopics, venue, lean) })), venue)
       .filter(({ s }) => s >= MIN_SCORE)
       .sort((a, b) => (b.s - a.s) || (a.t.order - b.t.order))
       .slice(0, limit);
