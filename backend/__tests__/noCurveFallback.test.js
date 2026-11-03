@@ -41,7 +41,11 @@
 //     it as LIVE, and still read by its exact name;
 //   * the strip, the coverage counter, the coverage block's switch (on only
 //     while the gate's own rule can serve the table), and the words
-//     crowdEngine gives it.
+//     crowdEngine gives it;
+//   * the re-measure a retrain needs before its table ships:
+//     scripts/ml/train/noCurveFallbackEval.js refuses another artifact's table
+//     by default, and --allow-version=<v> scores exactly the artifact named v,
+//     its own table, while production keeps serving the table beside 2.6.0 only.
 //
 // __tests__/noCurveFallbackSurfaces.test.js takes the same number through the
 // real routes. No network, no database. Run: node --test  (from backend/)
@@ -1340,4 +1344,118 @@ test('crowdEngine hedges it as a category prior, says its confidence is measured
   assert.equal(crowdEngine.describePublishedArithmetic(r, { reportsBlended: true }), 'category_typical_adjusted');
   assert.equal(crowdEngine.describePublishedArithmetic(r, { ownerReading: true }), null);
   assert.equal(crowdEngine.describeServedArithmetic({ predictionMethod: 'rule_engine_no_baseline' }), null);
+});
+
+// ---------------------------------------------------------------------------
+// 6. The re-measure a retrain needs (scripts/ml/train/noCurveFallbackEval.js).
+// ---------------------------------------------------------------------------
+
+const EVAL = require.resolve('../scripts/ml/train/noCurveFallbackEval');
+const CANDIDATE = '2.8.0-starling';
+
+test('the no-curve eval refuses a retrained artifact by default, and --allow-version=<its version> scores that artifact\'s own table while production keeps refusing it', async () => {
+  const os = require('os');
+  const crypto = require('crypto');
+  const exporter = require('../scripts/ml/train/export_training_data');
+  const evalScript = require(EVAL);
+  const FITTED = META.model_version;
+  assert.equal(FITTED, '2.6.0-starling', 'the shipped artifact is the one the table was measured on');
+
+  // The flag, read and checked on its own.
+  assert.equal(evalScript.parseArgs(['--csv=a.csv']).allowVersion, null, 'off unless given');
+  assert.equal(evalScript.parseArgs(['--csv=a.csv', `--allow-version=${CANDIDATE}`]).allowVersion, CANDIDATE);
+  assert.throws(() => evalScript.parseArgs(['--csv=a.csv', '--allow-version=']), /--allow-version needs the exact model_version/);
+  assert.throws(() => evalScript.parseArgs(['--csv=a.csv', '--allow-versions=x']), /unknown option --allow-versions/);
+  assert.deepStrictEqual(evalScript.versionGate(FITTED, FITTED), { analysisOnly: false });
+  assert.throws(() => evalScript.versionGate(CANDIDATE, FITTED),
+    /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling, so this would score a table production never shows/);
+  assert.deepStrictEqual(evalScript.versionGate(CANDIDATE, FITTED, CANDIDATE), { analysisOnly: true });
+  // The flag admits only the artifact it names, never "any version".
+  assert.throws(() => evalScript.versionGate(CANDIDATE, FITTED, '2.8.1-starling'), /names another artifact than the one loaded \(2\.8\.0-starling\)/);
+  assert.throws(() => evalScript.versionGate(FITTED, FITTED, CANDIDATE), /names another artifact than the one loaded \(2\.6\.0-starling\)/);
+
+  // End to end, on a candidate whose table differs from 2.6.0's at the one
+  // slot scored: a bar on a Friday at 9 PM with no curve and 900 reviews.
+  const date = '2026-11-20';
+  const hour = 21;
+  const y = 40;
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const key = `bar_${dow}_${hour}`;
+  assert.ok(Number.isFinite(META.category_baselines[key]), `2.6.0's table has a ${key} cell`);
+  assert.notEqual(Math.abs(Math.round(META.category_baselines[key]) - y), Math.abs(5 - y),
+    '2.6.0\'s table must score this reading differently from the candidate\'s, or the check below proves nothing');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-nocurve-eval-'));
+  const models = path.join(dir, 'models');
+  fs.mkdirSync(models);
+  fs.writeFileSync(path.join(models, 'crowd_model.onnx'), 'never opened: onnxruntime is stubbed');
+  fs.writeFileSync(path.join(models, 'model_metadata.json'), JSON.stringify({
+    ...META, model_version: CANDIDATE, category_baselines: { ...META.category_baselines, [key]: 4.6 },
+  }));
+  const csv = path.join(dir, 'export.csv');
+  fs.writeFileSync(csv, `${exporter.HEADER}\n${exporter.rowToCsv({
+    venue_id: 9301, day_of_week: dow, hour, month: 11, season: 'fall',
+    venue_category: 'bar', price_level: 2, rating: 4.4, review_count: 900,
+    temperature: 55, humidity: 60, wind_speed: 5, weather_condition: 'clear sky', weather_condition_code: 800, is_raining: false,
+    events_observed: false, baseline_busyness: 0, collection_mode: 'realtime', busyness_pct: y, city: 'philly',
+    google_types: ['bar', 'restaurant', 'food'], latitude: 39.95, longitude: -75.16,
+    avg_user_crowd: 0, user_feedback_count: 0, avg_prediction_error: 0,
+    stored_observed_date: date, label_source: 'live', vendor_forecast_pct: 50,
+  })}\n`);
+  const out = path.join(dir, 'report.json');
+  const args = [`--csv=${csv}`, `--models=${models}`, `--out=${out}`];
+  const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+  const watched = [META_FILE, path.join(models, 'model_metadata.json'), path.join(models, 'crowd_model.onnx')];
+  const before = watched.map(sha);
+
+  // The eval loads the artifact through the serving code; the model itself
+  // never runs (stubOrt throws if it does) and no database is reachable.
+  const ENV_KEYS = ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE', 'PGSERVICE'];
+  const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  const savedOrt = require.cache[ORT];
+  const savedDb = require.cache[DB];
+  const log = console.log;
+  let report;
+  try {
+    require.cache[ORT] = { id: ORT, filename: ORT, loaded: true, exports: stubOrt() };
+    require.cache[DB] = { id: DB, filename: DB, loaded: true, exports: scriptedDb() };
+    console.log = () => {};
+    await assert.rejects(() => evalScript.main(args),
+      /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling/);
+    await assert.rejects(() => evalScript.main([...args, '--allow-version=2.8.1-starling']),
+      /--allow-version=2\.8\.1-starling names another artifact than the one loaded \(2\.8\.0-starling\)/);
+    assert.equal(fs.existsSync(out), false, 'a refused run writes no report');
+    report = await evalScript.main([...args, `--allow-version=${CANDIDATE}`]);
+  } finally {
+    console.log = log;
+    if (savedOrt) require.cache[ORT] = savedOrt; else delete require.cache[ORT];
+    if (savedDb) require.cache[DB] = savedDb; else delete require.cache[DB];
+    for (const k of ENV_KEYS) {
+      if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k];
+    }
+  }
+  try {
+    assert.equal(report.artifact, CANDIDATE);
+    assert.deepStrictEqual(report.version_gate, { production_serves_table_beside: FITTED, allow_version: CANDIDATE, analysis_only: true });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(out, 'utf8')).version_gate, report.version_gate);
+    // The candidate's own table answered: its cell, served as 5, against the reading of 40.
+    assert.equal(report.cities.philly.all.rows, 1);
+    assert.equal(report.cities.philly.all.mae.table, Math.abs(5 - y));
+    assert.deepStrictEqual(watched.map(sha), before, 'the eval writes no artifact, the shipped one included');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // What production serves is untouched: an artifact that says it is
+  // 2.8.0-starling, loaded by the server with the switch on, still sends a
+  // venue with no curve to the rule engine.
+  await withPredictor({
+    env: { [SWITCH]: ON },
+    mutateMeta: (m) => ({ ...m, model_version: CANDIDATE }),
+  }, async (p, db) => {
+    assert.equal(p._internals.NO_CURVE_FALLBACK_FITTED_ON, FITTED);
+    assert.deepStrictEqual(p._internals.noCurveFallbackState(), { serving: false, switchSet: true, offReason: 'model_version' });
+    const v = venue();
+    assert.deepStrictEqual(await p.predictBusyness(v, WX, TS), todaysAnswer(v, WX, TS));
+    assert.equal(db.presence().length, 0);
+  });
 });

@@ -38,11 +38,25 @@
 // export_training_data.js exportCity. A later file's live row replaces an
 // earlier file's row for the same venue, date and hour.
 //
+// A RETRAINED ARTIFACT'S TABLE (2026-11-02). Production serves the table only
+// beside the artifact it was measured with (mlPredictor's
+// NO_CURVE_FALLBACK_FITTED_ON, read by noCurveFallbackState), so by default
+// this script refuses any other version: its table is one production never
+// shows. A candidate's own table has to be measured before it ships, or the
+// venues with no curve go back to the rule engine when it does. For that
+// re-measure, --allow-version=<model_version> admits exactly the artifact
+// under --models whose model_version it names, and refuses any other. It is
+// analysis only: the report records it under version_gate, and nothing here
+// changes what production serves, which still reads the constant. Move the
+// constant, the measured figure and their tests in the ship commit only if
+// the candidate's table still beats the rule engine on this report.
+//
 // Run (from backend/):
 //   node scripts/ml/train/noCurveFallbackEval.js \
 //     --csv=scripts/ml/train/training_data.csv --csv=scripts/ml/train/holdout_data.csv \
 //     [--csv=<a newer city extract>] --cities=philly,lehigh,miami \
-//     --from=2026-09-01 [--to=2026-10-14] [--split=2026-09-09] [--out=<report.json>]
+//     --from=2026-09-01 [--to=2026-10-14] [--split=2026-09-09] [--out=<report.json>] \
+//     [--models=<artifact dir>] [--allow-version=<that artifact's model_version>]
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
@@ -58,9 +72,9 @@ const STUDY_THROUGH = '2026-09-08';
 const DEFAULT_SPLIT = '2026-09-09';
 
 function parseArgs(argv) {
-  const out = { csv: [], cities: ['philly', 'lehigh', 'miami'], from: '2026-09-01', to: '9999-12-31', split: DEFAULT_SPLIT, out: null, models: null };
+  const out = { csv: [], cities: ['philly', 'lehigh', 'miami'], from: '2026-09-01', to: '9999-12-31', split: DEFAULT_SPLIT, out: null, models: null, allowVersion: null };
   for (const a of argv) {
-    const m = /^--([a-z]+)=(.*)$/.exec(a);
+    const m = /^--([a-z][a-z-]*)=(.*)$/.exec(a);
     if (!m) throw new Error(`unrecognised argument ${a}`);
     const [, k, v] = m;
     if (k === 'csv') out.csv.push(v);
@@ -69,10 +83,32 @@ function parseArgs(argv) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error(`--${k} must be YYYY-MM-DD`);
       out[k] = v;
     } else if (k === 'out' || k === 'models') out[k] = v;
-    else throw new Error(`unknown option --${k}`);
+    else if (k === 'allow-version') {
+      if (!v.trim()) throw new Error('--allow-version needs the exact model_version of the artifact under --models');
+      out.allowVersion = v.trim();
+    } else throw new Error(`unknown option --${k}`);
   }
   if (!out.csv.length) throw new Error('at least one --csv=<export.csv> is required');
   return out;
+}
+
+// WHICH ARTIFACT'S TABLE THIS RUN MAY SCORE (see the header). Without
+// --allow-version, only the one production serves the table beside. With it,
+// only the artifact it names, whatever that is; a name that is not the loaded
+// artifact's is refused, so the flag cannot admit a version nobody named.
+// analysisOnly: the table scored is one production does not serve today.
+function versionGate(loaded, fittedOn, allowVersion = null) {
+  if (allowVersion !== null && allowVersion !== undefined) {
+    if (loaded !== allowVersion) {
+      throw new Error(`--allow-version=${allowVersion} names another artifact than the one loaded (${loaded}); point --models at the artifact it names.`);
+    }
+    return { analysisOnly: loaded !== fittedOn };
+  }
+  if (loaded !== fittedOn) {
+    throw new Error(`the loaded artifact is ${loaded}; the switch serves the table only beside ${fittedOn}, so this would score a table production never shows. `
+      + `To measure this artifact's own table before it ships, name it: --allow-version=${loaded}.`);
+  }
+  return { analysisOnly: false };
 }
 
 // ---------------------------------------------------------------------------
@@ -214,8 +250,10 @@ async function main(argv = process.argv.slice(2)) {
 
   const art = await bandEval.loadArtifact(args.models ? path.resolve(args.models) : path.resolve(__dirname, '..', 'models'));
   const { I } = art;
-  if (art.meta.model_version !== I.NO_CURVE_FALLBACK_FITTED_ON) {
-    throw new Error(`the loaded artifact is ${art.meta.model_version}; the switch serves the table only beside ${I.NO_CURVE_FALLBACK_FITTED_ON}, so this would score a table production never shows.`);
+  const gate = versionGate(art.meta.model_version, I.NO_CURVE_FALLBACK_FITTED_ON, args.allowVersion);
+  if (gate.analysisOnly) {
+    console.log(`[NoCurve] --allow-version=${args.allowVersion}: scoring ${art.meta.model_version}'s own table, for analysis. `
+      + `Production serves the table only beside ${I.NO_CURVE_FALLBACK_FITTED_ON} (mlPredictor NO_CURVE_FALLBACK_FITTED_ON), and this run changes nothing it serves.`);
   }
   const crowdEngine = require('../../../services/crowdEngine');
   const { cuts, labels } = bandEval.bandLadder(crowdEngine.getLabel);
@@ -270,6 +308,11 @@ async function main(argv = process.argv.slice(2)) {
   const report = {
     generated_at: new Date().toISOString(),
     artifact: art.meta.model_version,
+    version_gate: {
+      production_serves_table_beside: I.NO_CURVE_FALLBACK_FITTED_ON,
+      allow_version: args.allowVersion,
+      analysis_only: gate.analysisOnly,
+    },
     files: corpus.census.files,
     window: { from: args.from, to: args.to, split: args.split, study_through: STUDY_THROUGH },
     cuts,
@@ -332,7 +375,7 @@ async function main(argv = process.argv.slice(2)) {
   return report;
 }
 
-module.exports = { main, compare, verdict, parseArgs };
+module.exports = { main, compare, verdict, parseArgs, versionGate };
 
 if (require.main === module) {
   main().catch((err) => { console.error(err); process.exit(1); });
