@@ -28,6 +28,9 @@
 //   ... --concurrency=4         conversations in flight at once (default 4)
 //   ... --max-tokens=1000000    stop starting items past this many tokens
 //   ... --quiet                 the grade lines and the summary, no answers
+//   ... --gemini-deadline=MS    a measurement: Birdie's per-call deadline is
+//                               replaced in this process only, to see how long
+//                               a call the real one cuts off would have taken
 //   node scripts/birdie/birdieEval.js --fixtures [--as=persona]
 //                               what every tool answers, at every clock, with
 //                               no model and no key
@@ -399,6 +402,17 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
   };
   return client;
 };
+
+// --gemini-deadline=MS: a measurement, never a setting. Birdie's per-call
+// deadline (UPSTREAM_TIMEOUT_MS.gemini) is replaced in this process only, so a
+// run can see how long a call that the real deadline cuts off would have
+// taken. Patched before the route loads, which is when it takes the function.
+if (args['gemini-deadline']) {
+  const upstream = require(path.join(B, 'utils', 'upstream'));
+  const realSignal = upstream.upstreamSignal;
+  const ms = Number(args['gemini-deadline']);
+  upstream.upstreamSignal = (kind) => (kind === 'gemini' ? AbortSignal.timeout(ms) : realSignal(kind));
+}
 
 // ── The route, in process ───────────────────────────────────────────────────
 
