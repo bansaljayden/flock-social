@@ -121,7 +121,10 @@ const ROUTER_REPLY = /^\s*\{\s*"mode"\s*:\s*"(?:grounded|advice|refused)"/;
 // stubs (each is a below day). The verdict's reading, usual and day count are
 // now offered under the facts it was worked out from (advisorPhrasing
 // inputNumbers), so a draft that wrote them under the verdict's id is read
-// under those.
+// under those. The restaurant's table stand-ins were tables_friday and
+// tables_tuesday until the fourth round; a draft's turn, wait and weekday
+// parts of them are read under the real builder's tables_turn_<day> ids, and
+// the old per-day fullHours part, which no real block carries, stays unknown.
 const replayed = new Map();
 const VERDICT_RESTATED = Object.freeze({
   reading: 'owner_reading_peakReading',
@@ -130,7 +133,8 @@ const VERDICT_RESTATED = Object.freeze({
 });
 const todaysIds = (raw) => String(raw || '').replace(/\{\{fact:([A-Za-z_]+)\}\}/g, (m, id) => `{{fact:${advisorPhrasing.internals.destutter(id)
   .replace(/^last_day_verdict_(?:delta|gap)(_[a-z]+)?$/, 'last_day_verdict_pointsBelow$1')
-  .replace(/^last_day_verdict_(reading|baseline|comparisonDays)$/, (all, part) => VERDICT_RESTATED[part])}}}`);
+  .replace(/^last_day_verdict_(reading|baseline|comparisonDays)$/, (all, part) => VERDICT_RESTATED[part])
+  .replace(/^tables_(tuesday|friday)_(weekday|turnMinutes|waitedPercent)$/, 'tables_turn_$1_$2')}}}`);
 if (args.replay) {
   for (const row of JSON.parse(fs.readFileSync(path.resolve(String(args.replay)), 'utf8'))) {
     const asked = row.kind === 'chip' ? row.intentId : row.q;
@@ -162,6 +166,23 @@ if (!standin && !args.replay && !real) {
   console.error('No GEMINI_API_KEY in the environment. Run it through `railway run --service "Flock-app-"`.');
   process.exit(1);
 }
+// AN ID THE BLOCK DOES NOT CARRY VOIDS THE WHOLE DRAFT (advisorPhrasing
+// checkAnswer), and until 2026-11-03 nothing here said that was why: round
+// three's restaurant "how do I fill Tuesdays" read only "the check threw out
+// the model's answer", and it took the raw draft to find {{fact:spend}}. Each
+// answer call now keeps any id its draft wrote that its own payload's
+// PLACEHOLDER IDS line does not list, and the scoring names it.
+const IDS_LINE = /^PLACEHOLDER IDS\. The only ones that exist; copy one exactly or write none: (.*)$/m;
+function unknownIdsIn(req, raw) {
+  const line = String(req?.contents?.[0]?.parts?.[0]?.text || '').match(IDS_LINE);
+  const known = new Set(line ? line[1].split(', ') : []);
+  return [...new Set([...String(raw || '').matchAll(/\{\{fact:([A-Za-z_]+)\}\}/g)].map((m) => m[1]))].filter((id) => !known.has(id));
+}
+function answered(req, entry) {
+  const unknown = entry.role === 'router' ? [] : unknownIdsIn(req, entry.raw);
+  return unknown.length ? { ...entry, unknownIds: unknown } : entry;
+}
+
 let calls = [];
 advisorPhrasing.__setGenAIForTests({
   models: {
@@ -176,7 +197,7 @@ advisorPhrasing.__setGenAIForTests({
           calls.push({ ms: 0, tokens: 0, raw: '', role, error: 'replay: the earlier run made no such call' });
           throw new Error('replay: the earlier run made no such call');
         }
-        calls.push({ ms: 0, tokens: 0, raw: recorded.raw, role });
+        calls.push(answered(req, { ms: 0, tokens: 0, raw: recorded.raw, role }));
         return { text: recorded.raw, usageMetadata: { totalTokenCount: 0 } };
       }
       if (standin) {
@@ -188,12 +209,12 @@ advisorPhrasing.__setGenAIForTests({
           calls.push({ ms: 0, tokens: 0, raw: '', role, error: 'stand-in: no answer recorded yet' });
           throw new Error('stand-in: no answer recorded yet');
         }
-        calls.push({ ms: 0, tokens: 0, raw: answer, role });
+        calls.push(answered(req, { ms: 0, tokens: 0, raw: answer, role }));
         return { text: answer, usageMetadata: { totalTokenCount: 0 } };
       }
       try {
         const resp = await real.models.generateContent(req);
-        calls.push({ ms: Date.now() - t0, tokens: resp?.usageMetadata?.totalTokenCount || 0, raw: resp?.text || '', role });
+        calls.push(answered(req, { ms: Date.now() - t0, tokens: resp?.usageMetadata?.totalTokenCount || 0, raw: resp?.text || '', role }));
         return resp;
       } catch (err) {
         calls.push({ ms: Date.now() - t0, tokens: 0, raw: '', role, error: `${err.status || ''} ${String(err.message || '').slice(0, 160)}` });
@@ -294,9 +315,16 @@ const VENUES = {
       mlVenue: { venue_category: 'restaurant' },
     },
     week: week([[18, 41], [18, 38], [19, 47], [19, 55], [20, 82], [20, 88], [13, 61]]),
+    // Shaped and labelled the way services/tableInsights.js buildTableFacts
+    // makes them, so the ids a draft can write are the ones a real table block
+    // carries (tables_turn_friday_waitedPercent). Until 2026-11-03's fourth
+    // round they were tables_friday and tables_tuesday, ids no real block has.
     tables: [
-      { id: 'tables_friday', value: { weekday: 'Friday', turnMinutes: 74, waitedPercent: 18, fullHours: 2 }, source: 'table_sensor', asOf: ASOF, label: 'On Fridays a party sits about 74 minutes, 18% of seatings waited for a server, and every table was in use for 2 hours.' },
-      { id: 'tables_tuesday', value: { weekday: 'Tuesday', turnMinutes: 52, waitedPercent: 4, fullHours: 0 }, source: 'table_sensor', asOf: ASOF, label: 'On Tuesdays a party sits about 52 minutes, 4% of seatings waited for a server, and no hour had every table in use.' },
+      { id: 'tables_turn_typical', value: { turnMinutes: 61 }, source: 'table_sensor', asOf: ASOF, label: 'A typical party sat for about 61 minutes.' },
+      { id: 'tables_waited_share', value: { waitedPercent: 12 }, source: 'table_sensor', asOf: ASOF, label: 'About 12% of seatings waited past your wait limit for a server.' },
+      { id: 'tables_turn_tuesday', value: { weekday: 'Tuesday', turnMinutes: 52, waitedPercent: 4, seatings: 30, days: 28 }, source: 'table_sensor', asOf: ASOF, label: 'On Tuesdays over the last 28 days, a typical party sat for about 52 minutes and about 4% of seatings waited past your wait limit for a server, from 30 seatings.' },
+      { id: 'tables_turn_friday', value: { weekday: 'Friday', turnMinutes: 74, waitedPercent: 18, seatings: 64, days: 28 }, source: 'table_sensor', asOf: ASOF, label: 'On Fridays over the last 28 days, a typical party sat for about 74 minutes and about 18% of seatings waited past your wait limit for a server, from 64 seatings.' },
+      { id: 'tables_full_hours_month', value: { when: ['Friday 7 PM', 'Friday 8 PM', 'Saturday 8 PM'], days: 28 }, source: 'table_sensor', asOf: ASOF, label: 'Over the last 28 days, every table was usually in use at Friday 7 PM, Friday 8 PM and Saturday 8 PM.' },
     ],
   },
   bar: {
@@ -451,6 +479,13 @@ function answerCall(callList) {
   return last && !last.error && last.raw ? last : null;
 }
 
+// The ids an item's drafts wrote that their own blocks did not carry.
+const unknownIdsWritten = (callList) => [...new Set(callList.flatMap((c) => c.unknownIds || []))];
+const unknownIdProblem = (callList) => {
+  const unknown = unknownIdsWritten(callList);
+  return unknown.length ? [`the draft wrote an id its block lacks (${unknown.join(', ')})`] : [];
+};
+
 // THE CHECK CAN THROW A WHOLE DRAFT OUT, and until 2026-11-03 this script
 // counted that as one dropped point: a voided advice answer was replaced by
 // the playbook's, and "drafted 4, shown 3" read as a single lost sentence.
@@ -497,6 +532,7 @@ async function runChip(venue, intentId) {
   const drafted = rawPoints(answerCall(calls) && answerCall(calls).raw);
   const problems = score(out);
   if (out.mode !== 'phrased') problems.push(`served the ${out.mode}`);
+  problems.push(...unknownIdProblem(calls));
   return { kind: 'chip', venue, q: advisorPhrasing.ADVISOR_INTENTS[intentId].chip, route: 'grounded', intentId, out, ms: Date.now() - t0, calls, drafted, problems };
 }
 
@@ -517,6 +553,7 @@ async function runTyped(venue, item, previous = null) {
   // A typed question the model answered and the check threw out fails the
   // way a chip does: the owner got the fallback, not the answer.
   if (thrownOut(r)) r.problems.push(out.mode === 'template' ? 'served the template' : 'the check threw out the model\'s answer, so the playbook answered');
+  r.problems.push(...unknownIdProblem(calls));
   return r;
 }
 
@@ -599,6 +636,7 @@ const picked = (...texts) => !onlyQ || texts.some((t) => onlyQ.some((q) => Strin
   console.log(`modes: ${JSON.stringify(results.reduce((m, r) => ({ ...m, [r.out.mode]: (m[r.out.mode] || 0) + 1 }), {}))}`);
   console.log(`points the check dropped: ${dropped}`);
   console.log(`drafts the check threw out whole: ${voided.length} (template ${voided.filter((r) => r.out.mode === 'template').length}, playbook ${voided.filter((r) => r.out.mode === 'advice').length})`);
+  console.log(`drafts that wrote an id their block lacks: ${results.filter((r) => unknownIdsWritten(r.calls).length).length}`);
   console.log(`model errors: ${errors.length}${errors.length ? ` (${[...new Set(errors)].slice(0, 3).join(' | ')})` : ''}`);
   console.log(`tokens: ${tokens}, latency p50 ${pct(0.5)} ms, p90 ${pct(0.9)} ms`);
 
