@@ -216,6 +216,39 @@ test('two facts may not fuse into one number, in either mode', () => {
   assert.strictEqual(ok.text, 'Your readings were 4 and 5.');
 });
 
+// THE LIVE EVAL OF 2026-11-03 lost three good answers to the rule above, all
+// of them "On {{fact:owner_reading_weekday_e}} {{fact:owner_reading_date_e}},
+// your peak reading was ...": any whitespace between two placeholders counted
+// as nothing, so a weekday beside its date voided the answer. What the rule
+// guards is one number read across two facts, and a space only lets that
+// happen where a digit faces a digit.
+test('a weekday may stand beside its date, and two numbers with a space between them still may not', () => {
+  const facts = [
+    { id: 'weekday', value: 'Tuesday', source: 'owner_report', asOf: '2026-10-27' },
+    { id: 'date', value: '2026-10-27', source: 'owner_report', asOf: '2026-10-27' },
+    { id: 'reading', value: 34, source: 'owner_report', asOf: '2026-10-27' },
+    { id: 'a', value: 1, source: 'model_holdout', asOf: '2026-10-27' },
+    { id: 'b', value: 500, source: 'model_holdout', asOf: '2026-10-27' },
+  ];
+  const side = phrasing.applyValve('On {{fact:weekday}} {{fact:date}}, your peak reading was {{fact:reading}}.', { facts });
+  assert.ok(side, 'a weekday and its date are two words, not one number');
+  assert.strictEqual(side.text, 'On Tuesday Oct 27, your peak reading was 34.');
+  for (const fused of [
+    'Your covers came to {{fact:a}} {{fact:b}} last week.',
+    'On {{fact:date}} {{fact:reading}} people came in.',
+    'Your covers came to {{fact:a}} {{fact:b}} last week.',
+  ]) {
+    assert.strictEqual(phrasing.applyValve(fused, { facts }), null, fused);
+    assert.strictEqual(freeText.applyAdviceValve(fused, facts), null, fused);
+  }
+  // Refused by the substitution itself, whatever the claim check makes of it.
+  const value = (id) => ({ a: '1', b: '500', weekday: 'Tuesday', date: 'Oct 27' })[id];
+  const { substituteFacts } = phrasing.internals;
+  assert.strictEqual(substituteFacts('{{fact:a}} {{fact:b}}', value).error, 'two facts side by side read as one number');
+  assert.strictEqual(substituteFacts('{{fact:a}}{{fact:b}}', value).error, 'two placeholders with nothing between them');
+  assert.strictEqual(substituteFacts('{{fact:weekday}} {{fact:date}}', value).rendered, 'Tuesday Oct 27');
+});
+
 // ── 3e. A vendor's string is not a number the server computed ──────────────
 
 test('a fact value that is written text carrying a number is not offered as a placeholder', () => {

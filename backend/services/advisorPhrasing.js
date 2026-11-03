@@ -1585,7 +1585,13 @@ const SENTINEL_OPEN = '\u0001';
 const SENTINEL_CLOSE = '\u0002';
 // A run of digits and the separators a written number is allowed to contain.
 const NUMERIC_RUN = /[0-9](?:[.,:٫٬']?[0-9])*/g;
-const ADJACENT_PLACEHOLDERS = /\}\}\s*\{\{/;
+// Two placeholders with NOTHING between them. With a space between them they
+// may stand side by side ("on {{fact:weekday}} {{fact:date}}" is "on Tuesday
+// Oct 27"), as long as no digit faces a digit across the gap: see
+// substituteFacts. Until 2026-11-03 any whitespace counted as nothing, and the
+// live eval lost three good answers to "On Tuesday Oct 27, your peak reading
+// was 34" (the template served instead).
+const ADJACENT_PLACEHOLDERS = /\}\}\{\{/;
 
 /**
  * Substitute every {{fact:id}} and vouch for the digits in the result.
@@ -1637,6 +1643,16 @@ function substituteFacts(text, resolve) {
           ? 'one number written half by the model and half by a fact'
           : 'one number assembled out of two facts',
       };
+    }
+  }
+  // Two facts with only a space between them never read as one number: "4 5"
+  // and "1 500" are refused, "Tuesday Oct 27" and "9 PM Friday" are not.
+  for (let i = 0; i < rendered.length; i++) {
+    if (region[i] === 0 || region[i + 1] === region[i] || !/[0-9]/.test(rendered[i])) continue;
+    let j = i + 1;
+    while (j < rendered.length && region[j] === 0 && /\s/.test(rendered[j])) j++;
+    if (j > i + 1 && j < rendered.length && region[j] !== 0 && /[0-9]/.test(rendered[j])) {
+      return { rendered: null, error: 'two facts side by side read as one number' };
     }
   }
   return { rendered, error: null };
