@@ -976,6 +976,12 @@ function flattenFacts(facts) {
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
+        // A PEAK AFTER MIDNIGHT IS DATED BY ITS EVENING, and that date beside a
+        // small-hours clock read as the next day's: "Saturday night into Nov
+        // 7" (2026-11-03 live eval). The night carries its name and needs no
+        // date (advisorFacts.nightTailHours); the label, the template and the
+        // check still have it.
+        if (k === 'date' && f.value.afterMidnight === true) continue;
         if (SIGNED_GAPS.has(k) && typeof v === 'number' && Number.isFinite(v)) {
           keep({ ...parent, sourceId: f.sourceId || f.id, id: `${f.id}_${gapPart(v)}`, value: Math.abs(v), unit: partUnit(k) });
           continue;
@@ -1105,6 +1111,10 @@ const isPeakFact = (f) => Boolean(f && f.value && typeof f.value.weekday === 'st
   && Number.isFinite(Number(f.value.peakScore)) && Number.isFinite(Number(f.value.peakHour)));
 
 const peakAt = (f) => `around ${clock12(Number(f.value.peakHour), 0)} at ${Number(f.value.peakScore)}`;
+// A peak in the small hours is named for its night: "Saturday night, around 1
+// AM", never "Saturday, around 1 AM", which reads as the night before
+// (advisorFacts.nightTailHours).
+const dayName = (f) => `${f.value.weekday}${f.value.afterMidnight === true ? ' night' : ''}`;
 
 const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 
@@ -1126,7 +1136,7 @@ function shapeWeek(which) {
     // second review). From a partial block the named day's own line stands alone.
     if (asked && days.length < 6) {
       return {
-        lead: `${named} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        lead: `${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`,
         points: rest.map(templateLine),
         used: [asked, ...rest],
       };
@@ -1139,13 +1149,13 @@ function shapeWeek(which) {
         points.push(`No day stands out this week: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}.`);
         used.push(top, low);
       } else {
-        if (top !== asked) { points.push(`Your busiest day this week is ${top.value.weekday}, ${peakAt(top)}.`); used.push(top); }
-        if (low !== asked && low !== top) { points.push(`${low.value.weekday} is the quietest, ${peakAt(low)}.`); used.push(low); }
+        if (top !== asked) { points.push(`Your busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
+        if (low !== asked && low !== top) { points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`); used.push(low); }
         if (top === asked) points.unshift('That makes it your busiest day this week.');
         if (low === asked) points.unshift('That makes it your quietest day this week.');
       }
       return {
-        lead: `${named} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        lead: `${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`,
         points: [...points, ...rest.map(templateLine)],
         used: [...new Set(used), ...rest],
       };
@@ -1155,8 +1165,8 @@ function shapeWeek(which) {
       // week before it gets here (routes/advisor.js quiet_nights).
       const [first, second] = [...days].reverse();
       return {
-        lead: `Your quietest day this week is ${first.value.weekday}, with its peak ${peakAt(first)} on our 0 to 100 index.`,
-        points: [`${second.value.weekday} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
+        lead: `Your quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`,
+        points: [`${dayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
         used: [first, second, ...rest],
       };
     }
@@ -1172,14 +1182,14 @@ function shapeWeek(which) {
     }
     const second = days[1];
     const close = Number(top.value.peakScore) - Number(second.value.peakScore) < HOUR_ORDERING_MIN_GAP;
-    const points = [`${second.value.weekday} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
+    const points = [`${dayName(second)} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
     const used = [top, second];
     if (low !== second) {
-      points.push(`${low.value.weekday} is the quietest, ${peakAt(low)}.`);
+      points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`);
       used.push(low);
     }
     return {
-      lead: `Your busiest day ${scope} is ${top.value.weekday}, with its peak ${peakAt(top)} on our 0 to 100 index.`,
+      lead: `Your busiest day ${scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`,
       points: [...points, ...rest.map(templateLine)],
       used: [...used, ...rest],
     };
@@ -1287,7 +1297,7 @@ function shapeMoneyMove(facts) {
     };
   }
   return {
-    lead: `Fill ${low.value.weekday}. It is your quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${top.value.weekday}.`,
+    lead: `Fill ${dayName(low)}. It is your quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${dayName(top)}.`,
     points: rest.map(templateLine),
     used: [low, top, ...rest],
   };

@@ -197,24 +197,28 @@ advisorPhrasing.__setGenAIForTests({
 
 const ASOF = new Date().toISOString();
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-// The same words the fact engine's labels use ("midnight", "9 PM").
-const { spokenClock: hour12 } = require(path.join(B, 'services', 'clockWords'));
 
 // Listed Monday to Sunday; each day carries the date of its next occurrence,
 // so a date and its weekday agree the way the real fact engine's do (until
 // 2026-10-28 the dates ran from tomorrow regardless of the weekday beside them).
+// A peak in the small hours is that day's night, flagged, labelled and noted
+// the way the real fact engine does it (advisorFacts.nightTailHours): the bar's
+// Saturday at midnight and the club's 1 AM peaks are Saturday and Friday night.
+const advisorFacts = require(path.join(B, 'services', 'advisorFacts'));
 function week(shape) {
   return shape.map(([peakHour, peakScore], i) => {
     const weekday = DAYS[i];
     const ahead = [1, 2, 3, 4, 5, 6, 7].find((k) => WEEKDAY_OF(new Date(Date.now() + k * 86400000).toISOString().slice(0, 10)) === weekday);
     const date = new Date(Date.now() + ahead * 86400000).toISOString().slice(0, 10);
+    const afterMidnight = peakHour <= advisorFacts.NIGHT_TAIL_LAST_HOUR;
     return {
       id: `peak_${date}`,
-      value: { date, weekday, peakHour, peakScore },
+      value: { date, weekday, peakHour, peakScore, ...(afterMidnight ? { afterMidnight: true } : {}) },
       unit: '0-100 index',
       source: 'model_holdout',
       asOf: ASOF,
-      label: `${weekday} projects busiest around ${hour12(peakHour)}, at ${peakScore} on our 0 to 100 index. This is an estimate, not a promise of foot traffic.`,
+      ...(afterMidnight ? { note: advisorFacts.afterMidnightNote(weekday) } : {}),
+      label: advisorFacts.weekAheadPeakLabel({ weekday, hour: peakHour, score: peakScore, afterMidnight }),
     };
   });
 }

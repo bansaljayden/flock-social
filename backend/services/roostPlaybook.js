@@ -758,7 +758,9 @@ function groundedLead(intentId, facts, question = '') {
     }
     const hour = Number(day.value.peakHour);
     const when = Number.isInteger(hour) && hour >= 0 && hour < 24 ? ` around ${clockHour(hour)}` : '';
-    return { text: `${named} projects busiest${when}, at ${Number(day.value.peakScore)} on our 0 to 100 index.`, fact: day };
+    // A peak in the small hours is that day's night (advisorFacts.nightTailHours).
+    const night = day.value.afterMidnight === true ? ' night' : '';
+    return { text: `${named}${night} projects busiest${when}, at ${Number(day.value.peakScore)} on our 0 to 100 index.`, fact: day };
   }
   if (intentId === 'money_move') {
     // A level week has no quiet day to name (the plan's note says so).

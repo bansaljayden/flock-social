@@ -440,6 +440,17 @@ test('a move\'s follow-up is offered when it fits this kind of room or carries o
     .some((f) => f.kind === 'question' && f.text === 'How do I fill Tuesdays?'));
 });
 
+test('a day whose peak is after midnight is named for its night, in the playbook\'s lead and in the contract', () => {
+  const DAY = (weekday, peakHour, peakScore, afterMidnight) => ({ id: `peak_${weekday}`, value: { weekday, peakHour, peakScore, ...(afterMidnight ? { afterMidnight: true } : {}) } });
+  const week = [DAY('Thursday', 23, 55), DAY('Friday', 1, 92, true), DAY('Saturday', 1, 96, true)];
+  assert.strictEqual(pb.groundedLead('peak_hours', week, 'how do I handle saturday').text, 'Saturday night projects busiest around 1 AM, at 96 on our 0 to 100 index.');
+  assert.strictEqual(pb.groundedLead('peak_hours', week, 'how do I handle thursday').text, 'Thursday projects busiest around 11 PM, at 55 on our 0 to 100 index.');
+  const { SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
+  for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
+    assert.match(prompt, /A peak the block marks afterMidnight is in the small hours of the night it belongs to: name it by that night, "Saturday night around 1 AM", and give it no date\./);
+  }
+});
+
 test('every follow-up points at a chip that exists, in copy that passes the house style', () => {
   for (const [from, n] of Object.entries(NEXT)) {
     assert.ok(advisorPhrasing.isKnownIntent(from), from);

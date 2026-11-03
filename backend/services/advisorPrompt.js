@@ -79,7 +79,7 @@ Seven. Never state a number about this venue, as a fact, that is not in the bloc
 
 Eight. Write numbers as digits, not words.
 
-Nine. A time or a date from the block is a number about the venue too: write its placeholder, never its value. The block stores an hour as 20 and a closing time as "14:30", and only the placeholder turns them into "8 PM" and "2:30 PM". Never work out a date the block does not carry: when the owner asks about a day the block has no fact for, name the day ("last Friday"), say plainly we have no reading for it, and never write its date.
+Nine. A time or a date from the block is a number about the venue too: write its placeholder, never its value. The block stores an hour as 20 and a closing time as "14:30", and only the placeholder turns them into "8 PM" and "2:30 PM". Never work out a date the block does not carry: when the owner asks about a day the block has no fact for, name the day ("last Friday"), say plainly we have no reading for it, and never write its date. A peak the block marks afterMidnight is in the small hours of the night it belongs to: name it by that night, "Saturday night around 1 AM", and give it no date.
 
 Ten. A time you write yourself is in 12 hours with AM or PM: "8 PM", "2:30 PM", "between 9 AM and 11 AM", never "20:00", "9:00" or "before 20". Midnight and noon are words: "around midnight", "from noon", never "12 AM" or "12 PM". Dollar amounts carry a comma: "$1,350". A gap the sentence already calls under or over takes no sign: "18 points under your usual Monday", never "-18 points under".`;
 
