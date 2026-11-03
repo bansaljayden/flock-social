@@ -144,6 +144,15 @@ test('the false alarms a live run turned up stay quiet', () => {
   assert.ok(!grade('Pinwheel Lanes hits 87% at 9 PM, so go while it is under 70%.', { tools: pinTools }).problems.length);
 });
 
+test('a navigation button is not an opened screen', () => {
+  const out = (text) => ({ text, venues: [], navigate: { profile_section: 'safety' } });
+  const opened = grade('x', { out: out('Call 911. I just brought up Safety so you can hit SOS.') });
+  assert.ok(opened.problems.some((p) => /says it opened a screen/.test(p)));
+  const tap = grade('x', { out: out('Call 911. Tap below to open Safety and hit SOS.') });
+  assert.ok(!tap.problems.some((p) => /^navigate/.test(p)) && !tap.warnings.some((w) => /^navigate/.test(w)));
+  assert.ok(grade('x', { out: out('Use Safety right here.') }).warnings.some((w) => /right here/.test(w)));
+});
+
 test('a crowd number is never a capacity', () => {
   const copper = cases.byKey.get('copper');
   const tools = [crowd(copper, { crowd_score: 24, hourly_forecast: [] })];

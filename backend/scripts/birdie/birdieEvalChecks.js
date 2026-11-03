@@ -498,7 +498,15 @@ function checkAnswer(input) {
   // Tables only where a search said so.
   if (/\btables?\b/i.test(text) && !facts.tablesFor.size) warnings.push('tables: talks about tables with no table data in any result');
 
-  // Cards the person has to confirm.
+  // Cards the person has to confirm. A navigation is a "Take me there" button
+  // under the reply; nothing has moved until it is tapped.
+  if (out && out.navigate) {
+    if (/\bi (just |have |'ve )?(brought up|opened|pulled up|took you|switched you|sent you)\b|\b(safety|it) is (now )?open\b/i.test(text)) {
+      problems.push('navigate: says it opened a screen the person still has to tap');
+    } else if (/\bright here\b/i.test(text)) {
+      warnings.push('navigate: "right here" beside a button that has not been tapped');
+    }
+  }
   if (expect.navigate) {
     const nav = (out && out.navigate) || {};
     for (const [k, v] of Object.entries(expect.navigate)) if (nav[k] !== v) problems.push(`navigate: wanted ${k}=${v}, got ${JSON.stringify(out && out.navigate || null)}`);
