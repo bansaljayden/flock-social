@@ -798,6 +798,42 @@ test('a Gemini timeout is not retried and still says something', async () => {
     'an aborted paid request was re-bought; utils/upstream.js says a timeout is never retried');
 });
 
+// A timeout after the tools delivered something ends the turn with it, as the
+// turn deadline does, and is still never retried. On the Birdie eval
+// (2026-11-03) someone who said they were being followed got "hmm gimme a
+// sec, hit me again" and lost the Safety button the model had already picked.
+const timesOutAfter = (name, args) => (_p, call) => {
+  if (call === 1) return { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name, args } }] } }] };
+  throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+};
+
+test('a timeout after the model chose Safety keeps the button and says to call 911', async () => {
+  sendImpl = timesOutAfter('navigate_app', { tab: 'profile', screen: 'profile', profile_section: 'safety' });
+  const r = await chat({ messages: [{ role: 'user', text: "someone's been following me" }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.navigate, { tab: 'profile', screen: 'profile', profile_section: 'safety' });
+  assert.strictEqual(r.body.text, "tap below to open Safety and send your location to your people. if you're in danger right now, call 911");
+  assert.strictEqual(sendCalls.length, 2, 'the timed-out call was bought again');
+});
+
+test('a timeout after a search answers with its cards', async () => {
+  sendImpl = timesOutAfter('search_venues', { query: 'bars' });
+  const r = await chat({ messages: [{ role: 'user', text: 'bars near me' }] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.venues.length, 1, 'the card the search made was thrown away');
+  assert.strictEqual(r.body.text, 'lot of chatter right now. hit me again in a bit');
+  assert.strictEqual(sendCalls.length, 2, 'the timed-out call was bought again');
+});
+
+test('a timeout after a tool that delivered nothing is still a 500', async () => {
+  dbFriends = [];
+  sendImpl = timesOutAfter('get_user_friends', {});
+  const r = await chat({ messages: [{ role: 'user', text: 'who are my friends' }] });
+  assert.strictEqual(r.status, 500);
+  speaks(r);
+  assert.strictEqual(sendCalls.length, 2);
+});
+
 test('a vendor throw with no status still reaches the user as a sentence', async () => {
   sendImpl = () => { throw new Error('something specific and internal'); };
   const r = await chat();

@@ -324,6 +324,17 @@ class GeminiBudgetError extends Error {
 // system prompt forbids that voice and the user is reading this sentence, not
 // the model.
 const BIRDIE_BUSY_MESSAGE = 'lot of chatter right now. hit me again in a bit';
+// A turn cut short after the model chose to take them to Safety (the tool
+// loop, below). What to do in danger does not wait on the model, and the
+// button it already chose is under this line.
+const BIRDIE_SAFETY_CUT_MESSAGE = "tap below to open Safety and send your location to your people. if you're in danger right now, call 911";
+
+// Whether a failed Gemini call was our own deadline (or a hang-up) rather than
+// an answer from Google. One reading for the retry, which never repeats one
+// (utils/upstream.js), and for the tool loop, which ends the turn on one.
+function geminiTimedOut(e) {
+  return e?.name === 'AbortError' || e?.name === 'TimeoutError' || /abort|timed? ?out/i.test(e?.message || '');
+}
 
 // ---------------------------------------------------------------------------
 // THE OUTAGE BREAKER (2026-10-30).
@@ -2786,9 +2797,7 @@ router.post('/chat',
           // the second attempt would charge again for a call we already decided
           // not to make, and a ceiling that retries itself is not a ceiling.
           if (e?.geminiBudget) throw e;
-          const aborted = e?.name === 'AbortError' || e?.name === 'TimeoutError'
-            || /abort|timed? ?out/i.test(e?.message || '');
-          if (aborted) throw e;
+          if (geminiTimedOut(e)) throw e;
           const transient = e.status === 429 || e.status >= 500 || /quota|overloaded|unavailable|fetch failed/i.test(e.message || '');
           if (!transient) throw e;
           await new Promise(r => setTimeout(r, 800));
@@ -3011,6 +3020,18 @@ router.post('/chat',
             budgetLeg = e.leg || 'global-day';
             break;
           }
+          // A CALL THAT TIMES OUT AFTER THE TOOLS DELIVERED SOMETHING ends the
+          // turn with it, the way the turn deadline above does (2026-11-03).
+          // It is still never retried (utils/upstream.js). It used to 500 the
+          // whole turn, throwing away the cards and buttons already made: on
+          // the Birdie eval someone who said they were being followed got
+          // "hmm gimme a sec, hit me again" and lost the Safety button the
+          // model had picked. With nothing delivered the 500 stands.
+          const delivered = collectedVenues.length > 0 || Boolean(navigationAction || flockDraftAction || venueVoteAction);
+          if (delivered && geminiTimedOut(e)) {
+            console.warn('[AI] Gemini timed out after tool work; answering with what the tools delivered');
+            break;
+          }
           throw e;
         }
       }
@@ -3052,9 +3073,14 @@ router.post('/chat',
         : budgetLeg === 'user-hour'
           ? `that's a lot of chat in one hour. hit me again ${waitPhrase(HOUR_MS)}`
           : `that's my limit for today. i'm back ${waitPhrase(msUntilUtcMidnight())}`;
+      // A cut-short turn that was taking them to Safety says what to do, not
+      // to come back later: the button is under it either way.
+      const cutText = navigationAction && navigationAction.profile_section === 'safety'
+        ? BIRDIE_SAFETY_CUT_MESSAGE
+        : BIRDIE_BUSY_MESSAGE;
       const fallbackText = budgetStopped
         ? budgetCutText
-        : (cutShort ? BIRDIE_BUSY_MESSAGE : 'say that one more time?');
+        : (cutShort ? cutText : 'say that one more time?');
       const responseText = textParts.map(p => p.text).join('') || fallbackText;
 
       // Collect venue data from tool results to send as cards
