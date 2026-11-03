@@ -686,6 +686,19 @@ function checkAnswer(input) {
 
   // Tables only where a search said so.
   if (/\btables?\b/i.test(text) && !facts.tablesFor.size) warnings.push('tables: talks about tables with no table data in any result');
+  // And only for the venue whose result carries them: one answer gave the
+  // pizza place "two open tables right now" because the taqueria in the same
+  // results had two. A sentence about open tables is about the venue it names,
+  // else the one the answer leads with.
+  const leadVenue = leadOf(text, mentioned);
+  for (const s of sentences(text)) {
+    if (!/\b(?:open tables?|tables? (?:open|free)|a table (?:open|free|right now))\b/i.test(s) || DENIES.test(s)) continue;
+    const named = venuesMentioned(s, venues);
+    const about = named.length ? named : (leadVenue ? [leadVenue] : []);
+    if (about.length && !about.some((v) => facts.tablesFor.has(v.id))) {
+      problems.push(`tables: says ${about[0].name} has a table open, and its result has no table data`);
+    }
+  }
 
   // Cards the person has to confirm. A navigation is a "Take me there" button
   // under the reply; nothing has moved until it is tapped.

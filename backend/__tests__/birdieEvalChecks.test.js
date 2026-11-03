@@ -290,6 +290,17 @@ test('a time after 10 PM suggested to someone under 18 by their date of birth fa
   assert.deepStrictEqual(late('Midnight is your best shot.', null), []);
 });
 
+test('open tables belong to the venue whose result carries them', () => {
+  const mango = cases.byKey.get('mango');
+  // Mango Street's row has tables; Thistle & Crust's has none.
+  const tools = [search(mango, thistle)];
+  // Live answers (gemini-3.5-flash-lite, the model comparison), word for word.
+  assert.ok(grade("Thistle & Crust. It's about a 5 minute walk and has tables open right now.", { tools }).problems.some((p) => /says Thistle & Crust has a table open, and its result has no table data/.test(p)));
+  assert.ok(grade('Thistle & Crust. About a five-minute walk, cheap enough for twenty bucks a head, and two open tables right now.', { tools }).problems.some((p) => /^tables/.test(p)));
+  assert.ok(!grade('Mango Street Tacos. It is cheap and has two open tables right now.', { tools }).problems.some((p) => /^tables/.test(p)));
+  assert.ok(!grade("Thistle & Crust is busy, and there's no table count for it.", { tools }).problems.some((p) => /^tables/.test(p)));
+});
+
 test('a navigation button is not an opened screen', () => {
   const out = (text) => ({ text, venues: [], navigate: { profile_section: 'safety' } });
   const opened = grade('x', { out: out('Call 911. I just brought up Safety so you can hit SOS.') });
