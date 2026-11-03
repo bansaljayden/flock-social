@@ -266,54 +266,75 @@ now, which is the signal the venue side of the business is built on.
 ## The sensor's people counter
 
 **Flux, Flock's venue sensor, counts people with its own trained vision model,
-Owl, running on the device. On real thermal footage it has never seen, it
-counts a room exactly right up to ten times as often as the heat-threshold
-method it replaced.**
+Owl, running on the device. On a ceiling camera's real footage, which it never
+trained on, it counts a room exactly right nearly ten times as often as the
+heat-threshold method it replaced.**
 
 Owl reads the 160 by 120 grid of temperatures from the sensor's thermal camera
 and puts a point on every person and a box and a name on every other warm
 thing: a hand at the lens, a pet, a hot drink, food, a laptop, a screen, a
 heater, a lamp, a seat somebody just left. Only people are counted. Scored on
 the held-out test splits of six real thermal datasets, footage it never
-trained on, the first two from the very camera Flux uses:
+trained on, the first two from the very camera Flux uses. owl-5 is the version
+on Flux; owl-4.9, the one before it, is shown beside it:
 
-| Real test set | the heat-threshold rule | **Owl** |
-|---|---|---|
-| **Flux's own camera** (FLIR Lepton 3.5, indoor rooms), 2,000 frames | 77.1% exact | **89.7% exact, 100% within one** |
-| **Flux's own camera in a crowded classroom and lab**, rows of up to ten people half hidden behind the row in front, 1,375 frames, 4,882 people | 33.0% exact | **39.3% exact, 73.9% within one; rooms of six to ten within one 96% of the time** |
-| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **92.9% exact, 99.7% within one** |
-| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **95.5% exact, 100% within one** |
-| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **93.0% exact, 99.1% within one** |
-| Side view, 2,151 frames, 3,872 people | 36.6% exact | **82.1% exact, 96.3% within one** |
+| Real test set | the heat-threshold rule | owl-4.9 | **owl-5** |
+|---|---|---|---|
+| **Flux's own camera** (FLIR Lepton 3.5, indoor rooms), 2,000 frames | 77.1% exact | 89.7% exact, 100% within one | **88.4% exact, 99.9% within one** |
+| **Flux's own camera in a crowded classroom and lab**, rows of up to ten people half hidden behind the row in front, 1,375 frames, 4,882 people | 33.0% exact | 39.3% exact, 73.9% within one; rooms of six to ten within one 96% of the time | **33.3% exact, 68.2% within one; rooms of six to ten within one 97% of the time** |
+| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | 92.9% exact, 99.7% within one | **89.9% exact, 99.9% within one** |
+| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | 95.5% exact, 100% within one | **96.2% exact, 100% within one** |
+| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | 93.0% exact, 99.1% within one | **98.2% exact, 100% within one** |
+| Side view, 2,151 frames, 3,872 people | 36.6% exact | 82.1% exact, 96.3% within one | **78.6% exact, 94.4% within one** |
 
-The crowded rooms are the hardest test there is for a camera this small, and
-the one Owl improved on most: before it trained on them it was off by almost
-five people a frame there, and now by one. The Lepton 3.5 frames are from the
+owl-5 replaced owl-4.9 on 3 November 2026 although it failed one of the three
+tests set before it trained. On 1,593 frames from five other datasets, frames
+neither version had trained on, it counted 37.2% of frames exactly against
+owl-4.9's 31.5%, and 28.5% against 19.2% on the 333 of them with three or more
+people; those two tests passed. The third asked that no set in the table fall
+by more than 2 points, and three fell by 3 to 6 points: the ceiling camera, the
+side view and the crowded classroom.
+
+The crowded rooms are the hardest test there is for a camera this small:
+before Owl trained on them it was off by almost five people a frame there, and
+both versions since are off by about one. The Lepton 3.5 frames are from the
 SDT dataset of the Computer Vision Lab at TU Wien (C. Pramerdorfer, J.
 Strohmayer and M. Kampel, "SDT: A Synthetic Multi-Modal Dataset for Person
 Detection and Pose Classification", IEEE ICIP 2020) and the Thermal Vision
 dataset of IISER Bhopal (A. Samal and H. R. Lone, "Thermal vision: Pioneering
 non-invasive temperature tracking in congested spaces", Smart Health 36, 2025),
-both used to train and evaluate Owl with their authors' permission.
+both used to train and evaluate Owl with their authors' permission. owl-5 also
+trained, with their authors' permission, on BU-TIV (Z. Wu, N. Fuller, D.
+Theriault and M. Betke, "A thermal infrared video benchmark for visual
+analysis", CVPR Workshops 2014), MlDetection (M. Vandersteegen, W. Reusen, K.
+Van Beeck and T. Goedemé, "Person Detection Using an Ultra Low-Resolution
+Thermal Imager on a Low-Cost MCU", IVCNZ 2022) and LITIV 2014 (G.-A.
+Bilodeau, A. Torabi, P.-L. St-Charles and D. Riahi, "Thermal-visible
+registration of human silhouettes: A similarity measure performance
+evaluation", Infrared Physics & Technology 64, 2014).
+`flock-sensor/models/NOTICE.md` credits all 28 datasets it learned from, with
+their licences.
 
 **It knows what is not a person.** The old rule counted warm regions, so a hand
 held up to the lens was a person and spread fingers were two. A stress test
-builds forty-one hard situations on purpose and scores each alone, averaging
-95%: a hand at the lens, a hot mug, a monitor, a radiator, a pet, a reflection
-in glass, warm footprints, a candle and an empty room each come out right 96 to
-100% of the time, where the rule managed 8 to 85%.
+builds forty-one hard situations on purpose and scores each alone, and owl-5
+averages 94%: a hand at the lens, a hot mug, a monitor, a radiator, a pet, a
+reflection in glass, warm footprints, a candle and an empty room each come out
+right 97 to 100% of the time, where the rule managed 14 to 85%.
 
-**It runs on the sensor, in 16 ms.** 718,550 parameters, a CenterNet-style
-network with a head map per kind of thing and a box head, exported to ONNX and
-run by ONNX Runtime on one Raspberry Pi 5 core, fast enough to read every frame
-the camera sends. When it sees a crowd, a second model counts the frame again
-with a density head whose total does not fall when heads touch: in a crowd of
-ten that doubles how often the count lands within one. It learns from millions of generated thermal frames drawn
-with measured physics (skin follows the room, clothing sits a measured share of
-the way from room to skin, fur is cool and eyes are hot) through this camera's
-optics and noise, mixed with real frames from four commercially licensed public
-datasets and two research datasets used with their authors' permission, and it
-is chosen on real footage, never on its own drawings.
+**It runs on the sensor.** 718,550 parameters, a CenterNet-style network with a
+head map per kind of thing and a box head, exported to ONNX and run by ONNX
+Runtime on one Raspberry Pi 5 core. The same network took 16 ms a frame there,
+fast enough to read every frame the camera sends; owl-5's weights are not yet
+timed on the Pi. When it sees four people or more, a second model counts the
+frame again with a density head whose total does not fall when heads touch,
+and the higher count stands. It learns from millions of generated thermal
+frames drawn with measured physics (skin follows the room, clothing sits a
+measured share of the way from room to skin, fur is cool and eyes are hot)
+through this camera's optics and noise, mixed with real frames from 28
+datasets, 23 whose terms allow commercial use and five used with their
+authors' permission, and it is chosen on real footage, never on its own
+drawings.
 
 **It counts, and never watches.** Owl names kinds of things, never who anyone
 is. Every frame is read on its own and forgotten, nothing about it follows a
