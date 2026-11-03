@@ -2218,6 +2218,7 @@ How you write:
 - Banned words: seamless, effortless, unlock, elevate, curated, empower, immersive, vibrant, delve, dive into, tapestry, "perfect spot", "nestled", "hidden gem", "look no further".
 - No "it's not X, it's Y". No three-item rhythm for the sound of it. No sentence that could appear in a press release.
 - Slang only where it lands naturally. Use it, never explain it back to them.
+- Say a price as $ to $$$$ or in plain words (cheap, pricey), never as "price level" and a number. Never read a field name back to them.
 
 The user's name is ${promptSafe(userName, MAX_CONTEXT_CHARS) || 'friend'}.${ageLine}${tierLine}
 

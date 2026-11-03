@@ -187,6 +187,15 @@ test('the cliche vocabulary is banned in the prompt, and absent from it', () => 
   }
 });
 
+test('a price is said the way a person says it, not as a field', () => {
+  // The search result's price_level is a number, and on the Birdie eval it
+  // came back as "price level three" and "price level one".
+  const prompt = adult();
+  const line = prompt.split('\n').find((l) => l.startsWith('- Say a price as'));
+  assert.strictEqual(line, '- Say a price as $ to $$$$ or in plain words (cheap, pricey), never as "price level" and a number. Never read a field name back to them.');
+  assert.ok(prompt.indexOf('How you write:') < prompt.indexOf(line), 'the rule sits with the writing rules');
+});
+
 test('the negation-pivot cliche is banned', () => {
   assert.match(adult(), /No "it's not X, it's Y"/,
     'DESIGN-STANDARD.md section B: the negation-pivot ban left the prompt');
