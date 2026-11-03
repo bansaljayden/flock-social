@@ -465,7 +465,52 @@ const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|th
 // in 25 more covers a week"). A dropped good sentence costs one line; a
 // made-up number shown as the venue's costs the owner's trust. The prompt's
 // numbers rule now shows the model how to write a suggestion so it reads as
-// one (advisorPrompt SHARED_NUMBERS, Six).
+// one (advisorPrompt SHARED_NUMBERS, Six). Two of those shapes, a count of the
+// newest records to read and a count of lanes to split into, were set aside
+// on 2026-11-03, number by number and only in their own shape (countToDo).
+
+// TWO COUNTS TO DO, SET ASIDE ONLY IN THEIR OWN SHAPE (2026-11-03). The live
+// eval still lost two good lines to the claim rules: "Read through your 50
+// most recent reviews, tally every delay complaint" ("read" is a claim verb in
+// "your index read 92", and "your" a subject) and "To keep the line moving at
+// peak, split your door into 2 lanes" ("peak" is a claim verb in "Fridays
+// peak at 92"), which also cost the point after it its sense ("both lanes").
+// Neither number says anything about the venue: one is how many of the newest
+// records to go through, the other how many lanes to set up. Each is set aside
+// only in exactly that shape, number by number: the stretch of the clause
+// after its last comma opens on the instruction verb, nothing but "your" or
+// "the" (or what is being split) stands between the verb and the number, and
+// the words right after it name the newest of a kind of record, or a lane,
+// line or station. Every other number in the sentence is checked as before,
+// and so is a number with its subject first: "Your rating fell across your 50
+// most recent reviews", "Read your 50 most recent reviews: 40 mention the
+// wait", "Read through your 140 one-star reviews", "At peak, your door splits
+// into 2 lanes" and "At peak, split your 300 guests into 2 lanes" all still
+// lose their line (advisorValveBoundary.test.js). And the count must be the
+// sentence's only number past a nought or a one: a number that opens its own
+// clause is not read as a claim at all ("Read the 50 most recent reviews; 40
+// mention the wait" passes on "the"), so the line it sits in keeps the check
+// it had while any other figure rides with it.
+//
+// TWO OTHERS STAY DROPPED, ON PURPOSE. "So your food cost stays around 30%"
+// has the shape of "so your Friday stays at 92", which presumes a reading, and
+// "shortly before dinner decisions get made, around 4 PM" the shape of "before
+// your Friday rush starts, around 7 PM" and "your drinks get made in 90
+// seconds", which are claims about the venue. No rule tells those apart from
+// the target and the time they were meant as, so the prompt shows the model
+// the shapes that read as suggestions instead (advisorPrompt, Six).
+const SAMPLE_VERB = /^\s*(?:(?:first|then|now|so)\s*,?\s+)?(?:read|re-?read|go\s+through|look\s+(?:through|over)|pull(?:\s+up)?|scan|skim|tally|sort|print|export)(?:\s+(?:through|over|back\s+through))?\s+(?:(?:your|the|all|of)\s+){0,3}$/i;
+const SAMPLE_NOUN = /^\s+(?:most\s+recent|latest|newest|last)\s+(?:(?:google|yelp|online|guest|customer|delivery)\s+)?(?:reviews?|comments?|ratings?|receipts?|tickets?|checks?|orders?|surveys?|complaints?|messages?|emails?|responses?)\b/i;
+const SETUP_VERB = /^\s*(?:(?:first|then|so)\s*,?\s+)?(?:split|divide|break|separate)\s+(?:(?:your|the)\s+)?(?:[a-z]+\s+){0,2}into\s+$/i;
+const SETUP_NOUN = /^\s+(?:(?:door|entry|bar|separate|parallel)\s+)?(?:lanes?|lines?|queues?|stations?|registers?|tills?|sections?|zones?)\b/i;
+function countToDo(text, num, prefix, all) {
+  if (num.dim !== 'plain') return false;
+  if (all.some((n) => n !== num && !(n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return false;
+  const after = text.slice(num.index + num.length);
+  const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
+  return (SAMPLE_VERB.test(stretch) && SAMPLE_NOUN.test(after))
+    || (SETUP_VERB.test(stretch) && SETUP_NOUN.test(after));
+}
 
 // A SUGGESTION WORD EARLIER IN THE CLAUSE DOES NOT MAKE A PAST READING A
 // SUGGESTION (adversarial review, 2026-10-28 night): "When your Friday hit 92
@@ -481,11 +526,15 @@ function pastReading(prefix, after) {
   return SUBJECT.test(tail) && CLAIM_VERB.test(tail);
 }
 
-function isReadingSlot(text, num) {
+function isReadingSlot(text, num, all = numbersIn(text)) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
   if (pastReading(prefix, text.slice(num.index + num.length))) return true;
-  if (NOT_A_READING.test(prefix)) return false;
+  if (countToDo(text, num, prefix, all)) return false;
+  // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
+  // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
+  // wait" would have let the 40 through on it (2026-11-03 self-review).
+  if (NOT_A_READING.test(prefix.replace(/\bmost\s+recent\b/gi, ' '))) return false;
   if (TRIAL_SPAN.test(prefix)) return false;
   // "a $12 special", "an 85 seat room": the article makes it a kind of
   // thing, not a reading of one.
@@ -762,8 +811,9 @@ function checkSentenceNumbers(sentence, support) {
   // claim rules (adversarial review, 2026-10-28 night).
   const text = asciiDigits(blankPlaceholders(sentence));
   const ids = new Set();
-  for (const num of numbersIn(text)) {
-    if (!isReadingSlot(text, num)) continue;
+  const all = numbersIn(text);
+  for (const num of all) {
+    if (!isReadingSlot(text, num, all)) continue;
     const from = supportFor(num, support, inPlay) || yearOf(num, text, support, inPlay);
     const written = text.slice(num.index, num.index + num.length);
     if (!from) return { ok: false, ids, number: written };

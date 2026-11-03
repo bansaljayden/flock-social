@@ -204,6 +204,57 @@ test('missing data is never read as an empty room, and saying we have no reading
   }
 });
 
+test('a count to do (the newest records to read, the lanes to split into) passes in its own shape, and a made-up venue figure in that shape still loses its line', () => {
+  // Two of the 2026-11-03 live eval's five dropped lines.
+  for (const fine of [
+    'Read through your 50 most recent reviews, tally every delay complaint, and fix the single bottleneck people name most often.',
+    'To keep the line moving at peak, split your door into 2 lanes, 1 for prepaid or list guests and 1 for cash or card.',
+    'First, read your 30 latest Google reviews.',
+    'Before you change anything, go through your 20 newest reviews.',
+    'At the rush, divide the bar into 3 stations.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine);
+  }
+  // The same shapes carrying a figure about the venue, or the count with its
+  // subject first, are still claims.
+  for (const claim of [
+    'Your rating fell across your 50 most recent reviews.',
+    'You read 50 most recent reviews a week.',
+    'Read your 50 most recent reviews: 40 mention the wait.',
+    'Read your 50 most recent reviews, and 40 of them mention the wait.',
+    'Read your 50 most recent reviews; 40 mention the wait.',
+    'Read through your 140 one-star reviews.',
+    'Read why your Friday hit 92 in your 50 most recent reviews.',
+    'Read your 50 most recent reviews from last month.',
+    'Your most recent Friday hit 70.',
+    'At peak, your door splits into 2 lanes.',
+    'At peak, split your 300 guests into 2 lanes.',
+    'At peak, split your door into 300 guests.',
+    'Split the door into 2 lanes because your Friday hit 92.',
+    'At peak, split your door into 2 lanes; your Friday hit 92.',
+    'At the peak, run 2 door lanes.',
+  ]) {
+    assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" carries a venue figure nobody measured`);
+  }
+  // Two other dropped lines stay dropped, on purpose: their shape is the shape
+  // of a real venue claim ("so your Friday stays at 92", "before your Friday
+  // rush starts, around 7 PM"), and the prompt shows the model the wording
+  // that reads as a suggestion instead.
+  for (const kept of [
+    'Keep the plate cost near $3.50 to $4.50 so your food cost stays around 30%.',
+    'Cost the dish down to the garnish so your plate cost stays around $4 to $5, landing near a 30% food cost.',
+    'Post one clear phone photo of a single best seller shortly before dinner decisions get made, around 4 PM to 5 PM.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(kept, ADVICE_FACTS()), null, kept);
+  for (const taught of ['to hold food cost near 30%', 'post around 4 PM, before dinner plans are made']) {
+    const out = freeText.applyAdviceValve(`Keep the special simple, ${taught}.`, ADVICE_FACTS());
+    assert.ok(out, taught);
+    const { ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
+    assert.ok(ADVICE_SYSTEM_PROMPT.includes(taught), `the contract teaches "${taught}"`);
+  }
+});
+
 test('when the answer line itself fails in advice, the first good point stands in for it', () => {
   const out = freeText.applyAdviceValve(JSON.stringify({
     answer: 'You had 140 covers last Friday.',

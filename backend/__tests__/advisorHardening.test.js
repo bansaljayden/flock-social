@@ -278,9 +278,14 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
     'When the rush starts, run 2 door lanes, 1 for prepaid and list guests and 1 for door payers.',
     'Aim for 25 more covers a week at {{fact:intake_typical_spend_per_person}} a head, which is $950.',
     'If your Friday hits 92 on the index, add a bartender.',
+    // Set aside on 2026-11-03, number by number and only in this shape: the
+    // count of the newest records to read is a count to do
+    // (advisorAnswer.countToDo, pinned in advisorValveBoundary.test.js).
+    'Read your 50 latest reviews and fix the most common complaint.',
   ]) assert.ok(served(ok), ok);
   for (const claim of [
-    'Read your 50 latest reviews and fix the most common complaint.',
+    'Your rating fell across your 50 latest reviews.',
+    'Read your 50 latest reviews: 40 mention the wait.',
     'At the peak, run 2 door lanes.',
     'Bring in a second bartender on Fridays because your Friday hit 92 last week.',
     'Your Friday, as usual, hit 92.',
