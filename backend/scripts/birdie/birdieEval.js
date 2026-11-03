@@ -31,26 +31,44 @@
 //   ... --gemini-deadline=MS    a measurement: Birdie's per-call deadline is
 //                               replaced in this process only, to see how long
 //                               a call the real one cuts off would have taken
-//   ... --model=NAME            a measurement: Birdie runs on this Gemini model
+//                               (in a replay, the deadline the recorded calls
+//                               are held to: see REPLAY below)
+//   ... --model=NAME           a measurement: Birdie runs on this Gemini model
 //                               in this process only (BIRDIE_MODEL is never
 //                               changed anywhere else), with the same settings
 //   ... --retry-probe=MS        a measurement: a model call still running at
 //                               MS gets one identical request sent beside it,
 //                               and how long that took, what it cost and
 //                               whether it answered is recorded on the call
-//                               (retryProbe). The route never sees it: this is
-//                               what one retry after a stall would have done,
-//                               without changing the rule that there is none
+//                               (retryProbe). The route never sees it. Since
+//                               2026-11-03 the route retries a stall itself
+//                               (routes/ai.js ONE RETRY AFTER A STALL), so a
+//                               probe at the real deadline would be a second
+//                               retry beside the route's: it needs
+//                               --gemini-deadline lifted past its mark
 //   node scripts/birdie/birdieEval.js --fixtures [--as=persona]
 //                               what every tool answers, at every clock, with
 //                               no model and no key
+//
+// THE ROUTE'S OWN RETRY. A call the route sends again after a stall has the
+// same contents as the one that stalled, and is recorded with `retryOf`, the
+// index of that call in the turn; the summary counts them and what they got.
 //
 // REPLAY: --replay=F answers every model call from run F's recorded replies,
 // in order, with no key and no network, so a change to the checks, the tool
 // code or the post-processing is scored on what the real model wrote. A call
 // the recorded run never made (the route changed since) fails, and that item
 // says so. The serving switches the recorded run saw are restored from F.
-//   node scripts/birdie/birdieEval.js --replay=F [--out=G]
+//   node scripts/birdie/birdieEval.js --replay=F [--out=G] [--gemini-deadline=MS]
+// A call F lost to the deadline is lost again, and the route's retry of it is
+// answered from F: by F's own retry when F has one (a run since 2026-11-03),
+// else by what F knew. A run that timed its stalls to the end
+// (--gemini-deadline lifted) and probed them (--retry-probe) answers the retry
+// with the stalled call's own reply when the probe answered inside the
+// deadline, at the probe's token count; any other retry stalls again. With
+// --gemini-deadline=MS a replay holds F's calls to MS: a reply F took longer
+// than MS to get is lost to the deadline, the way a run at MS would have lost
+// it. Without it, F's slow replies are served as F served them.
 //
 // RESCORE: --rescore=F scores run F's recorded answers exactly as they were,
 // with today's checks and no route at all. Replay re-drives the route with
@@ -386,8 +404,23 @@ const RealGenAI = genaiMod.GoogleGenAI;
 // minute to answer, so a slow one is timed rather than cut.
 const PROBE_AFTER_MS = !REPLAY && !RESCORE && Number(args['retry-probe']) > 0 ? Number(args['retry-probe']) : 0;
 const PROBE_DEADLINE_MS = 60000;
+// The route retries a stall at its deadline itself now, so a probe that fires
+// before that deadline is a second retry beside the route's, bought twice.
+if (PROBE_AFTER_MS > 0 && !(Number(args['gemini-deadline']) > PROBE_AFTER_MS)) {
+  console.error('--retry-probe needs --gemini-deadline past its mark: the route retries a stall at its deadline itself (routes/ai.js ONE RETRY AFTER A STALL).');
+  process.exit(1);
+}
+// The deadline a replay holds the recorded calls to (REPLAY, above), and the
+// one a probe must have answered inside for a replayed retry to answer.
+const REAL_DEADLINE_MS = require(path.join(B, 'utils', 'upstream')).UPSTREAM_TIMEOUT_MS.gemini;
+const REPLAY_DEADLINE_MS = REPLAY && Number(args['gemini-deadline']) > 0 ? Number(args['gemini-deadline']) : null;
 const pendingProbes = [];
 const stripSignatures = (value) => JSON.parse(JSON.stringify(value, (k, v) => (k === 'thoughtSignature' ? '[sig]' : v)));
+const replayedStall = () => Object.assign(new Error('The operation was aborted (replayed)'), { name: 'AbortError' });
+// Our own deadline, read the way the route reads it (routes/ai.js
+// geminiStalled): an abort, carrying no HTTP status.
+const ownDeadline = (err) => Boolean(err) && err.status == null
+  && /abort|timed? ?out/i.test(`${err.name || ''} ${err.message || ''}`);
 genaiMod.GoogleGenAI = function EvalGenAI(opts) {
   const client = new RealGenAI(REPLAY ? { apiKey: 'replay-no-network' } : opts);
   const realGenerate = client.models.generateContent.bind(client.models);
@@ -397,15 +430,56 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
     const input = contents.length ? stripSignatures(contents[contents.length - 1]) : null;
     const system = req.config && req.config.systemInstruction;
     if (ctx && typeof system === 'string' && !ctx.systemPrompt) ctx.systemPrompt = system;
+    // The route's retry of a stall: the same contents, straight after it.
+    const key = ctx ? JSON.stringify(contents) : null;
+    const stall = ctx && ctx.lastStall && ctx.lastStall.key === key ? ctx.lastStall : null;
+    if (ctx) ctx.lastStall = null;
     const record = { input, ms: 0, tokens: null, response: null, error: null };
+    if (stall) record.retryOf = stall.index;
     if (ctx) ctx.calls.push(record);
+    const index = ctx ? ctx.calls.length - 1 : -1;
+    const noteStall = (recorded) => { if (ctx) ctx.lastStall = { key, index, recorded: recorded || null }; };
     if (REPLAY) {
-      const recorded = ctx && ctx.replayCalls ? ctx.replayCalls[ctx.calls.length - 1] : null;
+      const recordedCalls = (ctx && ctx.replayCalls) || [];
+      if (ctx && ctx.replayCursor === undefined) ctx.replayCursor = 0;
+      const recordedRetry = ctx && recordedCalls[ctx.replayCursor] && recordedCalls[ctx.replayCursor].retryOf != null;
+      if (stall && !recordedRetry) {
+        // A retry the recorded run never made, answered from what it knew
+        // (see REPLAY above). It takes no recorded call of its own.
+        const was = stall.recorded;
+        const probe = was && was.retryProbe;
+        if (was && was.response && probe && probe.answered && probe.ms <= (REPLAY_DEADLINE_MS || REAL_DEADLINE_MS)) {
+          record.response = was.response;
+          record.tokens = probe.tokens || null;
+          return JSON.parse(JSON.stringify(was.response));
+        }
+        record.error = 'AbortError replay: stalled again (the recorded run has no reply for a retry)';
+        noteStall(null);
+        throw replayedStall();
+      }
+      let recorded = null;
+      if (ctx) {
+        // A retry the recorded run made and this route does not is passed over.
+        if (!stall) while (recordedCalls[ctx.replayCursor] && recordedCalls[ctx.replayCursor].retryOf != null) ctx.replayCursor++;
+        recorded = recordedCalls[ctx.replayCursor] || null;
+        ctx.replayCursor++;
+      }
       // A call the recorded run lost to the deadline is lost the same way
       // here, so the route's answer to a stall is replayed as well.
       if (recorded && !recorded.response && /abort|timed? ?out/i.test(String(recorded.error || ''))) {
         record.error = recorded.error;
-        throw Object.assign(new Error('The operation was aborted (replayed)'), { name: 'AbortError' });
+        noteStall(recorded);
+        throw replayedStall();
+      }
+      // --gemini-deadline in a replay: a reply the recorded run waited longer
+      // than the deadline for is lost to it.
+      if (recorded && recorded.response && REPLAY_DEADLINE_MS && recorded.ms > REPLAY_DEADLINE_MS) {
+        record.error = `AbortError replay: past the ${REPLAY_DEADLINE_MS} ms deadline (the recorded call took ${recorded.ms} ms)`;
+        // Google bills a request we hang up on, so the stalled attempt keeps
+        // the cost the recorded call had, and the totals count both attempts.
+        record.tokens = recorded.tokens;
+        noteStall(recorded);
+        throw replayedStall();
       }
       if (!recorded || !recorded.response) {
         record.error = 'replay: the recorded run made no such call';
@@ -448,6 +522,8 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
     } catch (err) {
       record.ms = RealDate.now() - t0;
       record.error = `${err.status || err.name || ''} ${String(err.message || '').slice(0, 200)}`.trim();
+      // The route may send this call once more (THE ROUTE'S OWN RETRY, above).
+      if (ownDeadline(err)) noteStall(null);
       throw err;
     } finally {
       if (probeTimer) clearTimeout(probeTimer);
@@ -701,6 +777,12 @@ function summarize(results, meta) {
   const deadline = require(path.join(B, 'utils', 'upstream')).UPSTREAM_TIMEOUT_MS.gemini;
   const stalls = calls.filter((c) => c.ms > deadline || (c.error && /abort|timed? ?out/i.test(c.error) && c.ms >= deadline - 50));
   const probes = calls.map((c) => c.retryProbe).filter(Boolean);
+  // Calls lost to the deadline, replayed ones included, and the route's own
+  // retries of them (THE ROUTE'S OWN RETRY, above).
+  const lostToDeadline = (c) => !c.response && /abort|timed? ?out/i.test(String(c.error || ''));
+  const retries = calls.filter((c) => c.retryOf != null);
+  const retryAnswered = retries.filter((c) => c.response).length;
+  const retryStalled = retries.filter(lostToDeadline).length;
   const ms = calls.filter((c) => c.ms).map((c) => c.ms).sort((a, z) => a - z);
   const turnMs = turns.map((t) => t.ms).sort((a, z) => a - z);
   const pct = (arr, p) => (arr.length ? arr[Math.min(arr.length - 1, Math.floor(p * arr.length))] : 0);
@@ -726,6 +808,14 @@ function summarize(results, meta) {
       answeredInTime: probes.filter((p) => p.answered && p.ms <= deadline).length,
       tokens: probes.reduce((n, p) => n + ((p.tokens && p.tokens.total) || 0), 0),
     },
+    stallRetries: {
+      lostToDeadline: calls.filter(lostToDeadline).length,
+      count: retries.length,
+      answered: retryAnswered,
+      stalledAgain: retryStalled,
+      failed: retries.length - retryAnswered - retryStalled,
+      tokens: retries.reduce((n, c) => n + ((c.tokens && c.tokens.total) || 0), 0),
+    },
     http: turns.reduce((m, t) => ({ ...m, [t.status]: (m[t.status] || 0) + 1 }), {}),
     lowercaseStarts: turns.filter((t) => t.info && t.info.lowercaseStart).length,
     blockedNetworkCalls: [...new Set(blocked)],
@@ -740,6 +830,8 @@ function summarize(results, meta) {
   console.log(`latency per model call p50 ${summary.callLatencyMs.p50} ms, p90 ${summary.callLatencyMs.p90} ms, max ${summary.callLatencyMs.max} ms; per answer p50 ${summary.turnLatencyMs.p50} ms, p90 ${summary.turnLatencyMs.p90} ms`);
   console.log(`http: ${JSON.stringify(summary.http)}; model errors: ${summary.modelErrors}${summary.modelErrors ? ` (${summary.modelErrorSamples.join(' | ')})` : ''}`);
   console.log(`calls past the ${deadline} ms deadline: ${stalls.length} of ${calls.length}${probes.length ? `; retry probes ${probes.length}, answered inside the deadline ${summary.retryProbes.answeredInTime}, probe tokens ${summary.retryProbes.tokens}` : ''}`);
+  const sr = summary.stallRetries;
+  console.log(`calls lost to the deadline: ${sr.lostToDeadline}; the route's stall retries: ${sr.count} (answered ${sr.answered}, stalled again ${sr.stalledAgain}, failed ${sr.failed}), retry tokens ${sr.tokens}`);
   console.log(`answers starting lowercase: ${summary.lowercaseStarts} of ${summary.turns}`);
   if (summary.blockedNetworkCalls.length) console.log(`REFUSED network calls: ${summary.blockedNetworkCalls.join(', ')}`);
   if (summary.unexpectedSql.length) console.log(`unanswered queries: ${summary.unexpectedSql.length}`);
