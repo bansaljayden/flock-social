@@ -809,7 +809,10 @@ function countToDo(text, num, prefix, all, alone) {
 // A rounding word may stand in front of it (third round, 2026-11-03):
 // "Nearly half of your reviews mention the wait" and "Nearly 40 of your
 // reviews mention the wait" were never read.
-const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?(?:(?:nearly|almost|about|around|roughly|over|under|just\s+over|just\s+under|well\s+over|well\s+under|more\s+than|less\s+than|fewer\s+than|close\s+to|at\s+least|up\s+to|only|barely|exactly|some)\s+)?$/i;
+// And a time or "another" may too (review of the round): "Last month 50% of
+// your guests came back", "In October 300 people came through your door",
+// "Another 40 guests came in last Friday".
+const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?(?:(?:(?:last|this|next)\s+(?:night|week|weekend|month|year|(?:mon|tues|wednes|thurs|fri|satur|sun)day)|yesterday|today|tonight|in\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*|on\s+(?:mon|tues|wednes|thurs|fri|satur|sun)days?|another)\s+)?(?:(?:nearly|almost|about|around|roughly|over|under|just\s+over|just\s+under|well\s+over|well\s+under|more\s+than|less\s+than|fewer\s+than|close\s+to|at\s+least|up\s+to|only|barely|exactly|some)\s+)?$/i;
 // A share in words says what it is a share of with no "of": "half your
 // guests", "half the room".
 const SHARE_OF_THE_VENUE = /^\s+(?:of\s+)?(?:your|our|their|them|those|these|the\s+(?:room|floor|tables?|seats?|bar|crowd|covers?|guests?|customers?|reviews?|line|door|place|venue|kitchen|staff|regulars?|nights?|week|menu|sales|orders?|bookings?|reservations?))\b/i;
@@ -820,7 +823,7 @@ const SHARE_OF_THE_VENUE = /^\s+(?:of\s+)?(?:your|our|their|them|those|these|the
 // that are never the noun they describe: "your typical spend", "your drink
 // orders" and "two turns" name things.
 const FIRST_CLAIM_VERB = /\b(?:is|are|was|were|has|have|had|come|comes|came|arrive|arrives|arrived|ordered|leave|left|wait|waited|stay|stayed|sit|sits|sat|spent|booked|visited|mention|mentioned|named|say|says|said|complain|complains|complained|cite|cites|cited|praise|praises|praised|rated|walked|showed|paid|tipped|returned|go|goes|went|turned|filled|asked|gave|wanted|brought|skipped|cancell?ed|drank|ate|bought|joined|landed|ran|ended|happen|happens|happened)\b|\b(?:guests|customers|diners|patrons|regulars|visitors|people|reviewers|reviews|covers|tables|seats|bookings|parties|groups)\s+(?:\w+\s+)?(?:order|book|visit|spend|walk|show|pay|tip|rate|return|turn|ask|give|want|bring|skip|cancel|drink|eat|buy|join)\b/i;
-const NUMBER_FIRST_CLAIM = /^\s*(?:%|percent|per\s+cent)?\s*(?:of\s+(?:them|those|these|your|our)\b|(?:[a-z'-]+\s+){0,3}(?:mentioned|came|walked|left|waited|ordered|booked|visited|complained|said|named|showed|stayed|spent|paid|returned|went|rated|gave|praised|asked|cancell?ed|arrived|turned|sat|ate|drank|bought|tipped|joined|mention|mentions|names|says|complain|complains|praise|praises|cites)\b)/i;
+const NUMBER_FIRST_CLAIM = /^\s*(?:%|percent|per\s+cent)?\s*(?:of\s+(?:them|those|these|your|our)\b|(?:out\s+of|in)\s+(?:\d+|ten|twenty|five|four|three|two|hundred|a\s+hundred)\s+(?:of\s+)?(?:your|our|them|those|these|the)\b|(?:[a-z'-]+\s+){0,3}(?:mentioned|came|walked|left|waited|ordered|booked|visited|complained|said|named|showed|stayed|spent|paid|returned|went|rated|gave|praised|asked|cancell?ed|arrived|turned|sat|ate|drank|bought|tipped|joined|mention|mentions|names|says|complain|complains|praise|praises|cites)\b)/i;
 const NUMBER_FIRST_SUGGESTION = /\b(?:should|would|could|can|might|may|aim|aims|target|goal|ceiling|cap|limit|plenty|enough|sensible|healthy|ideal|needs?\s+to|to\s+be|if|when|equals|adds?\s+up\s+to|comes?\s+to)\b|\bis\s+(?:about\s+|roughly\s+|around\s+)?\$|=/i;
 function numberFirstClaim(text, num, prefix) {
   const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
