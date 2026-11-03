@@ -410,3 +410,39 @@ test('past questions reach the recap and the routes the date work took back go w
     assert.strictEqual(advisorFreeText.offlineRoute(q).intentId, intentId, q);
   }
 });
+
+// ── The first live eval since 10-28 (2026-11-03) ────────────────────────────
+
+test('a past day asked the other ways owners ask it reaches the recap, and the future and the weather keep theirs', () => {
+  for (const [q, intentId] of [
+    ['was last friday any good', 'week_recap'],
+    ['were we busy on saturday', 'week_recap'],
+    ['was it dead last tuesday', 'week_recap'],
+    ['was sunday dead', 'week_recap'],
+    ['was saturday night any good', 'week_recap'],
+    ['how was saturday', 'week_recap'],
+    ['how did friday go?', 'week_recap'],
+    ['how busy was the weekend', 'week_recap'],
+    ['how slow was it on the weekend', 'week_recap'],
+    ['how was yesterday', 'last_night_verdict'],
+    ['how is saturday looking', 'peak_hours'],
+    ['how busy will friday be', 'peak_hours'],
+    ['why was saturday so slow', 'slow_night'],
+    ['how was the weather on saturday', 'around_you'],
+    ['how are our tables running', 'tables_service'],
+    ['how long are tables sitting on fridays', 'tables_service'],
+  ]) {
+    assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId }, q);
+  }
+});
+
+test('a crowd that goes home early is advice on the leaving hour, and "is everyone slow" is still the street', () => {
+  for (const said of ['people leave at midnight', 'everyone is gone by midnight', 'everyone leaves by midnight', 'the crowd thins out after 1']) {
+    const { route, answer } = offlineAnswer(said, CLUB);
+    assert.deepStrictEqual(route, { mode: 'advice', intentId: null }, said);
+    assert.strictEqual(answer.tactics[0], 'events_program_leaving_hour', said);
+  }
+  for (const q of ['is everyone slow tonight', 'was it just us or everyone']) {
+    assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId: 'cohort_same_night' }, q);
+  }
+});

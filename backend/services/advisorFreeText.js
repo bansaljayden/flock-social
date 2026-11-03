@@ -871,7 +871,10 @@ const OFFLINE_INTENT_CUES = [
   // A day or weekend that has already happened is the week's recap, not a
   // forecast: "how did last weekend go", "was last friday good", "how busy was
   // saturday", and "how did we do tuesday" after "how did we do yesterday".
-  ['week_recap', /\b(?:(?:last|this\s+past)\s+weekend|how\s+(?:did|was)\s+(?:the|our)\s+weekend|(?:was|how\s+was|how\s+did)\s+last\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day|how\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:was|were)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?)\b/i],
+  // The same question asked the other ways owners ask it (2026-11-03): "were
+  // we busy on saturday", "was sunday dead", "how was saturday", "how did
+  // friday go", "how busy was the weekend".
+  ['week_recap', /\b(?:(?:last|this\s+past)\s+weekend|how\s+(?:did|was)\s+(?:the|our)\s+weekend|(?:was|how\s+was|how\s+did)\s+last\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day|how\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:was|were)\b[^.?!]{0,20}\b(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|weekend)|(?:was|were)\s+(?:we|it|the\s+(?:room|place|bar|floor|club|cafe|restaurant))\s+(?:very\s+|really\s+|that\s+|so\s+)?(?:busy|full|packed|dead|slow|quiet|good|any\s+good)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)day|(?:was|how\s+was)\s+(?:this\s+past\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)day(?:\s+night)?\s+(?:busy|full|packed|dead|slow|quiet|good|any\s+good|ok(?:ay)?|decent|bad)|how\s+(?:was|did)\s+(?:this\s+past\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)day(?:\s+night)?(?:\s+go)?(?=\s*[?.!]|\s*$))\b/i],
   ['last_night_verdict', /\b(?:yesterday|last\s+night|how\s+did\s+(?:we|i)\s+do|how\s+(?:was|were)\s+(?:we|it|things)\b)/i],
   // Frustration is a request for the venue's own news, the way the router
   // reads it (advisorPrompt, FRUSTRATION IS NOT A ROUTE).
@@ -889,7 +892,9 @@ const OFFLINE_INTENT_CUES = [
   ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking)|(?:what\s+does|how\s+does|how\s+is|how's)\s+next\s+week\s+(?:look|looking))\b/i, KITCHEN],
   // Tomorrow is in the week-ahead forecast; today's outlook covers today only.
   ['peak_hours', /\btomorrow\b/i, KITCHEN],
-  ['cohort_same_night', /\b(?:everyone|everybody|whole\s+(?:street|strip|block|area|town)|just\s+(?:us|me))\b/i],
+  // "Is everyone slow" is the street; "everyone leaves by midnight" is the
+  // owner's own crowd going home, which is advice (2026-11-03).
+  ['cohort_same_night', /\b(?:(?:everyone|everybody)\b(?!\s+(?:leaves|left|is\s+gone|was\s+gone|goes\s+home|went\s+home|clears\s+out|heads\s+(?:out|home)))|whole\s+(?:street|strip|block|area|town)|just\s+(?:us|me))\b/i],
   ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places)|(?:busier|slower|quieter)\s+than\s+(?:other|the\s+other|most|similar)\s+(?:bars|places|venues|restaurants|cafes|spots|clubs))\b/i],
   ['weekend_outlook', /\bweekends?\b/i],
   ['tonight_outlook', /\b(?:today|tonight|this\s+(?:morning|afternoon|evening))\b/i],
@@ -907,7 +912,7 @@ const OFFLINE_INTENT_CUES = [
 
 // The words of a question about running or growing the business rather than
 // reading its numbers. Any one of them makes the question advice.
-const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|lost\s+money|cash\s+flow|struggl\w*|killing\s+(?:me|us)|nobody\s+comes|no\s+one\s+comes|people\s+leave|walk\s*outs?|quit\w*|turnover|complain\w*|takes\s+forever|too\s+slow|wait\s+times?|too\s+long|families|kids|children|out\s+the\s+door|how\s+to\b|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|doordash|uber\s*eats|grubhub|postmates|seamless|deliveroo|caviar|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
+const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|lost\s+money|cash\s+flow|struggl\w*|killing\s+(?:me|us)|nobody\s+comes|no\s+one\s+comes|people\s+leave|(?:everyone|everybody|the\s+crowd|our\s+crowd|guests|people)\s+(?:leaves|left|(?:is|are)\s+gone|goes\s+home|go\s+home|clears?\s+out|thins?\s+out|heads?\s+(?:out|home))|(?:the\s+)?room\s+empties|walk\s*outs?|quit\w*|turnover|complain\w*|takes\s+forever|too\s+slow|wait\s+times?|too\s+long|families|kids|children|out\s+the\s+door|how\s+to\b|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|doordash|uber\s*eats|grubhub|postmates|seamless|deliveroo|caviar|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
 
 /**
  * Route a question with no model: {mode, intentId} or null when nothing in it
@@ -951,6 +956,40 @@ const VAGUE_WORDS = new Set([
 function vagueQuestion(question) {
   const words = normalizeOwnerText(String(question || '')).match(/[a-z0-9']+/g) || [];
   return words.length > 0 && words.length <= 6 && words.every((w) => VAGUE_WORDS.has(w));
+}
+
+// ── Two router answers the question's own words overrule ─────────────────────
+//
+// THE FIRST LIVE GEMINI EVAL SINCE 10-28 (2026-11-03) FOUND THREE GOOD
+// QUESTIONS REFUSED BY THE ROUTER, and none of the refusals protected anyone.
+// "How busy was Saturday" (a cafe and a bar) and "was last Friday any good" (a
+// bar) were routed to the table sensor, and a venue with no table unit was
+// told "No table unit is installed". "People leave at midnight" (a club) was
+// told to say more. The prompt has been corrected; these two rules hold
+// whatever a future model makes of it.
+//
+//   1. A table route for a question that names no table. When the question's
+//      own words place it on another reading of the venue's numbers (the
+//      week's recap for a past day, yesterday's verdict), that reading
+//      answers. A question that is about the tables keeps the table route,
+//      and a venue with no table unit is still told so.
+//   2. "Tell us a little more" said of a question the owner's words place.
+//      unclear_ask is the one refusal that is not a boundary: it says we could
+//      not tell what was asked. When the offline reading can tell, and the
+//      message is not all vague words ("what should I do" stays refused), the
+//      question is answered. Every other refusal reason keeps its word, and
+//      the class check below still runs on whatever this lets through.
+const TABLE_INTENTS = new Set(['tables_service', 'tables_free']);
+function settledRoute(route, question) {
+  if (route.mode === 'refused' && route.why === 'unclear_ask' && !vagueQuestion(question)) {
+    const placed = offlineRoute(question);
+    if (placed) return placed;
+  }
+  if (route.mode === 'grounded' && TABLE_INTENTS.has(route.intentId)) {
+    const placed = offlineRoute(question);
+    if (placed && placed.mode === 'grounded' && !TABLE_INTENTS.has(placed.intentId)) return placed;
+  }
+  return route;
 }
 
 // ── The router (mode classification) ────────────────────────────────────────
@@ -1060,10 +1099,11 @@ async function classify({ userId, question }) {
     return { mode: 'refused', intentId: null, refusal: unplaced };
   }
 
-  const route = parseRoute(raw);
+  const parsed = parseRoute(raw);
   // Unparseable: the router wrote something that is not one of the three
   // routes, so nothing understood the question and the copy says exactly that.
-  if (!route) return { mode: 'refused', intentId: null, refusal: REFUSAL_UNROUTABLE };
+  if (!parsed) return { mode: 'refused', intentId: null, refusal: REFUSAL_UNROUTABLE };
+  const route = settledRoute(parsed, question);
   // A question about Roost itself is answered, not declined: it gets the
   // pitch, drawn in the normal ink.
   if (route.mode === 'refused' && route.why === 'about_roost') {

@@ -1217,3 +1217,117 @@ test('with ROOST_PLAYBOOK_FIRST a model call for a question the router never saw
     delete process.env.ROOST_PLAYBOOK_FIRST;
   }
 });
+
+// ── 9. What the first live eval since 10-28 found (2026-11-03) ──────────────
+//
+// The router sent "how busy was Saturday" and "was last Friday any good" to
+// the table sensor, so a cafe and a bar with no table unit were told "No table
+// unit is installed", and it told a club owner who typed "people leave at
+// midnight" to say more. Pinned through the real route, whatever the router
+// answers.
+
+// A venue's facts with or without a table unit: the table plan refuses
+// without one, and the recap carries the owner's own readings.
+function installVenueFacts({ tables }) {
+  advisorRouter.__setFactsForTests(async (_userId, intentId) => {
+    if (intentId === 'tables_service' || intentId === 'tables_free') {
+      return tables
+        ? {
+          intent: intentId,
+          facts: [{ id: 'tables_friday', value: { weekday: 'Friday', turnMinutes: 74, waitedPercent: 18 }, source: 'table_sensor', asOf: '2026-11-02', label: 'On Fridays a party sits about 74 minutes, and 18% of seatings waited for a server.' }],
+          refusals: [],
+        }
+        : { intent: intentId, facts: [], refusals: ['No table unit is installed.'] };
+    }
+    if (intentId === 'week_recap') {
+      return {
+        intent: intentId,
+        facts: [
+          { id: 'owner_reading_2026-10-31', value: { date: '2026-10-31', weekday: 'Saturday', peakReading: 84, readings: 3 }, source: 'owner_report', asOf: '2026-10-31', label: 'Your highest reading on Saturday Oct 31 was 84, from 3 readings.' },
+          { id: 'owner_reading_2026-10-27', value: { date: '2026-10-27', weekday: 'Tuesday', peakReading: 34, readings: 3 }, source: 'owner_report', asOf: '2026-10-27', label: 'Your highest reading on Tuesday Oct 27 was 34, from 3 readings.' },
+        ],
+        refusals: [],
+      };
+    }
+    return { ...GROUNDED_BLOCK(), intent: intentId };
+  });
+}
+const TABLES_ROUTE = '{"mode":"grounded","intentId":"tables_service"}';
+const UNCLEAR = '{"mode":"refused","intentId":null,"why":"unclear_ask"}';
+
+test('a past day the router sends to the table sensor is answered from the owner\'s own readings, with or without a table unit', async () => {
+  for (const tables of [false, true]) {
+    for (const q of ['how busy was saturday', 'was last friday any good', 'were we busy on saturday', 'how was saturday', 'how busy was the weekend']) {
+      resetAll();
+      installProfile();
+      installVenueFacts({ tables });
+      replies = [TABLES_ROUTE, JSON.stringify({ answer: 'Your busiest day was {{fact:owner_reading_weekday}}, at {{fact:owner_reading_peakReading}}.', points: [] })];
+      const r = await ask(q);
+      assert.strictEqual(r.body.intentId, 'week_recap', `${q} (table unit: ${tables})`);
+      assert.strictEqual(r.body.mode, 'phrased', `${q} (table unit: ${tables})`);
+      assert.ok(!/table unit/i.test(r.body.text), q);
+    }
+  }
+  // Yesterday is yesterday's verdict, wherever the router sent it.
+  resetAll();
+  installProfile();
+  installVenueFacts({ tables: false });
+  replies = [TABLES_ROUTE, 'Your busiest stretch is around {{fact:peak_hour}}.'];
+  const r = await ask('how was yesterday');
+  assert.strictEqual(r.body.intentId, 'last_night_verdict');
+  assert.notStrictEqual(r.body.mode, 'refusal');
+});
+
+test('a question about the tables keeps the table route, and a venue with no table unit is still told so', async () => {
+  resetAll();
+  installProfile();
+  installVenueFacts({ tables: false });
+  replies = [TABLES_ROUTE];
+  let r = await ask('how are our tables running');
+  assert.strictEqual(r.body.intentId, 'tables_service');
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.match(r.body.text, /No table unit is installed/);
+
+  resetAll();
+  installProfile();
+  installVenueFacts({ tables: true });
+  replies = [TABLES_ROUTE, JSON.stringify({ answer: 'On {{fact:tables_friday_weekday}} a party sits {{fact:tables_friday_turnMinutes}}.', points: [] })];
+  r = await ask('how long are tables sitting on fridays');
+  assert.strictEqual(r.body.intentId, 'tables_service');
+  assert.strictEqual(r.body.mode, 'phrased');
+  assert.match(r.body.text, /74 minutes/);
+});
+
+test('"tell us a little more" is not said to a problem stated plainly, and stays for a message that names nothing', async () => {
+  for (const q of ['people leave at midnight', 'everyone is gone by midnight']) {
+    resetAll();
+    installProfile();
+    replies = [UNCLEAR, JSON.stringify({ answer: 'Put your strongest draw just before the room starts to thin.', points: ['Keep the opening sets easy so the crowd lasts.'] })];
+    const r = await ask(q);
+    assert.strictEqual(r.body.mode, 'advice', q);
+    assert.match(r.body.text, /^Put your strongest draw/, q);
+    assert.strictEqual(modelCalls.length, 2, 'the advice model wrote it');
+  }
+  for (const q of ['what should I do', 'any ideas?', 'help']) {
+    resetAll();
+    installProfile();
+    replies = [UNCLEAR];
+    const r = await ask(q);
+    assert.strictEqual(r.body.mode, 'refusal', q);
+    assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_BY_REASON.unclear_ask, q);
+  }
+  // The class check still stands behind it.
+  resetAll();
+  installProfile();
+  replies = [UNCLEAR];
+  let r = await ask('can my staff work late unpaid');
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.strictEqual(modelCalls.length, 1, 'no advice was written for an employment question');
+  // And every other refusal keeps its word, even where the words would place it.
+  resetAll();
+  installProfile();
+  replies = ['{"mode":"refused","intentId":null,"why":"outside_trade"}'];
+  r = await ask('how do I get more customers');
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.strictEqual(modelCalls.length, 1);
+});

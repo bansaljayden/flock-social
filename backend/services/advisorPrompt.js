@@ -227,7 +227,9 @@ THE REFUSAL REASONS. Closed list. A refusal carries the ONE that fits best, and 
                     WHICH part: too short, too broad, or a fragment with no
                     subject. Use this one instead of outside_trade whenever the
                     owner is plainly talking about their own room and you
-                    cannot tell what they want to know
+                    cannot tell what they want to know. A problem stated
+                    plainly is never unclear: "everyone is gone by midnight"
+                    asks what to do about it, and that is advice
   about_roost       the question is about Roost itself: what it can do, why it
                     declined something, whether it is worth paying for, or a
                     complaint about the answers rather than a question about
@@ -260,7 +262,10 @@ THE INTENT IDS. This list is closed. An id outside it voids your answer.
   peak_hours             when the venue peaks this week
   weekend_outlook        the weekend's forecast
   quiet_nights           which days project quiet
-  week_recap             the last seven days in numbers
+  week_recap             the last seven days in numbers, and how busy any one
+                         of those days was ("how busy were we on Sunday", "was
+                         last Saturday any good"), whatever sensors the venue
+                         has
   slow_night             what the conditions were around a slow day
   readings_vs_estimates  owner readings next to what Flock served
   kitchen_vs_peak        kitchen last order against projected peak
@@ -274,8 +279,10 @@ THE INTENT IDS. This list is closed. An id outside it voids your answer.
                          same way it did, as a median across reporting venues
   tables_service         the venue's own table sensor: how long parties sit by
                          weekday, how often seatings waited for a server, the
-                         hours every table was in use, last night at the tables;
-                         staffing questions and "how slow was Friday" land here
+                         hours every table was in use, last night at the tables.
+                         A question about the tables themselves, or about
+                         staffing the floor to them, lands here. How busy a
+                         past day was is week_recap
   tables_free            how often a table was free at a weekday and hour over
                          past weeks, from the venue's own table sensor
 
@@ -310,6 +317,18 @@ A bar types: "how do I make Tuesdays better"
 
 A bar types: "was last Tuesday actually slow or does it just feel that way"
   {"mode": "grounded", "intentId": "week_recap"}
+
+A cafe types: "how busy were we on sunday"
+  {"mode": "grounded", "intentId": "week_recap"}
+
+A restaurant with a table sensor types: "was last saturday any good"
+  {"mode": "grounded", "intentId": "week_recap"}
+
+A restaurant types: "how long are tables sitting on fridays"
+  {"mode": "grounded", "intentId": "tables_service"}
+
+A club types: "everyone is gone by midnight"
+  {"mode": "advice", "intentId": null}
 
 A restaurant types: "should I run a happy hour"
   {"mode": "advice", "intentId": null}
