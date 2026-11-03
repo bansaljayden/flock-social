@@ -64,6 +64,45 @@ table, the ship switch and rollback. What a readiness audit of every step on
   is set to `model` on the main service: `curve_offset` never runs a model.
   Setting it back to `curve_offset` is the rollback.
 
+**2026-11-02: decisions recorded before the November export.**
+
+- **When.** The export waits until the BestTime plan's current cycle, which
+  runs to 2026-11-29, has been used to its end, so the run holds every live
+  reading the plan buys. No crowd training runs while another model trains on
+  the same machine.
+- **Comparator.** Rule (b), as registered: `--incumbent-serve=curve_offset+nowcast`,
+  pinned in `mlRetrainReadiness.test.js`. Production has served v2.6.0-starling
+  in model mode (quantile map, model-table nowcast) since the evening of
+  2026-11-01, so a candidate that ships changes users' numbers when it deploys
+  (the bullet above about `CROWD_SERVE_MODE` predates that). Production as
+  served is scored on the gate's readings after the verdict is written,
+  decides nothing, and is reported under its own label.
+- **Recipe.** The code as committed. Three lines of the 09-25 plan below are
+  made by no script and are not in the gated run: `reg:absoluteerror`
+  ("Target and calibration"), dropping Beijing ("Labels", item 4), and
+  dropping `is_school_break`, the four user-feedback features and
+  `etype_family` ("Features"; the constant ones stay as named dead slots).
+  Each runs after the verdict as an exploratory ablation, never as the result.
+- **No-curve fallback.** Its table was measured with v2.6.0-starling only
+  (`NO_CURVE_FALLBACK_FITTED_ON`), and any other version switches it off.
+  Before a candidate ships, its own table is re-measured on the new export
+  with `train/noCurveFallbackEval.js --from=<time_holdout.from_date>
+  --allow-version=<its model_version>`. The constant, the measured figure and
+  their tests move in the ship commit only if it still beats the rule engine;
+  otherwise the candidate ships with the rule engine for those venues, and
+  this file says so.
+- **What the later export changes, with no code change.** The 14-day window
+  falls in late November, so the fill-city readings taken from 2026-10-30
+  until the window opens train the gated candidate. "The gate's cities" below
+  was written for an early-November export, in which all of them would have
+  been held out; its reasons for the six-city verdict stand, because about
+  half the window's readings are still fill-city readings and
+  `no city regresses` would still bind about 30 cities. And with more than a
+  million live training readings, `FLOCK_WEEKLY_ANCHOR_WEIGHT=auto` sits at
+  its 0.05 ceiling, so live rows carry about 90% of the loss rather than the
+  80% described below; `sample_weight_policy.realtime_loss_share` records the
+  share the run trained with.
+
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
 Lehigh's 7,276 live readings of 09-01..09-08 and Miami's 730 of 09-05..09-08,
