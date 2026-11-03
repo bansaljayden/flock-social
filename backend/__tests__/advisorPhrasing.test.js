@@ -350,6 +350,21 @@ test('each payload fact carries the words its placeholder becomes, where they di
   assert.match(advice, /"id":"tables_friday_turnMinutes","value":74,"reads":"about 74 minutes"/);
 });
 
+// "That puts the night 15 points under your normal range" (a club, 2026-11-03):
+// the model took the verdict's floor of 15 for the gap, which was 18.
+test('yesterday\'s verdict reaches the model without the rule\'s own working', () => {
+  const ids = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{
+    id: 'last_day_verdict_2026-11-02',
+    value: { date: '2026-11-02', weekday: 'Monday', verdict: 'below', reading: 8, baseline: 26, baselineKind: 'same_weekday', comparisonDays: 6, delta: -18, threshold: 15, spread: 6, floorPoints: 15 },
+    source: 'arithmetic',
+    asOf: '2026-11-02',
+  }])).map((f) => f.id);
+  for (const working of ['threshold', 'spread', 'floorPoints']) {
+    assert.ok(!ids.some((id) => id.endsWith(`_${working}`)), `${working} reached the model`);
+  }
+  assert.ok(ids.includes('last_day_verdict_delta') && ids.includes('last_day_verdict_baseline') && ids.includes('last_day_verdict_reading'));
+});
+
 test('both payloads name every placeholder id the block carries, once, after the block', () => {
   const facts = [{ id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' }, { id: 'peak_score', value: 91, source: 'model_holdout', asOf: '2026-11-03' }];
   const chip = advisorPhrasing.internals.buildUserPayload('peak_hours', facts, [], 'When do we peak this week?');

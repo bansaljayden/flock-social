@@ -932,6 +932,16 @@ function vendorQuantity(value) {
   return hasNumerals(value);
 }
 
+// THE RULE'S OWN WORKING IS NOT A FACT ABOUT THE ROOM. Yesterday's verdict
+// carries the mark a day has to clear before it is called anything (threshold,
+// spread, floorPoints, all 15 or near it), and in the 2026-11-03 live eval a
+// club's answer read "That puts the night 15 points under your normal range":
+// the model took {{fact:last_day_verdict_floorPoints}} for the gap, which was
+// 18. Those parts never reach the model. The fact's label and note still
+// explain the mark, the template still prints them, and the check still reads
+// them.
+const WORKING_PARTS = new Set(['threshold', 'spread', 'floorPoints']);
+
 function flattenFacts(facts) {
   const out = [];
   const keep = (fact) => {
@@ -948,7 +958,7 @@ function flattenFacts(facts) {
   for (const f of facts) {
     if (f && f.value !== null && typeof f.value === 'object' && !Array.isArray(f.value)) {
       for (const [k, v] of Object.entries(f.value)) {
-        if (v === null) continue;
+        if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
         keep({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
       }
