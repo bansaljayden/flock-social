@@ -632,12 +632,18 @@ const AFTER_COUNT_STOP = /^(?:at|on|in|by|from|to|for|of|with|over|across|during
 // limes". After the owner's own verb, a plain count is a reading when it
 // counts the room or stands alone ("you see 300", "you fill 40 seats", "we do
 // 300 on a Friday", "you see 3 times the traffic"); a count of anything else
-// is what the owner does. A clock after a verb the owner operates something
-// with ("open", "close", "start", "book") is a reading when only a timing word
-// stands between ("you open at 7 AM"), never the time an object is opened at.
+// is what the owner does, after a verb the owner operates something with
+// ("open", "post", "book", "order", "host"). After any other verb a count is
+// what the room did ("you sell 200 croissants", "you see 300 folks"), unless
+// it counts the owner's staff ("you see 300 people with two servers on"). A
+// clock after an operating verb is the time a counted thing is opened or
+// closed at ("you open 2 registers at 5 PM"); "you open at 7 AM" and "you
+// open the doors at 5 PM" are the venue's hours, a reading.
 const OWNER_DOES = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(${BASE_VERB.source})\\b((?:\\s+[^\\s,;:.!?]+){0,3})\\s*$`, 'i');
 const OWNER_OPERATES = /^(?:open|close|start|end|post|book|order|host|run|hold)$/i;
-const ROOM_COUNTS = /^(?:people|persons?|guests?|customers?|diners?|visitors?|patrons?|regulars?|walk-?ins?|heads?|covers?|seats?|tables?|tops|parties|party|groups?|bookings?|reservations?|orders?|checks?|tickets?|sales?|transactions?|visits?|turns?|seatings?|sittings?|drinks?|cocktails?|pints?|beers?|glasses|bottles?|shots?|coffees?|cups?|lattes?|plates?|meals?|dishes|entrees?|mains?|desserts?|pastries|loaves|items?|units?|reviews?|ratings?|stars?|complaints?|mentions?|deliveries|calls?|views?|clicks?|likes?|followers?|impressions?|comments?|lookups?|searches|nights?|rushes|rush|peaks?|waves?|spikes?|crowds?|lines?|percent|points?)$/i;
+const ROOM_COUNTS = /^(?:people|persons?|guests?|customers?|diners?|visitors?|patrons?|regulars?|walk-?ins?|heads?|folks|locals?|students?|famil(?:y|ies)|couples?|tourists?|fans?|members?|clients?|kids?|punters?|attendees?|partygoers?|drinkers?|shoppers?|commuters?|workers?|teens?|adults?|seniors?|parents?|bodies|souls|covers?|seats?|tables?|tops|parties|party|groups?|bookings?|reservations?|orders?|checks?|tickets?|sales?|transactions?|visits?|turns?|seatings?|sittings?|drinks?|cocktails?|pints?|beers?|glasses|bottles?|shots?|coffees?|cups?|lattes?|plates?|meals?|dishes|entrees?|mains?|desserts?|pastries|loaves|items?|units?|reviews?|ratings?|stars?|complaints?|mentions?|deliveries|calls?|views?|clicks?|likes?|followers?|impressions?|comments?|lookups?|searches|nights?|rushes|rush|peaks?|waves?|spikes?|crowds?|lines?|percent|points?)$/i;
+const STAFF = /^(?:servers?|bartenders?|staff(?:ers)?|hosts?|hostess(?:es)?|cooks?|chefs?|baristas?|runners?|bussers?|barbacks?|dishwashers?|managers?|bouncers?|security|guards?|djs?|employees?|waiters?|waitress(?:es)?|waitstaff|crew)$/i;
+const COUNTED_OBJECT = /^(?:\d+|a|an|another|one|two|three|four|five|six|seven|eight|nine|ten|extra|second|third)$/i;
 // What the owner opens, closes, holds or runs: "you hold 2 tables for
 // walk-ins" sets two aside, where "you book 40 tables" counts bookings.
 const OWNER_RESOURCE = /^(?:tables?|seats?|sections?|stations?|registers?|tills?|lanes?|lines?|rooms?|areas?|tops|bars?|patios?|windows?)$/i;
@@ -648,28 +654,29 @@ function ownerActs(text, num, prefix) {
   const m = OWNER_DOES.exec(prefix);
   if (!m) return false;
   const verb = m[1].toLowerCase();
+  const operates = OWNER_OPERATES.test(verb);
   if (num.dim === 'clock') {
-    return OWNER_OPERATES.test(verb) && m[2].trim().split(/\s+/).filter(Boolean).some((w) => !TIMING_WORD.test(w));
+    return operates && m[2].trim().split(/\s+/).some((w) => COUNTED_OBJECT.test(w));
   }
   // The owner's own time: "you take 2 hours to plan the specials".
   if (num.dim === 'duration') return verb === 'take';
   if (num.dim !== 'plain') return false;
-  const operates = OWNER_OPERATES.test(verb) && verb !== 'book';
   const words = text.slice(num.index + num.length).split(/[,;:.!?()]/)[0].trim().split(/\s+/).filter(Boolean).slice(0, 3);
   let named = false;
   for (let k = 0; k < words.length; k += 1) {
     const w = words[k].replace(/[^A-Za-z'’-]/g, '');
-    if (operates && OWNER_RESOURCE.test(w)) return true;
+    if (STAFF.test(w)) return true;
+    if (operates && verb !== 'book' && OWNER_RESOURCE.test(w)) return true;
     if (ROOM_COUNTS.test(w)) return false;
     // How often: what the owner does ("you post 3 times a week") after a verb
     // they operate with, what the room does ("you sell out 3 times a month",
     // "3 times the traffic") after any other.
-    if (/^(?:times|x)$/i.test(w)) return OWNER_OPERATES.test(verb) && !/^(?:the|as|more|your|our|that|what)$/i.test(words[k + 1] || '');
+    if (/^(?:times|x)$/i.test(w)) return operates && !/^(?:the|as|more|your|our|that|what)$/i.test(words[k + 1] || '');
     if (COUNT_MODIFIER.test(w)) continue;
-    if (AFTER_COUNT_STOP.test(w)) return named;
+    if (AFTER_COUNT_STOP.test(w)) return operates && named;
     named = true;
   }
-  return named;
+  return operates && named;
 }
 
 // A RATE PER THING IS A PRICE OR A CUT, NEVER THE VENUE'S TAKINGS (re-check

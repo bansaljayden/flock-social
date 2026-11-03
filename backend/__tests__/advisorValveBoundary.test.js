@@ -684,7 +684,6 @@ test('what the owner does or sets out is advice, and what the room does after th
     'Every shift you open 2 registers at 5 PM.',
     'You post 3 times a week on Instagram.',
     'You open 2 more tables on the patio at 8 PM.',
-    'You close the patio at 10 PM on weeknights.',
     'You order 3 cases of limes every Monday.',
     'Every Thursday you host 2 trivia rounds.',
     'You book 2 DJs a month.',
@@ -706,7 +705,18 @@ test('what the owner does or sets out is advice, and what the room does after th
     'Every Friday you host 300 guests.',
     'You hold 120 people on a Friday.',
     'You average 45 minutes a table.',
+    // After a verb the owner does not operate with, a count of anything is
+    // what the room did, and an operating verb's clock is the venue's hours
+    // unless what it opens is counted.
+    'On Saturdays you sell 200 croissants.',
+    'On Fridays you see 300 folks.',
+    'You serve 200 brunches on Sundays.',
+    'Every Friday you host 300 locals.',
+    'You open the doors at 5 PM.',
+    'You close the patio at 10 PM on weeknights.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  // The owner's staff are no reading of the room.
+  assert.ok(freeText.applyAdviceValve('On Fridays you see 300 people with two servers on.', ADVICE_FACTS(), { texts: ['we see about 300 people on fridays, how many servers do we need'] }));
 });
 
 test('one day or the room doing it, in the third person or the past, is a reading too', () => {
