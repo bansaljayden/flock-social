@@ -388,8 +388,10 @@ test('the rules about WHEN to call a tool survive', () => {
 test('a quiet or seat-now ask is decided by the crowd numbers it already has', () => {
   // On the Birdie eval, "somewhere ... with a chill vibe" checked two spots
   // and sent them to the one at 79 over the one at 68, and "hungry. cheap.
-  // now." picked 79 over 62 with two tables open.
-  assert.match(adult(), /When they want it quiet, chill, or a seat right now, the crowd numbers and open tables you have decide the pick: never send them to the busier of two spots you checked\./);
+  // now." picked 79 over 62 with two tables open. Now that a result says how
+  // far each spot is, "right now" is not sent an hour's walk away for a
+  // quieter room.
+  assert.match(adult(), /When they want it quiet, chill, or a seat right now, the crowd numbers and open tables you have decide the pick: never send them to the busier of two spots you checked, unless they want it right now and the quieter one is a mile or more farther by `distance_miles`\./);
 });
 
 test('"is it busy" with no place named is asked back, never guessed', () => {
