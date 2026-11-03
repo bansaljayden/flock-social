@@ -110,6 +110,8 @@ test('a staged card is not a done deed', () => {
   assert.ok(!grade('Mango Street Tacos is on a card below, tap to add it to the vote.', { expect: { noClaim: true } }).problems.some((p) => /stages/.test(p)));
   // Putting it on the card is what a staged card is (a live run's answer).
   assert.ok(!grade('I put Mango Street Tacos on the vote card for Friday dinner. Tap confirm to send it to the group.', { expect: { noClaim: true } }).problems.some((p) => /stages/.test(p)));
+  // The tool's own word read back (a live run's answer, F03).
+  assert.ok(grade('Staged Mango Street Tacos onto the vote for Friday dinner.', { expect: { noClaim: true } }).problems.some((p) => /reads "staged" back/.test(p)));
 });
 
 test('a quiet ask is not sent to the busier of two spots the turn checked', () => {

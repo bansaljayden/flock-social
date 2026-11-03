@@ -340,6 +340,13 @@ const BIRDIE_SAFETY_CUT_MESSAGE = "tap below to open Safety and send your locati
 const BIRDIE_VOTE_CUT_MESSAGE = "the card's below. tap Vote for it to put it on the vote";
 const BIRDIE_PLAN_CUT_MESSAGE = "your plan's below. tap Start this flock when it looks right";
 const BIRDIE_NAV_CUT_MESSAGE = 'tap Take me there below';
+// The same buttons, described to the model in the staged tool results, the
+// way navigate_app describes its own. Told only that a card was staged, the
+// model read the result back: "Staged Mango Street Tacos onto the vote for
+// Friday dinner", in a field's word, and once "I put it on the vote card",
+// which reads as done.
+const BIRDIE_VOTE_BUTTON = 'A card with a "Vote for it" button is under your reply. Nothing has changed yet: tapping it puts their vote on this spot in that plan. Point them to the button, and never say the spot was added, staged or voted for.';
+const BIRDIE_PLAN_BUTTON = 'A plan card with a "Start this flock" button is under your reply. Nothing exists yet: tapping it starts the plan. Point them to the button, and never say the plan was made, set up, staged or sent.';
 
 // A PLAIN NO TO DRINKING UNDER 21, WHATEVER THE MODEL WROTE (2026-11-03). The
 // hard rules answer an ask about drinking under 21, getting past an ID or a
@@ -2085,6 +2092,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       }
       return {
         drafted: true,
+        // What the person sees, said the way navigate_app says its button,
+        // so the reply points at the card instead of reading this result
+        // back ("Staged ... onto the vote", on the Birdie eval).
+        button: BIRDIE_PLAN_BUTTON,
         name: rawName.slice(0, 60),
         event_time: eventTime,
         ...(eventTimeLocal ? { event_time_local: eventTimeLocal } : {}),
@@ -2123,6 +2134,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       }
       return {
         staged: true,
+        button: BIRDIE_VOTE_BUTTON,
         flock_id: flockId,
         flock_name: flockName,
         venue: {

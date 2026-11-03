@@ -1249,6 +1249,26 @@ test("a staged vote's venue is the Places row, rating and price included", async
   }, 'the vote card carries details the model typed rather than the ones Google returned');
 });
 
+// The model is told what the person sees, the way navigate_app tells it.
+// Told only that a card was staged, it read the result back on the Birdie
+// eval: "Staged Mango Street Tacos onto the vote for Friday dinner".
+test('a staged card tells the model which button is under the reply, and that text stays off the card', async () => {
+  dbVoteMembership = [{ name: 'Taco Tuesday', status: 'planning' }];
+  sendImpl = searchThen('add_venue_to_vote', { flock_id: 42, place_id: 'PLACE_CLEAN' });
+  const vote = await chat();
+  assert.strictEqual(vote.status, 200);
+  assert.match(stagingResult().button, /A card with a "Vote for it" button is under your reply\. Nothing has changed yet: tapping it puts their vote on this spot in that plan\./);
+  assert.match(stagingResult().button, /never say the spot was added, staged or voted for\./);
+  assert.ok(!('button' in vote.body.vote_stage));
+
+  sendCalls = [];
+  sendImpl = searchThen('draft_flock', { name: 'Friday', venue_place_id: 'PLACE_CLEAN' });
+  const plan = await chat();
+  assert.strictEqual(plan.status, 200);
+  assert.match(stagingResult().button, /A plan card with a "Start this flock" button is under your reply\. Nothing exists yet: tapping it starts the plan\./);
+  assert.ok(!('button' in plan.body.flock_draft));
+});
+
 // A stall after a card was staged points at the card. On the Birdie eval a
 // working vote card sat under "hit me again in a bit", which reads as failure.
 const stagesThenStalls = (name, args) => (p, call) => {
