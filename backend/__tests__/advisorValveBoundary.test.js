@@ -640,6 +640,27 @@ test('a habit, a command\'s outcome that is not money, and money flowing with no
   ]) assert.ok(freeText.applyAdviceValve(fine, facts), fine);
 });
 
+test('a rate per thing is a price or a cut, and money flowing over the venue\'s own days is still a reading', () => {
+  // Re-check of the third round, 2026-11-03: the money rule took the trade's
+  // cuts and prices for the venue's takings.
+  for (const fine of [
+    'You keep about 70% of each delivery order after the app takes its cut.',
+    'You pay roughly 30% to the delivery apps on every order.',
+    'With a loyalty card, you give up 10% on every tenth visit.',
+    'You save about $3 a case by ordering on Mondays.',
+    'You save about $3 a case on Mondays.',
+    'You pay $2 per order in card fees.',
+    'You pay $15 an hour for a barback.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
+  for (const claim of [
+    'You lose $40 a night on Tuesdays.',
+    'You spend $2,000 every week on labor.',
+    'You lose $500 a Tuesday.',
+    'You keep 70% of your revenue after costs.',
+    'You lose 30% of your Tuesday covers to the bar next door.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+});
+
 test('one day or the room doing it, in the third person or the past, is a reading too', () => {
   // Third round, 2026-11-03: CLAIM_VERB holds "sees" and "fills" but not
   // "draws", "sells", "packs" or "lets", and "drew" and "sent" were no verb

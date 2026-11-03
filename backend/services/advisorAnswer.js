@@ -603,6 +603,36 @@ const AND_THE_DOER = new RegExp(`\\band\\s+(?:then\\s+)?${DOES}`, 'i');
 // whose spending is what a worked example adds up.
 const DOER_SPENDS = /\b(?:you|we)(?:['’]ll|\s+will)?\s+(?:\w+\s+)?spend\b/i;
 const DOER_FLOWS = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(?:spend|pay|lose|keep|save|owe|give\\s+(?:up|away))\\b${VERB_TO_NUMBER.source}`, 'i');
+// The words that end what a number counts or is a rate of: "$3 a case on
+// Mondays", "2 registers at 5 PM".
+const AFTER_COUNT_STOP = /^(?:at|on|in|by|from|to|for|of|with|over|across|during|through|per|a|an|the|each|every|and|but|or|so|then|than|before|after|until|till|around|about|this|that|last|next|tonight|today|yesterday|is|are|was|were|will|would|can|could|should|costs?|means?|leaves?|which|who)$/i;
+
+// A RATE PER THING IS A PRICE OR A CUT, NEVER THE VENUE'S TAKINGS (re-check
+// of the third round, 2026-11-03): "you keep about 70% of each delivery
+// order", "you pay roughly 30% to the delivery apps on every order", "you pay
+// $2 per order in card fees", "you save about $3 a case". The flows the
+// money rule reads stay readings: "$2,000 a week", "$500 every Tuesday", "$3,000
+// a month in rent".
+const PERIOD_WORD = /^(?:nights?|days?|weeks?|weekends?|weeknights?|weekdays?|months?|years?|seasons?|quarters?|shifts?|mornings?|afternoons?|evenings?|lunch(?:es)?|dinners?|brunch(?:es)?|services?|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|tonight|today|yesterday)$/i;
+const RATE_RIGHT_AFTER = /^\s*(?:a|an|per|each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
+const RATE_IN_CLAUSE = /\b(?:on|for|from|of|in|with)\s+(?:each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
+function perThing(text, num) {
+  const rest = text.slice(num.index + num.length).split(/[.;:!?]|,\s+(?=(?:but|and|so|while|which|then)\b)/)[0];
+  // The noun phrase only, up to its first linking word: "$3 a case on Mondays"
+  // is a rate per case.
+  const thing = (words) => {
+    const list = [];
+    for (const w of words.trim().split(/\s+/)) {
+      if (!w || AFTER_COUNT_STOP.test(w)) break;
+      list.push(w);
+    }
+    return list.length > 0 && !list.some((w) => PERIOD_WORD.test(w));
+  };
+  const right = RATE_RIGHT_AFTER.exec(rest);
+  if (right && thing(right[1])) return true;
+  const inClause = RATE_IN_CLAUSE.exec(rest);
+  return Boolean(inClause && thing(inClause[1]));
+}
 
 // Words that make the number a suggestion, a hypothetical, a price or a
 // general rule rather than a reading: "if you add 10 covers", "aim for 85",
@@ -880,7 +910,7 @@ const HABITUAL = /\b(?:every|each|most|many)\s+(?:(?:mon|tues|wednes|thurs|fri|s
 const VENUE_DOES = /\b(?:you|your|you['’](?:re|ve)|we|our|the\s+(?:room|floor|kitchen|bar|patio|door|line|crowd|rush|peak|place|venue))\b/i;
 const DAY_DOES = /\b(?:hits|runs|peaks|sees|gets|lands|tops|reaches|fills|averages|comes|sits|holds|draws|brings|pulls|ran|peaked|saw|got|landed|topped|reached|filled|averaged|came|sat|held|drew|brought|pulled)\b/i;
 const SUPPOSES = /\b(?:if|when|whenever|aim|aiming|target|goal|try|trying|test|testing|consider|could|would|['’]d|might|may|can|should|imagine|suppose|need|needs|want|wants|plan|planning|budget)\b/i;
-function standingReading(prefix, num, all) {
+function standingReading(text, prefix, num, all) {
   if (!HABITUAL.test(prefix) || SUPPOSES.test(prefix)) return false;
   if (TRIAL_SPAN.test(prefix) || /\b(?:a|an)\s*\$?\s*$/i.test(prefix)) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
@@ -890,12 +920,14 @@ function standingReading(prefix, num, all) {
   // "Every Friday you see 300 people", "Most Fridays you pour 400 drinks",
   // "Every week you lose $500 to no-shows".
   return (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix)) || DOER_IN_THE_PAST.test(prefix)
-    || flowsUnworked(prefix, num, all);
+    || flowsUnworked(text, prefix, num, all);
 }
 
-// Money flowing with no other figure in its sentence to work it from.
-function flowsUnworked(prefix, num, all) {
-  return DOER_FLOWS.test(prefix) && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
+// Money flowing with no other figure in its sentence to work it from, and no
+// thing it is a rate of (perThing).
+function flowsUnworked(text, prefix, num, all) {
+  return (num.dim === 'money' || num.dim === 'pct') && DOER_FLOWS.test(prefix) && !perThing(text, num)
+    && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
 }
 
 // A SHARE IN A GERUND'S SCENARIO IS A SUPPOSITION (2026-11-03, the round's
@@ -947,7 +979,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   if (toDo === 'claim') return true;
   if (toDo === 'todo') return false;
   if (shareScenario(text, num, prefix)) return false;
-  if (standingReading(prefix, num, all)) return true;
+  if (standingReading(text, prefix, num, all)) return true;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
   // wait" would have let the 40 through on it (2026-11-03 self-review).
@@ -974,7 +1006,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   // flyers") stay set aside, and "You spend $2,000 a week on labor", "You
   // lose $500 every Tuesday" and "You pay $3,000 a month in rent", with no
   // other figure in the sentence, state the venue's own costs (same review).
-  return flowsUnworked(prefix, num, all);
+  return flowsUnworked(text, prefix, num, all);
 }
 
 // ── What the venue's numbers support ────────────────────────────────────────
