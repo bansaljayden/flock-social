@@ -684,7 +684,7 @@ function ownerActs(text, num, prefix) {
 // $2 per order in card fees", "you save about $3 a case". The flows the
 // money rule reads stay readings: "$2,000 a week", "$500 every Tuesday", "$3,000
 // a month in rent".
-const PERIOD_WORD = /^(?:nights?|days?|weeks?|weekends?|weeknights?|weekdays?|months?|years?|seasons?|quarters?|shifts?|mornings?|afternoons?|evenings?|lunch(?:es)?|dinners?|brunch(?:es)?|services?|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|tonight|today|yesterday)$/i;
+const PERIOD_WORD = /^(?:nights?|days?|weeks?|weekends?|weeknights?|weekdays?|fortnights?|months?|years?|seasons?|quarters?|periods?|cycles?|terms?|semesters?|payrolls?|stretch(?:es)?|shifts?|mornings?|afternoons?|evenings?|lunch(?:es)?|dinners?|brunch(?:es)?|services?|(?:mon|tues|wednes|thurs|fri|satur|sun)days?|tonight|today|yesterday)$/i;
 const RATE_RIGHT_AFTER = /^\s*(?:a|an|per|each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
 const RATE_IN_CLAUSE = /\b(?:on|for|from|of|in|with)\s+(?:each|every)\s+((?:[A-Za-z'’-]+\s*){1,3})/i;
 function perThing(text, num) {

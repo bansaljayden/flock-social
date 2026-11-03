@@ -671,6 +671,8 @@ test('a rate per thing is a price or a cut, and money flowing over the venue\'s 
     'You lose $40 a night on Tuesdays.',
     'You spend $2,000 every week on labor.',
     'You lose $500 a Tuesday.',
+    'You spend $2,000 a pay period on labor.',
+    'You spend $4,000 every fortnight on labor.',
     'You keep 70% of your revenue after costs.',
     'You lose 30% of your Tuesday covers to the bar next door.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
