@@ -80,7 +80,9 @@ const UPSTREAM_TIMEOUT_MS = Object.freeze({
   oauth: 6000,         // Google / Apple token + userinfo endpoints
   gemini: 12000,       // Gemini generation is genuinely slower
   // ROOST'S OWN DEADLINE, and the reason it is not the one above. Birdie runs
-  // on a non-thinking model and answers well inside twelve seconds. Roost runs
+  // gemini-3.7-flash too, held to the low thinking level (routes/ai.js
+  // BIRDIE_THINKING_LEVEL) so most of its calls fit inside twelve seconds; at
+  // the model's default, 17 of 59 eval answers did not. Roost runs
   // on gemini-3.7-flash, which reasons before it writes, and the reasoning is
   // where the time goes: measured 2026-08-20, an ordinary advice question
   // spends about nine hundred thinking tokens and a hard one nearly two

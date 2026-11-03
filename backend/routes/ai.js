@@ -109,6 +109,25 @@ const AI_CHAT_MAX_MESSAGES = 24;
 // (most generous free RPD) — one env var flip.
 // ---------------------------------------------------------------------------
 const BIRDIE_MODEL = process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite';
+// HOW LONG THE MODEL THINKS BEFORE IT ANSWERS (2026-11-03). Production runs
+// Birdie on gemini-3.7-flash through BIRDIE_MODEL, a model that reasons before
+// it writes, and nothing here said how much, so it reasoned at its default. On
+// the Birdie eval (scripts/birdie/birdieEval.js, 59 answers from the real
+// model) the call that writes the answer thought for a median 532 tokens and
+// 7 seconds, and 17 of the 59 answers died on the twelve-second per-call
+// deadline (UPSTREAM_TIMEOUT_MS.gemini): the app said "hmm gimme a sec, hit me
+// again" after fifteen seconds of waiting. Asked again at low, 14 of those 17
+// answered and thinking fell from 228 tokens a call to 51; the 3 that still
+// hit the deadline were slow moments at Google, and answered inside nine
+// seconds when asked once more. Low is the level Roost runs the same
+// model at (services/advisorPhrasing.js ADVISOR_THINKING_LEVEL) and the floor
+// this model accepts; it refuses MINIMAL. Gemini 3 models only: a 2.x model,
+// like the fallback named above, sets its thinking with a token budget instead,
+// so it is sent nothing and keeps its own default.
+const BIRDIE_THINKING_LEVEL = 'low';
+function birdieThinkingConfig(model) {
+  return /^gemini-3/.test(String(model || '')) ? { thinkingLevel: BIRDIE_THINKING_LEVEL } : null;
+}
 // Wall-clock ceiling for one chat turn. The per-call deadline
 // (UPSTREAM_TIMEOUT_MS.gemini) bounds a single round trip, but a turn is up to
 // six of them plus the tool work in between, so the worst case is their sum.
@@ -2653,9 +2672,11 @@ router.post('/chat',
       // merge. Passing `{ abortSignal }` alone on sendMessage would therefore
       // have silently dropped Birdie's system prompt AND every tool
       // declaration, which is a far worse bug than the one being fixed.
+      const thinkingConfig = birdieThinkingConfig(BIRDIE_MODEL);
       const chatConfig = {
         systemInstruction: buildSystemPrompt(userName, currentContext, { ageBracket, freeTier, salesOff, clock }),
         tools: [{ functionDeclarations: toolDeclarations }],
+        ...(thinkingConfig ? { thinkingConfig } : {}),
       };
       const chat = genAI.chats.create({
         model: BIRDIE_MODEL,
@@ -3101,4 +3122,4 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig };
