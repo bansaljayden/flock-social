@@ -326,6 +326,10 @@ const PROBED_FIELDS = {
     // PUT /api/users/me/analytics. Bounded by its type the same way, and
     // stricter: only a JSON true or false passes, never a string of either.
     'optOut',
+    // PUT /api/users/me/privacy. One field is bounded by a list of two exact
+    // words ('everyone', 'friends'), the other by its type, a JSON true or
+    // false, like optOut above.
+    'invitesFrom', 'showInSuggestions',
   ]),
   'routes/venueProfile.js': new Set([
     'businessName', 'category', 'location', 'description', 'goals',
@@ -414,6 +418,8 @@ test('no scalar field on these routes accepts an 8000-character value', async ()
     ['PUT', '/api/users/profile', { current_password: OVERSIZED }],
     ['PUT', '/api/users/phone-discovery', { enabled: OVERSIZED }],
     ['PUT', '/api/users/me/analytics', { optOut: OVERSIZED }],
+    ['PUT', '/api/users/me/privacy', { invitesFrom: OVERSIZED }],
+    ['PUT', '/api/users/me/privacy', { showInSuggestions: OVERSIZED }],
     ['GET', `/api/users/search?q=${OVERSIZED}`, undefined],
     ['PUT', '/api/users/profile-image', { url: `https://api.dicebear.com/7.x/bottts/svg?seed=${OVERSIZED}` }],
     ['PUT', '/api/users/venmo-username', { venmo_username: OVERSIZED }],

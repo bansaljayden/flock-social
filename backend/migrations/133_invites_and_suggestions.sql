@@ -1,0 +1,44 @@
+-- 133: two safety choices on an account. Who can add it to a plan, and
+-- whether Flock suggests it to people who are not its friends.
+--
+-- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. Flock's floor is 13 and its audience starts at 15, and until this file
+-- any member of a plan could add any account to it (a name search is enough to
+-- find one), and Quick Add offered every friend of a friend to everyone. A
+-- teenager had no way to say "only my friends" to either.
+--
+-- WHAT THE COLUMNS MEAN.
+--   invites_friends_only  TRUE: only an accepted friend can add this account
+--                         to a plan (POST /api/flocks with invited_user_ids,
+--                         POST /api/flocks/:id/invite, POST
+--                         /api/flocks/:id/rerun) or relay a plan invite to it
+--                         (the flock_invite socket event). FALSE: any member
+--                         of a plan can, as before.
+--   show_in_suggestions   TRUE: Flock may suggest this account to people who
+--                         are not its friends (GET /api/friends/suggestions,
+--                         which the app calls Quick Add, and GET
+--                         /api/users/suggested, the Suggested row on a new
+--                         plan and a new message). FALSE: only to its friends.
+--
+-- NULL MEANS "NEVER CHOSEN", AND THE DEFAULT FOLLOWS THE ACCOUNT'S AGE. A
+-- stored date of birth that makes the account under 18 reads as friends only
+-- and not suggested. Every other account, including the ones with no date of
+-- birth (the iPhone app asks for none), reads exactly as before this file.
+-- utils/invitesAndSuggestions.js holds that rule once, for JavaScript and for
+-- SQL. No default is written into a row, so a date of birth added later moves
+-- the default with it, and no choice a person made is ever overwritten.
+--
+-- WHO WRITES THEM. PUT /api/users/me/privacy (routes/users.js), from Settings.
+-- WHO READS THEM. The three invite doors and the socket relay, the two
+-- suggestion reads, GET /api/users/me/privacy, and the data export.
+--
+-- ADDITIVE. Two nullable columns with no default: a catalog change on
+-- PostgreSQL 11 and later, no rewrite and no scan. Every existing row reads
+-- NULL, which is the age default above. A replay is a no-op.
+-- @requires column users.invites_friends_only
+-- @requires column users.show_in_suggestions
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS invites_friends_only BOOLEAN;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS show_in_suggestions BOOLEAN;

@@ -96,6 +96,12 @@ const { createUserBudget } = require('../utils/probeBudget');
 // tombstone digests below, so neither table's rows can be compared with the
 // other's. See utils/phone.js.
 const { phoneDiscoveryHash } = require('../utils/phone');
+// Who can add an account to a plan, and whether Flock suggests it to people who
+// are not its friends (migration 133): GET / PUT /me/privacy read and write the
+// two choices, and GET /suggested filters on the second. See
+// utils/invitesAndSuggestions.js.
+const { effectiveSettings, suggestableToSql } = require('../utils/invitesAndSuggestions');
+const SUGGESTABLE_SQL = suggestableToSql('u', '$1');
 const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer, holdCheckoutLock } = require('../services/proBilling');
 const { closeVenueCustomer, venueCheckoutKey } = require('../services/venueBilling');
 // Held as a module object so a test can replace opsAlert after this loads.
@@ -1873,6 +1879,83 @@ router.put('/me/analytics',
   }
 );
 
+// ---------------------------------------------------------------------------
+// GET / PUT /api/users/me/privacy - "Invites and Quick Add"
+// ---------------------------------------------------------------------------
+// Two choices, both enforced where they bite rather than here (migration 133,
+// utils/invitesAndSuggestions.js):
+//
+//   invitesFrom        'friends': only an accepted friend can add this
+//                      account to a plan. 'everyone': any member of a plan
+//                      can, which is how Flock always worked.
+//   showInSuggestions  false: Flock suggests this account to its friends
+//                      only, in Quick Add and in the Suggested rows.
+//
+// The answer is the one that APPLIES: the account's own choice, else the
+// default for its age, which is friends only and not suggested when the stored
+// date of birth makes the account under 18 and today's behaviour otherwise. So
+// the switches are drawn from what the server enforces, never from a guess.
+//
+// Both halves read and write the CALLER'S OWN row and answer nothing about
+// anybody else, so there is nothing to ration beyond the general limiter, the
+// same reasoning as /me/analytics above. router.use(authenticate) guards both.
+router.get('/me/privacy', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT invites_friends_only, show_in_suggestions, date_of_birth FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json(effectiveSettings(result.rows[0]));
+  } catch (err) {
+    console.error('Get privacy settings error:', err);
+    res.status(500).json({ error: 'Failed to read these settings' });
+  }
+});
+
+// Either field, or both. A field left out keeps what the account holds, which
+// may be the age default, so turning one switch never pins the other. Strictly
+// typed for the reason /me/analytics gives: only the exact words and a JSON
+// true or false are accepted, so what is stored is what the switch showed.
+router.put('/me/privacy',
+  scalarOnly(body('invitesFrom').optional(), 'invitesFrom')
+    .isIn(['everyone', 'friends'])
+    .withMessage("invitesFrom must be 'everyone' or 'friends'"),
+  scalarOnly(body('showInSuggestions').optional(), 'showInSuggestions')
+    .custom((value) => typeof value === 'boolean')
+    .withMessage('showInSuggestions must be true or false'),
+  body()
+    .custom((value) => !!value && typeof value === 'object'
+      && (value.invitesFrom !== undefined || value.showInSuggestions !== undefined))
+    .withMessage('Nothing to change'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      // NULL keeps the stored value (COALESCE), so a field that was not sent
+      // is not written.
+      const friendsOnly = req.body.invitesFrom === undefined ? null : req.body.invitesFrom === 'friends';
+      const suggested = req.body.showInSuggestions === undefined ? null : req.body.showInSuggestions;
+      const result = await pool.query(
+        `UPDATE users
+            SET invites_friends_only = COALESCE($2::boolean, invites_friends_only),
+                show_in_suggestions = COALESCE($3::boolean, show_in_suggestions),
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING invites_friends_only, show_in_suggestions, date_of_birth`,
+        [req.user.id, friendsOnly, suggested]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+      res.json(effectiveSettings(result.rows[0]));
+    } catch (err) {
+      console.error('Update privacy settings error:', err);
+      res.status(500).json({ error: 'Failed to update these settings' });
+    }
+  }
+);
+
 // GET /api/users/stats - Get user's real stats (friends, XP, streak)
 router.get('/stats', async (req, res) => {
   try {
@@ -2241,6 +2324,10 @@ router.get('/search',
 );
 
 // GET /api/users/suggested - Get suggested users (flock mates, ordered by shared flock count)
+//
+// The Suggested row on a new plan and a new message. A flock mate who has
+// turned off "Show me in Quick Add", or never chose and has a stored date of
+// birth under 18, is suggested here to their friends only (SUGGESTABLE_SQL).
 router.get('/suggested', async (req, res) => {
   try {
     const result = await pool.query(
@@ -2263,6 +2350,7 @@ router.get('/suggested', async (req, res) => {
        JOIN users u ON u.id = fm2.user_id
        WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
          AND COALESCE(u.is_banned, FALSE) = FALSE
+         AND ${SUGGESTABLE_SQL}
          AND NOT EXISTS (
            SELECT 1 FROM user_blocks b
            WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
@@ -2850,7 +2938,8 @@ router.get('/export', async (req, res) => {
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
               phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code,
-              birdie_ai_consent_at, birdie_ai_consent_copy, roost_ai_consent_at, analytics_opt_out
+              birdie_ai_consent_at, birdie_ai_consent_copy, roost_ai_consent_at, analytics_opt_out,
+              invites_friends_only, show_in_suggestions
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -3148,6 +3237,11 @@ router.get('/export', async (req, res) => {
         // Whether the account switched off "Share usage analytics" (migration
         // 111). A choice the user made, so it is theirs to see.
         analytics_opt_out: account.analytics_opt_out ?? false,
+        // "Invites and Quick Add" (migration 133), as the account chose them:
+        // true, false, or null for never chosen, which leaves the default for
+        // the account's age in place. Choices the user made, so theirs to see.
+        invites_friends_only: account.invites_friends_only ?? null,
+        show_in_suggestions: account.show_in_suggestions ?? null,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },

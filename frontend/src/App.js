@@ -5090,6 +5090,7 @@ const PROFILE_SUBSCREEN_TITLES = {
   // heading carries the privacy policy's exact wording; see the pane.
   phonediscovery: 'Find me by phone',
   birdieai: 'Birdie and Google Gemini',
+  invites: 'Invites and Quick Add',
 };
 
 // blockGlyph lived here: a hand-rolled circle-and-slash with round caps, a
@@ -7006,7 +7007,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else if (res?.throttled) {
         note = `Invited ${sent} of ${asked}. You have invited a lot of people recently, so the rest did not go out.`;
       } else {
-        note = `Invited ${sent} of ${asked}. The rest were already in this flock.`;
+        // Not only "already in this flock": the server also leaves out, with
+        // the same silence, a pair with a block between them and a person who
+        // takes plan invites from their friends only, and it never says which,
+        // so this sentence does not either.
+        note = `Invited ${sent} of ${asked}. The rest are already in this flock or could not be added.`;
       }
       showToast(note, sent >= asked && !res?.closed ? 'success' : 'warning');
       setShowFlockInviteModal(false);

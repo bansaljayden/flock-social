@@ -21,6 +21,17 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // it once for a whole id set now, with the same bidirectional predicate written
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds, ROSTER_BLOCK_SQL, ROSTER_BLOCK_REFUSAL } = require('../utils/blocks');
+// WHO MAY PUT AN ACCOUNT ON A PLAN (migration 133). An account can take plan
+// invites from its friends only, and an account whose stored date of birth
+// makes it under 18 does unless it chose otherwise. Both doors that write an
+// invite (POST / with invited_user_ids, and inviteUsersToFlock behind POST
+// /:id/invite and POST /:id/rerun) fold this into the directory read they
+// already make, with the users row as `users` and the inviter as $2. So an
+// account closed to this inviter is, to the invite, exactly an id nobody
+// holds: charged to the budget, skipped, never told about, and never named
+// back to the inviter as a refusal. See utils/invitesAndSuggestions.js.
+const { acceptsInvitesFromSql } = require('../utils/invitesAndSuggestions');
+const OPEN_TO_INVITER_SQL = acceptsInvitesFromSql('users', '$2');
 const {
   GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts, carryGuestVote, lockVoteSlot, RETIRE_ON_INVITE_ACCEPT_SQL,
 } = require('../utils/guestRsvp');
@@ -988,9 +999,14 @@ router.post('/',
           // talks to the pool, not this client) while this one was busy. Both
           // are now one set-based query each against the same client.
           if (candidates.length > 0) {
+            // An account that takes plan invites from friends only, asked by
+            // somebody who is not its friend, does not come back from this
+            // read, so it is skipped below exactly like an id with no
+            // account (OPEN_TO_INVITER_SQL, at the top of this file).
             const realUsers = await client.query(
-              'SELECT id FROM users WHERE id = ANY($1::int[])',
-              [candidates]
+              `SELECT id FROM users WHERE id = ANY($1::int[])
+                  AND ${OPEN_TO_INVITER_SQL}`,
+              [candidates, req.user.id]
             );
             const exists = new Set(realUsers.rows.map((r) => r.id));
 
@@ -2891,9 +2907,15 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
   const names = new Map();
   const blocked = new Set();
   if (pending.length > 0 && Math.min(allowance.hourly, allowance.daily) > 0) {
+    // The directory read is also the invite rule (migration 133): an account
+    // that takes plan invites from friends only, asked by somebody who is not
+    // its friend, is not in `names`, so the replay below charges it and skips
+    // it at the same line as an id with no account. A re-invite of a member
+    // who declined is held to the same rule.
     const userRows = await pool.query(
-      'SELECT id, name FROM users WHERE id = ANY($1::int[])',
-      [pending]
+      `SELECT id, name FROM users WHERE id = ANY($1::int[])
+          AND ${OPEN_TO_INVITER_SQL}`,
+      [pending, inviter.id]
     );
     // `set`, not a truthiness test: a NULL display name is an EXISTING user,
     // and the per-id version pushed that null through to the response.

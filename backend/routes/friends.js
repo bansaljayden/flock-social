@@ -6,6 +6,13 @@ const { authenticate } = require('../middleware/auth');
 
 const { pushIfOffline } = require('../services/pushHelper');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+// Whether Flock may suggest an account to somebody who is not its friend
+// (migration 133): the account's own choice, else the default for its age,
+// which is off for an account whose stored date of birth makes it under 18.
+// Both reads behind GET /suggestions carry it, with the candidate as `u` and
+// the viewer as $1. See utils/invitesAndSuggestions.js.
+const { suggestableToSql } = require('../utils/invitesAndSuggestions');
+const SUGGESTABLE_SQL = suggestableToSql('u', '$1');
 const { createUserBudget } = require('../utils/probeBudget');
 // One canonical form for a phone number, and a keyed digest to match it by.
 // See the long note above find-by-phone, and utils/phone.js for why the old
@@ -783,6 +790,11 @@ router.get('/outgoing', async (req, res) => {
 });
 
 // GET /api/friends/suggestions - Mutual friend suggestions (friends of friends)
+//
+// The app calls this Quick Add. An account that has turned off "Show me in
+// Quick Add", or never chose and has a stored date of birth under 18, is left
+// out of both reads below (SUGGESTABLE_SQL). It is filtered, like a block, so
+// the list reads as if the person were not a friend of a friend at all.
 router.get('/suggestions', async (req, res) => {
   try {
     const result = await pool.query(
@@ -813,6 +825,7 @@ router.get('/suggestions', async (req, res) => {
        )
        AND u.id != $1
        AND ${NOT_BANNED_SQL}
+       AND ${SUGGESTABLE_SQL}
        GROUP BY u.id, u.name, u.profile_image_url
        ORDER BY mutual_count DESC
        LIMIT 20`,
@@ -833,6 +846,7 @@ router.get('/suggestions', async (req, res) => {
          JOIN users u ON u.id = fm2.user_id
          WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
          AND ${NOT_BANNED_SQL}
+         AND ${SUGGESTABLE_SQL}
          AND NOT EXISTS (
            SELECT 1 FROM friendships
            WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))

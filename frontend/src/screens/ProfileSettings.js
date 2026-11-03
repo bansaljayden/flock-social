@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice, userMessage } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice, getPrivacySettings, setPrivacySettings, userMessage } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -169,6 +169,137 @@ function UsageAnalyticsRow({ Toggle, colors }) {
         </div>
         <Toggle label="Share usage analytics" on={optOut === false} onChange={flip} />
       </div>
+      {error && (
+        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{error}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The two switches on Invites and Quick Add, and the line under each. Every
+// sentence is something the server does (backend
+// utils/invitesAndSuggestions.js): a refused invite writes nothing and answers
+// the inviter the way an id with no account is answered, and the suggestions
+// are Quick Add and the Suggested rows, while name search and friend codes do
+// not read this switch at all. invitesAndSuggestionsSettings.test.js holds
+// the words.
+export const INVITES_SWITCH = 'Only friends can invite me to flocks';
+export const INVITES_LINE = "When this is on, only your friends can add you to a flock. If someone else tries, you aren't added and they aren't told why.";
+export const SUGGESTIONS_SWITCH = 'Show me in Quick Add';
+export const SUGGESTIONS_LINE = "When this is on, Flock can suggest you to people who aren't your friends yet, in Quick Add and under Suggested when they start a flock or a message. Either way, people can still find you by searching your name or using your friend code.";
+
+// The server's answer in the one shape the switches draw, or null for an
+// answer that is not that shape: a switch is never drawn from a guess.
+function readPrivacy(data) {
+  if (!data || (data.invitesFrom !== 'friends' && data.invitesFrom !== 'everyone')) return null;
+  if (typeof data.showInSuggestions !== 'boolean') return null;
+  return { invitesFrom: data.invitesFrom, showInSuggestions: data.showInSuggestions };
+}
+
+/**
+ * "INVITES AND QUICK ADD", who can put this account on a plan and whether
+ * Flock suggests it to people who are not its friends.
+ *
+ * Both choices live on the account (GET and PUT /api/users/me/privacy) and are
+ * enforced by the server, so these switches change what the server does, not
+ * what this screen hides. What they first show is what applies now: the
+ * account's own choice, or the default for its age, which is friends only and
+ * not suggested when the account's date of birth says it is under 18.
+ *
+ * Built like the other server-backed switches on this screen: nothing is drawn
+ * as a switch until the account's answer is in, a tap moves the switch at once
+ * and the server's answer settles it, one write at a time, and a refusal puts
+ * the switch back and says so under it. A component of its own, at module
+ * scope, so its state and its read survive the settings shell re-rendering.
+ */
+function InvitesAndSuggestions({ Toggle, colors, styles }) {
+  const [settings, setSettings] = React.useState(null);
+  const [loadError, setLoadError] = React.useState('');
+  const [error, setError] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const busyRef = React.useRef(false);
+  const live = React.useRef(true);
+
+  const load = React.useCallback(async () => {
+    setLoadError('');
+    try {
+      const shown = readPrivacy(await getPrivacySettings());
+      if (!live.current) return;
+      if (shown) setSettings(shown);
+      else setLoadError('These settings are not loading right now.');
+    } catch (err) {
+      if (live.current && !err?.sessionExpired) setLoadError(userMessage(err, 'These settings are not loading right now.'));
+    }
+  }, []);
+
+  React.useEffect(() => {
+    live.current = true;
+    load();
+    return () => { live.current = false; };
+  }, [load]);
+
+  // `patch` is both the request body and where the switch heads while it is
+  // out: the server's field names are the ones the switches are drawn from.
+  const change = async (patch) => {
+    if (busyRef.current || !settings) return;
+    busyRef.current = true;
+    const before = settings;
+    setSettings({ ...settings, ...patch });
+    setBusy(true);
+    setError('');
+    try {
+      const shown = readPrivacy(await setPrivacySettings(patch));
+      if (live.current && shown) setSettings(shown);
+    } catch (err) {
+      if (!live.current) return;
+      setSettings(before);
+      if (!err?.sessionExpired) setError(userMessage(err, "That didn't save. Try again."));
+    } finally {
+      busyRef.current = false;
+      if (live.current) setBusy(false);
+    }
+  };
+
+  const friendsOnly = settings ? settings.invitesFrom === 'friends' : false;
+  const suggested = settings ? settings.showInSuggestions : false;
+  const flipInvites = () => change({ invitesFrom: friendsOnly ? 'everyone' : 'friends' });
+  const flipSuggestions = () => change({ showInSuggestions: !suggested });
+
+  // Until the answer is in, the switch's own shape stands where it will be.
+  const control = (label, on, onChange) => (settings
+    ? <Toggle label={label} on={on} onChange={() => { if (!busy) onChange(); }} />
+    : <SkeletonBar width={44} height={24} radius={12} />);
+
+  const row = (icon, label, on, onChange, line) => (
+    <div style={styles.card}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon(colors.navy, 18)}</div>
+        <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>{label}</h2>
+        {control(label, on, onChange)}
+      </div>
+      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>{line}</p>
+    </div>
+  );
+
+  return (
+    <div>
+      {!settings && !loadError && <span className="sr-only" role="status">Loading your settings</span>}
+      {loadError && (
+        <div style={styles.card}>
+          <div role="alert" style={{ padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+            <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{loadError}</p>
+          </div>
+          <button className="hit44 glass-btn glass-secondary" onClick={load} style={{ marginTop: '10px', padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+        </div>
+      )}
+      {!loadError && (
+        <>
+          {row(Icons.userPlus, INVITES_SWITCH, friendsOnly, flipInvites, INVITES_LINE)}
+          {row(Icons.users, SUGGESTIONS_SWITCH, suggested, flipSuggestions, SUGGESTIONS_LINE)}
+        </>
+      )}
       {error && (
         <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
           <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{error}</p>
@@ -682,6 +813,9 @@ export default function ProfileSettings({
                 </div>
               </div>
             )}
+            {profileScreen === 'invites' && (
+              <InvitesAndSuggestions Toggle={Toggle} colors={colors} styles={styles} />
+            )}
             {profileScreen === 'birdieai' && (
               <div>
                 <div style={styles.card}>
@@ -906,6 +1040,9 @@ export default function ProfileSettings({
               rows: [
                 { l: 'Safety', s: 'safety', icon: Icons.shield },
                 { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban, v: blockedError ? null : (blockedUsers.length > 0 ? `${blockedUsers.length} ${blockedUsers.length === 1 ? 'person' : 'people'}` : 'None') },
+                // Who can add you to a flock, and whether Quick Add suggests
+                // you. The page reads the account's answer itself.
+                { l: 'Invites and Quick Add', s: 'invites', icon: Icons.userPlus },
                 // Nothing in contact discovery can find anybody until this is
                 // on, so it is the switch the feature runs on rather than
                 // polish. Blank, not 'Off', until the read that knows lands.

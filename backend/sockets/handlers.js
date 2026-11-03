@@ -30,6 +30,11 @@ const {
   invalidateDmRelationshipCache,
   NOT_CONNECTED_MESSAGE,
 } = require('../utils/relationships');
+// Who may put an account on a plan (migration 133). The flock_invite relay
+// names its sender as the inviter, so it asks the rule the REST invite doors
+// ask, with the invitee's users row as `iu` and the sender as $3.
+const { acceptsInvitesFromSql } = require('../utils/invitesAndSuggestions');
+const INVITE_RELAY_OPEN_SQL = acceptsInvitesFromSql('iu', '$3');
 // isUserOnline is the DELIVERY signal and nothing else: a socket sitting in
 // `user:{id}` means the emit went out over an open connection, which is what
 // "Delivered" claims. pushHelper's own comment above that function is the
@@ -2666,12 +2671,18 @@ function registerHandlers(io, socket) {
       // Relay persisted state only (round 5): each target must actually hold
       // an 'invited' membership row — otherwise any member could spoof-flood
       // invite toasts to arbitrary user ids.
+      //
+      // And the target must take plan invites from this sender (migration
+      // 133). The toast names the sender as the one who invited them, so an
+      // account that takes invites from friends only hears it from a friend or
+      // not at all, even when a friend's invite is what put the row there.
       const invitedRows = await pool.query(
         // Round 23: asId per element, not Number/isInteger — Number.isInteger
         // is true for 1e20 and for 0, so those reached Postgres as an
         // out-of-int4-range value (a swallowed error) and an id no user holds.
-        `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])`,
-        [flockId, invitedUserIds.map(asId).filter((n) => n !== null)]
+        `SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id = ANY($2::int[])
+            AND EXISTS (SELECT 1 FROM users iu WHERE iu.id = flock_members.user_id AND ${INVITE_RELAY_OPEN_SQL})`,
+        [flockId, invitedUserIds.map(asId).filter((n) => n !== null), user.id]
       );
       // The plan is read LAST, right before the emits, so the answer is as
       // fresh as it can be. A plan that has ended is not relayed as an

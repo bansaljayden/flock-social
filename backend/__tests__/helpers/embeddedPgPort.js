@@ -171,6 +171,11 @@ const SUITE_SLOTS = {
                                  // through the real routes. Near the top on
                                  // purpose: 94 is the last slot whose range
                                  // ends below 65536.
+  invitesAndSuggestions: 47,     // new in 2026-11-02; who can add an account
+                                 // to a plan and who Quick Add suggests it to
+                                 // (migration 133), through the real invite,
+                                 // socket and suggestion code. Far from every
+                                 // slot any branch had taken that day.
   sensorTableHistoryStatement: 92, // new in 2026-10-23; the table history
                                  // (migration 131): the seatings statement,
                                  // the medians, the waits, the switches and
