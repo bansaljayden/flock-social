@@ -412,7 +412,8 @@ test('every worked example names the payload it is drawn from, and writes only i
 
 test('every worked example, sent back as the model\'s reply to its own payload, passes the real answer check with nothing dropped', async () => {
   const results = await runExamples();
-  assert.strictEqual(results.length, 7, 'seven examples carry a payload');
+  const declared = Object.values(EXAMPLE_PAYLOADS).flatMap((byQuestion) => Object.values(byQuestion)).filter(Boolean);
+  assert.ok(results.length >= 7 && results.length === declared.length, 'every example that names a payload was answered from it');
   for (const r of results) {
     const points = JSON.parse(r.example.json).points.length;
     const label = `${r.name}: "${r.example.question}"`;
