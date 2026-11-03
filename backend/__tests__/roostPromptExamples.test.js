@@ -374,7 +374,8 @@ test('every id the prompts write, worked examples and the rules\' own quoted one
       assert.ok(real.has(id), `${name} writes {{fact:${id}}}, and no payload the real builders made lists it`);
     }
   }
-  // And none of the spellings the live evals caught the model copying.
+  // And none of the spellings the examples used before the fourth round,
+  // which no block carries: the third round caught the model copying spend.
   for (const made of ['spend', 'quiet_day', 'peak_day', 'people_at_peak', 'waited_share', 'kitchen_last_order', 'service_style', 'capacity', 'reading', 'usual', 'readings']) {
     assert.ok(!real.has(made), `${made} is not a real id`);
     for (const [name, prompt] of Object.entries(ANSWER_CONTRACTS)) {
