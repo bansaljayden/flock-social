@@ -515,7 +515,12 @@ const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|th
 //   * what follows is only more commands ("tally every complaint, and fix the
 //     top one"), or for lanes what each lane is for ("1 for list guests and 1
 //     for door sales", "with IDs checked in both");
-//   * no other number, except the 1s that say what each lane is for.
+//   * no other number, except the 1s that say what each lane is for;
+//   * and nothing after the count says in words what the records hold: no
+//     count in words ("the forty that mention the wait"), no narrator ("the
+//     wait we see"), and no share of the records saying or holding anything
+//     ("most mention the wait", "the wait in nearly every one"). A share may
+//     only be what a command acts on: "answer every one".
 // "Your rating fell across your 50 most recent reviews", "Read through your
 // 140 one-star reviews", "At peak, your door, split into 2 lanes, clears the
 // line" and "At peak, split your 300 guests into 2 lanes" all still lose
@@ -541,9 +546,24 @@ const PAST_TENSE = /\b(?:\w{2,}(?<!e)ed|fell|rose|grew|went|came|took|got|ran|sa
 // a word that opens a clause of its own.
 const CLAIM_OPENING = /[:;()[\]꞉ː∶։׃]|[.!?]\s+\S|\b(?:which|who|whom|whose|where|but|because|since|whereas)\b/i;
 // What may follow the count: another command, or (lanes) what each lane is for.
-// The bare verb only: "pinpointed" or "spotted" is a report, and fails here.
-const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill|pinpoint|isolate|identify|spot|single\s+out|figure\s+out)\b/i;
+// The bare verb only: "pinpointed" or "isolated" is a report, and fails here.
+const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill|pinpoint|isolate|identify|single\s+out|figure\s+out)\b/i;
 const LANE_DETAIL = /^(?:(?:1|one)\s+for\b|with\b)/i;
+// A claim in words after the count, where no figure is read (second round's
+// review, 2026-11-03): "and find the forty that mention the wait", "and find
+// the wait we see in nearly every one", "then pinpoint why most mention the
+// wait", "and find the wait in every one" all passed as commands.
+const COUNT_IN_WORDS = /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|dozens?|half|halves|thirds?|quarters?|twice|thrice|doubles|doubled|doubling|triples|tripled|tripling)\b/i;
+const NARRATOR_AFTER = /\b(?:we|i|our|ours|us|flock|roost)\b/i;
+const SHARE_SAYS = /\b(?:every|each|all|most|many|few|several|none|both|majority|minority)\s+(?:(?!(?:that|which|who)\b)[a-z'-]+\s+){0,2}(?:mention|mentions|name|names|say|says|praise|praises|complain|complains|cite|cites|rate|rates|flag|flags|call|calls|bring|brings|point|points|love|loves|hate|hates|want|wants|ask|asks|give|gives|show|shows)\b|\bthey\s+all\b|\ball\s+but\b|\bone\s+(?:in|out\s+of)\b/i;
+const RECORDS_SHARE = /\b(?:(?:nearly|almost)\s+)?(?:(?:every|each|all|most|many|few|several|none|both|any)\s+(?:single\s+)?ones?|(?:every|each|all|most|many|few|several|none|both|any|some)\s+of\s+(?:them|those|these)|(?:no|not)\s+(?:single\s+)?one)\b/i;
+// A share of the records may be what the command acts on ("answer every
+// one", "reply to each one"), and nothing else in its segment.
+function shareOfRecords(segment) {
+  const body = segment.replace(NEXT_COMMAND, '').replace(/^\s*(?:to|on|with|through|over)\b/i, '').trim();
+  const lead = RECORDS_SHARE.exec(body);
+  return RECORDS_SHARE.test(lead && lead.index === 0 ? body.slice(lead[0].length) : body);
+}
 function countToDo(text, num, prefix, all, alone) {
   if (!alone || num.dim !== 'plain') return false;
   const after = text.slice(num.index + num.length);
@@ -564,10 +584,11 @@ function countToDo(text, num, prefix, all, alone) {
   const rest = after.slice(noun[0].length).replace(/[.!?]+\s*$/, '').trim();
   if (!rest) return true;
   if (!/^,/.test(rest) && !/^(?:and|then)\b/i.test(rest)) return false;
+  if (COUNT_IN_WORDS.test(rest) || NARRATOR_AFTER.test(rest) || SHARE_SAYS.test(rest)) return false;
   return rest.split(/\s*,\s*|\s+(?:and|then)\s+/i)
     .map((s) => s.replace(/^(?:and|then)\s+/i, '').trim())
     .filter(Boolean)
-    .every((s) => (NEXT_COMMAND.test(s) && !PAST_TENSE.test(s)) || (setup && LANE_DETAIL.test(s)));
+    .every((s) => ((NEXT_COMMAND.test(s) && !PAST_TENSE.test(s)) || (setup && LANE_DETAIL.test(s))) && !shareOfRecords(s));
 }
 
 // A NUMBER THAT OPENS ITS CLAUSE AS THE SUBJECT OF A CLAIM IS A READING

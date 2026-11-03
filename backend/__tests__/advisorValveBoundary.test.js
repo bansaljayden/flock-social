@@ -281,6 +281,9 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     // The second round's final run: the same command with another verb after it.
     'Read through your 50 most recent reviews and pinpoint the single bottleneck people name most often.',
     'Read your 50 most recent reviews, isolate the slowest step, and fix it first.',
+    // A share of the records that a command acts on is still a command.
+    'Read your 50 most recent reviews, list the complaints, and answer every one.',
+    'Read your 50 most recent reviews and reply to each one that mentions the wait.',
   ]) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
     assert.ok(out, fine);
@@ -336,6 +339,28 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     'Read your 50 most recent reviews and identify the 40 that mention the wait.',
     'We read your 50 most recent reviews and pinpoint the wait.',
     'Read your 50 most recent reviews and single out the wait, which 40 of them name.',
+    // The review of the second round: a claim in words after any command
+    // verb, old or new, made the count the venue's figure ("the wait in every
+    // one" of the 50). A count in words, a narrator, or a share of the records
+    // that says or holds anything keeps the line from being set aside.
+    'Read your 50 most recent reviews and find the wait in every one.',
+    'Read your 50 most recent reviews and identify the forty that mention the wait.',
+    'Read your 50 most recent reviews and pinpoint why your Friday hits ninety on the index.',
+    'Read your 50 most recent reviews and figure out why nearly half of them mention the wait.',
+    'Read your 50 most recent reviews and find the wait we see in nearly every one.',
+    'Read your 50 most recent reviews and find the wait our readings put at forty minutes.',
+    'Read your 50 most recent reviews and pinpoint the complaint in all but one of them.',
+    'Read your 50 most recent reviews, then pinpoint why most mention the wait.',
+    'Read your 50 most recent reviews and figure out why so many mention the wait.',
+    'Read your 50 most recent reviews and single out the cocktails every one praises.',
+    'Read your 50 most recent reviews and fix the wait as every one names it.',
+    'Read your 50 most recent reviews and fix the wait that tops every one of them.',
+    'Read your 50 most recent reviews, time checks show the wait in nearly every one.',
+    'Read your 50 most recent reviews, staff say the wait tops every one.',
+    'Read your 50 most recent reviews, pinpoint counts show the wait doubles on Fridays.',
+    // "spot" left the list of commands: as a noun it opens a report.
+    'Read your 50 most recent reviews and spot the wait in every one.',
+    'Read your 50 most recent reviews, spot checks show the wait in nearly every one.',
   ]) {
     assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" carries a venue figure nobody measured`);
   }
