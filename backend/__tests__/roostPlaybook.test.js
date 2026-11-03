@@ -448,6 +448,10 @@ test('a day whose peak is after midnight is named for its night, in the playbook
   const { SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
   for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
     assert.match(prompt, /A peak the block marks afterMidnight is in the small hours of the night it belongs to: name it by that night, "Saturday night around 1 AM", and give it no date\./);
+    // The second round's final run: "Your Saturday night rush peaks Saturday
+    // night around 1 AM" and "a very busy Saturday night, with Saturday night
+    // around 1 AM", the night named twice once the contract asked for it.
+    assert.match(prompt, /Name that night once in a sentence: "Saturday night peaks around 1 AM", never "your Saturday night rush peaks Saturday night around 1 AM"\./);
   }
 });
 
