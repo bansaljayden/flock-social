@@ -946,6 +946,22 @@ function isBarVenue(types) {
   return types.some((t) => BAR_TYPES.has(t)) && !types.some((t) => FOOD_TYPE.test(String(t)));
 }
 
+// A SEARCH ANCHORED NOWHERE (2026-11-03). With no location on the request,
+// none passed with the search and no place named in its words, Places answers
+// for wherever it guesses, not where they are, so on the Birdie eval someone
+// who had shared no location and said nowhere was handed a rooftop bar in
+// another city. The prompt says to ask where they
+// are first; once in two runs the model searched anyway. Such a search is
+// refused before anything is spent, with the same instruction. A location
+// ("39.95,-75.17") or a place in the words ("pizza in Fishtown", "bars near
+// Rittenhouse", "tacos, Allentown") anchors it.
+const UNANCHORED_SEARCH_ERROR = 'This person has not shared a location and this search names no place, so the results would be wherever Google guesses, not near them. Ask them where they are, or search with the place in the words, like "pizza in Fishtown".';
+function searchAnchoredNowhere(args) {
+  const loc = typeof args.location === 'string' ? args.location.split(',').map(Number) : [];
+  if (loc.length === 2 && loc.every(Number.isFinite)) return false;
+  return !/,|\b(?:in|near|around)\s+(?!me\b|here\b|tonight\b|now\b|town\b|the area\b)[a-z0-9]/i.test(String(args.query || ''));
+}
+
 // THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
 // OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
 // locked and nothing paid was computed, and the tool loop, when another turn
@@ -2709,7 +2725,8 @@ router.post('/chat',
       // Prepend location context if available — rounded to ~1km (2 decimals).
       // Neighborhood-level is all venue recommendations need; exact
       // coordinates of a minor never leave our servers for a third party.
-      if (location && Number.isFinite(+location.lat) && Number.isFinite(+location.lng)) {
+      const requestLocated = Boolean(location && Number.isFinite(+location.lat) && Number.isFinite(+location.lng));
+      if (requestLocated) {
         userText = `[My approximate location: ${(+location.lat).toFixed(2)},${(+location.lng).toFixed(2)}]\n${userText}`;
       }
       // The flock or venue being viewed, as data in the user turn. See
@@ -2914,7 +2931,10 @@ router.post('/chat',
               toolOpts.includeForecast = !(await venueForecastAccess(meterVenue, false)).locked;
             }
             const toolStart = Date.now();
-            const result = await executeTool(name, args || {}, userId, toolOpts);
+            // A SEARCH ANCHORED NOWHERE (above) is refused before it is bought.
+            const result = name === 'search_venues' && !requestLocated && searchAnchoredNowhere(args || {})
+              ? { error: UNANCHORED_SEARCH_ERROR }
+              : await executeTool(name, args || {}, userId, toolOpts);
             if (aiTraceAllowed) captureAiToolSpan({ userId, traceId: aiTraceId, sessionId: aiSessionId, name, latencyMs: Date.now() - toolStart });
             // Out before the model reads the result, before a card is built
             // from it and before a hand can stage it. The result is this

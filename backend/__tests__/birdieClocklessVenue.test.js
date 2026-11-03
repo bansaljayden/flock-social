@@ -344,7 +344,7 @@ test('a corpus zone ICU refuses, or a corpus read that fails, costs the zone and
 
 test('a number scored on UTC never goes on a venue card; one on the user\'s clock does', async () => {
   firstReply = [
-    { functionCall: { id: 'c1', name: 'search_venues', args: { query: 'cafes' } } },
+    { functionCall: { id: 'c1', name: 'search_venues', args: { query: 'cafes', location: '39.95,-75.16' } } },
     { functionCall: { id: 'c2', name: 'get_crowd_prediction', args: { place_id: PLACE_ID } } },
   ];
   await awayFromHourEdge();
