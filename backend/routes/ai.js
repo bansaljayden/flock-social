@@ -967,6 +967,55 @@ async function withTableSummaries(result) {
   return result;
 }
 
+// THE CARDS THE REPLY NAMES (2026-11-03). Up to four venue cards go with a
+// reply, and they were the first four the turn's searches returned. The app
+// puts the ones the reply names first (frontend/src/lib/birdieCardOrder.js),
+// but it can only reorder the four it is sent: on the Birdie eval "anything
+// still open? we're starving" named Night Owl Diner, the seventh result, over
+// four cards for places that were shut, and a spot named for being a
+// three-minute walk was the seventh result too. Which four go out is now
+// chosen the way the app orders them: the places the reply names, in the order
+// it names them, then the rest in the search's order. They still go out in the
+// search's order, which the app sorts by the reply as it always has, so a turn
+// with four venues or fewer sends exactly what it did. The matching is that
+// file's, rule for rule, so the server and the app agree on what a reply names.
+const CARD_NAME_TRAILING = / (philly|philadelphia|restaurant|pizzeria|cafe|bar|grill|kitchen|bistro|tavern|co|inc|llc)(?= $)/;
+const CARD_NAME_LEADING = /^ the(?= )/;
+const cardNorm = (s) => ` ${String(s || '')
+  .toLowerCase()
+  .normalize('NFKD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()} `;
+function cardMentionAt(text, name) {
+  const tries = [];
+  let n = cardNorm(name);
+  while (n.trim().length >= 4 && !tries.includes(n)) {
+    tries.push(n);
+    const shorter = n.replace(CARD_NAME_TRAILING, '');
+    n = shorter === n ? n.replace(CARD_NAME_LEADING, '') : shorter;
+  }
+  let at = -1;
+  for (const t of tries) {
+    const i = text.indexOf(t);
+    if (i >= 0 && (at < 0 || i < at)) at = i;
+  }
+  return at;
+}
+function venuesByMention(venues, text) {
+  if (!Array.isArray(venues) || venues.length < 2) return venues || [];
+  const t = cardNorm(text);
+  return venues
+    .map((v, i) => ({ v, i, at: cardMentionAt(t, v && v.name) }))
+    .sort((a, b) => {
+      if ((a.at < 0) !== (b.at < 0)) return a.at < 0 ? 1 : -1;
+      if (a.at >= 0 && a.at !== b.at) return a.at - b.at;
+      return a.i - b.i;
+    })
+    .map((x) => x.v);
+}
+
 // A BAR NEVER REACHES SOMEONE TREATED AS UNDER 18 (2026-11-03). The prompt
 // tells Birdie never to recommend one to a minor or to an account with no age
 // (every account the iPhone app makes), and on the Birdie eval its words kept
@@ -3344,8 +3393,10 @@ router.post('/chat',
       // the plain no: they were gathered to answer the drinking part.
       const venueCards = [];
       if (collectedVenues.length > 0 && !plainNo) {
-        // Take top 4 venues max for cards
-        for (const v of collectedVenues.slice(0, 4)) {
+        // Four cards at most, and the places the reply names are among them
+        // (THE CARDS THE REPLY NAMES), in the search's order.
+        const carded = new Set(venuesByMention(collectedVenues, responseText).slice(0, 4));
+        for (const v of collectedVenues.filter((c) => carded.has(c))) {
           venueCards.push({
             place_id: v.place_id,
             name: v.name,
@@ -3454,4 +3505,4 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding, venueDistance, distanceOrigin };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding, venueDistance, distanceOrigin, venuesByMention };
