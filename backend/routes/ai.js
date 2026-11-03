@@ -910,6 +910,31 @@ async function withTableSummaries(result) {
   return result;
 }
 
+// A BAR NEVER REACHES SOMEONE TREATED AS UNDER 18 (2026-11-03). The prompt
+// tells Birdie never to recommend one to a minor or to an account with no age
+// (every account the iPhone app makes), and on the Birdie eval its words kept
+// to that. The cards do not come from its words: they are built from the
+// search results, so a 16-year-old asking for something fun got the arcade
+// Birdie picked and a bar's card beside it, the listing's own name included.
+// So the rule utils/over21.js keeps for drink deals and drink events (left out
+// of the response, not hidden by the screen) holds for venues here: for an
+// account treated as under 18, a search result Google types as a bar is
+// removed before the model reads it and before a card is built from it, which
+// also keeps it off a plan or a vote card. Under 21 keeps them, because the
+// prompt lets someone 18 to 20 who asks hear about a bar, never get served.
+//
+// Google's types for a bar that is mostly a restaurant include one, and that
+// place stays: the test is a bar type with no food type, or a type that is
+// only ever about drinking. A search result carries Google's first three types.
+const DRINKING_ONLY_TYPES = new Set(['night_club', 'liquor_store', 'wine_bar', 'cocktail_bar', 'lounge_bar', 'hookah_bar', 'brewery', 'brewpub', 'winery', 'beer_hall', 'beer_garden']);
+const BAR_TYPES = new Set(['bar', 'pub', 'irish_pub', 'sports_bar', 'gastropub']);
+const FOOD_TYPE = /restaurant|^food$|^cafe$|coffee|bakery|diner|deli|meal_|ice_cream|dessert/;
+function isBarVenue(types) {
+  if (!Array.isArray(types)) return false;
+  if (types.some((t) => DRINKING_ONLY_TYPES.has(t))) return true;
+  return types.some((t) => BAR_TYPES.has(t)) && !types.some((t) => FOOD_TYPE.test(String(t)));
+}
+
 // THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
 // OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
 // locked and nothing paid was computed, and the tool loop, when another turn
@@ -2622,6 +2647,9 @@ router.post('/chat',
         const age = Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 3600 * 1000));
         ageBracket = age < 18 ? 'minor' : age < 21 ? 'under21' : 'adult';
       }
+      // A minor, or an age we do not know: the prompt's under-18 rule, and no
+      // bar in a search result (A BAR NEVER REACHES SOMEONE TREATED AS UNDER 18).
+      const treatedAsMinor = ageBracket === 'minor' || ageBracket === null;
 
       // The user's clock (WHOSE CLOCK BIRDIE PLANS ON): the zone this client
       // sent if ICU accepts it, else unknown. Never the push zone: a client
@@ -2864,6 +2892,12 @@ router.post('/chat',
             const toolStart = Date.now();
             const result = await executeTool(name, args || {}, userId, toolOpts);
             if (aiTraceAllowed) captureAiToolSpan({ userId, traceId: aiTraceId, sessionId: aiSessionId, name, latencyMs: Date.now() - toolStart });
+            // Out before the model reads the result, before a card is built
+            // from it and before a hand can stage it. The result is this
+            // turn's own copy (copySearchResult), never the cached one.
+            if (name === 'search_venues' && treatedAsMinor && Array.isArray(result?.venues)) {
+              result.venues = result.venues.filter((v) => !isBarVenue(v && v.types));
+            }
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
             // an upstream 404, a spent Places budget or a thrown tool all leave
@@ -3122,4 +3156,4 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue };
