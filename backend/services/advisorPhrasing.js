@@ -1008,8 +1008,9 @@ function flattenFacts(facts) {
         // small-hours clock read as the next day's: "Saturday night into Nov
         // 7" (2026-11-03 live eval). The night carries its name and needs no
         // date (advisorFacts.nightTailHours); the label, the template and the
-        // check still have it.
-        if (k === 'date' && f.value.afterMidnight === true) continue;
+        // check still have it. Any date part goes, not only `date`: the
+        // kitchen line carries the same night as peakDate.
+        if (f.value.afterMidnight === true && partUnit(k) === 'date') continue;
         if (SIGNED_GAPS.has(k) && typeof v === 'number' && Number.isFinite(v)) {
           keep({ ...parent, sourceId: f.sourceId || f.id, id: `${f.id}_${gapPart(v)}`, value: Math.abs(v), unit: partUnit(k) });
           continue;

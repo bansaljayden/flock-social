@@ -381,8 +381,10 @@ test('a night that runs past midnight is one night: its small hours are its own,
       assert.strictEqual(f.label, `${weekday} night projects busiest around 1 AM, at ${score} on our 0 to 100 index. This is an estimate, not a promise of foot traffic.`);
       assert.match(f.note, new RegExp(`It belongs to ${weekday} night\\.$`));
     }
-    // Sunday's small hours are Saturday night's, so Sunday has nothing of its own.
-    assert.ok(facts.some((f) => advisorFacts.isRefusal(f) && /no activity on Sunday/.test(f.reason)));
+    // Sunday's small hours are Saturday night's, so Sunday has nothing of its
+    // own, and the refusal says that rather than that the curve is empty.
+    const sunday = facts.find((f) => advisorFacts.isRefusal(f) && /Sunday/.test(f.reason));
+    assert.strictEqual(sunday.reason, "Your Google profile's curve shows Sunday only as the small hours of Saturday night, so there is no Sunday peak of its own to project.");
     // Saturday night's 1 AM is scored on Sunday's clock.
     assert.ok(asked.includes('0@1'));
     // The phrasing model gets no date beside a small-hours clock, and the
@@ -392,10 +394,42 @@ test('a night that runs past midnight is one night: its small hours are its own,
     const text = phrasing.renderTemplate({ intent: 'peak_hours', facts: peaks, refusals: [] }).text;
     assert.match(text, /^Your busiest day this week is Saturday night, with its peak around 1 AM at 96/);
     assert.match(text, /Friday night is close behind, around 1 AM at 92\./);
-    // The kitchen line reads a 1 AM peak as after a 10 PM last order, not before it.
+    // The kitchen line reads a 1 AM peak as after a 10 PM last order, not before it,
+    // and the phrasing model is not handed the evening's date beside that 1 AM.
     const listing = await advisorFacts.buildListingReadBack({ profile: profileRow({ kitchen_last_order: '22:00' }) }, [byDay.Friday]);
-    assert.strictEqual(listing.find((f) => f.id === 'kitchen_vs_peak').label,
-      "Friday night's projected peak lands around 1 AM, at or after your last orders at 10 PM. Two facts, side by side.");
+    const kitchen = listing.find((f) => f.id === 'kitchen_vs_peak');
+    assert.strictEqual(kitchen.label, "Friday night's projected peak lands around 1 AM, at or after your last orders at 10 PM. Two facts, side by side.");
+    assert.ok(!phrasing.flattenFacts([kitchen]).some((p) => /_peakDate$/.test(p.id)), 'the kitchen line handed over the evening date');
+    // A morning last order against a small-hours peak is as ambiguous as an overnight kitchen.
+    const diner = await advisorFacts.buildListingReadBack({ profile: profileRow({ kitchen_last_order: '06:00' }) }, [{ ...byDay.Friday, value: { ...byDay.Friday.value, peakHour: 4 } }]);
+    assert.match(diner.find((f) => f.id === 'kitchen_vs_peak').label, /make the order of those two ambiguous, so we state both and stop\.$/);
+  } finally {
+    mlPredictor.predictBusyness = realPredict;
+  }
+});
+
+test('in the small hours the night in progress is still tonight: the week starts from its evening', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: clubCurve() })]];
+  const NIGHT_PEAK = { 5: 55, 6: 92, 0: 96 };
+  const realPredict = mlPredictor.predictBusyness;
+  mlPredictor.predictBusyness = async (_v, _w, ts) => {
+    const t = new Date(ts);
+    const score = t.getHours() === 1 && NIGHT_PEAK[t.getDay()] !== undefined ? NIGHT_PEAK[t.getDay()] : 40;
+    return { score, label: 'Busy', predictionMethod: 'ml', modelVersion: 'v-test' };
+  };
+  try {
+    const ctx = { profile: profileRow(), mlVenue: ML_VENUE };
+    // 12:30 AM on Saturday in New York: Friday night is still going.
+    const late = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: new Date('2026-11-07T05:30:00Z') });
+    const first = late.find((f) => !advisorFacts.isRefusal(f));
+    assert.strictEqual(first.value.weekday, 'Friday');
+    assert.strictEqual(first.value.date, '2026-11-06');
+    assert.strictEqual(first.value.peakScore, 92, 'the 1 AM half an hour away');
+    assert.strictEqual(late[0].id, first.id, 'tonight comes first');
+    // At 5 PM the same Saturday, tonight is Saturday night.
+    const evening = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: new Date('2026-11-07T22:00:00Z') });
+    assert.strictEqual(evening[0].value.weekday, 'Saturday');
+    assert.strictEqual(evening[0].value.peakScore, 96);
   } finally {
     mlPredictor.predictBusyness = realPredict;
   }
@@ -412,9 +446,10 @@ test('a venue whose day ends by midnight, or starts at dawn, keeps its own hours
   for (let d = 0; d <= 6; d++) assert.deepStrictEqual(advisorFacts.nightTailHours(open, d), [], 'a 5 AM bakery hour is its own morning');
   const bar = advisorFacts.openHoursByDay([18, 19, 20, 21, 22, 23].flatMap((hour) => [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, hour, baseline: 50 }))));
   for (let d = 0; d <= 6; d++) assert.deepStrictEqual(advisorFacts.nightTailHours(bar, d), []);
-  // An all-night diner's small hours are the night before's, up to 5 AM.
+  // An all-night diner's hours before 5 AM are the night before's; its 5 AM
+  // breakfast is the morning's.
   const diner = advisorFacts.openHoursByDay(Array.from({ length: 24 }, (_, hour) => hour).flatMap((hour) => [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, hour, baseline: 50 }))));
-  assert.deepStrictEqual(advisorFacts.nightTailHours(diner, 3), [0, 1, 2, 3, 4, 5]);
+  assert.deepStrictEqual(advisorFacts.nightTailHours(diner, 3), [0, 1, 2, 3, 4]);
 });
 
 test('a club\'s strongest days are the nights it runs, not the mornings after them', async () => {

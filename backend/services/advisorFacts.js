@@ -734,13 +734,14 @@ function openHoursByDay(curve) {
 // big nights read as Saturday and Sunday, under the wrong dates, and the model
 // tried to square a Saturday, a 1 AM and the 7th in one sentence.
 //
-// The product's rule elsewhere is that the small hours belong to the night
-// before (crowdEngine.sameNightOffset). Here it is held to the venue's own
-// curve: an hour from midnight to 5 AM belongs to the night before when the
-// room was still open at 11 PM the evening before and every hour from
+// The product's rule elsewhere is that the hours before 5 AM belong to the
+// night before (crowdEngine.sameNightOffset). Here it is held to the venue's
+// own curve: an hour from midnight to 4 AM belongs to the night before when
+// the room was still open at 11 PM the evening before and every hour from
 // midnight up to it is open too. A bakery that opens at 5 AM keeps its
-// morning, and a bar that closes at midnight keeps its day.
-const NIGHT_TAIL_LAST_HOUR = 5;
+// morning, a diner's 5 AM breakfast stays a morning, and a bar that closes at
+// midnight keeps its day.
+const NIGHT_TAIL_LAST_HOUR = 4;
 
 /** The small hours of weekday `day` that carry on the night before, ascending. */
 function nightTailHours(openByDay, day) {
@@ -758,9 +759,12 @@ function nightTailHours(openByDay, day) {
 function weekAheadPeakLabel({ weekday, hour, score, afterMidnight = false }) {
   return `${weekday}${afterMidnight ? ' night' : ''} projects busiest around ${hour12(hour)}, at ${score} on our 0 to 100 index. This is an estimate, not a promise of foot traffic.`;
 }
+// No clock word in it: a "midnight" here vouched for any claim of a midnight
+// peak beside it (2026-11-03 review), since the answer check reads a fact's
+// note for the numbers it may support.
 function afterMidnightNote(weekday) {
   const next = WEEKDAY_NAMES[(WEEKDAY_NAMES.indexOf(weekday) + 1) % 7];
-  return `This peak is after midnight, early on ${next}. It belongs to ${weekday} night.`;
+  return `This peak is in the small hours, early on ${next}. It belongs to ${weekday} night.`;
 }
 
 /** The curve's own busiest hour per weekday, or null where nothing registers. */
@@ -851,6 +855,12 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
   // the memo that makes all of that one query.
   const curve = await fetchBaselineCurve(ctx.profile.google_place_id, ctx);
   const openByDay = openHoursByDay(curve);
+  // AT 12:30 AM THE NIGHT IN PROGRESS IS STILL TONIGHT. In the small hours
+  // that carry on last night, the week starts from last night's evening, so
+  // the first day (tonight's outlook, the cards' today) is the night the owner
+  // is standing in, not the next one 24 hours away (2026-11-03 review).
+  const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+  if (clock && nightTailHours(openByDay, clock.day).includes(clock.hour)) base.setDate(base.getDate() - 1);
   const out = [];
 
   for (let d = 0; d <= 6; d++) {
@@ -870,9 +880,14 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
       ...nightTailHours(openByDay, (day.getDay() + 1) % 7).map((h) => ({ h, afterMidnight: true })),
     ];
     if (!scanHours.length) {
+      // A day whose only hours are the end of the night before has no night
+      // of its own, and saying the curve shows nothing on it would be false.
+      const before = WEEKDAY_NAMES[(day.getDay() + 6) % 7];
       out.push(makeRefusal({
         id: `refuse_peak_${date}`,
-        reason: `Your Google profile's curve shows no activity on ${weekday}, so there is no peak to project for that day.`,
+        reason: lastNight.size
+          ? `Your Google profile's curve shows ${weekday} only as the small hours of ${before} night, so there is no ${weekday} peak of its own to project.`
+          : `Your Google profile's curve shows no activity on ${weekday}, so there is no peak to project for that day.`,
         whatWouldUnlock: 'Google recording activity for that day, or your own slider readings building a curve of your own.',
       }));
       continue;
@@ -1304,14 +1319,21 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
       // kitchen) makes "before/after" ambiguous against ANY peak, and a
       // morning peak (a cafe) against an evening kitchen is simply "before".
       // Roost serves every venue type, so the arithmetic must survive both.
-      // A peak after midnight is later than any same-day last order, so it is
-      // read on a clock that runs past 24 (1 AM is 25).
-      const comparable = Number.isFinite(kitchenHour) && kitchenHour >= 6;
+      // A peak after midnight is later than an evening's last order, so it is
+      // read on a clock that runs past 24 (1 AM is 25). Against a morning
+      // last order it is as ambiguous as an overnight kitchen: a diner's 4 AM
+      // peak and its 6 AM last orders are one morning, not one night.
+      const comparable = Number.isFinite(kitchenHour) && kitchenHour >= 6 && !(afterMidnight && kitchenHour < 12);
       const peakAtOrAfterLastOrder = comparable ? peakHour + (afterMidnight ? 24 : 0) >= kitchenHour : null;
       const whose = `${weekday}${afterMidnight ? ' night' : ''}'s`;
       out.push(makeFact({
         id: 'kitchen_vs_peak',
-        value: { kitchenLastOrder: p.kitchen_last_order, peakHour, peakDate: date, peakAtOrAfterLastOrder },
+        // The flag rides along so the phrasing model is not handed the
+        // evening's date beside a small-hours clock (advisorPhrasing.flattenFacts).
+        value: {
+          kitchenLastOrder: p.kitchen_last_order, peakHour, peakDate: date, peakAtOrAfterLastOrder,
+          ...(afterMidnight ? { afterMidnight: true } : {}),
+        },
         source: 'arithmetic',
         from: [kitchenFact.id, peakFact.id],
         asOf: now.toISOString(),
