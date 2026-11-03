@@ -1951,7 +1951,19 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       if (!tab && !screen && !profileSection) {
         return { error: 'That is not a screen in this app. Name one of the tabs or screens listed for you.' };
       }
-      return { success: true, navigated: true, tab, screen, profile_section: profileSection };
+      // A BUTTON, NOT A JUMP, and the model is told so. This result used to
+      // say `navigated: true`, and on the Birdie eval the model read it as
+      // done: "I just brought up Safety so you can hit SOS", "use Safety
+      // right here", to someone still looking at the chat with a button under
+      // it. Nothing moves until they tap, so the result says that, and the
+      // loop below draws the button off `success`.
+      return {
+        success: true,
+        button: 'A "Take me there" button for this screen is under your reply. Nothing has opened yet: it opens when they tap it, so point them to the button and never say you opened it.',
+        tab,
+        screen,
+        profile_section: profileSection,
+      };
     }
 
     default:
@@ -2937,7 +2949,7 @@ router.post('/chat',
                 collectedVenues.push({ ...v });
               }
             }
-            if (name === 'navigate_app' && result.navigated) {
+            if (name === 'navigate_app' && result.success === true) {
               navigationAction = { tab: result.tab, screen: result.screen, profile_section: result.profile_section };
             }
             if (name === 'draft_flock' && result.drafted) {

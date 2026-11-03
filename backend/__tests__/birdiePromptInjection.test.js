@@ -724,6 +724,21 @@ test('the navigation the app actually has still works', async () => {
   assert.deepStrictEqual(r.body.navigate, { tab: 'profile', screen: 'profile', profile_section: 'safety' });
 });
 
+test('the model is told navigation is a button they tap, not a screen already open', async () => {
+  // Told `navigated: true`, the model said "I just brought up Safety so you
+  // can hit SOS" to someone still looking at the chat (Birdie eval,
+  // 2026-11-03). The app draws a "Take me there" button and moves on a tap.
+  sendImpl = oneToolCall('navigate_app', { tab: 'profile', screen: 'profile', profile_section: 'safety' }, 'tap below for safety');
+  const r = await chat({ messages: [{ role: 'user', text: "someone's following me" }] });
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.navigate, 'the button is still drawn');
+  const told = sendCalls[1].message[0].functionResponse.response;
+  assert.strictEqual(told.navigated, undefined, 'the model is told it navigated');
+  assert.match(told.button, /"Take me there" button/);
+  assert.match(told.button, /Nothing has opened yet/);
+  assert.match(told.button, /never say you opened it/);
+});
+
 // ===========================================================================
 // 6. THE CAPS, AT THE ROUTE RATHER THAN IN THE SOURCE
 // ===========================================================================
