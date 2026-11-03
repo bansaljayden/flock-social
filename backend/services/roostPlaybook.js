@@ -210,8 +210,16 @@ const EARLY_EVENING = new RegExp([
   "\\b(?:get(?:ting)?|bring(?:ing)?|draw(?:ing)?|pull(?:ing)?|fill(?:ing)?|pack(?:ing)?|attract(?:ing)?|more)\\b[^.?!]{0,30}?\\b(?:before|by)\\s+(?:[5-8](?::[0-5]\\d)?(?:\\s*(?:pm|p\\.m\\.|o'?clock))?(?![\\d:]|\\s*(?:am|a\\.m\\.))|dinner(?:\\s+rush)?|the\\s+(?:dinner\\s+)?rush)\\b",
   '\\bearl(?:y|ier)\\s+(?:in\\s+the\\s+)?(?:evenings?|nights?)\\b',
 ].join('|'));
-function earlyEveningPhrase(venue) {
-  return venue && venue.kind === 'club' ? 'early crowd' : 'early evening';
+// Only a draw written for this kind of room: the phrase is ours, not the
+// owner's, so it must never be what lets another kind's move in (review,
+// 2026-11-03: a bakery and a counter shop were led to the happy hour move,
+// which nobody named). A room with no early evening draw of its own gets none.
+function earlyEveningPhrase(venue, compiled) {
+  const order = venue && venue.kind === 'club' ? ['early crowd', 'early evening'] : ['early evening', 'early crowd'];
+  return order.find((phrase) => {
+    const cue = stems(phrase).join(' ');
+    return compiled.some((t) => forThisKind(t, venue) && t.cueStems.some((c) => c.join(' ') === cue));
+  }) || null;
 }
 
 /**
@@ -720,7 +728,7 @@ function createPlaybook(tactics) {
     if (q.daypart && (!topics.length || topics[0] === 'fill_slow_days')) topics = q.lull ? LULL_TOPICS : DAYPART_TOPICS;
     const lean = topicLean(q.qSet);
     // An early evening asked for, in the cues of the draw that fits the room.
-    const early = q.earlyEvening ? earlyEveningPhrase(venue) : null;
+    const early = q.earlyEvening ? earlyEveningPhrase(venue, compiled) : null;
     const qStems = early ? [...q.qStems, '|', ...stems(early)] : q.qStems;
     const qSet = early ? new Set([...q.qSet, ...stems(early).filter((w) => !STOP.has(w))]) : q.qSet;
     const rank = (onTopics) => wordsOverRoute(compiled

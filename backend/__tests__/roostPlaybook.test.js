@@ -469,6 +469,14 @@ test('the move the owner\'s words name leads over the moves that only share the 
       assert.strictEqual(pb.followUpFor(plays, venue, early), NEXT_ASKED[name], name);
     }
   }
+  // A room with no early evening draw of its own is never led to another
+  // kind's: the phrase is ours, not the owner's (review, 2026-11-03). A bakery
+  // and a counter shop lead with what their words did name.
+  for (const venue of [{ kind: 'bakery', alcohol: false }, { kind: 'quick_service', alcohol: false }]) {
+    for (const intentId of ['peak_hours', null]) {
+      assert.strictEqual(pb.find(early, { intentId, venue })[0].id, 'mkt_sampling', `${venue.kind} ${intentId}`);
+    }
+  }
   // The same ask in other words, and a morning, which is not it.
   for (const q of ['how can we get a crowd in before 6', 'how do I bring people in by 7 pm', 'how do I fill the room earlier in the evening', 'how do i get more people in before dinner']) {
     assert.strictEqual(pb.find(q, { intentId: 'peak_hours', venue: VENUES.bar })[0].id, 'slow_hours_happy_hour', q);
