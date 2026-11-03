@@ -996,6 +996,75 @@ function searchAnchoredNowhere(args) {
   return !/,|\b(?:in|near|around)\s+(?!me\b|here\b|tonight\b|now\b|town\b|the area\b)[a-z0-9]/i.test(String(args.query || ''));
 }
 
+// HOW FAR A VENUE IS (2026-11-03). No tool said, so Birdie either said nothing
+// about it or worked it out from an address ("right around the corner from
+// you"), which the hard rules forbid and which is a guess. A search result and
+// a crowd lookup now carry `distance_miles` and `walk_minutes`, worked out
+// here from coordinates the turn already has, never from a paid call.
+//
+// FROM THE LOCATION GEMINI ALREADY HAS, NOT THE EXACT ONE. The turn carries the
+// person's location rounded to two decimals, about a kilometre, so exact
+// coordinates never reach a third party. A tenth-of-a-mile distance from the
+// exact spot to each of eight venues would place them to within a block or so
+// by trilateration, so every distance is measured from the same rounded point
+// the turn already sends, which tells Gemini nothing it could not work out
+// itself. That point can be up to about half a mile from where they stand, and
+// the rules tell Birdie to say these as "about".
+//
+// PER CALLER, AFTER THE CACHE. A search result is shared by everyone asking the
+// same words in the same square for five minutes (BIRDIE'S VENUE SEARCH CACHE),
+// so a distance on the stored copy would tell the next person in the square how
+// far the first one stood from every venue, which is the defect routes/events.js
+// describes for Ticketmaster's distance. It is written on the turn's own copy in
+// the tool loop and never cached. Only ever the asker's own location: nothing
+// here reads where anybody else is.
+//
+// ONLY FROM A FRESH FIX. The app sends the map's position, which can be where
+// the phone was in an earlier session. A client that knows how old its device
+// fix is sends that (locationAgeSec); a turn that sends no age, or one older
+// than BIRDIE_DISTANCE_MAX_FIX_AGE_SEC, gets no distance at all. Ten minutes on
+// foot is about half a mile, the same size as the rounding.
+//
+// WALKING MINUTES ON THE APP'S OWN PACE: frontend/src/lib/travel.js turns a
+// straight line into "about 8 min" on foot with a road factor of 1.3 and
+// 4.8 km/h, and these are the same two numbers. Past three miles there is no
+// walk to speak of, so only the distance goes.
+const BIRDIE_DISTANCE_MAX_FIX_AGE_SEC = 10 * 60;
+const WALK_ROAD_FACTOR = 1.3;
+const WALK_KMH = 4.8;
+const WALK_MAX_MILES = 3;
+const KM_PER_MILE = 1.609344;
+
+function haversineKm(a, b) {
+  const rad = (d) => (d * Math.PI) / 180;
+  const dLat = rad(b.lat - a.lat);
+  const dLng = rad(b.lng - a.lng);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+// The point distances are measured from: the turn's location rounded exactly
+// the way the turn's own text rounds it, or null when there is none, when the
+// client did not say how old it is, or when it is older than the limit above.
+function distanceOrigin(location, locationAgeSec) {
+  if (!location || !Number.isFinite(+location.lat) || !Number.isFinite(+location.lng)) return null;
+  if (!Number.isInteger(locationAgeSec) || locationAgeSec < 0 || locationAgeSec > BIRDIE_DISTANCE_MAX_FIX_AGE_SEC) return null;
+  return { lat: Number((+location.lat).toFixed(2)), lng: Number((+location.lng).toFixed(2)) };
+}
+
+// { distance_miles, walk_minutes } from `from` to a venue, or null when either
+// end is missing. Miles to one decimal, never below 0.1; walking minutes whole,
+// never below 1, and left off past WALK_MAX_MILES.
+function venueDistance(from, lat, lng) {
+  if (!from || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const km = haversineKm(from, { lat, lng });
+  if (!Number.isFinite(km)) return null;
+  const miles = Math.max(0.1, Math.round((km / KM_PER_MILE) * 10) / 10);
+  const out = { distance_miles: miles };
+  if (miles <= WALK_MAX_MILES) out.walk_minutes = Math.max(1, Math.round(((km * WALK_ROAD_FACTOR) / WALK_KMH) * 60));
+  return out;
+}
+
 // THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
 // OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
 // locked and nothing paid was computed, and the tool loop, when another turn
@@ -1667,6 +1736,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // A locked result carries neither, and lockForecastResult removes both.
         ...(onServerClock ? { clock: SERVER_CLOCK, clock_note: SERVER_CLOCK_NOTE } : {}),
       };
+      // How far it is from the person asking, when the turn may say (HOW FAR
+      // A VENUE IS, above). A fact about the street rather than a reading, so
+      // a locked result keeps it, as it keeps the game.
+      const distance = venueDistance(opts.distanceFrom, lat, lon);
+      if (distance) Object.assign(result, distance);
 
       // THE PAID HALF, AND WHY BIRDIE IS METERED THE SAME WAY THE CARD IS.
       //
@@ -2291,6 +2365,7 @@ How to answer:
 - \`best_time\`, \`peak_hours\` and \`hourly_forecast\` cover the next twelve hours from now and nothing later. For a plan on another day (tomorrow night, next Friday) there is no forecast: never give them those hours or numbers as that day's, and say the read you have is for now.
 - If you have their coordinates, always pass location to search_venues. If not, ask where they are, once.
 - A search_venues result may carry \`tables\`: that venue's live table count from its own sensor. \`open_tables\` is how many tables are free now, \`party_of_two_fits_now\` whether a party of two can sit right away, and \`wait_minutes\` the likely wait in minutes when nothing fits (null when unknown). You may use it to suggest a place with a table free. Never mention tables for a venue whose result has no \`tables\`, never guess them, and never promise a table will still be free when they arrive.
+- A search_venues or get_crowd_prediction result may carry \`distance_miles\` and \`walk_minutes\`: how far that venue is in a straight line from the location in their message, and about how long that is on foot. That location is approximate, so say them as about ("about half a mile", "about a 10 minute walk"), and lean on them when they want somewhere near, walkable or the closest. They measure from where the person is now, not from a place they name. A venue whose result has no \`distance_miles\` has no known distance: never say or guess how near or far it is, how long it takes to get there, or that it is walkable.
 
 Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
@@ -2510,6 +2585,12 @@ router.post('/chat',
       .withMessage('location takes only lat and lng'),
     scalarOnly(body('location.lat').optional({ values: 'null' }), 'location.lat').isFloat({ min: -90, max: 90 }),
     scalarOnly(body('location.lng').optional({ values: 'null' }), 'location.lng').isFloat({ min: -180, max: 180 }),
+    // How old the device fix behind `location` is, in whole seconds, from a
+    // client that knows (HOW FAR A VENUE IS). A JSON integer: anything else is
+    // a 400 in testing, never a distance from a position of unknown age.
+    body('locationAgeSec').optional({ values: 'null' })
+      .custom((v) => Number.isInteger(v) && v >= 0 && v <= 366 * 24 * 3600)
+      .withMessage('locationAgeSec must be whole seconds'),
     // Bounded: this is interpolated into the system prompt, so unbounded
     // strings were a 1MB context bypass around the message caps (round 6).
     //
@@ -2767,6 +2848,10 @@ router.post('/chat',
       if (requestLocated) {
         userText = `[My approximate location: ${(+location.lat).toFixed(2)},${(+location.lng).toFixed(2)}]\n${userText}`;
       }
+      // Where venue distances are measured from on this turn: that same
+      // rounded point, and only from a fix the client says is fresh (HOW FAR
+      // A VENUE IS). Null means no result carries a distance.
+      const distanceFrom = distanceOrigin(location, req.body.locationAgeSec);
       // The flock or venue being viewed, as data in the user turn. See
       // buildContextLine for why these names are not in the system prompt.
       const contextData = buildContextDataLine(currentContext);
@@ -2958,6 +3043,7 @@ router.post('/chat',
               salesOff,
               searchedPlaces,
               timeZone: userZone,
+              distanceFrom,
             };
             // The exact string the tool fetches, so the meter and Google agree
             // on which venue this is. No id means every lookup counts, which is
@@ -2979,6 +3065,14 @@ router.post('/chat',
             // turn's own copy (copySearchResult), never the cached one.
             if (name === 'search_venues' && treatedAsMinor && Array.isArray(result?.venues)) {
               result.venues = result.venues.filter((v) => !isBarVenue(v && v.types));
+            }
+            // Distances on this turn's own copy, never on the cached one (HOW
+            // FAR A VENUE IS), and only when the turn may carry them.
+            if (name === 'search_venues' && distanceFrom && Array.isArray(result?.venues)) {
+              for (const v of result.venues) {
+                const d = v ? venueDistance(distanceFrom, v.lat, v.lng) : null;
+                if (d) Object.assign(v, d);
+              }
             }
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
@@ -3265,4 +3359,4 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding, venueDistance, distanceOrigin };
