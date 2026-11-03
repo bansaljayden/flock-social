@@ -32,16 +32,24 @@ test('dollar amounts carry their thousands separator, and a figure already group
     // a SKU, an invoice or a phone number is an identifier, not an amount.
     ['Flyer the 10001 and 10011 zip codes first.', 'Flyer the 10001 and 10011 zip codes first.'],
     ['SKU 100234, invoice #12345, call +15551234567, about 12480 covers', 'SKU 100234, invoice #12345, call +15551234567, about 12480 covers'],
+    ['a code of $0800', 'a code of $0800'],
   ]) assert.strictEqual(tidyNumbers(said), shown, said);
 });
 
-test('a time reads in 12 hours where it is plainly a clock time, and nothing else is touched', () => {
+test('a 24-hour time beside a 12-hour one reads in 12 hours, and nothing that could be a timer or a duration is touched', () => {
   for (const [said, shown] of [
+    // The live answers: a 24-hour time in a line that already shows AM or PM.
     ['a pastry with a drink between 13:00 and 2:30 PM', 'a pastry with a drink between 1 PM and 2:30 PM'],
-    ['a full dining room between 19:00 and 21:00', 'a full dining room between 7 PM and 9 PM'],
-    ['Schedule it around 20:00 to pull the crowd in.', 'Schedule it around 8 PM to pull the crowd in.'],
-    ['offer free entry before 22:00 so the room fills early', 'offer free entry before 10 PM so the room fills early'],
+    ['Schedule it around 20:00 to pull the crowd in well before your 10 PM peak.', 'Schedule it around 8 PM to pull the crowd in well before your 10 PM peak.'],
+    ['Even with your peak landing at 11 PM, offer free entry before 22:00 so the room looks busy early.', 'Even with your peak landing at 11 PM, offer free entry before 10 PM so the room looks busy early.'],
+    ['Staff the floor between 19:00 and 21:00 for your 8 PM peak.', 'Staff the floor between 7 PM and 9 PM for your 8 PM peak.'],
     ['from 4pm to 6pm', 'from 4 PM to 6 PM'],
+    // A line with no 12-hour time is left as written (second review, 11-03).
+    ['a full dining room between 19:00 and 21:00', 'a full dining room between 19:00 and 21:00'],
+    ['Pull a runner for any ticket still up after 15:00 on the timer.', 'Pull a runner for any ticket still up after 15:00 on the timer.'],
+    ['Flip the burgers at 14:00 on the grill timer.', 'Flip the burgers at 14:00 on the grill timer.'],
+    ['Aim for ticket times between 13:00 and 15:00 minutes, and seat by 7 PM.', 'Aim for ticket times between 13:00 and 15:00 minutes, and seat by 7 PM.'],
+    ['Plate it from 13:30 to 14:45 minutes before your 8 PM peak.', 'Plate it from 13:30 to 14:45 minutes before your 8 PM peak.'],
     // Durations, timers, ratios and scores (adversarial review, 11-03).
     ['Keep ticket times under 15:00 at the peak, and pull a runner when they pass 20:00.', 'Keep ticket times under 15:00 at the peak, and pull a runner when they pass 20:00.'],
     ['Set the fryer timer to 03:30 and keep the quoted wait under 00:45.', 'Set the fryer timer to 03:30 and keep the quoted wait under 00:45.'],
@@ -50,8 +58,10 @@ test('a time reads in 12 hours where it is plainly a clock time, and nothing els
     ['post by 09:30 or 00:15', 'post by 09:30 or 00:15'],
     ['like 5pm to 6:30pm, so guests arrive early', 'like 5 PM to 6:30 PM, so guests arrive early'],
     ['between 5:00 PM and 6:30 PM, back by 7:00 PM', 'between 5 PM and 6:30 PM, back by 7 PM'],
-    ['Doors open at 10 a.m. and it eases off at 2 p.m. Then it fills.', 'Doors open at 10 AM and it eases off at 2 PM. Then it fills.'],
-    ['It opens at 10 a.m.', 'It opens at 10 AM.'],
+    // A dotted "a.m." can also end the sentence, so it stays as written.
+    ['Doors open at 10 a.m. and it eases off at 2 p.m. Then it fills.', 'Doors open at 10 a.m. and it eases off at 2 p.m. Then it fills.'],
+    ['Open at 10 a.m. Sunday through Thursday.', 'Open at 10 a.m. Sunday through Thursday.'],
+    ['a booth at $12 p.m. or $12pm', 'a booth at $12 p.m. or $12pm'],
     // "9:00" could be morning or night, and "5:00" a 5 PM special: left alone.
     ['between 9:00 and 11:00 around your 10 AM peak', 'between 9:00 and 11:00 around your 10 AM peak'],
     ['run it from 5:00 to 7:00', 'run it from 5:00 to 7:00'],
@@ -76,6 +86,9 @@ test('a sign goes only from a points gap under or over the venue\'s own usual, a
     ['moved to -12 under the new scoring', 'moved to -12 under the new scoring'],
     ['Plan for 40 +10 more covers on game nights.', 'Plan for 40 +10 more covers on game nights.'],
     ['Yesterday came in at 8 -18 points under your usual 26.', 'Yesterday came in at 8 -18 points under your usual 26.'],
+    ['-18 or -25 points under your usual', '-18 or -25 points under your usual'],
+    ['-18 vs. -25 points under your usual', '-18 vs. -25 points under your usual'],
+    ['+6 or +9 points over your usual', '+6 or +9 points over your usual'],
     // The other two live phrasings.
     ['falling -18 below your usual 55', 'falling 18 below your usual 55'],
     ['putting yesterday -18 points under typical levels', 'putting yesterday 18 points under typical levels'],

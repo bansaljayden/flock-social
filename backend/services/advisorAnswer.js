@@ -146,33 +146,41 @@ function repairDashes(text) {
 // "On Tuesday Oct 27". Each is set right here, after the check has read the
 // draft, and none changes what a number says.
 //
-// EVERY RULE IS NARROW, AND AN ADVERSARIAL REVIEW IS WHY. The first version
-// (same night) grouped every long number, so a zip code became "10,001"; it
-// turned any HH:MM into a clock, so "keep ticket times under 15:00" became
-// "under 3 PM" and a fryer timer of "03:30" became "3:30 AM"; and it dropped
-// signs inside ranges, so "-18 to -25 points under" read "-18 to 25". Now:
+// EVERY RULE IS NARROW, AND TWO ADVERSARIAL REVIEWS ARE WHY. The first
+// version grouped every long number (a zip code became "10,001"), turned any
+// HH:MM into a clock ("keep ticket times under 15:00" became "under 3 PM"),
+// and dropped signs inside ranges ("-18 to -25 points under" read "-18 to
+// 25"); the second still read a timer after a clock word ("after 15:00 on the
+// timer" became "after 3 PM"), put a full stop after "a.m." before any
+// capital ("Open at 10 a.m. Sunday" became "10 AM. Sunday"), and dropped one
+// sign of "-18 or -25". Now:
 //   * only a dollar amount gets its thousands comma;
-//   * only an afternoon or evening hour (13:00 to 23:59) is turned to 12
-//     hours, and only where a clock word sits in front of it ("at", "before",
-//     "after", "until", "around", "from", "between", "opens", "closes",
-//     "doors") or it closes a range that began with one, and never before a
-//     unit of time; "9:00" or "5:00" could be either half of the day, and a
-//     guess would put a 5 PM special at 5 AM, so those stay as written;
+//   * "7pm", "7 pm" and "5:00 PM" read "7 PM" and "5 PM"; a dotted "a.m." is
+//     left as written, since it can also end the sentence;
+//   * a 24-hour time is turned to 12 hours only in a line that already shows
+//     a 12-hour one (the "22:00" beside "11 PM" the owner saw), only for
+//     13:00 to 23:59, only after a clock word ("at", "before", "after",
+//     "until", "around", "from", "between", "opens", "closes", "doors") or at
+//     the end of a range that began with one, and never in a line where a
+//     time is a duration ("15:00 minutes"); "9:00" or "5:00" could be either
+//     half of the day, and a guess would put a 5 PM special at 5 AM;
 //   * a sign goes only in "-18 points under your usual ...": a points or
 //     percent gap, a word that agrees with the sign, the venue's own usual
 //     after it, and nothing in front that makes it half of a range or of a
 //     longer number.
 const MONTHS = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)';
 const WEEKDAY_THEN_DATE = new RegExp(`\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (${MONTHS}\\.? \\d{1,2})\\b`, 'g');
-const MONEY_UNGROUPED = /\$(\d{4,})(?!\d|,\d)/g;
-const NOT_A_DURATION = '(?![\\d:])(?!\\s*(?:[aApP]\\.?\\s?[mM]|minutes?|mins?|hours?|hrs?|seconds?|secs?)\\b)';
-const CLOCK_WORD_24 = new RegExp(`(?<=\\b(?:at|before|after|until|till|around|from|between|opens?|opening|closes?|closing|doors?)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'gi');
-const RANGE_END_24 = new RegExp(`(?<=\\b\\d{1,2}(?::[0-5]\\d)?\\s[AP]M\\s+(?:and|to|until|till|through|-)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'g');
-const TIDY_CLOCK_AMPM = /\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])(\.\s?[mM]\.|\s?[mM]\b)(?![a-zA-Z])/g;
+const MONEY_UNGROUPED = /\$([1-9]\d{3,})(?!\d|,\d)/g;
+const TWELVE_HOUR_SHOWN = /\b\d{1,2}(?::[0-5]\d)?\s[AP]M\b/;
+const A_DURATION = /\b\d{1,2}:[0-5]\d\s*(?:minutes?|mins?|hours?|hrs?|seconds?|secs?)\b/i;
+const NOT_BEFORE_A_UNIT = '(?![\\d:])(?!\\s*(?:[aApP]\\.?\\s?[mM]|minutes?|mins?|hours?|hrs?|seconds?|secs?)\\b)';
+const CLOCK_WORD_24 = new RegExp(`(?<=\\b(?:at|before|after|until|till|around|from|between|opens?|opening|closes?|closing|doors?)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_BEFORE_A_UNIT}`, 'gi');
+const RANGE_END_24 = new RegExp(`(?<=\\b\\d{1,2}(?::[0-5]\\d)?\\s[AP]M\\s+(?:and|to|until|till|through|-)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_BEFORE_A_UNIT}`, 'g');
+const TIDY_CLOCK_AMPM = /(?<![$\d.,:])\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])[mM]\b(?![a-zA-Z])/g;
 const USUAL = '\\s+(?:(?:your|the|their|our)\\s+)?(?:usual|typical|normal|own|baseline|median|middle|average|regular)\\b';
-const NOT_IN_A_RANGE = '(?<![\\d.,]\\s*)(?<![\\w$.,])(?<!\\b(?:from|to|and|through|between)\\s+)';
-const MINUS_UNDER_USUAL = new RegExp(`${NOT_IN_A_RANGE}[-−](\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:under|below|behind|short\\s+of)${USUAL})`, 'g');
-const PLUS_OVER_USUAL = new RegExp(`${NOT_IN_A_RANGE}\\+(\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:over|above|ahead\\s+of)${USUAL})`, 'g');
+const NOT_IN_A_RANGE = '(?<![\\d.,]\\s*)(?<![\\w$.,])(?<!\\b(?:from|to|and|or|nor|vs|versus|through|between)\\.?\\s+)';
+const MINUS_UNDER_USUAL = new RegExp(`${NOT_IN_A_RANGE}[-\\u2212](\\d+(?:\\.\\d+)?)(?![\\d.,]*\\s+(?:or|to|and|vs|versus|nor)\\b)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:under|below|behind|short\\s+of)${USUAL})`, 'g');
+const PLUS_OVER_USUAL = new RegExp(`${NOT_IN_A_RANGE}\\+(\\d+(?:\\.\\d+)?)(?![\\d.,]*\\s+(?:or|to|and|vs|versus|nor)\\b)(?=(?:\\s?%|\\s?percent|\\s+points?)?\\s+(?:over|above|ahead\\s+of)${USUAL})`, 'g');
 
 function groupThousands(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -186,18 +194,19 @@ function twelveHour(hour, minutes) {
 
 /** One answer line with the model's own numbers in house style. */
 function tidyNumbers(text) {
-  return String(text)
+  let out = String(text)
     .replace(MONEY_UNGROUPED, (m, d) => `$${groupThousands(d)}`)
-    .replace(TIDY_CLOCK_AMPM, (m, h, mm, half, tail, offset, whole) => {
+    .replace(TIDY_CLOCK_AMPM, (m, h, mm, half) => {
       const hour = Number(h);
       if (hour < 1 || hour > 12) return m;
-      // "a.m." closing a sentence was its full stop as well.
-      const rest = whole.slice(offset + m.length);
-      const stop = tail.endsWith('.') && (rest === '' || /^\s+[A-Z]/.test(rest)) ? '.' : '';
-      return `${hour}${mm && mm !== '00' ? `:${mm}` : ''} ${half.toUpperCase()}M${stop}`;
-    })
-    .replace(CLOCK_WORD_24, (m, h, mm) => twelveHour(h, mm))
-    .replace(RANGE_END_24, (m, h, mm) => twelveHour(h, mm))
+      return `${hour}${mm && mm !== '00' ? `:${mm}` : ''} ${half.toUpperCase()}M`;
+    });
+  if (TWELVE_HOUR_SHOWN.test(out) && !A_DURATION.test(out)) {
+    out = out
+      .replace(CLOCK_WORD_24, (m, h, mm) => twelveHour(h, mm))
+      .replace(RANGE_END_24, (m, h, mm) => twelveHour(h, mm));
+  }
+  return out
     .replace(MINUS_UNDER_USUAL, '$1')
     .replace(PLUS_OVER_USUAL, '$1')
     .replace(WEEKDAY_THEN_DATE, '$1, $2');
