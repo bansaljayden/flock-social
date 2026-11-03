@@ -332,7 +332,7 @@ function checkHonesty(text, honesty, ctx, problems, warnings) {
 // around here", "low lighting", "handmade pasta"). What a venue's own name or
 // types say is not an invention: pizza at a pizza place, lanes at a bowling
 // alley.
-const REPUTATION = /\b(best [a-z]+(?: [a-z]+)? (?:around|in (?:town|the city|philly|miami|allentown))|famous|known for|signature|legendary|iconic|never misses|can'?t miss|must[- ]try|hidden gem)\b/i;
+const REPUTATION = /\b(best [a-z]+(?: [a-z]+)? (?:around|in (?:town|the city|philly|miami|allentown))|famous|known for|signature|legendary|iconic|unmatched|unbeatable|never misses|can'?t miss|must[- ]try|hidden gem)\b/i;
 const DETAIL_WORDS = ['birria', 'al pastor', 'handmade', 'homemade', 'hand-pulled', 'wood-fired', 'milkshake', 'milkshakes', 'fries', 'burger', 'burgers', 'wings', 'slice', 'slices', 'pasta', 'sushi', 'dumplings', 'pancakes', 'waffles', 'cocktail', 'cocktails', 'beer', 'beers', 'wine', 'drafts', 'patio', 'rooftop', 'booth', 'booths', 'lighting', 'candlelit', 'dj', 'live music', 'music', 'playlist', 'decor', 'views', 'fireplace', 'couches', 'outlets', 'wifi', 'wi-fi', 'staff', 'service', 'servers', 'bartenders', 'portions', 'desserts', 'espresso', 'latte', 'lattes', 'pastries', 'croissants', 'machines', 'skee-ball', 'pinball', 'karaoke', 'trivia'];
 const TYPE_WORDS = {
   pizza_restaurant: ['pizza', 'slice', 'slices', 'pie'],
@@ -353,20 +353,18 @@ const TYPE_WORDS = {
 };
 const NEARNESS = /\b(around the corner|short walk|walking distance|steps (?:away|from)|quick walk|few blocks|close by|right next door|down the street)\b/i;
 
+// The words a venue's own listing allows are the ones for the venues the
+// answer names, never every venue in the results: a diner further down the
+// list does not put booths in a pizza place.
 function checkVenueDetails(text, ctx, problems, warnings) {
-  const { toolCalls, userTexts } = ctx;
+  const { mentioned, userTexts } = ctx;
   const allowed = new Set();
   const addWords = (s) => { for (const w of norm(s).trim().split(' ')) if (w) allowed.add(w); };
-  for (const call of toolCalls) {
-    const r = call.result || {};
-    const rows = call.name === 'search_venues' ? (r.venues || []) : [r.venue || r];
-    for (const v of rows) {
-      if (!v || typeof v !== 'object') continue;
-      addWords(v.name || v.venue_name || '');
-      for (const type of v.types || []) {
-        addWords(String(type).replace(/_/g, ' '));
-        for (const w of TYPE_WORDS[type] || []) allowed.add(w);
-      }
+  for (const v of mentioned) {
+    addWords(v.name);
+    for (const type of v.types || []) {
+      addWords(String(type).replace(/_/g, ' '));
+      for (const w of TYPE_WORDS[type] || []) allowed.add(w);
     }
   }
   for (const u of userTexts) addWords(u);
@@ -476,10 +474,13 @@ function checkAnswer(input) {
     (underAge || ageBracket === 'under21' ? problems : warnings).push('age: drinking talk');
   }
 
-  // Numbers, and what is said about a venue.
+  // Numbers, and what is said about a venue. A crowd number is measured
+  // against the venue's own busiest hour (crowdEngine getLabel), so it is
+  // never a capacity and never how full the room is.
   checkNumbers(text, { facts, userTexts, clock, flockHours }, problems, warnings);
+  if (/\bcapacity\b|\d{1,3}\s?%\s*full\b|\bpercent full\b/i.test(text)) problems.push('crowd scale: calls a crowd number capacity or how full the room is');
   // Only an answer about a venue can say something untrue about one.
-  if (mentioned.length) checkVenueDetails(text, { toolCalls: [...priorTools, ...tools], userTexts }, problems, warnings);
+  if (mentioned.length) checkVenueDetails(text, { mentioned, userTexts }, problems, warnings);
   if (/\b(clos(e|es|ing)|open (till|until|til))\b[^.?!]{0,25}?\b\d{1,2}\b/i.test(text)) {
     warnings.push('hours: states opening hours (no tool result carries them)');
   }

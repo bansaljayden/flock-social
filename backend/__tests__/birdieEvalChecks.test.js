@@ -119,6 +119,10 @@ test('dishes, decor and reputations no tool returned are inventions; a venue\'s 
   const kind = grade('Thistle & Crust for slices, or Mango Street Tacos if you want tacos.', { tools: rows });
   assert.ok(!kind.problems.some((p) => /venue details/.test(p)), kind.problems.join('\n'));
   assert.ok(grade('Thistle & Crust, right around the corner from you.', { tools: rows }).warnings.some((w) => /^distance/.test(w)));
+  // A diner further down the results does not put booths in a pizza place.
+  const withDiner = [search(thistle, cases.byKey.get('nightowl'))];
+  assert.ok(grade('Thistle & Crust, big booths that fit six.', { tools: withDiner }).problems.some((p) => /"booths"/.test(p)));
+  assert.ok(grade('Cafe Sol Cubano. Sol is unmatched for brunch.', { tools: [search(cases.byKey.get('cafesol'))] }).problems.some((p) => /reputation/.test(p)));
 });
 
 test('the false alarms a live run turned up stay quiet', () => {
@@ -138,6 +142,14 @@ test('the false alarms a live run turned up stay quiet', () => {
   const pinTools = [crowd(pin, { crowd_score: 71, best_time: '1 AM', hourly_forecast: [{ hour: '7 PM', score: 69 }, { hour: '9 PM', score: 87 }] })];
   assert.ok(!grade('Pinwheel Lanes is at 71 now, best at 1 AM.', { tools: pinTools, expect: { bestTime: true } }).problems.length);
   assert.ok(!grade('Pinwheel Lanes hits 87% at 9 PM, so go while it is under 70%.', { tools: pinTools }).problems.length);
+});
+
+test('a crowd number is never a capacity', () => {
+  const copper = cases.byKey.get('copper');
+  const tools = [crowd(copper, { crowd_score: 24, hourly_forecast: [] })];
+  assert.ok(grade('Copper Kettle Cafe is at 24% capacity.', { tools }).problems.some((p) => /^crowd scale/.test(p)));
+  assert.ok(grade('Copper Kettle Cafe, 24% full right now.', { tools }).problems.some((p) => /^crowd scale/.test(p)));
+  assert.ok(!grade('Copper Kettle Cafe is at 24, quiet for them.', { tools }).problems.some((p) => /^crowd scale/.test(p)));
 });
 
 test('a non-200 or a fallback line fails', () => {
