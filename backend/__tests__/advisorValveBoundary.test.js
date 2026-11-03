@@ -604,6 +604,22 @@ test('a report in the past is a reading whatever its verb, and a rule about othe
   }
   // The owner's own count is theirs to have quoted back.
   assert.ok(freeText.applyAdviceValve('Your guests complained 40 times last month.', ADVICE_FACTS(), { texts: ['my guests complained 40 times last month, what do I do'] }));
+  // A report that opens on its number after a time or "another", and a share
+  // said as "N out of M" (review of the round, 2026-11-03).
+  for (const claim of [
+    'Last month 50% of your guests came back.',
+    'In October 300 people came through your door.',
+    'Another 40 guests came in last Friday.',
+    'Seven out of ten of your reviews mention the wait.',
+    '7 out of 10 of your reviews mention the wait.',
+    'Three in ten of your guests order dessert.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  for (const fine of [
+    'Another 10 covers a week at $38 is $380.',
+    'Next month 20 more covers a week would add $760.',
+    'On Fridays 20% of your sales should come from drinks.',
+    'Aim for 3 in 10 of your guests ordering dessert.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
 });
 
 test('a number that opens its clause as the subject of a claim is read as one, and a target or a rule of thumb that opens on a number is not', () => {
