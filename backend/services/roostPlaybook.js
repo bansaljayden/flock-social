@@ -976,7 +976,10 @@ function subjectWords(text) {
   for (const w of stems(normalizeOwnerText(String(text || '')))) {
     if (STOP.has(w) || FRAME_WORDS.has(w)) continue;
     out.add(w);
-    for (const same of SAME_SUBJECT[w] || []) out.add(stem(same));
+    // Own keys only: "constructor" is a word an owner can type, and read off
+    // a plain object it is a function, which threw here and took the answer
+    // with it (2026-11-03).
+    for (const same of Object.hasOwn(SAME_SUBJECT, w) ? SAME_SUBJECT[w] : []) out.add(stem(same));
   }
   return out;
 }

@@ -446,3 +446,15 @@ test('a crowd that goes home early is advice on the leaving hour, and "is everyo
     assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId: 'cohort_same_night' }, q);
   }
 });
+
+test('a word that is also an object property is just a word: "constructor" answers like any other', () => {
+  // 2026-11-03: the follow-up's subject table was a plain object, so the word
+  // "constructor" read back a function, the loop over it threw, and the
+  // playbook's answer (and the advice path's follow-up) failed with it.
+  const said = 'the constructor next door blocks our patio, how do I get people in';
+  const answer = pb.answer({ question: said, intentId: null, ctx: RESTAURANT, groundedFacts: [] });
+  assert.ok(answer && answer.text, said);
+  const venue = pb.venueOf(RESTAURANT);
+  assert.doesNotThrow(() => pb.followUpFor(pb.find(said, { venue }), venue, said));
+  assert.strictEqual(pb.restates('What about the constructor?', 'constructor hours'), true);
+});
