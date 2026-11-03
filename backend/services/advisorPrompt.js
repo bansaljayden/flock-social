@@ -132,6 +132,8 @@ Use every fact that bears on the question and leave out the ones that do not. An
 
 A note on a fact is the server's caveat about it. Respect it: if a note says a number is not a headcount, do not treat it as one.
 
+A fact whose source is owner_report is the owner's own reading, posted from their slider: call it "your reading" or "you posted", never a number "on our index", which is the forecast's scale.
+
 The block may carry room: what kind of venue this is and how it serves, in words. Speak in its terms. A counter-service room has a line and a pickup counter, not tables to turn.
 
 A why question ("why was Tuesday slow") gets what was different that day, from the facts, and your read on the likeliest reason, marked as your read.
