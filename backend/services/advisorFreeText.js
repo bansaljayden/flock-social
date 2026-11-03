@@ -977,12 +977,21 @@ function vagueQuestion(question) {
 // out of server pay?", "guest lips swelling, what do we do"). The router
 // prompt now says a problem stated plainly is advice, and every router
 // refusal keeps its word.
+//
+// AND ONLY A PAST DAY MOVES. A second review found the swap moving table
+// questions that use the trade's own words ("how quickly did we flip the room
+// last night", "were the bar stools full at 9", "any room for a group of 8
+// tonight") and moving others onto the street's numbers or the weather. It now
+// moves a question only onto the owner's own readings of a past day (the
+// week's recap, yesterday's verdict, the slow day), and only when the question
+// names nothing at a table, in the words owners use for one.
 const TABLE_INTENTS = new Set(['tables_service', 'tables_free']);
-const AT_A_TABLE = /\b(?:tables?|two[\s-]?tops?|four[\s-]?tops?|six[\s-]?tops?|booths?|high[\s-]?tops?|seats?|seating|seated|seatings?|sit|sits|sitting|part(?:y|ies)|dwell\w*|linger\w*|camp\w*|turns?|turned|turning|turnover|waits?|waited|waiting|wait\s*list|servers?)\b/i;
+const PAST_DAY_READINGS = new Set(['week_recap', 'last_night_verdict', 'slow_night']);
+const AT_A_TABLE = /\b(?:tables?|two[\s-]?tops?|four[\s-]?tops?|six[\s-]?tops?|tops|booths?|high[\s-]?tops?|stools?|seats?|seating|seated|seatings?|sit|sits|sitting|stay|stayed|staying|part(?:y|ies)|groups?\s+of|dwell\w*|linger\w*|camp\w*|turns?|turned|turning|turnover|flip\w*|bus|bussed|bussing|reset\w*|clear(?:ed|ing)?\s+(?:the\s+)?(?:plates?|tables?)|covers?|sections?|queue\w*|room\s+for|fit\s+(?:in\s+)?(?:a\s+)?\d+|waits?|waited|waiting|wait\s*list|servers?)\b/i;
 function settledRoute(route, question) {
   if (route.mode === 'grounded' && TABLE_INTENTS.has(route.intentId) && !AT_A_TABLE.test(normalizeOwnerText(question))) {
     const placed = offlineRoute(question);
-    if (placed && placed.mode === 'grounded' && !TABLE_INTENTS.has(placed.intentId)) return placed;
+    if (placed && placed.mode === 'grounded' && PAST_DAY_READINGS.has(placed.intentId)) return placed;
   }
   return route;
 }

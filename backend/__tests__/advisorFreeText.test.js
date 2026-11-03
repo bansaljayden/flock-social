@@ -1296,6 +1296,14 @@ test('a question about the tables keeps the table route, and a venue with no tab
     'what was our average dwell time last weekend', 'any two-tops open tonight', 'can I fit a party of 6 in tonight',
     'how many more guests could our tables take on a friday', 'is foot traffic down because our tables turn slow?',
     'how often is a seat free at the bar this weekend',
+    // The second review's: the trade's own words for a table, and questions
+    // the rule must not move onto the street's numbers or the weather.
+    'how quickly did we flip the room last night', 'how long did it take to bus and reset last night',
+    'how fast did we clear plates last night', 'how long did guests stay yesterday',
+    'how many covers did each section do last night', 'were the bar stools full at 9 last night',
+    'were the tops full at 8 yesterday', 'did anyone queue for a spot on saturday',
+    'any room for a group of 8 tonight', 'can I fit 6 more covers in tonight',
+    'is everyone else empty tonight or just us', 'is it going to rain tonight',
   ]) {
     resetAll();
     installProfile();
