@@ -80,6 +80,11 @@ import {
 import { tableSettingsFrom } from '../lib/venueTablesReading';
 import { fallbackVenueCover } from '../lib/venueCover';
 
+// An hour label from the forecast ("12 AM") as the owner reads it in a
+// sentence. Roost says "around midnight" and "noon" for the same hour
+// (backend services/clockWords.js), so the peak tiles say it the same way.
+// The hourly strips keep the forecast's own labels as their axis ticks.
+const spokenHourLabel = (label) => (label === '12 AM' ? 'midnight' : label === '12 PM' ? 'noon' : label);
 
 // When an incoming group is coming, from the row's event_time. The same
 // six-day rule App.js's formatEventTime applies to the consumer's own plans:
@@ -1498,7 +1503,7 @@ export default function VenueDashboard({
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${tonightPeak.hour}` : ''}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${spokenHourLabel(tonightPeak.hour)}` : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               {/* One name for one list. This tile, the section on the Events
@@ -1519,7 +1524,7 @@ export default function VenueDashboard({
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${weekPeak.peakHour}` : ''}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${spokenHourLabel(weekPeak.peakHour)}` : ''}</p>
             </div>
           </div>
 

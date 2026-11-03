@@ -339,6 +339,7 @@
 const pool = require('../config/database');
 const { CITIES } = require('../scripts/ml/config');
 const { venueNoun } = require('../utils/venueLabel');
+const { spokenClock } = require('./clockWords');
 
 // advisorFacts is required lazily. This module builds every one of its outputs
 // through that module's constructors, and that module reaches this one through
@@ -405,11 +406,9 @@ const OWN_READING_LOOKBACK_DAYS = 14;
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
 function hour12(h) {
-  const n = ((Number(h) % 24) + 24) % 24;
-  const period = n >= 12 ? 'PM' : 'AM';
-  const display = n === 0 ? 12 : n > 12 ? n - 12 : n;
-  return `${display} ${period}`;
+  return spokenClock(h);
 }
 
 // TOTAL, because a NaN band is a published NaN. Number(undefined) is NaN and

@@ -197,7 +197,8 @@ advisorPhrasing.__setGenAIForTests({
 
 const ASOF = new Date().toISOString();
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-const hour12 = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
+// The same words the fact engine's labels use ("midnight", "9 PM").
+const { spokenClock: hour12 } = require(path.join(B, 'services', 'clockWords'));
 
 // Listed Monday to Sunday; each day carries the date of its next occurrence,
 // so a date and its weekday agree the way the real fact engine's do (until

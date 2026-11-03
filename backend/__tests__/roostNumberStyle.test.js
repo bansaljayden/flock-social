@@ -134,3 +134,79 @@ test('the owner reads the tidy form from both answer checks, and the check still
   assert.ok(grounded);
   assert.strictEqual(grounded.text, 'Yesterday came in at 8 against your usual 26.\n• Your reading was 18 points under your typical Monday.');
 });
+
+// ===========================================================================
+// MIDNIGHT AND NOON (2026-11-03, second polish round). "Your busiest point this
+// week is Saturday around 12 AM" read oddly to a bar owner. Every place Roost
+// writes an hour now says it one way (services/clockWords.js): the card label,
+// the phrased answer, the template twin, the playbook's lead and the kitchen
+// line, so the card and the answer beside it agree.
+// ===========================================================================
+
+test('an hour on the dot at 0 or 12 reads midnight or noon, and every other hour keeps the 12-hour clock', () => {
+  const { spokenClock } = require('../services/clockWords');
+  for (const [args, said] of [
+    [[0], 'midnight'], [[12], 'noon'], [[24], 'midnight'], [[21], '9 PM'], [[9], '9 AM'], [[23], '11 PM'], [[1], '1 AM'],
+    [[0, 30], '12:30 AM'], [[12, '30'], '12:30 PM'], [[14, '30'], '2:30 PM'], [[1, '05'], '1:05 AM'], [[0, '00'], 'midnight'],
+  ]) assert.strictEqual(spokenClock(...args), said, JSON.stringify(args));
+  const { formatFactValue } = phrasing.internals;
+  assert.strictEqual(formatFactValue({ value: 0, unit: 'hour' }), 'midnight');
+  assert.strictEqual(formatFactValue({ value: 12, unit: 'hour' }), 'noon');
+  assert.strictEqual(formatFactValue({ value: '00:00' }), 'midnight');
+  assert.strictEqual(formatFactValue({ value: '12:00' }), 'noon');
+  assert.strictEqual(formatFactValue({ value: '00:30' }), '12:30 AM');
+  assert.strictEqual(formatFactValue({ value: '01:30' }), '1:30 AM');
+});
+
+test('the card label, the phrased answer, the template and the playbook lead say the same word for the same hour', async () => {
+  const pb = require('../services/roostPlaybook');
+  const advisorFacts = require('../services/advisorFacts');
+  const week = [['Thursday', 23, 64], ['Friday', 23, 90], ['Saturday', 0, 94]].map(([weekday, peakHour, peakScore], i) => ({
+    id: `peak_2026-11-0${5 + i}`,
+    value: { date: `2026-11-0${5 + i}`, weekday, peakHour, peakScore },
+    unit: '0-100 index',
+    source: 'model_holdout',
+    asOf: '2026-11-03T06:00:00Z',
+    label: `${weekday} projects busiest.`,
+  }));
+  // The template twin.
+  const template = phrasing.renderTemplate({ intent: 'peak_hours', facts: week, refusals: [] });
+  assert.match(template.text, /^Your busiest day this week is Saturday, with its peak around midnight at 94/);
+  // The phrased answer's placeholders.
+  const facts = [
+    { id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' },
+    { id: 'peak_hour', value: 0, unit: 'hour', source: 'model_holdout', asOf: '2026-11-03' },
+  ];
+  const phrased = phrasing.applyValve('Your busiest stretch is {{fact:peak_weekday}} around {{fact:peak_hour}}.', { facts });
+  assert.strictEqual(phrased.text, 'Your busiest stretch is Saturday around midnight.');
+  // The playbook's lead line on a question about that day.
+  assert.strictEqual(pb.groundedLead('peak_hours', week, 'how do I handle saturday').text, 'Saturday projects busiest around midnight, at 94 on our 0 to 100 index.');
+  // The kitchen line on the card.
+  const kitchen = async (at) => (await advisorFacts.buildListingReadBack(
+    { profile: { kitchen_last_order: at, corpus_status: 'baselines', google_place_id: 'p' } }, week,
+  )).find((f) => f.id === 'intake_kitchen_last_order').label;
+  assert.strictEqual(await kitchen('00:00'), 'You told us the kitchen takes last orders at midnight.');
+  assert.strictEqual(await kitchen('12:00'), 'You told us the kitchen takes last orders at noon.');
+  assert.strictEqual(await kitchen('21:30'), 'You told us the kitchen takes last orders at 9:30 PM.');
+});
+
+test('a value that opens a sentence opens it with a capital, and one inside a sentence is left as it is', () => {
+  const facts = [
+    { id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' },
+    { id: 'peak_hour', value: 0, unit: 'hour', source: 'model_holdout', asOf: '2026-11-03' },
+    { id: 'intake_service_style', value: 'counter_order', source: 'intake', asOf: 'owner-set 2026-10-01' },
+  ];
+  const out = phrasing.applyValve(JSON.stringify({
+    answer: '{{fact:peak_hour}} is your busiest hour on {{fact:peak_weekday}}.',
+    points: ['Your rush builds toward {{fact:peak_hour}}. {{fact:intake_service_style}} keeps the line moving if the counter is staffed.'],
+  }), { facts });
+  assert.ok(out);
+  assert.strictEqual(out.text, 'Midnight is your busiest hour on Saturday.\n• Your rush builds toward midnight. Counter service keeps the line moving if the counter is staffed.');
+});
+
+test('the contract asks the model for midnight and noon, never 12 AM or 12 PM', () => {
+  const { SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
+  for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
+    assert.match(prompt, /Midnight and noon are words: "around midnight", "from noon", never "12 AM" or "12 PM"\./);
+  }
+});

@@ -733,7 +733,8 @@ function namedWeekday(question) {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)}day` : null;
 }
 
-const clockHour = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
+// "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
+const { spokenClock: clockHour } = require('./clockWords');
 
 function groundedLead(intentId, facts, question = '') {
   const days = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value

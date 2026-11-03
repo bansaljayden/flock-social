@@ -49,6 +49,7 @@
 
 const pool = require('../config/database');
 const advisorFacts = require('./advisorFacts');
+const { spokenClock } = require('./clockWords');
 
 // shortDate: every date this file prints is a calendar day out of the
 // database, and an owner reading their own verdict sees 'Aug 17' everywhere
@@ -117,11 +118,9 @@ const EVENT_SNAPSHOT_LOOKBACK_DAYS = 8;
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
 function hour12(h) {
-  const n = ((Number(h) % 24) + 24) % 24;
-  const period = n >= 12 ? 'PM' : 'AM';
-  const display = n === 0 ? 12 : n > 12 ? n - 12 : n;
-  return `${display} ${period}`;
+  return spokenClock(h);
 }
 
 // ─── The causation fence ─────────────────────────────────────────────────────

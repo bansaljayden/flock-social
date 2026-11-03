@@ -647,14 +647,10 @@ function shortAsOf(asOf) {
 // '21:00' is a database value. Every other surface in this product renders an
 // hour as "9 PM" (advisorFacts.hour12, the insight cards, the templates), and a
 // phrased answer that says "your kitchen stops at 21:00" beside a card that
-// says "9 PM" is one room described in two vocabularies.
+// says "9 PM" is one room described in two vocabularies. Midnight and noon are
+// words, the same words on every surface (services/clockWords.js).
 const CLOCK_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
-function clock12(h, minutes) {
-  const n = ((Number(h) % 24) + 24) % 24;
-  const twelve = n % 12 === 0 ? 12 : n % 12;
-  const mm = minutes && minutes !== '00' ? `:${minutes}` : '';
-  return `${twelve}${mm} ${n < 12 ? 'AM' : 'PM'}`;
-}
+const { spokenClock: clock12 } = require('./clockWords');
 
 // ── The vocabulary the owner picked from, spelled the way a person says it ──
 //
@@ -1683,6 +1679,17 @@ function foldForNumbers(text) {
 // was 34" (the template served instead).
 const ADJACENT_PLACEHOLDERS = /\}\}\{\{/;
 
+// A VALUE THAT OPENS A SENTENCE OPENS IT WITH A CAPITAL. Most values carry
+// their own ("Saturday", "Nov 7", "9 PM"), but "midnight", "noon" and the
+// owner's chosen words ("counter service") do not, and "{{fact:peak_hour}} is
+// your busiest hour" read "midnight is your busiest hour". Only the first
+// letter changes, and only at the start of a sentence.
+const SENTENCE_START = /(?:^|[.!?]["')\]]?\s+)$/;
+function capitalFirst(value) {
+  const s = String(value);
+  return /^[a-z]/.test(s) ? `${s.charAt(0).toUpperCase()}${s.slice(1)}` : s;
+}
+
 /**
  * Substitute every {{fact:id}} and vouch for the digits in the result.
  * `resolve(id)` returns the rendered value, or null/undefined for an id the
@@ -1695,10 +1702,11 @@ function substituteFacts(draft, resolve) {
     return { rendered: null, error: 'two placeholders with nothing between them' };
   }
   let unknownId = false;
-  const marked = String(text).replace(PLACEHOLDER, (m, id) => {
+  const marked = String(text).replace(PLACEHOLDER, (m, id, offset, whole) => {
     const v = resolve(id);
     if (v === null || v === undefined) { unknownId = true; return m; }
-    return `${SENTINEL_OPEN}${v}${SENTINEL_CLOSE}`;
+    const shown = SENTENCE_START.test(whole.slice(0, offset)) ? capitalFirst(v) : v;
+    return `${SENTINEL_OPEN}${shown}${SENTINEL_CLOSE}`;
   });
   if (unknownId) return { rendered: null, error: 'placeholder id not in the block' };
 

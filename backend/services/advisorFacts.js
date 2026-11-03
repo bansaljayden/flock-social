@@ -518,11 +518,11 @@ function tzOffsetMinutes(timeZone, at = new Date()) {
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+// "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js): the
+// labels the cards print and the answers Roost writes say an hour one way.
+const { spokenClock } = require('./clockWords');
 function hour12(h) {
-  const n = ((Number(h) % 24) + 24) % 24;
-  const period = n >= 12 ? 'PM' : 'AM';
-  const display = n === 0 ? 12 : n > 12 ? n - 12 : n;
-  return `${display} ${period}`;
+  return spokenClock(h);
 }
 
 // hour12 above takes a bare hour. The intake clock COLUMNS do not hold one:
@@ -543,7 +543,7 @@ function clockTime(value) {
   if (!m) return null;
   const h = Number(m[1]);
   if (!Number.isInteger(h) || h > 23) return null;
-  return m[2] === '00' ? hour12(h) : hour12(h).replace(' ', `:${m[2]} `);
+  return spokenClock(h, m[2]);
 }
 
 function toDateStr(v) {
