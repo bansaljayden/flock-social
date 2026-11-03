@@ -441,6 +441,26 @@ test('a worked figure inside a supposition must add up, whatever the supposition
   ]) assert.ok(freeText.applyAdviceValve(right, facts), right);
 });
 
+test('a worked figure takes an operand twice only as the base a share was taken of, never a count squared', () => {
+  // Re-check of the third round, 2026-11-03: letting the second step reuse
+  // any operand passed 10 x 10 x 38 for "10 covers at $38".
+  const facts = [
+    { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' },
+  ];
+  for (const wrong of [
+    'If you add 10 covers at {{fact:intake_typical_spend_per_person}}, that is $3,800 a week.',
+    'If 20 guests pay $38 each, that is $15,200.',
+    'Say a server costs $15 an hour: 4 hours is $240.',
+    'If 80 guests pay $38 each, that is $250,000.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(wrong, facts), null, wrong);
+  for (const right of [
+    'If you add 10 covers at {{fact:intake_typical_spend_per_person}}, that is $380 a week.',
+    'On a $20 order with a 25% app cut, you keep $15.',
+    'If a $40 bottle goes up 10%, that is $44.',
+    'If you add 10 covers a night at $38 for 5 nights, that is $1,900 a week.',
+  ]) assert.ok(freeText.applyAdviceValve(right, facts), right);
+});
+
 test('"more than", a comparison in front and "your most popular" never set a reading aside', () => {
   // Review of the third round, 2026-11-03: "more", "most" and "bars" are
   // suggestion and rule-of-thumb words, and all of these passed on them.

@@ -1352,16 +1352,26 @@ function workedFrom(num, support, inPlay, all) {
   const pool = [...operands, ...operands.filter((e) => e.dim === 'duration').map((e) => ({ ...e, dim: 'plain' }))];
   // Within 5%, since a worked figure is said rounded ("$110 less 25 to 30% is
   // about $75 to $80"); the wrong product this exists for is far off ($4,000
-  // for $3,040). The second step may take an operand again: what is kept of
-  // $110 after 30% is 110 less 30% of 110.
+  // for $3,040).
   const matches = (d) => (acceptsDim(num, d.dim) || (num.dim === 'plain' && d.dim === 'pct'))
     && (close(num.value, d.value) || Math.abs(num.value - d.value) <= Math.abs(d.value) * 0.05);
   for (let i = 0; i < pool.length; i += 1) {
     for (let j = 0; j < pool.length; j += 1) {
       if (i === j) continue;
+      // A share of a base: the one first step whose base may come back.
+      const shareOfBase = pool[j].dim === 'pct' && pool[i].dim !== 'pct';
       for (const r of workedSteps(pool[i], pool[j])) {
         if (matches(r)) return true;
         for (let k = 0; k < pool.length; k += 1) {
+          // AN OPERAND COMES BACK ONLY AS THE BASE A SHARE WAS TAKEN OF: what
+          // is kept of $110 after 30% is 110 less 30% of 110. Any other reuse
+          // squares a count, and "if you add 10 covers at $38, that is $3,800"
+          // passed as 10 x 10 x 38 (re-check of the third round, 2026-11-03).
+          if (k === i || k === j) {
+            if (k === i && shareOfBase && [pool[i].value + r.value, Math.abs(pool[i].value - r.value)]
+              .some((value) => matches({ value, dim: pool[i].dim }))) return true;
+            continue;
+          }
           if (workedSteps(r, pool[k]).some(matches) || workedSteps(pool[k], r).some(matches)) return true;
         }
       }
