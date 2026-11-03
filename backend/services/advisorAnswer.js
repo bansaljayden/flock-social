@@ -640,9 +640,13 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
     const ids = new Set([String(f.id)]);
     const v = f.value;
     const dim = dimOfFact(f);
+    // A 12-hour reading of an hour ("9" for 21) may be matched, never worked
+    // with: "your 9 PM peak is 9 hours before closing" came out of 9 minus a
+    // midnight the owner typed (2026-11-03 review). Gaps are taken between
+    // 24-hour values only.
     if (typeof v === 'number') {
       addValue(base, v, ids, { dim });
-      if (f.unit === 'hour') addValue(base, (v % 12) || 12, ids, { dim });
+      if (f.unit === 'hour') addValue(base, (v % 12) || 12, ids, { dim, arith: false });
       if (Math.abs(v) <= 1 && v !== 0) addValue(base, v * 100, ids, { dim: 'pct' });
     } else if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) {
       addValue(base, Number(v), ids, { dim });
@@ -659,7 +663,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
       for (const n of numbersIn(s)) {
         const opts = { arith: n.dim !== 'date', dim: n.dim === 'plain' ? dim : n.dim };
         addValue(base, n.value, ids, opts);
-        for (const a of n.alt) addValue(base, a, ids, opts);
+        for (const a of n.alt) addValue(base, a, ids, { ...opts, arith: false });
       }
     }
     // When a fact was measured is a date the answer may name, never a number
@@ -681,7 +685,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
     for (const n of numbersIn(t)) {
       const opts = { owner: true, arith: n.dim !== 'date', dim: n.dim };
       addValue(base, n.value, new Set(), opts);
-      for (const a of n.alt) addValue(base, a, new Set(), opts);
+      for (const a of n.alt) addValue(base, a, new Set(), { ...opts, arith: false });
     }
   }
   return { base };

@@ -114,6 +114,10 @@ test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1
   }
   const event = [...ADVICE_FACTS(), { id: 'event_friday', value: 'yes', source: 'events', asOf: '2026-08-19', label: 'Midnight Madness at the arena on Friday.' }];
   assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at 12 PM.', event), null);
+  // And a 12-hour reading of an hour is matched, never worked with: 9 (for a
+  // 9 PM fact) minus the owner's midnight is no gap anybody measured.
+  assert.strictEqual(freeText.applyAdviceValve('Your {{fact:peak_hour}} peak is 9 hours before closing.', ADVICE_FACTS(), asked), null);
+  assert.ok(freeText.applyAdviceValve('Your peak lands at 9 PM.', ADVICE_FACTS()), 'the 12-hour reading still matches the fact it reads');
   for (const fine of ['Put the headline set on at midnight.', 'Holding 50 guests past midnight at $45 a head is $2,250.', 'Open the patio from noon on hot days.']) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
     assert.ok(out, fine);
