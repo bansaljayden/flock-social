@@ -20,7 +20,8 @@
 //   ... --venue=cafe                   one venue
 //   ... --out=roost-eval.json          also write every answer as JSON
 //   ... --q=saturday                   only the items whose question (or
-//                                      chip id) contains this text
+//                                      chip id) contains this text; several
+//                                      texts are separated by "|"
 //
 // REPLAY (2026-11-03): --replay=<an earlier --out file> answers every model
 // call from that run's own recorded replies, in order, with no key and no
@@ -523,9 +524,10 @@ function droppedSentences(r) {
   return Math.max(0, r.drafted.points - kept);
 }
 
-// --q=<text>: only the items whose question, or chip id, carries it.
-const onlyQ = args.q ? String(args.q).toLowerCase() : null;
-const picked = (...texts) => !onlyQ || texts.some((t) => String(t || '').toLowerCase().includes(onlyQ));
+// --q=<text>: only the items whose question, or chip id, carries it; several
+// texts are separated by "|".
+const onlyQ = args.q ? String(args.q).toLowerCase().split('|').filter(Boolean) : null;
+const picked = (...texts) => !onlyQ || texts.some((t) => onlyQ.some((q) => String(t || '').toLowerCase().includes(q)));
 
 (async () => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
