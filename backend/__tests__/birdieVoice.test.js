@@ -102,6 +102,23 @@ test('Birdie is told to pick one place, not to present a menu', () => {
     'the opinionated-voice instruction is gone');
 });
 
+test('the reason for a pick comes from the tools, and the example shows one that does', () => {
+  // The Birdie eval (scripts/birdie/birdieEval.js) caught the model giving
+  // reasons no tool returned: "easily the best birria around here", "big
+  // booths that fit six", "low lighting, and the handmade pasta never misses".
+  // The example it was shown did the same thing ("the back patio is the whole
+  // reason to go"), and a search returns no patio. The reason now comes from
+  // the crowd and the price, which the tools do return.
+  const prompt = adult();
+  const example = prompt.split('\n').find((l) => l.startsWith('- Pick ONE spot'));
+  assert.ok(example.includes('"Oakwood. Dead till 9, and it\'s the cheap one."'), example);
+  assert.ok(!/patio|menu|lighting/i.test(example), 'the example models a detail no tool returns');
+  assert.match(prompt, /Your reasons for a spot come from what the tools returned: how busy it is and when, whether it is open, its price level and rating, open tables, and the kind of place its listing says it is\./);
+  assert.match(prompt, /No tool tells you a menu, a dish, a drink, the decor, the lighting, the music, the seating, the staff or what a place is known for, so never say any of those/);
+  assert.match(prompt, /never say how close it is or how long it takes to get there unless a tool gave you a distance\./);
+  assert.ok(prompt.indexOf('Hard rules:') < prompt.indexOf('Your reasons for a spot'), 'the rule sits with the other hard rules');
+});
+
 test('the joke rule is a limit, not an instruction to be funny', () => {
   // "Be funny" produces a model that opens every reply with a bit. The rule has
   // to carry its own brake or the personality change costs more than it buys.
