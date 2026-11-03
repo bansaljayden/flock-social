@@ -82,8 +82,16 @@ test('a member picking on Discover suggests; only the creator sets the venue', (
 test('the create screen caps invitees at the server\'s ceiling and counts what the server kept', () => {
   expect(create).toMatch(/disabled=\{flockFriends\.length >= 25\}/);
   expect(create).toMatch(/25 invited, the most at once\. Add more from the chat\./);
-  expect(create).toMatch(/const acceptedInvites = Array\.isArray\(f\.invited_user_ids\) \? f\.invited_user_ids\.length : invitedIds\.length;/);
-  expect(create).toMatch(/Invited \$\{acceptedInvites\} of \$\{invitedIds\.length\}\. The rest can join from the invite link\./);
+  // What the server kept is beside the flock in POST /api/flocks's answer,
+  // { flock, invited_user_ids }, and `f` is the flock alone. This pin used to
+  // assert the line that read f.invited_user_ids, a key the flock row never
+  // has, so the count always fell back to everyone asked for and the toast
+  // below never showed. Both ends are pinned now, so neither can move alone.
+  expect(flocks).toMatch(/res\.status\(201\)\.json\(\{ flock, invited_user_ids: invitedUids \}\);/);
+  expect(create).toMatch(/const f = data\.flock;/);
+  expect(create).toMatch(/const acceptedInvites = Array\.isArray\(data\.invited_user_ids\) \? data\.invited_user_ids\.length : invitedIds\.length;/);
+  expect(create).not.toMatch(/\bf\.invited_user_ids\b/);
+  expect(create).toMatch(/if \(invitedIds\.length > 0 && acceptedInvites < invitedIds\.length\) \{\s*showToast\(`Invited \$\{acceptedInvites\} of \$\{invitedIds\.length\}\. The rest can join from the invite link\.`\);/);
 });
 
 test('the invite helper\'s live card says when, where and how many', () => {

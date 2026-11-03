@@ -369,9 +369,15 @@ export default function CreateScreen({
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
         // The server drops invitees it could not seat (a blocked pair, the
-        // hourly budget) and echoes the ids it kept; the chat header used to
-        // count everyone asked for.
-        const acceptedInvites = Array.isArray(f.invited_user_ids) ? f.invited_user_ids.length : invitedIds.length;
+        // hourly budget, someone who takes plan invites from friends only) and
+        // echoes the ids it kept; the chat header used to count everyone asked
+        // for. The echo sits beside the flock in the answer, which is
+        // { flock, invited_user_ids }, not on the flock row: from 2026-09-04
+        // to 2026-11-02 this read the list off `f`, which never has it, so
+        // the count always fell back to everyone asked for and the toast
+        // never showed. An answer without the list still falls back that way,
+        // rather than claiming anyone was left out.
+        const acceptedInvites = Array.isArray(data.invited_user_ids) ? data.invited_user_ids.length : invitedIds.length;
         if (invitedIds.length > 0 && acceptedInvites < invitedIds.length) {
           showToast(`Invited ${acceptedInvites} of ${invitedIds.length}. The rest can join from the invite link.`);
         }
