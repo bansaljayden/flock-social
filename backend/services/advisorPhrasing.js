@@ -1883,20 +1883,22 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
   const support = advisorAnswer.buildSupport({ facts: list, extraFacts, format: formatFactValue, texts });
   const claimed = new Set();
   const dropped = [];
-  const keep = (sentence) => {
+  // `alone`: the sentence is its whole line (the answer, or one point), the
+  // only place a count to do may be set aside (advisorAnswer.countToDo).
+  const keep = (sentence, alone) => {
     const why = advisorAnswer.sentenceVeto(sentence, { mode });
     if (why) { dropped.push(why); return false; }
-    const check = advisorAnswer.checkSentenceNumbers(sentence, support);
+    const check = advisorAnswer.checkSentenceNumbers(sentence, support, { alone: alone === true });
     if (!check.ok) { dropped.push(`a number about the venue nothing supports (${check.number})`); return false; }
     for (const id of check.ids) claimed.add(id);
     return true;
   };
 
-  let answer = parsed.answer.filter(keep).slice(0, advisorAnswer.MAX_ANSWER_SENTENCES);
+  let answer = parsed.answer.filter((s) => keep(s, parsed.answer.length === 1)).slice(0, advisorAnswer.MAX_ANSWER_SENTENCES);
   const points = parsed.points
     .map((p) => {
       const sentences = advisorAnswer.splitSentences(p);
-      if (!sentences.every(keep)) return null;
+      if (!sentences.every((s) => keep(s, sentences.length === 1))) return null;
       // One line on a phone. A point that runs long keeps its first sentence.
       return p.length > advisorAnswer.MAX_POINT_CHARS && sentences.length > 1 ? sentences[0] : p;
     })

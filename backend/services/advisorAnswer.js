@@ -393,7 +393,11 @@ function numbersIn(text) {
   CLOCK_WORD.lastIndex = 0;
   while ((m = CLOCK_WORD.exec(src)) !== null) {
     const h = CLOCK_WORD_HOUR[m[1].toLowerCase()];
-    out.push({ index: m.index, length: m[0].length, value: h, alt: [12], kind: 'clock', dim: 'clock' });
+    // No second reading: "12 AM" also reads as a bare 12, but midnight is
+    // never noon, and an alternate 12 here let a "midnight" anywhere in the
+    // owner's words or a label vouch for "your Friday peaks at 12 PM"
+    // (2026-11-03 review).
+    out.push({ index: m.index, length: m[0].length, value: h, alt: [], kind: 'clock', dim: 'clock' });
     mark(m.index, m[0].length);
   }
   NUMBER.lastIndex = 0;
@@ -476,21 +480,33 @@ const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|th
 // peak, split your door into 2 lanes" ("peak" is a claim verb in "Fridays
 // peak at 92"), which also cost the point after it its sense ("both lanes").
 // Neither number says anything about the venue: one is how many of the newest
-// records to go through, the other how many lanes to set up. Each is set aside
-// only in exactly that shape, number by number: the stretch of the clause
-// after its last comma opens on the instruction verb, nothing but "your" or
-// "the" (or what is being split) stands between the verb and the number, and
-// the words right after it name the newest of a kind of record, or a lane,
-// line or station. Every other number in the sentence is checked as before,
-// and so is a number with its subject first: "Your rating fell across your 50
-// most recent reviews", "Read your 50 most recent reviews: 40 mention the
-// wait", "Read through your 140 one-star reviews", "At peak, your door splits
-// into 2 lanes" and "At peak, split your 300 guests into 2 lanes" all still
-// lose their line (advisorValveBoundary.test.js). And the count must be the
-// sentence's only number past a nought or a one: a number that opens its own
-// clause is not read as a claim at all ("Read the 50 most recent reviews; 40
-// mention the wait" passes on "the"), so the line it sits in keeps the check
-// it had while any other figure rides with it.
+// records to go through, the other how many lanes to set up.
+//
+// A DROPPED LINE WAS ALSO DROPPING WHAT RODE WITH IT, so each is set aside only
+// when the sentence is nothing but the instruction. A review of the first
+// version (2026-11-03) showed why: with the count set aside, "We went through
+// your listing, read your 50 most recent reviews, and found the wait is the
+// top complaint", "Read your 50 most recent reviews: all but 1 mention the
+// wait", "..., which all mention slow service" and a second sentence "40 of
+// them mention the wait" all reached the owner, because a narrative, a claim
+// in words, and a number that opens its own sentence are things this check
+// does not read on their own. So, all of it, number by number:
+//   * the line (an answer line or a point) is this one sentence;
+//   * nothing before the instruction verb names who did anything (no "we",
+//     "you", "your", no day, no subject at all): the verb is a command;
+//   * no colon, semicolon or bracket, and no "which", "who", "where", "but",
+//     "because" or "since" anywhere in it;
+//   * between the verb and the count only "your", "the" or what is being split;
+//     right after the count, the newest of a kind of record, or a lane, line
+//     or station;
+//   * what follows is only more commands ("tally every complaint, and fix the
+//     top one"), or for lanes what each lane is for ("1 for list guests and 1
+//     for door sales", "with IDs checked in both");
+//   * no other number, except the 1s that say what each lane is for.
+// "Your rating fell across your 50 most recent reviews", "Read through your
+// 140 one-star reviews", "At peak, your door, split into 2 lanes, clears the
+// line" and "At peak, split your 300 guests into 2 lanes" all still lose
+// their line (advisorValveBoundary.test.js).
 //
 // TWO OTHERS STAY DROPPED, ON PURPOSE. "So your food cost stays around 30%"
 // has the shape of "so your Friday stays at 92", which presumes a reading, and
@@ -503,13 +519,36 @@ const SAMPLE_VERB = /^\s*(?:(?:first|then|now|so)\s*,?\s+)?(?:read|re-?read|go\s
 const SAMPLE_NOUN = /^\s+(?:most\s+recent|latest|newest|last)\s+(?:(?:google|yelp|online|guest|customer|delivery)\s+)?(?:reviews?|comments?|ratings?|receipts?|tickets?|checks?|orders?|surveys?|complaints?|messages?|emails?|responses?)\b/i;
 const SETUP_VERB = /^\s*(?:(?:first|then|so)\s*,?\s+)?(?:split|divide|break|separate)\s+(?:(?:your|the)\s+)?(?:[a-z]+\s+){0,2}into\s+$/i;
 const SETUP_NOUN = /^\s+(?:(?:door|entry|bar|separate|parallel)\s+)?(?:lanes?|lines?|queues?|stations?|registers?|tills?|sections?|zones?)\b/i;
-function countToDo(text, num, prefix, all) {
-  if (num.dim !== 'plain') return false;
-  if (all.some((n) => n !== num && !(n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return false;
+// Who did it: a subject before the verb makes it a narrative, not a command.
+const NARRATOR = /\b(?:i|we|they|he|she|it|someone|somebody|everyone|everybody|nobody)\b/i;
+// Where a narrative or a claim can start inside the sentence.
+const CLAIM_OPENING = /[:;()[\]]|\b(?:which|who|whom|whose|where|but|because|since|whereas)\b/i;
+// What may follow the count: another command, or (lanes) what each lane is for.
+const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill)\b/i;
+const LANE_DETAIL = /^(?:(?:1|one)\s+for\b|with\b)/i;
+function countToDo(text, num, prefix, all, alone) {
+  if (!alone || num.dim !== 'plain') return false;
   const after = text.slice(num.index + num.length);
-  const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
-  return (SAMPLE_VERB.test(stretch) && SAMPLE_NOUN.test(after))
-    || (SETUP_VERB.test(stretch) && SETUP_NOUN.test(after));
+  const stretchAt = prefix.lastIndexOf(',') + 1;
+  const stretch = prefix.slice(stretchAt);
+  const sample = SAMPLE_VERB.test(stretch) && SAMPLE_NOUN.exec(after);
+  const setup = !sample && SETUP_VERB.test(stretch) && SETUP_NOUN.exec(after);
+  const noun = sample || setup;
+  if (!noun) return false;
+  if (CLAIM_OPENING.test(text)) return false;
+  // Nothing before the command says who did anything.
+  const head = text.slice(0, num.index - prefix.length + stretchAt);
+  if (SUBJECT.test(head) || NARRATOR.test(head)) return false;
+  // No other figure rides with it; lanes may say "1 for" each kind of guest.
+  if (all.some((n) => n !== num && !(setup && n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return false;
+  // And what follows is only more commands, or what each lane is for.
+  const rest = after.slice(noun[0].length).replace(/[.!?]+\s*$/, '').trim();
+  if (!rest) return true;
+  if (!/^,/.test(rest) && !/^(?:and|then)\b/i.test(rest)) return false;
+  return rest.split(/\s*,\s*|\s+(?:and|then)\s+/i)
+    .map((s) => s.replace(/^(?:and|then)\s+/i, '').trim())
+    .filter(Boolean)
+    .every((s) => NEXT_COMMAND.test(s) || (setup && LANE_DETAIL.test(s)));
 }
 
 // A SUGGESTION WORD EARLIER IN THE CLAUSE DOES NOT MAKE A PAST READING A
@@ -526,11 +565,13 @@ function pastReading(prefix, after) {
   return SUBJECT.test(tail) && CLAIM_VERB.test(tail);
 }
 
-function isReadingSlot(text, num, all = numbersIn(text)) {
+// `alone`: the sentence is the whole answer line or point it sits in, the
+// one place a count to do may be set aside (countToDo).
+function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
   if (pastReading(prefix, text.slice(num.index + num.length))) return true;
-  if (countToDo(text, num, prefix, all)) return false;
+  if (countToDo(text, num, prefix, all, alone)) return false;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
   // wait" would have let the 40 through on it (2026-11-03 self-review).
@@ -802,7 +843,7 @@ function yearOf(num, text, support, inPlay) {
   return null;
 }
 
-function checkSentenceNumbers(sentence, support) {
+function checkSentenceNumbers(sentence, support, { alone = false } = {}) {
   const inPlay = inPlayFor([sentence]);
   // Folded the way numbersIn folds it, so the positions it reports are
   // positions in this text: an ellipsis is three characters after folding,
@@ -813,7 +854,7 @@ function checkSentenceNumbers(sentence, support) {
   const ids = new Set();
   const all = numbersIn(text);
   for (const num of all) {
-    if (!isReadingSlot(text, num, all)) continue;
+    if (!isReadingSlot(text, num, all, alone)) continue;
     const from = supportFor(num, support, inPlay) || yearOf(num, text, support, inPlay);
     const written = text.slice(num.index, num.index + num.length);
     if (!from) return { ok: false, ids, number: written };

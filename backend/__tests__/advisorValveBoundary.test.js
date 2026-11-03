@@ -106,6 +106,14 @@ test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1
   }
   // The owner's own hour is theirs, and an hour said as a suggestion is not a claim.
   assert.ok(freeText.applyAdviceValve('Your crowd is gone by midnight, so put the headline set on at 11 PM.', [], { texts: ['people leave at midnight'] }));
+  // But midnight is never noon: a "midnight" in the owner's words, a label or
+  // a vendor's event title vouches for midnight only (2026-11-03 review).
+  const asked = { texts: ['should we stay open till midnight on fridays'] };
+  for (const draft of ['Your Friday peaks at 12 PM.', 'Your Friday peaks at 12:00.', 'Your Friday peaks at noon.']) {
+    assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS(), asked), null, draft);
+  }
+  const event = [...ADVICE_FACTS(), { id: 'event_friday', value: 'yes', source: 'events', asOf: '2026-08-19', label: 'Midnight Madness at the arena on Friday.' }];
+  assert.strictEqual(freeText.applyAdviceValve('Your Friday peaks at 12 PM.', event), null);
   for (const fine of ['Put the headline set on at midnight.', 'Holding 50 guests past midnight at $45 a head is $2,250.', 'Open the patio from noon on hot days.']) {
     const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
     assert.ok(out, fine);
@@ -235,9 +243,40 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     'Split the door into 2 lanes because your Friday hit 92.',
     'At peak, split your door into 2 lanes; your Friday hit 92.',
     'At the peak, run 2 door lanes.',
+    // The review of the first version (2026-11-03): a narrative before the
+    // command, a claim in words after it, the count as the venue's total, and
+    // a lane split described rather than ordered.
+    'We went through your listing, read your 50 most recent reviews, and found the wait is the top complaint.',
+    'We checked, read the 50 most recent reviews, and every one praises the cocktails.',
+    'We pulled your listing, then read your 50 most recent reviews and the wait tops the list.',
+    'We did the work; read your 50 most recent reviews; the wait comes up in all but 1.',
+    'Read your 50 most recent reviews: all but 1 mention the wait.',
+    'Read your 50 most recent reviews: every one of them mentions the wait.',
+    'Read your 50 most recent reviews, which all mention slow service.',
+    'Read your 50 most recent reviews; your rating fell 1 star across them.',
+    'Read your 50 most recent reviews and every one of them mentions the wait.',
+    'Read your 50 most recent reviews, and they all mention the wait.',
+    'Read your 50 most recent reviews, but 40 mention the wait.',
+    'Read all of your 312 most recent reviews, every review you have.',
+    'At peak, your door, split into 2 lanes, clears the line.',
+    "Friday's door, split into 2 lanes, moved fast.",
+    'To keep the line moving at peak, split your door into 2 lanes, 1 for list guests and 1 for door sales, and you lost 1 guest a minute last Friday.',
   ]) {
     assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" carries a venue figure nobody measured`);
   }
+  // A count to do is set aside only when its sentence is its whole line: a
+  // second sentence in the same point is not read on its own ("40 of them"
+  // opens its sentence), so the point keeps the check it had.
+  const twoSentences = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'Fix the slowest step first.',
+    points: ['Read your 50 most recent reviews. 40 of them mention the wait.'],
+  }), ADVICE_FACTS());
+  assert.strictEqual(twoSentences.text, 'Fix the slowest step first.');
+  const alone = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'Fix the slowest step first.',
+    points: ['Read your 50 most recent reviews, tally every delay complaint, and fix the top one.'],
+  }), ADVICE_FACTS());
+  assert.strictEqual(alone.text, 'Fix the slowest step first.\n• Read your 50 most recent reviews, tally every delay complaint, and fix the top one.');
   // Two other dropped lines stay dropped, on purpose: their shape is the shape
   // of a real venue claim ("so your Friday stays at 92", "before your Friday
   // rush starts, around 7 PM"), and the prompt shows the model the wording
