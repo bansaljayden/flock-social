@@ -272,6 +272,10 @@ const SPAN_STOP = new Set([
   'about', 'after', 'before', 'until', 'till', 'when', 'if', 'we', 'i', 'they', 'you', 'nobody', 'no', 'never',
   'did', 'didnt', "didn't", 'does', 'doesnt', "doesn't", 'was', 'were', 'is', 'are', 'has', 'have', 'had',
   'but', 'people', 'guests', 'customers', 'anyone', 'anybody', 'everyone', 'everybody',
+  // A please or thanks ends what is refused: "No happy hour please help me get
+  // people in" refuses the happy hour, not getting people in (re-check of the
+  // third round, 2026-11-03).
+  'please', 'pls', 'plz', 'thanks', 'thank',
 ]);
 const PRONOUN = new Set(['it', 'that', 'they', 'this', 'those', 'these', 'which', 'everything', 'nothing', 'all']);
 const GOAL = /^(?:fill|filling|get|getting|bring|bringing|make|making|attract|attracting|increase|increasing|boost|boosting|grow|growing|drive|driving|draw|drawing|pull|pulling|build|building|cut|cutting|lower|lowering|reduce|reducing|keep|keeping|save|saving|fix|fixing)$/;
@@ -359,7 +363,10 @@ function refusedFrom(tokens, i, asksElse) {
   // "but no discounts", "with no discounts" refuse anywhere; a bare "no X"
   // opening a clause refuses only when the owner asks for something else
   // ("no happy hour, what else"), since "no regulars anymore" is a complaint.
-  if (w === 'no' && next && !SPAN_STOP.has(next)) {
+  // "No problem", "no worries" and "no rush" refuse nothing (re-check of the
+  // third round, 2026-11-03: "No problem, please help me fill Tuesdays" ruled
+  // out every move for Tuesdays).
+  if (w === 'no' && next && !SPAN_STOP.has(next) && !NO_INTERJECTION.has(next)) {
     if (before === 'but' || before === 'with') return i + 1;
     // "No happy hour please" refuses too, the way "no happy hour, what else"
     // does: a please or thanks before the clause ends (review, 2026-11-03).
@@ -389,6 +396,7 @@ function refusedFrom(tokens, i, asksElse) {
 }
 const NOT_YET = new Set(['yet', 'until', 'till', 'til', 'before', 'after']);
 const POLITE = new Set(['please', 'pls', 'plz', 'thanks', 'thank']);
+const NO_INTERJECTION = new Set(['problem', 'problems', 'worries', 'worry', 'rush', 'pressure', 'idea', 'doubt', 'kidding', 'offense', 'offence', 'way', 'thanks', 'biggie', 'sweat', 'stress']);
 function politeUntilClauseEnd(tokens, from) {
   for (let k = from; k < tokens.length && k < from + 8; k += 1) {
     if (CLAUSE_END.has(tokens[k]) || tokens[k] === ',') return POLITE.has(tokens[k + 1] || '');

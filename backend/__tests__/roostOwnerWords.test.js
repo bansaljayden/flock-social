@@ -469,4 +469,13 @@ test('"no X please" rules X out the way "no X, what else" does, and a complaint 
   }
   assert.ok(pb.find('No reservations please, we are walk in only. How do I stop the line?', { venue: BAR, limit: 5 }).every((t) => t.topic !== 'reservations'));
   assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('no regulars anymore, how do I get them back')).spans, []);
+  // Re-check of the round: "no problem" and "no worries" refuse nothing, and
+  // what is refused ends at the please.
+  for (const q of ['No problem, please help me fill Tuesdays', 'No worries, please help me fill Tuesdays', 'no problem please help me fill tuesdays', 'No idea, please help me fill Tuesdays']) {
+    assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText(q)).spans, [], q);
+    assert.strictEqual(pb.find(q, { venue: BAR, limit: 1 })[0].id, 'slow_day_recurring_reason', q);
+  }
+  assert.deepStrictEqual(pb.ruledOut(normalizeOwnerText('No happy hour please, how do I get people in before 7pm')).spans, [['happy', 'hour']]);
+  const ids = pb.find('No happy hour please help me get people in before 7pm', { venue: BAR, limit: 5 }).map((t) => t.id);
+  assert.ok(!ids.includes('slow_hours_happy_hour') && ids.length > 0, String(ids));
 });
