@@ -31,7 +31,12 @@ const PAPER_PAGES = 30;
 // Every number below is one the paper reports, on the data it names. The crowd
 // figures are the served number and the stored weekly curve on all 119,939
 // model-served live readings of 2026-09-09..10-08, the month after the serving
-// weights were set (MODEL-METRICS.md, the month section). The
+// weights were set (MODEL-METRICS.md, the month section). The chart's note
+// says no reading was used to set the forecast AS IT WAS SERVED THEN, and
+// stops there on purpose: the two- and three-hour nowcast weights served
+// since 2026-10-14 were chosen on these same readings (MODEL-METRICS.md, "The
+// two- and three-hour nowcast weights set to zero"), so of today's forecast
+// the unqualified sentence would not be true. The
 // counter's figures are owl-4.9 and the heat rule as deployed on the six real
 // benchmark sets, which also guided Owl's development (paper Table 6).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
@@ -191,7 +196,7 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."
+              note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast as it was served then. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"

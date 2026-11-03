@@ -1053,7 +1053,13 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
     expect(page).toContain("behind the number on a venue card wherever Flock knows that venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
-    expect(page).toContain('note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."');
+    // "As it was served then": the forecast charted is the one served over
+    // that month, whose weights were fitted before it. The nowcast weights
+    // served since 14 October 2026 were chosen on these same readings
+    // (backend/scripts/ml/MODEL-METRICS.md), so the bare "None of them was
+    // used to set the forecast" is not true of today's forecast.
+    expect(page).toContain('note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast as it was served then. Higher is better."');
+    expect(page).not.toContain('None of them was used to set the forecast. ');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
   });
 });
