@@ -570,8 +570,10 @@ const BATTERY = [
     expect: { tools: { must: ['search_venues'] }, pickOne: true } },
   { id: 'P05', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ['hungry. cheap. now.'],
     expect: { tools: { must: ['search_venues'] }, pickOne: true, openOnly: true } },
+  // Tomorrow: the crowd tool's hours are tonight's, so no hour of them may be
+  // handed over as tomorrow's.
   { id: 'P06', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['date night tomorrow, somewhere nice but not loud'],
-    expect: { tools: { must: ['search_venues'] }, pickOne: true, allowsBars: true } },
+    expect: { tools: { must: ['search_venues'] }, pickOne: true, allowsBars: true, forbid: ['\\b\\d{1,2}\\s*(am|pm)\\b', 'best time'] } },
   { id: 'P07', clock: 'fri_evening', persona: 'nomad', ctx: ctxHome, turns: ['where should we go tonight'],
     expect: { asksBack: true, maxVenues: 0 } },
   { id: 'P08', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ["anything fun to do around here tonight that isn't just food"],
