@@ -555,6 +555,49 @@ test('a count to do (the newest records to read, the lanes to split into) passes
   }
 });
 
+test('a claim riding on a count to do makes the count a reading whatever the verb, and an instruction that only cannot be set aside keeps its line', () => {
+  // Third round, 2026-11-03: only "Read your 50 ..." lost its line, because
+  // "read" is a claim verb and "your" a subject. Any other verb, or "the 50",
+  // served a made-up fact about the venue's reviews.
+  for (const verb of ['Go through', 'Scan', 'Pull', 'Skim', 'Read']) {
+    for (const whose of ['your', 'the']) {
+      const claim = `${verb} ${whose} 50 most recent reviews, which all mention slow service.`;
+      assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+    }
+  }
+  for (const claim of [
+    'Go through your 50 most recent reviews, which mention slow service.',
+    'Scan your 50 most recent reviews and identify the 40 that mention the wait.',
+    'Scan your 50 most recent reviews and identify the forty that mention the wait.',
+    'Scan the 50 newest reviews and flag the 40 that mentioned the wait.',
+    'Scan your 50 most recent reviews and find the wait in every one.',
+    'Scan the 50 most recent reviews: all but 1 mention the wait.',
+    'Scan the 50 newest reviews, and every one mentions the wait.',
+    'Scan the 50 newest reviews, and every one of them mentioned the wait.',
+    'Go through the 50 latest reviews; most reviews mention the wait.',
+    'Go through the 50 latest reviews and find the wait we see in nearly every one.',
+    'Split your door into 2 lanes, which cut the wait in half.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  // Instructions the recorded runs wrote, with "mention" as a noun, a
+  // description after a share, or a question to answer, still reach the owner.
+  for (const fine of [
+    'Read the 50 most recent reviews, log every recurring mention, and isolate the exact stage where the wait happens.',
+    'Read the 50 most recent reviews, note every mention of wait times, and fix the specific step guests name most.',
+    'Read the 50 most recent reviews, note every bottleneck mentioned more than 2 times, and fix the specific choke point at the bar.',
+    'Read the 50 most recent reviews, tally every delay mentioned, and speed up the exact station causing the jam.',
+    'Go through the 50 most recent reviews and note exactly which part of the meal guests called slow.',
+    'Read the 50 most recent reviews and group the complaints to see if the wait is at the door, the wells, or getting served.',
+    'Scan your 50 most recent reviews and reply to each one that mentions the wait.',
+    'Go through your 50 most recent reviews, tally every delay complaint, and fix the top one.',
+    'Go through the 50 latest reviews and note all mentions of the wait.',
+    'Go through the 50 latest reviews and note the 2 delays mentioned most.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine);
+  }
+});
+
 test('when the answer line itself fails in advice, the first good point stands in for it', () => {
   const out = freeText.applyAdviceValve(JSON.stringify({
     answer: 'You had 140 covers last Friday.',

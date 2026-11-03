@@ -631,31 +631,69 @@ function shareOfRecords(segment) {
   const lead = RECORDS_SHARE.exec(body);
   return RECORDS_SHARE.test(lead && lead.index === 0 ? body.slice(lead[0].length) : body);
 }
+// A CLAIM RIDING ON THE COUNT MAKES THE COUNT A READING, WHATEVER THE VERB
+// (third round, 2026-11-03). "Read your 50 most recent reviews, which all
+// mention slow service" lost its line only because "read" is a claim verb and
+// "your" a subject: "Go through", "Scan", "Pull" or "Skim" in its place, or
+// "the 50" for "your 50", and the line reached the owner, a made-up fact about
+// the venue's reviews attached to a count to do. When the records' count is
+// followed by a share of them saying something, a narrator, a ", which" clause
+// on the records, a count of them saying something, or the records holding a
+// thing, the count is read as the venue's, and nothing supports it. An
+// instruction that only cannot be set aside ("note exactly which part of the
+// meal guests called slow", a colon list of places to look) keeps the rules
+// it had.
+// The verb agrees with what says it, which keeps the nouns out: "every one
+// mentions" and "all mention" are claims, "log every recurring mention" and
+// "note every mention of wait times" are instructions (the 2026-11-03 live and
+// polish runs), and so is "fix anything with 2 mentions". A form in the past
+// after a share is read only where it cannot be a description: "every one
+// mentioned", "all of them said", "the 40 that mentioned"; "note every
+// bottleneck mentioned more than 2 times" and "tally every delay mentioned"
+// are instructions (the run3 and second polish runs).
+const SAYS_ONE = '(?:mentions|names|says|praises|complains|cites|rates|flags|calls|brings|points|loves|hates|wants|asks|gives|shows)';
+const SAY_MANY = '(?:mention|name|say|praise|complain|cite|rate|flag|call|bring|point|love|hate|want|ask|give|show)';
+const SAID = '(?:mentioned|named|said|praised|complained|cited|rated|flagged|called)';
+const SHARE_CLAIMS = new RegExp(`\\b(?:(?:every|each)\\s+(?:(?!(?:that|which|who)\\b)[a-z'-]+\\s+){0,2}${SAYS_ONE}|(?:every|each)\\s+(?:single\\s+)?one\\s+${SAID}|(?:all|most|many|few|several|none|both|majority|minority)\\s+(?:(?!(?:that|which|who)\\b)[a-z'-]+\\s+){0,2}${SAY_MANY}|(?:every|each|all|most|many|few|several|none|both|some|any)\\s+(?:(?:single\\s+)?one\\s+)?of\\s+(?:them|those|these)\\s+(?:${SAYS_ONE}|${SAY_MANY}|${SAID}))\\b|\\bthey\\s+all\\b|\\ball\\s+but\\b|\\bone\\s+(?:in|out\\s+of)\\b`, 'i');
+const COUNT_SAYS = new RegExp(`\\b(?:\\d+|${COUNT_IN_WORDS.source.replace(/^\\b|\\b$/g, '')})\\s+(?:of\\s+(?:them|those|these)\\s+)?(?:(?:that|which|who)\\s+(?:${SAY_MANY}|${SAID})|(?:[a-z'-]+\\s+)?${SAY_MANY})\\b`, 'i');
+function claimRides(riding) {
+  if (SHARE_CLAIMS.test(riding) || NARRATOR_AFTER.test(riding) || COUNT_SAYS.test(riding)) return true;
+  if (/^\s*,?\s*(?:which|who)\b/i.test(riding)) return true;
+  return riding.replace(/[.!?]+\s*$/, '').split(/\s*[,;:]\s*|\s+(?:and|then)\s+/i)
+    .map((s) => s.replace(/^(?:and|then)\s+/i, '').trim())
+    .filter(Boolean)
+    .some(shareOfRecords);
+}
+
+// 'todo' when the count is set aside, 'claim' when it is read as the venue's,
+// and null when the rules below decide.
 function countToDo(text, num, prefix, all, alone) {
-  if (!alone || num.dim !== 'plain') return false;
+  if (num.dim !== 'plain') return null;
   const after = text.slice(num.index + num.length);
   const stretchAt = prefix.lastIndexOf(',') + 1;
   const stretch = prefix.slice(stretchAt);
   const sample = SAMPLE_VERB.test(stretch) && SAMPLE_NOUN.exec(after);
   const setup = !sample && SETUP_VERB.test(stretch) && SETUP_NOUN.exec(after);
   const noun = sample || setup;
-  if (!noun) return false;
-  if (CLAIM_OPENING.test(text.replace(/[.!?]+\s*$/, ''))) return false;
+  if (!noun) return null;
+  if (claimRides(after.slice(noun[0].length))) return 'claim';
+  if (!alone) return null;
+  if (CLAIM_OPENING.test(text.replace(/[.!?]+\s*$/, ''))) return null;
   // Nothing before the command says who did anything.
   const head = text.slice(0, num.index - prefix.length + stretchAt);
-  if (SUBJECT.test(head) || NARRATOR.test(head) || PAST_TENSE.test(head)) return false;
+  if (SUBJECT.test(head) || NARRATOR.test(head) || PAST_TENSE.test(head)) return null;
   // No other figure rides with it; lanes may say "1 for" each kind of guest.
-  if (all.some((n) => n !== num && !(setup && n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return false;
+  if (all.some((n) => n !== num && !(setup && n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return null;
   // And what follows is only more commands, or what each lane is for. A
   // command word in the past is a report ("staff complaints doubled").
   const rest = after.slice(noun[0].length).replace(/[.!?]+\s*$/, '').trim();
-  if (!rest) return true;
-  if (!/^,/.test(rest) && !/^(?:and|then)\b/i.test(rest)) return false;
-  if (COUNT_IN_WORDS.test(rest) || NARRATOR_AFTER.test(rest) || SHARE_SAYS.test(rest)) return false;
+  if (!rest) return 'todo';
+  if (!/^,/.test(rest) && !/^(?:and|then)\b/i.test(rest)) return null;
+  if (COUNT_IN_WORDS.test(rest) || NARRATOR_AFTER.test(rest) || SHARE_SAYS.test(rest)) return null;
   return rest.split(/\s*,\s*|\s+(?:and|then)\s+/i)
     .map((s) => s.replace(/^(?:and|then)\s+/i, '').trim())
     .filter(Boolean)
-    .every((s) => ((NEXT_COMMAND.test(s) && !PAST_TENSE.test(s)) || (setup && LANE_DETAIL.test(s))) && !shareOfRecords(s));
+    .every((s) => ((NEXT_COMMAND.test(s) && !PAST_TENSE.test(s)) || (setup && LANE_DETAIL.test(s))) && !shareOfRecords(s)) ? 'todo' : null;
 }
 
 // A NUMBER THAT OPENS ITS CLAUSE AS THE SUBJECT OF A CLAIM IS A READING
@@ -730,7 +768,9 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   if (EXPECT_LEAD.test(prefix)) return true;
   if (pastReading(prefix, text.slice(num.index + num.length))) return true;
   if (numberFirstClaim(text, num, prefix)) return true;
-  if (countToDo(text, num, prefix, all, alone)) return false;
+  const toDo = countToDo(text, num, prefix, all, alone);
+  if (toDo === 'claim') return true;
+  if (toDo === 'todo') return false;
   if (standingReading(prefix)) return true;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
