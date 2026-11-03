@@ -907,16 +907,28 @@ test('a turn we cut short does not tell the user to repeat themselves', async ()
   // The model asks for another tool round every time, so the five-round cap is
   // what ends this turn. That is our ceiling, not a question the user asked
   // badly, and "say that one more time?" is an instruction that cannot work:
-  // repeating it stops at the same place.
+  // repeating it stops at the same place. The tool it loops on delivers
+  // nothing to show, so the busy line is what is left to say; a turn cut short
+  // with a card or a button points at that instead (the stall tests below).
   sendImpl = () => ({
-    candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'navigate_app', args: { tab: 'home' } } }] } }],
+    candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'get_user_friends', args: {} } }] } }],
   });
-  const r = await chat({ messages: [{ role: 'user', text: 'take me home' }] });
+  const r = await chat({ messages: [{ role: 'user', text: 'who are my friends' }] });
   assert.strictEqual(r.status, 200);
   const said = speaks(r);
   assert.notStrictEqual(said, 'say that one more time?',
     'a turn the server cut off was blamed on the user');
   assert.match(said, /lot of chatter right now/);
+});
+
+test('a turn cut short with a button points at the button', async () => {
+  sendImpl = () => ({
+    candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'navigate_app', args: { tab: 'home' } } }] } }],
+  });
+  const r = await chat({ messages: [{ role: 'user', text: 'take me home' }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.navigate, { tab: 'home' });
+  assert.strictEqual(r.body.text, 'tap Take me there below');
 });
 
 test('an empty reply from a finished turn does still ask for a rephrase', async () => {
@@ -1235,6 +1247,39 @@ test("a staged vote's venue is the Places row, rating and price included", async
   assert.deepStrictEqual(res.body.vote_stage.venue, {
     place_id: 'PLACE_CLEAN', name: 'Oakwood', address: '1 Main St, Denver, CO', rating: 4.4, price_level: 2,
   }, 'the vote card carries details the model typed rather than the ones Google returned');
+});
+
+// A stall after a card was staged points at the card. On the Birdie eval a
+// working vote card sat under "hit me again in a bit", which reads as failure.
+const stagesThenStalls = (name, args) => (p, call) => {
+  if (call <= 2) return searchThen(name, args)(p, call);
+  throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
+};
+
+test('a stall after a staged vote points at the card', async () => {
+  dbVoteMembership = [{ name: 'Taco Tuesday', status: 'planning' }];
+  sendImpl = stagesThenStalls('add_venue_to_vote', { flock_id: 42, place_id: 'PLACE_CLEAN' });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.vote_stage, 'the staged card was lost');
+  assert.strictEqual(res.body.text, "the card's below. tap Vote for it to put it on the vote");
+  assert.strictEqual(sendCalls.length, 3, 'the stalled call was bought again');
+});
+
+test('a stall after a staged plan points at the card', async () => {
+  sendImpl = stagesThenStalls('draft_flock', { name: 'Friday', venue_place_id: 'PLACE_CLEAN' });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.flock_draft, 'the staged card was lost');
+  assert.strictEqual(res.body.text, "your plan's below. tap Start this flock when it looks right");
+});
+
+test('a stall after a navigation that is not Safety points at the button', async () => {
+  sendImpl = timesOutAfter('navigate_app', { screen: 'addFriends' });
+  const res = await chat({ messages: [{ role: 'user', text: 'how do i add friends' }] });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.navigate, { screen: 'addFriends' });
+  assert.strictEqual(res.body.text, 'tap Take me there below');
 });
 
 for (const [label, id] of [['a well-shaped id no search returned', 'ChIJN1t_tDeuEmsRUsoyG83frY4'], ['an off-shape id', 'not a place id']]) {

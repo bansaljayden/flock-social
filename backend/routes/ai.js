@@ -328,6 +328,13 @@ const BIRDIE_BUSY_MESSAGE = 'lot of chatter right now. hit me again in a bit';
 // loop, below). What to do in danger does not wait on the model, and the
 // button it already chose is under this line.
 const BIRDIE_SAFETY_CUT_MESSAGE = "tap below to open Safety and send your location to your people. if you're in danger right now, call 911";
+// The same for a turn cut short after it staged a card or a button: the thing
+// they asked for is under the line, so the line points at it ("hit me again in
+// a bit" beside a working vote card on the Birdie eval read as a failure).
+// The button labels are BirdiePanel's own.
+const BIRDIE_VOTE_CUT_MESSAGE = "the card's below. tap Vote for it to put it on the vote";
+const BIRDIE_PLAN_CUT_MESSAGE = "your plan's below. tap Start this flock when it looks right";
+const BIRDIE_NAV_CUT_MESSAGE = 'tap Take me there below';
 
 // Whether a failed Gemini call was our own deadline (or a hang-up) rather than
 // an answer from Google. One reading for the retry, which never repeats one
@@ -3098,10 +3105,14 @@ router.post('/chat',
           ? `that's a lot of chat in one hour. hit me again ${waitPhrase(HOUR_MS)}`
           : `that's my limit for today. i'm back ${waitPhrase(msUntilUtcMidnight())}`;
       // A cut-short turn that was taking them to Safety says what to do, not
-      // to come back later: the button is under it either way.
+      // to come back later: the button is under it either way. One that staged
+      // a card or a button points at it.
       const cutText = navigationAction && navigationAction.profile_section === 'safety'
         ? BIRDIE_SAFETY_CUT_MESSAGE
-        : BIRDIE_BUSY_MESSAGE;
+        : venueVoteAction ? BIRDIE_VOTE_CUT_MESSAGE
+          : flockDraftAction ? BIRDIE_PLAN_CUT_MESSAGE
+            : navigationAction ? BIRDIE_NAV_CUT_MESSAGE
+              : BIRDIE_BUSY_MESSAGE;
       const fallbackText = budgetStopped
         ? budgetCutText
         : (cutShort ? cutText : 'say that one more time?');
