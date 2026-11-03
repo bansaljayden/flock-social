@@ -419,20 +419,55 @@ test('in the small hours the night in progress is still tonight: the week starts
   };
   try {
     const ctx = { profile: profileRow(), mlVenue: ML_VENUE };
-    // 12:30 AM on Saturday in New York: Friday night is still going.
-    const late = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: new Date('2026-11-07T05:30:00Z') });
+    // 12:30 AM on Saturday in New York: Friday night is still going, and a
+    // caller asking for tonight gets it first.
+    const AT_1230 = new Date('2026-11-07T05:30:00Z');
+    const late = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: AT_1230, nightInProgress: true });
     const first = late.find((f) => !advisorFacts.isRefusal(f));
     assert.strictEqual(first.value.weekday, 'Friday');
     assert.strictEqual(first.value.date, '2026-11-06');
     assert.strictEqual(first.value.peakScore, 92, 'the 1 AM half an hour away');
     assert.strictEqual(late[0].id, first.id, 'tonight comes first');
-    // At 5 PM the same Saturday, tonight is Saturday night.
-    const evening = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: new Date('2026-11-07T22:00:00Z') });
+    // Every other caller keeps seven days from today, so next Friday is in
+    // the week and a question about Friday is never answered about last night.
+    const week = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: AT_1230 });
+    assert.strictEqual(week[0].value.weekday, 'Saturday');
+    assert.deepStrictEqual(week.filter((f) => !advisorFacts.isRefusal(f) && f.value.weekday === 'Friday').map((f) => f.value.date), ['2026-11-13']);
+    // At 5 PM the same Saturday, tonight is Saturday night either way.
+    const evening = await advisorFacts.buildWeekAhead(ctx, { userId: 7, now: new Date('2026-11-07T22:00:00Z'), nightInProgress: true });
     assert.strictEqual(evening[0].value.weekday, 'Saturday');
     assert.strictEqual(evening[0].value.peakScore, 96);
+    // A venue with no zone on file reads the server's clock, as the week's
+    // base day already does.
+    const noZone = { profile: profileRow(), mlVenue: { ...ML_VENUE, timezone: null } };
+    const local = new Date(2026, 10, 7, 0, 30);
+    const unzoned = await advisorFacts.buildWeekAhead(noZone, { userId: 7, now: local, nightInProgress: true });
+    assert.strictEqual(unzoned.find((f) => !advisorFacts.isRefusal(f)).value.weekday, 'Friday');
+    // Tonight's outlook asks for tonight; the week's other questions do not.
+    const plans = require('../routes/advisor').__INTENT_PLANS;
+    const stub = (weekday) => [{ id: `peak_${weekday}`, value: { date: weekday === 'Friday' ? '2026-11-06' : '2026-11-07', weekday, peakHour: 1, peakScore: 90 } }];
+    const b = { week: async () => stub('Saturday'), tonight: async () => stub('Friday'), around: async () => [] };
+    assert.strictEqual((await plans.tonight_outlook(b))[0].value.weekday, 'Friday');
+    assert.strictEqual((await plans.peak_hours(b))[0].value.weekday, 'Saturday');
   } finally {
     mlPredictor.predictBusyness = realPredict;
   }
+});
+
+test('a fact worked out from a small-hours peak never hands the model the evening\'s date', async () => {
+  const phrasing = require('../services/advisorPhrasing');
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: clubCurve() })]];
+  const peak = { id: 'peak_2026-11-07', value: { date: '2026-11-07', weekday: 'Saturday', peakHour: 1, peakScore: 96, afterMidnight: true }, source: 'model_holdout', asOf: '2026-11-06T22:00:00Z', label: 'Saturday night projects busiest around 1 AM, at 96 on our 0 to 100 index.' };
+  const out = await advisorFacts.buildListingReadBack({ profile: profileRow({ event_nights: ['friday', 'saturday'] }) }, [peak]);
+  const eventDays = out.find((f) => f.id === 'event_days_vs_peak');
+  assert.strictEqual(eventDays.value.afterMidnight, true);
+  const parts = phrasing.flattenFacts([peak, eventDays]).map((p) => p.id);
+  assert.ok(!parts.some((id) => /(?:_date|_strongestProjectedDate)$/.test(id)), parts.join(', '));
+  assert.ok(parts.includes('event_days_vs_peak_strongestProjectedDay'));
+  // Any fact worked out from a small-hours peak in the same block, flagged or not.
+  const derived = { id: 'later_fact', value: { when: '2026-11-07', note: 'x' }, from: ['peak_2026-11-07'], source: 'arithmetic', asOf: '2026-11-06' };
+  const derivedParts = phrasing.flattenFacts([peak, { ...derived, value: { whenDate: '2026-11-07', score: 96 } }]).map((p) => p.id);
+  assert.ok(!derivedParts.includes('later_fact_whenDate'), derivedParts.join(', '));
 });
 
 test('a venue whose day ends by midnight, or starts at dawn, keeps its own hours', async () => {

@@ -1000,6 +1000,11 @@ function flattenFacts(facts) {
       // the check still read it.
       const parent = Object.keys(f.value).some((k) => WORKING_PARTS.has(k)) ? { ...f, note: undefined } : f;
       const restated = inputNumbers(f, byId);
+      // A fact about a small-hours peak, or worked out from one in this block.
+      const smallHours = f.value.afterMidnight === true || (Array.isArray(f.from) && f.from.some((id) => {
+        const input = byId.get(String(id));
+        return Boolean(input && input.value && input.value.afterMidnight === true);
+      }));
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
@@ -1009,8 +1014,10 @@ function flattenFacts(facts) {
         // 7" (2026-11-03 live eval). The night carries its name and needs no
         // date (advisorFacts.nightTailHours); the label, the template and the
         // check still have it. Any date part goes, not only `date`: the
-        // kitchen line carries the same night as peakDate.
-        if (f.value.afterMidnight === true && partUnit(k) === 'date') continue;
+        // kitchen line carries the same night as peakDate, the event-days
+        // line as strongestProjectedDate, and so may the next fact worked out
+        // from a peak.
+        if (smallHours && partUnit(k) === 'date') continue;
         if (SIGNED_GAPS.has(k) && typeof v === 'number' && Number.isFinite(v)) {
           keep({ ...parent, sourceId: f.sourceId || f.id, id: `${f.id}_${gapPart(v)}`, value: Math.abs(v), unit: partUnit(k) });
           continue;

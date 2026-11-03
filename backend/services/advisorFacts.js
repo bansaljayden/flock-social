@@ -833,7 +833,7 @@ function weekAheadSourceNote(numberSource) {
   return null;
 }
 
-async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
+async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress = false } = {}) {
   const gate = corpusGate(ctx.profile);
   if (gate) return [gate];
   if (!ctx.mlVenue) {
@@ -856,11 +856,18 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
   const curve = await fetchBaselineCurve(ctx.profile.google_place_id, ctx);
   const openByDay = openHoursByDay(curve);
   // AT 12:30 AM THE NIGHT IN PROGRESS IS STILL TONIGHT. In the small hours
-  // that carry on last night, the week starts from last night's evening, so
-  // the first day (tonight's outlook, the cards' today) is the night the owner
-  // is standing in, not the next one 24 hours away (2026-11-03 review).
-  const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
-  if (clock && nightTailHours(openByDay, clock.day).includes(clock.hour)) base.setDate(base.getDate() - 1);
+  // that carry on last night, a caller asking for tonight (`nightInProgress`:
+  // tonight's outlook, and the cards, whose today slot reads the first day
+  // then) gets a week that starts from last night's evening, so tonight is the
+  // night the owner is standing in, not the next one 24 hours away. Every
+  // other caller keeps the seven days from today, so next week's same weekday
+  // stays in the week and a question about "Friday" is never answered about
+  // last night (2026-11-03 review). The venue's own clock, or the server's
+  // when the venue has no zone on file, the same fallback venueBaseDate uses.
+  if (nightInProgress) {
+    const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now) || { day: now.getDay(), hour: now.getHours() };
+    if (nightTailHours(openByDay, clock.day).includes(clock.hour)) base.setDate(base.getDate() - 1);
+  }
   const out = [];
 
   for (let d = 0; d <= 6; d++) {
@@ -1493,7 +1500,7 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     out.push(eventDaysFact);
     const strongest = strongestPeak(facts);
     if (strongest) {
-      const { weekday, date } = strongest.value;
+      const { weekday, date, afterMidnight } = strongest.value;
       const programmed = eventDays.includes(String(weekday).toLowerCase());
       out.push(makeFact({
         id: 'event_days_vs_peak',
@@ -1502,6 +1509,10 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
           strongestProjectedDay: weekday,
           strongestProjectedDate: date,
           fallsOnADayYouProgramme: programmed,
+          // A night that runs past midnight is dated by its evening; the flag
+          // keeps that date away from a small-hours clock in the phrasing
+          // payload (advisorPhrasing.flattenFacts), as on the kitchen line.
+          ...(afterMidnight === true ? { afterMidnight: true } : {}),
         },
         source: 'arithmetic',
         from: [eventDaysFact.id, strongest.id],

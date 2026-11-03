@@ -236,7 +236,9 @@ const INTENT_PLANS = {
   // of cards that each carry three. Undated street facts are about the street
   // NOW and belong here; dated ones are still held to today.
   tonight_outlook: async (b) => {
-    const week = await b.week();
+    // In the small hours, tonight is the night still running
+    // (advisorFacts.buildWeekAhead, nightInProgress).
+    const week = await (b.tonight ? b.tonight() : b.week());
     const tonight = week.slice(0, 1);
     const date = tonight.length ? entryDate(tonight[0]) : null;
     const around = await b.around();
@@ -491,6 +493,9 @@ async function bridgeFactBlock(userId, intentId) {
   const b = {
     ctx,
     week: () => (memo.week = memo.week || advisorFacts.buildWeekAhead(ctx, opts)),
+    // The same week, started from last night's evening while that night is
+    // still running: what "tonight" means at 12:30 AM.
+    tonight: () => (memo.tonight = memo.tonight || advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
@@ -633,8 +638,10 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
     const [verdictDef, weekDef, aroundDef, listingDef, readingsDef, cohortDef] = CARDS;
 
     // Card 1 is built first because card 3's arithmetic reads its peak facts.
+    // From the night still running, in the small hours, so the cards' today
+    // is the night the owner is in (components/VenueInsightCards.js todayStr).
     const weekFacts = tierCovers(tier, weekDef.tier)
-      ? await advisorFacts.buildWeekAhead(ctx, opts)
+      ? await advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })
       : null;
 
     const cards = [];

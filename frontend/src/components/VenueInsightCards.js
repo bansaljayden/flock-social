@@ -19,8 +19,11 @@ import { isNativeShell } from '../lib/nativeShell';
 //     refusal  { id, status: 'refused', reason, whatWouldUnlock }
 //   Week-ahead entries are per day: peak_YYYY-MM-DD facts whose value is
 //   { date, weekday, peakHour, peakScore }, or refuse_peak_YYYY-MM-DD when
-//   that day cannot honestly be forecast. Around-you entries are
-//   event_YYYY-MM-DD and weather_YYYY-MM-DD, joinable to the scrubber by date.
+//   that day cannot honestly be forecast. A late room's night is one day:
+//   a peak in its small hours is dated by its evening and carries
+//   afterMidnight, and before 5 AM the first day is the night still running.
+//   Around-you entries are event_YYYY-MM-DD and weather_YYYY-MM-DD,
+//   joinable to the scrubber by date.
 //
 // Rules this file holds, both structural:
 //
@@ -488,7 +491,6 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   useEffect(() => { if (!held) load(); }, [held, load]);
 
   const clock = now instanceof Date ? now : new Date();
-  const todayStr = localDateStr(clock);
 
   const cards = useMemo(
     () => (Array.isArray(payload?.cards) ? payload.cards : []),
@@ -504,6 +506,14 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
     () => parseWeekDays(Array.isArray(byId.week_ahead?.facts) ? byId.week_ahead.facts : []),
     [byId]
   );
+  // THE NIGHT IN PROGRESS IS STILL TODAY. Before 5 AM the server starts a late
+  // room's week from last night's evening while that night is still running
+  // (backend advisorFacts.buildWeekAhead, nightInProgress), so a week that
+  // holds yesterday's date at this hour is holding the night the owner is in.
+  const lastEvening = localDateStr(new Date(clock.getFullYear(), clock.getMonth(), clock.getDate() - 1));
+  const todayStr = clock.getHours() < 5 && weekDays.some((d) => d.date === lastEvening)
+    ? lastEvening
+    : localDateStr(clock);
   const aroundByDate = useMemo(() => {
     const m = { events: {}, weather: {} };
     const entries = Array.isArray(byId.around_you?.facts) ? byId.around_you.facts : [];
