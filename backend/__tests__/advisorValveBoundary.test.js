@@ -441,6 +441,26 @@ test('a worked figure inside a supposition must add up, whatever the supposition
   ]) assert.ok(freeText.applyAdviceValve(right, facts), right);
 });
 
+test('a fact never works with its own copy, a clock is matched to the minute, and a count of one is never 100%', () => {
+  // Review of the third round, 2026-11-03; all three passed before it.
+  const cap = { id: 'intake_capacity', value: 46, source: 'intake', asOf: 'owner-set 2026-10-01' };
+  const spend = { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' };
+  for (const [claim, facts] of [
+    ['Your Friday hit 92 covers at your {{fact:intake_capacity}} seats.', [...ADVICE_FACTS(), cap]],
+    ['Your room was 100% full on Friday at {{fact:intake_capacity}} seats.', [...ADVICE_FACTS(), cap]],
+    ['Your Friday guests spent $76 a head, against your usual {{fact:intake_typical_spend_per_person}}.', [...ADVICE_FACTS(), spend]],
+    ['Your Friday peaks at 8:30 PM.', ADVICE_FACTS()],
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, facts), null, claim);
+  const kitchen = { id: 'intake_kitchen_last_order', value: '21:30', source: 'intake', asOf: 'owner-set 2026-10-01' };
+  for (const [fine, facts] of [
+    ['With 2 turns, your {{fact:intake_capacity}} seats seat 92 covers on Friday.', [...ADVICE_FACTS(), cap]],
+    ['Your kitchen takes last orders at 9:30 PM.', [kitchen]],
+    ['Your room was 42% full on Friday.', [...ADVICE_FACTS(), { id: 'occupancy', value: 0.42, source: 'table_sensor', asOf: '2026-11-03' }]],
+    ['Your room was 100% full on Friday.', [...ADVICE_FACTS(), { id: 'occupancy', value: 1, source: 'table_sensor', asOf: '2026-11-03' }]],
+  ]) assert.ok(freeText.applyAdviceValve(fine, facts), fine);
+  assert.strictEqual(freeText.applyAdviceValve('Your kitchen takes last orders at 9 PM.', [kitchen]), null);
+});
+
 test('owner text full of numbers cannot make the worked-figure search hold the server', () => {
   // Review, 2026-11-03: the search paired every owner number with every other
   // and a third, so a question of 132 small numbers held the check for 18

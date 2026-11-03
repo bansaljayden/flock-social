@@ -1134,8 +1134,12 @@ function acceptsDim(num, dim) {
 
 // A share in words ("half", "a third") is a rounding of a percentage: it
 // matches one within 5 points, and only a percentage (numbersIn).
+// A clock time is matched to the minute: within half an hour, "8:30 PM" was
+// vouched for by a 9 PM peak (review of the third round, 2026-11-03).
 function nearFor(num) {
-  return num.kind === 'fraction' ? (a, b) => Math.abs(a - b) <= 5 : close;
+  if (num.kind === 'fraction') return (a, b) => Math.abs(a - b) <= 5;
+  if (num.dim === 'clock') return (a, b) => Math.abs(a - b) < 0.01;
+  return close;
 }
 
 /** The ids of a fact or owner number this number simply is, or null. No arithmetic. */
@@ -1144,12 +1148,15 @@ function supportedDirectly(num, support) {
   const share = num.kind === 'fraction';
   const near = nearFor(num);
   // A percentage may also be a share the facts hold as a fraction (0.42 is
-  // 42%), matched at the fraction's own scale: "82%" is not "about 1".
+  // 42%), matched at the fraction's own scale: "82%" is not "about 1". Only a
+  // true fraction: a count of 1 (one fact of a source, one reading) vouched
+  // for "your room was 100% full" (review of the third round, 2026-11-03),
+  // and a fact of exactly 1 already offers its 100% above (buildSupport).
   const ratio = num.dim === 'pct' ? num.value / 100 : null;
   for (const entry of support.base) {
     if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct') || (entry.share && !share)) continue;
     if (targets.some((t) => near(t, entry.value))) return entry.ids;
-    if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
+    if (ratio !== null && entry.value > 0 && entry.value < 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
   }
   return null;
 }
@@ -1196,7 +1203,11 @@ function supportFor(num, support, inPlay = {}) {
   const matches = (d) => acceptsDim(num, d.dim) && near(num.value, d.value);
   for (const a of anchored) {
     for (const b of others) {
-      if (a === b) continue;
+      // A FACT NEVER WORKS WITH ITS OWN COPY. A fact's value, its string and
+      // its rendered form are separate entries, so "your 92 covers" came out
+      // of a capacity of 46 added to itself, and "100% full" out of 46 over
+      // 46 (review of the third round, 2026-11-03).
+      if (a === b || (a.value === b.value && [...a.ids].some((id) => b.ids.has(id)))) continue;
       if (derived(a, b).some(matches) || derived(b, a).some(matches)) return new Set([...a.ids, ...b.ids]);
     }
   }
