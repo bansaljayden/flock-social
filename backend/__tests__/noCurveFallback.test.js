@@ -1408,8 +1408,10 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
   const before = watched.map(sha);
 
   // The eval loads the artifact through the serving code; the model itself
-  // never runs (stubOrt throws if it does) and no database is reachable.
-  const ENV_KEYS = ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE', 'PGSERVICE'];
+  // never runs (stubOrt throws if it does) and no database is reachable. It
+  // rewrites the database keys (bandEval.isolateFromDatabases) and TZ
+  // (bandEval.pinUtcClock); every one of them is put back after.
+  const ENV_KEYS = ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE', 'PGSERVICE', 'TZ'];
   const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   const savedOrt = require.cache[ORT];
   const savedDb = require.cache[DB];
@@ -1419,6 +1421,13 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
     require.cache[ORT] = { id: ORT, filename: ORT, loaded: true, exports: stubOrt() };
     require.cache[DB] = { id: DB, filename: DB, loaded: true, exports: scriptedDb() };
     console.log = () => {};
+    // The version is checked before the export is read, so a refused run
+    // never opens a --csv: here, one that does not exist.
+    const unread = [`--csv=${path.join(dir, 'never-read.csv')}`, `--models=${models}`, `--out=${out}`];
+    await assert.rejects(() => evalScript.main(unread),
+      /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling/);
+    await assert.rejects(() => evalScript.main([...unread, '--allow-version=2.8.1-starling']),
+      /names another artifact than the one loaded \(2\.8\.0-starling\)/);
     await assert.rejects(() => evalScript.main(args),
       /the loaded artifact is 2\.8\.0-starling; the switch serves the table only beside 2\.6\.0-starling/);
     await assert.rejects(() => evalScript.main([...args, '--allow-version=2.8.1-starling']),
@@ -1432,6 +1441,8 @@ test('the no-curve eval refuses a retrained artifact by default, and --allow-ver
     for (const k of ENV_KEYS) {
       if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k];
     }
+    // A failure above never reaches the cleanup below.
+    if (report === undefined) fs.rmSync(dir, { recursive: true, force: true });
   }
   try {
     assert.equal(report.artifact, CANDIDATE);

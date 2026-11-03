@@ -243,11 +243,8 @@ async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   bandEval.pinUtcClock();
   bandEval.isolateFromDatabases();
-  const files = args.csv.map((f) => path.resolve(f));
-  const t0 = Date.now();
-  const corpus = await bandEval.readCorpus(files);
-  console.log(`[NoCurve] read ${corpus.census.rows.toLocaleString()} rows (${corpus.live.length.toLocaleString()} live) from ${files.length} file(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-
+  // The artifact and its version gate before the export: a refused run stops
+  // here, not after reading every --csv (about 1.3 GB for a November export).
   const art = await bandEval.loadArtifact(args.models ? path.resolve(args.models) : path.resolve(__dirname, '..', 'models'));
   const { I } = art;
   const gate = versionGate(art.meta.model_version, I.NO_CURVE_FALLBACK_FITTED_ON, args.allowVersion);
@@ -255,6 +252,11 @@ async function main(argv = process.argv.slice(2)) {
     console.log(`[NoCurve] --allow-version=${args.allowVersion}: scoring ${art.meta.model_version}'s own table, for analysis. `
       + `Production serves the table only beside ${I.NO_CURVE_FALLBACK_FITTED_ON} (mlPredictor NO_CURVE_FALLBACK_FITTED_ON), and this run changes nothing it serves.`);
   }
+
+  const files = args.csv.map((f) => path.resolve(f));
+  const t0 = Date.now();
+  const corpus = await bandEval.readCorpus(files);
+  console.log(`[NoCurve] read ${corpus.census.rows.toLocaleString()} rows (${corpus.live.length.toLocaleString()} live) from ${files.length} file(s) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
   const crowdEngine = require('../../../services/crowdEngine');
   const { cuts, labels } = bandEval.bandLadder(crowdEngine.getLabel);
 
