@@ -1091,6 +1091,11 @@ export default function VenueDashboard({
     // stored 'premium'; both are read here so an older answer cannot show a
     // Roost venue the free sheet).
     const onRoost = venueTier === 'premium' || venueTier === 'pro';
+    // Inside the Roost notice window (Terms 9.6) the server serves a venue
+    // from before Roost had a price everything, so its tier reads Roost
+    // whether or not it holds a plan. See the Upgrade button on the
+    // Subscription card.
+    const inNoticeWindow = venueProfile?.tier_notice_window === true;
 
     // Capability gates by plan, used elsewhere in the dashboard. One flag,
     // because one tab is paid. Deals, events and the incoming-flocks feed are
@@ -3014,10 +3019,23 @@ export default function VenueDashboard({
                     )}
                   </div>
                   {/* The plan held is said inside the app too; the way to
-                      another one is not (`native`, at the plans above). */}
-                  {!onRoost && !native && (
+                      another one is not (`native`, at the plans above).
+
+                      INSIDE THE NOTICE WINDOW TOO. The window serves the
+                      venue everything, so its plan reads Roost and this
+                      button, shown only off Roost, was gone; the row with See
+                      plans and pricing below is hidden in the window, where
+                      nothing billed is there to change. That left no way to
+                      the plans, while the venue is the one that must buy
+                      Roost before the window closes to keep it, and checkout
+                      sells it there (the window is not a grant). In the
+                      window it opens the same sheet, whose Roost card offers
+                      the plans with the date nothing is charged before, or
+                      Manage billing to a venue that has already subscribed
+                      (components/venue/VenueBillingControl.js). */}
+                  {(!onRoost || inNoticeWindow) && !native && (
                     <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
-                      Upgrade
+                      {onRoost ? 'See plans' : 'Upgrade'}
                     </button>
                   )}
                 </div>

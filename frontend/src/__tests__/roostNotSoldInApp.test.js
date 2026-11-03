@@ -250,6 +250,53 @@ describe('the Subscription card on the Settings tab', () => {
     });
   });
 
+  // THE NOTICE WINDOW (Terms 9.6). A venue from before Roost had a price is
+  // served everything until the date its notice named, so the dashboard reads
+  // its plan as Roost. It still has to be able to buy the plan that keeps Roost
+  // after that date, and checkout lets it (the window is not a grant), but the
+  // card offered no way to the plans: Upgrade showed only to a venue not on
+  // Roost, and the row holding See plans and pricing is hidden in the window,
+  // where nothing billed is there to change or cancel.
+  const IN_WINDOW = {
+    venueTab: 'settings',
+    venueTier: 'pro',
+    venueProfile: {
+      business_name: 'Hoppers', verification_status: 'verified',
+      tier_notice_window: true, tier_notice_until: '2026-12-01T15:00:00.000Z',
+    },
+  };
+
+  test('on the web a venue inside its notice window gets See plans, which opens the plans', async () => {
+    const setShowUpgradeModal = jest.fn();
+    dashboard({ ...IN_WINDOW, setShowUpgradeModal });
+    await settle();
+    expect(screen.getByText('Roost Plan')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'See plans' }));
+    expect(setShowUpgradeModal).toHaveBeenCalledWith(true);
+    // Nothing is billed in the window, so there is nothing to change or cancel.
+    expect(screen.queryByRole('button', { name: 'Change or cancel this plan' })).toBeNull();
+  });
+
+  test('and the plans it opens are the ones that keep Roost after the window', async () => {
+    getVenueBillingStatus.mockResolvedValue({
+      billingEnabled: true, checkoutAvailable: true, verified: true, canManage: false,
+      inNoticeWindow: true, noticeUntil: '2026-12-01T15:00:00.000Z', freeUntil: '2026-12-01T15:00:00.000Z',
+      plans: [{ id: 'monthly', interval: 'month', label: '$99.00' }], trialDays: 0, taxAdded: false,
+    });
+    dashboard({ ...IN_WINDOW, showUpgradeModal: true });
+    await settle();
+    expect(screen.getByText('Venue plans')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Free until December 1, 2026, then \$99\.00 a month$/ })).toBeTruthy();
+  });
+
+  test('inside the app a venue inside its notice window is offered no plans', async () => {
+    inTheApp();
+    dashboard(IN_WINDOW);
+    await settle();
+    expect(screen.getByText('Roost Plan')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /See plans|Upgrade/ })).toBeNull();
+  });
+
   test('inside the app a Roost venue keeps the way to change or cancel and loses the plans', async () => {
     inTheApp();
     const { container } = dashboard({ venueTab: 'settings', venueTier: 'pro', venueTierReason: 'paid', venueTierSource: 'admin' });
@@ -390,7 +437,7 @@ describe('the gates are in the source, where the build can see them', () => {
     expect(DASH).toContain(`{showUpgradeModal && ${ON} && !native && (`);
     expect(DASH).toContain(`{${ON} && !native ? (<>\n        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost`);
     expect(DASH).toContain(`{${ON} && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)}`);
-    expect(DASH).toContain('{!onRoost && !native && (\n                    <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
+    expect(DASH).toContain('{(!onRoost || inNoticeWindow) && !native && (\n                    <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     expect(DASH).toContain('{!native && (\n                      <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     // Four buttons open the sheet, each pinned above. A fifth is a new one to gate.
     expect(DASH.split('setShowUpgradeModal(true)').length - 1).toBe(4);
