@@ -65,6 +65,8 @@ test('a bar named or carded to someone treated as under 18 fails; an adult who a
   assert.ok(minor.problems.some((p) => /a bar's card/.test(p)));
   const unknown = grade('Try The Velvet Hour.', { tools, ageBracket: null });
   assert.ok(unknown.problems.some((p) => /under 18/.test(p)), 'an unknown age is held to the under-18 rule');
+  assert.ok(grade('Lehigh Lanes, midnight is your best shot.', { ageBracket: 'minor' }).problems.every((p) => !/drinking talk/.test(p)), '"best shot" read as drinking');
+  assert.ok(grade('Pregame with shots first.', { ageBracket: 'minor' }).problems.some((p) => /drinking talk/.test(p)));
   const adult = grade('The Velvet Hour. Quiet now, packed by 11.', { tools: [...tools, crowd(velvet, { hourly_forecast: [{ hour: '11 PM', score: 91 }] })], expect: { allowsBars: true } });
   assert.ok(!adult.problems.some((p) => /^age/.test(p)), adult.problems.join('\n'));
 });

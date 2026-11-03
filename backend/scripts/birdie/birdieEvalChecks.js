@@ -491,7 +491,8 @@ function checkAnswer(input) {
   });
   if (barCards.length && underAge) problems.push(`age: a bar's card (${barCards.map((c) => byId.get(c.place_id)?.key || c.name).join(', ')}) shown to someone treated as under 18`);
   else if (barCards.length && ageBracket === 'under21' && !expect.allowsBars) warnings.push('age: a bar\'s card shown to someone under 21');
-  if (/\b(shots?|get (wasted|drunk|hammered|smashed|lit)|pregame|chug)\b/i.test(text)) {
+  // "Your best shot" is not drinking talk; shots, plural, or taking one is.
+  if (/\b(shots|(take|do|doing|taking) (a )?shot|get (wasted|drunk|hammered|smashed|lit)|pregame|chug)\b/i.test(text)) {
     (underAge || ageBracket === 'under21' ? problems : warnings).push('age: drinking talk');
   }
 

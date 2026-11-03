@@ -375,6 +375,12 @@ genaiMod.GoogleGenAI = function EvalGenAI(opts) {
     if (ctx) ctx.calls.push(record);
     if (REPLAY) {
       const recorded = ctx && ctx.replayCalls ? ctx.replayCalls[ctx.calls.length - 1] : null;
+      // A call the recorded run lost to the deadline is lost the same way
+      // here, so the route's answer to a stall is replayed as well.
+      if (recorded && !recorded.response && /abort|timed? ?out/i.test(String(recorded.error || ''))) {
+        record.error = recorded.error;
+        throw Object.assign(new Error('The operation was aborted (replayed)'), { name: 'AbortError' });
+      }
       if (!recorded || !recorded.response) {
         record.error = 'replay: the recorded run made no such call';
         throw Object.assign(new Error(record.error), { status: 400 });
