@@ -110,7 +110,12 @@ genaiMod.GoogleGenAI = function FakeGenAI() {
 
 // --- Google Places, faked ---------------------------------------------------
 // utcOffsetMinutes null so the venue clock falls back to the localHour/localDay
-// each request passes in, which keeps every cache key predictable.
+// each request passes in, which keeps every cache key predictable. Birdie's
+// turns send no user clock, and since 2026-11-03 Birdie gives the model no
+// number, best time or curve for a venue whose local time nothing knows
+// (routes/ai.js serverClockResult), so the venues Birdie is asked about here
+// carry Denver's offset: the gate is checked where a forecast is served.
+const birdieVenue = (id) => /^(BIRDIE_|RACE_NEW_|VENUE_\d|MANY_\d|EDGE_[A-Z]$|SEEN_BEFORE$|NEVER_SEEN$|SAME_ONE$)/.test(String(id));
 function place(id, over = {}) {
   return {
     id,
@@ -122,7 +127,7 @@ function place(id, over = {}) {
     types: ['bar'],
     location: { latitude: 39.74, longitude: -104.98 },
     currentOpeningHours: { openNow: true, periods: [] },
-    utcOffsetMinutes: null,
+    utcOffsetMinutes: birdieVenue(id) ? -420 : null,
     ...over,
   };
 }
