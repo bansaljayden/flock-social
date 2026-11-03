@@ -129,6 +129,15 @@ test('a crowd number is read against the venue\'s own busiest hour, never as how
   assert.ok(crowds > -1 && prompt.indexOf('A crowd number runs 0 to 100') > crowds, 'the scale is explained beside the crowd advice');
 });
 
+test('the forecast is today\'s, and another day\'s plan is not handed it', () => {
+  // The crowd tool's hours run twelve hours from now. On the Birdie eval,
+  // "date night tomorrow" got "best time to pull up is around 10 PM": tonight's
+  // hour, given as tomorrow's.
+  const prompt = adult();
+  assert.match(prompt, /`best_time`, `peak_hours` and `hourly_forecast` cover the next twelve hours from now and nothing later\. For a plan on another day \(tomorrow night, next Friday\) there is no forecast: never give them those hours or numbers as that day's, and say the read you have is for now\./);
+  assert.ok(prompt.indexOf('WHEN TO GO IS `best_time`, ALWAYS') < prompt.indexOf('cover the next twelve hours from now'), 'the limit sits under the best-time rule it limits');
+});
+
 test('the joke rule is a limit, not an instruction to be funny', () => {
   // "Be funny" produces a model that opens every reply with a bit. The rule has
   // to carry its own brake or the personality change costs more than it buys.
