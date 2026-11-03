@@ -232,7 +232,7 @@ test('a weekday may stand beside its date, and two numbers with a space between 
   ];
   const side = phrasing.applyValve('On {{fact:weekday}} {{fact:date}}, your peak reading was {{fact:reading}}.', { facts });
   assert.ok(side, 'a weekday and its date are two words, not one number');
-  assert.strictEqual(side.text, 'On Tuesday Oct 27, your peak reading was 34.');
+  assert.strictEqual(side.text, 'On Tuesday, Oct 27, your peak reading was 34.');
   for (const fused of [
     'Your covers came to {{fact:a}} {{fact:b}} last week.',
     'On {{fact:date}} {{fact:reading}} people came in.',

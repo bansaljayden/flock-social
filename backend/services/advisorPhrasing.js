@@ -1780,7 +1780,9 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     for (const s of parts) {
       const { rendered, error } = render(s);
       if (error) return reject(error);
-      out[key].push(dedupeAdjacentWords(rendered));
+      // House style for the numbers the model wrote itself, after the check
+      // has read them (advisorAnswer.tidyNumbers): it changes no value.
+      out[key].push(advisorAnswer.tidyNumbers(dedupeAdjacentWords(rendered)));
     }
   }
   for (const id of claimed) if (byId.has(id)) used.add(id);

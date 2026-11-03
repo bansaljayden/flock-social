@@ -136,6 +136,63 @@ function repairDashes(text) {
     .replace(/,\s*([.!?])/g, '$1');
 }
 
+// ── Numbers in house style ──────────────────────────────────────────────────
+//
+// THE 2026-11-03 LIVE EVAL READ ALL 179 ANSWERS AND FOUND THE SAME SLIPS AGAIN
+// AND AGAIN, every one in a number the model wrote itself (a placeholder
+// already renders in house style): "$1350" a line under "$1,350", "13:00",
+// "20:00" and "22:00" beside "2:30 PM" and "10 PM", "4pm to 6pm", "5:00 PM"
+// beside "5 PM", "your reading was -18 points under your typical Monday", and
+// "On Tuesday Oct 27". Each is set right here, after the check has read the
+// draft, and none changes what a number says: an amount keeps its digits, a
+// time its hour, and a sign goes only where a word beside it already says
+// which way.
+//
+// A clock time is turned to 12 hours only where it cannot be read two ways:
+// "13:00" and "09:30" are 24-hour times, while "9:00" or "5:00" could be
+// either, and guessing would put a 5 PM special at 5 AM. Those stay as written.
+const MONTHS = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)';
+const WEEKDAY_THEN_DATE = new RegExp(`\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (${MONTHS}\\.? \\d{1,2})\\b`, 'g');
+const MONEY_UNGROUPED = /\$(\d{4,})(?!\d|,\d)/g;
+const PLAIN_UNGROUPED = /(?<![\w$.,:/-])(\d{5,})(?!\w|,\d|\.\d)/g;
+const TIDY_CLOCK_24 = /(?<![\d:$.,])\b(\d{1,2}):([0-5]\d)(?![\d:])(?!\s*(?:[aApP]\.?\s?[mM]\b))/g;
+const TIDY_CLOCK_AMPM = /\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])(\.\s?[mM]\.|\s?[mM]\b)(?![a-zA-Z])/g;
+const SIGN_THEN_WAY = /(?<![\w$.,])[-+−](\d+(?:\.\d+)?)(?=(?:%|\s?percent|\s+points?)?\s+(?:under|below|behind|short\s+of|less|fewer|lower|down|over|above|ahead|more|higher|up)\b)/g;
+const WAY_THEN_SIGN = /\b(fell|falling|falls|dropped|dropping|drops|slipped|slipping|declined|declining|trailed|trailing|down|rose|rising|rises|climbed|climbing|up)(\s+(?:by\s+)?)[-+−](?=\d)/gi;
+
+function groupThousands(digits) {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function twelveHour(hour, minutes) {
+  const h = Number(hour) % 24;
+  const mm = minutes && minutes !== '00' ? `:${minutes}` : '';
+  return `${h % 12 === 0 ? 12 : h % 12}${mm} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+/** One answer line with the model's own numbers in house style. */
+function tidyNumbers(text) {
+  return String(text)
+    .replace(MONEY_UNGROUPED, (m, d) => `$${groupThousands(d)}`)
+    .replace(PLAIN_UNGROUPED, (m, d) => groupThousands(d))
+    .replace(TIDY_CLOCK_24, (m, h, mm) => {
+      const hour = Number(h);
+      const unambiguous = hour >= 13 || (h.length === 2 && h[0] === '0');
+      return unambiguous && hour <= 23 ? twelveHour(hour, mm) : m;
+    })
+    .replace(TIDY_CLOCK_AMPM, (m, h, mm, half, tail, offset, whole) => {
+      const hour = Number(h);
+      if (hour < 1 || hour > 12) return m;
+      // "a.m." closing a sentence was its full stop as well.
+      const rest = whole.slice(offset + m.length);
+      const stop = tail.endsWith('.') && (rest === '' || /^\s+[A-Z]/.test(rest)) ? '.' : '';
+      return `${hour}${mm && mm !== '00' ? `:${mm}` : ''} ${half.toUpperCase()}M${stop}`;
+    })
+    .replace(SIGN_THEN_WAY, '$1')
+    .replace(WAY_THEN_SIGN, '$1$2')
+    .replace(WEEKDAY_THEN_DATE, '$1, $2');
+}
+
 // ── Content that voids the whole answer ─────────────────────────────────────
 
 // A refusal that sells is the darkest pattern available to this product.
@@ -698,6 +755,7 @@ module.exports = {
   assemble,
   splitSentences,
   repairDashes,
+  tidyNumbers,
   wholeAnswerVeto,
   sentenceVeto,
   numbersIn,
