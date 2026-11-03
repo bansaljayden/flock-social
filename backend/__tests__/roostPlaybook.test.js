@@ -398,6 +398,48 @@ test('after advice, the playbook\'s next step and the venue\'s own numbers on th
   assert.deepStrictEqual(followUpsFor({ mode: 'advice' }), [], 'nothing to go on, nothing offered');
 });
 
+test('a move\'s follow-up is offered when it fits this kind of room or carries on in the owner\'s words, and never when it asks the question again', () => {
+  const moves = (...ids) => ids.map((id) => {
+    const t = pb.tactics.find((x) => x.id === id);
+    assert.ok(t, id);
+    return t;
+  });
+  const BAR = { kind: 'bar', alcohol: true };
+  const CLUB = { kind: 'club', alcohol: true };
+  const CAFE = { kind: 'cafe', alcohol: false };
+  const RESTAURANT = { kind: 'full_service', alcohol: false };
+  const tables = 'how do I turn tables faster on saturday';
+  // The live eval: a full-service move led a bar's and a club's answer, and its
+  // follow-up asked them about meals.
+  for (const venue of [BAR, CLUB]) {
+    assert.strictEqual(pb.followUpFor(moves('turn_cut_dead_time', 'labor_schedule_from_forecast', 'labor_stagger_starts'), venue, tables), 'How many staff do I need per shift?');
+  }
+  assert.strictEqual(pb.followUpFor(moves('turn_cut_dead_time', 'turn_handheld_ordering', 'turn_table_mix'), CAFE, tables), 'Are handheld devices worth the cost?');
+  assert.strictEqual(pb.followUpFor(moves('turn_cut_dead_time', 'turn_handheld_ordering', 'turn_check_on_time'), RESTAURANT, tables), 'Where do meals lose the most time?');
+  // Another kind's move keeps its follow-up when it carries on the owner's subject.
+  assert.strictEqual(pb.followUpFor(moves('slow_hours_happy_hour', 'bev_pour_cost', 'bev_measured_pours'), CLUB, 'should I run a happy hour'), 'What should go on a happy hour menu?');
+  assert.strictEqual(pb.followUpFor(moves('res_confirm_remind'), BAR, 'how do I stop no-shows'), 'What else cuts no shows?');
+  // The question again, in other words, is passed over for the next move's.
+  for (const venue of [BAR, CAFE, RESTAURANT]) {
+    assert.strictEqual(pb.followUpFor(moves('food_cost_recipe_cards', 'costs_prime_weekly', 'costs_waste_hauling'), venue, 'what should my food cost be'), 'Where should I start cutting costs?');
+    assert.strictEqual(pb.followUpFor(moves('food_cost_recipe_cards', 'costs_prime_weekly'), venue, 'my food cost is 38 percent, is that bad'), 'Where should I start cutting costs?');
+    assert.strictEqual(pb.followUpFor(moves('mkt_real_photos', 'mkt_listing_current'), venue, 'what should I post on instagram'), 'What photos should I post on my listing?');
+    assert.strictEqual(pb.followUpFor(moves('delivery_commission_math', 'delivery_app_prices'), venue, 'is delivery worth it with the app fees'), 'How much higher should app prices be?');
+  }
+  // A follow-up that asks something new about the same subject is kept.
+  assert.strictEqual(pb.followUpFor(moves('pricing_small_steps'), CAFE, 'how do I raise prices without losing regulars'), 'How often should I raise prices?');
+  assert.strictEqual(pb.followUpFor(moves('pricing_from_plate_cost'), CAFE, 'what should I charge for a lunch special'), 'What food cost should I aim for?');
+  assert.strictEqual(pb.followUpFor(moves('slow_day_recurring_reason'), BAR, 'how do I fill Tuesdays'), 'What theme would suit my slow day?');
+  assert.strictEqual(pb.followUpFor(moves('food_cost_recipe_cards'), CAFE, 'what should my food cost be'), null, 'nothing left to offer is nothing offered');
+  assert.strictEqual(pb.followUpFor([], CAFE, 'anything'), null);
+  // The chips' own next question is never the typed question again either.
+  const block = { facts: [{ id: 'peak_2026-11-03', value: { weekday: 'Tuesday', peakScore: 38 } }] };
+  assert.ok(!followUpsFor({ intentId: 'quiet_nights', block, question: 'which days are quiet, and how do i fill tuesdays' })
+    .some((f) => f.kind === 'question'));
+  assert.ok(followUpsFor({ intentId: 'quiet_nights', block, question: 'which days are quiet for us' })
+    .some((f) => f.kind === 'question' && f.text === 'How do I fill Tuesdays?'));
+});
+
 test('every follow-up points at a chip that exists, in copy that passes the house style', () => {
   for (const [from, n] of Object.entries(NEXT)) {
     assert.ok(advisorPhrasing.isKnownIntent(from), from);

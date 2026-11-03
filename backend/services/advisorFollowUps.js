@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 const { ADVISOR_INTENTS, isKnownIntent } = require('./advisorPhrasing');
+const { restates } = require('./roostPlaybook');
 
 // The money question each chip's answer leads to, and the chip that pairs
 // with it. Questions are owner voice, short enough for a chip on a phone.
@@ -114,7 +115,9 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
     else if (intentId === 'money_move') ask = moneyMoveQuestion(block);
     else ask = next.question;
   }
-  if (ask && !same(ask, question)) out.push({ kind: 'question', text: ask });
+  // The question just asked is never offered back, in its own words or in
+  // others (roostPlaybook.restates).
+  if (ask && !same(ask, question) && !restates(ask, question)) out.push({ kind: 'question', text: ask });
 
   const chip = advice
     ? intentId || (topic && TOPIC_INTENT[topic]) || null

@@ -1393,7 +1393,9 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
     text: valved.text,
     sources: [...valved.sources, { ...TRADE_SOURCE }],
     topic: plays.length ? plays[0].topic : null,
-    followUp: plays.length ? plays[0].follow_up || null : null,
+    // Written for this kind of room, and never the question again
+    // (roostPlaybook.followUpFor).
+    followUp: roostPlaybook.followUpFor(plays, venue, question),
     // The moves the model was handed. "What else" sets them aside, so the
     // next answer is built from different ones.
     tactics: plays.map((t) => t.id),

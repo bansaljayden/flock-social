@@ -886,7 +886,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       sources,
       tactics: calc.move ? [calc.move.id] : [],
       topic: calc.move ? calc.move.topic : 'fill_slow_days',
-      followUp: calc.move ? calc.move.follow_up || null : null,
+      followUp: calc.move ? followUpFor([calc.move], venue, question) : null,
     };
   }
   const ranking = book.ranked(question, { intentId, venue, limit: 3, exclude });
@@ -937,8 +937,69 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
     sources,
     tactics: picks.map((t) => t.id),
     topic: first.topic,
-    followUp: first.follow_up || null,
+    followUp: followUpFor(picks, venue, question),
   };
+}
+
+// ── What to ask next ────────────────────────────────────────────────────────
+//
+// THE NEXT QUESTION FITS THIS KIND OF ROOM (2026-11-03). A move written for
+// another kind of room is offered when the owner names its subject ("how do I
+// turn tables faster" from a club), and its own follow-up came with it: the
+// live eval offered a bar and a club "Where do meals lose the most time?". A
+// move's follow-up is offered when the move is written for this kind of room,
+// or when the follow-up carries on in the owner's own words ("What should go
+// on a happy hour menu?" to a club that asked about a happy hour, "What else
+// cuts no shows?" to a bar that asked about no-shows); otherwise the next
+// move's is.
+//
+// AND IT IS NEVER THE QUESTION AGAIN. "What should my food cost be" was offered
+// "What food cost should I aim for?", "what should I post on instagram" was
+// offered "What should I post on social media?", and "is delivery worth it with
+// the app fees" was offered "Should I be on delivery apps at all?": a tap that
+// asks what was just answered. A follow-up whose words are all in the question
+// (the words that only frame a question set aside, and a platform read as the
+// social media it is) restates it, and the next move's follow-up is offered.
+const FRAME_WORDS = new Set(['aim', 'target', 'worth', 'ideal', 'right', 'usually', 'typical', 'normal'].map(stem));
+const SAME_SUBJECT = Object.freeze({
+  instagram: ['social', 'media'],
+  tiktok: ['social', 'media'],
+  facebook: ['social', 'media'],
+  insta: ['social', 'media'],
+  ig: ['social', 'media'],
+});
+
+function subjectWords(text) {
+  const out = new Set();
+  for (const w of stems(normalizeOwnerText(String(text || '')))) {
+    if (STOP.has(w) || FRAME_WORDS.has(w)) continue;
+    out.add(w);
+    for (const same of SAME_SUBJECT[w] || []) out.add(stem(same));
+  }
+  return out;
+}
+
+/** True when every word a follow-up asks about is already in the question. */
+function restates(followUp, question) {
+  const next = subjectWords(followUp);
+  if (!next.size) return false;
+  const asked = subjectWords(question);
+  return [...next].every((w) => asked.has(w));
+}
+
+/**
+ * The follow-up an answer built on these moves offers, or null: in the moves'
+ * order, the first that does not ask the question again and either belongs to
+ * a move written for this kind of room or carries on in the owner's words;
+ * failing that, the first that does not ask the question again.
+ */
+function followUpFor(tactics, venue, question = '') {
+  const offered = (Array.isArray(tactics) ? tactics : [])
+    .filter((t) => t && typeof t.follow_up === 'string' && !restates(t.follow_up, question));
+  const asked = subjectWords(question);
+  const carriesOn = (t) => [...subjectWords(t.follow_up)].some((w) => asked.has(w));
+  const pick = offered.find((t) => forThisKind(t, venue) || carriesOn(t)) || offered[0];
+  return pick ? pick.follow_up : null;
 }
 
 // ── The one move a chip answer ends on ──────────────────────────────────────
@@ -1069,6 +1130,8 @@ module.exports = {
   moveFor,
   forPayload,
   forThisKind,
+  followUpFor,
+  restates,
   stem,
   stems,
   trafficView,

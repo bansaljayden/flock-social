@@ -1119,6 +1119,28 @@ test('a playbook answer offers "What else could we try?", and tapping it gives a
   for (const id of first.body.context.tactics) assert.ok(!next.body.text.includes(moveText(id)), `${id} came back`);
 });
 
+test('what an advice answer offers next fits this kind of room, and never asks the question just answered', async () => {
+  // The 2026-11-03 live eval offered a bar and a club "Where do meals lose the
+  // most time?" after "how do I turn tables faster", and every venue that
+  // asked "what should my food cost be" was offered "What food cost should I
+  // aim for?".
+  const answered = '{"answer":"Cut the wait to order and to settle up.","points":["Close tabs as you go at the rush."]}';
+  const offered = async (question) => {
+    resetAll();
+    installProfile(); // a bar
+    replies = ['{"mode":"advice","intentId":"tables_service"}', answered];
+    const r = await ask(question);
+    assert.strictEqual(r.body.mode, 'advice', r.body.text);
+    return r.body.followUps.filter((f) => f.kind === 'question').map((f) => f.text);
+  };
+  const tables = await offered('how do I turn tables faster on saturday');
+  assert.ok(tables.length, 'a next question is still offered');
+  assert.ok(!tables.some((q) => /meals?/i.test(q)), `a bar was offered ${tables}`);
+  const cost = await offered('what should my food cost be');
+  assert.ok(cost.length, 'a next question is still offered');
+  assert.ok(!cost.some((q) => /food cost should I aim/i.test(q)), `the question came back as ${cost}`);
+});
+
 test('the moves handed to the advice model beside the first are written for this kind of room', async () => {
   resetAll();
   installProfile(); // a bar
