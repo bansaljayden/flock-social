@@ -197,8 +197,8 @@ export default function AboutPage() {
             </p>
             <p>
               Flux has only been tested on research footage so far. A retrained
-              crowd model gets scored in early November, and it ships only if it
-              beats today’s numbers on days it never saw.
+              crowd model gets scored in late November on days it never saw, and
+              it ships only if it passes thresholds set in September.
             </p>
           </div>
         </section>
