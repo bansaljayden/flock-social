@@ -127,6 +127,52 @@ test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1
   }
 });
 
+test('a number written as a word is read the way its digits are, and a share of the venue in words is a claim', () => {
+  // Third round, 2026-11-03: only digits were read, so all of these passed
+  // while "Your Friday hits 90" lost its line.
+  const facts = [...ADVICE_FACTS(), { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  for (const claim of [
+    'Your Friday hits ninety.',
+    'Your Friday peaks at ninety on the index.',
+    'Expect around ninety people tonight.',
+    'Your tables turn in about forty-five minutes.',
+    'You had a hundred and forty covers last Friday.',
+    'Forty of your reviews mention the wait.',
+    'Nearly half of your reviews mention the wait.',
+    'Nearly 40 of your reviews mention the wait.',
+    'About a third of your seats sit empty on Tuesdays.',
+    'Two thirds of your guests order a second drink.',
+    'Half your guests come from Instagram.',
+    'On Fridays, half your covers are walk-ins.',
+    'Your room is half full on Tuesdays.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, facts), null, `"${claim}" is a reading nobody measured`);
+  // The words in advice, prices, spans and asides are what they always were.
+  for (const fine of [
+    'Charge $18 to $21, about half your {{fact:intake_typical_spend_per_person}} typical spend, to fill lunch seats without undercutting dinner.',
+    'Charge $18 to $20, which is about half your {{fact:intake_typical_spend_per_person}} typical check.',
+    'Aim for ninety on the index by 9 PM.',
+    'Half your sales should come from drinks.',
+    'About half of guests at most bars order a second round.',
+    'Cut the menu in half and keep the 10 best sellers.',
+    'Run half price wings on Tuesdays.',
+    'Stagger staff arrivals so half start around 10 PM and the rest arrive by 11 PM.',
+    'Cover four clear lanes first: a lager, an IPA, a seasonal and a cider.',
+    'Track morning drink counts for two weeks before scheduling another body.',
+    'Post a clip of the room an hour or two before people head out.',
+    'Pick one night a week and test it.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, facts);
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine.replace('{{fact:intake_typical_spend_per_person}}', '$38'));
+  }
+  // A share in words matches the venue's own percentage within 5 points, and
+  // the owner's own share is theirs.
+  const tables = [...facts, { id: 'tables_friday', value: { weekday: 'Friday', waitedPercent: 18 }, source: 'table_sensor', asOf: '2026-11-03', label: 'On Fridays 18% of seatings waited for a server.' }];
+  assert.ok(freeText.applyAdviceValve('Nearly a fifth of your seatings waited for a server on Friday.', tables));
+  assert.strictEqual(freeText.applyAdviceValve('Nearly half of your seatings waited for a server on Friday.', tables), null);
+  assert.ok(freeText.applyAdviceValve('Nearly half of your reviews mention the wait.', facts, { texts: ['nearly half my reviews mention the wait, what do i do'] }));
+});
+
 test('AM and PM are two different hours: a fact in one half of the day never vouches for the same hour in the other', () => {
   // Third round, 2026-11-03: every one of these passed, because a clock time
   // and an hour fact each carried their 12-hour reading beside the 24-hour one.

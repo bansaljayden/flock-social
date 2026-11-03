@@ -365,6 +365,45 @@ const NUMBER = /(\$\s?)?\b(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:(st|nd|rd|th)\b)?(\
 const ORDINAL_DATE_BEFORE = /(?:\bon\s+the|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day,?(?:\s+the)?)\s+$/i;
 const ORDINAL_DATE_AFTER = /^(?:\s*(?:[.,;:!?)\]]|$)|\s+of\s+(?:(?:this|the|next|last)\s+month\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b))/i;
 
+// A NUMBER WRITTEN AS A WORD IS A NUMBER (third round, 2026-11-03). Only
+// digits were read, so "Your Friday hits ninety" and "Nearly half of your
+// reviews mention the wait" reached the owner with nothing behind them while
+// "hits 90" lost its line. Counts from two up are read the way digits are
+// ("forty-five", "a hundred and forty", "two dozen", "twice"); a lone "one"
+// is not, since it is in nearly every sentence and as a count it is never
+// checked anyway. A share ("half", "a third", "two thirds", "a quarter") is
+// read as a percentage when what follows says what it is a share of ("half
+// your seats", "a third of your covers", "half full"), never in "half an
+// hour", "half price", "cut it in half" or "a third bartender". A share is a
+// rounding by nature, so it matches the venue's own percentage within 5
+// points (supportFor), and only a percentage: a 45 on the index is no "half".
+const WORD_VALUE = Object.freeze({
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20,
+  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, a: 1, an: 1,
+});
+const UNIT_WORDS = 'one|two|three|four|five|six|seven|eight|nine';
+const UNDER_100 = `(?:(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\\s-]+(?:${UNIT_WORDS}))?|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|${UNIT_WORDS})`;
+const NUMBER_WORDS = new RegExp(`\\b(?:(?:a|${UNDER_100})\\s+(?:hundred|thousand)(?:\\s+(?:and\\s+)?${UNDER_100})?|(?:a|${UNDER_100})\\s+dozen|${UNDER_100}|twice)\\b`, 'gi');
+const VAGUE_SPAN_AFTER = new RegExp(`^\\s+or\\s+${UNDER_100}\\b`, 'i');
+function wordsValue(phrase) {
+  const words = phrase.toLowerCase().split(/[\s-]+/).filter((w) => w && w !== 'and');
+  if (words[0] === 'twice') return 2;
+  let total = 0;
+  let part = 0;
+  for (const w of words) {
+    if (w === 'dozen') part = (part || 1) * 12;
+    else if (w === 'hundred') part = (part || 1) * 100;
+    else if (w === 'thousand') { total += (part || 1) * 1000; part = 0; } else part += WORD_VALUE[w] || 0;
+  }
+  return total + part;
+}
+const FRACTION_OF = Object.freeze({
+  half: 1 / 2, halves: 1 / 2, third: 1 / 3, thirds: 1 / 3, quarter: 1 / 4, quarters: 1 / 4, fifth: 1 / 5, fifths: 1 / 5,
+  sixth: 1 / 6, sixths: 1 / 6, eighth: 1 / 8, eighths: 1 / 8, tenth: 1 / 10, tenths: 1 / 10,
+});
+const FRACTION_WORDS = new RegExp(`\\b(?:(a|an|${UNIT_WORDS})[\\s-]+(halves|half|thirds?|quarters?|fifths?|sixths?|eighths?|tenths?)|(half))\\b(?=[\\s-]+(?:full|empty|booked|sold)\\b|\\s+(?:of|your|our|my|their|the|its|them|those|these|that|this|all|every|capacity)\\b)`, 'gi');
+
 // AM AND PM ARE TWO DIFFERENT HOURS (2026-11-03, third round). A clock time
 // used to carry its 12-hour reading beside its 24-hour one, and so did every
 // hour fact, so a 9 PM peak vouched for "your Friday peaks at 9 AM", "21:00"
@@ -439,6 +478,31 @@ function numbersIn(text) {
     // typed as digits always did that, and a word now does not.
     out.push({ index: m.index, length: m[0].length, value: h, alt: [], kind: 'clock', dim: 'clock', word: true });
     mark(m.index, m[0].length);
+  }
+  // Numbers written as words (third round, 2026-11-03), shares first so "two
+  // thirds" is one number.
+  FRACTION_WORDS.lastIndex = 0;
+  while ((m = FRACTION_WORDS.exec(src)) !== null) {
+    const count = m[1] ? WORD_VALUE[m[1].toLowerCase()] || 1 : 1;
+    const value = count * FRACTION_OF[(m[2] || m[3]).toLowerCase()] * 100;
+    out.push({ index: m.index, length: m[0].length, value, alt: [], kind: 'fraction', dim: 'pct' });
+    mark(m.index, m[0].length);
+  }
+  NUMBER_WORDS.lastIndex = 0;
+  while ((m = NUMBER_WORDS.exec(src)) !== null) {
+    if (taken[m.index] || /^one$/i.test(m[0])) continue;
+    // "An hour or two", "two or three bartenders": a span, not a count.
+    if (/\bor\s+$/i.test(src.slice(Math.max(0, m.index - 4), m.index)) || VAGUE_SPAN_AFTER.test(src.slice(m.index + m[0].length))) continue;
+    const value = wordsValue(m[0]);
+    if (!(value >= 2)) continue;
+    const after = src.slice(m.index + m[0].length, m.index + m[0].length + 16);
+    const pct = /^\s?(?:%|percent\b|per\s+cent\b)/i.exec(after);
+    let dim = pct ? 'pct' : 'plain';
+    if (dim === 'plain' && /^\s*(?:minutes?|mins?|hours?|hrs?)\b/i.test(after)) dim = 'duration';
+    if (dim === 'plain' && /^\s*(?:dollars?|bucks)\b/i.test(after)) dim = 'money';
+    const length = m[0].length + (pct ? pct[0].length : 0);
+    out.push({ index: m.index, length, value, alt: [], kind: pct ? 'percent' : 'number', dim });
+    mark(m.index, length);
   }
   NUMBER.lastIndex = 0;
   while ((m = NUMBER.exec(src)) !== null) {
@@ -708,14 +772,30 @@ function countToDo(text, num, prefix, all, alone) {
 // goal", "a sensible ceiling", "is $1,000") keeps it a suggestion, unless the
 // clause puts it in the past ("140 covers came in last Friday, which is
 // $5,320" is still a reading).
-const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?$/i;
+// A rounding word may stand in front of it (third round, 2026-11-03):
+// "Nearly half of your reviews mention the wait" and "Nearly 40 of your
+// reviews mention the wait" were never read.
+const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?(?:(?:nearly|almost|about|around|roughly|over|under|just\s+over|just\s+under|well\s+over|well\s+under|more\s+than|less\s+than|fewer\s+than|close\s+to|at\s+least|up\s+to|only|barely|exactly|some)\s+)?$/i;
+// A share in words says what it is a share of with no "of": "half your
+// guests", "half the room".
+const SHARE_OF_THE_VENUE = /^\s+(?:of\s+)?(?:your|our|their|them|those|these|the\s+(?:room|floor|tables?|seats?|bar|crowd|covers?|guests?|customers?|reviews?|line|door|place|venue|kitchen|staff|regulars?|nights?|week|menu|sales|orders?|bookings?|reservations?))\b/i;
+// And a share, or a number after a rounding word, is a claim only with a verb
+// after it before the clause ends: "half your covers are walk-ins" says
+// something, "Charge $18 to $21, about half your typical spend, to fill
+// lunch seats" describes the price (five recorded runs wrote it). Only forms
+// that are never the noun they describe: "your typical spend", "your drink
+// orders" and "two turns" name things.
+const FIRST_CLAIM_VERB = /\b(?:is|are|was|were|has|have|had|come|comes|came|arrive|arrives|arrived|ordered|leave|left|wait|waited|stay|stayed|sit|sits|sat|spent|booked|visited|mention|mentioned|named|say|says|said|complain|complains|complained|cite|cites|cited|praise|praises|praised|rated|walked|showed|paid|tipped|returned|go|goes|went|turned|filled|asked|gave|wanted|brought|skipped|cancell?ed|drank|ate|bought|joined|landed|ran|ended|happen|happens|happened)\b|\b(?:guests|customers|diners|patrons|regulars|visitors|people|reviewers|reviews|covers|tables|seats|bookings|parties|groups)\s+(?:\w+\s+)?(?:order|book|visit|spend|walk|show|pay|tip|rate|return|turn|ask|give|want|bring|skip|cancel|drink|eat|buy|join)\b/i;
 const NUMBER_FIRST_CLAIM = /^\s*(?:%|percent|per\s+cent)?\s*(?:of\s+(?:them|those|these|your|our)\b|(?:[a-z'-]+\s+){0,3}(?:mentioned|came|walked|left|waited|ordered|booked|visited|complained|said|named|showed|stayed|spent|paid|returned|went|rated|gave|praised|asked|cancell?ed|arrived|turned|sat|ate|drank|bought|tipped|joined|mention|mentions|names|says|complain|complains|praise|praises|cites)\b)/i;
 const NUMBER_FIRST_SUGGESTION = /\b(?:should|would|could|can|might|may|aim|aims|target|goal|ceiling|cap|limit|plenty|enough|sensible|healthy|ideal|needs?\s+to|to\s+be|if|when|equals|adds?\s+up\s+to|comes?\s+to)\b|\bis\s+(?:about\s+|roughly\s+|around\s+)?\$|=/i;
 function numberFirstClaim(text, num, prefix) {
   const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
   if (!NUMBER_FIRST_LEAD.test(stretch)) return false;
   const after = text.slice(num.index + num.length).split(/[.!?;]/)[0];
-  if (!NUMBER_FIRST_CLAIM.test(after)) return false;
+  if (!NUMBER_FIRST_CLAIM.test(after) && !(num.kind === 'fraction' && SHARE_OF_THE_VENUE.test(after))) return false;
+  // A share or a rounded number says something only with a verb of its own.
+  const rounded = num.kind === 'fraction' || /\S/.test(stretch.replace(/^\s*(?:(?:and|so|then|also|plus)\s+)?/i, ''));
+  if (rounded && !FIRST_CLAIM_VERB.test(after.split(',')[0])) return false;
   return PAST_TIME.test(after) || !NUMBER_FIRST_SUGGESTION.test(after);
 }
 
@@ -986,13 +1066,17 @@ function supportFor(num, support, inPlay = {}) {
   // A position, never a day of the month (numbersIn reads those as dates).
   if (num.kind === 'ordinal' && num.dim !== 'date' && num.value <= 10) return new Set();
 
+  // A share in words ("half", "a third") is a rounding of a percentage: it
+  // matches one within 5 points, and only a percentage (numbersIn).
+  const share = num.kind === 'fraction';
+  const near = (a, b) => (share ? Math.abs(a - b) <= 5 : close(a, b));
   // A percentage may also be a share the facts hold as a fraction (0.42 is
   // 42%), matched at the fraction's own scale: "82%" is not "about 1".
   const ratio = num.dim === 'pct' ? num.value / 100 : null;
   for (const entry of support.base) {
-    if (!directKinds(num.dim, entry.dim)) continue;
-    if (targets.some((t) => close(t, entry.value))) return entry.ids;
-    if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= 0.005) return entry.ids;
+    if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct')) continue;
+    if (targets.some((t) => near(t, entry.value))) return entry.ids;
+    if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
   }
   const anchored = support.base.filter((e) => e.arith !== false && (e.owner || [...e.ids].some((id) => ids.has(id))));
   // A number never vouches for itself, which it would as "60 - 30 = 30", and a
@@ -1003,7 +1087,7 @@ function supportFor(num, support, inPlay = {}) {
       .filter((l) => l.value !== num.value && l.dim !== 'date' && !l.word)
       .map((l) => ({ value: l.value, ids: new Set(), dim: l.dim })),
   ];
-  const matches = (d) => acceptsDim(num, d.dim) && close(num.value, d.value);
+  const matches = (d) => acceptsDim(num, d.dim) && near(num.value, d.value);
   for (const a of anchored) {
     for (const b of others) {
       if (a === b) continue;

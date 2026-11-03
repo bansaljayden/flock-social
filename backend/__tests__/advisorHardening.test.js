@@ -115,13 +115,16 @@ test('a reading the facts do not hold is refused in any script', () => {
 test('number words in ordinary prose render: the check reads readings, not vocabulary', () => {
   for (const draft of [
     'Run it for two weeks on {{fact:peak_day}} and look again.',
-    'Half the room on {{fact:peak_day}} is regulars, so greet them by name.',
     'A dozen covers on {{fact:peak_day}} is worth a second server for an hour.',
   ]) {
     const out = phrasing.applyValve(draft, BLOCK());
     assert.ok(out, `"${draft}"`);
     assert.match(out.text, /Friday/);
   }
+  // Since the third round (2026-11-03) a number word is read the way its
+  // digits are, so a share of the venue's own room in words is a reading the
+  // facts must hold, like "50% of the room on Friday is regulars".
+  assert.strictEqual(phrasing.applyValve('Half the room on {{fact:peak_day}} is regulars, so greet them by name.', BLOCK()), null);
 });
 
 test('a sentence that says what the facts mean renders beside the one that cites them', () => {
