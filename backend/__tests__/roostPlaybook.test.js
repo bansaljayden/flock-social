@@ -341,6 +341,24 @@ test('a playbook answer has Roost\'s shape: one line, at most four points, sourc
   assert.strictEqual(a.topic, 'fill_slow_days');
 });
 
+// THE MODEL COPIES THE PLAYBOOK'S WORDS TOO (2026-11-03, third round). The
+// slow-day move read "Give your slowest day 1 recurring reason to visit", it
+// rides in every slow-day advice payload, and a restaurant's live draft came
+// back "give guests 1 recurring reason to visit every Tuesday night". A count
+// of one in front of its noun is the word. The number-word rule reads "one"
+// there as prose, so the line still passes the house style and the check
+// whole (the playbook's own tests above), and house style leaves it alone.
+test('the slow-day move gives the slowest day one recurring reason, in a word, and that is the line the model is handed', () => {
+  const t = pb.tactics.find((x) => x.id === 'slow_day_recurring_reason');
+  assert.strictEqual(t.move, 'Give your slowest day one recurring reason to visit, such as a weekly dish or a game, and run it every week without skipping.');
+  assert.ok(!hasNumberWords(t.move), 'one in front of its noun is prose to the number-word rule');
+  assert.strictEqual(advisorAnswer.tidyNumbers(t.move), t.move, 'and house style leaves it as written');
+  assert.ok(pb.forPayload(pb.find('how do I fill Tuesdays', { intentId: 'quiet_nights' })).some((p) => p.move === t.move),
+    'the advice model is handed it for a slow day');
+  const a = pb.answer({ question: 'how do I fill Tuesdays', intentId: 'quiet_nights', ctx: CTX(38) });
+  assert.match(a.text.split('\n')[0], /^Give your slowest day one recurring reason to visit/);
+});
+
 test('with no spend per head on file, the answer works the example instead and says how to get the dollar figure', () => {
   const a = pb.answer({ question: 'how do I make Tuesdays better', ctx: CTX(null) });
   assert.ok(!a.text.includes('At your'), 'no spend, no per-head line');
