@@ -376,8 +376,9 @@ const ORDINAL_DAY_NEXT = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|
 // date read is a date checked, but in the owner's words they made support out
 // of positions: "this is the 10th for us", "the 25th in a row" and "the 2nd in
 // the city" let "your busiest night was Oct 10" through (re-check of the
-// third round, 2026-11-03).
-const ORDINAL_DAY_NEXT_OWNER = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|went|came|drew|brought|peaked|peaks|again|this)\b/i;
+// third round, 2026-11-03). "This" only as "this month": "the 10th this
+// year we sold out" is the tenth time.
+const ORDINAL_DAY_NEXT_OWNER = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|went|came|drew|brought|peaked|peaks|again|this\s+month)\b/i;
 
 // A NUMBER WRITTEN AS A WORD IS A NUMBER (third round, 2026-11-03). Only
 // digits were read, so "Your Friday hits ninety" and "Nearly half of your

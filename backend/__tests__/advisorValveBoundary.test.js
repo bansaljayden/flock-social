@@ -367,6 +367,7 @@ test('the owner\'s "the Nth" vouches for a date only when a verb, "this" or "aga
     ['Your peak lands on Nov 3.', 'we came the 3rd at the regional awards, how do we use that'],
     ['Your busiest night this year was Oct 25.', 'we have sold out the 25th in a row, how do we raise prices'],
     ['Your peak landed on Nov 2.', 'we were the 2nd in the city to get a patio permit'],
+    ['Your busiest night was Oct 10.', 'this is the 10th this year we sold out'],
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS(), { texts: [owner] }), null, `${claim} [${owner}]`);
   for (const [claim, owner] of [
     ['Your busiest night was Oct 4.', 'the 4th was huge, how do we do it again'],
