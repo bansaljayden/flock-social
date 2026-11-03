@@ -109,6 +109,15 @@ test('a staged card is not a done deed', () => {
   assert.ok(!grade('I put Mango Street Tacos on the vote card for Friday dinner. Tap confirm to send it to the group.', { expect: { noClaim: true } }).problems.some((p) => /stages/.test(p)));
 });
 
+test('a quiet ask is not sent to the busier of two spots the turn checked', () => {
+  const copper = cases.byKey.get('copper');
+  const tools = [crowd(thistle, { crowd_score: 79 }), crowd(copper, { crowd_score: 24, venue_name: copper.name })];
+  const busy = grade('Thistle & Crust, cheap and rated 4.5.', { tools, expect: { quietPick: true } });
+  assert.ok(busy.problems.some((p) => /a quiet ask sent to Thistle & Crust at 79 over Copper Kettle Cafe at 24/.test(p)), busy.problems.join('\n'));
+  const calm = grade('Copper Kettle Cafe at 24, and Thistle & Crust is slammed.', { tools, expect: { quietPick: true } });
+  assert.ok(!calm.problems.some((p) => /^pick/.test(p)), calm.problems.join('\n'));
+});
+
 test('a venue the answer says is shut is not one it sends them to', () => {
   const palma = cases.byKey.get('palma');
   const sol = cases.byKey.get('cafesol');

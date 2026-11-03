@@ -451,6 +451,23 @@ function checkAnswer(input) {
     problems.push(maxVenues === 0 ? `venues: names ${mentioned.map((v) => v.name).join(', ')} without being asked for one`
       : `venues: hands them ${mentioned.length} places (${mentioned.map((v) => v.key).join(', ')}), the prompt says pick one`);
   }
+  // A quiet or seat-now ask: the spot the answer leads with is not the busier
+  // of two this turn checked (by 10 points or more, the ordering floor).
+  if (expect.quietPick && mentioned.length) {
+    const t2 = norm(text);
+    const at = (v) => Math.min(...v.aliases.map((a) => t2.indexOf(norm(a))).filter((i) => i >= 0));
+    const pick = [...mentioned].sort((a, b) => at(a) - at(b))[0];
+    const scoreOf = (id) => (turnFacts.crowd.get(id) || {}).crowd_score;
+    const mine = scoreOf(pick.id);
+    if (Number.isFinite(mine)) {
+      for (const [id, r] of turnFacts.crowd) {
+        if (id !== pick.id && Number.isFinite(r.crowd_score) && r.crowd_score <= mine - 10) {
+          problems.push(`pick: a quiet ask sent to ${pick.name} at ${mine} over ${r.venue_name} at ${r.crowd_score}`);
+          break;
+        }
+      }
+    }
+  }
   if (expect.openOnly) {
     for (const v of mentioned) {
       if (openIds.has(v.id)) continue;

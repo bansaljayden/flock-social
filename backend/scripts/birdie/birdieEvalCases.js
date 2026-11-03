@@ -558,6 +558,8 @@ const ctxFlock = (persona, flockId) => {
 //                                not) match
 //   offTopic                     not what Birdie is for: no tools, short
 //   openOnly                     every venue it names is open now
+//   quietPick                    a quiet or seat-now ask: the spot it leads
+//                                with is not the busier of two it checked
 const BATTERY = [
   // Picking a place tonight
   { id: 'P01', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ["what's the move tonight"],
@@ -567,9 +569,9 @@ const BATTERY = [
   { id: 'P03', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ['me and 3 friends want food and then something fun after, like $15 each max'],
     expect: { tools: { must: ['search_venues'] }, maxVenues: 2 } },
   { id: 'P04', clock: 'fri_evening', persona: 'priya_19', ctx: ctxHome, turns: ['somewhere chill to study tonight with good coffee'],
-    expect: { tools: { must: ['search_venues'] }, pickOne: true } },
+    expect: { tools: { must: ['search_venues'] }, pickOne: true, quietPick: true } },
   { id: 'P05', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ['hungry. cheap. now.'],
-    expect: { tools: { must: ['search_venues'] }, pickOne: true, openOnly: true } },
+    expect: { tools: { must: ['search_venues'] }, pickOne: true, openOnly: true, quietPick: true } },
   // Tomorrow: the crowd tool's hours are tonight's, so no hour of them may be
   // handed over as tomorrow's.
   { id: 'P06', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['date night tomorrow, somewhere nice but not loud'],
@@ -623,7 +625,7 @@ const BATTERY = [
     expect: { tools: { must: ['search_venues'] }, pickOne: true,
       forbid: ['\\b(table|room|seats?) for (all )?(6|six)\\b', '\\b(6|six) of you (will )?(fit|get a table)'] } },
   { id: 'G02', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ['somewhere walkable from rittenhouse with a chill vibe'],
-    expect: { tools: { must: ['search_venues'] }, pickOne: true } },
+    expect: { tools: { must: ['search_venues'] }, pickOne: true, quietPick: true } },
   { id: 'G03', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxFlock('leo_minor', 721), turns: ['set up a plan for galaxy arcade saturday at 7 with the crew'],
     expect: { tools: { must: ['search_venues', 'draft_flock'] }, draft: { venue: 'galaxy', local: '2026-11-07T19:00' }, noClaim: true } },
   { id: 'G04', clock: 'fri_evening', persona: 'priya_19', ctx: ctxHome, turns: ['add mango street tacos to our friday dinner vote'],
@@ -635,7 +637,7 @@ const BATTERY = [
 
   // Follow-ups
   { id: 'F01', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ["what's the move tonight", 'nah something more lowkey'],
-    expect: { pickOne: true } },
+    expect: { pickOne: true, quietPick: true } },
   { id: 'F02', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['how busy is thistle & crust right now', 'ok what about around 10?'],
     expect: { tools: { must: ['get_crowd_prediction'] } } },
   { id: 'F03', clock: 'fri_evening', persona: 'priya_19', ctx: ctxHome, turns: ['cheap tacos near me', 'add that to our friday dinner vote'],
