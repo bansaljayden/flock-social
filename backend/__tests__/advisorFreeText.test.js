@@ -1331,3 +1331,28 @@ test('"tell us a little more" is not said to a problem stated plainly, and stays
   assert.strictEqual(r.body.mode, 'refusal');
   assert.strictEqual(modelCalls.length, 1);
 });
+
+// The model imitates the examples, so every example has to pass the check the
+// contract describes, whole: a lunch-special price (2026-11-03, where the live
+// answer gave a method and no dollar figure), a verdict, a money line.
+test('every worked example in both contracts passes the answer check with nothing dropped', () => {
+  const F = (id, value, unit, source = 'model_holdout') => ({ id, value, unit, source, asOf: '2026-11-03' });
+  const facts = [
+    F('quiet_day', 'Tuesday'), F('spend', 35, 'usd', 'intake'), F('peak_hour', 20, 'hour'),
+    F('waited_share', 18, 'percent', 'table_sensor'), F('peak_weekday', 'Saturday'), F('peak_score', 91),
+    F('kitchen_last_order', '14:30', undefined, 'intake'), F('reading', 41, undefined, 'owner_report'),
+    F('usual', 55, undefined, 'owner_report'), F('capacity', 60, undefined, 'intake'), F('people_at_peak', 40),
+  ];
+  for (const [prompt, check] of [
+    [advisorPrompt.SYSTEM_PROMPT, (o) => advisorPhrasing.applyValve(o, { facts })],
+    [advisorPrompt.ADVICE_SYSTEM_PROMPT, (o) => advisorFreeText.applyAdviceValve(o, facts)],
+  ]) {
+    const examples = prompt.slice(prompt.indexOf('\nEXAMPLES\n')).match(/^\{"answer": .*\}$/gm);
+    for (const example of examples) {
+      const out = check(example);
+      assert.ok(out, example);
+      assert.strictEqual(out.text.split('\n').length - 1, JSON.parse(example).points.length, `a point of this example was dropped: ${example}`);
+    }
+  }
+  assert.match(advisorPrompt.ADVICE_SYSTEM_PROMPT, /\{"answer": "Charge \$16 to \$19/, 'the pricing example answers with a price');
+});
