@@ -119,6 +119,16 @@ test('the reason for a pick comes from the tools, and the example shows one that
   assert.ok(prompt.indexOf('Hard rules:') < prompt.indexOf('Your reasons for a spot'), 'the rule sits with the other hard rules');
 });
 
+test('a crowd number is read against the venue\'s own busiest hour, never as how full it is', () => {
+  // The scale is venue-relative (services/crowdEngine.js getLabel: 100 is the
+  // venue's own weekly peak, never percent-full), and nothing told Birdie so:
+  // on the Birdie eval it called a cafe's 24 "24% full" and "24% capacity".
+  const prompt = adult();
+  assert.match(prompt, /A crowd number runs 0 to 100 against that venue's own busiest hour of the week: 100 is as packed as that place gets, not a full room\. Never call it capacity or say a place is some percent full\./);
+  const crowds = prompt.indexOf('- Crowds: translate numbers into advice.');
+  assert.ok(crowds > -1 && prompt.indexOf('A crowd number runs 0 to 100') > crowds, 'the scale is explained beside the crowd advice');
+});
+
 test('the joke rule is a limit, not an instruction to be funny', () => {
   // "Be funny" produces a model that opens every reply with a bit. The rule has
   // to carry its own brake or the personality change costs more than it buys.
