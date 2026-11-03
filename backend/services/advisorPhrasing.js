@@ -2218,6 +2218,9 @@ const internals = {
   // line both payloads use to name the placeholder ids.
   buildUserPayload,
   placeholderLine,
+  // How a placeholder id is spelled since 2026-11-03 (peak_score, not
+  // peak_peakScore), for the eval's replay of drafts written before then.
+  destutter,
   roomWords,
   // The outage breaker: both answer paths check it before charging, and
   // record every failed call with it.

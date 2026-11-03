@@ -113,13 +113,16 @@ function roleOf(req) {
 const ROUTER_REPLY = /^\s*\{\s*"mode"\s*:\s*"(?:grounded|advice|refused)"/;
 // The battery asks some questions twice (once alone, once with a follow-on),
 // so each item key holds its rows in the order the earlier run asked them.
+// A draft written before 2026-11-03 spells a peak part peak_peakScore, and is
+// read in today's spelling (peak_score), the one its block now carries.
 const replayed = new Map();
+const todaysIds = (raw) => String(raw || '').replace(/\{\{fact:([A-Za-z_]+)\}\}/g, (m, id) => `{{fact:${advisorPhrasing.internals.destutter(id)}}}`);
 if (args.replay) {
   for (const row of JSON.parse(fs.readFileSync(path.resolve(String(args.replay)), 'utf8'))) {
     const asked = row.kind === 'chip' ? row.intentId : row.q;
     const key = `${row.venue}|${row.kind}|${asked}`;
     replayed.set(key, [...(replayed.get(key) || []), (row.calls || []).map((c) => ({
-      raw: c.raw,
+      raw: todaysIds(c.raw),
       error: c.error,
       router: c.role ? c.role === 'router' : ROUTER_REPLY.test(c.raw || ''),
     }))]);
