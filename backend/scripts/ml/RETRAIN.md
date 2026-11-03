@@ -85,12 +85,35 @@ table, the ship switch and rollback. What a readiness audit of every step on
   Each runs after the verdict as an exploratory ablation, never as the result.
 - **No-curve fallback.** Its table was measured with v2.6.0-starling only
   (`NO_CURVE_FALLBACK_FITTED_ON`), and any other version switches it off.
-  Before a candidate ships, its own table is re-measured on the new export
-  with `train/noCurveFallbackEval.js --from=<time_holdout.from_date>
-  --allow-version=<its model_version>`. The constant, the measured figure and
-  their tests move in the ship commit only if it still beats the rule engine;
-  otherwise the candidate ships with the rule engine for those venues, and
-  this file says so.
+  Before a candidate ships, its own table is re-measured on the new export's
+  time-holdout window, from `backend/`, after the band gate and while
+  `models/` still holds the gated artifact (the script refuses to run without
+  a `--csv`):
+
+  ```bash
+  node --max-old-space-size=16384 scripts/ml/train/noCurveFallbackEval.js \
+    --csv=scripts/ml/train/training_data.csv --csv=scripts/ml/train/holdout_data.csv \
+    --from=<time_holdout.from_date> --allow-version=2.8.0-starling --out=<report.json>
+  ```
+
+  The constant, the measured figure and their tests move in the ship commit
+  only if it still beats the rule engine; otherwise the candidate ships with
+  the rule engine for those venues, and this file says so.
+- **The final refit's table (added 2026-11-03, before the export).** A final
+  refit (2.8.1-starling; see `train/final_refit_gate.py`) ships its own
+  `category_baselines`, the gated candidate's recipe fitted on more rows.
+  `prepare_features.py`'s refit branch folds the time-holdout window and the
+  three holdout cities into training and records `time_holdout.from_date` as
+  null, so that table has nothing left to be scored on, and scoring it on the
+  window would be in-sample. It is not re-measured. The 2.8.0-starling
+  measurement above, out of sample on the window, is carried to it by
+  reference, the way `final_refit_gate.py` carries the ship verdict: when
+  2.8.1 ships, `NO_CURVE_FALLBACK_FITTED_ON` moves to 2.8.1-starling, and
+  `NO_CURVE_FALLBACK_MEASURED` and its population string cite 2.8.0's
+  out-of-sample result as the measurement behind 2.8.1's table. If 2.8.0's
+  table does not beat the rule engine, neither artifact serves a table.
+  `services/mlPredictor.js` does not change before a ship, so production
+  serves the table beside v2.6.0-starling only.
 - **What the later export changes, with no code change.** The 14-day window
   falls in late November, so the fill-city readings taken from 2026-10-30
   until the window opens train the gated candidate. "The gate's cities" below
