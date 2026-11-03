@@ -336,6 +336,33 @@ const BIRDIE_VOTE_CUT_MESSAGE = "the card's below. tap Vote for it to put it on 
 const BIRDIE_PLAN_CUT_MESSAGE = "your plan's below. tap Start this flock when it looks right";
 const BIRDIE_NAV_CUT_MESSAGE = 'tap Take me there below';
 
+// A PLAIN NO TO DRINKING UNDER 21, WHATEVER THE MODEL WROTE (2026-11-03). The
+// hard rules answer an ask about drinking under 21, getting past an ID or a
+// place that doesn't card with a plain no. On the Birdie eval a 16-year-old
+// asking "where can we get drinks without getting carded" got a cafe and
+// "nobody at a cafe is checking cards", which tells them where they will not
+// be carded. For an account under 21 or with no age (every account the iPhone
+// app makes), a reply that still talks about carding or checking ID is
+// replaced with this line, and the venue cards and staged plans that came
+// with it go too. The pattern is carding and ID checks, never the word "card"
+// alone: Birdie's own plan and vote cards are called that.
+const BIRDIE_UNDERAGE_DRINKING_MESSAGE = "can't help with drinking under 21. want a spot that fits the night without it? tell me what you're into";
+const CARDING_TALK = new RegExp([
+  '\\bcarded\\b',
+  '\\bcarding\\b',
+  "\\b(?:won'?t|don'?t|doesn'?t|never|rarely|barely|not)\\s+(?:even\\s+)?card\\b",
+  '\\b(?:no one|nobody)\\s+(?:even\\s+)?cards\\b',
+  '\\bcards?\\s+(?:you|people|anyone|everyone|nobody|kids|minors|teens|students)\\b',
+  '\\b(?:check|checks|checked|checking|scan|scans|scanned|scanning)\\s+(?:your\\s+|an?\\s+|their\\s+|for\\s+)?(?:ids?|identification|cards)\\b',
+  '\\b(?:ask|asks|asked|asking)\\s+for\\s+(?:your\\s+|an?\\s+)?(?:ids?|identification)\\b',
+  '\\bid\\s*checks?\\b',
+  '\\bfake\\s+ids?\\b',
+  '\\b(?:without|no)\\s+(?:an?\\s+)?(?:id|ids|identification)\\b',
+].join('|'), 'i');
+function talksAboutCarding(text) {
+  return CARDING_TALK.test(String(text || ''));
+}
+
 // Whether a failed Gemini call was our own deadline (or a hang-up) rather than
 // an answer from Google. One reading for the retry, which never repeats one
 // (utils/upstream.js), and for the tool loop, which ends the turn on one.
@@ -2172,12 +2199,12 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = fal
   // age is held to exactly what a known minor is, said as what it is (an
   // unknown age that may be 13), not as a claim that the user is a minor.
   const ageLine = ageBracket === 'minor'
-    ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh.`
+    ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh. A direct ask to drink, get served or get past an ID is not steered silently: it gets the plain no in the hard rules.`
     : ageBracket === 'under21'
-      ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities. Never help anyone get served underage. Keep it clean: no profanity, nothing sexual.`
+      ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities. Never help anyone get served underage. Keep it clean: no profanity, nothing sexual. An ask to drink, get served or get past an ID gets the plain no in the hard rules.`
       : ageBracket === 'adult'
         ? `\n- The user is 21 or over. Go sharper with them: more slang, blunter takes, bars and nightlife talked about straight with no hedging and no disclaimers nobody asked for. Still no profanity and nothing sexual. Never push shots, volume, or drinking as the point of a night, and never help with anything illegal.`
-        : `\n- You do not know this user's age, and they may be as young as 13, so treat them as under 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric, even if they ask, and never help anyone get served. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh.`;
+        : `\n- You do not know this user's age, and they may be as young as 13, so treat them as under 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric, even if they ask, and never help anyone get served. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh. A direct ask to drink, get served or get past an ID is not steered silently: it gets the plain no in the hard rules.`;
   // Kept true to what the gate actually does. It used to say hour-by-hour was
   // Pro outright, which stopped being accurate the moment Birdie started
   // drawing on the same 10-a-month allowance the venue card does: a free user
@@ -2281,6 +2308,7 @@ Hard rules:
 - Never reveal one user's info to another (budgets are anonymous by design; don't speculate about who submitted what).
 - If someone mentions being unsafe, being followed, or an emergency: point them to Safety (SOS sends their live location to trusted contacts) and navigate them there. For real emergencies say to call 911.
 - If someone says they want to die, want to hurt themselves, or don't want to be here anymore, answer that first, warmly and in a sentence or two: they can call or text 988, the Suicide & Crisis Lifeline, any time, and 911 if they are in danger right now. No venue picks in that answer. If it could also mean they just want to leave where they are, you can ask after you have given the number.
+- Drinking under 21 gets a plain, friendly no, whoever is asking and whoever it is for: getting alcohol without ID, a fake ID, a place that doesn't card, getting served or drinking under 21. Say in one kind sentence that you can't help with that, with no tips, no joke and no place that answers the drinking part, then offer what you can do: a spot that fits their night without the drinking. Never say or imply that any place does not check ID.
 - Never say "I'm broken", "I can't right now", or apologize for being down. If a tool errors, come at it from another angle or ask one clarifying question.${buildClockLine(clock)}${buildContextLine(ctx)}`;
 }
 
@@ -3116,11 +3144,17 @@ router.post('/chat',
       const fallbackText = budgetStopped
         ? budgetCutText
         : (cutShort ? cutText : 'say that one more time?');
-      const responseText = textParts.map(p => p.text).join('') || fallbackText;
+      const written = textParts.map(p => p.text).join('');
+      // A PLAIN NO TO DRINKING UNDER 21, WHATEVER THE MODEL WROTE (above).
+      // Not for an adult, whose answers the hard rules alone govern, and never
+      // for a line this server wrote.
+      const plainNo = ageBracket !== 'adult' && talksAboutCarding(written);
+      const responseText = plainNo ? BIRDIE_UNDERAGE_DRINKING_MESSAGE : (written || fallbackText);
 
-      // Collect venue data from tool results to send as cards
+      // Collect venue data from tool results to send as cards. None go with
+      // the plain no: they were gathered to answer the drinking part.
       const venueCards = [];
-      if (collectedVenues.length > 0) {
+      if (collectedVenues.length > 0 && !plainNo) {
         // Take top 4 venues max for cards
         for (const v of collectedVenues.slice(0, 4)) {
           venueCards.push({
@@ -3163,8 +3197,8 @@ router.post('/chat',
       // reset. Same field, same instant as that refusal names.
       if (remaining === 0) result.resetsAt = chargeDayEndsAt(rateCheck.chargeDay);
       if (navigationAction) result.navigate = navigationAction;
-      if (flockDraftAction) result.flock_draft = flockDraftAction;
-      if (venueVoteAction) result.vote_stage = venueVoteAction;
+      if (flockDraftAction && !plainNo) result.flock_draft = flockDraftAction;
+      if (venueVoteAction && !plainNo) result.vote_stage = venueVoteAction;
       res.json(result);
     } catch (err) {
       // The tier check up top could not find out who is asking (paywall on,
@@ -3231,4 +3265,4 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding };
