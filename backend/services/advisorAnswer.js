@@ -630,26 +630,46 @@ const AFTER_COUNT_STOP = /^(?:at|on|in|by|from|to|for|of|with|over|across|during
 // people", "we pour 400 drinks"), and they made readings of what the owner
 // does or sets out too: "Every week you post 3 times on Instagram", "you open
 // 2 registers at 5 PM", "you book 2 DJs a month", "you order 3 cases of
-// limes". After the owner's own verb, a plain count is a reading when it
-// counts the room or stands alone ("you see 300", "you fill 40 seats", "we do
-// 300 on a Friday", "you see 3 times the traffic"); a count of anything else
-// is what the owner does, after a verb the owner operates something with
-// ("open", "post", "book", "order", "host"). After any other verb a count is
-// what the room did ("you sell 200 croissants", "you see 300 folks"), unless
-// it counts the owner's staff ("you see 300 people with two servers on"). A
-// clock after an operating verb is the time a counted thing is opened or
-// closed at ("you open 2 registers at 5 PM"); "you open at 7 AM" and "you
-// open the doors at 5 PM" are the venue's hours, a reading.
+// limes". After the owner's own verb a plain count is a reading, with four
+// exceptions, each what the owner does or sets out:
+//   - a count of their staff, as what it counts ("you see 300 people with two
+//     servers on"), never "300 security incidents" or "3 servers calling out";
+//   - equipment they open or run ("you open 2 registers", "close 2 sections"),
+//     and seats or tables only as room they add ("you open 2 more tables");
+//     "you open 60 seats on the patio" and "we hold 12 tables" are capacity;
+//   - after "post" and "order", which no reading of Flock's counts, anything
+//     but the room ("you post 3 times a week", "you order 3 cases of limes");
+//     after every other verb a count of anything is what the room did ("you
+//     sell 200 croissants", "you host 3 weddings a month", "we open 5 times a
+//     week", "you open 6 days a week");
+//   - the owner's own time on a task ("you take 2 hours to plan the
+//     specials"), never the room's service ("you take 45 minutes to turn a
+//     table").
+// A clock after an operating verb is the time a counted thing is opened or
+// closed at ("you open 2 registers at 5 PM"); "you open at 7 AM", "you open
+// the doors at 5 PM" and "you close a little after 11 PM" are the venue's
+// hours, a reading (re-check of the round's fixes, 2026-11-03).
 const OWNER_DOES = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(${BASE_VERB.source})\\b((?:\\s+[^\\s,;:.!?]+){0,3})\\s*$`, 'i');
 const OWNER_OPERATES = /^(?:open|close|start|end|post|book|order|host|run|hold)$/i;
-const ROOM_COUNTS = /^(?:people|persons?|guests?|customers?|diners?|visitors?|patrons?|regulars?|walk-?ins?|heads?|folks|locals?|students?|famil(?:y|ies)|couples?|tourists?|fans?|members?|clients?|kids?|punters?|attendees?|partygoers?|drinkers?|shoppers?|commuters?|workers?|teens?|adults?|seniors?|parents?|bodies|souls|covers?|seats?|tables?|tops|parties|party|groups?|bookings?|reservations?|orders?|checks?|tickets?|sales?|transactions?|visits?|turns?|seatings?|sittings?|drinks?|cocktails?|pints?|beers?|glasses|bottles?|shots?|coffees?|cups?|lattes?|plates?|meals?|dishes|entrees?|mains?|desserts?|pastries|loaves|items?|units?|reviews?|ratings?|stars?|complaints?|mentions?|deliveries|calls?|views?|clicks?|likes?|followers?|impressions?|comments?|lookups?|searches|nights?|rushes|rush|peaks?|waves?|spikes?|crowds?|lines?|percent|points?)$/i;
+const OWNER_ACTS = /^(?:post|order)$/i;
+const ROOM_COUNTS = /^(?:people|persons?|guests?|customers?|diners?|visitors?|patrons?|regulars?|walk-?ins?|heads?|folks|locals?|students?|famil(?:y|ies)|couples?|tourists?|fans?|members?|clients?|kids?|punters?|attendees?|partygoers?|drinkers?|shoppers?|commuters?|workers?|teens?|adults?|seniors?|parents?|bodies|souls|covers?|seats?|tables?|tops|parties|party|groups?|bookings?|reservations?|orders?|checks?|tickets?|sales?|transactions?|visits?|turns?|seatings?|sittings?|drinks?|cocktails?|pints?|beers?|glasses|bottles?|shots?|coffees?|cups?|lattes?|plates?|meals?|dishes|entrees?|mains?|desserts?|pastries|loaves|items?|units?|reviews?|ratings?|stars?|complaints?|mentions?|deliveries|calls?|views?|clicks?|likes?|followers?|impressions?|comments?|lookups?|searches|nights?|days?|weekends?|evenings?|mornings?|afternoons?|lunch(?:es)?|dinners?|brunch(?:es)?|rushes|rush|peaks?|waves?|spikes?|crowds?|lines?|percent|points?)$/i;
 const STAFF = /^(?:servers?|bartenders?|staff(?:ers)?|hosts?|hostess(?:es)?|cooks?|chefs?|baristas?|runners?|bussers?|barbacks?|dishwashers?|managers?|bouncers?|security|guards?|djs?|employees?|waiters?|waitress(?:es)?|waitstaff|crew)$/i;
-const COUNTED_OBJECT = /^(?:\d+|a|an|another|one|two|three|four|five|six|seven|eight|nine|ten|extra|second|third)$/i;
-// What the owner opens, closes, holds or runs: "you hold 2 tables for
-// walk-ins" sets two aside, where "you book 40 tables" counts bookings.
-const OWNER_RESOURCE = /^(?:tables?|seats?|sections?|stations?|registers?|tills?|lanes?|lines?|rooms?|areas?|tops|bars?|patios?|windows?)$/i;
+const COUNTED_OBJECT = /^(?:\d+|another|one|two|three|four|five|six|seven|eight|nine|ten|extra|second|third)$/i;
+const OWNER_EQUIPMENT = /^(?:registers?|tills?|lanes?|lines?|stations?|windows?|sections?|terminals?|kiosks?|ovens?|grills?|taps?)$/i;
+const OWNER_CAPACITY = /^(?:tables?|seats?|tops|rooms?|areas?|bars?|patios?)$/i;
 // Words between a count and what it counts: "2 more tables", "300 new guests".
+const INCREMENT = /^(?:more|extra|additional|another|fewer|less)$/i;
 const COUNT_MODIFIER = /^(?:more|fewer|less|extra|new|additional|other|regular|full|empty|busy|slow|small|big|large)$/i;
+const OWNER_TASK = /^(?:plan|prep|prepare|write|post|order|clean|set|train|schedule|review|update|design|build|bake|count|research|stock|restock|call|email|text|answer|reply|respond|read|draft|film|shoot|edit|fix|repair|organize|sort|label|price|check)$/i;
+// The words a plain count is followed by, up to the clause's first mark.
+function countedWords(text, num) {
+  return text.slice(num.index + num.length).split(/[,;:.!?()]/)[0].trim().split(/\s+/)
+    .map((w) => w.replace(/[^A-Za-z'’-]/g, '')).filter(Boolean).slice(0, 4);
+}
+// Staff as what the count counts: the word ends its noun phrase.
+function staffCounted(words, k) {
+  return STAFF.test(words[k]) && (!words[k + 1] || AFTER_COUNT_STOP.test(words[k + 1]));
+}
 function ownerActs(text, num, prefix) {
   const m = OWNER_DOES.exec(prefix);
   if (!m) return false;
@@ -658,25 +678,31 @@ function ownerActs(text, num, prefix) {
   if (num.dim === 'clock') {
     return operates && m[2].trim().split(/\s+/).some((w) => COUNTED_OBJECT.test(w));
   }
-  // The owner's own time: "you take 2 hours to plan the specials".
-  if (num.dim === 'duration') return verb === 'take';
+  if (num.dim === 'duration') {
+    const task = /^\s*(?:minutes?|mins?|hours?|hrs?)\s+to\s+([a-z]+)/i.exec(text.slice(num.index + num.length));
+    return verb === 'take' && Boolean(task) && OWNER_TASK.test(task[1]);
+  }
   if (num.dim !== 'plain') return false;
-  const words = text.slice(num.index + num.length).split(/[,;:.!?()]/)[0].trim().split(/\s+/).filter(Boolean).slice(0, 3);
+  const words = countedWords(text, num);
+  const acts = OWNER_ACTS.test(verb);
   let named = false;
-  for (let k = 0; k < words.length; k += 1) {
-    const w = words[k].replace(/[^A-Za-z'’-]/g, '');
-    if (STAFF.test(w)) return true;
-    if (operates && verb !== 'book' && OWNER_RESOURCE.test(w)) return true;
+  let added = false;
+  for (let k = 0; k < Math.min(3, words.length); k += 1) {
+    const w = words[k];
+    if (staffCounted(words, k)) return true;
+    if (operates && OWNER_EQUIPMENT.test(w)) return true;
+    if (operates && added && OWNER_CAPACITY.test(w)) return true;
     if (ROOM_COUNTS.test(w)) return false;
-    // How often: what the owner does ("you post 3 times a week") after a verb
-    // they operate with, what the room does ("you sell out 3 times a month",
-    // "3 times the traffic") after any other.
-    if (/^(?:times|x)$/i.test(w)) return operates && !/^(?:the|as|more|your|our|that|what)$/i.test(words[k + 1] || '');
+    // How often: what the owner does after "post" or "order" ("you post 3
+    // times a week"), what the room does after any other verb ("you sell out
+    // 3 times a month", "we open 5 times a week", "3 times the traffic").
+    if (/^(?:times|x)$/i.test(w)) return acts && !/^(?:the|as|more|your|our|that|what)$/i.test(words[k + 1] || '');
+    if (INCREMENT.test(w)) { added = true; continue; }
     if (COUNT_MODIFIER.test(w)) continue;
-    if (AFTER_COUNT_STOP.test(w)) return operates && named;
+    if (AFTER_COUNT_STOP.test(w)) return acts && named;
     named = true;
   }
-  return operates && named;
+  return acts && named;
 }
 
 // A RATE PER THING IS A PRICE OR A CUT, NEVER THE VENUE'S TAKINGS (re-check

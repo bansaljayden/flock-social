@@ -691,9 +691,9 @@ test('what the owner does or sets out is advice, and what the room does after th
     'You post 3 times a week on Instagram.',
     'You open 2 more tables on the patio at 8 PM.',
     'You order 3 cases of limes every Monday.',
-    'Every Thursday you host 2 trivia rounds.',
+    'You close 2 sections at 10 PM.',
     'You book 2 DJs a month.',
-    'Every Friday you hold 2 tables for walk-ins.',
+    'You keep 2 servers on until close.',
     'Every shift you spend 30 minutes prepping.',
     'You take 2 hours to plan the specials.',
   ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
@@ -720,6 +720,22 @@ test('what the owner does or sets out is advice, and what the room does after th
     'Every Friday you host 300 locals.',
     'You open the doors at 5 PM.',
     'You close the patio at 10 PM on weeknights.',
+    // Review of the fixes (2026-11-03): an operating verb's count is advice
+    // only for equipment, room added, or after "post" and "order"; staff only
+    // as what the count counts; the owner's time only on a task.
+    'You host 3 weddings a month.',
+    'Every Saturday we host 3 weddings.',
+    'Every Thursday you host 2 trivia rounds.',
+    'You open 6 days a week.',
+    'We open 5 times a week.',
+    'We hold 12 tables for walk-ins every night.',
+    'Every Friday you hold 2 tables for walk-ins.',
+    'You open 60 seats on the patio every Friday.',
+    'You close a little after 11 PM on Fridays.',
+    'You see 300 security incidents a year.',
+    'You get 3 servers calling out every weekend.',
+    'You take 45 minutes to turn a table on Fridays.',
+    'We take about 20 minutes to seat a walk-in.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
   // The owner's staff are no reading of the room.
   assert.ok(freeText.applyAdviceValve('On Fridays you see 300 people with two servers on.', ADVICE_FACTS(), { texts: ['we see about 300 people on fridays, how many servers do we need'] }));
