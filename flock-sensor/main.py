@@ -216,7 +216,7 @@ DEFAULTS = {
     # been still and the camera has seen nobody for this many minutes. Raise
     # it for a room where people sit out of the camera's view for long spells.
     'OCCUPANCY_EMPTY_MINUTES': '20',
-    # owl-5's, chosen with PeopleModel.CROWD_AT on its validation frames.
+    # owl-5.1's, chosen with PeopleModel.CROWD_AT on its validation frames.
     'THERMAL_MODEL_THRESHOLD': '0.35',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
@@ -1823,14 +1823,18 @@ class PeopleModel:
     # From this many people the crowd model (models/people-fine.onnx), when
     # installed, counts the frame too, and the highest count stands. The main
     # model merges heads a few pixels apart, which is how a crowd reads short.
-    # The crowd model shipped now is owl-5's, whose density head's total does
-    # not fall when heads merge. owl-5 asks it from four people and counts at
-    # a threshold of 0.35. Both were chosen on 12,597 validation frames from
-    # owl-5's training sets that it never trained on: there owl-5's pair
-    # counted 69.2% of frames exactly at four and 0.35, and 68.7% at owl-4.9's
-    # settings of five and 0.4. owl-4.9 stayed at five because three and four
-    # counted IISER Bhopal's classroom crowds worse for its own pair.
-    CROWD_AT = 4
+    # The pair shipped now is owl-5.1: its own main counter and owl-4.9's
+    # crowd model, whose density head's total does not fall when heads merge.
+    # owl-5.1 asks it from six people and counts at a threshold of 0.35. Both
+    # were chosen on 12,597 validation frames from owl-5.1's training sets
+    # that it never trained on, among the settings that stayed no more than
+    # 1 point below owl-4.9 on each of owl-4.9's six benchmark sets there:
+    # owl-5.1's pair counted 69.4% of the frames exactly at six and 0.35 (one
+    # frame more than at four), and 68.9% at owl-4.9's settings of five and
+    # 0.4. owl-5 asked its own crowd model from four; owl-4.9 asked this one
+    # from five, because three and four counted IISER Bhopal's classroom
+    # crowds worse for its own pair.
+    CROWD_AT = 6
     fine = None
 
     # Things a person is easily mistaken for. Where one of these is surer

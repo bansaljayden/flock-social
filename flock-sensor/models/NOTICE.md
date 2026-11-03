@@ -1,10 +1,12 @@
 # Acknowledgements for the people counter
 
-`people.onnx` and `people-fine.onnx`, the people counter and its crowd model
-(owl-5), were trained on generated thermal frames and on frames from the 28
-datasets below. None of their images are included in this product. The MIT
-licences are reproduced in full, the Creative Commons ones credited, and the
-papers their authors asked to have cited are cited, as they require.
+`people.onnx`, the people counter (owl-5.1), was trained on generated thermal
+frames and on frames from the 28 datasets below: the frames owl-5 trained on,
+drawn in different shares. `people-fine.onnx`, its crowd model, is owl-4.9's,
+trained on generated thermal frames and on frames from the first six datasets
+below. None of their images are included in this product. The MIT licences
+are reproduced in full, the Creative Commons ones credited, and the papers
+their authors asked to have cited are cited, as they require.
 
 ## PUT Thermo Presence
 
