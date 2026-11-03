@@ -314,7 +314,7 @@ test('a peak fact\'s parts read once (peak_hour, peak_score), and the contract\'
     { id: 'owner_reading_2026-10-27', value: { weekday: 'Tuesday', peakReading: 34 }, source: 'owner_report', asOf: '2026-10-27' },
     { id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02' },
   ])).map((f) => f.id);
-  assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_gap']);
+  assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_pointsBelow']);
   // The example a model is most likely to copy writes ids a peak block has.
   const examplePeakIds = [...advisorPhrasing.SYSTEM_PROMPT.matchAll(/\{\{fact:(peak_[a-z_]+)\}\}/g)].map((m) => m[1]);
   assert.ok(examplePeakIds.length >= 3);
@@ -353,24 +353,33 @@ test('each payload fact carries the words its placeholder becomes, where they di
 // "That puts the night 15 points under your normal range" (a club, 2026-11-03):
 // the model took the verdict's floor of 15 for the gap, which was 18.
 test('yesterday\'s verdict reaches the model without the rule\'s own working', () => {
-  const ids = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{
+  const parts = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{
     id: 'last_day_verdict_2026-11-02',
     value: { date: '2026-11-02', weekday: 'Monday', verdict: 'below', reading: 8, baseline: 26, baselineKind: 'same_weekday', comparisonDays: 6, delta: -18, threshold: 15, spread: 6, floorPoints: 15 },
     source: 'arithmetic',
     asOf: '2026-11-02',
-  }])).map((f) => f.id);
+    note: 'The 15 point mark is the wider of a fixed 15 points and how far your own comparison days typically sit from their middle.',
+  }]));
+  const ids = parts.map((f) => f.id);
   for (const working of ['threshold', 'spread', 'floorPoints']) {
     assert.ok(!ids.some((id) => id.endsWith(`_${working}`)), `${working} reached the model`);
   }
+  // Nor the note that explains the same mark (a review still got "15 points
+  // under your normal range" through it).
+  assert.ok(parts.every((f) => f.note === undefined), 'the mark rode in on the note');
   assert.ok(ids.includes('last_day_verdict_baseline') && ids.includes('last_day_verdict_reading'));
-  // The signed delta arrives as the size of the gap; the verdict word says
-  // which way. "-18 points under" was in five live answers on 11-03.
-  const flat = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{
-    id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02',
-  }]));
-  assert.deepStrictEqual(flat.map((f) => [f.id, f.value]), [['last_day_verdict_verdict', 'below'], ['last_day_verdict_gap', 18]]);
-  const out = advisorPhrasing.applyValve('Yesterday came in {{fact:last_day_verdict_gap}} points under your usual Monday.', { facts: flat });
+  // The signed delta arrives as a size with its direction in its name.
+  // "-18 points under" was in five live answers on 11-03, and a bare size
+  // would let "18 points above" pass on a below day unnoticed.
+  const flat = (value) => advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{ id: 'last_day_verdict_2026-11-02', value, source: 'arithmetic', asOf: '2026-11-02' }]));
+  assert.deepStrictEqual(flat({ verdict: 'below', delta: -18 }).map((f) => [f.id, f.value]), [['last_day_verdict_verdict', 'below'], ['last_day_verdict_pointsBelow', 18]]);
+  assert.deepStrictEqual(flat({ verdict: 'above', delta: 21 }).map((f) => [f.id, f.value]), [['last_day_verdict_verdict', 'above'], ['last_day_verdict_pointsAbove', 21]]);
+  assert.deepStrictEqual(flat({ verdict: 'ordinary', delta: 0 }).map((f) => [f.id, f.value]), [['last_day_verdict_verdict', 'ordinary'], ['last_day_verdict_pointsApart', 0]]);
+  const out = advisorPhrasing.applyValve('Yesterday came in {{fact:last_day_verdict_pointsBelow}} points under your usual Monday.', { facts: flat({ verdict: 'below', delta: -18 }) });
   assert.strictEqual(out.text, 'Yesterday came in 18 points under your usual Monday.');
+  // The other signed gap a fact carries: what we published against the reading.
+  const served = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{ id: 'served_vs_reading_2026-11-02', value: { servedMedian: 40, yourPeak: 52, gap: -12 }, source: 'arithmetic', asOf: '2026-11-02' }]));
+  assert.deepStrictEqual(served.map((f) => [f.id, f.value]), [['served_vs_reading_servedMedian', 40], ['served_vs_reading_yourPeak', 52], ['served_vs_reading_pointsBelow', 12]]);
 });
 
 test('both payloads name every placeholder id the block carries, once, after the block', () => {

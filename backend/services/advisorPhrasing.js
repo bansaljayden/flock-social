@@ -941,11 +941,20 @@ function vendorQuantity(value) {
 // explain the mark, the template still prints them, and the check still reads
 // them.
 const WORKING_PARTS = new Set(['threshold', 'spread', 'floorPoints']);
-// AND THE GAP ARRIVES AS A SIZE. The verdict's delta is signed (-18), the
-// model writes "{{fact:..._delta}} points under your usual Monday", and five
-// live answers on 2026-11-03 read "-18 points under". The model is handed the
-// gap (18) beside the verdict word that already says which way.
-const SIGNED_GAP_PARTS = Object.freeze({ delta: 'gap' });
+// AND A GAP ARRIVES AS A SIZE WITH ITS DIRECTION IN ITS NAME. The verdict's
+// delta is signed (-18), the model writes "{{fact:..._delta}} points under
+// your usual Monday", and five live answers on 2026-11-03 read "-18 points
+// under". Handing over the bare size was tried next, and a review showed a
+// model could then write "18 points above" on a below day with nothing on
+// screen to show the slip. So a signed delta or gap becomes pointsBelow,
+// pointsAbove or pointsApart, holding the size: "{{fact:..._pointsBelow}}
+// points under" reads right, and "pointsBelow points above" is a contradiction
+// the model has to write out in full to make.
+const SIGNED_GAPS = new Set(['delta', 'gap']);
+function gapPart(v) {
+  if (v < 0) return 'pointsBelow';
+  return v > 0 ? 'pointsAbove' : 'pointsApart';
+}
 
 function flattenFacts(facts) {
   const out = [];
@@ -962,14 +971,20 @@ function flattenFacts(facts) {
   };
   for (const f of facts) {
     if (f && f.value !== null && typeof f.value === 'object' && !Array.isArray(f.value)) {
+      // The verdict's note explains the mark (the same 15 the working parts
+      // hold), and every part carried it to the model: "15 points under your
+      // normal range" still came back in a review. A fact whose working is
+      // withheld keeps its note out of the model's way too; the template and
+      // the check still read it.
+      const parent = Object.keys(f.value).some((k) => WORKING_PARTS.has(k)) ? { ...f, note: undefined } : f;
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
-        if (SIGNED_GAP_PARTS[k] && typeof v === 'number') {
-          keep({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${SIGNED_GAP_PARTS[k]}`, value: Math.abs(v), unit: partUnit(k) });
+        if (SIGNED_GAPS.has(k) && typeof v === 'number' && Number.isFinite(v)) {
+          keep({ ...parent, sourceId: f.sourceId || f.id, id: `${f.id}_${gapPart(v)}`, value: Math.abs(v), unit: partUnit(k) });
           continue;
         }
-        keep({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
+        keep({ ...parent, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
       }
     } else if (f) {
       keep(f);
