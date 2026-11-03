@@ -194,7 +194,13 @@ test('an hour in words is an hour, and a share a gerund supposes for a cost is a
     'Your room runs half empty on Tuesdays.',
     'Your room sits half empty, which costs you $1,440.',
     'At {{fact:intake_typical_spend_per_person}} a head, running your {{fact:intake_capacity}}-capacity room 50% empty costs you about $1,440 in lost drink spend alone every Tuesday.',
+    // The venue's own days between the share and its cost say the room is
+    // half empty on them (re-check of the third round, 2026-11-03).
+    'Running your room half empty every Tuesday costs you $1,440.',
+    'Running your room half empty on Tuesdays costs you about $1,440.',
+    'Running your room half empty across your mornings costs you $1,440.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, bar), null, claim);
+  assert.ok(freeText.applyAdviceValve('Running your room half empty for an evening costs you more than staying shut.', bar));
 });
 
 test('a number written as a word is checked, never worked with, and a word in a label or an owner\'s count vouches for nothing', () => {

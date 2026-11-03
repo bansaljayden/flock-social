@@ -909,8 +909,13 @@ function flowsUnworked(prefix, num, all) {
 // followed straight away by what that costs, is set aside. "Your room runs
 // half empty on Tuesdays" and "Your room sits half empty, which costs you
 // $1,440" stay readings, and so does "50% empty" in digits, as it always was.
+// The stretch between the share and its cost is one the sentence supposes ("a
+// morning", "an evening"), never the venue's own days: "running your room half
+// empty every Tuesday costs you $1,440" and "...on Tuesdays costs..." say the
+// room is half empty on its Tuesdays, which is a reading (re-check of the
+// third round, 2026-11-03).
 const SCENARIO_BEFORE = /(?:^|[,;:]\s*|^\s*(?:at\s+[^,]{1,60},\s*))(?:running|leaving|keeping|having|operating)\s+(?:your|the)\s+(?:[\w-]+\s+){0,3}?(?:room|rooms|seats|tables|floor|bar|place|venue|space|house|capacity)\s+$/i;
-const SCENARIO_AFTER = /^[\s-]+(?:empty|full)\b(?:\s+(?:across|over|for|through|during|on|every|each)\s+(?:(?:a|an|the|one|your|each|every)\s+)?[\w-]+){0,2},?\s+(?:costs?|means?|leaves?|loses?|burns?|wastes?)\b/i;
+const SCENARIO_AFTER = /^[\s-]+(?:empty|full)\b(?:\s+(?:across|over|for|through|during)\s+(?:(?:a|an|the|one)\s+)?(?!(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|weekends?|weeknights?|weekdays?|every|each|your)\b)[\w-]+){0,2},?\s+(?:costs?|means?|leaves?|loses?|burns?|wastes?)\b/i;
 function shareScenario(text, num, prefix) {
   return num.kind === 'fraction' && SCENARIO_BEFORE.test(prefix) && SCENARIO_AFTER.test(text.slice(num.index + num.length));
 }
