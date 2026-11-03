@@ -190,6 +190,35 @@ test('a made-up point is dropped and the rest of the answer stands', () => {
   ].join('\n'));
 });
 
+test('a number that opens its clause as the subject of a claim is read as one, and a target or a rule of thumb that opens on a number is not', () => {
+  // Never read at all before 2026-11-03: the rules look for a subject in front
+  // of a number, and here the number is the subject.
+  for (const claim of [
+    '40 of them mention the wait.',
+    '140 covers came in last Friday.',
+    'On Friday, 140 covers came in.',
+    '10 of your 28 seats sit empty at 3 PM.',
+    'And 30 guests walked out before ordering.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  for (const fine of [
+    '38% of your sales should come from drinks.',
+    '20 extra covers come in when the patio opens.',
+    'If 20 guests order the special, that is $240.',
+    '2 servers can cover 40 seats on a quiet night.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, ADVICE_FACTS());
+    assert.ok(out, fine);
+    assert.strictEqual(out.text, fine);
+  }
+  // The figure on the line after a count to do (second review, grounded).
+  const grounded = phrasing.applyValve(JSON.stringify({
+    answer: 'Read your 50 most recent reviews.',
+    points: ['40 of them mention the wait.', 'Your busiest day is {{fact:peak_day}}.'],
+  }), BLOCK());
+  assert.ok(grounded);
+  assert.ok(!/40 of them/.test(grounded.text), grounded.text);
+});
+
 test('missing data is never read as an empty room, and saying we have no reading still is', () => {
   // A club asking about a second barista on Saturday mornings (2026-11-03).
   const out = freeText.applyAdviceValve(JSON.stringify({
@@ -281,6 +310,13 @@ test('a count to do (the newest records to read, the lanes to split into) passes
     'At peak, your door, split into 2 lanes, clears the line.',
     "Friday's door, split into 2 lanes, moved fast.",
     'To keep the line moving at peak, split your door into 2 lanes, 1 for list guests and 1 for door sales, and you lost 1 guest a minute last Friday.',
+    // The second review: a narrator the first list missed, a report in the
+    // past, a second sentence that never split, a letter that looks like a colon.
+    'Flock pulled the listing, read your 50 most recent reviews, and put the wait first.',
+    'Pulled the listing, read your 50 most recent reviews, and put the wait first.',
+    'Read your 50 most recent reviews, staff complaints doubled, time to seat fell.',
+    'Read your 50 most recent reviews and fix the wait. every one names it.',
+    'Read your 50 most recent reviews꞉ all but 1 mention the wait.',
   ]) {
     assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, `"${claim}" carries a venue figure nobody measured`);
   }

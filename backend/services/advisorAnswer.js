@@ -528,10 +528,14 @@ const SAMPLE_VERB = /^\s*(?:(?:first|then|now|so)\s*,?\s+)?(?:read|re-?read|go\s
 const SAMPLE_NOUN = /^\s+(?:most\s+recent|latest|newest|last)\s+(?:(?:google|yelp|online|guest|customer|delivery)\s+)?(?:reviews?|comments?|ratings?|receipts?|tickets?|checks?|orders?|surveys?|complaints?|messages?|emails?|responses?)\b/i;
 const SETUP_VERB = /^\s*(?:(?:first|then|so)\s*,?\s+)?(?:split|divide|break|separate)\s+(?:(?:your|the)\s+)?(?:[a-z]+\s+){0,2}into\s+$/i;
 const SETUP_NOUN = /^\s+(?:(?:door|entry|bar|separate|parallel)\s+)?(?:lanes?|lines?|queues?|stations?|registers?|tills?|sections?|zones?)\b/i;
-// Who did it: a subject before the verb makes it a narrative, not a command.
-const NARRATOR = /\b(?:i|we|they|he|she|it|someone|somebody|everyone|everybody|nobody)\b/i;
-// Where a narrative or a claim can start inside the sentence.
-const CLAIM_OPENING = /[:;()[\]]|\b(?:which|who|whom|whose|where|but|because|since|whereas)\b/i;
+// Who did it: a subject before the verb makes it a narrative, not a command,
+// and so does a verb in the past ("Pulled the listing, read your 50 ...").
+const NARRATOR = /\b(?:i|we|they|he|she|it|someone|somebody|everyone|everybody|nobody|flock|roost)\b/i;
+const PAST_TENSE = /\b(?:\w{2,}(?<!e)ed|fell|rose|grew|went|came|took|got|ran|saw|made|had|was|were|did|found|left|lost|spent|brought|bought|sold|paid|kept|led|said|told|knew|thought)\b/i;
+// Where a narrative or a claim can start inside the sentence: a colon (or a
+// letter that looks like one), a semicolon, a bracket, a second sentence, or
+// a word that opens a clause of its own.
+const CLAIM_OPENING = /[:;()[\]꞉ː∶։׃]|[.!?]\s+\S|\b(?:which|who|whom|whose|where|but|because|since|whereas)\b/i;
 // What may follow the count: another command, or (lanes) what each lane is for.
 const NEXT_COMMAND = /^(?:then\s+)?(?:tally|count|list|note|mark|fix|find|flag|sort|group|pick|reply|answer|compare|check|write|track|look|read|start|address|share|train|brief|time|watch|move|staff|put|run|keep|add|use|sign|label|post|ask|call|cut|drop|change|test|try|chase|clear|log|circle|highlight|rank|tag|tackle|solve|coach|walk|work|strip|batch|prep|stock|set|open|send|hand|give|seat|greet|quote|text|fill)\b/i;
 const LANE_DETAIL = /^(?:(?:1|one)\s+for\b|with\b)/i;
@@ -544,20 +548,40 @@ function countToDo(text, num, prefix, all, alone) {
   const setup = !sample && SETUP_VERB.test(stretch) && SETUP_NOUN.exec(after);
   const noun = sample || setup;
   if (!noun) return false;
-  if (CLAIM_OPENING.test(text)) return false;
+  if (CLAIM_OPENING.test(text.replace(/[.!?]+\s*$/, ''))) return false;
   // Nothing before the command says who did anything.
   const head = text.slice(0, num.index - prefix.length + stretchAt);
-  if (SUBJECT.test(head) || NARRATOR.test(head)) return false;
+  if (SUBJECT.test(head) || NARRATOR.test(head) || PAST_TENSE.test(head)) return false;
   // No other figure rides with it; lanes may say "1 for" each kind of guest.
   if (all.some((n) => n !== num && !(setup && n.dim === 'plain' && (n.value === 0 || n.value === 1)))) return false;
-  // And what follows is only more commands, or what each lane is for.
+  // And what follows is only more commands, or what each lane is for. A
+  // command word in the past is a report ("staff complaints doubled").
   const rest = after.slice(noun[0].length).replace(/[.!?]+\s*$/, '').trim();
   if (!rest) return true;
   if (!/^,/.test(rest) && !/^(?:and|then)\b/i.test(rest)) return false;
   return rest.split(/\s*,\s*|\s+(?:and|then)\s+/i)
     .map((s) => s.replace(/^(?:and|then)\s+/i, '').trim())
     .filter(Boolean)
-    .every((s) => NEXT_COMMAND.test(s) || (setup && LANE_DETAIL.test(s)));
+    .every((s) => (NEXT_COMMAND.test(s) && !PAST_TENSE.test(s)) || (setup && LANE_DETAIL.test(s)));
+}
+
+// A NUMBER THAT OPENS ITS CLAUSE AS THE SUBJECT OF A CLAIM IS A READING
+// (2026-11-03 review). The rules below look for a subject and a verb in front
+// of a number, so "40 of them mention the wait", "140 covers came in last
+// Friday" and "On Friday, 140 covers came in" were never read at all, and a
+// line set aside as a count to do could carry one in its next sentence. Read
+// as a claim when nothing but "and", "so" or "then" stands before the number
+// in its clause and what follows says it is a share of a group ("of them",
+// "of your") or what that many people did, or what reviews say; a target or
+// a hypothetical after it ("should", "would", "aim") keeps it a suggestion.
+const NUMBER_FIRST_LEAD = /^\s*(?:(?:and|so|then|also|plus)\s+)?$/i;
+const NUMBER_FIRST_CLAIM = /^\s*(?:%|percent|per\s+cent)?\s*(?:of\s+(?:them|those|these|your|our)\b|(?:[a-z'-]+\s+){0,3}(?:mentioned|came|walked|left|waited|ordered|booked|visited|complained|said|named|showed|stayed|spent|paid|returned|went|rated|gave|praised|asked|cancell?ed|arrived|turned|sat|ate|drank|bought|tipped|joined|mention|mentions|names|says|complain|complains|praise|praises|cites)\b)/i;
+const NUMBER_FIRST_SUGGESTION = /\b(?:should|would|could|can|might|may|aim|target|needs?\s+to|to\s+be|if|when)\b/i;
+function numberFirstClaim(text, num, prefix) {
+  const stretch = prefix.slice(prefix.lastIndexOf(',') + 1);
+  if (!NUMBER_FIRST_LEAD.test(stretch)) return false;
+  const after = text.slice(num.index + num.length).split(/[.!?;]/)[0];
+  return NUMBER_FIRST_CLAIM.test(after) && !NUMBER_FIRST_SUGGESTION.test(after);
 }
 
 // A SUGGESTION WORD EARLIER IN THE CLAUSE DOES NOT MAKE A PAST READING A
@@ -580,6 +604,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
   if (pastReading(prefix, text.slice(num.index + num.length))) return true;
+  if (numberFirstClaim(text, num, prefix)) return true;
   if (countToDo(text, num, prefix, all, alone)) return false;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
