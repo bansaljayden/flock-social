@@ -1891,10 +1891,12 @@ router.put('/me/analytics',
 //   showInSuggestions  false: Flock suggests this account to its friends
 //                      only, in Quick Add and in the Suggested rows.
 //
-// The answer is the one that APPLIES: the account's own choice, else the
-// default for its age, which is friends only and not suggested when the stored
-// date of birth makes the account under 18 and today's behaviour otherwise. So
-// the switches are drawn from what the server enforces, never from a guess.
+// The answer is the one that APPLIES: the account's own choice, else how Flock
+// has always worked ('everyone', and suggested), for every account whatever its
+// age. So the switches are drawn from what the server enforces, never from a
+// guess. date_of_birth is read for MINOR_SAFER_DEFAULTS, which is off, and
+// effectiveSettings does not look at it then; it stays in both statements so
+// that turning the constant on changes nothing here.
 //
 // Both halves read and write the CALLER'S OWN row and answer nothing about
 // anybody else, so there is nothing to ration beyond the general limiter, the
@@ -1914,7 +1916,7 @@ router.get('/me/privacy', async (req, res) => {
 });
 
 // Either field, or both. A field left out keeps what the account holds, which
-// may be the age default, so turning one switch never pins the other. Strictly
+// may be no choice at all, so turning one switch never pins the other. Strictly
 // typed for the reason /me/analytics gives: only the exact words and a JSON
 // true or false are accepted, so what is stored is what the switch showed.
 router.put('/me/privacy',
@@ -2326,8 +2328,9 @@ router.get('/search',
 // GET /api/users/suggested - Get suggested users (flock mates, ordered by shared flock count)
 //
 // The Suggested row on a new plan and a new message. A flock mate who has
-// turned off "Show me in Quick Add", or never chose and has a stored date of
-// birth under 18, is suggested here to their friends only (SUGGESTABLE_SQL).
+// turned off "Show me in Quick Add" is suggested here to their friends only
+// (SUGGESTABLE_SQL); one who never chose is suggested as before, whatever
+// their age.
 router.get('/suggested', async (req, res) => {
   try {
     const result = await pool.query(
@@ -3238,8 +3241,9 @@ router.get('/export', async (req, res) => {
         // 111). A choice the user made, so it is theirs to see.
         analytics_opt_out: account.analytics_opt_out ?? false,
         // "Invites and Quick Add" (migration 133), as the account chose them:
-        // true, false, or null for never chosen, which leaves the default for
-        // the account's age in place. Choices the user made, so theirs to see.
+        // true, false, or null for never chosen, which reads as Flock always
+        // worked (anyone can invite, suggested). Choices the user made, so
+        // theirs to see.
         invites_friends_only: account.invites_friends_only ?? null,
         show_in_suggestions: account.show_in_suggestions ?? null,
         created_at: account.created_at,

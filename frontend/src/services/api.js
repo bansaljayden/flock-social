@@ -3484,8 +3484,9 @@ export async function setPhoneDiscovery(enabled) {
 // "Invites and Quick Add" in Settings: who can add this account to a flock
 // ('everyone' or 'friends') and whether Flock suggests it to people who are not
 // its friends. GET answers { invitesFrom, showInSuggestions } as they apply
-// now, the account's choice or the default for its age, and the server
-// enforces both. PUT takes either field or both and answers the same shape.
+// now: the account's choice, or 'everyone' and true for a choice never made,
+// at any age. The server enforces both. PUT takes either field or both and
+// answers the same shape.
 export async function getPrivacySettings() {
   return request('/api/users/me/privacy');
 }

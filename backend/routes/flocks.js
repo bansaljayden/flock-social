@@ -21,15 +21,16 @@ const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // it once for a whole id set now, with the same bidirectional predicate written
 // out inline. The helper is unchanged and keeps every other caller it has.
 const { getInvisibleUserIds, ROSTER_BLOCK_SQL, ROSTER_BLOCK_REFUSAL } = require('../utils/blocks');
-// WHO MAY PUT AN ACCOUNT ON A PLAN (migration 133). An account can take plan
-// invites from its friends only, and an account whose stored date of birth
-// makes it under 18 does unless it chose otherwise. Both doors that write an
-// invite (POST / with invited_user_ids, and inviteUsersToFlock behind POST
-// /:id/invite and POST /:id/rerun) fold this into the directory read they
+// WHO MAY PUT AN ACCOUNT ON A PLAN (migration 133). An account can choose to
+// take plan invites from its friends only; one that never chose takes them
+// from anyone, whatever its age (MINOR_SAFER_DEFAULTS is off). Both doors that
+// write an invite (POST / with invited_user_ids, and inviteUsersToFlock behind
+// POST /:id/invite and POST /:id/rerun) fold this into the directory read they
 // already make, with the users row as `users` and the inviter as $2. So an
 // account closed to this inviter is, to the invite, exactly an id nobody
 // holds: charged to the budget, skipped, never told about, and never named
-// back to the inviter as a refusal. See utils/invitesAndSuggestions.js.
+// back to the inviter as a refusal. The inviter can still see that the person
+// was not added; utils/invitesAndSuggestions.js says what that tells them.
 const { acceptsInvitesFromSql } = require('../utils/invitesAndSuggestions');
 const OPEN_TO_INVITER_SQL = acceptsInvitesFromSql('users', '$2');
 const {

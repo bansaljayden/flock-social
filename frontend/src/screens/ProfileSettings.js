@@ -205,8 +205,10 @@ function readPrivacy(data) {
  * Both choices live on the account (GET and PUT /api/users/me/privacy) and are
  * enforced by the server, so these switches change what the server does, not
  * what this screen hides. What they first show is what applies now: the
- * account's own choice, or the default for its age, which is friends only and
- * not suggested when the account's date of birth says it is under 18.
+ * account's own choice, or, for an account that never chose, how Flock has
+ * always worked (anyone can add it, Quick Add can suggest it), whatever its
+ * age. Both are opt-in, so the words under them say what each one does when
+ * it is on and make no claim about who starts where.
  *
  * Built like the other server-backed switches on this screen: nothing is drawn
  * as a switch until the account's answer is in, a tap moves the switch at once

@@ -22,13 +22,13 @@
 --                         /api/users/suggested, the Suggested row on a new
 --                         plan and a new message). FALSE: only to its friends.
 --
--- NULL MEANS "NEVER CHOSEN", AND THE DEFAULT FOLLOWS THE ACCOUNT'S AGE. A
--- stored date of birth that makes the account under 18 reads as friends only
--- and not suggested. Every other account, including the ones with no date of
--- birth (the iPhone app asks for none), reads exactly as before this file.
+-- NULL MEANS "NEVER CHOSEN", AND BOTH CHOICES ARE OPT-IN. An account that
+-- never chose reads exactly as before this file, whatever its date of birth:
+-- anyone on a plan can invite it, and Quick Add can suggest it.
 -- utils/invitesAndSuggestions.js holds that rule once, for JavaScript and for
--- SQL. No default is written into a row, so a date of birth added later moves
--- the default with it, and no choice a person made is ever overwritten.
+-- SQL, and keeps age-based defaults behind MINOR_SAFER_DEFAULTS, which is off
+-- (its comment says what turning it on needs). No default is written into a
+-- row, so no choice a person made is ever overwritten.
 --
 -- WHO WRITES THEM. PUT /api/users/me/privacy (routes/users.js), from Settings.
 -- WHO READS THEM. The three invite doors and the socket relay, the two
@@ -36,7 +36,7 @@
 --
 -- ADDITIVE. Two nullable columns with no default: a catalog change on
 -- PostgreSQL 11 and later, no rewrite and no scan. Every existing row reads
--- NULL, which is the age default above. A replay is a no-op.
+-- NULL, which is "never chosen" above. A replay is a no-op.
 -- @requires column users.invites_friends_only
 -- @requires column users.show_in_suggestions
 

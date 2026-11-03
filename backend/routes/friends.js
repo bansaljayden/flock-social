@@ -7,10 +7,10 @@ const { authenticate } = require('../middleware/auth');
 const { pushIfOffline } = require('../services/pushHelper');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 // Whether Flock may suggest an account to somebody who is not its friend
-// (migration 133): the account's own choice, else the default for its age,
-// which is off for an account whose stored date of birth makes it under 18.
-// Both reads behind GET /suggestions carry it, with the candidate as `u` and
-// the viewer as $1. See utils/invitesAndSuggestions.js.
+// (migration 133): the account's own choice, else yes, as before, whatever its
+// age (MINOR_SAFER_DEFAULTS is off). Both reads behind GET /suggestions carry
+// it, with the candidate as `u` and the viewer as $1. See
+// utils/invitesAndSuggestions.js.
 const { suggestableToSql } = require('../utils/invitesAndSuggestions');
 const SUGGESTABLE_SQL = suggestableToSql('u', '$1');
 const { createUserBudget } = require('../utils/probeBudget');
@@ -792,9 +792,10 @@ router.get('/outgoing', async (req, res) => {
 // GET /api/friends/suggestions - Mutual friend suggestions (friends of friends)
 //
 // The app calls this Quick Add. An account that has turned off "Show me in
-// Quick Add", or never chose and has a stored date of birth under 18, is left
-// out of both reads below (SUGGESTABLE_SQL). It is filtered, like a block, so
-// the list reads as if the person were not a friend of a friend at all.
+// Quick Add" is left out of both reads below for everyone but its friends
+// (SUGGESTABLE_SQL); an account that never chose is in them, whatever its age.
+// It is filtered, like a block, so the list reads as if the person were not a
+// friend of a friend at all.
 router.get('/suggestions', async (req, res) => {
   try {
     const result = await pool.query(

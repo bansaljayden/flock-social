@@ -11,13 +11,17 @@
  *   - a row in the Safety and privacy card leads to the page, which App.js
  *     titles "Invites and Quick Add"
  *   - nothing is drawn as a switch until the account's answer is in, and the
- *     answer is drawn as it came (a teen's defaults included)
+ *     answer is drawn as it came: how Flock has always worked for an account
+ *     that never chose, at any age, and a choice as it was made
  *   - each switch sends its one field and lands where the server's answer
  *     lands; it moves on the tap, and a second tap while one is out does
  *     nothing
  *   - a refused write puts the switch back and says so; a failed read says so
  *     with a way to try again
- *   - the words under each switch say what the server does, plainly
+ *   - the words under each switch say what the server does, plainly, and
+ *     nothing on the page claims a default that depends on age: both
+ *     switches are opt-in, and an account that never chose starts where Flock
+ *     has always been, whatever its date of birth
  *
  * HOW TO RUN
  *   cd frontend && CI=true npm test -- --watchAll=false invitesAndSuggestionsSettings
@@ -132,8 +136,11 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-const TEEN = { invitesFrom: 'friends', showInSuggestions: false };
+// What the server answers for every account that never chose, a teen's
+// included (the age defaults are off in backend
+// utils/invitesAndSuggestions.js), and what it answers after both are chosen.
 const OPEN = { invitesFrom: 'everyone', showInSuggestions: true };
+const CHOSEN = { invitesFrom: 'friends', showInSuggestions: false };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -141,7 +148,7 @@ beforeEach(() => {
   api.getProStatus.mockResolvedValue({});
   api.knownAnalyticsChoice.mockReturnValue(null);
   api.getAnalyticsChoice.mockResolvedValue({ optOut: false });
-  api.getPrivacySettings.mockResolvedValue(TEEN);
+  api.getPrivacySettings.mockResolvedValue(OPEN);
 });
 
 afterEach(() => {
@@ -171,12 +178,21 @@ test('nothing is a switch until the answer is in, and then the answer is drawn a
   expect(screen.getByText(INVITES_LINE)).toBeTruthy();
   expect(screen.getByText(SUGGESTIONS_LINE)).toBeTruthy();
 
-  // A teen's defaults: friends only, and not suggested.
-  await act(async () => { answer.resolve(TEEN); });
-  expect(checked(invitesSwitch())).toBe('true');
-  expect(checked(suggestionsSwitch())).toBe('false');
+  // An account that never chose, at any age: anyone can add it, and Quick
+  // Add can suggest it, so the first switch is off and the second is on.
+  await act(async () => { answer.resolve(OPEN); });
+  expect(checked(invitesSwitch())).toBe('false');
+  expect(checked(suggestionsSwitch())).toBe('true');
   expect(screen.queryByRole('status')).toBeNull();
   expect(api.getPrivacySettings).toHaveBeenCalledTimes(1);
+});
+
+test('a choice already made is drawn as it was made', async () => {
+  api.getPrivacySettings.mockResolvedValue(CHOSEN);
+  render(React.createElement(ProfileSettings, props()));
+  await act(async () => {});
+  expect(checked(invitesSwitch())).toBe('true');
+  expect(checked(suggestionsSwitch())).toBe('false');
 });
 
 test('an answer that is not the shape the switches draw is a failed read, not a guess', async () => {
@@ -190,24 +206,25 @@ test('an answer that is not the shape the switches draw is a failed read, not a 
 test('each switch sends its one field and lands where the server\'s answer lands', async () => {
   render(React.createElement(ProfileSettings, props()));
   await act(async () => {});
-  expect(checked(invitesSwitch())).toBe('true');
+  expect(checked(invitesSwitch())).toBe('false');
 
+  api.setPrivacySettings.mockResolvedValue({ invitesFrom: 'friends', showInSuggestions: true });
+  await act(async () => { fireEvent.click(invitesSwitch()); });
+  expect(api.setPrivacySettings).toHaveBeenLastCalledWith({ invitesFrom: 'friends' });
+  expect(checked(invitesSwitch())).toBe('true');
+  expect(checked(suggestionsSwitch())).toBe('true');
+
+  api.setPrivacySettings.mockResolvedValue(CHOSEN);
+  await act(async () => { fireEvent.click(suggestionsSwitch()); });
+  expect(api.setPrivacySettings).toHaveBeenLastCalledWith({ showInSuggestions: false });
+  expect(checked(suggestionsSwitch())).toBe('false');
+
+  // And back: the server's answer, not the tap, is where it lands.
   api.setPrivacySettings.mockResolvedValue({ invitesFrom: 'everyone', showInSuggestions: false });
   await act(async () => { fireEvent.click(invitesSwitch()); });
   expect(api.setPrivacySettings).toHaveBeenLastCalledWith({ invitesFrom: 'everyone' });
   expect(checked(invitesSwitch())).toBe('false');
   expect(checked(suggestionsSwitch())).toBe('false');
-
-  api.setPrivacySettings.mockResolvedValue(OPEN);
-  await act(async () => { fireEvent.click(suggestionsSwitch()); });
-  expect(api.setPrivacySettings).toHaveBeenLastCalledWith({ showInSuggestions: true });
-  expect(checked(suggestionsSwitch())).toBe('true');
-
-  // And back: the server's answer, not the tap, is where it lands.
-  api.setPrivacySettings.mockResolvedValue({ invitesFrom: 'friends', showInSuggestions: true });
-  await act(async () => { fireEvent.click(invitesSwitch()); });
-  expect(api.setPrivacySettings).toHaveBeenLastCalledWith({ invitesFrom: 'friends' });
-  expect(checked(invitesSwitch())).toBe('true');
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
@@ -233,9 +250,9 @@ test('a refused write puts the switch back and says so in plain words', async ()
   const put = deferred();
   api.setPrivacySettings.mockReturnValue(put.promise);
   fireEvent.click(suggestionsSwitch());
-  expect(checked(suggestionsSwitch())).toBe('true');
-  await act(async () => { put.reject(Object.assign(new Error('Failed to update these settings'), { status: 500 })); });
   expect(checked(suggestionsSwitch())).toBe('false');
+  await act(async () => { put.reject(Object.assign(new Error('Failed to update these settings'), { status: 500 })); });
+  expect(checked(suggestionsSwitch())).toBe('true');
   expect(screen.getByRole('alert').textContent).toBe("That didn't save. Try again.");
 });
 
@@ -265,4 +282,26 @@ test('the words say what the server does, plainly', () => {
   // friend codes still find the account, and the line says so.
   expect(SUGGESTIONS_LINE).toMatch(/Quick Add and under Suggested/);
   expect(SUGGESTIONS_LINE).toMatch(/searching your name or using your friend code/);
+});
+
+// Both switches are opt-in for every account, so nothing here may say that
+// teens, or anyone, start somewhere safer. Turning on the age defaults in
+// backend utils/invitesAndSuggestions.js would change what this page has to
+// say, and it starts with the privacy policy.
+const AGE_CLAIM = /\b(teens?|teenagers?|under 18|minors?|ages?|younger|older|birthdays?|date of birth|by default|defaults?)\b/i;
+
+test('the page claims nothing about age, and reads right where every account starts', async () => {
+  for (const line of [INVITES_SWITCH, INVITES_LINE, SUGGESTIONS_SWITCH, SUGGESTIONS_LINE]) {
+    expect(line).not.toMatch(AGE_CLAIM);
+  }
+  // Each line says what its switch does when it is on, so it reads true with
+  // the invite switch off and the Quick Add switch on, the start for anyone
+  // who never chose.
+  expect(INVITES_LINE).toMatch(/^When this is on, /);
+  expect(SUGGESTIONS_LINE).toMatch(/^When this is on, /);
+  render(React.createElement(ProfileSettings, props()));
+  await act(async () => {});
+  expect(checked(invitesSwitch())).toBe('false');
+  expect(checked(suggestionsSwitch())).toBe('true');
+  expect(document.body.textContent).not.toMatch(AGE_CLAIM);
 });
