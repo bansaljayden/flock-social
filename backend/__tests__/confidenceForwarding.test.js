@@ -107,7 +107,12 @@ function place(id) {
     types: ['bar'],
     location: { latitude: 39.74, longitude: -104.98 },
     currentOpeningHours: { openNow: true, periods: [] },
-    utcOffsetMinutes: null,
+    // Birdie gives the model no crowd number, level or confidence for a venue
+    // whose local time nothing knows (routes/ai.js serverClockResult,
+    // 2026-11-03), so its surface reads a venue Google gives an offset for
+    // (Denver's), and forwarding is checked where a number is published. The
+    // card and the batch send the caller's hour and keep the clockless venue.
+    utcOffsetMinutes: String(id).startsWith('BIRDIE') ? -420 : null,
   };
 }
 const realFetch = global.fetch;
