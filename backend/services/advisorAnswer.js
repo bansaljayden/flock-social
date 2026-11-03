@@ -980,7 +980,20 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
       if (dayOfMonthToo(n)) addValue(base, n.value, new Set(), { owner: true, arith: false, dim: 'date' });
     }
   }
-  return { base };
+  // The owner's numbers once each. A repeat carries nothing a first one does
+  // not (they have no fact ids), and the arithmetic below pairs every number
+  // with every other, so a question and notes full of repeated small numbers
+  // cost the search its square (review, 2026-11-03).
+  const ownerSeen = new Set();
+  return {
+    base: base.filter((e) => {
+      if (!e.owner) return true;
+      const key = `${e.value}|${e.dim}|${e.arith}`;
+      if (ownerSeen.has(key)) return false;
+      ownerSeen.add(key);
+      return true;
+    }),
+  };
 }
 
 // THE SAME NUMBER, written the way a person writes it. Exact to the unit, a
@@ -1047,6 +1060,28 @@ function acceptsDim(num, dim) {
   return num.dim === dim;
 }
 
+// A share in words ("half", "a third") is a rounding of a percentage: it
+// matches one within 5 points, and only a percentage (numbersIn).
+function nearFor(num) {
+  return num.kind === 'fraction' ? (a, b) => Math.abs(a - b) <= 5 : close;
+}
+
+/** The ids of a fact or owner number this number simply is, or null. No arithmetic. */
+function supportedDirectly(num, support) {
+  const targets = [num.value, ...(num.alt || [])];
+  const share = num.kind === 'fraction';
+  const near = nearFor(num);
+  // A percentage may also be a share the facts hold as a fraction (0.42 is
+  // 42%), matched at the fraction's own scale: "82%" is not "about 1".
+  const ratio = num.dim === 'pct' ? num.value / 100 : null;
+  for (const entry of support.base) {
+    if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct')) continue;
+    if (targets.some((t) => near(t, entry.value))) return entry.ids;
+    if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
+  }
+  return null;
+}
+
 /**
  * Which fact ids a number came from, or null when nothing supports it.
  *
@@ -1074,18 +1109,9 @@ function supportFor(num, support, inPlay = {}) {
   // A position, never a day of the month (numbersIn reads those as dates).
   if (num.kind === 'ordinal' && num.dim !== 'date' && num.value <= 10) return new Set();
 
-  // A share in words ("half", "a third") is a rounding of a percentage: it
-  // matches one within 5 points, and only a percentage (numbersIn).
-  const share = num.kind === 'fraction';
-  const near = (a, b) => (share ? Math.abs(a - b) <= 5 : close(a, b));
-  // A percentage may also be a share the facts hold as a fraction (0.42 is
-  // 42%), matched at the fraction's own scale: "82%" is not "about 1".
-  const ratio = num.dim === 'pct' ? num.value / 100 : null;
-  for (const entry of support.base) {
-    if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct')) continue;
-    if (targets.some((t) => near(t, entry.value))) return entry.ids;
-    if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
-  }
+  const direct = supportedDirectly(num, support);
+  if (direct) return direct;
+  const near = nearFor(num);
   const anchored = support.base.filter((e) => e.arith !== false && (e.owner || [...e.ids].some((id) => ids.has(id))));
   // A number never vouches for itself, which it would as "60 - 30 = 30", and a
   // date is never half of a sum.
@@ -1198,12 +1224,29 @@ function workedSteps(a, b) {
   }
   return out;
 }
+// BOUNDED, BECAUSE OWNER TEXT IS LONG (review, 2026-11-03). The search runs
+// one or two steps over every pair and triple of its operands, and with the
+// owner's numbers among them a question of 132 small numbers held the server
+// for 18 seconds on one supposition. A supposition's operands are written in
+// its own sentence, so the operands are the sentence's own numbers and the
+// facts it cites, each value once, and at most WORKED_OPERANDS of them.
+const WORKED_OPERANDS = 8;
 function workedFrom(num, support, inPlay, all) {
   const ids = inPlay.ids instanceof Set ? inPlay.ids : new Set();
-  const operands = [
-    ...support.base.filter((e) => e.arith !== false && (e.owner || [...e.ids].some((id) => ids.has(id)))),
-    ...all.filter((n) => n !== num && n.dim !== 'date' && !n.word).map((n) => ({ value: n.value, ids: new Set(), dim: n.dim })),
-  ];
+  const operands = [];
+  const seen = new Set();
+  const take = (e) => {
+    const key = `${e.dim}:${e.value}`;
+    if (seen.has(key) || operands.length >= WORKED_OPERANDS) return;
+    seen.add(key);
+    operands.push(e);
+  };
+  for (const n of all) {
+    if (n !== num && n.dim !== 'date' && !n.word && !n.spelled) take({ value: n.value, ids: new Set(), dim: n.dim });
+  }
+  for (const e of support.base) {
+    if (e.arith !== false && !e.owner && [...e.ids].some((id) => ids.has(id))) take(e);
+  }
   const pool = [...operands, ...operands.filter((e) => e.dim === 'duration').map((e) => ({ ...e, dim: 'plain' }))];
   const matches = (d) => (acceptsDim(num, d.dim) || (num.dim === 'plain' && d.dim === 'pct')) && close(num.value, d.value);
   for (let i = 0; i < pool.length; i += 1) {
@@ -1233,8 +1276,9 @@ function checkSentenceNumbers(sentence, support, { alone = false } = {}) {
   const all = numbersIn(text);
   for (const num of all) {
     if (!isReadingSlot(text, num, all, alone)) {
-      // A worked figure inside a supposition still adds up.
-      if (workedResult(text, num, all) && !supportFor(num, support, inPlay)
+      // A worked figure inside a supposition still adds up: a number the
+      // facts or the owner hold, a year of a week, or the bounded search.
+      if (workedResult(text, num, all) && !supportedDirectly(num, support)
         && !yearOf(num, text, support, inPlay) && !workedFrom(num, support, inPlay, all)) {
         return { ok: false, ids, number: text.slice(num.index, num.index + num.length) };
       }

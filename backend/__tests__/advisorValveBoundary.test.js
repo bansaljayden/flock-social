@@ -343,6 +343,24 @@ test('a worked figure inside a supposition must add up, whatever the supposition
   assert.ok(freeText.applyAdviceValve('Over a year, those 10 weekly covers add up to $19,760 in revenue.', facts));
 });
 
+test('owner text full of numbers cannot make the worked-figure search hold the server', () => {
+  // Review, 2026-11-03: the search paired every owner number with every other
+  // and a third, so a question of 132 small numbers held the check for 18
+  // seconds on one supposition, and long notes for over a minute.
+  const small = Array.from({ length: 200 }, (_, i) => String((i % 9) + 2)).join(' ');
+  const distinct = Array.from({ length: 200 }, (_, i) => String(i + 11)).join(' ');
+  const draft = JSON.stringify({
+    answer: 'If 3 guests pay $7 each, that is $987,654.32.',
+    points: ['Say 4 servers work 6 hours, that comes to $123,456.78.', 'Suppose 5 tables of 4 order the special, that is $765,432.11.', 'Your Friday hit 987654 covers.'],
+  });
+  for (const words of [small, distinct]) {
+    const texts = [words.slice(0, 280), words.slice(0, 400), words.slice(0, 200), words.slice(0, 120)];
+    const started = Date.now();
+    assert.strictEqual(freeText.applyAdviceValve(draft, [], { texts }), null);
+    assert.ok(Date.now() - started < 1000, `${Date.now() - started} ms`);
+  }
+});
+
 // ── 3. One bad sentence costs its own line ─────────────────────────────────
 
 test('a made-up point is dropped and the rest of the answer stands', () => {
