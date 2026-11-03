@@ -173,6 +173,34 @@ test('a number written as a word is read the way its digits are, and a share of 
   assert.ok(freeText.applyAdviceValve('Nearly half of your reviews mention the wait.', facts, { texts: ['nearly half my reviews mention the wait, what do i do'] }));
 });
 
+test('a number written as a word is checked, never worked with, and a word in a label or an owner\'s count vouches for nothing', () => {
+  // Review of the third round, 2026-11-03: once words were read, "two
+  // bartenders" and "a dozen tables" became operands, an owner's "forty seats"
+  // became support, and a label's "fewer than half of the weeks" vouched for
+  // "you had 50 covers". Every one of these was dropped before words were read.
+  const spend = { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' };
+  const label = { id: 'tables_rarely_free', value: 'yes', source: 'table_sensor', asOf: '2026-11-03', label: 'Every table was free in fewer than half of the weeks we measured.' };
+  for (const [claim, facts, texts] of [
+    ['With two bartenders on, your Friday hit 92 covers.', ADVICE_FACTS(), ['we have 46 seats, how do we fill fridays']],
+    ['From a dozen tables, your Friday brought in $456 at {{fact:intake_typical_spend_per_person}} a head.', [...ADVICE_FACTS(), spend]],
+    ['Your lunch check is $19, half your dinner check.', ADVICE_FACTS(), ['our dinner check is $38 a head']],
+    ['Your Tuesday check is $9.50, a quarter of your {{fact:intake_typical_spend_per_person}} Friday check.', [...ADVICE_FACTS(), spend]],
+    ['Your Tuesday was 5% full with two servers on.', ADVICE_FACTS(), ['we have 40 seats']],
+    ['Your Friday hit 46 covers.', ADVICE_FACTS(), ['we have forty-six seats, how do we fill fridays']],
+    ['Your Friday hit 80 covers.', ADVICE_FACTS(), ['we have forty seats and two bartenders, how do we fill fridays']],
+    ['Your Friday already hits 100 covers.', ADVICE_FACTS(), ['how do i get to a hundred covers on a friday']],
+    ['You had 280 covers last week.', ADVICE_FACTS(), ['we have forty seats and are open seven days a week']],
+    ['Your room runs 50% full on Tuesdays.', [...ADVICE_FACTS(), label]],
+    ['You had 50 covers.', [...ADVICE_FACTS(), label]],
+    ['We saw 50 people.', [...ADVICE_FACTS(), label]],
+  ]) {
+    assert.strictEqual(freeText.applyAdviceValve(claim, facts, texts ? { texts } : {}), null, claim);
+  }
+  // The owner's own share is theirs, and their digits are as before.
+  assert.ok(freeText.applyAdviceValve('Nearly half of your reviews mention the wait.', ADVICE_FACTS(), { texts: ['nearly half my reviews mention the wait, what do i do'] }));
+  assert.ok(freeText.applyAdviceValve('Your Friday hit 46 covers.', ADVICE_FACTS(), { texts: ['we have 46 seats, how do we fill fridays'] }));
+});
+
 test('AM and PM are two different hours: a fact in one half of the day never vouches for the same hour in the other', () => {
   // Third round, 2026-11-03: every one of these passed, because a clock time
   // and an hour fact each carried their 12-hour reading beside the 24-hour one.

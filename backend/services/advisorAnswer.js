@@ -485,7 +485,7 @@ function numbersIn(text) {
   while ((m = FRACTION_WORDS.exec(src)) !== null) {
     const count = m[1] ? WORD_VALUE[m[1].toLowerCase()] || 1 : 1;
     const value = count * FRACTION_OF[(m[2] || m[3]).toLowerCase()] * 100;
-    out.push({ index: m.index, length: m[0].length, value, alt: [], kind: 'fraction', dim: 'pct' });
+    out.push({ index: m.index, length: m[0].length, value, alt: [], kind: 'fraction', dim: 'pct', spelled: true });
     mark(m.index, m[0].length);
   }
   NUMBER_WORDS.lastIndex = 0;
@@ -501,7 +501,7 @@ function numbersIn(text) {
     if (dim === 'plain' && /^\s*(?:minutes?|mins?|hours?|hrs?)\b/i.test(after)) dim = 'duration';
     if (dim === 'plain' && /^\s*(?:dollars?|bucks)\b/i.test(after)) dim = 'money';
     const length = m[0].length + (pct ? pct[0].length : 0);
-    out.push({ index: m.index, length, value, alt: [], kind: pct ? 'percent' : 'number', dim });
+    out.push({ index: m.index, length, value, alt: [], kind: pct ? 'percent' : 'number', dim, spelled: true });
     mark(m.index, length);
   }
   NUMBER.lastIndex = 0;
@@ -888,9 +888,10 @@ function dayOfMonthToo(n) {
   return n.kind === 'ordinal' && n.dim !== 'date' && Number.isInteger(n.value) && n.value >= 1 && n.value <= 31;
 }
 
-function addValue(list, value, ids, { owner = false, arith = true, dim = 'plain' } = {}) {
+// `share`: a share the owner wrote in words, which only a share may match.
+function addValue(list, value, ids, { owner = false, arith = true, dim = 'plain', share = false } = {}) {
   if (!Number.isFinite(value)) return;
-  list.push({ value, ids, owner, arith, dim });
+  list.push({ value, ids, owner, arith, dim, ...(share ? { share: true } : {}) });
 }
 
 // What kind of quantity a fact's own value is, from its unit. Arithmetic is
@@ -951,6 +952,10 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
     for (const s of [f.label, f.note]) if (typeof s === 'string') written.push(s);
     for (const s of written) {
       for (const n of numbersIn(s)) {
+        // Server-written words are prose, never a figure ("fewer than half of
+        // the weeks", "two different kinds of number"): a label's "half" read
+        // as 50% vouched for "you had 50 covers" (review, 2026-11-03).
+        if (n.spelled) continue;
         const opts = { arith: n.dim !== 'date' && !n.word, dim: n.dim === 'plain' ? dim : n.dim };
         addValue(base, n.value, ids, opts);
         for (const a of n.alt) addValue(base, a, ids, { ...opts, arith: false });
@@ -974,6 +979,14 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
   for (const t of texts) {
     if (typeof t !== 'string') continue;
     for (const n of numbersIn(t)) {
+      // The owner's own words: a share they wrote ("half my reviews") vouches
+      // for the same share and nothing else; a count in words ("forty seats",
+      // "two bartenders") vouches for nothing, the way it did before words
+      // were read (review, 2026-11-03).
+      if (n.spelled) {
+        if (n.kind === 'fraction') addValue(base, n.value, new Set(), { owner: true, arith: false, dim: 'pct', share: true });
+        continue;
+      }
       const opts = { owner: true, arith: n.dim !== 'date' && !n.word, dim: n.dim };
       addValue(base, n.value, new Set(), opts);
       for (const a of n.alt) addValue(base, a, new Set(), { ...opts, arith: false });
@@ -988,7 +1001,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
   return {
     base: base.filter((e) => {
       if (!e.owner) return true;
-      const key = `${e.value}|${e.dim}|${e.arith}`;
+      const key = `${e.value}|${e.dim}|${e.arith}|${Boolean(e.share)}`;
       if (ownerSeen.has(key)) return false;
       ownerSeen.add(key);
       return true;
@@ -1075,7 +1088,7 @@ function supportedDirectly(num, support) {
   // 42%), matched at the fraction's own scale: "82%" is not "about 1".
   const ratio = num.dim === 'pct' ? num.value / 100 : null;
   for (const entry of support.base) {
-    if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct')) continue;
+    if (!directKinds(num.dim, entry.dim) || (share && entry.dim !== 'pct') || (entry.share && !share)) continue;
     if (targets.some((t) => near(t, entry.value))) return entry.ids;
     if (ratio !== null && entry.value > 0 && entry.value <= 1 && Math.abs(ratio - entry.value) <= (share ? 0.05 : 0.005)) return entry.ids;
   }
@@ -1118,7 +1131,7 @@ function supportFor(num, support, inPlay = {}) {
   const others = [
     ...anchored,
     ...literals
-      .filter((l) => l.value !== num.value && l.dim !== 'date' && !l.word)
+      .filter((l) => l.value !== num.value && l.dim !== 'date' && !l.word && !l.spelled)
       .map((l) => ({ value: l.value, ids: new Set(), dim: l.dim })),
   ];
   const matches = (d) => acceptsDim(num, d.dim) && near(num.value, d.value);
@@ -1168,7 +1181,7 @@ function restated(num, support) {
 function yearOf(num, text, support, inPlay) {
   if (num.dim !== 'money' || !OWN_YEAR.test(text.slice(num.index + num.length))) return null;
   for (const lit of inPlay.literals) {
-    if (lit.dim !== 'money' || lit.value === num.value) continue;
+    if (lit.dim !== 'money' || lit.value === num.value || lit.spelled) continue;
     const period = text.slice(lit.index + lit.length).match(OWN_PERIOD);
     if (!period || restated(lit, support)) continue;
     const yearly = lit.value * ((period[1] || period[2]).toLowerCase() === 'week' ? 52 : 12);
@@ -1204,7 +1217,7 @@ const OPERAND_SHOWN = /x{10,}/g;
 function workedResult(text, num, all) {
   const before = text.slice(0, num.index);
   if (!SUPPOSING.test(before)) return false;
-  const shown = all.filter((n) => n !== num && n.index < num.index && n.dim !== 'date' && !n.word).length
+  const shown = all.filter((n) => n !== num && n.index < num.index && n.dim !== 'date' && !n.word && !n.spelled).length
     + (before.match(OPERAND_SHOWN) || []).length;
   if (shown < 2) return false;
   if (RESULT_MARK.test(before)) return true;
