@@ -284,6 +284,36 @@ test('an ordinal that names a day of the month is a date the facts must hold, an
   assert.ok(freeText.applyAdviceValve('Your busiest night was the 4th.', ADVICE_FACTS(), { texts: ['the 4th was huge, how do I repeat it'] }));
 });
 
+test('a day of the month is matched as a day, never by a month, a year or a position', () => {
+  // Review of the third round, 2026-11-03: a position in the owner's words or
+  // a label ("our 25th anniversary", "5th avenue", "25th percentile") vouched
+  // for that date, and a date's month and year rode along as second readings,
+  // so any fact measured in November vouched for "the 11th" and "Nov 11".
+  const nov = [{ id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-11-03' }];
+  const percentile = [...ADVICE_FACTS(), { id: 'cohort_your_standing', value: 25, unit: 'percentile', source: 'cohort', asOf: '2026-11-03' }];
+  for (const [claim, facts, texts] of [
+    ['Your busiest night this year was Oct 25.', ADVICE_FACTS(), ['what should we run for our 25th anniversary']],
+    ['Your peak lands on Nov 5.', ADVICE_FACTS(), ['we are on 5th avenue, how do we get more walk-ins']],
+    ['Your busiest night was October 10th.', ADVICE_FACTS(), ['this is our 10th year, how do we celebrate']],
+    ['Your peak landed on Nov 3, at 9 PM.', ADVICE_FACTS(), ['we are opening our 3rd location']],
+    ['Your busiest night this month was Oct 25.', percentile],
+    ['Your best night was November 25th, at 9 PM.', percentile],
+    ['Your busiest night was the 11th.', nov],
+    ['Your busiest night was Nov 11.', nov],
+    ['Your busiest night was Oct 4, 2026.', nov],
+    ['Your busiest night was the 7th this month.', ADVICE_FACTS()],
+    ['Your best night was the 4th again.', ADVICE_FACTS()],
+  ]) {
+    assert.strictEqual(freeText.applyAdviceValve(claim, facts, texts ? { texts } : {}), null, claim);
+  }
+  // The day a fact holds, and the owner's own day, still render.
+  const oct28 = [{ id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-10-28' }];
+  assert.ok(freeText.applyAdviceValve('Your peak lands on Oct 28.', oct28));
+  assert.ok(freeText.applyAdviceValve('Your peak lands on Friday the 28th.', oct28));
+  assert.ok(freeText.applyAdviceValve('Your busiest night was the 4th.', ADVICE_FACTS(), { texts: ['the 4th was huge, how do I repeat it'] }));
+  assert.ok(freeText.applyAdviceValve('Run the special into the 3rd week before you judge it.', ADVICE_FACTS()));
+});
+
 // ── 2. The numbers an owner needs ──────────────────────────────────────────
 
 test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {

@@ -362,8 +362,14 @@ const NUMBER = /(\$\s?)?\b(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:(st|nd|rd|th)\b)?(\
 // and "your peak lands on Friday the 7th" through with no date behind them.
 // An ordinal is a date when nothing it could rank follows it (the clause ends,
 // or "of" a month does), or when "on the" or a weekday stands right before it.
+// "The 4th was huge", "the 7th this month" and "the 4th again" are days too:
+// after "the", an ordinal followed by a word that cannot be what it ranks (a
+// verb, "this", "again", "at") is a day, and "the 3rd week" and "our 25th
+// anniversary" are positions (review, 2026-11-03).
 const ORDINAL_DATE_BEFORE = /(?:\bon\s+the|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day,?(?:\s+the)?)\s+$/i;
 const ORDINAL_DATE_AFTER = /^(?:\s*(?:[.,;:!?)\]]|$)|\s+of\s+(?:(?:this|the|next|last)\s+month\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b))/i;
+const ORDINAL_THE = /\bthe\s+$/i;
+const ORDINAL_DAY_NEXT = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|went|came|drew|brought|peaked|peaks|again|this|that|last|next|at|with|when|after|before|by|so|but|too|as|which|for|to|in|on|you|we|your|our|it|there|then|because|since|until|till|only|alone)\b/i;
 
 // A NUMBER WRITTEN AS A WORD IS A NUMBER (third round, 2026-11-03). Only
 // digits were read, so "Your Friday hits ninety" and "Nearly half of your
@@ -432,15 +438,19 @@ function numbersIn(text) {
   let m;
   // Dates first: a calendar day is a number a claim can name ("your peak lands
   // on Oct 25") and never an operand of arithmetic, so it is tagged as one.
+  // A DAY IS MATCHED AS A DAY (review, 2026-11-03). Its year and month rode
+  // along as second readings, so any fact measured in November vouched for
+  // "your busiest night was the 11th" and "Nov 11", and any fact of 2026 for
+  // "Oct 4, 2026". A date's value is its day of the month, and nothing else.
   ISO_DATE.lastIndex = 0;
   while ((m = ISO_DATE.exec(src)) !== null) {
-    out.push({ index: m.index, length: m[0].length, value: Number(m[3]), alt: [Number(m[1]), Number(m[2])], kind: 'date', dim: 'date' });
+    out.push({ index: m.index, length: m[0].length, value: Number(m[3]), alt: [], kind: 'date', dim: 'date' });
     mark(m.index, m[0].length);
   }
   MONTH_DAY.lastIndex = 0;
   while ((m = MONTH_DAY.exec(src)) !== null) {
     if (taken[m.index]) continue;
-    out.push({ index: m.index, length: m[0].length, value: Number(m[2]), alt: m[3] ? [Number(m[3])] : [], kind: 'date', dim: 'date' });
+    out.push({ index: m.index, length: m[0].length, value: Number(m[2]), alt: [], kind: 'date', dim: 'date' });
     mark(m.index, m[0].length);
   }
   CLOCK_TIME.lastIndex = 0;
@@ -511,8 +521,10 @@ function numbersIn(text) {
     if (!Number.isFinite(value)) continue;
     const kind = m[5] ? 'percent' : m[1] ? 'money' : m[4] ? 'ordinal' : 'number';
     const after = src.slice(m.index + m[0].length, m.index + m[0].length + 16);
+    const ahead = src.slice(m.index + m[0].length);
+    const behind = src.slice(Math.max(0, m.index - 24), m.index);
     if (kind === 'ordinal' && value >= 1 && value <= 31
-      && (ORDINAL_DATE_AFTER.test(src.slice(m.index + m[0].length)) || ORDINAL_DATE_BEFORE.test(src.slice(Math.max(0, m.index - 24), m.index)))) {
+      && (ORDINAL_DATE_AFTER.test(ahead) || ORDINAL_DATE_BEFORE.test(behind) || (ORDINAL_THE.test(behind) && ORDINAL_DAY_NEXT.test(ahead)))) {
       out.push({ index: m.index, length: m[0].length, value, alt: [], kind, dim: 'date' });
       continue;
     }
@@ -881,13 +893,6 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
 
 // ── What the venue's numbers support ────────────────────────────────────────
 
-// The owner's "the 4th was huge" and a label's "the 3rd" may name a day of
-// the month even where a word follows them, and both are trusted, so an
-// ordinal there also vouches for that date.
-function dayOfMonthToo(n) {
-  return n.kind === 'ordinal' && n.dim !== 'date' && Number.isInteger(n.value) && n.value >= 1 && n.value <= 31;
-}
-
 // `share`: a share the owner wrote in words, which only a share may match.
 function addValue(list, value, ids, { owner = false, arith = true, dim = 'plain', share = false } = {}) {
   if (!Number.isFinite(value)) return;
@@ -959,7 +964,6 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
         const opts = { arith: n.dim !== 'date' && !n.word, dim: n.dim === 'plain' ? dim : n.dim };
         addValue(base, n.value, ids, opts);
         for (const a of n.alt) addValue(base, a, ids, { ...opts, arith: false });
-        if (dayOfMonthToo(n)) addValue(base, n.value, ids, { arith: false, dim: 'date' });
       }
     }
     // When a fact was measured is a date the answer may name, never a number
@@ -990,7 +994,6 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
       const opts = { owner: true, arith: n.dim !== 'date' && !n.word, dim: n.dim };
       addValue(base, n.value, new Set(), opts);
       for (const a of n.alt) addValue(base, a, new Set(), { ...opts, arith: false });
-      if (dayOfMonthToo(n)) addValue(base, n.value, new Set(), { owner: true, arith: false, dim: 'date' });
     }
   }
   // The owner's numbers once each. A repeat carries nothing a first one does
