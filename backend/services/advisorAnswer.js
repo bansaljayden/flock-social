@@ -144,29 +144,35 @@ function repairDashes(text) {
 // "20:00" and "22:00" beside "2:30 PM" and "10 PM", "4pm to 6pm", "5:00 PM"
 // beside "5 PM", "your reading was -18 points under your typical Monday", and
 // "On Tuesday Oct 27". Each is set right here, after the check has read the
-// draft, and none changes what a number says: an amount keeps its digits, a
-// time its hour, and a sign goes only where a word beside it already says
-// which way.
+// draft, and none changes what a number says.
 //
-// A clock time is turned to 12 hours only where it cannot be read two ways:
-// "13:00" and "09:30" are 24-hour times, while "9:00" or "5:00" could be
-// either, and guessing would put a 5 PM special at 5 AM. Those stay as written.
+// EVERY RULE IS NARROW, AND AN ADVERSARIAL REVIEW IS WHY. The first version
+// (same night) grouped every long number, so a zip code became "10,001"; it
+// turned any HH:MM into a clock, so "keep ticket times under 15:00" became
+// "under 3 PM" and a fryer timer of "03:30" became "3:30 AM"; and it dropped
+// signs inside ranges, so "-18 to -25 points under" read "-18 to 25". Now:
+//   * only a dollar amount gets its thousands comma;
+//   * only an afternoon or evening hour (13:00 to 23:59) is turned to 12
+//     hours, and only where a clock word sits in front of it ("at", "before",
+//     "after", "until", "around", "from", "between", "opens", "closes",
+//     "doors") or it closes a range that began with one, and never before a
+//     unit of time; "9:00" or "5:00" could be either half of the day, and a
+//     guess would put a 5 PM special at 5 AM, so those stay as written;
+//   * a sign goes only in "-18 points under your usual ...": a points or
+//     percent gap, a word that agrees with the sign, the venue's own usual
+//     after it, and nothing in front that makes it half of a range or of a
+//     longer number.
 const MONTHS = '(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)';
 const WEEKDAY_THEN_DATE = new RegExp(`\\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) (${MONTHS}\\.? \\d{1,2})\\b`, 'g');
 const MONEY_UNGROUPED = /\$(\d{4,})(?!\d|,\d)/g;
-const PLAIN_UNGROUPED = /(?<![\w$.,:/-])(\d{5,})(?!\w|,\d|\.\d)/g;
-const TIDY_CLOCK_24 = /(?<![\d:$.,])\b(\d{1,2}):([0-5]\d)(?![\d:])(?!\s*(?:[aApP]\.?\s?[mM]\b))/g;
+const NOT_A_DURATION = '(?![\\d:])(?!\\s*(?:[aApP]\\.?\\s?[mM]|minutes?|mins?|hours?|hrs?|seconds?|secs?)\\b)';
+const CLOCK_WORD_24 = new RegExp(`(?<=\\b(?:at|before|after|until|till|around|from|between|opens?|opening|closes?|closing|doors?)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'gi');
+const RANGE_END_24 = new RegExp(`(?<=\\b\\d{1,2}(?::[0-5]\\d)?\\s[AP]M\\s+(?:and|to|until|till|through|-)\\s+)(1[3-9]|2[0-3]):([0-5]\\d)${NOT_A_DURATION}`, 'g');
 const TIDY_CLOCK_AMPM = /\b(\d{1,2})(?::([0-5]\d))?\s?([aApP])(\.\s?[mM]\.|\s?[mM]\b)(?![a-zA-Z])/g;
-// The sign goes only when the word agrees with it: a minus beside "under",
-// "below" or "fell", a plus beside "over", "above" or "rose". A minus beside
-// "over" is a sentence that contradicts its own number, and dropping the sign
-// would make it say the wrong thing cleanly, so it is left for the owner to
-// see as written.
-const AFTER_SIGN = '(?=(?:%|\\s?percent|\\s+points?)?\\s+(?:WAYS)\\b)';
-const MINUS_THEN_DOWN = new RegExp(`(?<![\\w$.,])[-−](\\d+(?:\\.\\d+)?)${AFTER_SIGN.replace('WAYS', 'under|below|behind|short\\s+of|less|fewer|lower|down')}`, 'g');
-const PLUS_THEN_UP = new RegExp(`(?<![\\w$.,])\\+(\\d+(?:\\.\\d+)?)${AFTER_SIGN.replace('WAYS', 'over|above|ahead|more|higher|up')}`, 'g');
-const DOWN_THEN_MINUS = /\b(fell|falling|falls|dropped|dropping|drops|slipped|slipping|declined|declining|trailed|trailing|down)(\s+(?:by\s+)?)[-−](?=\d)/gi;
-const UP_THEN_PLUS = /\b(rose|rising|rises|climbed|climbing|up)(\s+(?:by\s+)?)\+(?=\d)/gi;
+const USUAL = '\\s+(?:your|the|their|our)\\s+(?:usual|typical|normal|own|baseline|median|middle|average|regular)\\b';
+const NOT_IN_A_RANGE = '(?<![\\d.,]\\s*)(?<![\\w$.,])(?<!\\b(?:from|to|and|through|between)\\s+)';
+const MINUS_UNDER_USUAL = new RegExp(`${NOT_IN_A_RANGE}[-−](\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)\\s+(?:under|below|behind|short\\s+of)${USUAL})`, 'g');
+const PLUS_OVER_USUAL = new RegExp(`${NOT_IN_A_RANGE}\\+(\\d+(?:\\.\\d+)?)(?=(?:\\s?%|\\s?percent|\\s+points?)\\s+(?:over|above|ahead\\s+of)${USUAL})`, 'g');
 
 function groupThousands(digits) {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -182,12 +188,6 @@ function twelveHour(hour, minutes) {
 function tidyNumbers(text) {
   return String(text)
     .replace(MONEY_UNGROUPED, (m, d) => `$${groupThousands(d)}`)
-    .replace(PLAIN_UNGROUPED, (m, d) => groupThousands(d))
-    .replace(TIDY_CLOCK_24, (m, h, mm) => {
-      const hour = Number(h);
-      const unambiguous = hour >= 13 || (h.length === 2 && h[0] === '0');
-      return unambiguous && hour <= 23 ? twelveHour(hour, mm) : m;
-    })
     .replace(TIDY_CLOCK_AMPM, (m, h, mm, half, tail, offset, whole) => {
       const hour = Number(h);
       if (hour < 1 || hour > 12) return m;
@@ -196,10 +196,10 @@ function tidyNumbers(text) {
       const stop = tail.endsWith('.') && (rest === '' || /^\s+[A-Z]/.test(rest)) ? '.' : '';
       return `${hour}${mm && mm !== '00' ? `:${mm}` : ''} ${half.toUpperCase()}M${stop}`;
     })
-    .replace(MINUS_THEN_DOWN, '$1')
-    .replace(PLUS_THEN_UP, '$1')
-    .replace(DOWN_THEN_MINUS, '$1$2')
-    .replace(UP_THEN_PLUS, '$1$2')
+    .replace(CLOCK_WORD_24, (m, h, mm) => twelveHour(h, mm))
+    .replace(RANGE_END_24, (m, h, mm) => twelveHour(h, mm))
+    .replace(MINUS_UNDER_USUAL, '$1')
+    .replace(PLUS_OVER_USUAL, '$1')
     .replace(WEEKDAY_THEN_DATE, '$1, $2');
 }
 
