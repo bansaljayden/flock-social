@@ -163,8 +163,14 @@ function fakeTeamId() {
   return id;
 }
 
+// Waits on the event loop for the condition, bounded by time rather than by a
+// count of turns: the signature check before the upstream call runs on the
+// thread pool, and on a busy machine it took longer than 200 turns of the loop
+// (pre-push of 2026-11-03). A quiet machine still returns within a few turns,
+// and three seconds stays inside Jest's five-second test timeout.
 async function until(condition) {
-  for (let i = 0; i < 200 && !condition(); i++) await new Promise((resolve) => setImmediate(resolve));
+  const deadline = Date.now() + 3000;
+  while (!condition() && Date.now() < deadline) await new Promise((resolve) => setImmediate(resolve));
   if (!condition()) throw new Error('the condition never held');
 }
 
