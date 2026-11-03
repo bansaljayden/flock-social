@@ -244,26 +244,19 @@ const PROHIBITED_ADVICE = [
     reason: 'dishonest reporting, written as timing',
     re: /\b(?:post|set|put|enter|leave|hold|log|record)\s+(?:your|the)\s+(?:reading|readings|slider|score|count|number)\b[^.!?]*\b(?:fullest|busiest|peak|peaks|highest|at\s+its\s+best)\b|\bleave\s+it\s+(?:there|up|set)\b[^.!?]*\b(?:rest\s+of\s+the\s+(?:night|service|shift|week)|all\s+(?:night|service|week))\b/i,
   },
-  // FOUR INSTRUCTIONS AN ADVERSARIAL REVIEW GOT PAST THE ENTRIES ABOVE
-  // (2026-11-03), each written the way an answer would put it: "Pay the extra
-  // dish hours in cash and leave them out of payroll", "Split 30% of server
-  // tips to the kitchen at the end of each night", "Give him 400 mg of
-  // ibuprofen and run the hand under cool water for 20 minutes", "Log 90 at
-  // your 8 PM rush so the app shows you full when people are deciding".
-  // Narrow on purpose: "keep payroll near 30% of sales", "share 3 tips with
-  // new hires" and "seat the front tables first so people see the room busy"
-  // are the trade's own advice and still pass.
-  {
-    reason: 'employment, pay or hiring instruction',
-    re: /\b(?:leave|keep|keeping|leaving|put|putting)\s+(?:it|them|those|these|that|the\s+(?:\w+\s+){0,2}hours)\s+(?:out\s+of|off(?:\s+of)?)\s+(?:the\s+)?payroll\b|\bpay\b[^.!?]{0,40}\b(?:hours|shifts?|wages|overtime|staff|server|servers|bartenders?|cooks?|dishwashers?|crew|team|them|him|her)\b[^.!?]{0,20}\bin\s+cash\b|\b(?:split|pool|divide|redistribute)\s+(?:\d{1,3}\s?%\s+of\s+)?(?:the\s+|your\s+|server\s+|staff\s+|their\s+)?tips\b|\b\d{1,3}\s?%\s+of\s+(?:the\s+|their\s+|server\s+|staff\s+|your\s+)?tips\b/i,
-  },
+  // A MEDICINE BY NAME IS A MEDICAL INSTRUCTION in any answer a venue reads.
+  // An adversarial review (2026-11-03) got "Give him 400 mg of ibuprofen and
+  // run the hand under cool water for 20 minutes" past the entry above. A
+  // wider set of patterns was tried the same night, for cash wages off
+  // payroll, tip splitting, doses and gaming the app's reading, and a second
+  // review found it voided ordinary advice ("guests pay the bartender in
+  // cash", "keep 100% of their tips", "a large cold brew can top 300 mg", a
+  // Painkiller on the tiki list, "run your finger down the book") while close
+  // variants of all four still passed. Only the medicine names stayed: they
+  // have no other sense in a venue's answer.
   {
     reason: 'health or medical instruction',
-    re: /\b(?:\d+\s?(?:mg|milligrams?)|ibuprofen|paracetamol|acetaminophen|tylenol|advil|aspirin|antihistamines?|benadryl|inhalers?|painkillers?|burn\s+(?:cream|gel|dressing))\b|\brun\s+(?:the|his|her|their|your)\s+(?:hand|arm|finger|fingers|wrist|burn|cut|wound)\b/i,
-  },
-  {
-    reason: 'dishonest reporting',
-    re: /\bso\s+(?:the\s+app|flock|your\s+listing|the\s+listing)\s+(?:shows?|reads?|says?|lists?)\s+(?:you|the\s+room|us|your\s+room|it)?\s*(?:as\s+)?(?:full|busy|busier|packed|slammed)\b/i,
+    re: /\b(?:ibuprofen|naproxen|paracetamol|acetaminophen|tylenol|advil|motrin|aleve|nurofen|panadol|aspirin|antihistamines?|benadryl|zyrtec|claritin|cetirizine|loratadine|inhalers?|burn\s+(?:cream|gel|dressing))\b/i,
   },
 ];
 

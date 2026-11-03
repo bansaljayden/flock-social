@@ -405,22 +405,27 @@ test('any single mark between two hands\' digits joins them, and a range or an "
   ]) assert.strictEqual(substituteFacts(draft, value).rendered, shown, draft);
 });
 
-// THE SAME REVIEW got four instructions past the whole-answer veto as an
-// answer would write them. Each is void now, and the trade advice beside them
-// still passes.
-test('cash wages off payroll, tip splitting, a drug dose and gaming the app are void; the advice that sounds like them is not', () => {
+// A medicine by name voids an answer. The wider patterns tried the same night
+// for cash wages, tip splitting, doses and gaming the app voided ordinary
+// advice in a second review, so they are gone and that advice passes.
+test('a medicine by name voids the answer, and the ordinary advice a wider pattern voided passes', () => {
   for (const draft of [
-    'Pay the extra dish hours in cash and leave them out of payroll.',
-    'Split 30% of server tips to the kitchen at the end of each night.',
     'Give him 400 mg of ibuprofen and run the hand under cool water for 20 minutes.',
-    'Log 90 at your 8 PM rush so the app shows you full when people are deciding.',
+    'Give him two Motrin and hold the hand under cold water for 20 minutes.',
+    'Hand her a couple of Aleve and an ice pack.',
+    'Give him a Zyrtec and keep him sitting up.',
   ]) assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, draft);
   for (const draft of [
+    'On a cash-heavy bar, guests pay the bartender in cash, so count the till at every shift change.',
+    'Book a local DJ for Thursdays and pay them in cash at the end of the night.',
+    'Large parties often want to split the tips across cards, so set the POS up for it.',
+    'Under a service charge, servers should still keep 100% of their tips.',
+    'Note the caffeine on the board: a large cold brew can top 300 mg.',
+    'Put a Painkiller on the Tuesday tiki list at $12.',
+    'Run your finger down the book each afternoon and call anyone booked for 6 or more.',
+    'Update your reading during the rush so the app shows you busy while it is true.',
     'Keep payroll near 30% of sales on slow nights.',
-    'Share 3 tips with new hires about upselling the dessert board.',
-    'Give staff tips on suggesting a second round.',
     'Seat the front tables first so people see the room busy from the street.',
-    'Let guests pay at the bar in cash or by card.',
   ]) assert.ok(freeText.applyAdviceValve(draft, ADVICE_FACTS()), draft);
 });
 
