@@ -487,6 +487,33 @@ test('a verb in its base form right after the room doing it is a reading, and a 
   }
 });
 
+test('a habit, a command\'s outcome that is not money, and money flowing with no working shown are readings too', () => {
+  // Review of the third round, 2026-11-03: each of these passed, through
+  // "every", "most" or "each", through the command-outcome exemption, or
+  // because "spend", "lose" and "pay" were left out of the doer's verbs.
+  const facts = [...ADVICE_FACTS(), { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  for (const claim of [
+    'Every Friday you see 300 people.',
+    'Each Saturday you serve 140 covers.',
+    'Most Fridays you pour 400 drinks.',
+    'Keep doing what works and you see 300 people on Fridays.',
+    'You spend $2,000 a week on labor.',
+    'You lose $500 every Tuesday.',
+    'You pay $3,000 a month in rent.',
+    'Every week you lose $500 to no-shows.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, facts), null, claim);
+  for (const fine of [
+    'Fill 15 early seats and you bring in roughly $450.',
+    'On a $20 order with a 25% app cut, you keep $15.',
+    'At $5 a flyer, you spend $250 for 50 flyers.',
+    'Every week, make sure you get 2 servers on the floor by 7 PM.',
+    'Each Friday, aim to seat 20 more covers before 7 PM.',
+    'Most bars see 2 turns on a Friday.',
+    'If you lose $500 every Tuesday, close earlier.',
+    'Every 10 empty seats at your {{fact:intake_typical_spend_per_person}} spend means you lose $380 a week.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, facts), fine);
+});
+
 test('one day or the room doing it, in the third person or the past, is a reading too', () => {
   // Third round, 2026-11-03: CLAIM_VERB holds "sees" and "fills" but not
   // "draws", "sells", "packs" or "lets", and "drew" and "sent" were no verb

@@ -580,6 +580,7 @@ const AND_THE_DOER = new RegExp(`\\band\\s+(?:then\\s+)?${DOES}`, 'i');
 // room's own guests ("your guests spend $40"), never after "you" or "we",
 // whose spending is what a worked example adds up.
 const DOER_SPENDS = /\b(?:you|we)(?:['’]ll|\s+will)?\s+(?:\w+\s+)?spend\b/i;
+const DOER_FLOWS = new RegExp(`\\b(?:you|we)(?:['’]ll|\\s+will)?\\s+(?:${OFTEN.source}\\s+)?(?:spend|pay|lose|keep|save|owe|give\\s+(?:up|away))\\b${VERB_TO_NUMBER.source}`, 'i');
 
 // Words that make the number a suggestion, a hypothetical, a price or a
 // general rule rather than a reading: "if you add 10 covers", "aim for 85",
@@ -854,11 +855,22 @@ const HABITUAL = /\b(?:every|each|most|many)\s+(?:(?:mon|tues|wednes|thurs|fri|s
 const VENUE_DOES = /\b(?:you|your|you['’](?:re|ve)|we|our|the\s+(?:room|floor|kitchen|bar|patio|door|line|crowd|rush|peak|place|venue))\b/i;
 const DAY_DOES = /\b(?:hits|runs|peaks|sees|gets|lands|tops|reaches|fills|averages|comes|sits|holds|draws|brings|pulls|ran|peaked|saw|got|landed|topped|reached|filled|averaged|came|sat|held|drew|brought|pulled)\b/i;
 const SUPPOSES = /\b(?:if|when|whenever|aim|aiming|target|goal|try|trying|test|testing|consider|could|would|['’]d|might|may|can|should|imagine|suppose|need|needs|want|wants|plan|planning|budget)\b/i;
-function standingReading(prefix) {
+function standingReading(prefix, num, all) {
   if (!HABITUAL.test(prefix) || SUPPOSES.test(prefix)) return false;
   if (TRIAL_SPAN.test(prefix) || /\b(?:a|an)\s*\$?\s*$/i.test(prefix)) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
-  return CLAIM_VERB.test(tail) && (VENUE_DOES.test(tail) || DAY_DOES.test(tail));
+  if (CLAIM_VERB.test(tail) && (VENUE_DOES.test(tail) || DAY_DOES.test(tail))) return true;
+  // And with the doer and its verb in the base form or the past, or money
+  // flowing with no working shown (review of the third round, 2026-11-03):
+  // "Every Friday you see 300 people", "Most Fridays you pour 400 drinks",
+  // "Every week you lose $500 to no-shows".
+  return (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix)) || DOER_IN_THE_PAST.test(prefix)
+    || flowsUnworked(prefix, num, all);
+}
+
+// Money flowing with no other figure in its sentence to work it from.
+function flowsUnworked(prefix, num, all) {
+  return DOER_FLOWS.test(prefix) && !all.some((n) => n !== num && !n.spelled && n.dim !== 'date');
 }
 
 // `alone`: the sentence is the whole answer line or point it sits in, the
@@ -871,7 +883,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   const toDo = countToDo(text, num, prefix, all, alone);
   if (toDo === 'claim') return true;
   if (toDo === 'todo') return false;
-  if (standingReading(prefix)) return true;
+  if (standingReading(prefix, num, all)) return true;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
   // wait" would have let the 40 through on it (2026-11-03 self-review).
@@ -887,8 +899,18 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   // The doer and its verb in the past ("your guests complained 40 times",
   // "you comped 25 drinks") or in the base form (third round, 2026-11-03).
   if (DOER_IN_THE_PAST.test(prefix)) return true;
-  return DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail)
-    && !(COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix));
+  // A command's outcome is set aside only as money worked from a price the
+  // answer gave ("Fill 15 early seats and you bring in roughly $450"); "Keep
+  // doing what works and you see 300 people on Fridays" says what the room
+  // does now (review of the third round, 2026-11-03).
+  if (DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail)
+    && !(num.dim === 'money' && COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix))) return true;
+  // MONEY THAT FLOWS WITH NO WORKING SHOWN IS A READING. The flows a worked
+  // example ends on ("you keep $15 of a $20 order", "you spend $250 for 50
+  // flyers") stay set aside, and "You spend $2,000 a week on labor", "You
+  // lose $500 every Tuesday" and "You pay $3,000 a month in rent", with no
+  // other figure in the sentence, state the venue's own costs (same review).
+  return flowsUnworked(prefix, num, all);
 }
 
 // ── What the venue's numbers support ────────────────────────────────────────
