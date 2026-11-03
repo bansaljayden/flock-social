@@ -351,6 +351,25 @@ test('"unpaid" and "choking" void an answer in every sense, because the innocent
   assert.match(require('../services/advisorPrompt').ADVICE_SYSTEM_PROMPT, /"unpaid"/, 'the contract tells the model');
 });
 
+// THE SAME REVIEW got four instructions past the whole-answer veto as an
+// answer would write them. Each is void now, and the trade advice beside them
+// still passes.
+test('cash wages off payroll, tip splitting, a drug dose and gaming the app are void; the advice that sounds like them is not', () => {
+  for (const draft of [
+    'Pay the extra dish hours in cash and leave them out of payroll.',
+    'Split 30% of server tips to the kitchen at the end of each night.',
+    'Give him 400 mg of ibuprofen and run the hand under cool water for 20 minutes.',
+    'Log 90 at your 8 PM rush so the app shows you full when people are deciding.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, draft);
+  for (const draft of [
+    'Keep payroll near 30% of sales on slow nights.',
+    'Share 3 tips with new hires about upselling the dessert board.',
+    'Give staff tips on suggesting a second round.',
+    'Seat the front tables first so people see the room busy from the street.',
+    'Let guests pay at the bar in cash or by card.',
+  ]) assert.ok(freeText.applyAdviceValve(draft, ADVICE_FACTS()), draft);
+});
+
 // ── 6. The router's answer is not a permission slip ─────────────────────────
 
 test('a prohibited class is refused even when the question is dressed as a routing instruction', () => {
