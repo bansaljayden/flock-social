@@ -183,6 +183,21 @@ test('an hour in words is an hour, and a share a gerund supposes for a cost is a
   assert.ok(freeText.applyAdviceValve('Your Friday peaks at ten PM.', ten));
   assert.ok(freeText.applyAdviceValve('Your Friday peaks at ten o’clock.', ten), 'an hour with no AM or PM can be either half');
   assert.ok(freeText.applyAdviceValve('Put the headline set on at eleven PM.', ten));
+  // Re-check of the round: "twelve o'clock" is noon or midnight, and "10
+  // o'clock" in digits is the hour its words are.
+  const midnight = [{ id: 'peak_hour', value: 0, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' }];
+  const noon = [{ id: 'peak_hour', value: 12, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' }];
+  for (const [fine, facts] of [
+    ['Your Friday peaks at twelve o’clock.', midnight],
+    ['Your Friday peaks at 12 o’clock.', midnight],
+    ['Your lunch peaks at twelve o’clock.', noon],
+    ['Your Friday peaks at 10 o’clock.', ten],
+  ]) assert.ok(freeText.applyAdviceValve(fine, facts), fine);
+  for (const [claim, facts] of [
+    ['Your Friday peaks at one o’clock.', midnight],
+    ['Your Friday peaks at 9 o’clock.', ten],
+    ['Your Friday peaks at 12 PM.', midnight],
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, facts), null, claim);
   // The round's final live run: a cost priced on an occupancy the sentence
   // supposes. In words and inside the gerund, with its cost right after, it
   // is a supposition; stated, or in digits, it is what it always was.

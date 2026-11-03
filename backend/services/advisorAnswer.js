@@ -348,6 +348,7 @@ const ISO_DATE = /\b(\d{4})-(\d{2})-(\d{2})(?:T[\d:.]+Z?)?/g;
 const MONTH_DAY = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?/gi;
 const CLOCK_TIME = /\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s?([ap])\.?\s?m\b\.?/gi;
 const CLOCK_24 = /\b([01]?\d|2[0-3]):([0-5]\d)\b/g;
+const CLOCK_OCLOCK = /\b(1[0-2]|[1-9])\s?o['’]?clock\b/gi;
 // MIDNIGHT AND NOON ARE CLOCK TIMES WRITTEN AS WORDS (2026-11-03). A claim
 // can carry the hour as a word, and a word this check did not read was a
 // claim it never checked: "your Friday peaks at midnight" passed with nothing
@@ -430,6 +431,13 @@ const FRACTION_WORDS = new RegExp(`\\b(?:(a|an|${UNIT_WORDS})[\\s-]+(halves|half
 function otherHalf(hour) {
   return hour + 12;
 }
+// An hour said with "o'clock" and no AM or PM: either half of the day, and
+// "twelve o'clock" is noon or midnight (re-check of the third round,
+// 2026-11-03: it was noon only, so it never matched a midnight fact).
+function oclockAlt(hour) {
+  if (hour === 12) return [0];
+  return hour >= 1 && hour <= 11 ? [otherHalf(hour)] : [];
+}
 
 /**
  * Every number written in a piece of text, with where it sits. Clock times
@@ -483,6 +491,16 @@ function numbersIn(text, { owner = false } = {}) {
     out.push({ index: m.index, length: m[0].length, value: h + min / 60, alt: eitherHalf ? [otherHalf(h) + min / 60] : [], kind: 'clock', dim: 'clock' });
     mark(m.index, m[0].length);
   }
+  // "9 o'clock" is an hour, either half of the day, the way "nine o'clock" is;
+  // it was read as a plain 9, which no hour fact holds (re-check of the third
+  // round, 2026-11-03).
+  CLOCK_OCLOCK.lastIndex = 0;
+  while ((m = CLOCK_OCLOCK.exec(src)) !== null) {
+    if (taken[m.index]) continue;
+    const h = Number(m[1]);
+    out.push({ index: m.index, length: m[0].length, value: h, alt: oclockAlt(h), kind: 'clock', dim: 'clock' });
+    mark(m.index, m[0].length);
+  }
   CLOCK_WORD.lastIndex = 0;
   while ((m = CLOCK_WORD.exec(src)) !== null) {
     const h = CLOCK_WORD_HOUR[m[1].toLowerCase()];
@@ -516,8 +534,7 @@ function numbersIn(text, { owner = false } = {}) {
     const meridiem = /^\s*(?:([ap])\.?\s?m\b\.?|o['’]?clock\b)/i.exec(src.slice(m.index + m[0].length));
     if (meridiem && spokenHour >= 1 && spokenHour <= 12) {
       const h24 = meridiem[1] ? (spokenHour % 12) + (meridiem[1].toLowerCase() === 'p' ? 12 : 0) : spokenHour;
-      const eitherHalf = !meridiem[1] && spokenHour <= 11;
-      out.push({ index: m.index, length: m[0].length + meridiem[0].length, value: h24, alt: eitherHalf ? [otherHalf(spokenHour)] : [], kind: 'clock', dim: 'clock', spelled: true });
+      out.push({ index: m.index, length: m[0].length + meridiem[0].length, value: h24, alt: meridiem[1] ? [] : oclockAlt(spokenHour), kind: 'clock', dim: 'clock', spelled: true });
       mark(m.index, m[0].length + meridiem[0].length);
       continue;
     }
