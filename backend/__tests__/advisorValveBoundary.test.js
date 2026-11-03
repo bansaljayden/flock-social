@@ -694,6 +694,9 @@ test('a rate per thing is a price or a cut, and money flowing over the venue\'s 
     'We give away 30 free drinks every Friday.',
     'You lose 6 cooks a year to turnover.',
     'You lose 2 hours a night to slow tickets.',
+    'You lose 40 every time it rains.',
+    'You lose 2 weddings a month.',
+    'We give away 40 every Friday.',
     'You keep 70% of your revenue after costs.',
     'You lose 30% of your Tuesday covers to the bar next door.',
   ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);

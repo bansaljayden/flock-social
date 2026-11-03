@@ -1053,9 +1053,12 @@ function flowsUnworked(text, prefix, num, all) {
   let flows = num.dim === 'money' || num.dim === 'pct';
   if (num.dim === 'duration') flows = verb === 'lose';
   if (num.dim === 'plain') {
+    // Whatever is lost is the room's ("you lose 40 every time it rains"); a
+    // count given away or kept flows when it counts the room or stands alone.
     const words = countedWords(text, num);
+    flows = verb === 'lose' || !words.length || AFTER_COUNT_STOP.test(words[0]);
     for (let k = 0; k < Math.min(3, words.length) && !flows; k += 1) {
-      if (ROOM_COUNTS.test(words[k]) || (verb === 'lose' && staffCounted(words, k))) flows = true;
+      if (ROOM_COUNTS.test(words[k])) flows = true;
       else if (AFTER_COUNT_STOP.test(words[k])) break;
     }
   }
