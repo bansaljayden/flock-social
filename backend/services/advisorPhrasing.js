@@ -952,8 +952,34 @@ function gapPart(v) {
   return v > 0 ? 'pointsAbove' : 'pointsApart';
 }
 
+// AN ARITHMETIC FACT DOES NOT HAND THE MODEL ITS INPUTS' NUMBERS A SECOND TIME
+// (2026-11-03). Yesterday's verdict carries the day's reading and the usual it
+// was set against, and so do the two facts it was worked out from, so the
+// model held two ids for each number, and a live answer read "37 against a
+// normal 55", then "18 points under your typical baseline of 55", then "your
+// Monday middle reading usually sits at 55". A verdict's number that a fact it
+// came from already carries, in the same block, is offered once, under the
+// input's id; the gap it adds stays. Read only for the verdict and the
+// served-against-reading comparison: the arithmetic the owner's questions
+// about yesterday land on, whose inputs always ride with them. The label, the
+// template and the check still have every number.
+const RESTATES_ITS_INPUTS = /^(?:last_day_verdict|served_vs_reading)_/;
+function inputNumbers(f, byId) {
+  const nums = new Set();
+  if (!RESTATES_ITS_INPUTS.test(String(f.id)) || !Array.isArray(f.from)) return nums;
+  for (const id of f.from) {
+    const input = byId.get(String(id));
+    if (!input) continue;
+    const v = input.value;
+    const values = v !== null && typeof v === 'object' && !Array.isArray(v) ? Object.values(v) : [v];
+    for (const x of values) if (typeof x === 'number' && Number.isFinite(x)) nums.add(x);
+  }
+  return nums;
+}
+
 function flattenFacts(facts) {
   const out = [];
+  const byId = new Map((Array.isArray(facts) ? facts : []).filter(Boolean).map((f) => [String(f.id), f]));
   const keep = (fact) => {
     if (vendorQuantity(fact.value)) {
       warnOnce(
@@ -973,9 +999,11 @@ function flattenFacts(facts) {
       // withheld keeps its note out of the model's way too; the template and
       // the check still read it.
       const parent = Object.keys(f.value).some((k) => WORKING_PARTS.has(k)) ? { ...f, note: undefined } : f;
+      const restated = inputNumbers(f, byId);
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
+        if (typeof v === 'number' && restated.has(v) && !SIGNED_GAPS.has(k)) continue;
         // A PEAK AFTER MIDNIGHT IS DATED BY ITS EVENING, and that date beside a
         // small-hours clock read as the next day's: "Saturday night into Nov
         // 7" (2026-11-03 live eval). The night carries its name and needs no

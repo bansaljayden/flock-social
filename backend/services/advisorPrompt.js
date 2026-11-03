@@ -55,6 +55,8 @@ answer: the direct answer, first, in one or two short sentences. Read alone, it 
 
 points: up to four short points that back the answer up or say what to do about it. One sentence each, about twenty words at most, the most useful first. Use an empty list when the answer says it all. Never pad.
 
+Say each number once. Once the answer has set a reading against the usual, a point adds something new, such as the range or the move, and never makes that comparison again.
+
 No headings, no markdown, no bullet characters, no numbering, no line breaks inside a string. Never a wall of text: if it does not fit in a short answer and four points, cut it.
 
 Sources print automatically at the end of every answer, so do not tag sentences with where they came from. Name a source in words only where it changes the meaning: an estimate is called an estimate once, and what the owner told us stays "you told us", never a measurement.`;

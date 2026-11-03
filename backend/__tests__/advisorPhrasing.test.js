@@ -382,6 +382,40 @@ test('yesterday\'s verdict reaches the model without the rule\'s own working', (
   assert.deepStrictEqual(served.map((f) => [f.id, f.value]), [['served_vs_reading_servedMedian', 40], ['served_vs_reading_yourPeak', 52], ['served_vs_reading_pointsBelow', 12]]);
 });
 
+// "37 against a normal 55", "18 points under your typical baseline of 55",
+// "your Monday middle reading usually sits at 55" in one answer (2026-11-03
+// live eval): the reading and the usual each reached the model under two ids.
+test('yesterday\'s verdict offers each number once, under the fact it came from, and keeps the gap it adds', () => {
+  const date = '2026-11-02';
+  const facts = [
+    { id: `owner_reading_${date}`, value: { date, weekday: 'Monday', peakReading: 37, readings: 3 }, source: 'owner_report', asOf: date, label: 'Your highest reading on Monday Nov 2 was 37, from 3 readings.' },
+    { id: `owner_weekday_baseline_${date}`, value: { weekday: 'Monday', days: 6, middleReading: 55, lowest: 46, highest: 62, windowWeeks: 9 }, source: 'owner_report', asOf: date, label: 'Your 6 other Mondays in the last 9 weeks had a middle highest reading of 55, running from 46 to 62.' },
+    { id: `last_day_verdict_${date}`, value: { date, weekday: 'Monday', verdict: 'below', reading: 37, baseline: 55, baselineKind: 'same_weekday', comparisonDays: 6, delta: -18, threshold: 15, spread: 6, floorPoints: 15 }, source: 'arithmetic', from: [`owner_reading_${date}`, `owner_weekday_baseline_${date}`], asOf: date, label: 'Monday came in 18 points below your own Mondays (middle 55, across 6 days).' },
+    { id: `served_trusted_${date}`, value: { date, serves: 40, medianScore: 49 }, source: 'served_prediction', asOf: date, label: 'Flock showed a middle estimate of 49.' },
+    { id: `served_vs_reading_${date}`, value: { date, servedMedian: 49, yourPeak: 37, gap: 12 }, source: 'arithmetic', from: [`served_trusted_${date}`, `owner_reading_${date}`], asOf: date, label: 'What we published sat 12 points above your own highest reading.' },
+  ];
+  const parts = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts(facts));
+  const ids = parts.map((f) => f.id);
+  for (const gone of ['last_day_verdict_reading', 'last_day_verdict_baseline', 'last_day_verdict_comparisonDays', 'served_vs_reading_servedMedian', 'served_vs_reading_yourPeak']) {
+    assert.ok(!ids.includes(gone), `${gone} handed the model a second id for a number its inputs carry`);
+  }
+  for (const kept of ['owner_reading_peakReading', 'owner_weekday_baseline_middleReading', 'owner_weekday_baseline_days', 'last_day_verdict_pointsBelow', 'served_vs_reading_pointsAbove', 'last_day_verdict_verdict']) {
+    assert.ok(ids.includes(kept), `${kept} is missing`);
+  }
+  // Every number is still sayable, and still checked.
+  const out = advisorPhrasing.applyValve(JSON.stringify({
+    answer: 'Yesterday came in at {{fact:owner_reading_peakReading}}, {{fact:last_day_verdict_pointsBelow}} points under your usual {{fact:owner_weekday_baseline_middleReading}}.',
+    points: ['Your Mondays usually run {{fact:owner_weekday_baseline_lowest}} to {{fact:owner_weekday_baseline_highest}}.', 'Your Monday baseline sits at 60.'],
+  }), { facts: parts });
+  assert.ok(out);
+  assert.strictEqual(out.text, 'Yesterday came in at 37, 18 points under your usual 55.\n• Your Mondays usually run 46 to 62.');
+  // A verdict with nothing beside it keeps its own numbers.
+  const alone = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([facts[2]])).map((f) => f.id);
+  assert.ok(alone.includes('last_day_verdict_reading') && alone.includes('last_day_verdict_baseline'));
+  // And the contract asks for each number once.
+  assert.match(advisorPhrasing.SYSTEM_PROMPT, /Say each number once\. Once the answer has set a reading against the usual, a point adds something new, such as the range or the move, and never makes that comparison again\./);
+});
+
 test('both payloads name every placeholder id the block carries, once, after the block', () => {
   const facts = [{ id: 'peak_weekday', value: 'Saturday', source: 'model_holdout', asOf: '2026-11-03' }, { id: 'peak_score', value: 91, source: 'model_holdout', asOf: '2026-11-03' }];
   const chip = advisorPhrasing.internals.buildUserPayload('peak_hours', facts, [], 'When do we peak this week?');
