@@ -145,8 +145,22 @@ test('a two-unit request is told when TWO units free up, not one', () => {
   __resetPlacesBudget();
   const now = Date.now();
   for (let i = 0; i < PER_USER_HOURLY; i++) allowPlacesSearch(42);
-  const one = placesRetryAfter(42, 1).ms;
-  const two = placesRetryAfter(42, 2).ms;
+  // Both answers are read at one instant. placesRetryAfter reads Date.now()
+  // itself and this file's clock keeps running (helpers/pinnedClock.js), so on
+  // a busy machine the second call could read a later millisecond than the
+  // first and report a wait that much shorter: two < one, though the ledger is
+  // right. The instant is taken after the charges, so none is later than it.
+  const runningNow = Date.now;
+  const instant = Date.now();
+  Date.now = () => instant;
+  let one;
+  let two;
+  try {
+    one = placesRetryAfter(42, 1).ms;
+    two = placesRetryAfter(42, 2).ms;
+  } finally {
+    Date.now = runningNow;
+  }
   assert.ok(two >= one, 'two units cannot free up before one does');
   assert.ok(two > 0 && two <= HOUR_MS + (Date.now() - now));
 });
