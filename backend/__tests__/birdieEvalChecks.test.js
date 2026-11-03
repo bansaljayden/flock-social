@@ -105,6 +105,17 @@ test('a staged card is not a done deed', () => {
   const r = grade("Done, I've added Mango Street Tacos to the vote.", { expect: { noClaim: true } });
   assert.ok(r.problems.some((p) => /already did what the card only stages/.test(p)));
   assert.ok(!grade('Mango Street Tacos is on a card below, tap to add it to the vote.', { expect: { noClaim: true } }).problems.some((p) => /stages/.test(p)));
+  // Putting it on the card is what a staged card is (a live run's answer).
+  assert.ok(!grade('I put Mango Street Tacos on the vote card for Friday dinner. Tap confirm to send it to the group.', { expect: { noClaim: true } }).problems.some((p) => /stages/.test(p)));
+});
+
+test('a venue the answer says is shut is not one it sends them to', () => {
+  const palma = cases.byKey.get('palma');
+  const sol = cases.byKey.get('cafesol');
+  const open = new Set([sol.id]);
+  const tools = [search(sol, palma)];
+  assert.ok(!grade("Cafe Sol Cubano. Palma isn't even open right now.", { tools, openIds: open, expect: { openOnly: true } }).problems.some((p) => /closed now/.test(p)));
+  assert.ok(grade('Palma Pasta Bar, go now.', { tools, openIds: open, expect: { openOnly: true } }).problems.some((p) => /closed now/.test(p)));
 });
 
 test('dishes, decor and reputations no tool returned are inventions; a venue\'s own kind is not', () => {

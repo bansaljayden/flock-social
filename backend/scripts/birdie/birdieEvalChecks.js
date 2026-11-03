@@ -174,7 +174,10 @@ const UNSURE = /(can'?t|cannot|couldn'?t|don'?t|do not|no (crowd )?(read|reading
 const HONEST_NO_READ = /(\bpro\b|flock pro|limit|no (crowd |live )?(read|reading|data|number|info|forecast)|(do not|don'?t) have|can'?t (see|tell|get|pull|check|show)|cannot (see|tell|get)|couldn'?t|not sure|no idea|unavailable|locked|out of (free|your)|used up|past (this|your))/i;
 const NEGATED = /\b(not|no|never|isn'?t|aren'?t|wasn'?t|don'?t|doesn'?t)\b/i;
 const SALES = /\b(pro|premium|upgrade|subscri\w*|paid plan|plan for \$|\$\d)/i;
-const CLAIMED_DONE = /\b(i'?ve|i have|i just|i)\s+(created|made|set up|started|added|booked|put|locked in|scheduled)\b|\b(is|was|it'?s|been|are)\s+(now\s+)?(created|added|booked|set up|on the vote|in the vote|scheduled|locked in)\b|\byou'?re all set\b|\bdone\.?$/i;
+// Saying the plan, the vote or the booking already happened. Putting a venue
+// "on the card" is what a staged card is, so a sentence about the card is not
+// a claim; "added it to the vote" is.
+const CLAIMED_DONE = /\b(i'?ve|i have|i just|i)\s+(created|made|set up|started|added|booked|locked in|scheduled)\b|\b(is|was|it'?s|been|are)\s+(now\s+)?(created|added|booked|set up|on the vote|in the vote|scheduled|locked in)\b|\byou'?re all set\b|\bdone\.?$/i;
 
 function checkVoice(text, problems, warnings, info) {
   const t = String(text || '');
@@ -451,7 +454,7 @@ function checkAnswer(input) {
   if (expect.openOnly) {
     for (const v of mentioned) {
       if (openIds.has(v.id)) continue;
-      const said = sentencesNaming(text, v).some((s) => /\b(closed|shut|not open|opens|closes)\b/i.test(s));
+      const said = sentencesNaming(text, v).some((s) => /\b(closed|shut|opens|closes)\b|\b(not|isn'?t|aren'?t) (even |yet )?open\b/i.test(s));
       if (!said) problems.push(`venues: sends them to ${v.name}, which is closed now`);
     }
   }
