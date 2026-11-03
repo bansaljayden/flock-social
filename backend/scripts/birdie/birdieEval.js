@@ -41,6 +41,11 @@
 // the recorded run never made (the route changed since) fails, and that item
 // says so. The serving switches the recorded run saw are restored from F.
 //   node scripts/birdie/birdieEval.js --replay=F [--out=G]
+//
+// RESCORE: --rescore=F scores run F's recorded answers exactly as they were,
+// with today's checks and no route at all. Replay re-drives the route with
+// today's code; rescore is the one for comparing two runs.
+//   node scripts/birdie/birdieEval.js --rescore=F [--out=G]
 // ---------------------------------------------------------------------------
 
 'use strict';
@@ -57,6 +62,10 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   return m ? [m[1], m[2] === undefined ? true : m[2]] : [a, true];
 }));
 const REPLAY = args.replay ? JSON.parse(fs.readFileSync(path.resolve(String(args.replay)), 'utf8')) : null;
+// --rescore=F: today's checks over run F's recorded answers exactly as they
+// were, with no route and no model. Replay re-drives the route with today's
+// code; this is the one to compare two runs with.
+const RESCORE = args.rescore ? JSON.parse(fs.readFileSync(path.resolve(String(args.rescore)), 'utf8')) : null;
 
 // ── The environment: the model key and the serving switches, nothing else ──
 //
@@ -89,7 +98,7 @@ process.env.JWT_SECRET = 'birdie-eval-not-a-secret';
 // Search runs only with a key set; the fetch below answers it.
 process.env.GOOGLE_PLACES_API_KEY = 'birdie-eval-fixtures-no-network';
 
-if (!REPLAY && !args.fixtures && !process.env.GEMINI_API_KEY) {
+if (!REPLAY && !RESCORE && !args.fixtures && !process.env.GEMINI_API_KEY) {
   console.error('No GEMINI_API_KEY in the environment. Run it through `railway run --service "Flock-app-"`, or use --replay.');
   process.exit(1);
 }
@@ -517,15 +526,26 @@ function expectFor(item, turnIndex) {
 let tokensUsed = 0;
 const maxTokens = Number(args['max-tokens'] || 1000000);
 
+// A recorded turn, as --rescore scores it: what the run answered, with the
+// prompt it was answered under.
+function recordedTurn(t) {
+  if (!t) return null;
+  return {
+    status: t.status, out: t.out, ms: t.ms, calls: t.calls || [], tools: t.tools || [], promptHash: t.promptHash,
+    systemPrompt: ((RESCORE.meta && RESCORE.meta.prompts) || {})[t.promptHash] || null, clock: clockFacts(),
+  };
+}
+
 async function runItem(item) {
   const persona = cases.PERSONAS[item.persona];
-  const recorded = REPLAY ? (REPLAY.items || []).find((r) => r.id === item.id) : null;
+  const source = REPLAY || RESCORE;
+  const recorded = source ? (source.items || []).find((r) => r.id === item.id) : null;
   const result = { id: item.id, persona: item.persona, clock: item.clock, turns: [] };
-  if (REPLAY && !recorded) {
+  if (source && (!recorded || recorded.skipped)) {
     result.skipped = 'not in the recorded run';
     return result;
   }
-  if (!REPLAY && tokensUsed >= maxTokens) {
+  if (!source && tokensUsed >= maxTokens) {
     result.skipped = `token ceiling (${maxTokens}) reached`;
     return result;
   }
@@ -539,9 +559,12 @@ async function runItem(item) {
     const text = item.turns[i];
     messages.push({ role: 'user', text });
     userTexts.push(text);
-    const turn = await runTurn(item, persona, messages.slice(-24), i, recorded ? recorded.turns[i] : null);
+    const turn = RESCORE
+      ? recordedTurn(recorded.turns[i])
+      : await runTurn(item, persona, messages.slice(-24), i, recorded ? recorded.turns[i] : null);
+    if (!turn) break;
     const turnTokens = turn.calls.reduce((n, c) => n + ((c.tokens && c.tokens.total) || 0), 0);
-    if (!REPLAY) tokensUsed += turnTokens;
+    if (!source) tokensUsed += turnTokens;
     const expect = expectFor(item, i);
     const ctxVenueIds = item.ctx && item.ctx.venue && item.ctx.venue.place_id ? [item.ctx.venue.place_id] : [];
     const flockHours = persona.flocks.filter((f) => f.event_time).map((f) => wallNowAt(f.event_time));
@@ -709,7 +732,11 @@ async function previewFixtures() {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
   const items = pick(cases.BATTERY);
-  const meta = {
+  const meta = RESCORE ? {
+    ...RESCORE.meta,
+    mode: `rescore of ${path.basename(String(args.rescore))}`,
+    startedAt: new RealDate().toISOString(),
+  } : {
     model: process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite (code default)',
     mode: REPLAY ? `replay of ${path.basename(String(args.replay))}` : 'live',
     startedAt: new RealDate().toISOString(),
@@ -717,6 +744,8 @@ async function previewFixtures() {
     switches: Object.fromEntries(['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'BIRDIE_MODEL'].map((k) => [k, process.env[k] ?? null])),
     concurrency: Number(args.concurrency || 4),
   };
+  delete meta.summary;
+  delete meta.prompts;
   const results = [];
   for (const clock of Object.keys(cases.CLOCKS)) {
     const group = items.filter((i) => i.clock === clock);
