@@ -958,34 +958,29 @@ function vagueQuestion(question) {
   return words.length > 0 && words.length <= 6 && words.every((w) => VAGUE_WORDS.has(w));
 }
 
-// ── Two router answers the question's own words overrule ─────────────────────
+// ── A table route for a question about no table ─────────────────────────────
 //
-// THE FIRST LIVE GEMINI EVAL SINCE 10-28 (2026-11-03) FOUND THREE GOOD
-// QUESTIONS REFUSED BY THE ROUTER, and none of the refusals protected anyone.
-// "How busy was Saturday" (a cafe and a bar) and "was last Friday any good" (a
-// bar) were routed to the table sensor, and a venue with no table unit was
-// told "No table unit is installed". "People leave at midnight" (a club) was
-// told to say more. The prompt has been corrected; these two rules hold
-// whatever a future model makes of it.
+// THE FIRST LIVE GEMINI EVAL SINCE 10-28 (2026-11-03): "how busy was
+// Saturday" (a cafe and a bar) and "was last Friday any good" (a bar) were
+// routed to the table sensor, and a venue with no table unit was told "No
+// table unit is installed". The router prompt said "how slow was Friday"
+// lands there; it now says only table questions do. Behind it, a table route
+// for a question that names nothing at a table (no table, seat, party, turn,
+// wait or server) takes the reading the question's own words place it on
+// (the week's recap for a past day, yesterday's verdict). Both readings are
+// the venue's own numbers, so nothing is answered that a chip could not.
 //
-//   1. A table route for a question that names no table. When the question's
-//      own words place it on another reading of the venue's numbers (the
-//      week's recap for a past day, yesterday's verdict), that reading
-//      answers. A question that is about the tables keeps the table route,
-//      and a venue with no table unit is still told so.
-//   2. "Tell us a little more" said of a question the owner's words place.
-//      unclear_ask is the one refusal that is not a boundary: it says we could
-//      not tell what was asked. When the offline reading can tell, and the
-//      message is not all vague words ("what should I do" stays refused), the
-//      question is answered. Every other refusal reason keeps its word, and
-//      the class check below still runs on whatever this lets through.
+// "TELL US A LITTLE MORE" IS NOT OVERRULED. Answering an unclear_ask refusal
+// whenever the offline reading could place the question was tried the same
+// night, and an adversarial review sent terse employment, health, competitor
+// and injection questions straight to the advice model through it ("walkouts
+// out of server pay?", "guest lips swelling, what do we do"). The router
+// prompt now says a problem stated plainly is advice, and every router
+// refusal keeps its word.
 const TABLE_INTENTS = new Set(['tables_service', 'tables_free']);
+const AT_A_TABLE = /\b(?:tables?|two[\s-]?tops?|four[\s-]?tops?|six[\s-]?tops?|booths?|high[\s-]?tops?|seats?|seating|seated|seatings?|sit|sits|sitting|part(?:y|ies)|dwell\w*|linger\w*|camp\w*|turns?|turned|turning|turnover|waits?|waited|waiting|wait\s*list|servers?)\b/i;
 function settledRoute(route, question) {
-  if (route.mode === 'refused' && route.why === 'unclear_ask' && !vagueQuestion(question)) {
-    const placed = offlineRoute(question);
-    if (placed) return placed;
-  }
-  if (route.mode === 'grounded' && TABLE_INTENTS.has(route.intentId)) {
+  if (route.mode === 'grounded' && TABLE_INTENTS.has(route.intentId) && !AT_A_TABLE.test(normalizeOwnerText(question))) {
     const placed = offlineRoute(question);
     if (placed && placed.mode === 'grounded' && !TABLE_INTENTS.has(placed.intentId)) return placed;
   }

@@ -1288,6 +1288,23 @@ test('a question about the tables keeps the table route, and a venue with no tab
   assert.strictEqual(r.body.mode, 'refusal');
   assert.match(r.body.text, /No table unit is installed/);
 
+  // Questions an adversarial review found moved off the table route by the
+  // first version of the rule, because yesterday, tonight or "more guests"
+  // placed them first. Anything said at a table keeps the router's table route.
+  for (const q of [
+    'how long were parties sitting yesterday', 'were people waiting for a server last night',
+    'what was our average dwell time last weekend', 'any two-tops open tonight', 'can I fit a party of 6 in tonight',
+    'how many more guests could our tables take on a friday', 'is foot traffic down because our tables turn slow?',
+    'how often is a seat free at the bar this weekend',
+  ]) {
+    resetAll();
+    installProfile();
+    installVenueFacts({ tables: false });
+    replies = [TABLES_ROUTE];
+    r = await ask(q);
+    assert.strictEqual(r.body.intentId, 'tables_service', q);
+  }
+
   resetAll();
   installProfile();
   installVenueFacts({ tables: true });
@@ -1298,38 +1315,22 @@ test('a question about the tables keeps the table route, and a venue with no tab
   assert.match(r.body.text, /74 minutes/);
 });
 
-test('"tell us a little more" is not said to a problem stated plainly, and stays for a message that names nothing', async () => {
-  for (const q of ['people leave at midnight', 'everyone is gone by midnight']) {
-    resetAll();
-    installProfile();
-    replies = [UNCLEAR, JSON.stringify({ answer: 'Put your strongest draw just before the room starts to thin.', points: ['Keep the opening sets easy so the crowd lasts.'] })];
-    const r = await ask(q);
-    assert.strictEqual(r.body.mode, 'advice', q);
-    assert.match(r.body.text, /^Put your strongest draw/, q);
-    assert.strictEqual(modelCalls.length, 2, 'the advice model wrote it');
-  }
-  for (const q of ['what should I do', 'any ideas?', 'help']) {
+// "Tell us a little more" was overruled for a while on 11-03 whenever the
+// offline reading could place the question, and an adversarial review sent
+// terse employment, health and competitor questions to the advice model
+// through it. The router's refusal keeps its word; what fixed "people leave
+// at midnight" is the router prompt (a problem stated plainly is advice).
+test('every router refusal keeps its word, "tell us a little more" included', async () => {
+  for (const q of ['people leave at midnight', 'walkouts out of server pay?', 'guest lips swelling, what do we do', 'joe\'s pizza sales?', 'what should I do']) {
     resetAll();
     installProfile();
     replies = [UNCLEAR];
     const r = await ask(q);
     assert.strictEqual(r.body.mode, 'refusal', q);
-    assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_BY_REASON.unclear_ask, q);
+    assert.strictEqual(modelCalls.length, 1, `${q}: nothing was written after the router refused`);
   }
-  // The class check still stands behind it.
-  resetAll();
-  installProfile();
-  replies = [UNCLEAR];
-  let r = await ask('can my staff work late unpaid');
-  assert.strictEqual(r.body.mode, 'refusal');
-  assert.strictEqual(modelCalls.length, 1, 'no advice was written for an employment question');
-  // And every other refusal keeps its word, even where the words would place it.
-  resetAll();
-  installProfile();
-  replies = ['{"mode":"refused","intentId":null,"why":"outside_trade"}'];
-  r = await ask('how do I get more customers');
-  assert.strictEqual(r.body.mode, 'refusal');
-  assert.strictEqual(modelCalls.length, 1);
+  assert.match(advisorPrompt.CLASSIFIER_PROMPT, /A problem stated\s+plainly is never unclear/);
+  assert.match(advisorPrompt.CLASSIFIER_PROMPT, /"everyone is gone by midnight"\n\s+\{"mode": "advice", "intentId": null\}/);
 });
 
 // The model imitates the examples, so every example has to pass the check the
