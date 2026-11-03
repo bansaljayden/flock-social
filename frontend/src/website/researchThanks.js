@@ -5,6 +5,10 @@
 // Left out on purpose: sets never scored (held out whole, withdrawn, dropped,
 // not yet received or not downloaded), Flock's own recording, LTDv2 until it
 // is scored, and Wellington until its council has seen the results.
+// Academic-only sets (research_owl_sources_academic_only) stay off this site,
+// with one exception: VIPER, the site edition's sixteenth sealed test, whose
+// evaluation results KU Leuven allowed on this site on 2026-10-30, provided
+// no frame or dataset content is shown and the AVSS 2017 paper is cited.
 // The foot-traffic provider behind the live readings is not credited here;
 // the paper calls it the provider.
 
@@ -32,6 +36,7 @@ export const THERMAL_SETS = [
   { name: "MlDetection", who: "Vandersteegen, Reusen, Van Beeck and Goedemé, KU Leuven EAVISE, with Melexis", terms: "by permission" },
   { name: "Thermal-IM", who: "Tang, Ye, Ma and Zhao, Tsinghua University and MIT", terms: "BSD-3-Clause" },
   { name: "Multi-View Visible-Thermal images for Human Pose Estimation", who: "Lupión, Polo-Rodríguez, Medina-Quero, Sanjuan and Ortigosa, Universidad de Almería", terms: "CC BY-NC 3.0, by permission" },
+  { name: "VIPER, railway platforms", who: "Van Beeck, Van Engeland, Vennekens and Goedemé, KU Leuven EAVISE", terms: "AVSS 2017; scientific use only, results shown by permission" },
 ];
 
 export const ROBOFLOW_SETS = [
