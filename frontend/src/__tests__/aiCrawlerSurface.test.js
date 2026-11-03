@@ -408,15 +408,28 @@ describe('llms.txt stays true to the shipped model', () => {
     // pre-upgrade figures are on the whole set, as /about now says too.
     expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 119,939 readings did`);
     expect(flat).toContain('119,939 real live readings at venues in Philadelphia, the Lehigh Valley and Miami');
-    // The horizon and the target are stated with the figures, in the past
-    // tense, because they measure the forecast as it was served that month.
-    expect(flat).toContain('How the crowd numbers in the app performed one hour ahead');
+    // The horizon and the target are stated with the figures, and so is WHICH
+    // forecast they measure and over what. They are previous_weights: the
+    // forecast served from 2026-09-26, when the two serving switches went
+    // live, until its nowcast weights changed on 2026-10-14. The readings run
+    // from 09-09, so the first 39,000 of them were replayed, not served: the
+    // app showed v2.6.0's numbers then, the `before` figures below
+    // (backend/scripts/ml/MODEL-METRICS.md, the month section). "How the crowd
+    // numbers in the app performed ... from September 9" said the app showed
+    // these numbers over the whole window, and it did not.
+    expect(flat).toContain('How the crowd forecast Flock served from September 26 to mid-October 2026 scored one hour ahead, replayed on 119,939 real live readings at venues in Philadelphia, the Lehigh Valley and Miami from September 9 to October 8, 2026, none of which was used to set it');
     expect(flat).toContain("relative 0 to 100 scores, not headcounts");
-    // Held out of the forecast as it was served then, and of no other: the
-    // nowcast weights served since 2026-10-14 were chosen on these same
-    // readings (backend/scripts/ml/MODEL-METRICS.md), the reason the
-    // research page's chart note says the same thing in the same words.
-    expect(flat).toContain('from September 9 to October 8, 2026, none of which was used to set the forecast as it was served then');
+    expect(flat).not.toMatch(/crowd numbers in the app perform/);
+    // Both ends of the served period are the records' own: the end is the
+    // one servedAccuracy.json gives previous_weights, and the start is the
+    // date RETRAIN.md gives the switches the incumbent is scored with.
+    expect(tested.what).toMatch(/served until 2026-10-14/);
+    expect(served.before.configuration).toMatch(/as served before the two switches/);
+    const retrain = read(path.join(FRONTEND, '..', 'backend', 'scripts', 'ml', 'RETRAIN.md')).replace(/\s+/g, ' ');
+    expect(retrain).toMatch(/as production serves it: curve_offset \+ nowcast #? ?since 2026-09-26\./);
+    // Not held out of the forecast served now: the nowcast weights served
+    // since 2026-10-14 were chosen on these same readings, so the sentence
+    // names the forecast it is true of.
     expect(flat).not.toMatch(/held out from September/);
   });
 

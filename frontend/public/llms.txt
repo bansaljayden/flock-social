@@ -18,7 +18,7 @@ and /research are served to everyone as an HTML snapshot of the rendered page.
 /guidelines and /delete-account need JavaScript to read.
 This file is the summary and the index.
 
-Updated: November 2, 2026.
+Updated: November 3, 2026.
 
 ## What Flock does
 
@@ -79,11 +79,11 @@ Updated: November 2, 2026.
 
 ## Key facts about the crowd model
 
-How the crowd numbers in the app performed one hour ahead, measured on 119,939
-real live readings at venues in Philadelphia, the Lehigh Valley and Miami from
-September 9 to October 8, 2026, none of which was used to set the forecast as it
-was served then (the readings are a busyness provider's relative 0 to 100
-scores, not headcounts):
+How the crowd forecast Flock served from September 26 to mid-October 2026
+scored one hour ahead, replayed on 119,939 real live readings at venues in
+Philadelphia, the Lehigh Valley and Miami from September 9 to October 8, 2026,
+none of which was used to set it (the readings are a busyness provider's
+relative 0 to 100 scores, not headcounts):
 
 - Flock collects live busyness readings every hour. A venue's number is its own
   usual pattern for that hour, moved by its newest live readings where Flock has
