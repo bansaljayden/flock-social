@@ -36,5 +36,7 @@ test('the tile names the evening and says a small-hours peak belongs to that nig
 test('the server scans each evening into the small hours its curve keeps open, and flags a peak there', () => {
   expect(ROUTE).toMatch(/predictHourlyForecast\(venue, weather, 17, EVENING_HOURS \+ nightTail\(day\)\.length, day\)/);
   expect(ROUTE).toMatch(/advisorFacts\.nightTailHours\(openByDay, \(day\.getDay\(\) \+ 1\) % 7\)/);
-  expect(ROUTE).toMatch(/\.\.\.\(at >= EVENING_HOURS \? \{ afterMidnight: true \} : \{\}\)/);
+  expect(ROUTE).toMatch(/\.\.\.\(afterMidnight \? \{ afterMidnight: true \} : \{\}\)/);
+  // The night's own hours only, so a spring-forward strip's 5 AM is never it.
+  expect(ROUTE).toMatch(/h >= 17 \|\| h <= advisorFacts\.NIGHT_TAIL_LAST_HOUR/);
 });

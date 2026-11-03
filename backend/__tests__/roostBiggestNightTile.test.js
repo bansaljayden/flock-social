@@ -58,12 +58,21 @@ const label = (h) => (h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM
 // A night that builds to 1 AM and empties by 4.
 const LEVEL = { 17: 5, 18: 6, 19: 8, 20: 15, 21: 30, 22: 50, 23: 70, 0: 85, 1: 96, 2: 80, 3: 40, 4: 10 };
 let forecastCalls = [];
+// On the night the clocks spring forward the real strip skips 2 AM and walks
+// on: `springForward` makes every evening that night, with a loud 5 AM.
+let springForward = false;
 mlPredictor.predictHourlyForecast = async (_venue, _weather, startHour, count, day) => {
   // Today's strip (6 AM, 18 hours) is not the week; the six evenings are.
   if (startHour === 17) forecastCalls.push({ startHour, count, weekday: new Date(day).getDay() });
-  return Array.from({ length: count }, (_, i) => {
+  const hours = [];
+  for (let i = 0; hours.length < count; i += 1) {
     const h = (startHour + i) % 24;
-    return { hour: label(h), score: LEVEL[h], baselineScore: LEVEL[h], predictionMethod: 'ml' };
+    if (springForward && startHour === 17 && h === 2) continue;
+    hours.push(h);
+  }
+  return hours.map((h) => {
+    const level = springForward && h === 5 ? 99 : LEVEL[h];
+    return { hour: label(h), score: level, baselineScore: level, predictionMethod: 'ml' };
   });
 };
 
@@ -167,4 +176,25 @@ test('a room that closes at midnight, a morning that starts at 4 AM, and an unre
   body = await weekFor('PLACE_UNREAD', [], { fail: true });
   assert.deepStrictEqual(forecastCalls.map((c) => c.count), [7, 7, 7, 7, 7, 7]);
   assert.strictEqual(body.week.length, 6);
+});
+
+test('on the night the clocks spring forward, the morning after is never the night\'s peak', async () => {
+  // The strip skips the hour that does not exist and walks on to 5 AM, which
+  // belongs to the next morning (review, 2026-11-03): the peak stays inside
+  // the night, at its own 1 AM.
+  springForward = true;
+  try {
+    const body = await weekFor('PLACE_CLUB_DST', curve({
+      0: [0, 1, 2, 3, 4, ...EVENING], 1: EVENING, 2: EVENING, 3: EVENING, 4: EVENING, 5: EVENING, 6: [0, 1, 2, 3, 4, ...EVENING],
+    }));
+    for (const night of body.week) {
+      assert.notStrictEqual(night.peakHour, '5 AM', `${night.weekday} ${night.date}`);
+      if (night.weekday === 'Fri' || night.weekday === 'Sat') {
+        assert.strictEqual(night.peakHour, '1 AM');
+        assert.strictEqual(night.afterMidnight, true);
+      }
+    }
+  } finally {
+    springForward = false;
+  }
 });

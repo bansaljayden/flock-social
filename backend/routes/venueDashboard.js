@@ -1841,6 +1841,12 @@ const mlPredictor = require('../services/mlPredictor');
 // The night Roost's week uses: the venue's curve, and the small hours that
 // carry an evening on (/intelligence's week).
 const advisorFacts = require('../services/advisorFacts');
+// A forecast strip's hour label ("1 AM") as an hour of the day, or null.
+function hourOfLabel(label) {
+  const m = /^(\d{1,2})\s*(AM|PM)$/i.exec(String(label === null || label === undefined ? '' : label).trim());
+  if (!m) return null;
+  return (Number(m[1]) % 12) + (m[2].toUpperCase() === 'PM' ? 12 : 0);
+}
 // Round 15: the owner dashboard scored on Railway's UTC clock. venueLocalNow +
 // weekdayOffset move scoring onto the venue's wall clock, same as routes/crowd.js.
 const crowdEngine = require('../services/crowdEngine');
@@ -2173,7 +2179,13 @@ router.get('/intelligence', requirePro, async (req, res) => {
     // Mapped over `days` rather than pushed from the resolved order, so the week
     // the owner reads stays in date order whatever order the six settled in.
     const week = days.map((day, i) => {
-      const evening = evenings[i];
+      // The night's own hours only: on the night the clocks spring forward the
+      // strip walks past the hour that does not exist and on into 5 AM, which
+      // is the next morning, not this night (review, 2026-11-03).
+      const evening = evenings[i].filter((b) => {
+        const h = hourOfLabel(b.hour);
+        return h === null || h >= 17 || h <= advisorFacts.NIGHT_TAIL_LAST_HOUR;
+      });
       // WHICH evening hour is the peak is an ordering question, and ordering
       // is not the model's job any more: on within-night hour pairs the
       // trained delta layer scores 62.7% against the popular-times curve's
@@ -2187,6 +2199,8 @@ router.get('/intelligence', requirePro, async (req, res) => {
       let at = -1;
       evening.forEach((b, i) => { if (at < 0 || rank(b) > rank(evening[at])) at = i; });
       const peak = at >= 0 ? evening[at] : null;
+      const peakClock = peak ? hourOfLabel(peak.hour) : null;
+      const afterMidnight = peakClock !== null ? peakClock <= advisorFacts.NIGHT_TAIL_LAST_HOUR : at >= EVENING_HOURS;
       return {
         date: day.toISOString().slice(0, 10),
         weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
@@ -2194,7 +2208,7 @@ router.get('/intelligence', requirePro, async (req, res) => {
         peakHour: peak ? (peak.hour ?? null) : null,
         // A peak in the small hours belongs to this evening's night, and the
         // tile says so ("at 1 AM that night"), never the next day's.
-        ...(at >= EVENING_HOURS ? { afterMidnight: true } : {}),
+        ...(afterMidnight ? { afterMidnight: true } : {}),
       };
     });
 
