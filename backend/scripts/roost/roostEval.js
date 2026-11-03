@@ -19,6 +19,14 @@
 //   ... --only=typed | --only=chips    one half
 //   ... --venue=cafe                   one venue
 //   ... --out=roost-eval.json          also write every answer as JSON
+//   ... --q=saturday                   only the items whose question (or
+//                                      chip id) contains this text
+//
+// REPLAY (2026-11-03): --replay=<an earlier --out file> answers every model
+// call from that run's own recorded replies, in order, with no key and no
+// spend, so a change to the checks is scored on the drafts the real model
+// wrote. A call the earlier run never made (a route that changed since) gets
+// no reply and falls back the way an outage does.
 //
 // STAND-IN MODE, for when Gemini cannot be called (2026-10-28, credits out):
 // the same routes and the same payloads, with every model call recorded and
@@ -98,8 +106,42 @@ function roleOf(req) {
   return 'phrasing';
 }
 
-const real = standin ? null : advisorPhrasing.internals.getGenAI();
-if (!standin && !real) {
+// REPLAY: an earlier run's replies, by item, in the order they were made.
+// Rows written before roles were recorded have them read off the reply: the
+// router's is one {"mode": ...} object, and anything else answered the advice
+// or phrasing call after it.
+const ROUTER_REPLY = /^\s*\{\s*"mode"\s*:\s*"(?:grounded|advice|refused)"/;
+// The battery asks some questions twice (once alone, once with a follow-on),
+// so each item key holds its rows in the order the earlier run asked them.
+const replayed = new Map();
+if (args.replay) {
+  for (const row of JSON.parse(fs.readFileSync(path.resolve(String(args.replay)), 'utf8'))) {
+    const asked = row.kind === 'chip' ? row.intentId : row.q;
+    const key = `${row.venue}|${row.kind}|${asked}`;
+    replayed.set(key, [...(replayed.get(key) || []), (row.calls || []).map((c) => ({
+      raw: c.raw,
+      error: c.error,
+      router: c.role ? c.role === 'router' : ROUTER_REPLY.test(c.raw || ''),
+    }))]);
+  }
+}
+function replayKey(item) {
+  const [venue, kind, ...rest] = String(item).split('|');
+  const asked = rest.join('|');
+  return `${venue}|${kind}|${kind === 'follow-on' ? asked.split(' > ').pop() : asked}`;
+}
+// Which asking of the current item this is (0 for the first).
+const askedBefore = new Map();
+let currentNth = 0;
+function startItem(item) {
+  currentItem = item;
+  roleCounts = {};
+  currentNth = askedBefore.get(item) || 0;
+  askedBefore.set(item, currentNth + 1);
+}
+
+const real = standin || args.replay ? null : advisorPhrasing.internals.getGenAI();
+if (!standin && !args.replay && !real) {
   console.error('No GEMINI_API_KEY in the environment. Run it through `railway run --service "Flock-app-"`.');
   process.exit(1);
 }
@@ -108,25 +150,36 @@ advisorPhrasing.__setGenAIForTests({
   models: {
     generateContent: async (req) => {
       const t0 = Date.now();
+      // Which call this was, kept with its reply, so a later replay and the
+      // scoring below can tell the router from the answer.
+      const role = roleOf(req);
+      if (args.replay) {
+        const recorded = ((replayed.get(replayKey(currentItem)) || [])[currentNth] || [])[calls.length];
+        if (!recorded || recorded.error || recorded.router !== (role === 'router')) {
+          calls.push({ ms: 0, tokens: 0, raw: '', role, error: 'replay: the earlier run made no such call' });
+          throw new Error('replay: the earlier run made no such call');
+        }
+        calls.push({ ms: 0, tokens: 0, raw: recorded.raw, role });
+        return { text: recorded.raw, usageMetadata: { totalTokenCount: 0 } };
+      }
       if (standin) {
-        const role = roleOf(req);
         roleCounts[role] = (roleCounts[role] || 0) + 1;
         const key = `${currentItem}|${role}${roleCounts[role] > 1 ? `#${roleCounts[role]}` : ''}`;
         book.calls[key] = { role, system: req.config.systemInstruction, payload: req.contents[0].parts[0].text };
         const answer = answerFor(key, book.calls[key].payload);
         if (typeof answer !== 'string') {
-          calls.push({ ms: 0, tokens: 0, raw: '', error: 'stand-in: no answer recorded yet' });
+          calls.push({ ms: 0, tokens: 0, raw: '', role, error: 'stand-in: no answer recorded yet' });
           throw new Error('stand-in: no answer recorded yet');
         }
-        calls.push({ ms: 0, tokens: 0, raw: answer });
+        calls.push({ ms: 0, tokens: 0, raw: answer, role });
         return { text: answer, usageMetadata: { totalTokenCount: 0 } };
       }
       try {
         const resp = await real.models.generateContent(req);
-        calls.push({ ms: Date.now() - t0, tokens: resp?.usageMetadata?.totalTokenCount || 0, raw: resp?.text || '' });
+        calls.push({ ms: Date.now() - t0, tokens: resp?.usageMetadata?.totalTokenCount || 0, raw: resp?.text || '', role });
         return resp;
       } catch (err) {
-        calls.push({ ms: Date.now() - t0, tokens: 0, raw: '', error: `${err.status || ''} ${String(err.message || '').slice(0, 160)}` });
+        calls.push({ ms: Date.now() - t0, tokens: 0, raw: '', role, error: `${err.status || ''} ${String(err.message || '').slice(0, 160)}` });
         throw err;
       }
     },
@@ -368,6 +421,25 @@ function rawPoints(raw) {
   return { answer: parsed.answer.length, points: parsed.points.length };
 }
 
+// The model call that wrote the answer (the advice or phrasing call, never the
+// router), when it came back with text.
+function answerCall(callList) {
+  const answered = callList.filter((c) => c.role !== 'router' && !ROUTER_REPLY.test(c.raw || ''));
+  const last = answered[answered.length - 1];
+  return last && !last.error && last.raw ? last : null;
+}
+
+// THE CHECK CAN THROW A WHOLE DRAFT OUT, and until 2026-11-03 this script
+// counted that as one dropped point: a voided advice answer was replaced by
+// the playbook's, and "drafted 4, shown 3" read as a single lost sentence.
+// A draft is thrown out when the model wrote one and the owner was served the
+// template (grounded) or the playbook (advice) instead.
+function thrownOut(r) {
+  if (!answerCall(r.calls)) return false;
+  if (r.out.mode === 'template') return true;
+  return r.out.mode === 'advice' && (r.out.sources || []).some((s) => s.source === 'roost_playbook');
+}
+
 function score(out, { expect = null, money = false, route = null } = {}) {
   const problems = [];
   const text = String(out.text || '');
@@ -397,11 +469,10 @@ function score(out, { expect = null, money = false, route = null } = {}) {
 async function runChip(venue, intentId) {
   calls = [];
   currentVenue = venue;
-  currentItem = `${venue}|chip|${intentId}`;
-  roleCounts = {};
+  startItem(`${venue}|chip|${intentId}`);
   const t0 = Date.now();
   const out = await post('ask', { intentId });
-  const drafted = rawPoints(calls[calls.length - 1] && calls[calls.length - 1].raw);
+  const drafted = rawPoints(answerCall(calls) && answerCall(calls).raw);
   const problems = score(out);
   if (out.mode !== 'phrased') problems.push(`served the ${out.mode}`);
   return { kind: 'chip', venue, q: advisorPhrasing.ADVISOR_INTENTS[intentId].chip, route: 'grounded', intentId, out, ms: Date.now() - t0, calls, drafted, problems };
@@ -410,18 +481,21 @@ async function runChip(venue, intentId) {
 async function runTyped(venue, item, previous = null) {
   calls = [];
   currentVenue = venue;
-  currentItem = `${venue}|${previous ? 'follow-on' : 'typed'}|${item.key || item.q}`;
-  roleCounts = {};
+  startItem(`${venue}|${previous ? 'follow-on' : 'typed'}|${item.key || item.q}`);
   const t0 = Date.now();
   const out = await post('question', previous ? { question: item.q, previous } : { question: item.q });
-  const last = calls[calls.length - 1];
   const refused = out.mode === 'refusal' || out.mode === 'small_talk';
   const routeName = refused ? 'refused' : (['phrased', 'template'].includes(out.mode) ? 'grounded' : out.mode);
-  const drafted = refused ? null : rawPoints(last && last.raw);
+  const wrote = answerCall(calls);
+  const drafted = refused || !wrote ? null : rawPoints(wrote.raw);
   // A model call before the answer means the router ran; none means the
   // offline route placed it.
   const offline = !refused && calls.length === 0;
-  return { kind: previous ? 'follow-on' : 'typed', venue, q: item.q, route: routeName, intentId: out.intentId || null, offline, out, ms: Date.now() - t0, calls, drafted, problems: score(out, { expect: item.expect, money: item.money, route: routeName }) };
+  const r = { kind: previous ? 'follow-on' : 'typed', venue, q: item.q, route: routeName, intentId: out.intentId || null, offline, out, ms: Date.now() - t0, calls, drafted, problems: score(out, { expect: item.expect, money: item.money, route: routeName }) };
+  // A typed question the model answered and the check threw out fails the
+  // way a chip does: the owner got the fallback, not the answer.
+  if (thrownOut(r)) r.problems.push(out.mode === 'template' ? 'served the template' : 'the check threw out the model\'s answer, so the playbook answered');
+  return r;
 }
 
 // The follow-on half of a `then` item: asked with the first answer's context,
@@ -438,11 +512,17 @@ async function runFollowOn(venue, item, first) {
   return r;
 }
 
+// Points the check took out of a draft the owner was still shown. A draft
+// thrown out whole is counted on its own line, never as dropped points.
 function droppedSentences(r) {
-  if (!r.drafted || r.out.mode === 'template' || r.out.mode === 'refusal') return 0;
+  if (!r.drafted || r.out.mode === 'template' || r.out.mode === 'refusal' || thrownOut(r)) return 0;
   const kept = String(r.out.text || '').split('\n').filter((l) => l.startsWith(advisorAnswer.BULLET)).length;
   return Math.max(0, r.drafted.points - kept);
 }
+
+// --q=<text>: only the items whose question, or chip id, carries it.
+const onlyQ = args.q ? String(args.q).toLowerCase() : null;
+const picked = (...texts) => !onlyQ || texts.some((t) => String(t || '').toLowerCase().includes(onlyQ));
 
 (async () => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -453,6 +533,7 @@ function droppedSentences(r) {
     if (args.only !== 'typed') {
       for (const intentId of CHIPS) {
         if (intentId.startsWith('tables_') && !VENUES[venue].tables) continue;
+        if (!picked(intentId, advisorPhrasing.ADVISOR_INTENTS[intentId].chip)) continue;
         results.push(await runChip(venue, intentId));
         process.stdout.write('.');
       }
@@ -462,6 +543,7 @@ function droppedSentences(r) {
         // A table question is only fair to a venue with a table unit.
         if (item.tables && !VENUES[venue].tables) continue;
         if (item.kinds && !item.kinds.includes(venue)) continue;
+        if (!picked(item.q, item.then)) continue;
         const first = await runTyped(venue, item);
         results.push(first);
         if (item.then) results.push(await runFollowOn(venue, item, first));
@@ -475,6 +557,7 @@ function droppedSentences(r) {
   const errors = results.flatMap((r) => r.calls.filter((c) => c.error).map((c) => c.error));
   const tokens = results.reduce((n, r) => n + r.calls.reduce((m, c) => m + c.tokens, 0), 0);
   const dropped = results.reduce((n, r) => n + droppedSentences(r), 0);
+  const voided = results.filter(thrownOut);
   const ms = results.map((r) => r.ms).sort((a, z) => a - z);
   const pct = (p) => ms[Math.min(ms.length - 1, Math.floor(p * ms.length))];
 
@@ -492,6 +575,7 @@ function droppedSentences(r) {
   console.log(`answers: ${results.length}, passing: ${results.length - failing.length}, failing: ${failing.length}`);
   console.log(`modes: ${JSON.stringify(results.reduce((m, r) => ({ ...m, [r.out.mode]: (m[r.out.mode] || 0) + 1 }), {}))}`);
   console.log(`points the check dropped: ${dropped}`);
+  console.log(`drafts the check threw out whole: ${voided.length} (template ${voided.filter((r) => r.out.mode === 'template').length}, playbook ${voided.filter((r) => r.out.mode === 'advice').length})`);
   console.log(`model errors: ${errors.length}${errors.length ? ` (${[...new Set(errors)].slice(0, 3).join(' | ')})` : ''}`);
   console.log(`tokens: ${tokens}, latency p50 ${pct(0.5)} ms, p90 ${pct(0.9)} ms`);
 
