@@ -35,6 +35,52 @@ POLICY_KEYS = ('weather_policy', 'calendar_policy', 'dead_slot_policy', 'run_len
                'live_feature_policy', 'sports_features', 'dropped_features')
 
 
+def weight_policy_problems(refit_rec, gated_rec) -> list:
+    """The anchor-weight recipe, read off sample_weight_policy as prepare_features.py records it.
+
+    assign_sample_weights writes {policy, weight, target_realtime_share (auto only),
+    live_run_length {policy, ...}, realtime_loss_share}. The policy and the run-length policy
+    must match. A fixed weight (default, explicit, and auto_degenerate, which falls back to the
+    default) is part of the recipe and must match too. Under auto the weight is solved on the
+    training frame and capped at 0.05, so the refit's larger frame may land on another weight by
+    the same recipe; there the target share is what must match. realtime_loss_share is what each
+    frame came out at, expected to differ, and is not compared.
+
+    A record or field missing on either side is a problem, never a match: this check used to read
+    a key ('mode') that prepare_features.py never writes, so it compared None with None and
+    passed every refit.
+    """
+    missing = [name for name, rec in (('the refit', refit_rec), ('the gated metadata', gated_rec))
+               if not isinstance(rec, dict)]
+    if missing:
+        return [f'sample_weight_policy is missing from {" and ".join(missing)}: '
+                'the anchor-weight recipe cannot be checked']
+    out = []
+
+    def same(field, r, g):
+        if r is None or g is None:
+            out.append(f'sample_weight_policy.{field} is not recorded (refit {r!r}, gated {g!r})')
+            return False
+        if r != g:
+            out.append(f'sample_weight_policy.{field} differs: refit {r!r} vs gated {g!r}')
+            return False
+        return True
+
+    if same('policy', refit_rec.get('policy'), gated_rec.get('policy')):
+        if gated_rec['policy'] == 'auto':
+            same('target_realtime_share', refit_rec.get('target_realtime_share'),
+                 gated_rec.get('target_realtime_share'))
+        else:
+            same('weight', refit_rec.get('weight'), gated_rec.get('weight'))
+
+    def run_policy(rec):
+        rl = rec.get('live_run_length')
+        return rl.get('policy') if isinstance(rl, dict) else None
+
+    same('live_run_length.policy', run_policy(refit_rec), run_policy(gated_rec))
+    return out
+
+
 def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
     """Every reason the gated verdict may not be carried onto this refit. Empty means it may."""
     out = []
@@ -64,9 +110,7 @@ def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
     for k in POLICY_KEYS:
         if rc.get(k) != gc.get(k):
             out.append(f'corpus_contract.{k} differs: refit {rc.get(k)!r} vs gated {gc.get(k)!r}')
-    rw, gw = refit.get('sample_weight_policy'), gated.get('sample_weight_policy')
-    if isinstance(rw, dict) and isinstance(gw, dict) and rw.get('mode') != gw.get('mode'):
-        out.append(f'sample_weight_policy.mode differs: refit {rw.get("mode")!r} vs gated {gw.get("mode")!r}')
+    out.extend(weight_policy_problems(refit.get('sample_weight_policy'), gated.get('sample_weight_policy')))
     if 'training_metrics' not in refit:
         out.append('train_model.py has not run on the refit (no training_metrics)')
     gr, rr = gated.get('training_rows'), refit.get('training_rows')
