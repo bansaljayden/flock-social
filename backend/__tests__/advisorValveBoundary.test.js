@@ -441,6 +441,29 @@ test('a worked figure inside a supposition must add up, whatever the supposition
   ]) assert.ok(freeText.applyAdviceValve(right, facts), right);
 });
 
+test('"more than", a comparison in front and "your most popular" never set a reading aside', () => {
+  // Review of the third round, 2026-11-03: "more", "most" and "bars" are
+  // suggestion and rule-of-thumb words, and all of these passed on them.
+  for (const claim of [
+    'Your Friday hit more than 300 covers.',
+    'Your Friday drew fewer than 40 guests.',
+    'Like most bars, your Friday peaks at 11 PM.',
+    'Unlike other venues nearby, your room peaks at 11 PM.',
+    'Compared with other bars, your Friday hit 300 covers.',
+    'Your most popular night hit 300 covers.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS()), null, claim);
+  for (const fine of [
+    'Like most bars, your Friday peaks at 9 PM.',
+    'Like most bars, charge $12 for a happy hour special.',
+    'Aim for more than 300 covers on Friday.',
+    'If you hit more than 300 covers, add a door host.',
+    'Put more than 3 servers on the floor at 9 PM.',
+    'Most bars run 2 turns on a Friday.',
+    'Your Friday needs more than 3 servers.',
+    'Try the most popular 3 dishes as a set menu.',
+  ]) assert.ok(freeText.applyAdviceValve(fine, ADVICE_FACTS()), fine);
+});
+
 test('a fact never works with its own copy, a clock is matched to the minute, and a count of one is never 100%', () => {
   // Review of the third round, 2026-11-03; all three passed before it.
   const cap = { id: 'intake_capacity', value: 46, source: 'intake', asOf: 'owner-set 2026-10-01' };

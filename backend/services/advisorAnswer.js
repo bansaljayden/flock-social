@@ -906,6 +906,22 @@ function shareScenario(text, num, prefix) {
   return num.kind === 'fraction' && SCENARIO_BEFORE.test(prefix) && SCENARIO_AFTER.test(text.slice(num.index + num.length));
 }
 
+// WHAT THE SUGGESTION WORDS ARE READ IN (review of the third round,
+// 2026-11-03). "More", "fewer" and "less" mark a suggestion ("10 more
+// covers"), and so set aside "your Friday hit more than 300 covers", which is
+// a reading rounded; "most" and "bars" mark a rule of thumb ("most bars run"),
+// and so set aside the claim after "Like most bars, your Friday peaks at 11
+// PM" and "your most popular night hit 300 covers". Those three are taken out
+// before the suggestion words are looked for; what remains still sets aside
+// what it always did ("Like most bars, charge $12", "aim for more than 300").
+function exemptionText(prefix) {
+  return prefix
+    .replace(/\bmost\s+recent\b/gi, ' ')
+    .replace(/\b(?:your|our|the)\s+most\s+(?=[a-z])/gi, ' ')
+    .replace(/^\s*(?:just\s+)?(?:like|unlike|as\s+with|compared\s+(?:with|to)|similar\s+to)\b[^,]*,\s*/i, ' ')
+    .replace(/\b(?:more|fewer|less)\s+than\s*\$?\s*$/i, ' ');
+}
+
 // `alone`: the sentence is the whole answer line or point it sits in, the
 // one place a count to do may be set aside (countToDo).
 function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
@@ -921,7 +937,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
   // wait" would have let the 40 through on it (2026-11-03 self-review).
-  if (NOT_A_READING.test(prefix.replace(/\bmost\s+recent\b/gi, ' '))) return false;
+  if (NOT_A_READING.test(exemptionText(prefix))) return false;
   if (TRIAL_SPAN.test(prefix)) return false;
   // "a $12 special", "an 85 seat room": the article makes it a kind of
   // thing, not a reading of one.
