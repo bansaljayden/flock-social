@@ -628,6 +628,26 @@ function pastReading(prefix, after) {
   return SUBJECT.test(tail) && CLAIM_VERB.test(tail);
 }
 
+// A STANDING CLAIM ABOUT A DAY IS A READING TOO (second round's review,
+// 2026-11-03). "Every", "each", "most" and "many" mark a rate or a rule of
+// thumb below ("every 10 more covers", "most rooms run"), so in front of a day
+// they let "Every Friday your room hits 92", "Each Saturday you run 140
+// covers" and "Most Fridays your room hits 92" through, in the advice and the
+// grounded answers alike. One of them on a day or a stretch of the week, with
+// the venue (or the day itself) doing a claim verb right in front of the
+// number, makes it a reading, unless the clause asks or supposes, or the
+// number names a kind of thing ("a 6 week test").
+const HABITUAL = /\b(?:every|each|most|many)\s+(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|days?|nights?|evenings?|mornings?|afternoons?|weekends?|weekdays?|weeks?|months?|shifts?|services?|lunch(?:es)?|brunch(?:es)?|dinners?)\b/i;
+const VENUE_DOES = /\b(?:you|your|you['’](?:re|ve)|we|our|the\s+(?:room|floor|kitchen|bar|patio|door|line|crowd|rush|peak|place|venue))\b/i;
+const DAY_DOES = /\b(?:hits|runs|peaks|sees|gets|lands|tops|reaches|fills|averages|comes|sits|holds|draws|brings|pulls|ran|peaked|saw|got|landed|topped|reached|filled|averaged|came|sat|held|drew|brought|pulled)\b/i;
+const SUPPOSES = /\b(?:if|when|whenever|aim|aiming|target|goal|try|trying|test|testing|consider|could|would|['’]d|might|may|can|should|imagine|suppose|need|needs|want|wants|plan|planning|budget)\b/i;
+function standingReading(prefix) {
+  if (!HABITUAL.test(prefix) || SUPPOSES.test(prefix)) return false;
+  if (TRIAL_SPAN.test(prefix) || /\b(?:a|an)\s*\$?\s*$/i.test(prefix)) return false;
+  const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
+  return CLAIM_VERB.test(tail) && (VENUE_DOES.test(tail) || DAY_DOES.test(tail));
+}
+
 // `alone`: the sentence is the whole answer line or point it sits in, the
 // one place a count to do may be set aside (countToDo).
 function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
@@ -636,6 +656,7 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   if (pastReading(prefix, text.slice(num.index + num.length))) return true;
   if (numberFirstClaim(text, num, prefix)) return true;
   if (countToDo(text, num, prefix, all, alone)) return false;
+  if (standingReading(prefix)) return true;
   // "Most" marks a rule of thumb ("most rooms run"), never "most recent": with
   // the 50 above set aside, "Read your 50 most recent reviews: 40 mention the
   // wait" would have let the 40 through on it (2026-11-03 self-review).

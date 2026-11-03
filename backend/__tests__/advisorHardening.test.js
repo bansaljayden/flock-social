@@ -317,6 +317,53 @@ test('a suggestion word earlier in the clause does not turn a past reading into 
   assert.ok(served('When your Friday hit 92 last week, the door backed up.', facts));
 });
 
+// THE REVIEW OF THE SECOND ROUND (2026-11-03): "every", "each", "most" and
+// "many" in front of a day passed a standing claim about the venue as a
+// suggestion, in both the advice and the grounded answers.
+test('every, each or most in front of a day does not turn a standing claim into a suggestion', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  const advisorPhrasing = require('../services/advisorPhrasing');
+  const facts = [{ id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  const point = (s) => {
+    const out = advisorFreeText.applyAdviceValve(JSON.stringify({ answer: 'Fix the slowest step first.', points: [s] }), facts);
+    return Boolean(out && out.text.includes(s.slice(0, 20)));
+  };
+  for (const claim of [
+    'Every Friday your room hits 92.',
+    'Each Saturday you run 140 covers.',
+    'Most Fridays your room hits 92.',
+    'Every Friday hits 92 on our index.',
+    'On most Fridays you hit 92.',
+    'Most weekends the room fills by 10 PM.',
+    'Each weekend your door takes 300 people.',
+  ]) assert.strictEqual(point(claim), false, claim);
+  // The rate, the rule of thumb, the command, the supposition and the kind of
+  // thing that the same words mark are untouched.
+  for (const ok of [
+    'At $38 a head, every 10 more covers a week is $380.',
+    'Every Friday run 2 door lanes.',
+    'Every Friday, run 2 door lanes.',
+    'Each night you open, staff 2 bartenders.',
+    'Every weekend you should staff 2 extra bartenders.',
+    'If every Friday your room hits 92, add a bartender.',
+    'Most nights bars run 2 bartenders per 100 guests.',
+    'Every week you run a 6 week test of one change.',
+  ]) assert.ok(point(ok), ok);
+  // The grounded answers: the same claim is served when the facts hold it.
+  const block = { facts: [
+    { id: 'peak_hour', value: 23, unit: 'hour', source: 'model_holdout', asOf: '2026-11-03' },
+    { id: 'peak_score', value: 92, source: 'model_holdout', asOf: '2026-11-03' },
+  ] };
+  const grounded = (s) => {
+    const out = advisorPhrasing.applyValve(JSON.stringify({ answer: 'Your peak is {{fact:peak_hour}}.', points: [s] }), block);
+    return Boolean(out && out.text.includes(s.slice(0, 20)));
+  };
+  assert.strictEqual(grounded('Every Friday your room hits 70.'), false);
+  assert.strictEqual(grounded('Most Fridays your room peaks around 9 PM.'), false);
+  assert.ok(grounded('Every Friday your room hits {{fact:peak_score}}.'));
+  assert.ok(grounded('Most Fridays peak around {{fact:peak_hour}}.'));
+});
+
 test('an ellipsis does not move the claim rules off their numbers', () => {
   const advisorFreeText = require('../services/advisorFreeText');
   for (const claim of ['Heads up… expect around 45 people tonight.', 'Last Tuesday… down 18% on your usual.']) {
