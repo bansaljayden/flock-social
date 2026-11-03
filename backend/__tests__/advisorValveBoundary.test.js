@@ -275,6 +275,55 @@ test('a made-up point is dropped and the rest of the answer stands', () => {
   ].join('\n'));
 });
 
+test('a verb in its base form right after the room doing it is a reading, and a worked example, a command\'s outcome or a target is not', () => {
+  // Third round, 2026-11-03: the claim verbs were listed as "sees", "saw" and
+  // "gets", so every one of these passed with nothing behind it.
+  const facts = [...ADVICE_FACTS(), { id: 'intake_typical_spend_per_person', value: 24, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  for (const claim of [
+    'On Fridays you see 300 people.',
+    'You serve 140 covers on Fridays.',
+    'On Saturdays we pour 400 drinks.',
+    'You usually get 40 walk-ins on Tuesdays.',
+    'You’ll see 300 people on Friday.',
+    'On Fridays you bring in about 300 people.',
+    'On Fridays you see well over 300 people.',
+    'On Fridays you see a crowd of 300.',
+    'On Fridays you take in $5,000.',
+    'We see 82 on your Friday.',
+    'Your Fridays see 300 people.',
+    'Fridays draw 300 people.',
+    'Your guests spend $40 a head.',
+    'Your regulars order 2 drinks each.',
+    'Your guests stay for 90 minutes.',
+    'Your reviews mention the wait 40 times.',
+    'On Fridays people wait 20 minutes for a drink.',
+    'Fill your room, since on Fridays you see 300 people.',
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, facts), null, `"${claim}" is a reading nobody measured`);
+  for (const fine of [
+    // Worked examples end on what is kept, given up or spent.
+    'On a $20 order with a 25% app cut, you keep $15.',
+    'With food cost around 30%, you keep roughly $266 of that each week.',
+    'At $5 a flyer, you spend $250 for 50 flyers.',
+    // Advice, a supposition, a target, a condition and a command's outcome.
+    'You need 2 servers on Friday.',
+    'If you see 300 people on Fridays, add a door host.',
+    'When you see 300 people at the door, open a second lane.',
+    'Make sure you get 2 servers on the floor by 7 PM.',
+    'Until you fill 40 seats, keep 1 bartender on.',
+    'Fill 15 early seats and you bring in roughly $450.',
+    'You can see 300 people on a big night.',
+    'You should see 20 more covers by week 4.',
+    // A general rule about guests, with no venue in it.
+    'Guests see 3 prices and pick the middle one.',
+    // And the same shapes worked from the venue's own facts.
+    'At {{fact:intake_typical_spend_per_person}} a head, 15 early guests bring in $360.',
+    'Your Friday peak lands at {{fact:peak_hour}}, and you see your crowd peak at 9 PM.',
+  ]) {
+    const out = freeText.applyAdviceValve(fine, facts);
+    assert.ok(out, fine);
+  }
+});
+
 test('a number that opens its clause as the subject of a claim is read as one, and a target or a rule of thumb that opens on a number is not', () => {
   // Never read at all before 2026-11-03: the rules look for a subject in front
   // of a number, and here the number is the subject.

@@ -468,6 +468,38 @@ const SUBJECT = /\b(you|your|yours|you['’](?:re|ve|ll)|we|our|ours|us|yesterda
 // The verb that turns a number into a reading: it sits within a few words in
 // front of the number.
 const CLAIM_VERB = /\b(is|are|was|were|ran|run|runs|hit|hits|had|has|have|got|gets|saw|sees|peaked|peaks|peak|averaged|averages|came|comes|sat|sits|read|reads|dropped|drops|fell|falls|rose|rises|climbed|climbs|jumped|grew|grows|slipped|slips|projects|projected|shows|showed|landed|lands|land|puts|put|served|serves|seated|turn|turned|turns|filled|fills|waited|waits|lasted|lasts|took|takes|stayed|stays|totaled|totalled|totals|reached|reaches|held|holds|scored|scores|logged|recorded|expect|expects|expected|estimate|estimates|estimated|forecasts|forecast|measured|counted|posted|did|does|made|makes|earned|earns|brought|brings|pulled|pulls|missed|lost|gained|added|cleared|clears|closes|closed|opens|opened|stops|stopped|starts|started|ends|ended|peaking|running|sitting|landing|coming|averaging|reading|holding|hitting|turning|closing|opening|starting|ending)\b|['’]s\b|:\s*$/i;
+// THE SAME VERBS IN THE BASE FORM, RIGHT AFTER THE ROOM DOING THEM (third
+// round, 2026-11-03). CLAIM_VERB reads "your Friday sees 300" and "you saw
+// 300", and "On Fridays you see 300 people", "we pour 400 drinks" and "your
+// guests spend $40 a head" passed: after "you", "we", "they" or the room's own
+// plural ("your Fridays", "your regulars") the verb takes its base form.
+// A closed list of what a room does, read with the doer right in front of
+// the verb and at most three words between the verb and the number ("see
+// about 300", "mention the wait 40 times", "stay for 90 minutes"), none of
+// them opening a clause of its own ("see why 2 lanes matter"). "You keep $15
+// of a $20 order", "you give up $0.88 a cover" and "you need 2 servers" are
+// worked examples and advice, and their verbs are not in the list.
+const BASE_VERB = /(?:see|serve|pour|sell|seat|host|draw|pull|bring|fill|do|get|average|reach|top|book|welcome|pack|handle|count|log|record|post|ring|gross|net|take|make|earn|hold|attract|run|hit|turn|peak|land|open|close|start|end|stay|sit|wait|visit|order|tip|drink|eat|rate|mention|complain|return|arrive|come|walk|leave|show|spend)/;
+const DOER = /(?:(?:you|we|they)(?:['’]ll|\s+will)?|(?:mon|tues|wednes|thurs|fri|satur|sun)days|weekends|weekdays|nights|evenings|mornings|afternoons|lunches|dinners|brunches|guests|customers|regulars|diners|visitors|patrons|servers|bartenders|staff|crowds|reviews|reviewers|people)/;
+const OFTEN = /(?:usually|typically|often|normally|always|still|also|only|generally|regularly|reliably|consistently|routinely|easily|already)/;
+const VERB_TO_NUMBER = /(?:\s+(?!(?:and|but|or|so|then|if|when|whether|because|which|who|whom|that|while|why|how|what|where)\b)[^\s,;:.!?]+){0,3}\s*$/;
+const DOES = `${DOER.source}\\s+(?:${OFTEN.source}\\s+)?${BASE_VERB.source}\\b${VERB_TO_NUMBER.source}`;
+const DOER_THEN_BASE = new RegExp(`\\b${DOES}`, 'i');
+// A target or a condition in front of the doer is not a reading: "make sure
+// you get 2 servers on", "until you fill 40 seats", "once you hit 100 covers".
+const DOER_AIMED = new RegExp(`\\b(?:make\\s+sure|be\\s+sure|ensure|so\\s+that|until|till|unless|once|before|after|as\\s+soon\\s+as|by\\s+the\\s+time|in\\s+case|as\\s+long\\s+as|provided)\\s+(?:that\\s+)?${DOES}`, 'i');
+// Nor is the outcome of a command: "Fill 15 early seats and you bring in
+// roughly $450" is "if you fill them, you bring in", worked from a price the
+// answer suggested (the 2026-11-03 prereview run). The sentence opens on the
+// command and the doer comes after "and".
+const COMMAND_OPENS = /^\s*(?:(?:first|then|now|so|just)\s*,?\s+)?(?:fill|add|book|run|seat|sell|get|bring|turn|push|post|offer|put|keep|move|start|try|test|price|charge|cut|raise|drop|staff|schedule|train|ask|invite|host|hold|open|close|make|give|use|pick|set|send|feature|promote|pair|bundle|batch|prep|pull|draw|serve|pour|launch|build|swap|switch|stagger|split|limit|release|track|reward|greet|clear|win|land|sign|convert|catch|capture|hook|lure|attract|welcome|pack)\b/i;
+const AND_THE_DOER = new RegExp(`\\band\\s+(?:then\\s+)?${DOES}`, 'i');
+// The money flows a worked example ends on are not in the list: "you keep",
+// "you pay", "you save", "you lose", "you give up". "spend" is read after the
+// room's own guests ("your guests spend $40"), never after "you" or "we",
+// whose spending is what a worked example adds up.
+const DOER_SPENDS = /\b(?:you|we)(?:['’]ll|\s+will)?\s+(?:\w+\s+)?spend\b/i;
+
 // Words that make the number a suggestion, a hypothetical, a price or a
 // general rule rather than a reading: "if you add 10 covers", "aim for 85",
 // "charge $12", "your best move is", "most rooms run".
@@ -700,7 +732,10 @@ function isReadingSlot(text, num, all = numbersIn(text), alone = false) {
   if (AGAINST_HISTORY.test(text.slice(num.index + num.length))) return true;
   if (!SUBJECT.test(prefix)) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
-  return CLAIM_VERB.test(tail);
+  if (CLAIM_VERB.test(tail)) return true;
+  // The doer and its verb in the base form (third round, 2026-11-03).
+  return DOER_THEN_BASE.test(prefix) && !DOER_AIMED.test(prefix) && !DOER_SPENDS.test(tail)
+    && !(COMMAND_OPENS.test(text) && AND_THE_DOER.test(prefix));
 }
 
 // ── What the venue's numbers support ────────────────────────────────────────
