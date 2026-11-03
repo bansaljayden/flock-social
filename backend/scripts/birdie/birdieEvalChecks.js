@@ -684,6 +684,16 @@ function checkAnswer(input) {
     problems.push('game night: says the game makes a venue busier or quieter');
   }
 
+  // A spot the reply names has a card to tap when this turn's searches
+  // returned it: the cards come from those rows, and "Night Owl Diner, the
+  // only spot open" once went out over four cards for places that were shut.
+  const cardIds = new Set(((out && out.venues) || []).map((c) => c.place_id));
+  if (cardIds.size) {
+    for (const v of mentioned) {
+      if (turnFacts.searchRows.has(v.id) && !cardIds.has(v.id)) problems.push(`cards: names ${v.name}, and no card for it went out`);
+    }
+  }
+
   // Tables only where a search said so.
   if (/\btables?\b/i.test(text) && !facts.tablesFor.size) warnings.push('tables: talks about tables with no table data in any result');
   // And only for the venue whose result carries them: one answer gave the

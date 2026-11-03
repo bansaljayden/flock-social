@@ -290,6 +290,18 @@ test('a time after 10 PM suggested to someone under 18 by their date of birth fa
   assert.deepStrictEqual(late('Midnight is your best shot.', null), []);
 });
 
+test('a spot the reply names has a card when the turn searched it', () => {
+  const nightowl = cases.byKey.get('nightowl');
+  const mango = cases.byKey.get('mango');
+  const tools = [search(mango, thistle, nightowl)];
+  const cards = (...vs) => vs.map((x) => ({ place_id: x.id, name: x.name }));
+  // A live answer (L01), with the cards it went out with.
+  const missing = grade("Night Owl Diner on South Broad. It's cheap and the only spot actually open right now.", { tools, out: { text: "Night Owl Diner on South Broad. It's cheap and the only spot actually open right now.", venues: cards(mango, thistle) } });
+  assert.ok(missing.problems.some((p) => /cards: names Night Owl Diner, and no card for it went out/.test(p)), missing.problems.join('\n'));
+  const carded = grade('Night Owl Diner, open and cheap.', { tools, out: { text: 'Night Owl Diner, open and cheap.', venues: cards(mango, nightowl) } });
+  assert.ok(!carded.problems.some((p) => /^cards/.test(p)), carded.problems.join('\n'));
+});
+
 test('open tables belong to the venue whose result carries them', () => {
   const mango = cases.byKey.get('mango');
   // Mango Street's row has tables; Thistle & Crust's has none.
