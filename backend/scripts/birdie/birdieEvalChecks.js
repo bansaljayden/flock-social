@@ -190,6 +190,7 @@ function checkVoice(text, problems, warnings, info) {
   if (emoji > 1) problems.push(`voice: ${emoji} emoji`);
   if (/\b(as an ai|i'?m an ai|i am an ai|language model|ai assistant|i'?m (just )?a (bot|chatbot|program)|i'?m an assistant)\b/i.test(t)) problems.push('voice: calls itself an AI or an assistant');
   if (/\*\*|__|`|^#{1,6}\s/m.test(t)) problems.push('format: markdown the app prints as raw symbols');
+  if (/\bprice[ _]level\b/i.test(t)) problems.push('voice: reads "price level" back like a field');
   if (/^\s*([-*•]|\d+[.)])\s+/m.test(t)) warnings.push('format: a list in a chat bubble');
   if (/^\s*(let me|i'?ll (check|look|search|pull|find)|checking|searching|one sec|hold on|give me a sec)/i.test(t)) problems.push('voice: narrates what it is about to do');
   if (/\b(it'?s|this is|that'?s|isn'?t)\s+not\s+(just\s+)?[^.,;!?]{1,40}[,;]\s*(it'?s|this is|that'?s)\b/i.test(t)) warnings.push('voice: an "it\'s not X, it\'s Y" pivot');

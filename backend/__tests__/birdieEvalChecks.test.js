@@ -92,6 +92,7 @@ test('the voice rules', () => {
   }
   assert.ok(grade('I\'m an AI, so take this with salt.').problems.some((p) => /calls itself an AI/.test(p)));
   assert.ok(grade('Let me check that for you.').problems.some((p) => /narrates/.test(p)));
+  assert.ok(grade('Palma Pasta Bar, rated 4.7, price level three.').problems.some((p) => /price level/.test(p)));
 });
 
 test('repeating the instructions back is a leak', () => {
