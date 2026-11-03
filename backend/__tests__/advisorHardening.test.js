@@ -267,7 +267,7 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
   const advisorPrompt = require('../services/advisorPrompt');
   const facts = [{ id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
   const served = (answer) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), facts);
-  for (const taught of ['aim for 25 more covers a week', 'read the 50 most recent reviews', 'when the rush starts, run 2 door lanes']) {
+  for (const taught of ['aim for 25 more covers a week', 'read the 50 most recent reviews', 'when the rush starts, run 2 door lanes', 'if 80 guests pay $10 each, that is $800']) {
     assert.ok(advisorPrompt.SYSTEM_PROMPT.includes(taught) && advisorPrompt.ADVICE_SYSTEM_PROMPT.includes(taught), taught);
   }
   // The prompt shows the wording; it does not explain which wordings the
@@ -282,6 +282,10 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
     // count of the newest records to read is a count to do
     // (advisorAnswer.countToDo, pinned in advisorValveBoundary.test.js).
     'Read your 50 latest reviews and fix the most common complaint.',
+    // A worked example in the shape the prompt teaches (second round's final
+    // run: "80 paid entries at $10 brings in $800" lost its line, and stays
+    // a claim below, because "On Fridays, 80 paid entries..." is the same shape).
+    'If 80 guests pay $10 each, that is $800 straight to margin.',
   ]) assert.ok(served(ok), ok);
   for (const claim of [
     'Your rating fell across your 50 latest reviews.',
@@ -292,6 +296,8 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
     'Wait times on Saturday ran 25 minutes.',
     'Your Tuesday special brought in 25 more covers a week.',
     'Last month you saw 60 new customers a week.',
+    'At a capacity of 120, 80 paid entries at $10 brings in $800 straight to margin.',
+    'On Fridays, 80 paid entries at $10 bring in $800.',
   ]) assert.strictEqual(served(claim), null, claim);
 });
 
