@@ -1767,6 +1767,18 @@ async function primeVenueCurve(placeId, userId) {
   }
 }
 
+// THE CURVE THE STRIPS JUST READ, for a caller that needs its open hours
+// (routes/venueDashboard.js, the week's nights, 2026-11-03). Through
+// primeVenueCurve, so it is the same read, the same charge and the same cache:
+// a route that has already built a strip for this venue sends no second query.
+// Null when the read was refused or the venue has no rows remembered.
+async function venueCurveRows(placeId, userId) {
+  if (!placeId) return null;
+  await primeVenueCurve(placeId, userId);
+  const cached = curveCache.get(placeId);
+  return cached && Date.now() - cached.ts < CURVE_CACHE_TTL ? cached.rows : null;
+}
+
 // `userId` (optional) is the account a cache MISS is charged to — see
 // allowVenueLookup. Hits are answered above the gate and cost nothing.
 // `miss` (optional): an object this call writes its own miss reason into
@@ -5650,6 +5662,8 @@ module.exports = {
   // costs no queries. services/advisorFacts.js fetchBaselineCurve is the caller
   // it was written for; see the header above primeBaselineCache.
   primeBaselineCache,
+  // The venue's weekly curve as the strips read it (see venueCurveRows).
+  venueCurveRows,
   getLabel,
   init,
   // Internals exported for backend/__tests__/mlPipeline.test.js — the

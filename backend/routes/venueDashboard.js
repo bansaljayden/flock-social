@@ -1838,6 +1838,9 @@ router.get('/public-events/:placeId', placeIdParam, async (req, res) => {
 
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
+// The night Roost's week uses: the venue's curve, and the small hours that
+// carry an evening on (/intelligence's week).
+const advisorFacts = require('../services/advisorFacts');
 // Round 15: the owner dashboard scored on Railway's UTC clock. venueLocalNow +
 // weekdayOffset move scoring onto the venue's wall clock, same as routes/crowd.js.
 const crowdEngine = require('../services/crowdEngine');
@@ -2145,8 +2148,27 @@ router.get('/intelligence', requirePro, async (req, res) => {
       day.setHours(17, 0, 0, 0);
       days.push(day);
     }
+    // THE WHOLE NIGHT, NOT 5 TO 11 PM (2026-11-03). A club that peaks at 1 AM
+    // showed its 11 PM hour on "Biggest Night Ahead" while Roost named 1 AM,
+    // because this scan stopped at 11 PM. A night runs from its evening into
+    // the small hours that carry it on, the rule Roost's own week uses
+    // (advisorFacts.nightTailHours): an hour from midnight to 4 AM belongs to
+    // the night before when the venue's curve has the room open at 11 PM and
+    // every hour from midnight up to it. Each evening is scanned to the end of
+    // its own night and keeps its own day's name. The curve is the one today's
+    // strip just read (mlPredictor.venueCurveRows), so no second query. Without
+    // a curve to read, the evening alone, as before.
+    let nightTail = () => [];
+    try {
+      const rows = await mlPredictor.venueCurveRows(venue.place_id || ctx.google_place_id, req.user.id);
+      const openByDay = advisorFacts.openHoursByDay((rows || []).map((r) => ({
+        day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline),
+      })));
+      nightTail = (day) => advisorFacts.nightTailHours(openByDay, (day.getDay() + 1) % 7);
+    } catch { /* the evening alone */ }
+    const EVENING_HOURS = 7;
     const evenings = await Promise.all(
-      days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day))
+      days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, EVENING_HOURS + nightTail(day).length, day))
     );
     // Mapped over `days` rather than pushed from the resolved order, so the week
     // the owner reads stays in date order whatever order the six settled in.
@@ -2162,14 +2184,17 @@ router.get('/intelligence', requirePro, async (req, res) => {
       // hour is stays the model's number, read at the hour just named, so the
       // pair the owner reads describes one hour rather than two.
       const rank = crowdEngine.orderingAxis(evening).valueOf;
-      const peak = evening.length
-        ? evening.reduce((a, b) => (rank(b) > rank(a) ? b : a), evening[0])
-        : null;
+      let at = -1;
+      evening.forEach((b, i) => { if (at < 0 || rank(b) > rank(evening[at])) at = i; });
+      const peak = at >= 0 ? evening[at] : null;
       return {
         date: day.toISOString().slice(0, 10),
         weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
         peakScore: peak ? (peak.score ?? null) : null,
         peakHour: peak ? (peak.hour ?? null) : null,
+        // A peak in the small hours belongs to this evening's night, and the
+        // tile says so ("at 1 AM that night"), never the next day's.
+        ...(at >= EVENING_HOURS ? { afterMidnight: true } : {}),
       };
     });
 

@@ -1524,7 +1524,11 @@ export default function VenueDashboard({
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${spokenHourLabel(weekPeak.peakHour)}` : ''}</p>
+              {/* Each night runs into its small hours and keeps its evening's
+                  name (routes/venueDashboard.js, /intelligence), so a club's
+                  1 AM peak reads "Fri" over "at 1 AM that night", never as
+                  the next day's. */}
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{weekPeak ? `projected ${weekPeak.peakScore} at ${spokenHourLabel(weekPeak.peakHour)}${weekPeak.afterMidnight ? ' that night' : ''}` : ''}</p>
             </div>
           </div>
 
