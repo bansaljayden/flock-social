@@ -127,6 +127,56 @@ test('an hour or a day of the month is a claim at midnight, noon, 1 AM and the 1
   }
 });
 
+test('AM and PM are two different hours: a fact in one half of the day never vouches for the same hour in the other', () => {
+  // Third round, 2026-11-03: every one of these passed, because a clock time
+  // and an hour fact each carried their 12-hour reading beside the 24-hour one.
+  const hour = (value) => [{ id: 'peak_hour', value, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' }];
+  const kitchen = { id: 'intake_kitchen_last_order', value: '14:30', source: 'intake', asOf: 'owner-set 2026-10-01', label: 'You told us the kitchen takes last orders at 2:30 PM.' };
+  const opens = { id: 'intake_opens', value: '09:30', source: 'intake', asOf: 'owner-set 2026-10-01' };
+  const label = { id: 'peak_2026_11_06', value: { weekday: 'Friday' }, source: 'model_holdout', asOf: '2026-11-03', label: 'Friday projects busiest around 9 PM, at 82 on our 0 to 100 index.' };
+  for (const [draft, facts, opts] of [
+    ['Your Friday peaks at 9 AM.', hour(21)],
+    ['Your Friday peaks at 9 PM.', hour(9)],
+    ['Your Friday peaks at 21:00.', hour(9)],
+    ['Your Friday peaks at 12 PM.', hour(0)],
+    ['Your Friday peaks at noon.', hour(0)],
+    ['Your Friday peaks at 12 AM.', hour(12)],
+    ['Your Friday peaks at midnight.', hour(12)],
+    ['Your Friday peaks at 9 AM.', [label]],
+    ['Your kitchen closes at 2:30 AM.', [kitchen]],
+    ['Your kitchen opens at 9:30 PM.', [opens]],
+    ['Your Friday peaks at 2 PM.', [], { texts: ['we close at 2am'] }],
+  ]) {
+    assert.strictEqual(freeText.applyAdviceValve(draft, facts, opts), null, `"${draft}" is the wrong half of the day for ${JSON.stringify(facts.map((f) => f.value))}`);
+  }
+  assert.strictEqual(phrasing.applyValve('Your index peaks at 9 AM on {{fact:peak_day}}.', { facts: [...BLOCK().facts, ...hour(21)] }), null);
+  // The same hours in the half of the day the facts hold still render, and a
+  // time written without AM or PM ("9:00", the owner's "10:30") can be either.
+  for (const [draft, facts, opts] of [
+    ['Your Friday peaks at 9 PM.', hour(21)],
+    ['Your Friday peaks at 21:00.', hour(21)],
+    ['Your Friday peaks at 9:00.', hour(21)],
+    ['Your Friday peaks at 9:00.', hour(9)],
+    ['Your Friday peaks at midnight.', hour(0)],
+    ['Your Saturday peaks at noon.', hour(12)],
+    ['Your Saturday peaks at 12 PM.', hour(12)],
+    ['Your Friday peaks at 9 PM.', [label]],
+    ['Your kitchen closes at 2:30 PM.', [kitchen]],
+    ['Your kitchen opens at 9:30 AM.', [opens]],
+    ['Your 10:30 PM close leaves an hour after the rush.', [], { texts: ['we close at 10:30'] }],
+    ['Your crowd is gone by 2 AM, so start last call at 1:30 AM.', [], { texts: ['we close at 2am'] }],
+    ['Your kitchen closes at {{fact:intake_kitchen_last_order}}, 6.5 hours before your {{fact:peak_hour}} peak.', [...hour(21), kitchen]],
+  ]) {
+    const out = freeText.applyAdviceValve(draft, facts, opts);
+    assert.ok(out, draft);
+  }
+  assert.strictEqual(
+    freeText.applyAdviceValve('Your kitchen closes at {{fact:intake_kitchen_last_order}}, 18.5 hours before your {{fact:peak_hour}} peak.', [...hour(9), kitchen]),
+    null,
+    'a gap is worked from the hours the facts hold, never from the other half of the day',
+  );
+});
+
 // ── 2. The numbers an owner needs ──────────────────────────────────────────
 
 test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {

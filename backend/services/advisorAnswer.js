@@ -357,10 +357,24 @@ const CLOCK_WORD = /\b(midnight|noon)\b/gi;
 const CLOCK_WORD_HOUR = Object.freeze({ midnight: 0, noon: 12 });
 const NUMBER = /(\$\s?)?\b(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:(st|nd|rd|th)\b)?(\s?(?:%|percent\b|per\s+cent\b))?/gi;
 
+// AM AND PM ARE TWO DIFFERENT HOURS (2026-11-03, third round). A clock time
+// used to carry its 12-hour reading beside its 24-hour one, and so did every
+// hour fact, so a 9 PM peak vouched for "your Friday peaks at 9 AM", "21:00"
+// for a 9 AM fact, a midnight fact for "12 PM" and the owner's "we close at
+// 2am" for "your Friday peaks at 2 PM". A time that says which half of the day
+// it is in ("9 PM", "21:30", "09:30", "12:00", "midnight") is now only that
+// hour. Only a time from 1:00 to 11:59 written without one ("9:30") is either
+// half, and it carries the other half as its second reading, matched but
+// never worked with.
+/** The other half of the day for an hour from 1 to 11 written without AM or PM: 9 is also 21. */
+function otherHalf(hour) {
+  return hour + 12;
+}
+
 /**
  * Every number written in a piece of text, with where it sits. Clock times
- * come out as hours of the day (9:30 PM is 21.5) and also carry the hour as
- * it was written, because "9" and "21" are both the same kitchen.
+ * come out as hours of the day (9:30 PM is 21.5). A time written without AM or
+ * PM ("9:30") also carries the other half of the day as `alt` (21.5).
  */
 function numbersIn(text) {
   const src = asciiDigits(text);
@@ -388,7 +402,8 @@ function numbersIn(text) {
     const min = m[2] ? Number(m[2]) : 0;
     const pm = m[3].toLowerCase() === 'p';
     const h24 = (h12 % 12) + (pm ? 12 : 0);
-    out.push({ index: m.index, length: m[0].length, value: h24 + min / 60, alt: [h12 + min / 60], kind: 'clock', dim: 'clock' });
+    // AM or PM says which hour it is: no second reading.
+    out.push({ index: m.index, length: m[0].length, value: h24 + min / 60, alt: [], kind: 'clock', dim: 'clock' });
     mark(m.index, m[0].length);
   }
   CLOCK_24.lastIndex = 0;
@@ -396,7 +411,11 @@ function numbersIn(text) {
     if (taken[m.index]) continue;
     const h = Number(m[1]);
     const min = Number(m[2]);
-    out.push({ index: m.index, length: m[0].length, value: h + min / 60, alt: [(h % 12 || 12) + min / 60], kind: 'clock', dim: 'clock' });
+    // "21:30", "00:30" and the database's "09:30" say which half of the day
+    // they are in, and "12:00" is noon (midnight is never noon, 2026-11-03
+    // review); "9:30" could be either.
+    const eitherHalf = h >= 1 && h <= 11 && !/^0/.test(m[1]);
+    out.push({ index: m.index, length: m[0].length, value: h + min / 60, alt: eitherHalf ? [otherHalf(h) + min / 60] : [], kind: 'clock', dim: 'clock' });
     mark(m.index, m[0].length);
   }
   CLOCK_WORD.lastIndex = 0;
@@ -716,13 +735,12 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
     const ids = new Set([String(f.id)]);
     const v = f.value;
     const dim = dimOfFact(f);
-    // A 12-hour reading of an hour ("9" for 21) may be matched, never worked
-    // with: "your 9 PM peak is 9 hours before closing" came out of 9 minus a
-    // midnight the owner typed (2026-11-03 review). Gaps are taken between
-    // 24-hour values only.
+    // An hour fact is the hour it holds, in one half of the day. Its 12-hour
+    // reading ("9" for 21) used to be offered beside it, and it vouched for
+    // "9 AM" (third round, 2026-11-03); a claim written without AM or PM
+    // ("9:00") still finds it through the claim's own second reading.
     if (typeof v === 'number') {
       addValue(base, v, ids, { dim });
-      if (f.unit === 'hour') addValue(base, (v % 12) || 12, ids, { dim, arith: false });
       if (Math.abs(v) <= 1 && v !== 0) addValue(base, v * 100, ids, { dim: 'pct' });
     } else if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) {
       addValue(base, Number(v), ids, { dim });
