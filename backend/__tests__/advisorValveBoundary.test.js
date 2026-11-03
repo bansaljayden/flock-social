@@ -205,6 +205,22 @@ test('missing data is never read as an empty room, and saying we have no reading
   ].join('\n'));
   // In a grounded answer too, where the answer line falling means the template serves.
   assert.strictEqual(phrasing.applyValve('{{fact:peak_day}} mornings carry zero logged activity.', BLOCK()), null);
+  // Only a part of the venue's week is read as emptied: records with nothing
+  // in them are ordinary advice, and so is what we say we hold (2026-11-03 review).
+  for (const fine of [
+    'Send a win-back offer to loyalty members with no recorded visits since spring.',
+    'If no registered guests have arrived by 10 PM, release their spots on the list.',
+    'Flag any server section with no logged covers by 7 PM so you can move staff.',
+    'A promo code with zero tracked visits after two weeks should be retired.',
+    'We have no recorded traffic for Saturday mornings, so log a reading on the next one.',
+  ]) {
+    const kept = freeText.applyAdviceValve(fine, ADVICE_FACTS());
+    assert.ok(kept, fine);
+    assert.strictEqual(kept.text, fine);
+  }
+  for (const empty of ['There is zero logged activity on Mondays.', 'Tuesday nights see zero tracked guests, so close early.']) {
+    assert.strictEqual(freeText.applyAdviceValve(empty, ADVICE_FACTS()), null, empty);
+  }
   const { SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT } = require('../services/advisorPrompt');
   for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
     assert.match(prompt, /No reading is not an empty room\./);

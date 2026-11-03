@@ -318,8 +318,17 @@ const FALSE_MEASUREMENT = /\b((?:our|the)\s+(?:data|numbers|measurements?|model|
 // block simply held no morning hours. "No recorded traffic" turns what we do
 // not have into a claim that nobody came. "We have no reading for Saturday
 // mornings" is the true sentence, and a point about the data itself ("no
-// recorded sales data") is not touched.
-const NO_DATA_AS_EMPTY = /\b(?:no|zero)\s+(?:recorded|measured|logged|tracked|reported|registered)\s+(?:foot\s*traffic|traffic|activity|visits?|visitors|customers|guests|covers|demand|crowds?)\b(?!\s+(?:data|figures|numbers|readings|records|history|counts?)\b)/i;
+// recorded sales data") is not touched. Only a part of the venue's week is
+// read as emptied this way: "loyalty members with no recorded visits since
+// spring", "if no registered guests have arrived by 10 PM" and "a section with
+// no logged covers by 7 PM" are ordinary advice (2026-11-03 review), and so is
+// what we say we hold ("we have no recorded traffic for Saturday mornings").
+const PART_OF_THE_WEEK = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mornings?|afternoons?|evenings?|nights?|weekends?|weekdays?|lunch(?:es)?|brunch(?:es)?|dinners?|(?:your|the)\\s+room)';
+const NO_RECORDED = '(?<!\\bwe\\s+(?:have|hold|keep|got)\\s+)(?:no|zero)\\s+(?:recorded|measured|logged|tracked|reported|registered)\\s+(?:foot\\s*traffic|traffic|activity|visits?|visitors|customers|guests|covers|demand|crowds?)\\b(?!\\s+(?:data|figures|numbers|readings|records|history|counts?)\\b)';
+const NO_DATA_AS_EMPTY = new RegExp(
+  `\\b${PART_OF_THE_WEEK}\\b[^.!?]{0,40}?\\b${NO_RECORDED}|\\b${NO_RECORDED}[^.!?]{0,20}?\\b(?:on|during|across|for|in)\\s+(?:the\\s+|your\\s+)?${PART_OF_THE_WEEK}\\b`,
+  'i',
+);
 
 // ── Numbers ──────────────────────────────────────────────────────────────────
 
