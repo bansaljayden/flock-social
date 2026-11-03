@@ -667,11 +667,14 @@ function clock12(h, minutes) {
 // English on the day it ships rather than on the day someone remembers this
 // file. Owner-typed prose never reaches here: it is not an enum, it is theirs.
 const ENUM_WORDS = Object.freeze({
-  // venueIntake.js SERVICE_STYLES
+  // venueIntake.js SERVICE_STYLES. Each reads as a noun phrase with no comma
+  // and no article, because the model writes it into the middle of a
+  // sentence: "standing room, ordering at the bar" came out as "In a 120
+  // capacity standing room, ordering at the bar room" (2026-11-03 live eval).
   seated_table: 'seated table service',
   counter_order: 'counter service',
-  bar_standing: 'standing room, ordering at the bar',
-  mixed: 'a mix of seated and standing service',
+  bar_standing: 'standing bar service',
+  mixed: 'mixed seated and standing service',
   // RESERVATION_POLICIES
   walk_in_only: 'walk ins only',
   reservations_accepted: 'reservations and walk ins',

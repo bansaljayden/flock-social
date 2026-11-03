@@ -573,6 +573,20 @@ test('database vocabulary never reaches prose: dates, clocks, enums and lists', 
   assert.strictEqual(formatFactValue({ value: 'the back room' }), 'the back room');
 });
 
+// "In a 120 capacity standing room, ordering at the bar room" was a live
+// answer (2026-11-03): a service style lands mid-sentence, so each one reads
+// as a plain noun phrase, with no comma and no article of its own.
+test('every service style reads as a noun phrase a sentence can carry', () => {
+  const { formatFactValue } = advisorPhrasing.internals;
+  const { SERVICE_STYLES } = require('../validators/venueIntake');
+  assert.strictEqual(formatFactValue({ value: 'bar_standing' }), 'standing bar service');
+  for (const style of SERVICE_STYLES) {
+    const words = formatFactValue({ value: style });
+    assert.ok(!/[,_]/.test(words) && !/^(?:a|an|the)\b/.test(words), `${style} reads "${words}"`);
+    assert.strictEqual(advisorPhrasing.internals.roomWords(null, style).service, words);
+  }
+});
+
 test('substitution never stutters: the noun the model wrote and the noun the value carries collapse to one', () => {
   const { dedupeAdjacentWords } = advisorPhrasing.internals;
   assert.strictEqual(
