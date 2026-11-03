@@ -45,7 +45,10 @@ const EMOJI = /\p{Extended_Pictographic}/gu;
 
 // ── Numbers ─────────────────────────────────────────────────────────────────
 
-const WORD_NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, 'forty-five': 45, couple: 2, a: 1 };
+const WORD_NUMBERS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, thirty: 30, 'forty-five': 45, couple: 2, few: 3, a: 1 };
+const MILE_FRACTIONS = { half: 0.5, third: 0.33, quarter: 0.25 };
+// The unit a distance was said in, for turning it into miles.
+const distanceUnit = (u) => (/^(?:mi|mile)/i.test(u) ? 'mi' : /^(?:km|kilomet)/i.test(u) ? 'km' : /^block/i.test(u) ? 'block' : 'ft');
 
 function to24(h, meridiem) {
   const hour = Number(h) % 12;
@@ -72,10 +75,13 @@ function extractNumbers(text) {
   take(/\b(\d+)\s*(?:bucks|dollars)\b/gi, 'money', (m) => ({ value: Number(m[1]) }));
   take(/\b(\d{1,3})\s?(?:%|percent\b)/gi, 'percent', (m) => ({ value: Number(m[1]) }));
   take(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)(?![a-z])/gi, 'time', (m) => ({ value: to24(m[1], m[3]), minute: m[2] ? Number(m[2]) : 0 }));
-  take(/\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(?:mins?|minutes?|hrs?|hours?)\b/gi, 'duration', (m) => ({ value: Number(m[1]) }));
-  take(/\b(five|ten|fifteen|twenty|thirty|forty-five)\s*(?:-\s*)?(?:mins?|minutes?)\b/gi, 'duration', (m) => ({ value: WORD_NUMBERS[m[1].toLowerCase()] }));
-  take(/\b(\d+(?:\.\d+)?)\s*(?:mi|miles?|km|kilometers?|blocks?|feet|ft)\b/gi, 'distance', (m) => ({ value: Number(m[1]) }));
-  take(/\b(a|one|two|three|four|five|ten|couple(?: of)?)\s+(?:blocks?|miles?)\b/gi, 'distance', (m) => ({ value: WORD_NUMBERS[m[1].toLowerCase().replace(/ of$/, '')] }));
+  take(/\b(\d+(?:\.\d+)?)\s*(?:-|to)?\s*(mins?|minutes?|hrs?|hours?)\b/gi, 'duration', (m) => ({ value: Number(m[1]), unit: /^h/i.test(m[2]) ? 'hr' : 'min' }));
+  take(/\b(five|ten|fifteen|twenty|thirty|forty-five)\s*(?:-\s*)?(?:mins?|minutes?)\b/gi, 'duration', (m) => ({ value: WORD_NUMBERS[m[1].toLowerCase()], unit: 'min' }));
+  // Fractions of a mile first, so "half a mile" is never read as "a mile".
+  take(/\ba\s+mile\s+and\s+a\s+half\b/gi, 'distance', () => ({ value: 1.5, unit: 'mi' }));
+  take(/\b(half|third|quarter)(?:\s+of)?\s+a\s+mile\b|\b(half|quarter)[-\s]mile\b/gi, 'distance', (m) => ({ value: MILE_FRACTIONS[(m[1] || m[2]).toLowerCase()], unit: 'mi' }));
+  take(/\b(\d+(?:\.\d+)?)\s*(mi|miles?|km|kilometers?|blocks?|feet|ft)\b/gi, 'distance', (m) => ({ value: Number(m[1]), unit: distanceUnit(m[2]) }));
+  take(/\b(a|one|two|three|four|five|ten|few|couple(?: of)?)\s+(blocks?|miles?)\b/gi, 'distance', (m) => ({ value: WORD_NUMBERS[m[1].toLowerCase().replace(/ of$/, '')], unit: distanceUnit(m[2]) }));
   take(/\b(\d{1,3})\s?(?:°|degrees?\b)/gi, 'temperature', (m) => ({ value: Number(m[1]) }));
   take(/\b([1-5]\.\d)\s*(?:stars?|★|rating)?/gi, 'rating', (m) => ({ value: Number(m[1]) }));
   // An hour with no AM or PM, read off the word in front of it: "at 9",
@@ -122,16 +128,26 @@ function factsFrom(toolCalls) {
     numbers: new Set(), hours: new Set(), ratings: new Set(), waits: new Set(), temps: new Set(), distances: new Set(),
     crowdScores: new Set(), confidences: new Set(), venueIds: new Set(), crowd: new Map(), searchRows: new Map(),
     tablesFor: new Set(), gameNight: false, bestTimes: [], peaks: [],
+    // How far each venue is, in miles, and the walks, in minutes, as the
+    // tools measured them (distance_miles, walk_minutes). `distances` above
+    // is the game's arena in kilometres.
+    venueMiles: new Map(), walks: new Set(),
+  };
+  const measured = (id, row) => {
+    if (id && Number.isFinite(row.distance_miles)) facts.venueMiles.set(id, row.distance_miles);
+    if (Number.isFinite(row.walk_minutes)) facts.walks.add(row.walk_minutes);
   };
   for (const call of toolCalls) {
     const r = call.result;
     if (!r || typeof r !== 'object') continue;
     walkNumbers(r, facts);
+    if (call.name === 'get_crowd_prediction') measured(call.args && call.args.place_id, r);
     if (call.name === 'search_venues' && Array.isArray(r.venues)) {
       for (const v of r.venues) {
         if (!v || !v.place_id) continue;
         facts.venueIds.add(v.place_id);
         facts.searchRows.set(v.place_id, v);
+        measured(v.place_id, v);
         if (Number.isFinite(v.rating)) facts.ratings.add(v.rating);
         if (v.tables) {
           facts.tablesFor.add(v.place_id);
@@ -227,6 +243,92 @@ function promptEcho(text, systemPrompt, userTexts) {
   return null;
 }
 
+// Whether a distance the answer states is one the tools measured, said the way
+// a person rounds one: within about a tenth of a mile (a fifth of a longer
+// one), and more loosely after "about", "around" and the like, since the tools
+// measure from an approximate location and say so. "Under a mile" is any
+// measured distance below it. A block is about a twelfth of a mile in these
+// cities, so blocks get a wide band.
+function distanceMatches(n, text, miles) {
+  if (!miles.length) return false;
+  const before = text.slice(Math.max(0, n.at - 16), n.at);
+  const qualified = /\b(about|around|under|less than|nearly|almost|roughly|close to|just over|just under|like|maybe|within)\s*$/i.test(before);
+  const upper = /\b(under|less than|within)\s*$/i.test(before);
+  const said = n.unit === 'km' ? n.value / 1.609344 : n.unit === 'ft' ? n.value / 5280 : n.unit === 'block' ? n.value * 0.08 : n.value;
+  return miles.some((d) => {
+    if (upper && d <= said) return true;
+    const tol = n.unit === 'block'
+      ? 0.1 + 0.05 * n.value
+      : Math.max(qualified ? 0.3 : 0.15, d * (qualified ? 0.35 : 0.2));
+    return Math.abs(d - said) <= tol;
+  });
+}
+
+// The venue an answer leads with: the one it names first.
+function leadOf(text, mentioned) {
+  if (!mentioned.length) return null;
+  const t = norm(text);
+  const at = (v) => Math.min(...v.aliases.map((a) => t.indexOf(norm(a))).filter((i) => i >= 0));
+  return [...mentioned].sort((a, b) => at(a) - at(b))[0];
+}
+
+// HOW NEAR, IN WORDS. "Around the corner", "walkable", "closest" are distance
+// claims, and one no tool measured is made up: before the tools carried a
+// distance, Birdie called a pizza place "right around the corner" from its
+// address. Each phrase is held to the venue it is about (the one its sentence
+// names nearest before it, else after it, else the one the answer leads with)
+// and to the most that phrase can mean. A sentence that denies one ("can't
+// tell if it's walkable") claims nothing, and neither does a phrase in an
+// answer that names no venue ("step into the nearest open store", "I'll find
+// you something nearby").
+const NEAR_CLAIMS = [
+  { re: /\b(?:right )?around the corner\b|\bsteps (?:away|from)\b|\b(?:right )?next door\b|\bdown the (?:street|block)\b|\ba block (?:away|over|from)\b|\bright (?:by|near) (?:you|u)\b|\bstone'?s throw\b/i, max: 0.5 },
+  { re: /\b(?:short|quick|easy) walk\b|\bwalking distance\b|\bwalkable\b|\bfew blocks\b|\bcouple(?: of)? blocks\b|\b(?:you|u) can walk\b/i, max: 1.5 },
+  { re: /\bnearby\b|\bnear (?:you|u)\b|\bclose (?:by|to (?:you|u))\b|\bnot far\b|\bminutes away\b/i, max: 3 },
+];
+const NEAREST = /\b(closest|nearest|closer|nearer)\b/i;
+const DENIES = /\b(not|no|never|isn'?t|aren'?t|can'?t|cannot|couldn'?t|don'?t|doesn'?t|without|unsure|whether)\b/i;
+
+function checkDistanceWords(text, ctx, problems) {
+  const { facts, venues, mentioned } = ctx;
+  const lead = leadOf(text, mentioned);
+  const measuredMiles = [...facts.venueMiles.values()];
+  const nearestMeasured = measuredMiles.length ? Math.min(...measuredMiles) : null;
+  for (const s of sentences(text)) {
+    const claims = NEAR_CLAIMS.map((c) => ({ max: c.max, m: s.match(c.re) })).filter((c) => c.m);
+    const nearest = s.match(NEAREST);
+    if (!claims.length && !nearest) continue;
+    if (DENIES.test(s.replace(/\bnot far\b/gi, ''))) continue;
+    const lower = s.toLowerCase().replace(/&/g, 'and');
+    const named = venuesMentioned(s, venues).map((v) => ({
+      v, at: Math.min(...v.aliases.map((a) => lower.indexOf(a.replace(/&/g, 'and'))).filter((i) => i >= 0)),
+    })).filter((x) => Number.isFinite(x.at));
+    const venueAt = (idx) => {
+      const before = named.filter((x) => x.at <= idx).sort((a, b) => b.at - a.at)[0];
+      const after = named.filter((x) => x.at > idx).sort((a, b) => a.at - b.at)[0];
+      return (before || after || {}).v || lead;
+    };
+    // One phrase is one claim: "right near you" is not also "near you".
+    const held = [];
+    for (const h of [...claims.map((c) => ({ phrase: c.m[0], max: c.max, idx: c.m.index })),
+      ...(nearest ? [{ phrase: nearest[0], nearest: true, idx: nearest.index }] : [])]) {
+      if (!held.some((x) => h.idx < x.idx + x.phrase.length && x.idx < h.idx + h.phrase.length)) held.push(h);
+    }
+    for (const h of held) {
+      const v = venueAt(h.idx);
+      if (!v) continue;
+      const d = facts.venueMiles.get(v.id);
+      if (!Number.isFinite(d)) {
+        problems.push(`distance: says "${h.phrase}" about ${v.name}, which no tool measured`);
+      } else if (h.nearest) {
+        if (d > nearestMeasured + 0.3) problems.push(`distance: calls ${v.name} "${h.phrase}" at ${d} mi when a tool measured one at ${nearestMeasured} mi`);
+      } else if (d > h.max) {
+        problems.push(`distance: calls ${v.name} "${h.phrase}" at ${d} mi`);
+      }
+    }
+  }
+}
+
 function checkNumbers(text, ctx, problems, warnings) {
   const { facts, userTexts, clock, flockHours } = ctx;
   const userNumbers = new Set();
@@ -265,12 +367,22 @@ function checkNumbers(text, ctx, problems, warnings) {
       case 'rating':
         if (!facts.ratings.has(v) && !known(v)) problems.push(`numbers: a rating no tool gave "${n.raw}"`);
         break;
-      case 'duration':
-        if (!facts.waits.has(v) && !userNumbers.has(v)) problems.push(`numbers: a travel or wait time no tool gave "${n.raw}"`);
+      case 'duration': {
+        if (facts.waits.has(v) || userNumbers.has(v)) break;
+        // A walk the tools timed, said the way a person rounds one.
+        const minutes = n.unit === 'hr' ? v * 60 : v;
+        if ([...facts.walks].some((w) => Math.abs(w - minutes) <= Math.max(2, w * 0.25))) break;
+        problems.push(`numbers: a travel or wait time no tool gave "${n.raw}"`);
         break;
-      case 'distance':
-        if (!facts.distances.has(v) && !userNumbers.has(v)) problems.push(`numbers: a distance no tool gave "${n.raw}"`);
+      }
+      case 'distance': {
+        if (userNumbers.has(v)) break;
+        // The arena the game is at, which the tool gives in kilometres.
+        if (n.unit === 'km' && facts.distances.has(v)) break;
+        if (distanceMatches(n, text, [...facts.venueMiles.values()])) break;
+        problems.push(`numbers: a distance no tool gave "${n.raw}"`);
         break;
+      }
       case 'temperature':
         if (!facts.temps.has(v) && !userNumbers.has(v)) problems.push(`numbers: a temperature no tool gave "${n.raw}"`);
         break;
@@ -355,8 +467,6 @@ const TYPE_WORDS = {
   bowling_alley: ['lanes', 'lane', 'bowling'],
   amusement_center: ['games', 'machines', 'arcade', 'skee-ball', 'pinball'],
 };
-const NEARNESS = /\b(around the corner|short walk|walking distance|steps (?:away|from)|quick walk|few blocks|close by|right next door|down the street)\b/i;
-
 // The words a venue's own listing allows are the ones for the venues the
 // answer names, never every venue in the results: a diner further down the
 // list does not put booths in a pizza place.
@@ -377,8 +487,6 @@ function checkVenueDetails(text, ctx, problems, warnings) {
   if (said.length) problems.push(`venue details: says ${said.map((w) => `"${w}"`).join(', ')}, which no tool returned`);
   const rep = text.match(REPUTATION);
   if (rep) problems.push(`venue details: a reputation no tool gave ("${rep[0]}")`);
-  const near = text.match(NEARNESS);
-  if (near) warnings.push(`distance: "${near[0]}" (no tool returns a distance)`);
 }
 
 // When to go: an hour the answer names has to be the tool's best time, its
@@ -454,18 +562,38 @@ function checkAnswer(input) {
   }
   // A quiet or seat-now ask: the spot the answer leads with is not the busier
   // of two this turn checked (by 10 points or more, the ordering floor).
+  // A quieter spot a mile or more further off is not the better pick for
+  // "now": the distance the tools measured settles that one.
   if (expect.quietPick && mentioned.length) {
-    const t2 = norm(text);
-    const at = (v) => Math.min(...v.aliases.map((a) => t2.indexOf(norm(a))).filter((i) => i >= 0));
-    const pick = [...mentioned].sort((a, b) => at(a) - at(b))[0];
+    const pick = leadOf(text, mentioned);
     const scoreOf = (id) => (turnFacts.crowd.get(id) || {}).crowd_score;
     const mine = scoreOf(pick.id);
+    const pickMiles = facts.venueMiles.get(pick.id);
     if (Number.isFinite(mine)) {
       for (const [id, r] of turnFacts.crowd) {
+        const otherMiles = facts.venueMiles.get(id);
+        if (Number.isFinite(pickMiles) && Number.isFinite(otherMiles) && pickMiles + 1 <= otherMiles) continue;
         if (id !== pick.id && Number.isFinite(r.crowd_score) && r.crowd_score <= mine - 10) {
           problems.push(`pick: a quiet ask sent to ${pick.name} at ${mine} over ${r.venue_name} at ${r.crowd_score}`);
           break;
         }
+      }
+    }
+  }
+  // A "closest" or "walkable" ask: the spot it leads with, by the distance
+  // the tools measured.
+  if (expect.nearestPick || Number.isFinite(expect.walkablePick)) {
+    const pick = leadOf(text, mentioned);
+    const turnMiles = [...turnFacts.venueMiles.values()];
+    const d = pick ? facts.venueMiles.get(pick.id) : undefined;
+    if (!pick) problems.push('pick: names no spot');
+    else if (!Number.isFinite(d)) problems.push(`pick: leads with ${pick.name}, which no tool measured`);
+    else {
+      if (expect.nearestPick && turnMiles.length && d > Math.min(...turnMiles) + 0.3) {
+        problems.push(`pick: a nearest ask sent to ${pick.name} at ${d} mi when a tool measured one at ${Math.min(...turnMiles)} mi`);
+      }
+      if (Number.isFinite(expect.walkablePick) && d > expect.walkablePick) {
+        problems.push(`pick: a walkable ask sent to ${pick.name} at ${d} mi`);
       }
     }
   }
@@ -503,6 +631,7 @@ function checkAnswer(input) {
   if (/\bcapacity\b|\d{1,3}\s?%\s*full\b|\bpercent full\b/i.test(text)) problems.push('crowd scale: calls a crowd number capacity or how full the room is');
   // Only an answer about a venue can say something untrue about one.
   if (mentioned.length) checkVenueDetails(text, { mentioned, userTexts }, problems, warnings);
+  checkDistanceWords(text, { facts, venues, mentioned }, problems);
   if (/\b(clos(e|es|ing)|open (till|until|til))\b[^.?!]{0,25}?\b\d{1,2}\b/i.test(text)) {
     warnings.push('hours: states opening hours (no tool result carries them)');
   }

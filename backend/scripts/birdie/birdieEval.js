@@ -486,6 +486,8 @@ async function runTurn(item, persona, messages, turnIndex, replayTurn) {
     localHour: w.hour,
     localDay: w.day,
   };
+  // How old the location is, from a client that knows (fixAgeSec in the cases).
+  if (persona.location && Number.isInteger(persona.fixAgeSec)) body.locationAgeSec = persona.fixAgeSec;
   if (persona.client === 'ios' || persona.client === 'ios_legacy') body.purchases = 'off';
   if (persona.client !== 'ios_legacy') {
     body.consentFlow = 'ask';

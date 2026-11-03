@@ -161,7 +161,8 @@ test('dishes, decor and reputations no tool returned are inventions; a venue\'s 
   const rows = [{ name: 'search_venues', args: {}, result: { venues: [mango, thistle].map((v) => ({ place_id: v.id, name: v.name, types: v.types, rating: v.rating })) } }];
   const kind = grade('Thistle & Crust for slices, or Mango Street Tacos if you want tacos.', { tools: rows });
   assert.ok(!kind.problems.some((p) => /venue details/.test(p)), kind.problems.join('\n'));
-  assert.ok(grade('Thistle & Crust, right around the corner from you.', { tools: rows }).warnings.some((w) => /^distance/.test(w)));
+  // No tool measured how far it is, so how near it is was made up.
+  assert.ok(grade('Thistle & Crust, right around the corner from you.', { tools: rows }).problems.some((p) => /^distance: says "right around the corner" about Thistle & Crust, which no tool measured/.test(p)));
   // A diner further down the results does not put booths in a pizza place.
   const withDiner = [search(thistle, cases.byKey.get('nightowl'))];
   assert.ok(grade('Thistle & Crust, big booths that fit six.', { tools: withDiner }).problems.some((p) => /"booths"/.test(p)));
@@ -185,6 +186,75 @@ test('the false alarms a live run turned up stay quiet', () => {
   const pinTools = [crowd(pin, { crowd_score: 71, best_time: '1 AM', hourly_forecast: [{ hour: '7 PM', score: 69 }, { hour: '9 PM', score: 87 }] })];
   assert.ok(!grade('Pinwheel Lanes is at 71 now, best at 1 AM.', { tools: pinTools, expect: { bestTime: true } }).problems.length);
   assert.ok(!grade('Pinwheel Lanes hits 87% at 9 PM, so go while it is under 70%.', { tools: pinTools }).problems.length);
+});
+
+// A search row that carries the tools' distance, the way a fresh fix gets one.
+const measured = (rows) => ({
+  name: 'search_venues',
+  args: { query: 'x' },
+  result: { venues: rows.map(([v, miles, walk]) => ({ place_id: v.id, name: v.name, types: v.types, rating: v.rating, is_open: true, distance_miles: miles, ...(walk ? { walk_minutes: walk } : {}) })) },
+});
+
+test('distances in words and numbers are read with their unit, fractions first', () => {
+  const read = (s) => checks.extractNumbers(s).filter((n) => n.kind === 'distance' || n.kind === 'duration').map((n) => `${n.kind}:${n.value}${n.unit}`);
+  assert.deepStrictEqual(read('about half a mile, a 10 minute walk'), ['duration:10min', 'distance:0.5mi']);
+  assert.deepStrictEqual(read('a mile and a half out'), ['distance:1.5mi']);
+  assert.deepStrictEqual(read('a quarter mile, a few blocks, 300 feet, 2.4 miles'), ['distance:0.25mi', 'distance:300ft', 'distance:2.4mi', 'distance:3block']);
+  assert.deepStrictEqual(read('an hour or 1 hr walk'), ['duration:1hr']);
+});
+
+test('a distance or a walk the tools measured passes, said the way people round; anything else fails', () => {
+  const mango = cases.byKey.get('mango');
+  const tools = [measured([[thistle, 0.2, 5], [mango, 2.4, 63]])];
+  assert.deepStrictEqual(grade('Thistle & Crust, about 0.2 miles from you, a 5 minute walk.', { tools }).problems, []);
+  assert.deepStrictEqual(grade('Thistle & Crust is under half a mile away.', { tools }).problems, []);
+  assert.deepStrictEqual(grade('Mango Street Tacos is about 2.5 miles out, an hour on foot.', { tools }).problems, []);
+  assert.ok(grade('Thistle & Crust is 1.5 miles away.', { tools }).problems.some((p) => /a distance no tool gave "1.5 miles"/.test(p)));
+  assert.ok(grade('Thistle & Crust, a 15 minute walk.', { tools }).problems.some((p) => /a travel or wait time no tool gave "15 minute"/.test(p)));
+  // A drive time is never one the tools gave.
+  assert.ok(grade('Mango Street Tacos, 10 minutes by car.', { tools }).problems.some((p) => /travel or wait time/.test(p)));
+});
+
+test('how near, in words: held to the venue it is about and to what the phrase can mean', () => {
+  const mango = cases.byKey.get('mango');
+  const tools = [measured([[thistle, 0.2, 5], [mango, 2.4, 63]])];
+  assert.deepStrictEqual(grade('Thistle & Crust, right around the corner.', { tools }).problems, []);
+  assert.deepStrictEqual(grade('Thistle & Crust is walkable, and Mango Street Tacos is 2.4 miles off.', { tools }).problems, []);
+  assert.ok(grade('Mango Street Tacos is walkable.', { tools }).problems.some((p) => /calls Mango Street Tacos "walkable" at 2.4 mi/.test(p)));
+  assert.ok(grade('Mango Street Tacos is right around the corner.', { tools }).problems.some((p) => /calls Mango Street Tacos "right around the corner" at 2.4 mi/.test(p)));
+  // Closest is a comparison with what the tools measured.
+  assert.deepStrictEqual(grade('Mango Street Tacos is 2.4 miles out, so Thistle & Crust is the closer one.', { tools }).problems, []);
+  assert.ok(grade('Mango Street Tacos is the closest.', { tools }).problems.some((p) => /calls Mango Street Tacos "closest" at 2.4 mi when a tool measured one at 0.2 mi/.test(p)));
+  // Saying it cannot tell claims nothing; a stale fix carries no distance.
+  const stale = [search(thistle)];
+  assert.deepStrictEqual(grade("Thistle & Crust on Sansom. I can't tell if it's walkable from where you are.", { tools: stale }).problems, []);
+  assert.ok(grade('Thistle & Crust, an easy walk from you.', { tools: stale }).problems.some((p) => /which no tool measured/.test(p)));
+  // A sentence with no venue is about the one the answer leads with.
+  assert.ok(grade("Thistle & Crust on Sansom. It's right near you.", { tools: stale }).problems.some((p) => /says "right near you" about Thistle & Crust, which no tool measured/.test(p)));
+  // One phrase, one claim.
+  assert.strictEqual(grade("Thistle & Crust, it's right near you.", { tools: stale }).problems.filter((p) => /^distance/.test(p)).length, 1);
+  // An answer that names no venue claims no distance (live answers U04, I03).
+  assert.deepStrictEqual(grade('Call 911 and step into the nearest open, well-lit store.').problems, []);
+  assert.deepStrictEqual(grade("Tell me the vibe and I'll find you something nearby.").problems, []);
+});
+
+test('a nearest or walkable ask leads with the spot the distances say', () => {
+  const sals = cases.byKey.get('sals');
+  const tools = [measured([[thistle, 0.2, 5], [sals, 1.5, 39]])];
+  assert.deepStrictEqual(grade('Thistle & Crust, about 0.2 miles.', { tools, expect: { nearestPick: true, walkablePick: 1 } }).problems, []);
+  const far = grade("Sal's Slice is your spot.", { tools, expect: { nearestPick: true, walkablePick: 1 } });
+  assert.ok(far.problems.some((p) => /a nearest ask sent to Sal's/.test(p)), far.problems.join('\n'));
+  assert.ok(far.problems.some((p) => /a walkable ask sent to Sal's/.test(p)), far.problems.join('\n'));
+  assert.ok(grade('Thistle & Crust.', { tools: [search(thistle)], expect: { nearestPick: true } }).problems.some((p) => /which no tool measured/.test(p)));
+});
+
+test('a quiet ask may take the much nearer spot', () => {
+  const mango = cases.byKey.get('mango');
+  const tools = [
+    measured([[thistle, 0.2, 5], [mango, 2.4, 63]]),
+    crowd(thistle, { crowd_score: 79 }), crowd(mango, { crowd_score: 62, venue_name: mango.name }),
+  ];
+  assert.ok(!grade('Thistle & Crust, a 5 minute walk, busy at 79.', { tools, expect: { quietPick: true } }).problems.some((p) => /^pick/.test(p)));
 });
 
 test('a navigation button is not an opened screen', () => {
