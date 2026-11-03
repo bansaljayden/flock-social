@@ -30,7 +30,9 @@ from pathlib import Path
 MODELS_DIR = Path(__file__).parent.parent / 'models'
 META = MODELS_DIR / 'model_metadata.json'
 
-# The recipe: what must be identical between the gated run and its refit.
+# The recipe: what must be identical between the gated run and its refit. Two more parts of it
+# are records rather than strings and have their own checks below: the anchor weights
+# (sample_weight_policy) and the unknown-provenance policy (corpus_contract.unknown_provenance).
 POLICY_KEYS = ('weather_policy', 'calendar_policy', 'dead_slot_policy', 'run_length_policy',
                'live_feature_policy', 'sports_features', 'dropped_features')
 
@@ -81,6 +83,29 @@ def weight_policy_problems(refit_rec, gated_rec) -> list:
     return out
 
 
+def unknown_provenance_problems(refit_contract: dict, gated_contract: dict) -> list:
+    """Whether the realtime rows that predate label_source trained, read off
+    corpus_contract.unknown_provenance as prepare_features.py records it: {train, holdout, env},
+    each side the record exclude_unknown_provenance returns.
+
+    Its policy is 'exclude' by default and 'admit_at_live_weight' under
+    ML_ALLOW_UNKNOWN_PROVENANCE=true, which trains every such row at the live weight: another
+    corpus and another loss, so the policy must match. The counts are what each frame held and
+    are not compared. A record missing on either side is a problem, never a match.
+    """
+    def policy(contract):
+        rec = contract.get('unknown_provenance')
+        train = rec.get('train') if isinstance(rec, dict) else None
+        return train.get('policy') if isinstance(train, dict) else None
+
+    r, g = policy(refit_contract), policy(gated_contract)
+    if r is None or g is None:
+        return [f'corpus_contract.unknown_provenance.train.policy is not recorded (refit {r!r}, gated {g!r})']
+    if r != g:
+        return [f'corpus_contract.unknown_provenance.train.policy differs: refit {r!r} vs gated {g!r}']
+    return []
+
+
 def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
     """Every reason the gated verdict may not be carried onto this refit. Empty means it may."""
     out = []
@@ -110,6 +135,7 @@ def problems_with(refit: dict, gated: dict, gated_blob: bytes) -> list:
     for k in POLICY_KEYS:
         if rc.get(k) != gc.get(k):
             out.append(f'corpus_contract.{k} differs: refit {rc.get(k)!r} vs gated {gc.get(k)!r}')
+    out.extend(unknown_provenance_problems(rc, gc))
     out.extend(weight_policy_problems(refit.get('sample_weight_policy'), gated.get('sample_weight_policy')))
     if 'training_metrics' not in refit:
         out.append('train_model.py has not run on the refit (no training_metrics)')

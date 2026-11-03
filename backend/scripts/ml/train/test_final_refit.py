@@ -2,13 +2,16 @@
 across only when the refit used the gated recipe.
 
 Pins resolve_final_refit (prepare_features.py) and problems_with / carry (final_refit_gate.py)
-on hand-built metadata, and the anchor-weight check on the sample_weight_policy records
-prepare_features.assign_sample_weights writes for small hand-built frames. No data, no training.
+on hand-built metadata, the anchor-weight check on the sample_weight_policy records
+prepare_features.assign_sample_weights writes for small hand-built frames, and the
+unknown-provenance check on the records prepare_features.exclude_unknown_provenance writes.
+No data, no training.
 
 Run: python test_final_refit.py     (no pytest needed)
 """
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import traceback
@@ -19,7 +22,18 @@ import prepare_features as pf  # noqa: E402
 import final_refit_gate as frg  # noqa: E402
 
 PARAMS = {'max_depth': 8, 'n_estimators': 800, 'learning_rate': 0.01}
-POLICY = {k: f'{k}-v' for k in frg.POLICY_KEYS}
+
+
+def provenance(policy='exclude', rows=1):
+    """corpus_contract.unknown_provenance in the shape prepare_features.py records it: what
+    exclude_unknown_provenance did to each frame, and the variable that admits the rows. The
+    default is the registered run's: ML_ALLOW_UNKNOWN_PROVENANCE unset, the rows excluded."""
+    rec = {'realtime_rows': 2 * rows, 'unknown_provenance_rows': rows, 'policy': policy,
+           'rows_excluded': rows if policy == 'exclude' else 0}
+    return {'train': rec, 'holdout': dict(rec), 'env': 'ML_ALLOW_UNKNOWN_PROVENANCE'}
+
+
+POLICY = dict({k: f'{k}-v' for k in frg.POLICY_KEYS}, unknown_provenance=provenance())
 
 
 def weights(policy='auto', **over):
@@ -243,6 +257,70 @@ def test_gate_compares_the_records_prepare_features_writes():
     assert weight_problems(gated, refit) == []
     assert_refused(weight_problems(gated, fixed), 'sample_weight_policy.policy differs')
     assert_refused(weight_problems(gated, no_runs), 'sample_weight_policy.live_run_length.policy differs')
+
+
+def provenance_problems(gated_record, refit_record):
+    """problems_with on a gated run and its refit that differ only in
+    corpus_contract.unknown_provenance. None leaves the record out."""
+    def contract(rec):
+        c = {k: v for k, v in POLICY.items() if k != 'unknown_provenance'}
+        if rec is not None:
+            c['unknown_provenance'] = rec
+        return c
+
+    with tempfile.TemporaryDirectory() as tmp:
+        g = gated_meta(corpus_contract=contract(gated_record))
+        p = write(tmp, g)
+        return frg.problems_with(refit_meta(p, corpus_contract=contract(refit_record)), g, p.read_bytes())
+
+
+def test_gate_refuses_another_unknown_provenance_policy():
+    # ML_ALLOW_UNKNOWN_PROVENANCE=true on one run only: the realtime rows that predate
+    # label_source train at the live weight in that run and not in the other.
+    for gated, refit in ((provenance(), provenance('admit_at_live_weight')),
+                         (provenance('admit_at_live_weight'), provenance())):
+        assert_refused(provenance_problems(gated, refit),
+                       'corpus_contract.unknown_provenance.train.policy differs')
+    # the counts are what each frame held, and a refit holds more rows
+    assert provenance_problems(provenance(), provenance(rows=7)) == []
+    for gated, refit in ((provenance(), None), (None, provenance()), (provenance(), {'env': 'x'})):
+        assert_refused(provenance_problems(gated, refit),
+                       'corpus_contract.unknown_provenance.train.policy is not recorded')
+
+
+def written_provenance_record(admit):
+    """corpus_contract.unknown_provenance as prepare_features.py records it for frames holding a
+    realtime row that predates label_source, with ML_ALLOW_UNKNOWN_PROVENANCE unset or true, as
+    JSON stores it."""
+    import pandas as pd
+
+    def frame():
+        return pd.DataFrame({'is_realtime': [1, 1, 0], 'label_provenance': ['live', 'unknown', 'weekly']})
+
+    saved = os.environ.pop(pf.UNKNOWN_PROVENANCE_ENV, None)
+    try:
+        if admit:
+            os.environ[pf.UNKNOWN_PROVENANCE_ENV] = 'true'
+        kept, train = pf.exclude_unknown_provenance(frame(), 'train')
+        _, holdout = pf.exclude_unknown_provenance(frame(), 'holdout')
+    finally:
+        os.environ.pop(pf.UNKNOWN_PROVENANCE_ENV, None)
+        if saved is not None:
+            os.environ[pf.UNKNOWN_PROVENANCE_ENV] = saved
+    assert len(kept) == (3 if admit else 2), kept
+    return json.loads(json.dumps({'train': train, 'holdout': holdout, 'env': pf.UNKNOWN_PROVENANCE_ENV}))
+
+
+def test_gate_compares_the_provenance_records_prepare_features_writes():
+    # The gate used to compare no part of corpus_contract.unknown_provenance, so a refit run with
+    # ML_ALLOW_UNKNOWN_PROVENANCE=true carried a verdict the gated run earned without those rows.
+    excluded, admitted = written_provenance_record(False), written_provenance_record(True)
+    assert excluded['train']['policy'] == 'exclude', excluded
+    assert admitted['train']['policy'] == 'admit_at_live_weight', admitted
+    assert provenance_problems(excluded, excluded) == []
+    assert provenance_problems(admitted, admitted) == []
+    assert_refused(provenance_problems(excluded, admitted),
+                   'corpus_contract.unknown_provenance.train.policy differs')
 
 
 def main():
