@@ -941,6 +941,11 @@ function vendorQuantity(value) {
 // explain the mark, the template still prints them, and the check still reads
 // them.
 const WORKING_PARTS = new Set(['threshold', 'spread', 'floorPoints']);
+// AND THE GAP ARRIVES AS A SIZE. The verdict's delta is signed (-18), the
+// model writes "{{fact:..._delta}} points under your usual Monday", and five
+// live answers on 2026-11-03 read "-18 points under". The model is handed the
+// gap (18) beside the verdict word that already says which way.
+const SIGNED_GAP_PARTS = Object.freeze({ delta: 'gap' });
 
 function flattenFacts(facts) {
   const out = [];
@@ -960,6 +965,10 @@ function flattenFacts(facts) {
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || WORKING_PARTS.has(k)) continue;
         if (typeof v === 'object' && !scalarList(v)) continue;
+        if (SIGNED_GAP_PARTS[k] && typeof v === 'number') {
+          keep({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${SIGNED_GAP_PARTS[k]}`, value: Math.abs(v), unit: partUnit(k) });
+          continue;
+        }
         keep({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
       }
     } else if (f) {

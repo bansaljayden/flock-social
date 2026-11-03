@@ -314,7 +314,7 @@ test('a peak fact\'s parts read once (peak_hour, peak_score), and the contract\'
     { id: 'owner_reading_2026-10-27', value: { weekday: 'Tuesday', peakReading: 34 }, source: 'owner_report', asOf: '2026-10-27' },
     { id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02' },
   ])).map((f) => f.id);
-  assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_delta']);
+  assert.deepStrictEqual(others, ['owner_reading_weekday', 'owner_reading_peakReading', 'last_day_verdict_verdict', 'last_day_verdict_gap']);
   // The example a model is most likely to copy writes ids a peak block has.
   const examplePeakIds = [...advisorPhrasing.SYSTEM_PROMPT.matchAll(/\{\{fact:(peak_[a-z_]+)\}\}/g)].map((m) => m[1]);
   assert.ok(examplePeakIds.length >= 3);
@@ -362,7 +362,15 @@ test('yesterday\'s verdict reaches the model without the rule\'s own working', (
   for (const working of ['threshold', 'spread', 'floorPoints']) {
     assert.ok(!ids.some((id) => id.endsWith(`_${working}`)), `${working} reached the model`);
   }
-  assert.ok(ids.includes('last_day_verdict_delta') && ids.includes('last_day_verdict_baseline') && ids.includes('last_day_verdict_reading'));
+  assert.ok(ids.includes('last_day_verdict_baseline') && ids.includes('last_day_verdict_reading'));
+  // The signed delta arrives as the size of the gap; the verdict word says
+  // which way. "-18 points under" was in five live answers on 11-03.
+  const flat = advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([{
+    id: 'last_day_verdict_2026-11-02', value: { verdict: 'below', delta: -18 }, source: 'arithmetic', asOf: '2026-11-02',
+  }]));
+  assert.deepStrictEqual(flat.map((f) => [f.id, f.value]), [['last_day_verdict_verdict', 'below'], ['last_day_verdict_gap', 18]]);
+  const out = advisorPhrasing.applyValve('Yesterday came in {{fact:last_day_verdict_gap}} points under your usual Monday.', { facts: flat });
+  assert.strictEqual(out.text, 'Yesterday came in 18 points under your usual Monday.');
 });
 
 test('both payloads name every placeholder id the block carries, once, after the block', () => {
