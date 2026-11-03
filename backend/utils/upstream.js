@@ -24,8 +24,23 @@
 //   * NEVER retry a paid call after a timeout. A retry is a second invoice for
 //     a question we already paid to ask, and a slow upstream is precisely when
 //     retries pile up. routes/events.js has a Ticketmaster fallback fetch after
-//     a failed first call: that is a deliberate second charge, and it is the
-//     only one in the codebase. Do not add more.
+//     a failed first call: that is a deliberate second charge, and apart from
+//     the one exception below it is the only one in the codebase. Do not add
+//     more.
+//
+//     THE ONE EXCEPTION, BY THE OWNER'S DECISION (2026-11-03): Birdie's own
+//     Gemini calls (routes/ai.js, ONE RETRY AFTER A STALL). A Birdie call that
+//     dies on the `gemini` deadline below is sent once more, because on the
+//     Birdie eval one retry at twelve seconds answered 6 of the 7 stalls it
+//     was tried on, in about six seconds, at about 7,300 tokens a retry and
+//     about 4.4% more Gemini tokens overall. It is fenced the way this header
+//     asks: the retry is charged to Birdie's spend ledger before it goes, like
+//     the first attempt, and the stalled attempt stays charged; once a turn;
+//     only on our own deadline, never on a status Google answered (402, 403,
+//     429, 5xx); never while Birdie's or Roost's outage breaker is open; and
+//     only when it ends inside the turn's cap. Nothing else gets one: not
+//     Roost (services/advisorPhrasing.js, services/advisorFreeText.js, the
+//     `geminiAdvisor` deadline), and no other upstream in this table.
 //   * A timeout is therefore a LOSS, not a free operation. Timeouts belong in
 //     the same mental column as errors when someone reads the Google invoice
 //     and the request log disagree.

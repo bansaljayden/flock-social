@@ -610,8 +610,12 @@ test('an id that cannot be a Google place id is refused before any charge or cal
 });
 
 // ---------------------------------------------------------------------------
-// 4. Gemini has a deadline, and a timeout is not retried
+// 4. Gemini has a deadline, and a timeout is retried once at most
 // ---------------------------------------------------------------------------
+//
+// Birdie's stall retry (routes/ai.js ONE RETRY AFTER A STALL, the owner's
+// decision of 2026-11-03) is the one exception to utils/upstream.js's rule;
+// birdieStallRetry.test.js pins its fences.
 
 function chatBody() {
   return { messages: [{ role: 'user', text: "what's the move tonight" }] };
@@ -642,7 +646,7 @@ test('the per-request config still carries the system prompt and the tools', asy
     'the tools must survive the per-request config');
 });
 
-test('a Gemini timeout is not retried — an aborted paid call is still billed', async () => {
+test('a Gemini timeout is retried once and never again, and each attempt is still billed', async () => {
   handlers.push([/FROM users WHERE id/, () => ({ rows: [{ name: 'Ava Lee' }] })]);
   sendImpl = () => {
     const e = new Error('The operation was aborted due to timeout');
@@ -651,8 +655,11 @@ test('a Gemini timeout is not retried — an aborted paid call is still billed',
   };
   const res = await post('/api/ai/chat', chatBody());
   assert.strictEqual(res.status, 500);
-  assert.strictEqual(sendCalls.length, 1,
-    'retrying a timed-out paid call is a second invoice for a question we already paid to ask');
+  assert.strictEqual(sendCalls.length, 2,
+    'a stall gets one retry; a third attempt is a third invoice for a question we already paid to ask');
+  for (const call of sendCalls) {
+    assert.ok(call.config?.abortSignal instanceof AbortSignal, 'the retry carries a deadline of its own');
+  }
 });
 
 test('a transient 429 still gets its one retry', async () => {

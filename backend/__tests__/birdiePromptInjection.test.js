@@ -849,17 +849,21 @@ test('a Gemini 429 is answered as a 429 in Birdie\'s own voice', async () => {
   assert.strictEqual(sendCalls.length, 2, 'a transient 429 gets exactly one retry');
 });
 
-test('a Gemini timeout is not retried and still says something', async () => {
+// A stall is retried once (routes/ai.js ONE RETRY AFTER A STALL, the owner's
+// decision of 2026-11-03) and never twice; every fake below stalls its retry
+// too, so these are the turns where the retry did not save the answer.
+// birdieStallRetry.test.js pins the retry itself.
+test('a Gemini timeout is retried once and, stalling again, still says something', async () => {
   sendImpl = () => { throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }); };
   const r = await chat();
   assert.strictEqual(r.status, 500);
   speaks(r);
-  assert.strictEqual(sendCalls.length, 1,
-    'an aborted paid request was re-bought; utils/upstream.js says a timeout is never retried');
+  assert.strictEqual(sendCalls.length, 2,
+    'a stall gets one retry and no more; utils/upstream.js allows Birdie that one exception only');
 });
 
 // A timeout after the tools delivered something ends the turn with it, as the
-// turn deadline does, and is still never retried. On the Birdie eval
+// turn deadline does, once its one retry has stalled too. On the Birdie eval
 // (2026-11-03) someone who said they were being followed got "hmm gimme a
 // sec, hit me again" and lost the Safety button the model had already picked.
 const timesOutAfter = (name, args) => (_p, call) => {
@@ -873,7 +877,7 @@ test('a timeout after the model chose Safety keeps the button and says to call 9
   assert.strictEqual(r.status, 200);
   assert.deepStrictEqual(r.body.navigate, { tab: 'profile', screen: 'profile', profile_section: 'safety' });
   assert.strictEqual(r.body.text, "tap below to open Safety and send your location to your people. if you're in danger right now, call 911");
-  assert.strictEqual(sendCalls.length, 2, 'the timed-out call was bought again');
+  assert.strictEqual(sendCalls.length, 3, 'a stall gets exactly one retry');
 });
 
 test('a timeout after a search answers with its cards', async () => {
@@ -882,7 +886,7 @@ test('a timeout after a search answers with its cards', async () => {
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.venues.length, 1, 'the card the search made was thrown away');
   assert.strictEqual(r.body.text, 'lot of chatter right now. hit me again in a bit');
-  assert.strictEqual(sendCalls.length, 2, 'the timed-out call was bought again');
+  assert.strictEqual(sendCalls.length, 3, 'a stall gets exactly one retry');
 });
 
 test('a timeout after a tool that delivered nothing is still a 500', async () => {
@@ -891,7 +895,7 @@ test('a timeout after a tool that delivered nothing is still a 500', async () =>
   const r = await chat({ messages: [{ role: 'user', text: 'who are my friends' }] });
   assert.strictEqual(r.status, 500);
   speaks(r);
-  assert.strictEqual(sendCalls.length, 2);
+  assert.strictEqual(sendCalls.length, 3);
 });
 
 test('a vendor throw with no status still reaches the user as a sentence', async () => {
@@ -1283,7 +1287,7 @@ test('a stall after a staged vote points at the card', async () => {
   assert.strictEqual(res.status, 200);
   assert.ok(res.body.vote_stage, 'the staged card was lost');
   assert.strictEqual(res.body.text, "the card's below. tap Vote for it to put it on the vote");
-  assert.strictEqual(sendCalls.length, 3, 'the stalled call was bought again');
+  assert.strictEqual(sendCalls.length, 4, 'a stall gets exactly one retry');
 });
 
 test('a stall after a staged plan points at the card', async () => {

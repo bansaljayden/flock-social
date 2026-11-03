@@ -46,8 +46,14 @@ const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError, warnOnce } = require('../services/entitlements');
 // Roost's outage classifier and backoffs, read rather than copied: Birdie and
 // Roost call Gemini on one key, so they must agree on what an outage is (THE
-// OUTAGE BREAKER below).
-const { outageKindOf, OUTAGE_BACKOFF_MS } = require('../services/advisorPhrasing').internals;
+// OUTAGE BREAKER below). Roost's breaker itself is read only by the stall
+// retry (ONE RETRY AFTER A STALL below), which is never sent into an outage
+// either surface has seen.
+const {
+  outageKindOf,
+  OUTAGE_BACKOFF_MS,
+  modelAvailable: roostModelAvailable,
+} = require('../services/advisorPhrasing').internals;
 // THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
 // than re-derived: a second private copy of "has this user paid, and has their
 // monthly allowance run out" is precisely how this route ended up serving the
@@ -69,7 +75,7 @@ const { recordPlacesResult } = require('../utils/placesHealth');
 // The six-hour memory of place ids Google has said name nothing. Birdie shares
 // only that, not the payload cache; services/placeDetailsCache.js says why.
 const { isGonePlace } = require('../services/placeDetailsCache');
-const { upstreamSignal } = require('../utils/upstream');
+const { upstreamSignal, UPSTREAM_TIMEOUT_MS } = require('../utils/upstream');
 // The venue's IANA zone off a Places payload (utils/venueZone.js). The same
 // module checks the user's zone and reads a plan time on it (WHOSE CLOCK
 // BIRDIE PLANS ON, below), and builds the timestamp every venue is handed to
@@ -137,7 +143,8 @@ function birdieThinkingConfig(model) {
 // (UPSTREAM_TIMEOUT_MS.gemini) bounds a single round trip, but a turn is up to
 // six of them plus the tool work in between, so the worst case is their sum.
 // This bounds the whole turn instead: past it the tool loop stops asking for
-// another round and answers with what it has.
+// another round and answers with what it has. The one retry after a stall has
+// to end inside it as well (ONE RETRY AFTER A STALL, below).
 const BIRDIE_TURN_BUDGET_MS = 45_000;
 let genAIClient = null;
 function getGenAI() {
@@ -376,10 +383,86 @@ function talksAboutCarding(text) {
 }
 
 // Whether a failed Gemini call was our own deadline (or a hang-up) rather than
-// an answer from Google. One reading for the retry, which never repeats one
-// (utils/upstream.js), and for the tool loop, which ends the turn on one.
+// an answer from Google. One reading for the transient retry, which never
+// covers one, and for the tool loop, which ends the turn on one. The stall
+// retry below reads it more narrowly (geminiStalled).
 function geminiTimedOut(e) {
   return e?.name === 'AbortError' || e?.name === 'TimeoutError' || /abort|timed? ?out/i.test(e?.message || '');
+}
+
+// ---------------------------------------------------------------------------
+// ONE RETRY AFTER A STALL (the owner's decision, 2026-11-03).
+//
+// utils/upstream.js never retries a paid call after a timeout: Google has
+// already metered a request we hang up on, and retries pile up exactly when
+// the upstream is slow. Birdie's own Gemini calls are the one exception, by
+// the owner's decision. On the Birdie eval (scripts/birdie/birdieEval.js),
+// gemini-3.7-flash ran past its twelve seconds on 20 of 530 calls, and each
+// of those cut its answer short (20 of 194 answers): the fallback line, or a
+// 500. One identical request sent at the twelve-second mark answered 6 of
+// the 7 stalls it was tried on (gemini-3.7-flash and gemini-3.8-flash), in
+// about six seconds, for about 7,300 tokens a retry (the whole conversation
+// goes up again): about 4.4% more tokens overall.
+//
+// So a call that dies on OUR deadline is sent once more, at once, and only
+// when all of this holds:
+//   * it is our own twelve-second deadline (geminiStalled): the abort's own
+//     error, which carries no HTTP status. A 402, 403, 429 or 5xx is an
+//     answer from Google and keeps its handling, the one transient retry and
+//     the breaker, never this;
+//   * no outage breaker is open, Birdie's or Roost's (the two call Gemini on
+//     one key): a retry into an outage is spend for nothing;
+//   * the turn has not had one: one retry per turn, so a turn costs at most
+//     one call more than it did;
+//   * the retry's whole deadline ends inside BIRDIE_STALL_RETRY_CAP_MS of the
+//     request's arrival;
+//   * the spend ledger allows it. send() charges every attempt before it goes,
+//     so the retry is charged like the first call, and the stalled attempt
+//     stays charged, because Google bills it.
+// Whatever the retry gets is what the call got: an answer is the answer, a
+// second stall ends the turn exactly as one stall always has, and a refusal
+// or an error from Google takes the handling it takes anywhere else.
+//
+// THE CAP is the turn budget. The app waits 75 s for a turn (frontend
+// src/services/api.js AI_TIMEOUT_MS), sized on that 45 s budget plus one
+// more model call, so a retry that ends inside the budget leaves the longest
+// turn what it already was: a call that starts at the budget's last moment,
+// plus its own deadline. Every stall the eval recorded began 0 to 19 s into
+// its turn, so all of them fit; a cap of two deadlines (24 s) would have
+// reached at most the 2 of the 17 at the real deadline that were the turn's
+// first call.
+//
+// One log line per stall says what its retry did, with this process's
+// totals. Fixed words and numbers only, never anything the user typed.
+// ---------------------------------------------------------------------------
+const BIRDIE_STALL_RETRY_CAP_MS = BIRDIE_TURN_BUDGET_MS;
+
+// A call that died on our own deadline: the abort, not a status from Google.
+function geminiStalled(e) {
+  return geminiTimedOut(e) && (e?.status === undefined || e?.status === null) && !outageKindOf(e);
+}
+
+// Why a stall would not be retried, or null when it may be.
+function stallRetryRefusal({ retriedThisTurn, turnStartedAt, now = Date.now() }) {
+  if (retriedThisTurn) return 'the turn had its retry';
+  if (birdieOutageOpen(now) || !roostModelAvailable(now)) return 'an outage breaker is open';
+  if (now + UPSTREAM_TIMEOUT_MS.gemini > turnStartedAt + BIRDIE_STALL_RETRY_CAP_MS) return 'past the turn cap';
+  return null;
+}
+
+// This process's totals, for the log line. A deploy resets them, like every
+// other meter in this file.
+const stallRetryCounts = { stalls: 0, answered: 0, stalledAgain: 0, failed: 0, refused: 0, notSent: 0 };
+const STALL_OUTCOME_KEYS = { answered: 'answered', 'stalled again': 'stalledAgain', failed: 'failed', refused: 'refused', 'not sent': 'notSent' };
+
+function logStallRetry(outcome, detail) {
+  const c = stallRetryCounts;
+  c.stalls += 1;
+  c[STALL_OUTCOME_KEYS[outcome]] += 1;
+  const sent = c.answered + c.stalledAgain + c.failed;
+  console.warn(`[AI] Birdie stall retry: ${outcome}${detail ? ` (${detail})` : ''}. This process: `
+    + `${c.stalls} stalls, ${sent} retried, ${c.answered} answered, ${c.stalledAgain} stalled again, `
+    + `${c.failed} failed, ${c.refused} refused by the spend ledger, ${c.notSent} not sent`);
 }
 
 // ---------------------------------------------------------------------------
@@ -2770,6 +2853,10 @@ router.post('/chat',
     body('consentFlow').optional({ values: 'null' }).isIn([BIRDIE_CONSENT_FLOW]),
   ],
   async (req, res) => {
+    // When the request arrived, the closest this server gets to when the
+    // app's own timer started. The stall retry's cap counts from here (ONE
+    // RETRY AFTER A STALL).
+    const turnStartedAt = Date.now();
     try {
       // A CONVERSATION THAT OUTGREW THE CAP IS NOT A MISSING ARRAY.
       //
@@ -3027,20 +3114,24 @@ router.post('/chat',
       // round trips on prompts they write. A fresh signal per call, because
       // AbortSignal.timeout starts counting when it is constructed.
       //
-      // The retry deliberately does NOT cover a timeout. Gemini is PAID per
-      // token and the vendor has already parsed and metered a request we abort,
-      // so retrying one is a second invoice for a question we paid to ask —
-      // the rule stated in utils/upstream.js. Transient 429/5xx failures, which
-      // are cheap and fast, still get their one retry.
+      // Two retries, and neither is free. Transient 429/5xx failures, which
+      // are cheap and fast, get one after a short pause. A call that dies on
+      // our own deadline gets one only under the rules in ONE RETRY AFTER A
+      // STALL above (the owner's decision, 2026-11-03): at most once a turn,
+      // never into an open breaker, never past the turn's cap. Gemini is PAID
+      // per token and the vendor has already parsed and metered a request we
+      // abort, so that retry is a second invoice for a question we paid to ask,
+      // which is why utils/upstream.js allows it nowhere else. A call gets one
+      // retry at most, whichever kind.
       //
       // THE SPEND LEDGER IS CHARGED HERE, ONCE PER ATTEMPT.
       //
       // Not once per turn, and not once per payload. Every attempt below is a
       // separate request Google receives, parses and bills, so every attempt
-      // charges — including the retry, which is a second invoice for the same
-      // question and is charged like one. The charge happens BEFORE the call
-      // for the reason utils/upstream.js states: an aborted paid request is
-      // still billed, so a charge-on-success design undercounts exactly when
+      // charges — including either retry, which is a second invoice for the
+      // same question and is charged like one. The charge happens BEFORE the
+      // call for the reason utils/upstream.js states: an aborted paid request
+      // is still billed, so a charge-on-success design undercounts exactly when
       // the upstream is sick and our call rate is highest.
       //
       // `promptChars` is the size of the WHOLE conversation, not of this
@@ -3049,6 +3140,8 @@ router.post('/chat',
       // call. Measuring only the new part is precisely how a six-round tool loop
       // came to be billed as one short question.
       let promptChars = payloadChars(chatConfig) + payloadChars(history);
+      // ONE RETRY AFTER A STALL (above): one a turn, whichever call stalls.
+      let stallRetried = false;
       async function sendWithRetry(payload) {
         // Once per payload, not once per attempt: a retry re-sends the same
         // message, it does not append a second copy of it.
@@ -3079,7 +3172,32 @@ router.post('/chat',
           // the second attempt would charge again for a call we already decided
           // not to make, and a ceiling that retries itself is not a ceiling.
           if (e?.geminiBudget) throw e;
-          if (geminiTimedOut(e)) throw e;
+          if (geminiTimedOut(e)) {
+            // A timeout Google reported (a 504, say) carries a status and is
+            // not ours to repeat, and a stall the rules above rule out is not
+            // repeated either. Both end the turn the way a timeout always has.
+            if (!geminiStalled(e)) throw e;
+            const notSent = stallRetryRefusal({ retriedThisTurn: stallRetried, turnStartedAt });
+            if (notSent) {
+              logStallRetry('not sent', notSent);
+              throw e;
+            }
+            stallRetried = true;
+            const retryStart = Date.now();
+            try {
+              const resp = await send();
+              logStallRetry('answered', `${Date.now() - retryStart} ms`);
+              return resp;
+            } catch (e2) {
+              // No further attempt, whatever this was: it is the call's
+              // outcome, and the handling below and in the tool loop takes it
+              // from here (a ledger refusal, a second stall, the breaker).
+              if (e2?.geminiBudget) logStallRetry('refused');
+              else if (geminiStalled(e2)) logStallRetry('stalled again');
+              else logStallRetry('failed', e2?.status ? String(e2.status) : String(e2?.name || 'error'));
+              throw e2;
+            }
+          }
           const transient = e.status === 429 || e.status >= 500 || /quota|overloaded|unavailable|fetch failed/i.test(e.message || '');
           if (!transient) throw e;
           await new Promise(r => setTimeout(r, 800));
@@ -3319,11 +3437,12 @@ router.post('/chat',
           }
           // A CALL THAT TIMES OUT AFTER THE TOOLS DELIVERED SOMETHING ends the
           // turn with it, the way the turn deadline above does (2026-11-03).
-          // It is still never retried (utils/upstream.js). It used to 500 the
-          // whole turn, throwing away the cards and buttons already made: on
-          // the Birdie eval someone who said they were being followed got
-          // "hmm gimme a sec, hit me again" and lost the Safety button the
-          // model had picked. With nothing delivered the 500 stands.
+          // By here its one retry (ONE RETRY AFTER A STALL) has stalled too or
+          // was not allowed. It used to 500 the whole turn, throwing away the
+          // cards and buttons already made: on the Birdie eval someone who said
+          // they were being followed got "hmm gimme a sec, hit me again" and
+          // lost the Safety button the model had picked. With nothing
+          // delivered the 500 stands.
           const delivered = collectedVenues.length > 0 || Boolean(navigationAction || flockDraftAction || venueVoteAction);
           if (delivered && geminiTimedOut(e)) {
             console.warn('[AI] Gemini timed out after tool work; answering with what the tools delivered');
@@ -3488,6 +3607,12 @@ router.__resetBirdieOutage = () => {
   birdieOutage.until = 0;
   birdieOutage.kind = null;
 };
+// The stall retry's process totals (ONE RETRY AFTER A STALL), module scope for
+// the same reason: a test reads them, and the next case starts from zero.
+router.__stallRetryCounts = () => ({ ...stallRetryCounts });
+router.__resetStallRetryCounts = () => {
+  for (const k of Object.keys(stallRetryCounts)) stallRetryCounts[k] = 0;
+};
 // Exposed for backend/__tests__/paidCallBudgets.test.js. The tool executor is
 // where Birdie spends money on the user's behalf (Places, and weather at
 // caller-chosen coordinates), and those charges are invisible from the route's
@@ -3505,4 +3630,6 @@ router.__resetBirdieOutage = () => {
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
 // withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding, venueDistance, distanceOrigin, venuesByMention };
+// geminiStalled and BIRDIE_STALL_RETRY_CAP_MS are for
+// backend/__tests__/birdieStallRetry.test.js.
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries, birdieThinkingConfig, isBarVenue, talksAboutCarding, venueDistance, distanceOrigin, venuesByMention, geminiStalled, BIRDIE_STALL_RETRY_CAP_MS };
