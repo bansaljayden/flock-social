@@ -378,6 +378,16 @@ test('the app map keeps every user-facing name and every tool enum', () => {
   }
 });
 
+test('Add friends is described the way the screen works, with no usernames', () => {
+  // The screen searches by name (frontend/src/screens/AddFriends.js "Search by
+  // name..."), takes a friend code or a phone number, and has QR and contacts.
+  // Told only "search", Birdie told a 16-year-old on the Birdie eval to
+  // "search their username", which Flock does not have.
+  const line = adult().split('\n').find((l) => l.includes('**Add friends**'));
+  assert.ok(line.includes('search by name or phone number, friend code, QR, phone contacts'), line);
+  assert.ok(line.includes('There are no usernames'), line);
+});
+
 test('the flock and friend context rules survive', () => {
   const prompt = adult();
   assert.match(prompt, /anonymous budget matching/, 'the budget-matching description is gone');
