@@ -338,6 +338,23 @@ test('a day of the month is matched as a day, never by a month, a year or a posi
   assert.ok(freeText.applyAdviceValve('Run the special into the 3rd week before you judge it.', ADVICE_FACTS()));
 });
 
+test('the owner\'s "the Nth" vouches for a date only when a verb, "this" or "again" follows it', () => {
+  // Re-check of the third round, 2026-11-03: the prepositions that make a
+  // claim's "the Nth" a date made support out of the owner's positions.
+  for (const [claim, owner] of [
+    ['Your busiest night was Oct 10.', 'this is the 10th for us, how do we celebrate'],
+    ['Your peak lands on Nov 3.', 'we came the 3rd at the regional awards, how do we use that'],
+    ['Your busiest night this year was Oct 25.', 'we have sold out the 25th in a row, how do we raise prices'],
+    ['Your peak landed on Nov 2.', 'we were the 2nd in the city to get a patio permit'],
+  ]) assert.strictEqual(freeText.applyAdviceValve(claim, ADVICE_FACTS(), { texts: [owner] }), null, `${claim} [${owner}]`);
+  for (const [claim, owner] of [
+    ['Your busiest night was Oct 4.', 'the 4th was huge, how do we do it again'],
+    ['Your peak landed on the 7th.', 'the 7th this month was our best night'],
+    ['Your busiest night was Oct 4.', 'the 4th again was packed'],
+    ['Your busiest night was the 4th.', 'we did it on the 4th and it was packed'],
+  ]) assert.ok(freeText.applyAdviceValve(claim, ADVICE_FACTS(), { texts: [owner] }), `${claim} [${owner}]`);
+});
+
 // ── 2. The numbers an owner needs ──────────────────────────────────────────
 
 test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {

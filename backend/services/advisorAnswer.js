@@ -370,6 +370,13 @@ const ORDINAL_DATE_BEFORE = /(?:\bon\s+the|\b(?:mon|tues|wednes|thurs|fri|satur|
 const ORDINAL_DATE_AFTER = /^(?:\s*(?:[.,;:!?)\]]|$)|\s+of\s+(?:(?:this|the|next|last)\s+month\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b))/i;
 const ORDINAL_THE = /\bthe\s+$/i;
 const ORDINAL_DAY_NEXT = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|went|came|drew|brought|peaked|peaks|again|this|that|last|next|at|with|when|after|before|by|so|but|too|as|which|for|to|in|on|you|we|your|our|it|there|then|because|since|until|till|only|alone)\b/i;
+// The owner's own "the Nth" vouches for a date only when a verb, "this" or
+// "again" follows it. The words above are right for reading a claim, where a
+// date read is a date checked, but in the owner's words they made support out
+// of positions: "this is the 10th for us", "the 25th in a row" and "the 2nd in
+// the city" let "your busiest night was Oct 10" through (re-check of the
+// third round, 2026-11-03).
+const ORDINAL_DAY_NEXT_OWNER = /^\s+(?:was|is|were|will|would|had|has|saw|got|hit|did|went|came|drew|brought|peaked|peaks|again|this)\b/i;
 
 // A NUMBER WRITTEN AS A WORD IS A NUMBER (third round, 2026-11-03). Only
 // digits were read, so "Your Friday hits ninety" and "Nearly half of your
@@ -429,7 +436,8 @@ function otherHalf(hour) {
  * come out as hours of the day (9:30 PM is 21.5). A time written without AM or
  * PM ("9:30") also carries the other half of the day as `alt` (21.5).
  */
-function numbersIn(text) {
+// `owner`: the text is the owner's own words, read for support (buildSupport).
+function numbersIn(text, { owner = false } = {}) {
   const src = asciiDigits(text);
   const out = [];
   const taken = new Array(src.length).fill(false);
@@ -537,7 +545,8 @@ function numbersIn(text) {
     const ahead = src.slice(m.index + m[0].length);
     const behind = src.slice(Math.max(0, m.index - 24), m.index);
     if (kind === 'ordinal' && value >= 1 && value <= 31
-      && (ORDINAL_DATE_AFTER.test(ahead) || ORDINAL_DATE_BEFORE.test(behind) || (ORDINAL_THE.test(behind) && ORDINAL_DAY_NEXT.test(ahead)))) {
+      && (ORDINAL_DATE_AFTER.test(ahead) || ORDINAL_DATE_BEFORE.test(behind)
+        || (ORDINAL_THE.test(behind) && (owner ? ORDINAL_DAY_NEXT_OWNER : ORDINAL_DAY_NEXT).test(ahead)))) {
       out.push({ index: m.index, length: m[0].length, value, alt: [], kind, dim: 'date' });
       continue;
     }
@@ -1054,7 +1063,7 @@ function buildSupport({ facts = [], extraFacts = [], format = null, texts = [] }
   for (const n of counts.values()) addValue(base, n, new Set(), { arith: false });
   for (const t of texts) {
     if (typeof t !== 'string') continue;
-    for (const n of numbersIn(t)) {
+    for (const n of numbersIn(t, { owner: true })) {
       // The owner's own words: a share they wrote ("half my reviews") vouches
       // for the same share and nothing else; a count in words ("forty seats",
       // "two bartenders") vouches for nothing, the way it did before words
