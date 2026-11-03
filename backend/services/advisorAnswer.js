@@ -649,7 +649,6 @@ const COUNTED_OBJECT = /^(?:\d+|a|an|another|one|two|three|four|five|six|seven|e
 const OWNER_RESOURCE = /^(?:tables?|seats?|sections?|stations?|registers?|tills?|lanes?|lines?|rooms?|areas?|tops|bars?|patios?|windows?)$/i;
 // Words between a count and what it counts: "2 more tables", "300 new guests".
 const COUNT_MODIFIER = /^(?:more|fewer|less|extra|new|additional|other|regular|full|empty|busy|slow|small|big|large)$/i;
-const TIMING_WORD = /^(?:at|by|around|from|until|till|about|roughly|near|nearly|before|after|as|early|late|again|usually|only|still|always|up|back|right|just)$/i;
 function ownerActs(text, num, prefix) {
   const m = OWNER_DOES.exec(prefix);
   if (!m) return false;
