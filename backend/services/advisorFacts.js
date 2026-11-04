@@ -1001,7 +1001,9 @@ async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress =
 //     one, never the venue's own.
 // Only when every scored day is a category prior: a model number means the
 // venue has a curve its profile has not caught up with, and that week is not
-// "typical for places like yours". No card, no facts, and the refusal stands.
+// "typical for places like yours". And only for a kind of place that peaks in
+// the evening the card scans (a bar, a club, a restaurant). No card, no
+// facts, and the refusal stands.
 const { KIND_FORECAST_SOURCE, KIND_FORECAST } = require('./kindForecast');
 
 // The card's day labels ('Sat', from toLocaleDateString), as the forecast
@@ -1031,6 +1033,11 @@ function kindForecastPeakLabel({ weekday, hour, score, afterMidnight = false }) 
  */
 function projectionFacts(intel, { hourOf = null } = {}) {
   if (!intel || typeof intel !== 'object' || intel.available !== true || !Array.isArray(intel.week)) return [];
+  // The card scans evenings. For a cafe or a bakery those are hours it may not
+  // open, and "fill Sunday" chosen from them is advice about a room that is
+  // shut (2026-11-03 review), so only a kind of place that peaks in the
+  // evening is answered from it (venueIntelligence, eveningPlace).
+  if (intel.eveningPlace !== true) return [];
   const asOf = typeof intel.generatedAt === 'string' && intel.generatedAt ? intel.generatedAt : null;
   if (!asOf) return [];
   // eslint-disable-next-line global-require

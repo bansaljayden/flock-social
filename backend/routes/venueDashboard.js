@@ -2207,6 +2207,12 @@ async function venueIntelligence(ctx, userId) {
     // published level per hour is the model's, which is what these bars are.
     todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
     week,
+    // Whether the evenings `week` scans are the hours this kind of place
+    // peaks in: bars, clubs and restaurants, by the strip's own rule
+    // (stripPeakWindow). A cafe or a bakery is drawn here from evening hours
+    // it may not open, so Roost reads this week only when they are
+    // (advisorFacts.projectionFacts).
+    eveningPlace: stripPeakWindow(stripComparisonTypes(venue)) === 'evening',
     model: current.modelVersion || null,
     // Which arithmetic made the dial's number when a serving switch changed
     // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock

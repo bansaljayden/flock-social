@@ -817,7 +817,7 @@ function namedWeekday(question) {
 
 // "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
 const { spokenClock: clockHour } = require('./clockWords');
-const { KIND_FORECAST, isKindForecast } = require('./kindForecast');
+const { KIND_FORECAST, isKindForecast, unownDays } = require('./kindForecast');
 
 function groundedLead(intentId, facts, question = '') {
   const days = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
@@ -999,13 +999,17 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const picks = second ? [first, second] : [first];
   const spend = spendOf(ctx);
   const lead = groundedLead(intentId, groundedFacts, question);
+  // Under a lead that names a day of Flock's forecast for places like this
+  // venue, the move points at that day, never "your slowest day"
+  // (services/kindForecast.js unownDays).
+  const say = lead && isKindForecast(lead.fact) ? unownDays : (s) => s;
 
-  const points = [first.why];
+  const points = [say(first.why)];
   const money = moneyLine(first, spend);
   if (money) points.push(money);
-  else if (first.example) points.push(first.example);
-  points.push(first.watch);
-  if (second && points.length < advisorAnswer.MAX_POINTS) points.push(`${ANOTHER}${lowerFirst(second.move)}`);
+  else if (first.example) points.push(say(first.example));
+  points.push(say(first.watch));
+  if (second && points.length < advisorAnswer.MAX_POINTS) points.push(`${ANOTHER}${lowerFirst(say(second.move))}`);
   if (!money && spend === null && (first.money === 'covers' || first.money === 'check')
       && points.length < advisorAnswer.MAX_POINTS) {
     points.push(SPEND_NUDGE);
@@ -1024,7 +1028,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
 
   return {
     mode: 'advice',
-    text: advisorAnswer.assemble({ structured: true, answer: [lead ? `${lead.text} ${first.move}` : first.move], points }),
+    text: advisorAnswer.assemble({ structured: true, answer: [lead ? `${lead.text} ${say(first.move)}` : first.move], points }),
     sources,
     tactics: picks.map((t) => t.id),
     topic: first.topic,

@@ -368,7 +368,7 @@ const VENUES = {
 // The dashboard's Week Ahead as GET /api/venue-dashboard/intelligence serves
 // it: the six evenings after today, each with the card's short day label, its
 // peak, the hour label and what made it (a category prior for a venue with no
-// curve of its own).
+// curve of its own), for a kind of place that peaks in the evening.
 function cardWeek(byDay) {
   const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const label = (h) => (h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`);
@@ -378,7 +378,7 @@ function cardWeek(byDay) {
     const [hour, score] = byDay[weekday];
     return { date, weekday, peakScore: score, peakHour: label(hour), method: 'rule_engine_no_baseline' };
   });
-  return { available: true, week, generatedAt: ASOF };
+  return { available: true, week, eveningPlace: true, generatedAt: ASOF };
 }
 
 // A no-history venue's blocks, built the way the real fact bridge builds them
@@ -637,7 +637,9 @@ async function runFollowOn(venue, item, first) {
   const given = (first.out.context && first.out.context.tactics) || [];
   for (const id of given) {
     const t = roostPlaybook.tactics.find((x) => x.id === id);
-    if (t && String(r.out.text || '').toLowerCase().includes(t.move.toLowerCase())) r.problems.push(`repeated a move already given (${id})`);
+    // In the playbook's words, or pointed at the day a card answer named.
+    const shown = t ? [t.move, kindForecast.unownDays(t.move)].map((m) => m.toLowerCase()) : [];
+    if (shown.some((m) => String(r.out.text || '').toLowerCase().includes(m))) r.problems.push(`repeated a move already given (${id})`);
   }
   return r;
 }

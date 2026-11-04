@@ -64,7 +64,7 @@ const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
-const { isKindForecast } = require('../services/kindForecast');
+const { KIND_FORECAST, isKindForecast, holdsCard, unownDays } = require('../services/kindForecast');
 
 // THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
 // point when the facts point at one (advisorPrompt, the venue's own numbers
@@ -97,9 +97,17 @@ function chipTactics(answer, intentId, block) {
   // A template with no room left gets no move appended (withMove), and a
   // move the owner never saw must not be set aside by their "what else"
   // (2026-10-28 review). The phrasing model was handed it, so a phrased
-  // answer counts it as given.
-  if (answer.mode === 'template' && !String(answer.text || '').includes(move.move)) return [];
+  // answer counts it as given. Beside a no-history venue's card the move
+  // was shown pointed at the day it named (moveText).
+  if (answer.mode === 'template' && !String(answer.text || '').includes(moveText(move.move, block))) return [];
   return [move.id];
+}
+
+// A playbook move as a chip's template shows it: in the playbook's own words,
+// or, beside a no-history venue's Week Ahead card, pointed at the day the
+// answer named instead of "your slowest day" (services/kindForecast.js).
+function moveText(text, block) {
+  return holdsCard(block && block.facts) ? unownDays(text) : text;
 }
 
 // What the chat sends back as `previous` with the owner's next typed
@@ -147,7 +155,7 @@ async function withMove(answer, intentId, userId, ctx = null, block = null) {
   const room = MAX_POINTS - points;
   return {
     ...answer,
-    text: [answer.text, ...lines.slice(0, room).map((l) => `${BULLET}${l}`)].join('\n'),
+    text: [answer.text, ...lines.slice(0, room).map((l) => `${BULLET}${moveText(l, block)}`)].join('\n'),
     sources: [...(answer.sources || []), ...sources],
   };
 }
@@ -311,10 +319,20 @@ const INTENT_PLANS = {
     if (!scored.length) return week;
     const spread = Number(scored[scored.length - 1].value.peakScore) - Number(scored[0].value.peakScore);
     if (spread < HOUR_ORDERING_MIN_GAP) {
+      // A level week of Flock's forecast for places like this venue says
+      // whose week it is, and what would give the venue a week of its own
+      // (2026-11-03 review: the spread of a category prior read as the
+      // venue's own).
+      const card = scored.some(isKindForecast);
       return [advisorFacts.makeRefusal({
         id: 'refuse_quiet_nights_flat_week',
-        reason: `No day stands out as quiet in the week ahead. Every day projects within ${spread} points of every other on our 0 to 100 index, and we do not name a quietest day inside ${HOUR_ORDERING_MIN_GAP} points because the ordering under that is noise.`,
-        whatWouldUnlock: 'A week whose days actually separate. The moment one does, this names it.',
+        reason: card
+          ? `In ${KIND_FORECAST}, no day stands out as quiet in the week ahead: every day projects within ${spread} points of every other on our 0 to 100 index, and we do not name a quietest day inside ${HOUR_ORDERING_MIN_GAP} points because the ordering under that is noise.`
+          : `No day stands out as quiet in the week ahead. Every day projects within ${spread} points of every other on our 0 to 100 index, and we do not name a quietest day inside ${HOUR_ORDERING_MIN_GAP} points because the ordering under that is noise.`,
+        whatWouldUnlock: card
+          ? ((b.ctx && advisorFacts.corpusGate(b.ctx.profile)) || {}).whatWouldUnlock
+            || 'Your own slider readings build history for your venue that does not depend on the corpus.'
+          : 'A week whose days actually separate. The moment one does, this names it.',
       })];
     }
     const quietest = scored.slice(0, 2);
@@ -490,10 +508,13 @@ const INTENT_PLANS = {
 // refusal stands as it was. Today is not on that card, so tonight's outlook
 // (`tonight` below) keeps the corpus week, and the listing lines, which set
 // the venue's own forecast beside what the owner told us, read the venue's
-// own week only (`ownWeek`).
-async function weekFor(ctx, opts, ownWeek) {
+// own week only (`ownWeek`). Whether the card was read is kept on `memo`
+// (true or false once tried), so a question that would read it a second time
+// in the same request does not pay a second lookup that just failed.
+async function weekFor(ctx, opts, ownWeek, memo = {}) {
   if (advisorFacts.corpusGate(ctx.profile) && typeof advisorFacts.buildWeekProjection === 'function') {
     const projected = await advisorFacts.buildWeekProjection(ctx, opts);
+    memo.cardRead = projected.length > 0;
     if (projected.length) return projected;
   }
   return ownWeek();
@@ -520,7 +541,7 @@ async function bridgeFactBlock(userId, intentId) {
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
     // The week a question about the week ahead reads (weekFor above).
-    week: () => (memo.week = memo.week || weekFor(ctx, opts, b.ownWeek)),
+    week: () => (memo.week = memo.week || weekFor(ctx, opts, b.ownWeek, memo)),
     // The same week, started from last night's evening while that night is
     // still running: what "tonight" means at 12:30 AM.
     tonight: () => (memo.tonight = memo.tonight || advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })),
@@ -559,6 +580,9 @@ async function bridgeFactBlock(userId, intentId) {
     serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
     spendAsOf: ctx.profile.updated_at ? `owner-set ${String(ctx.profile.updated_at).slice(0, 10)}` : 'owner-set',
+    // Whether this block tried the no-history venue's Week Ahead card and
+    // found it (weekFor); absent when it never needed to.
+    ...(typeof memo.cardRead === 'boolean' ? { cardRead: memo.cardRead } : {}),
   };
 }
 
@@ -1183,9 +1207,13 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // so "how do I fill Thursdays" had nothing about Thursday to stand on.
     // Only when the route's own facts lack that day (a second build of the
     // week costs reads), and a failure here costs the lead, never the answer
-    // (2026-10-28 second review: it ran the week twice and could 500).
+    // (2026-10-28 second review: it ran the week twice and could 500). A
+    // block that already tried a no-history venue's Week Ahead card and found
+    // none is not asked again: the second read is a second paid lookup that
+    // fails the same way (2026-11-03 review).
     const named = roostPlaybook.namedWeekday(asked);
-    if (named && !groundedFacts.some((f) => f && f.value && f.value.weekday === named)) {
+    if (named && !(block && block.cardRead === false)
+        && !groundedFacts.some((f) => f && f.value && f.value.weekday === named)) {
       try {
         const week = await buildFactBlock(userId, 'peak_hours');
         const have = new Set(groundedFacts.map((f) => f && f.id));

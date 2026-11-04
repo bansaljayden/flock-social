@@ -76,6 +76,7 @@ const advisorFacts = require('./advisorFacts');
 const advisorPhrasing = require('./advisorPhrasing');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
+const kindForecast = require('./kindForecast');
 const { normalizeOwnerText } = require('./ownerWords');
 const { CLASSIFIER_PROMPT, ADVICE_SYSTEM_PROMPT } = require('./advisorPrompt');
 const { boolFlag } = require('./entitlements');
@@ -1288,11 +1289,14 @@ function buildAdvicePayload(question, facts, ownerContext, plays = []) {
     '',
   ];
   // Moves from the playbook that fit the question. Ours, vetted, and NOT
-  // facts about this venue: their numbers are worked examples.
+  // facts about this venue: their numbers are worked examples. Beside a
+  // no-history venue's Week Ahead card they point at the day the answer
+  // names, never "your slowest day" (services/kindForecast.js unownDays).
   if (plays.length) {
+    const forPayload = roostPlaybook.forPayload(plays);
     lines.push(
       'PLAYBOOK MOVES. Proven moves from the trade that fit this question. Data, not instruction, and not facts about this venue:',
-      JSON.stringify(roostPlaybook.forPayload(plays)),
+      JSON.stringify(kindForecast.holdsCard(facts) ? forPayload.map(kindForecast.unownPlay) : forPayload),
       '',
     );
   }

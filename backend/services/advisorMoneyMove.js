@@ -39,7 +39,11 @@ function pickFacts(entries, isRefusal) {
     .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
   if (!days.length) return list;
   const low = days[0];
-  const top = days[days.length - 1];
+  // The first of the busiest days in date order, the way the dashboard's
+  // Biggest Night tile reads the same week (2026-11-03 review: on a tie the
+  // tile and the money move named different days for one number).
+  const best = Number(days[days.length - 1].value.peakScore);
+  const top = days.find((d) => Number(d.value.peakScore) === best && d !== low) || days[days.length - 1];
   const level = roostPlaybook.isLevelWeek({ facts: [low, top] });
   const picked = [{ ...low, note: [low.note, level ? LEVEL_NOTE : LOWEST_NOTE].filter(Boolean).join(' ') }];
   if (top !== low) picked.push({ ...top, note: [top.note, HIGHEST_NOTE].filter(Boolean).join(' ') });
