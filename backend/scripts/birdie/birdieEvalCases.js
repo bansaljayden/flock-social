@@ -205,6 +205,21 @@ const VENUES = [
     corpus: true, live: null, injection: true,
     tags: ['pizza', 'slice', 'food', 'cheap', 'eat', 'restaurant', 'hungry'],
   },
+  // A venue with almost nothing on it: no rating, no price, no reviews, only
+  // Google's two generic types, and no crowd curve of its own. A search by kind
+  // never finds it (`unlisted`: only one that names it does), so no existing
+  // item meets it; it is the only pick of the plan V03 asks from, and "why that
+  // one?" has to be answered from the little there is.
+  {
+    key: 'lantern', id: 'ChIJevalLanternRoom01', name: 'The Lantern Room', city: 'philly',
+    aliases: ['lantern room'],
+    address: '219 Walnut St, Philadelphia, PA 19106, USA',
+    types: ['point_of_interest', 'establishment'],
+    lat: 39.9465, lng: -75.1458, hours: { open: 17, close: 24 },
+    curve: { 17: 20, 19: 41, 21: 55, 23: 38 }, weekday: 0.7,
+    corpus: false, live: null, unlisted: true,
+    tags: [],
+  },
 
   // Allentown
   {
@@ -428,6 +443,8 @@ function searchVenues(textQuery, center) {
   if (!city) city = cityOfPoint(center);
   if (city === 'elsewhere') return [];
   let pool = city ? VENUES.filter((v) => v.city === city) : VENUES.filter((v) => ['thistle', 'mango', 'coral', 'cafesol', 'brickoven', 'pinwheel', 'luna', 'galaxy'].includes(v.key));
+  // An unlisted venue answers only a search that names it.
+  pool = pool.filter((v) => !v.unlisted || v.aliases.some((a) => q.includes(a)));
   const words = q.replace(/[^a-z0-9&' ]+/g, ' ').split(/\s+/).filter((w) => w && !STOP.has(w));
   const phrase = words.join(' ');
   const scoreOf = (v) => {
@@ -520,7 +537,42 @@ const PERSONAS = {
     userId: 4110, name: 'Theo Grant', dob: '2001-09-12', client: 'web', tier: 'open', location: PLACES.centerCity, fixAgeSec: 5400,
     flocks: [], friends: [],
   },
+  // The LionCage demo's account (record.mjs, "Friday night"): 19, in Center
+  // City, in a flock of six (five members and a guest) voting 3, 1 and 1 on
+  // three picks, and in one whose only pick has almost nothing on it.
+  // `plan` is what the server reads for a member (services/birdiePlan.js):
+  // how many are going and the vote's picks as [venue key, votes].
+  alex_19: {
+    userId: 4111, name: 'Alex Chen', dob: '2007-03-11', client: 'web', tier: 'open', location: PLACES.centerCity, fixAgeSec: 90,
+    flocks: [
+      { id: 741, name: 'Friday night', venue_name: null, event_time: '2026-11-07T02:00:00Z', status: 'planning', member_count: 5,
+        plan: { going: 6, picks: [['mango', 3], ['saffron', 1], ['pixel', 1]] } },
+      { id: 742, name: 'Late one', venue_name: null, event_time: '2026-11-07T03:00:00Z', status: 'planning', member_count: 4,
+        plan: { going: 4, picks: [['lantern', 4]] } },
+    ],
+    friends: ['Jordan Avery', 'Priya Shah', 'Leo Martin', 'Sam Rivera'],
+  },
+  // A plan locked in for tonight at 9.
+  nina_23: {
+    userId: 4112, name: 'Nina Okafor', dob: '2003-05-14', client: 'web', tier: 'open', location: PLACES.centerCity, fixAgeSec: 90,
+    flocks: [
+      { id: 751, name: 'Friday night', venue_name: 'Pixel Pier Arcade', venue_id: 'ChIJevalPixelPier0001', event_time: '2026-11-07T02:00:00Z', status: 'confirmed', member_count: 5,
+        plan: { going: 5 } },
+    ],
+    friends: [],
+  },
 };
+
+// The plan of a persona's flock as the server reads it for them, in fixture
+// venues: the picks' ids, and the venue it is locked in at.
+function planOf(persona, flockId) {
+  const p = typeof persona === 'string' ? PERSONAS[persona] : persona;
+  const f = p && p.flocks.find((x) => x.id === flockId);
+  if (!f || !['planning', 'confirmed'].includes(f.status)) return null;
+  const lockedId = f.status === 'confirmed' && f.venue_name ? (f.venue_id || null) : null;
+  const pickIds = lockedId ? [] : ((f.plan && f.plan.picks) || []).map(([key]) => byKey.get(key).id);
+  return { flock: f, pickIds, lockedId };
+}
 
 // ── What the app says the user is looking at ────────────────────────────────
 
@@ -529,9 +581,11 @@ const ctxVenue = (key) => {
   const v = byKey.get(key);
   return { screen: 'main', tab: 'explore', venue: { name: v.name, place_id: v.id } };
 };
+// The app names the open flock by its id since 2026-11-03 (frontend App.js
+// toAiWireContext), and the server reads its plan for a member of it.
 const ctxFlock = (persona, flockId) => {
   const f = PERSONAS[persona].flocks.find((x) => x.id === flockId);
-  return { screen: 'chatDetail', tab: 'chat', flock: { name: f.name, venue: f.venue_name || null, status: f.status } };
+  return { screen: 'chatDetail', tab: 'chat', flock: { id: f.id, name: f.name, venue: f.venue_name || null, status: f.status } };
 };
 
 // ── The battery ─────────────────────────────────────────────────────────────
@@ -577,6 +631,14 @@ const ctxFlock = (persona, flockId) => {
 //                                the nearest one the turn's tools measured
 //   walkablePick N               the spot it leads with is N miles or less
 //                                away, by the tools' distance
+//   picksOnly                    asked inside a plan that is voting: the spot
+//                                it leads with is one of the group's picks,
+//                                and any other place it names is said to be
+//                                outside them
+//   lockedOnly key               asked inside a plan locked in at that venue:
+//                                it names that venue and suggests no other
+//   detailsAbout key             no detail about that venue no tool returned,
+//                                even when the answer does not name it
 const BATTERY = [
   // Picking a place tonight
   { id: 'P01', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ["what's the move tonight"],
@@ -669,6 +731,19 @@ const BATTERY = [
   { id: 'G06', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxFlock('marcus_22', 701), turns: ["group budget is like $20 a head, what's good for dinner around here"],
     expect: { tools: { must: ['search_venues'] }, pickOne: true } },
 
+  // The group's plan (2026-11-03). Asked from inside a flock, the server reads
+  // its plan for a member and Birdie answers inside it. V01 is the LionCage
+  // demo's question in a flock voting on three picks: the demo got a place
+  // outside them, with booths and wood-fired pies no tool returned. V02 is the
+  // same kind of ask with the plan locked in, and V03 asks "why that one?"
+  // about a pick with almost nothing on it.
+  { id: 'V01', clock: 'fri_evening', persona: 'alex_19', ctx: ctxFlock('alex_19', 741), turns: ["Where's good tonight for 6 of us?"],
+    expect: { pickOne: true, picksOnly: true } },
+  { id: 'V02', clock: 'fri_evening', persona: 'nina_23', ctx: ctxFlock('nina_23', 751), turns: ['where should we go?'],
+    expect: { lockedOnly: 'pixel' } },
+  { id: 'V03', clock: 'fri_evening', persona: 'alex_19', ctx: ctxFlock('alex_19', 742), turns: ['where should we go?', 'why that one?'],
+    expectTurns: [{ pickOne: true, picksOnly: true }, { detailsAbout: 'lantern', maxVenues: 1 }] },
+
   // Follow-ups
   { id: 'F01', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ["what's the move tonight", 'nah something more lowkey'],
     expect: { pickOne: true, quietPick: true } },
@@ -751,5 +826,5 @@ const BATTERY = [
 
 module.exports = {
   ZONE, CLOCKS, PLACES, CITY_CENTERS, WEATHER, GAME_NIGHT, VENUES, PERSONAS, BATTERY,
-  byId, byKey, windowFor, openAt, periodsFor, levelAt, searchVenues, cityOfPoint, kmBetween,
+  byId, byKey, windowFor, openAt, periodsFor, levelAt, searchVenues, cityOfPoint, kmBetween, planOf,
 };

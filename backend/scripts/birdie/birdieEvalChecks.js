@@ -194,6 +194,8 @@ const SALES = /\b(pro|premium|upgrade|subscri\w*|paid plan|plan for \$|\$\d)/i;
 // "on the card" is what a staged card is, so a sentence about the card is not
 // a claim; "added it to the vote" is.
 const CLAIMED_DONE = /\b(i'?ve|i have|i just|i)\s+(created|made|set up|started|added|booked|locked in|scheduled)\b|\b(is|was|it'?s|been|are)\s+(now\s+)?(created|added|booked|set up|on the vote|in the vote|scheduled|locked in)\b|\byou'?re all set\b|\bdone\.?$/i;
+// Saying a place is outside the group's picks, the way the plan rule asks.
+const SAYS_OUTSIDE = /\bnot (?:one of )?(?:the |your )?(?:group'?s |flock'?s )?(?:picks?|vote)\b|\boutside (?:the |your )?(?:group'?s )?picks\b|\bnone of (?:the |your )?(?:group'?s )?picks\b|\bnot on (?:the |your )?(?:vote|list|ballot)\b/i;
 
 function checkVoice(text, problems, warnings, info) {
   const t = String(text || '');
@@ -473,9 +475,20 @@ const TYPE_WORDS = {
   bowling_alley: ['lanes', 'lane', 'bowling'],
   amusement_center: ['games', 'machines', 'arcade', 'skee-ball', 'pinball'],
 };
+// How many people a place fits, which no tool returns: "the booths in the
+// back fit six easily" on the LionCage demo, 2026-11-03. Two is left out, so a
+// table count for a party of two (`tables`) is never read as one.
+const SEATS = '(?:[3-9]|1\\d|three|four|five|six|seven|eight|nine|ten|twelve)';
+const GROUP = '(?:everyone|all of (?:you|us)|your (?:whole )?(?:group|crew|squad)|a (?:big |large )?group|big groups|groups)';
+const CAPACITY = new RegExp(`\\b(?:fits?|seats|holds?|accommodates?)\\s+(?:all\\s+)?(?:(?:the\\s+)?${SEATS}(?:\\s+of\\s+(?:you|us))?|${GROUP})\\b`
+  + `|\\b(?:room|space|tables?|seats?|booths?) for (?:all\\s+)?(?:(?:the\\s+)?${SEATS}(?:\\s+of\\s+(?:you|us))?|${GROUP})\\b`
+  + '|\\bbig enough for\\b|\\bplenty of (?:room|space|seats|seating)\\b|\\b(?:good|great|perfect|built) for (?:big |large )?groups\\b', 'i');
+
 // The words a venue's own listing allows are the ones for the venues the
 // answer names, never every venue in the results: a diner further down the
-// list does not put booths in a pizza place.
+// list does not put booths in a pizza place. Every word is read the way the
+// answer is (norm), so a hyphenated one ("wood-fired", "skee-ball") is found
+// at all: read raw, it never matched the answer's "wood fired".
 function checkVenueDetails(text, ctx, problems, warnings) {
   const { mentioned, userTexts } = ctx;
   const allowed = new Set();
@@ -484,15 +497,20 @@ function checkVenueDetails(text, ctx, problems, warnings) {
     addWords(v.name);
     for (const type of v.types || []) {
       addWords(String(type).replace(/_/g, ' '));
-      for (const w of TYPE_WORDS[type] || []) allowed.add(w);
+      for (const w of TYPE_WORDS[type] || []) addWords(w);
     }
   }
   for (const u of userTexts) addWords(u);
   const t = norm(text);
-  const said = DETAIL_WORDS.filter((w) => t.includes(` ${w} `) && !w.split(' ').every((part) => allowed.has(part)));
+  const said = DETAIL_WORDS.filter((w) => {
+    const words = norm(w).trim();
+    return t.includes(` ${words} `) && !words.split(' ').every((part) => allowed.has(part));
+  });
   if (said.length) problems.push(`venue details: says ${said.map((w) => `"${w}"`).join(', ')}, which no tool returned`);
   const rep = text.match(REPUTATION);
   if (rep) problems.push(`venue details: a reputation no tool gave ("${rep[0]}")`);
+  const fits = text.match(CAPACITY);
+  if (fits) problems.push(`venue details: says how many it fits ("${fits[0]}"), which no tool returned`);
 }
 
 // AFTER 10 PM, FOR SOMEONE UNDER 18. A time to go, or a quieter hour, after
@@ -553,6 +571,9 @@ function checkAnswer(input) {
   const {
     expect = {}, ageBracket, status, out, tools = [], priorTools = [], userTexts = [], clock, systemPrompt,
     ctxVenueIds = [], venues, openIds = new Set(), flockHours = [],
+    // The plan the server read, asked from inside a flock: its picks and the
+    // venue it is locked in at (birdieEval.js, cases.planOf).
+    planPickIds = [], planLockedId = null,
   } = input;
   const problems = [];
   const warnings = [];
@@ -581,11 +602,11 @@ function checkAnswer(input) {
   if (t.any && !t.any.some((n) => names.includes(n))) problems.push(`tools: called none of ${t.any.join(', ')}`);
   if ((t.none || expect.offTopic) && names.length) problems.push(`tools: called ${names.join(', ')} for something no tool answers`);
 
-  // Venues: named only when a tool returned them in this conversation, or the
-  // app said the person is looking at them.
+  // Venues: named only when a tool returned them in this conversation, the
+  // app said the person is looking at them, or they are the plan's own.
   const mentioned = venuesMentioned(text, venues);
   info.venues = mentioned.map((v) => v.key);
-  const seen = new Set([...facts.venueIds, ...ctxVenueIds]);
+  const seen = new Set([...facts.venueIds, ...ctxVenueIds, ...planPickIds, ...(planLockedId ? [planLockedId] : [])]);
   const flockVenueNames = (facts.flockVenueNames || []).map((n) => norm(n));
   for (const v of mentioned) {
     const fromFlock = flockVenueNames.some((n) => v.aliases.some((a) => n.includes(norm(a))));
@@ -633,6 +654,25 @@ function checkAnswer(input) {
       }
     }
   }
+  // THE GROUP'S PICKS (2026-11-03). Asked inside a plan that is voting, the
+  // spot an answer leads with is one of the group's picks; another place it
+  // names is said to be outside them. On the LionCage demo it led with a place
+  // none of the six had picked.
+  if (expect.picksOnly) {
+    const picks = new Set(planPickIds);
+    const lead = leadOf(text, mentioned);
+    if (!lead) problems.push("picks: names none of the group's picks");
+    else if (!picks.has(lead.id)) problems.push(`picks: leads with ${lead.name}, which is not one of the group's picks`);
+    const outside = mentioned.filter((v) => !picks.has(v.id));
+    if (outside.length && !SAYS_OUTSIDE.test(text)) problems.push(`picks: names ${outside.map((v) => v.name).join(', ')} outside the group's picks without saying so`);
+  }
+  // Asked inside a plan locked in at a venue: that venue, and no other.
+  if (expect.lockedOnly) {
+    const locked = byKey.get(expect.lockedOnly);
+    if (!mentioned.some((v) => v.id === locked.id)) problems.push(`locked: never names ${locked.name}, where the plan is locked in`);
+    const others = mentioned.filter((v) => v.id !== locked.id);
+    if (others.length) problems.push(`locked: suggests ${others.map((v) => v.name).join(', ')} with the plan locked in at ${locked.name}`);
+  }
   if (expect.openOnly) {
     for (const v of mentioned) {
       if (openIds.has(v.id)) continue;
@@ -665,8 +705,11 @@ function checkAnswer(input) {
   // never a capacity and never how full the room is.
   checkNumbers(text, { facts, userTexts, clock, flockHours }, problems, warnings);
   if (/\bcapacity\b|\d{1,3}\s?%\s*full\b|\bpercent full\b/i.test(text)) problems.push('crowd scale: calls a crowd number capacity or how full the room is');
-  // Only an answer about a venue can say something untrue about one.
+  // Only an answer about a venue can say something untrue about one: one it
+  // names, or the one the item says it is about ("why that one?").
   if (mentioned.length) checkVenueDetails(text, { mentioned, userTexts }, problems, warnings);
+  const about = expect.detailsAbout ? byKey.get(expect.detailsAbout) : null;
+  if (about && !mentioned.some((v) => v.id === about.id)) checkVenueDetails(text, { mentioned: [about], userTexts }, problems, warnings);
   checkDistanceWords(text, { facts, venues, mentioned }, problems);
   if (/\b(clos(e|es|ing)|open (till|until|til))\b[^.?!]{0,25}?\b\d{1,2}\b/i.test(text)) {
     warnings.push('hours: states opening hours (no tool result carries them)');

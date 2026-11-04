@@ -346,3 +346,64 @@ test('the fixture world: every venue fixture is searchable, hours read the way G
   assert.strictEqual(cases.openAt(pin, 2, 1, 0), false);
   assert.strictEqual(cases.levelAt(pin, 2, 1), 2);
 });
+
+// THE GROUP'S PLAN (2026-11-03): items asked from inside a flock are held to
+// its picks or its locked venue, and the LionCage demo's two made-up details
+// ("the booths in the back fit six", "wood-fired pies") are both caught.
+test('asked inside a vote, the answer leads with one of the group\'s picks, and says so when it names another', () => {
+  const mango = cases.byKey.get('mango');
+  const pixel = cases.byKey.get('pixel');
+  const plan = cases.planOf('alex_19', 741);
+  assert.deepStrictEqual(plan.pickIds, [mango.id, saffron.id, pixel.id]);
+  const inPlan = (text, tools = []) => grade(text, { tools, expect: { picksOnly: true }, planPickIds: plan.pickIds, ageBracket: 'under21' });
+  // A pick no tool returned is still a place Birdie may name: the plan is the
+  // group's own.
+  assert.deepStrictEqual(inPlan('Mango Street Tacos. It has 3 of the 5 votes.').problems, []);
+  const outside = inPlan("Thistle & Crust. It's the cheap one.", [search(thistle)]);
+  assert.ok(outside.problems.some((p) => /^picks: leads with Thistle & Crust, which is not one of the group's picks/.test(p)), outside.problems.join('\n'));
+  assert.ok(outside.problems.some((p) => /^picks: names Thistle & Crust outside the group's picks without saying so/.test(p)));
+  const said = inPlan("Mango Street Tacos. If you want somewhere new, Thistle & Crust is not one of the group's picks but it is close.", [search(thistle)]);
+  assert.ok(!said.problems.some((p) => /^picks:/.test(p)), said.problems.join('\n'));
+  assert.ok(inPlan('Somewhere with tables, give me a sec.').problems.some((p) => /^picks: names none of the group's picks/.test(p)));
+});
+
+test('asked inside a locked plan, the answer is about that venue and no other', () => {
+  const pixel = cases.byKey.get('pixel');
+  const plan = cases.planOf('nina_23', 751);
+  assert.strictEqual(plan.lockedId, pixel.id);
+  const locked = (text, tools = []) => grade(text, { tools, expect: { lockedOnly: 'pixel' }, planLockedId: plan.lockedId });
+  assert.deepStrictEqual(locked("You're locked in at Pixel Pier Arcade. Go at 10 PM when it drops off.", [crowd(pixel)]).problems, []);
+  assert.ok(locked('Thistle & Crust is the move tonight.', [search(thistle)]).problems.some((p) => /^locked: never names Pixel Pier Arcade/.test(p)));
+  assert.ok(locked('Pixel Pier Arcade, or Thistle & Crust if you want pizza.', [search(thistle)]).problems.some((p) => /^locked: suggests Thistle & Crust/.test(p)));
+});
+
+test('a detail about the venue an answer is about is held to its data even when the answer does not name it', () => {
+  const lantern = cases.byKey.get('lantern');
+  const why = (text) => grade(text, { expect: { detailsAbout: 'lantern', maxVenues: 1 }, planPickIds: [lantern.id], userTexts: ['where should we go?', 'why that one?'] });
+  assert.deepStrictEqual(why("It's the only place the group voted for, four votes, and it's open now.").problems, []);
+  const made = why('It has a cozy back room and the best cocktails in town.');
+  assert.ok(made.problems.some((p) => /venue details: says "cocktails"/.test(p)), made.problems.join('\n'));
+  assert.ok(made.problems.some((p) => /a reputation no tool gave/.test(p)));
+});
+
+test('the demo\'s booths for six and wood-fired pies are both caught', () => {
+  const rows = [{ name: 'search_venues', args: {}, result: { venues: [{ place_id: thistle.id, name: thistle.name, types: thistle.types, rating: 4.6 }] } }];
+  const r = grade('Thistle & Crust. The booths in the back fit six easily and the wood-fired pies are the whole reason to go.', { tools: rows });
+  assert.ok(r.problems.some((p) => /venue details: says .*"wood-fired"/.test(p)), r.problems.join('\n'));
+  assert.ok(r.problems.some((p) => /venue details: says .*"booths"/.test(p)));
+  assert.ok(r.problems.some((p) => /venue details: says how many it fits \("fit six"\)/.test(p)));
+  // A table count for two from a venue's own tables is not a capacity claim.
+  const mango = cases.byKey.get('mango');
+  assert.ok(!grade('Mango Street Tacos has a table for 2 right now.', { tools: [search(mango)] }).problems.some((p) => /how many it fits/.test(p)));
+  // Skee-ball and pinball at an arcade are what its listing says.
+  const pixel = cases.byKey.get('pixel');
+  const arcade = [{ name: 'search_venues', args: {}, result: { venues: [{ place_id: pixel.id, name: pixel.name, types: pixel.types }] } }];
+  assert.ok(!grade('Pixel Pier Arcade. Skee-ball and pinball till late.', { tools: arcade }).problems.some((p) => /venue details/.test(p)));
+});
+
+test('the unlisted fixture answers only a search that names it', () => {
+  const lantern = cases.byKey.get('lantern');
+  assert.ok(!cases.searchVenues('bars', cases.CITY_CENTERS.philly).some((v) => v.id === lantern.id));
+  assert.ok(!cases.searchVenues('fun things to do', cases.CITY_CENTERS.philly).some((v) => v.id === lantern.id));
+  assert.ok(cases.searchVenues('the lantern room', cases.CITY_CENTERS.philly).some((v) => v.id === lantern.id));
+});

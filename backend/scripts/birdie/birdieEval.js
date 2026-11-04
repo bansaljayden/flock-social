@@ -229,13 +229,45 @@ pool.query = async (sql, params = []) => {
     const v = cases.byId.get(params[0]);
     return v && v.corpus ? { rows: [{ timezone: cases.ZONE }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
+  // The group's plan (services/birdiePlan.js), from the persona's own flock:
+  // the plan row for a member (every flock a persona lists is theirs), nobody
+  // hidden from them, and the vote's tally as routes/venues.js reads it.
+  if (/AS going_member_ids/.test(q)) {
+    const f = persona && persona.flocks.find((x) => x.id === Number(params[0]));
+    if (!f || !['planning', 'confirmed'].includes(f.status)) return { rows: [], rowCount: 0 };
+    const going = f.plan && Number.isInteger(f.plan.going) ? f.plan.going : f.member_count;
+    const members = Math.min(going, f.member_count);
+    return {
+      rows: [{
+        status: f.status, venue_name: f.venue_name || null, venue_id: f.venue_id || null,
+        going_member_ids: Array.from({ length: members }, (_, i) => 80000 + i), guests_going: going - members,
+      }],
+      rowCount: 1,
+    };
+  }
+  if (/FROM user_blocks WHERE blocker_id/.test(q)) return { rows: [], rowCount: 0 };
+  if (/FROM venue_votes vv JOIN users u/.test(q)) {
+    const f = persona && persona.flocks.find((x) => x.id === Number(params[0]));
+    const picks = (f && f.plan && f.plan.picks) || [];
+    const rows = picks.map(([key, votes], i) => ({
+      venue_name: cases.byKey.get(key).name, venue_id: cases.byKey.get(key).id, member_count: votes,
+      voter_rows: Array.from({ length: votes }, (_, j) => ({ id: 81000 + i * 20 + j, name: `Voter ${i}.${j}` })),
+    }));
+    return { rows, rowCount: rows.length };
+  }
+  if (/FROM guest_votes gv JOIN guest_rsvps gr/.test(q)) return { rows: [], rowCount: 0 };
   if (/FROM venue_feedback/.test(q)) return { rows: [], rowCount: 0 };
   if (/fm\.user_id = \$2/.test(q)) {
     const f = persona && persona.flocks.find((x) => x.id === Number(params[0]));
     return f ? { rows: [{ name: f.name, status: f.status }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (/FROM flocks f JOIN flock_members fm/.test(q)) {
-    const rows = (persona ? persona.flocks : []).map((f) => ({ ...f, event_time: f.event_time ? new Date(f.event_time) : null }));
+    // The columns get_user_flocks selects, and no others: a flock's `plan`
+    // fixture is what the plan read answers, not a column of this statement.
+    const rows = (persona ? persona.flocks : []).map((f) => ({
+      id: f.id, name: f.name, venue_name: f.venue_name, event_time: f.event_time ? new Date(f.event_time) : null,
+      status: f.status, member_count: f.member_count,
+    }));
     return { rows, rowCount: rows.length };
   }
   if (/FROM friendships fr/.test(q)) {
@@ -684,10 +716,14 @@ async function runItem(item) {
     const expect = expectFor(item, i);
     const ctxVenueIds = item.ctx && item.ctx.venue && item.ctx.venue.place_id ? [item.ctx.venue.place_id] : [];
     const flockHours = persona.flocks.filter((f) => f.event_time).map((f) => wallNowAt(f.event_time));
+    // The plan the server read for this persona, when the item asks from a
+    // flock: its picks and its locked venue are places Birdie may name.
+    const plan = item.ctx && item.ctx.flock && item.ctx.flock.id ? cases.planOf(persona, item.ctx.flock.id) : null;
     const graded = checks.checkAnswer({
       expect, ageBracket: ageBracketOf(persona.dob), status: turn.status, out: turn.out, tools: turn.tools, priorTools: [...priorTools],
       userTexts: [...userTexts], clock: turn.clock, systemPrompt: turn.systemPrompt, ctxVenueIds, venues: cases.VENUES,
       openIds: new Set(cases.VENUES.filter(openNow).map((v) => v.id)), flockHours,
+      planPickIds: plan ? plan.pickIds : [], planLockedId: plan ? plan.lockedId : null,
     });
     result.turns.push({
       user: text, status: turn.status, out: turn.out, ms: turn.ms, tokens: turnTokens, promptHash: turn.promptHash,
