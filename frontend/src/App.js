@@ -9684,6 +9684,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const FAB_DOCK_GAP = 12;
   // The docked buttons themselves: SafetyButton and AIBubble draw 52px discs.
   const FAB_SIZE = 52;
+  // How far a button keeps from the side of the screen it rests on.
+  const FAB_EDGE = 12;
   // How far the docked row reaches up from the top of the tab bar, which a
   // list that scrolls above it leaves clear under its last row so the row can
   // scroll out from under the buttons (the Nest below, and the Messages list,
@@ -9697,15 +9699,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTab]);
 
-  // Corner positions for FABs
-  const cornerStyle = useCallback((corner) => {
+  // Corner positions for FABs, `inset` px in from the side of the screen.
+  const cornerStyle = useCallback((corner, inset) => {
     const isTop = corner.startsWith('top');
     const isLeft = corner.includes('left');
     const pos = {};
     if (isTop) { pos.top = '60px'; } else { pos.bottom = fabDockBottom; }
-    if (isLeft) { pos.left = '12px'; } else { pos.right = '12px'; }
+    if (isLeft) { pos.left = `${inset}px`; } else { pos.right = `${inset}px`; }
     return pos;
   }, [fabDockBottom]);
+
+  /* BIRDIE NEVER RESTS UNDER SOS (2026-11-04). SOS docks in a bottom corner,
+     Birdie can be dragged to any of the four, and both sit on the docked row
+     at the same 12px from the side. So Birdie dropped in SOS's corner,
+     remembered there, or joined there by SOS dragged across, took exactly
+     SOS's 52px box, and SOS is drawn after it: on the screenshot rig at
+     390x844 and 390x667 the two discs overlapped by all 2,704 px2 and no tap
+     reached Birdie. In that corner Birdie now rests beside SOS on the same
+     row, one 12px gap toward the middle. SOS never moves for it; the corner
+     remembered is still the one Birdie was given, so it takes the corner
+     itself again once SOS leaves it or Safety is off; and the row keeps its
+     height, so the lists that leave dockedRowHeight clear still clear both.
+     Keyed on Safety being on rather than on the button being drawn: the
+     button also hides while its own sheet is open, and Birdie should not
+     slide into the corner behind the sheet and back out. */
+  const birdieInset = safetyOn && birdieCorner === sosCorner ? FAB_EDGE + FAB_SIZE + FAB_EDGE : FAB_EDGE;
 
   // Drag FABs — smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
@@ -15890,7 +15908,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSOS(true); } }}
       style={{
         position: 'absolute',
-        ...cornerStyle(sosCorner),
+        ...cornerStyle(sosCorner, FAB_EDGE),
         width: '52px',
         height: '52px',
         zIndex: 20,
@@ -15938,7 +15956,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAiChatMode('panel'); } }}
       style={{
         position: 'absolute',
-        ...cornerStyle(birdieCorner),
+        ...cornerStyle(birdieCorner, birdieInset),
         display: 'flex',
         flexDirection: birdieIsRight ? 'row-reverse' : 'row',
         alignItems: 'center',
