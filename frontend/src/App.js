@@ -3431,6 +3431,52 @@ const toAiWireContext = (ctx) => {
   return out;
 };
 
+// THE VENUES BIRDIE ALREADY CARDED, sent back with the next question (backend
+// utils/birdieGrounding.js THE CARDS ALREADY SHOWN). The server checks every
+// venue detail a reply states against what its tools returned, and a
+// follow-up answered with no tool ("why that one?") has nothing of its own to
+// stand on: the history above carries a reply's cards only as names. So the
+// most recent answer that carried cards sends them back with their own
+// fields: place id, name, types, price, rating and deal, at most four, cut to
+// the server's bounds (routes/ai.js CARDED_*), which refuses anything wider.
+// They only ever keep a true detail about one of those venues in this
+// person's own reply; nothing here adds a venue, a card or a word to it.
+const AI_CARDED_MAX = 4;
+const AI_CARDED_TYPES_MAX = 5;
+const AI_CARDED_TYPE_CHARS = 60;
+const AI_CARDED_DEAL_TITLE_CHARS = 80;
+const AI_CARDED_DEAL_WHEN_CHARS = 60;
+const AI_CARDED_PLACE_ID_CHARS = 200;
+const aiCut = (value, n) => (typeof value === 'string' ? Array.from(value).slice(0, n).join('') : null);
+const toAiCardedVenue = (v) => {
+  const name = aiCut(v?.name, AI_CONTEXT_NAME_CHARS);
+  if (!name || !name.trim()) return null;
+  const out = { name };
+  if (typeof v.place_id === 'string' && v.place_id && v.place_id.length <= AI_CARDED_PLACE_ID_CHARS) out.place_id = v.place_id;
+  if (Array.isArray(v.types)) {
+    out.types = v.types.filter((t) => typeof t === 'string' && t).slice(0, AI_CARDED_TYPES_MAX).map((t) => aiCut(t, AI_CARDED_TYPE_CHARS));
+  }
+  if (Number.isInteger(v.price_level) && v.price_level >= 0 && v.price_level <= 4) out.price_level = v.price_level;
+  if (typeof v.rating === 'number' && Number.isFinite(v.rating) && v.rating >= 0 && v.rating <= 5) out.rating = v.rating;
+  if (v.deal && typeof v.deal === 'object' && typeof v.deal.title === 'string' && v.deal.title.trim()) {
+    out.deal = {
+      title: aiCut(v.deal.title, AI_CARDED_DEAL_TITLE_CHARS),
+      time_slot: aiCut(v.deal.time_slot, AI_CARDED_DEAL_WHEN_CHARS),
+      days: aiCut(v.deal.days, AI_CARDED_DEAL_WHEN_CHARS),
+    };
+  }
+  return out;
+};
+const toAiCarded = (messages) => {
+  const list = Array.isArray(messages) ? messages : [];
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const m = list[i];
+    if (m?.role !== 'assistant' || m.error || !Array.isArray(m.venues) || m.venues.length === 0) continue;
+    return m.venues.slice(0, AI_CARDED_MAX).map(toAiCardedVenue).filter(Boolean);
+  }
+  return [];
+};
+
 // ---------------------------------------------------------------------------
 // Paying somebody back, when the wallet app may not be installed
 //
@@ -10989,6 +11035,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // window is marked in the thread rather than dropped behind the user's
       // back (see aiMemoryCutIndex).
       let outgoing = trimAiHistory(newMessages);
+      // The venues the most recent carded answer in that window showed, with
+      // the context (toAiCarded above): they keep a true detail about one of
+      // them in a follow-up no tool answers.
+      const carded = toAiCarded(outgoing);
+      if (carded.length > 0) currentContext.carded = carded;
 
       let response;
       try {

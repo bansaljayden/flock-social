@@ -620,7 +620,21 @@ function toolsOf(calls) {
 let base = null;
 const prompts = {};
 
-async function runTurn(item, persona, messages, turnIndex, replayTurn) {
+// The venues an answer carded, as the app sends them back with the next
+// question (frontend App.js toAiCarded): each card's place id, name, types,
+// price, rating and deal, at most four.
+function cardedOf(venues) {
+  return (Array.isArray(venues) ? venues : []).slice(0, 4).filter((v) => v && typeof v.name === 'string' && v.name).map((v) => ({
+    name: v.name,
+    ...(typeof v.place_id === 'string' && v.place_id ? { place_id: v.place_id } : {}),
+    ...(Array.isArray(v.types) ? { types: v.types.filter((t) => typeof t === 'string' && t).slice(0, 5) } : {}),
+    ...(Number.isInteger(v.price_level) ? { price_level: v.price_level } : {}),
+    ...(typeof v.rating === 'number' && Number.isFinite(v.rating) ? { rating: v.rating } : {}),
+    ...(v.deal && typeof v.deal.title === 'string' ? { deal: { title: v.deal.title, time_slot: v.deal.time_slot || null, days: v.deal.days || null } } : {}),
+  }));
+}
+
+async function runTurn(item, persona, messages, turnIndex, replayTurn, carded = []) {
   const key = `${item.id}#${turnIndex}#${crypto.randomUUID()}`;
   const ctx = { item, persona, turnIndex, calls: [], systemPrompt: null, replayCalls: replayTurn ? replayTurn.calls : null };
   turnContexts.set(key, ctx);
@@ -628,7 +642,8 @@ async function runTurn(item, persona, messages, turnIndex, replayTurn) {
   const body = {
     messages,
     location: persona.location ? { lat: persona.location.lat, lng: persona.location.lng } : null,
-    currentContext: item.ctx || null,
+    // The app's context, with the venues its most recent carded answer showed.
+    currentContext: carded.length ? { ...(item.ctx || {}), carded } : (item.ctx || null),
     localHour: w.hour,
     localDay: w.day,
   };
@@ -700,6 +715,8 @@ async function runItem(item) {
   const messages = [];
   const priorTools = [];
   const userTexts = [];
+  // The cards of the most recent answer that carried any (toAiCarded).
+  let carded = [];
   for (let i = 0; i < item.turns.length; i++) {
     // The outage breaker is module state: one item's failure must not close
     // Birdie for the items after it.
@@ -709,7 +726,8 @@ async function runItem(item) {
     userTexts.push(text);
     const turn = RESCORE
       ? recordedTurn(recorded.turns[i])
-      : await runTurn(item, persona, messages.slice(-24), i, recorded ? recorded.turns[i] : null);
+      : await runTurn(item, persona, messages.slice(-24), i, recorded ? recorded.turns[i] : null, carded);
+    if (turn && turn.out && Array.isArray(turn.out.venues) && turn.out.venues.length) carded = cardedOf(turn.out.venues);
     if (!turn) break;
     const turnTokens = turn.calls.reduce((n, c) => n + ((c.tokens && c.tokens.total) || 0), 0);
     if (!source) tokensUsed += turnTokens;

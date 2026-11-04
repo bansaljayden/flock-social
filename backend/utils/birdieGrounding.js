@@ -214,6 +214,42 @@ function noteToolResult(facts, toolName, result) {
   }
 }
 
+// THE CARDS ALREADY SHOWN (2026-11-03). A follow-up the model answers with no
+// tool ("why that one?", "is it cheap?") has nothing of this turn's to stand
+// on, so a true detail about a venue an earlier answer carded ("pizza" at a
+// pizza place, its deal, its price) was removed whenever the check knew any
+// venue at all. The history the app sends carries an answer's cards only as
+// names with a crowd word, so the app now sends, with the next question, the
+// venues its most recent carded answer showed (frontend App.js toAiCarded):
+// each card's place id, name, types, price, rating and deal, at most four,
+// bounded and validated by the route like the rest of the client's context.
+// They are read here as that venue's data, for that venue only.
+//
+// WHAT THE APP'S LIST CAN DO. It only ever stands behind a claim about one of
+// those venues, keeping it from being removed. It never adds a venue to the
+// reply, a card, or anything the model reads (the route hands it to this check
+// alone), so a forged value can only change the asker's own reply. A carded
+// venue is a venue this check knows, so a claim about it that its card does
+// not say ("wood-fired", "the booths in the back") still goes, the way it does
+// for a venue a tool returned.
+const CARDED_MAX = 4;
+function noteCarded(facts, carded) {
+  if (!facts || !Array.isArray(carded)) return;
+  for (const c of carded.slice(0, CARDED_MAX)) {
+    if (!c || typeof c !== 'object' || typeof c.name !== 'string') continue;
+    const deal = c.deal && typeof c.deal === 'object'
+      ? { title: c.deal.title, time_slot: c.deal.time_slot, days: c.deal.days }
+      : null;
+    // The rating is a number and stands behind no word; the price level stands
+    // behind "upscale" and "fancy" at $$$ and above, as a tool's does.
+    facts.add(c.name, {
+      types: Array.isArray(c.types) ? c.types.filter((t) => typeof t === 'string') : [],
+      price_level: Number.isInteger(c.price_level) ? c.price_level : null,
+      ...(deal ? { deal } : {}),
+    });
+  }
+}
+
 // The group's plan (services/birdiePlan.js): its picks and the venue it is
 // locked in at are venues the reply can be about. Their votes are a fact about
 // the group, not the place, so they support no detail.
@@ -634,6 +670,8 @@ module.exports = {
   createVenueFacts,
   noteToolResult,
   notePlan,
+  noteCarded,
+  CARDED_MAX,
   groundVenueDetails,
   // For __tests__/birdieGrounding.test.js.
   __internals: { findClaims, findMentions, mentionPatterns, splitSentences, segmentsOf, norm, stem, nameForms },

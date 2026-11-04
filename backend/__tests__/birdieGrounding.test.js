@@ -15,7 +15,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-const { createVenueFacts, noteToolResult, notePlan, groundVenueDetails } = require('../utils/birdieGrounding');
+const { createVenueFacts, noteToolResult, notePlan, noteCarded, groundVenueDetails } = require('../utils/birdieGrounding');
 const { buildSystemPrompt } = require('../routes/ai').__testables;
 
 // The demo's venue, as the local Places stub served it and search_venues
@@ -213,6 +213,32 @@ test('the plan\'s places and the venue on screen are venues a reply is held to, 
   // A crowd lookup on the pick adds its words; its votes alone support no detail.
   noteToolResult(facts, 'get_crowd_prediction', { venue_name: 'Wren & Barrel', crowd_score: 31, crowd_label: 'Quiet' });
   assert.strictEqual(ground('Wren & Barrel. Quiet at 31, and it has 3 of the 5 votes.', facts).removed.length, 0);
+});
+
+test('a venue an earlier answer carded is held to its card: its types, price and deal keep a claim, for that venue only', () => {
+  // THE CARDS ALREADY SHOWN: what the app sends back with a follow-up.
+  const facts = createVenueFacts();
+  noteCarded(facts, [
+    { place_id: 'demo-thistle-crust', name: 'Thistle & Crust', types: ['pizza_restaurant', 'restaurant'], price_level: 2, rating: 4.6 },
+    { name: 'Palma Pasta Bar', types: ['italian_restaurant'], price_level: 3 },
+    { name: 'Rally House Wings', deal: { title: 'Half-price wings 9–11 PM', time_slot: 'Late Night', days: 'Fri-Sun' } },
+  ]);
+  const keep = [
+    'Thistle & Crust is a pizza place, rated 4.6.',
+    'Palma Pasta Bar is the upscale pick, and the pasta is the point.',
+    'Rally House Wings has half-price wings tonight.',
+  ];
+  for (const said of keep) assert.strictEqual(ground(said, facts).text, said);
+  // What the card does not say still goes, and a card speaks for its venue alone.
+  assert.strictEqual(ground('Thistle & Crust has wood-fired pies and booths in the back.', facts).text, 'Thistle & Crust.');
+  assert.strictEqual(ground('Palma Pasta Bar. Grab a pizza there.', facts).text, 'Palma Pasta Bar.');
+  // At most four, and an entry with no name is no venue.
+  const many = createVenueFacts();
+  noteCarded(many, [{ name: 'A1 Place' }, { name: 'B2 Place' }, { name: 'C3 Place' }, { name: 'D4 Place' }, { name: 'E5 Place', types: ['pizza_restaurant'] }, { types: ['bar'] }, null, 'x']);
+  assert.deepStrictEqual(many.list().map((v) => v.name), ['A1 Place', 'B2 Place', 'C3 Place', 'D4 Place']);
+  noteCarded(many, null);
+  noteCarded(many, { name: 'not a list' });
+  assert.strictEqual(many.size, 4);
 });
 
 test('a vibe read off the crowd is the crowd, and one with nothing behind it is a claim', () => {

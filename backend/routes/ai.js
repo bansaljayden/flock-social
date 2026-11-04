@@ -764,6 +764,20 @@ const MAX_CONTEXT_NAME_WIRE_CHARS = 255;
 const MAX_CONTEXT_PLACE_ID_CHARS = 200;
 const MAX_VENUE_NAME_CHARS = 120;
 const MAX_VENUE_ADDRESS_CHARS = 200;
+// The venues an earlier answer carded, as the app sends them back with the
+// next question (THE CARDS ALREADY SHOWN, utils/birdieGrounding.js): at most
+// four, each with only its card's own fields, every one bounded. A card's name
+// is a search row's (MAX_VENUE_NAME_CHARS), its types are the first three
+// Google sends, and its deal is the one its venue page leads with: a title of
+// up to 80 characters and a time slot and days of up to 60 each. The app cuts
+// to these same numbers (frontend App.js toAiCarded).
+const CARDED_MAX = birdieGrounding.CARDED_MAX;
+const CARDED_TYPES_MAX = 5;
+const CARDED_TYPE_CHARS = 60;
+const CARDED_DEAL_TITLE_CHARS = 80;
+const CARDED_DEAL_WHEN_CHARS = 60;
+const CARDED_KEYS = new Set(['place_id', 'name', 'types', 'price_level', 'rating', 'deal']);
+const CARDED_DEAL_KEYS = new Set(['title', 'time_slot', 'days']);
 
 function promptSafe(value, maxChars) {
   if (typeof value !== 'string') return '';
@@ -2903,6 +2917,26 @@ router.post('/chat',
     scalarOnly(body('currentContext.flock.id').optional({ values: 'null' }), 'flock id'),
     scalarOnly(body('currentContext.venue.name').optional({ values: 'null' }), 'venue name').isString().isLength({ max: MAX_CONTEXT_NAME_WIRE_CHARS }),
     scalarOnly(body('currentContext.venue.place_id').optional({ values: 'null' }), 'venue place id').isString().isLength({ max: 200 }),
+    // The venues the most recent carded answer showed (CARDED_MAX above, THE
+    // CARDS ALREADY SHOWN in utils/birdieGrounding.js). Read by the reply
+    // check alone: never the model, never a card.
+    body('currentContext.carded').optional({ values: 'null' }).isArray({ max: CARDED_MAX })
+      .withMessage(`carded takes at most ${CARDED_MAX} venues`),
+    body('currentContext.carded.*').isObject().withMessage('a carded venue is an object').bail()
+      .custom((v) => Object.keys(v).every((k) => CARDED_KEYS.has(k)))
+      .withMessage('a carded venue takes only its card fields'),
+    scalarOnly(body('currentContext.carded.*.name'), 'carded venue name').isString().isLength({ min: 1, max: MAX_VENUE_NAME_CHARS }),
+    scalarOnly(body('currentContext.carded.*.place_id').optional({ values: 'null' }), 'carded place id').isString().isLength({ max: MAX_CONTEXT_PLACE_ID_CHARS }),
+    body('currentContext.carded.*.types').optional({ values: 'null' }).isArray({ max: CARDED_TYPES_MAX }).withMessage('carded types'),
+    scalarOnly(body('currentContext.carded.*.types.*'), 'carded type').isString().isLength({ max: CARDED_TYPE_CHARS }),
+    scalarOnly(body('currentContext.carded.*.price_level').optional({ values: 'null' }), 'carded price').isInt({ min: 0, max: 4 }),
+    scalarOnly(body('currentContext.carded.*.rating').optional({ values: 'null' }), 'carded rating').isFloat({ min: 0, max: 5 }),
+    body('currentContext.carded.*.deal').optional({ values: 'null' }).isObject().withMessage('carded deal').bail()
+      .custom((v) => Object.keys(v).every((k) => CARDED_DEAL_KEYS.has(k)))
+      .withMessage('a carded deal takes only its title, time slot and days'),
+    scalarOnly(body('currentContext.carded.*.deal.title').optional({ values: 'null' }), 'carded deal title').isString().isLength({ max: CARDED_DEAL_TITLE_CHARS }),
+    scalarOnly(body('currentContext.carded.*.deal.time_slot').optional({ values: 'null' }), 'carded deal time').isString().isLength({ max: CARDED_DEAL_WHEN_CHARS }),
+    scalarOnly(body('currentContext.carded.*.deal.days').optional({ values: 'null' }), 'carded deal days').isString().isLength({ max: CARDED_DEAL_WHEN_CHARS }),
     body('localHour').optional().isInt({ min: 0, max: 23 }),
     body('localDay').optional().isInt({ min: 0, max: 6 }),
     // The device's IANA zone name (WHOSE CLOCK BIRDIE PLANS ON). Shape and
@@ -3314,6 +3348,10 @@ router.post('/chat',
       birdieGrounding.notePlan(venueFacts, plan);
       venueFacts.add(currentContext?.venue?.name, null);
       venueFacts.add(currentContext?.flock?.venue, null);
+      // The venues an earlier answer carded, with the card's own fields as
+      // their data (THE CARDS ALREADY SHOWN): they can only keep a claim about
+      // one of those venues, in this asker's own reply.
+      birdieGrounding.noteCarded(venueFacts, currentContext?.carded);
       // The Places rows this turn's searches returned, by place id, as the
       // model was handed them: the only venues draft_flock and
       // add_venue_to_vote may stage (VENUES THE HANDS MAY NAME). It lives and

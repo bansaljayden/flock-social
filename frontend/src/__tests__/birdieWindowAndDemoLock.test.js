@@ -482,6 +482,83 @@ describe('toAiWireContext', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// 3c. toAiCarded — the venues Birdie already carded go back with the next
+// question (backend utils/birdieGrounding.js THE CARDS ALREADY SHOWN), so a
+// follow-up no tool answers keeps a true detail about one of them. Only the
+// card's own fields, at most four, cut to the bounds the server refuses past.
+// ───────────────────────────────────────────────────────────────────────────
+describe('toAiCarded', () => {
+  const groundingSource = readSource(path.resolve(__dirname, '../../../backend/utils/birdieGrounding.js'));
+  const NAMES = ['AI_CONTEXT_NAME_CHARS', 'AI_CARDED_MAX', 'AI_CARDED_TYPES_MAX', 'AI_CARDED_TYPE_CHARS', 'AI_CARDED_DEAL_TITLE_CHARS',
+    'AI_CARDED_DEAL_WHEN_CHARS', 'AI_CARDED_PLACE_ID_CHARS', 'aiCut', 'toAiCardedVenue', 'toAiCarded'];
+  const lift = () => evaluate(NAMES.map((n) => extractDeclaration(appSource, n)), NAMES);
+  const card = (name, over = {}) => ({
+    place_id: `p-${name}`, name, address: 'Chestnut St, Philadelphia', rating: 4.6, reviews: 301, price_level: 2,
+    types: ['pizza_restaurant', 'restaurant'], is_open: true, lat: 39.95, lng: -75.16, photo_url: '/api/venues/photo?ref=x', crowd: 40, crowd_label: 'Steady',
+    ...over,
+  });
+
+  test('the bounds are the server\'s own numbers', () => {
+    const c = lift();
+    expect(c.AI_CARDED_MAX).toBe(readNumber(groundingSource, 'CARDED_MAX'));
+    expect(c.AI_CARDED_TYPES_MAX).toBe(readNumber(aiRouteSource, 'CARDED_TYPES_MAX'));
+    expect(c.AI_CARDED_TYPE_CHARS).toBe(readNumber(aiRouteSource, 'CARDED_TYPE_CHARS'));
+    expect(c.AI_CARDED_DEAL_TITLE_CHARS).toBe(readNumber(aiRouteSource, 'CARDED_DEAL_TITLE_CHARS'));
+    expect(c.AI_CARDED_DEAL_WHEN_CHARS).toBe(readNumber(aiRouteSource, 'CARDED_DEAL_WHEN_CHARS'));
+    expect(c.AI_CARDED_PLACE_ID_CHARS).toBe(readNumber(aiRouteSource, 'MAX_CONTEXT_PLACE_ID_CHARS'));
+    expect(c.AI_CONTEXT_NAME_CHARS).toBe(readNumber(aiRouteSource, 'MAX_VENUE_NAME_CHARS'));
+  });
+
+  test('the most recent answer that carried cards goes back, with only the card\'s own fields', () => {
+    const { toAiCarded } = lift();
+    const deal = { title: 'Half-price pies 9-11 PM', time_slot: 'Late Night', days: 'Fri-Sun' };
+    const thread = [
+      { role: 'user', text: 'pizza near me?' },
+      { role: 'assistant', text: 'Thistle & Crust.', venues: [card('Thistle & Crust', { deal }), card('Sals Slice')] },
+      { role: 'user', text: 'is it good for 6?' },
+      { role: 'assistant', text: 'It is rated 4.6.', venues: [] },
+      { role: 'assistant', error: true, text: 'hmm gimme a sec, hit me again', venues: [card('Not This One')] },
+      { role: 'user', text: 'why that one?' },
+    ];
+    expect(toAiCarded(thread)).toEqual([
+      { name: 'Thistle & Crust', place_id: 'p-Thistle & Crust', types: ['pizza_restaurant', 'restaurant'], price_level: 2, rating: 4.6, deal },
+      { name: 'Sals Slice', place_id: 'p-Sals Slice', types: ['pizza_restaurant', 'restaurant'], price_level: 2, rating: 4.6 },
+    ]);
+    // No answer carried a card: nothing goes.
+    expect(toAiCarded([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hey' }])).toEqual([]);
+    for (const bad of [null, undefined, 7, 'nope', {}]) expect(toAiCarded(bad)).toEqual([]);
+  });
+
+  test('at most four, each cut to the bounds, and nothing past them', () => {
+    const c = lift();
+    const wide = card(`${'n'.repeat(130)}`, {
+      types: ['a', 'b', 'c', 'd', 'e', 'f', 't'.repeat(70)], price_level: 9, rating: 7, place_id: 'p'.repeat(201),
+      deal: { title: 'd'.repeat(90), time_slot: 's'.repeat(70), days: 7 },
+    });
+    const [one, ...rest] = c.toAiCarded([{ role: 'assistant', text: 'x', venues: [wide, card('B1'), card('C1'), card('D1'), card('E1')] }]);
+    expect(rest).toHaveLength(3);
+    expect(Array.from(one.name)).toHaveLength(c.AI_CONTEXT_NAME_CHARS);
+    expect(one.types).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(one).not.toHaveProperty('price_level');
+    expect(one).not.toHaveProperty('rating');
+    expect(one).not.toHaveProperty('place_id');
+    expect(one.deal).toEqual({ title: 'd'.repeat(c.AI_CARDED_DEAL_TITLE_CHARS), time_slot: 's'.repeat(c.AI_CARDED_DEAL_WHEN_CHARS), days: null });
+    expect(Object.keys(one).sort()).toEqual(['deal', 'name', 'types']);
+  });
+
+  test('sendAiMessage sends it with the context, from the window the server will read', () => {
+    const start = appSource.indexOf('const sendAiMessage = useCallback');
+    const send = appSource.slice(start, appSource.indexOf('const fillAiInput = useCallback', start));
+    const trimmed = send.indexOf('let outgoing = trimAiHistory(newMessages);');
+    const carded = send.indexOf('const carded = toAiCarded(outgoing);');
+    expect(trimmed).toBeGreaterThan(-1);
+    expect(carded).toBeGreaterThan(trimmed);
+    expect(send).toContain('if (carded.length > 0) currentContext.carded = carded;');
+    expect(carded).toBeLessThan(send.indexOf('await sendAiChat('));
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // 4. Client and server agree about the cap
 // ───────────────────────────────────────────────────────────────────────────
 describe('the message cap is the same number in all three files', () => {
