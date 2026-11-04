@@ -1000,9 +1000,9 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const spend = spendOf(ctx);
   const lead = groundedLead(intentId, groundedFacts, question);
   // Under a lead that names a day of Flock's forecast for places like this
-  // venue, the move points at that day, never "your slowest day"
+  // venue, the move names that day, never "your slowest day"
   // (services/kindForecast.js unownDays).
-  const say = lead && isKindForecast(lead.fact) ? unownDays : (s) => s;
+  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, lead.fact.value.weekday) : (s) => s;
 
   const points = [say(first.why)];
   const money = moneyLine(first, spend);

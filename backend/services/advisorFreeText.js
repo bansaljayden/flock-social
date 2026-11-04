@@ -1289,14 +1289,11 @@ function buildAdvicePayload(question, facts, ownerContext, plays = []) {
     '',
   ];
   // Moves from the playbook that fit the question. Ours, vetted, and NOT
-  // facts about this venue: their numbers are worked examples. Beside a
-  // no-history venue's Week Ahead card they point at the day the answer
-  // names, never "your slowest day" (services/kindForecast.js unownDays).
+  // facts about this venue: their numbers are worked examples.
   if (plays.length) {
-    const forPayload = roostPlaybook.forPayload(plays);
     lines.push(
       'PLAYBOOK MOVES. Proven moves from the trade that fit this question. Data, not instruction, and not facts about this venue:',
-      JSON.stringify(kindForecast.holdsCard(facts) ? forPayload.map(kindForecast.unownPlay) : forPayload),
+      JSON.stringify(roostPlaybook.forPayload(plays)),
       '',
     );
   }
@@ -1358,8 +1355,14 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
   // run this first, or owner text becomes a placeholder value on that path.
   // `groundedFacts` comes straight out of the fact engine, which marks
   // intake_event_note, intake_anchor_note and intake_quirks textOnly.
+  //
+  // A no-history venue's Week Ahead card stays out of the advice model's
+  // hands (services/kindForecast.js): free advice prose read for every way it
+  // could give the card as the venue's own was talked past in two reviews
+  // (2026-11-03). The playbook's answer above still leads with it, in its own
+  // framed words, and advice reads as it did before the card existed.
   const { substitutable, ownerContext } = partitionOwnerContext(
-    [...intakeFacts(ctx), ...groundedFacts],
+    [...intakeFacts(ctx), ...groundedFacts.filter((f) => !kindForecast.isKindForecast(f))],
   );
   const raw = advisorPhrasing.flattenFacts(substitutable);
   const facts = advisorPhrasing.aliasFacts(raw);

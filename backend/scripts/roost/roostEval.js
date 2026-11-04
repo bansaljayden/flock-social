@@ -637,8 +637,8 @@ async function runFollowOn(venue, item, first) {
   const given = (first.out.context && first.out.context.tactics) || [];
   for (const id of given) {
     const t = roostPlaybook.tactics.find((x) => x.id === id);
-    // In the playbook's words, or pointed at the day a card answer named.
-    const shown = t ? [t.move, kindForecast.unownDays(t.move)].map((m) => m.toLowerCase()) : [];
+    // In the playbook's words, or naming the day a card answer named.
+    const shown = t ? [t.move, ...DAYS.map((d) => kindForecast.unownDays(t.move, d))].map((m) => m.toLowerCase()) : [];
     if (shown.some((m) => String(r.out.text || '').toLowerCase().includes(m))) r.problems.push(`repeated a move already given (${id})`);
   }
   return r;

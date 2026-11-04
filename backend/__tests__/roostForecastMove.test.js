@@ -10,19 +10,25 @@
 //   1. the facts: the card's own week (GET /api/venue-dashboard/intelligence,
 //      venueIntelligence) becomes Roost facts with the card's numbers, source
 //      category_pattern, ids of their own, and a label and note that call it
-//      Flock's forecast for places like this one; never a week holding a
-//      model number;
+//      Flock's forecast for places like this one; never a week holding a model
+//      number, and never a daytime venue's evening scan;
 //   2. the answer: the money move names the card's quietest and busiest days
 //      with the card's numbers, from the same function and the same cache
 //      entry (no second estimate), said as Flock's forecast for places like
-//      yours, and so do the other week chips; today and the listing lines,
-//      which the card does not carry, keep their refusals;
-//   3. the phrasing input and the number check: the model is handed those
-//      facts with their source and note, a draft that never says whose
-//      forecast it is goes to the template, an invented number loses its
-//      line, and advice built on the card is held to the same rule;
-//   4. no history and no card: the refusal stands, word for word;
-//   5. a venue with its own crowd history never reads the card.
+//      yours, with the move naming the quiet day; so do the other week chips;
+//      today and the listing lines, which the card does not carry, are as
+//      they were;
+//   3. the phrasing input and the check: the model is handed those facts with
+//      their source and note; a draft that does not open on whose forecast it
+//      is, or puts "you" or "your" beside a ranking of its days, goes to the
+//      template; an invented number loses its line;
+//   4. advice: the advice model is never handed the card; the playbook's
+//      answer leads with it, framed, and names the day in its move;
+//   5. no history and no card: the refusal stands, word for word, and costs
+//      no model call;
+//   6. a venue with its own crowd history never reads the card;
+//   7. the review's other findings: a level card week, a cafe, a tie, and a
+//      failed lookup paid for once.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -136,7 +142,6 @@ global.fetch = (url, opts) => {
 
 const advisorFacts = require('../services/advisorFacts');
 const advisorPhrasing = require('../services/advisorPhrasing');
-const advisorFreeText = require('../services/advisorFreeText');
 const roostPlaybook = require('../services/roostPlaybook');
 const kindForecast = require('../services/kindForecast');
 const { CLASSIFIER_PROMPT, ADVICE_SYSTEM_PROMPT, SYSTEM_PROMPT } = require('../services/advisorPrompt');
@@ -196,14 +201,16 @@ async function call(path, body = null) {
   return { status: res.status, body: await res.json() };
 }
 
-// The card's week as the dashboard serves it, and its quietest and busiest.
+// The card's week as the dashboard serves it, and its quietest and busiest
+// (each the first of its kind in date order, the way the tile reads it).
 async function cardWeek() {
   const r = await call('/api/venue-dashboard/intelligence');
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   assert.strictEqual(r.body.available, true, JSON.stringify(r.body));
   const week = r.body.week;
-  const sorted = [...week].sort((a, z) => a.peakScore - z.peakScore);
-  return { intel: r.body, week, low: sorted[0], top: sorted[sorted.length - 1] };
+  const low = week.reduce((a, b) => (b.peakScore < a.peakScore ? b : a));
+  const top = week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a));
+  return { intel: r.body, week, low, top };
 }
 
 // The facts a payload hands the model, read back off it.
@@ -215,6 +222,19 @@ const idFor = (facts, weekday, part) => facts.find((f) => f.id.startsWith(`typic
   (g) => g.id === f.id.replace(`_${part}`, '_weekday') && g.value === weekday,
 )).id;
 
+// The demo's card as the dashboard would serve it, for tests that need no
+// route: the six evenings from a Friday, as filmed.
+const DEMO_INTEL = {
+  available: true,
+  eveningPlace: true,
+  generatedAt: '2026-11-03T12:00:00Z',
+  week: [
+    ['2026-11-07', 'Sat', 74, '10 PM'], ['2026-11-08', 'Sun', 45, '8 PM'], ['2026-11-09', 'Mon', 48, '9 PM'],
+    ['2026-11-10', 'Tue', 48, '9 PM'], ['2026-11-11', 'Wed', 48, '9 PM'], ['2026-11-12', 'Thu', 64, '10 PM'],
+  ].map(([date, weekday, peakScore, peakHour]) => ({ date, weekday, peakScore, peakHour, method: 'rule_engine_no_baseline' })),
+};
+const demoCard = () => advisorFacts.projectionFacts(DEMO_INTEL, { hourOf: venueDashboardRouter.hourOfLabel });
+
 // ── 1. The facts ────────────────────────────────────────────────────────────
 
 test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as Flock\'s forecast for places like this one', async () => {
@@ -222,6 +242,7 @@ test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as
   const { intel, week } = await cardWeek();
   // The card says what made each number; a venue with no curve is a category prior.
   assert.ok(week.every((d) => d.method === 'rule_engine_no_baseline'), JSON.stringify(week));
+  assert.strictEqual(intel.eveningPlace, true, 'a bar peaks in the evenings the card scans');
   const facts = advisorFacts.projectionFacts(intel);
   assert.strictEqual(facts.length, 6, 'one fact per evening on the card');
   for (const [i, f] of facts.entries()) {
@@ -241,7 +262,7 @@ test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as
   assert.ok(facts.every((f) => !f.id.startsWith('peak_')));
 });
 
-test('a card that is not a week of category priors is no week at all', async () => {
+test('a card that is not a week of category priors for an evening place is no week at all', async () => {
   setUp({ placeId: 'ChIJforecastNotKind000000' });
   const { intel } = await cardWeek();
   // One model number means the venue has a curve its profile has not caught
@@ -250,6 +271,7 @@ test('a card that is not a week of category priors is no week at all', async () 
   assert.deepStrictEqual(advisorFacts.projectionFacts(oneModelDay), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, week: intel.week.map(({ method: _m, ...d }) => d) }), [],
     'a week that does not say what made it is not vouched for');
+  assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, eveningPlace: false }), [], 'a daytime place\'s evening scan');
   assert.deepStrictEqual(advisorFacts.projectionFacts(null), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ available: false, reason: 'x' }), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, generatedAt: null }), []);
@@ -276,13 +298,13 @@ test('the money move names the card\'s quietest and busiest days, from the card\
   // The demo's card: Sunday is the quiet one at 45, Saturday the busy one at 74.
   assert.strictEqual(low.peakScore, 45);
   assert.strictEqual(top.peakScore, 74);
-  // The move and what it is worth at the owner's own spend, as for any venue.
-  // The move points at the day the answer named: the playbook's "Give your
-  // slowest day" under a card's Sunday would say Sunday is the venue's own.
+  // The move names the day it fills: the playbook's "Give your slowest day"
+  // under a card's Sunday would call Sunday the venue's own slowest day, and
+  // "that day" after "against 74 on Saturday" reads as Saturday.
   const move = roostPlaybook.moveFor('money_move', { facts: advisorFacts.projectionFacts(intel) }, roostPlaybook.venueOf({ profile }));
   assert.strictEqual(move.topic, 'fill_slow_days', 'a week with a quiet day to fill');
   assert.match(move.move, /^Give your slowest day /);
-  assert.ok(lines.includes(`• ${move.move.replace(/^Give your slowest day /, 'Give that day ')}`), r.body.text);
+  assert.ok(lines.includes(`• ${move.move.replace(/^Give your slowest day /, `Give ${LONG[low.weekday]} `)}`), r.body.text);
   assert.ok(lines.includes(`• At your $28 a head, every 10 extra covers on ${LONG[low.weekday]} is $280 a week, about $14,560 a year.`), r.body.text);
   assert.ok(!/\byour (?:quietest|busiest|slowest)\b/i.test(r.body.text), 'never "your quietest day" for a forecast that is not the venue\'s own');
   // "What else" still knows the move was shown, so it sets it aside.
@@ -309,10 +331,9 @@ test('asked cold, Roost builds the card through the same function, and the card 
   assert.match(r.body.text, new RegExp(`^Fill ${LONG[low.weekday]}\\. .* at ${low.peakScore} on our 0 to 100 index, against ${top.peakScore} on ${LONG[top.weekday]}\\.`));
 });
 
-test('the other week questions answer from the card the same way, and what the card does not carry still refuses', async () => {
+test('the other week questions answer from the card the same way, and what the card does not carry is as it was', async () => {
   setUp({ placeId: 'ChIJforecastOtherChips000' });
-  const { week, top } = await cardWeek();
-  const sorted = [...week].sort((a, z) => a.peakScore - z.peakScore);
+  const { low, top } = await cardWeek();
 
   const peaks = await call('/api/venue/advisor/ask', { intentId: 'peak_hours' });
   assert.strictEqual(peaks.body.mode, 'template');
@@ -320,10 +341,11 @@ test('the other week questions answer from the card the same way, and what the c
 
   const quiet = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
   assert.strictEqual(quiet.body.mode, 'template');
-  assert.strictEqual(quiet.body.text.split('\n')[0], `In Flock's forecast for places like yours, the quietest day this week is ${LONG[sorted[0].weekday]}, with its peak around 9 PM at ${sorted[0].peakScore} on our 0 to 100 index.`);
+  assert.strictEqual(quiet.body.text.split('\n')[0], `In Flock's forecast for places like yours, the quietest day this week is ${LONG[low.weekday]}, with its peak around 9 PM at ${low.peakScore} on our 0 to 100 index.`);
+  assert.ok(quiet.body.text.includes(`• Give ${LONG[low.weekday]} one recurring reason to visit`), quiet.body.text);
 
   for (const r of [peaks, quiet]) {
-    assert.ok(!/\byour (?:quietest|busiest)\b/i.test(r.body.text), r.body.text);
+    assert.ok(!/\byour (?:quietest|busiest|slowest)\b/i.test(r.body.text), r.body.text);
     assert.ok(r.body.sources.length > 0 && r.body.sources.every((s) => s.source === 'category_pattern' || s.source === 'roost_playbook'), JSON.stringify(r.body.sources));
   }
 
@@ -347,52 +369,47 @@ test('the other week questions answer from the card the same way, and what the c
   }
 });
 
-// ── 3. The phrasing input and the number check ──────────────────────────────
+// ── 3. The phrasing input and the check ─────────────────────────────────────
 
-test('the model is handed the card\'s facts with their source and note, and its answer must say whose forecast it is', async () => {
+test('the model is handed the card\'s facts with their source and note, and an answer that opens on whose forecast it is is served', async () => {
   setUp({ placeId: 'ChIJforecastPhrased000000', phrasing: true });
   const { low, top } = await cardWeek();
   const quiet = LONG[low.weekday];
   const busy = LONG[top.weekday];
   let payload = null;
+  // The live model's own wording for the typed money move (2026-11-03).
   const good = (p) => {
-    const facts = payloadFacts(p);
+    const f = payloadFacts(p);
     return {
-      answer: `Fill {{fact:${idFor(facts, quiet, 'weekday')}}}: Flock's forecast for places like yours has it as the quietest day this week, at {{fact:${idFor(facts, quiet, 'score')}}} against {{fact:${idFor(facts, busy, 'score')}}} on {{fact:${idFor(facts, busy, 'weekday')}}}.`,
-      points: ['Give people one fixed reason to come in that day, at the same time every week.'],
+      answer: `Flock's forecast for places like yours has {{fact:${idFor(f, quiet, 'weekday')}}} as the quietest day this week, peaking at {{fact:${idFor(f, quiet, 'score')}}} on our index around {{fact:${idFor(f, quiet, 'hour')}}}.`,
+      points: [
+        `Give {{fact:${idFor(f, quiet, 'weekday')}}} one recurring reason to visit, such as a weekly game or tasting, and run it every week without skipping.`,
+        'A fixed weekly reason builds a habit that fills a room you already pay to staff and light.',
+        `For contrast, places like yours peak highest on {{fact:${idFor(f, busy, 'weekday')}}} around {{fact:${idFor(f, busy, 'hour')}}}, reaching {{fact:${idFor(f, busy, 'score')}}}.`,
+      ],
     };
   };
   draftFor = (role, p) => { payload = p; return good(p); };
   let r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
   assert.strictEqual(r.body.mode, 'phrased', r.body.text);
-  assert.strictEqual(r.body.text.split('\n')[0], `Fill ${quiet}: Flock's forecast for places like yours has it as the quietest day this week, at ${low.peakScore} against ${top.peakScore} on ${busy}.`);
+  assert.strictEqual(r.body.text.split('\n')[0], `Flock's forecast for places like yours has ${quiet} as the quietest day this week, peaking at ${low.peakScore} on our index around 9 PM.`);
+  assert.ok(r.body.text.includes(`places like yours peak highest on ${busy} around 9 PM, reaching ${top.peakScore}.`), r.body.text);
   assert.ok(r.body.sources.every((s) => s.source === 'category_pattern'), JSON.stringify(r.body.sources));
 
   // What the model was given: the two days, their source and their note, the
-  // ids it may write, and the playbook's move.
+  // ids it may write, and the playbook's move naming the quiet day.
   const facts = payloadFacts(payload);
   assert.ok(facts.length >= 6 && facts.every((f) => f.source === 'category_pattern' && f.id.startsWith('typical_peak_')), JSON.stringify(facts));
   assert.ok(facts.every((f) => f.note.includes(advisorFacts.KIND_FORECAST_NOTE)));
   assert.ok(facts.some((f) => f.note.includes('LOWEST projected day in the week ahead')));
   assert.match(payload, /^PLACEHOLDER IDS\. .*typical_peak_score/m);
-  assert.match(payload, /^PLAYBOOK MOVE\./m);
+  assert.match(payload, new RegExp(`"move":"Give ${quiet} one recurring reason to visit`));
+  assert.ok(!/your (?:slowest|quietest) day/i.test(payload.slice(payload.indexOf('PLAYBOOK MOVE'))), payload);
   assert.ok(!/"peak_(?:score|hour|weekday)/.test(payload), 'no id of the venue\'s own forecast');
-  assert.ok(SYSTEM_PROMPT.includes('A fact whose source is category_pattern is Flock\'s forecast for places like this one'));
-  assert.ok(ADVICE_SYSTEM_PROMPT.includes('A fact whose source is category_pattern is Flock\'s forecast for places like this one'));
-
-  // The same numbers given as the venue's own: the template says it instead.
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return { answer: `{{fact:${idFor(f, quiet, 'weekday')}}} is your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
-  };
-  r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-  assert.strictEqual(r.body.mode, 'template', r.body.text);
-  assert.match(r.body.text, /^Fill \w+\. In Flock's forecast for places like yours, it is the quietest day this week/);
-
-  // Written as digits it is the same claim, and goes the same way.
-  draftFor = () => ({ answer: `${quiet} peaks at ${low.peakScore} on our index, your quietest day this week.`, points: [] });
-  r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  for (const prompt of [SYSTEM_PROMPT, ADVICE_SYSTEM_PROMPT]) {
+    assert.ok(prompt.includes('A fact whose source is category_pattern is Flock\'s forecast for places like this one'));
+    assert.ok(prompt.includes('Open the answer with those words'));
+  }
 
   // A number nothing on the card supports loses its line; the rest stands.
   draftFor = (role, p) => ({ ...good(p), points: [`Expect ${quiet} to sit near 31 on the index again next week.`, 'Give people one fixed reason to come in that day.'] });
@@ -402,114 +419,136 @@ test('the model is handed the card\'s facts with their source and note, and its 
   assert.ok(r.body.text.includes('Give people one fixed reason to come in that day.'), r.body.text);
 });
 
-test('the answer check holds a forecast for places like this one to saying so, and leaves the venue\'s own forecast alone', () => {
-  const kind = [advisorFacts.makeFact({ id: 'typical_peak_score', value: 45, source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' })];
+test('a draft built on the card that does not open on whose forecast it is, or says "your" beside a ranking, goes to the template', async () => {
+  setUp({ placeId: 'ChIJforecastStrict000000', phrasing: true });
+  const { low, top } = await cardWeek();
+  const quiet = LONG[low.weekday];
+  const busy = LONG[top.weekday];
+  const ids = (f) => ({ qd: idFor(f, quiet, 'weekday'), qs: idFor(f, quiet, 'score'), qh: idFor(f, quiet, 'hour'), bd: idFor(f, busy, 'weekday'), bs: idFor(f, busy, 'score') });
+  const drafts = [
+    // Given as the venue's own, with or without a "like yours" elsewhere.
+    (i) => ({ answer: `{{fact:${i.qd}}} is your quietest day this week, at {{fact:${i.qs}}}.`, points: [] }),
+    (i) => ({ answer: `{{fact:${i.qd}}} is your quietest day this week, at {{fact:${i.qs}}} against {{fact:${i.bs}}} on {{fact:${i.bd}}}.`, points: ['For a bar like yours, a weekly trivia night is the classic way to fill it.'] }),
+    // An opener that is not about the forecast vouches for nothing after it.
+    (i) => ({ answer: `For a bar like yours, a weekly trivia night is the classic fill, and {{fact:${i.qd}}} is the quietest night this week, at {{fact:${i.qs}}}.`, points: [] }),
+    // The live model's wordings (2026-11-03): attribution first, then "your".
+    (i) => ({ answer: `Flock's forecast for places like yours points to {{fact:${i.qd}}} as your quietest night this week, peaking at only {{fact:${i.qs}}} around {{fact:${i.qh}}}.`, points: [] }),
+    (i) => ({ answer: `Flock's forecast for places like yours shows {{fact:${i.qd}}} as your quietest day this week.`, points: [] }),
+    // "Your" two points after the attribution.
+    (i) => ({ answer: `Fill {{fact:${i.qd}}}: Flock's forecast for places like yours has it as the quietest day this week, at {{fact:${i.qs}}}.`, points: [`{{fact:${i.bd}}} is your busiest night, so keep the promo off it.`] }),
+    // Every other way of saying "yours" beside a ranking (2026-11-03 review).
+    (i) => ({ answer: `Flock's forecast for places like yours has {{fact:${i.qd}}} at {{fact:${i.qs}}}.`, points: [`You are busiest on {{fact:${i.bd}}}.`] }),
+    (i) => ({ answer: `Flock's forecast for places like yours has {{fact:${i.qd}}} at {{fact:${i.qs}}}.`, points: ['Your bar is quietest early in the week.'] }),
+    (i) => ({ answer: `Flock's forecast for places like yours has {{fact:${i.qd}}} at {{fact:${i.qs}}}.`, points: [`Your room peaks on {{fact:${i.bd}}} at {{fact:${i.bs}}}.`] }),
+    (i) => ({ answer: `Flock's forecast for places like yours has {{fact:${i.qd}}} at {{fact:${i.qs}}}.`, points: [`{{fact:${i.qd}}} is the slowest night at your bar.`] }),
+    (i) => ({ answer: `Your forecast, like places like yours, has {{fact:${i.qd}}} at {{fact:${i.qs}}}.`, points: [] }),
+    // Sentences joined at a placeholder are still read for "your".
+    (i) => ({ answer: `This is Flock's forecast for bars like yours. {{fact:${i.qd}}} is your quietest night at {{fact:${i.qs}}}.`, points: [] }),
+  ];
+  for (const draft of drafts) {
+    let shown = null;
+    draftFor = (role, p) => { shown = draft(ids(payloadFacts(p))); return shown; };
+    const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+    assert.strictEqual(r.body.mode, 'template', `${JSON.stringify(shown)} -> ${r.body.text}`);
+    assert.match(r.body.text, /^Fill \w+\. In Flock's forecast for places like yours, it is the quietest day this week/);
+  }
+});
+
+test('the two rules, read directly', () => {
+  const card = [advisorFacts.makeFact({ id: 'typical_peak_score', value: 45, source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' })];
   const own = [advisorFacts.makeFact({ id: 'peak_score', value: 45, source: 'model_holdout', asOf: '2026-11-03T12:00:00Z' })];
-  const say = (answer) => JSON.stringify({ answer, points: [] });
+  const say = (answer, points = []) => JSON.stringify({ answer, points });
   const why = [];
   const reject = (reason) => { why.push(reason); return null; };
-  assert.strictEqual(advisorPhrasing.applyValve(say('Sunday is your quietest day, at {{fact:typical_peak_score}}.'), { facts: kind }, { reject }), null);
-  // The card's number written as digits is the same claim.
-  assert.strictEqual(advisorPhrasing.applyValve(say('Sunday peaks at 45 on our index, your quietest day.'), { facts: kind }, { reject }), null);
-  assert.deepStrictEqual(why, ['a forecast for places like this one, given as the venue\'s own', 'a forecast for places like this one, given as the venue\'s own']);
+  assert.strictEqual(advisorPhrasing.applyValve(say('Sunday is the quietest day, at {{fact:typical_peak_score}}.'), { facts: card }, { reject }), null);
+  assert.strictEqual(advisorPhrasing.applyValve(say('Flock\'s forecast for places like yours has Sunday as your quietest day, at {{fact:typical_peak_score}}.'), { facts: card }, { reject }), null);
+  assert.deepStrictEqual(why, [
+    'a forecast for places like this one that does not open on whose it is',
+    'a forecast for places like this one, given as the venue\'s own',
+  ]);
   for (const fine of [
     'Flock\'s forecast for places like yours puts Sunday at {{fact:typical_peak_score}}.',
-    'For a bar like yours, Sunday typically peaks at {{fact:typical_peak_score}}.',
-    'In this kind of place, Sunday peaks at {{fact:typical_peak_score}}.',
-    'For venues similar to yours, Sunday peaks at {{fact:typical_peak_score}}.',
+    'The forecast for bars like yours has Sunday as the quietest night, at {{fact:typical_peak_score}}.',
+    'What is typical for places like yours puts Sunday at {{fact:typical_peak_score}}.',
   ]) {
-    const out = advisorPhrasing.applyValve(say(fine), { facts: kind });
+    const out = advisorPhrasing.applyValve(say(fine, ['Stagger your shifts so staff arrive as orders build and leave as the rush eases.']), { facts: card });
     assert.ok(out, fine);
     assert.ok(out.text.includes('45'), out.text);
   }
-  // The venue's own forecast needs no such words.
+  // The venue's own forecast needs no such words, and "your" is its own.
   assert.ok(advisorPhrasing.applyValve(say('Sunday is your quietest day, at {{fact:peak_score}}.'), { facts: own }));
-  // Advice built on the card is held to the same rule.
-  assert.strictEqual(advisorFreeText.applyAdviceValve(say('Sunday is your quiet day at {{fact:typical_peak_score}}, so run a weekly reason to come in.'), kind), null);
-  assert.ok(advisorFreeText.applyAdviceValve(say('Flock\'s forecast for places like yours has Sunday at {{fact:typical_peak_score}}, so run a weekly reason to come in.'), kind));
-  assert.ok(kindForecast.saysWhose('venues like you') && !kindForecast.saysWhose('your quietest day'));
-
-  // AND WITHOUT ITS PLACEHOLDER. Advice needs no source, so the card's number
-  // written as a plain number, or its quiet day named as the venue's own,
-  // passed with none at all until this rule.
-  const card = [
-    advisorFacts.makeFact({ id: 'typical_peak_score', value: 45, source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' }),
-    advisorFacts.makeFact({ id: 'typical_peak_weekday', value: 'Sunday', source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' }),
-    advisorFacts.makeFact({ id: 'intake_typical_spend_per_person', value: 28, source: 'intake', asOf: 'owner-set 2026-10-01', unit: 'usd' }),
-  ];
-  for (const own of [
-    'Sunday is your quietest day this week, at 45, so run a weekly quiz.',
-    'With Sunday at 45, give people one fixed reason to come in.',
-    'Sunday is your slowest day, so run a weekly quiz.',
-    'Your Sundays are the quietest, so run a weekly quiz.',
-  ]) {
-    assert.strictEqual(advisorFreeText.applyAdviceValve(say(own), card), null, own);
-    assert.strictEqual(advisorPhrasing.applyValve(say(own), { facts: card }), null, own);
-  }
-  for (const fine of [
-    'Flock\'s forecast for places like yours has Sunday as the quietest day at 45, so run a weekly quiz.',
-    'Run a weekly quiz on Sundays at 8 PM, and give it 6 weeks.',
-    'Aim for 45 more covers a month, and at $28 a head that is $1,260.',
-    'Sunday is a good night for a quiz, so run one every week.',
-    'Sunday is the best night to try a quiz, so run one every week.',
-  ]) {
-    assert.ok(advisorFreeText.applyAdviceValve(say(fine), card), fine);
-  }
-  // A venue whose block holds no card is never held to it.
-  const ownWeek = [advisorFacts.makeFact({ id: 'peak_score', value: 45, source: 'model_holdout', asOf: 'x' })];
-  assert.ok(advisorFreeText.applyAdviceValve(say('Sunday is your quietest day this week, at 45, so run a weekly quiz.'), ownWeek));
+  // The readers on their own.
+  assert.ok(kindForecast.saysWhose('Flock\'s forecast for places like yours'));
+  assert.ok(!kindForecast.saysWhose('For a bar like yours, run a quiz'));
+  assert.ok(kindForecast.ownsCard('Flock\'s forecast for places like yours points to Sunday as your quietest night'));
+  assert.ok(!kindForecast.ownsCard('For contrast, places like yours peak highest on Saturday'));
+  assert.ok(!kindForecast.ownsCard('Stagger your bartending shifts so staff arrive as orders build toward 10 PM'));
 });
 
-test('typed, the money move routes to the card; advice built on it says whose forecast it is or the playbook does', async () => {
-  setUp({ placeId: 'ChIJforecastTyped00000000', phrasing: true });
-  const { low } = await cardWeek();
+test('the playbook\'s copy beside the card names the quiet day, and leaves the busy days and the venue\'s own week alone', () => {
+  assert.strictEqual(kindForecast.unownDays('Give your slowest day one recurring reason to visit.', 'Sunday'), 'Give Sunday one recurring reason to visit.');
+  assert.strictEqual(kindForecast.unownDays('A habit around your quietest day fills seats.', 'Sunday'), 'A habit around Sunday fills seats.');
+  assert.strictEqual(kindForecast.unownDays('Set lower minimums on your slow days.', 'Sunday'), 'Set lower minimums on days like Sunday.');
+  assert.strictEqual(kindForecast.unownDays('Higher minimums on your busiest nights.', 'Sunday'), 'Higher minimums on your busiest nights.');
+  assert.strictEqual(kindForecast.unownDays('Give your slowest day one recurring reason to visit.', null), 'Give your slowest day one recurring reason to visit.');
+  assert.strictEqual(kindForecast.cardQuietDay(demoCard()), 'Sunday');
+  assert.strictEqual(kindForecast.cardQuietDay([advisorFacts.makeFact({ id: 'peak_x', value: { weekday: 'Sunday', peakScore: 4 }, source: 'model_holdout', asOf: 'x' })]), null);
+});
 
-  route = { mode: 'grounded', intentId: 'money_move' };
-  draftFor = () => null; // the phrasing call fails: the template answers
-  let r = await call('/api/venue/advisor/question', { question: 'What is our best money move this week?' });
-  assert.strictEqual(r.body.intentId, 'money_move');
-  assert.strictEqual(r.body.mode, 'template', r.body.text);
-  assert.match(r.body.text, new RegExp(`^Fill ${LONG[low.weekday]}\\. In Flock's forecast for places like yours, it is the quietest day this week`));
+// ── 4. Advice ───────────────────────────────────────────────────────────────
 
-  // "How do I fill a slow Monday?" is advice; Monday's evening on the card
-  // rides with it.
+test('the advice model is never handed the card; its answer reads as it did, and the playbook\'s leads with the card, framed', async () => {
+  setUp({ placeId: 'ChIJforecastAdvice000000', phrasing: true });
+  await cardWeek();
   route = { mode: 'advice', intentId: 'quiet_nights' };
   let advicePayload = null;
   draftFor = (role, p) => {
     advicePayload = p;
-    const f = payloadFacts(p);
-    return { answer: `Monday is your quiet day at {{fact:${idFor(f, 'Monday', 'score')}}}, so give people one fixed reason to come in.`, points: [] };
+    return { answer: 'Skip blanket discounts and give people a fixed reason to show up every Monday, like a weekly industry night.', points: ['Run it for 6 weeks without skipping so people build a habit around it.'] };
   };
-  r = await call('/api/venue/advisor/question', { question: 'How do I fill a slow Monday?' });
-  assert.strictEqual(r.body.mode, 'advice');
-  assert.ok(payloadFacts(advicePayload).some((f) => f.id.startsWith('typical_peak_weekday') && f.value === 'Monday'), 'Monday\'s card evening was in the payload');
-  // The draft gave the card's number as the venue's own: the playbook answers,
-  // and its lead says whose forecast it is.
-  assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook'), JSON.stringify(r.body.sources));
-  assert.match(r.body.text, /^In Flock's forecast for places like yours, Monday projects busiest around 9 PM, at 48 on our 0 to 100 index\./);
+  let r = await call('/api/venue/advisor/question', { question: 'How do I fill a slow Monday?' });
+  assert.strictEqual(r.body.mode, 'advice', r.body.text);
+  assert.ok(advicePayload, 'the advice model was asked');
+  assert.ok(!/category_pattern|typical_peak_/.test(advicePayload), 'the card reached the advice model');
+  assert.strictEqual(r.body.text, 'Skip blanket discounts and give people a fixed reason to show up every Monday, like a weekly industry night.\n• Run it for 6 weeks without skipping so people build a habit around it.');
+  assert.ok(!r.body.sources.some((s) => s.source === 'category_pattern'), JSON.stringify(r.body.sources));
 
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return { answer: `Flock's forecast for places like yours has Monday at {{fact:${idFor(f, 'Monday', 'score')}}}, so give people one fixed reason to come in.`, points: [] };
-  };
+  // The model out: the playbook answers, leading with the card in its own
+  // framed words and naming the day in its move.
+  draftFor = () => null;
   r = await call('/api/venue/advisor/question', { question: 'How do I fill a slow Monday?' });
-  assert.strictEqual(r.body.mode, 'advice');
-  assert.strictEqual(r.body.text, 'Flock\'s forecast for places like yours has Monday at 48, so give people one fixed reason to come in.');
-  assert.ok(r.body.sources.some((s) => s.source === 'category_pattern'), JSON.stringify(r.body.sources));
+  assert.strictEqual(r.body.mode, 'advice', r.body.text);
+  assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook') && r.body.sources.some((s) => s.source === 'category_pattern'), JSON.stringify(r.body.sources));
+  assert.match(r.body.text, /^In Flock's forecast for places like yours, Monday projects /);
+  assert.ok(!/\byour (?:slowest|quietest) day\b/i.test(r.body.text), r.body.text);
 });
 
-test('the playbook\'s lead says whose forecast it is, and the venue\'s own reads as it did', () => {
-  const kind = [
-    advisorFacts.makeFact({ id: 'typical_peak_2026-11-08', value: { weekday: 'Sunday', peakHour: 21, peakScore: 45 }, source: 'category_pattern', asOf: 'x' }),
-    advisorFacts.makeFact({ id: 'typical_peak_2026-11-07', value: { weekday: 'Saturday', peakHour: 21, peakScore: 74 }, source: 'category_pattern', asOf: 'x' }),
-  ];
-  assert.strictEqual(roostPlaybook.groundedLead('money_move', kind).text, 'In Flock\'s forecast for places like yours, Sunday projects as the quietest day this week.');
-  assert.strictEqual(roostPlaybook.groundedLead('peak_hours', kind).text, 'In Flock\'s forecast for places like yours, Saturday projects as the busiest day this week.');
-  const own = kind.map((f) => ({ ...f, id: f.id.replace('typical_', ''), source: 'model_holdout' }));
-  assert.strictEqual(roostPlaybook.groundedLead('money_move', own).text, 'Sunday projects as your quietest day this week.');
+test('the playbook answer under a card day names that day in its move, and the venue\'s own week keeps the playbook\'s words', () => {
+  const ctx = { profile: { service_style: 'bar_standing', typical_spend_per_person: 28 } };
+  const card = demoCard();
+  const out = roostPlaybook.answer({ question: 'How do I fill a slow Sunday?', intentId: 'quiet_nights', ctx, groundedFacts: card });
+  assert.match(out.text, /^In Flock's forecast for places like yours, Sunday projects as the quietest day this week\. Give Sunday one recurring reason to visit/);
+  assert.ok(!/\byour (?:slowest|quietest) day\b/i.test(out.text), out.text);
+  const own = card.map((f) => ({ ...f, id: f.id.replace('typical_', ''), source: 'model_holdout' }));
+  const mine = roostPlaybook.answer({ question: 'How do I fill a slow Sunday?', intentId: 'quiet_nights', ctx, groundedFacts: own });
+  assert.match(mine.text, /^Sunday projects as your quietest day this week\. Give your slowest day one recurring reason to visit/);
+  // The lead for the other questions.
+  assert.strictEqual(roostPlaybook.groundedLead('money_move', card).text, 'In Flock\'s forecast for places like yours, Sunday projects as the quietest day this week.');
+  assert.strictEqual(roostPlaybook.groundedLead('peak_hours', card).text, 'In Flock\'s forecast for places like yours, Saturday projects as the busiest day this week.');
 });
 
-// ── 4. No history and no card ───────────────────────────────────────────────
+test('typed, the money move routes to the card and is answered the same way', async () => {
+  setUp({ placeId: 'ChIJforecastTyped00000000', phrasing: true });
+  const { low } = await cardWeek();
+  route = { mode: 'grounded', intentId: 'money_move' };
+  draftFor = () => null; // the phrasing call fails: the template answers
+  const r = await call('/api/venue/advisor/question', { question: 'What is our best money move this week?' });
+  assert.strictEqual(r.body.intentId, 'money_move');
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.match(r.body.text, new RegExp(`^Fill ${LONG[low.weekday]}\\. In Flock's forecast for places like yours, it is the quietest day this week`));
+});
+
+// ── 5. No history and no card ───────────────────────────────────────────────
 
 test('with no crowd history and no card to read, the refusal stands word for word', async () => {
   const refusal = (p) => {
@@ -545,7 +584,7 @@ test('with no crowd history and no card to read, the refusal stands word for wor
   assert.deepStrictEqual(await advisorFacts.buildWeekProjection({ profile }, { userId: 1 }), []);
 });
 
-// ── 5. A venue with its own crowd history ───────────────────────────────────
+// ── 6. A venue with its own crowd history ───────────────────────────────────
 
 test('a venue with its own crowd history never reads the card: its week is its own forecast, as before', async () => {
   setUp({ placeId: 'ChIJforecastCorpus0000000', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 } });
@@ -561,7 +600,10 @@ test('a venue with its own crowd history never reads the card: its week is its o
   try {
     const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
     assert.strictEqual(r.body.mode, 'template');
-    assert.strictEqual(r.body.text.split('\n')[0], 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.');
+    const lines = r.body.text.split('\n');
+    assert.strictEqual(lines[0], 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.');
+    // The playbook's own words for the venue's own week.
+    assert.ok(lines.some((l) => l.startsWith('• Give your slowest day one recurring reason to visit')), r.body.text);
     assert.strictEqual(projectionReads, 0);
   } finally {
     advisorFacts.buildWeekAhead = realWeek;
@@ -569,153 +611,7 @@ test('a venue with its own crowd history never reads the card: its week is its o
   }
 });
 
-// ── 6. After the adversarial review (2026-11-03) ────────────────────────────
-//
-// The review's reproductions, each pinned: a draft that says whose forecast
-// it is once and then calls the card's days the venue's own; wordings the
-// first reader missed; the level-week refusal; a daytime venue; a tie; a
-// failed lookup paid twice; and the false positives a blunter reader threw
-// good answers away on.
-
-// The demo's card as Roost facts, flattened and aliased the way the advice
-// payload carries them, with the owner's spend beside them.
-const DEMO_INTEL = {
-  available: true,
-  eveningPlace: true,
-  generatedAt: '2026-11-03T12:00:00Z',
-  week: [
-    ['2026-11-07', 'Sat', 74, '10 PM'], ['2026-11-08', 'Sun', 45, '8 PM'], ['2026-11-09', 'Mon', 48, '9 PM'],
-    ['2026-11-10', 'Tue', 48, '9 PM'], ['2026-11-11', 'Wed', 48, '9 PM'], ['2026-11-12', 'Thu', 64, '10 PM'],
-  ].map(([date, weekday, peakScore, peakHour]) => ({ date, weekday, peakScore, peakHour, method: 'rule_engine_no_baseline' })),
-};
-function adviceFacts(extra = []) {
-  const card = advisorFacts.projectionFacts(DEMO_INTEL, { hourOf: venueDashboardRouter.hourOfLabel });
-  const spend = advisorFacts.makeFact({ id: 'intake_typical_spend_per_person', value: 28, source: 'intake', asOf: 'owner-set 2026-10-01', unit: 'usd' });
-  return advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([spend, ...extra, ...card]));
-}
-const sayAnswer = (answer, points = []) => JSON.stringify({ answer, points });
-
-test('a draft that says whose forecast it is once and then calls the card\'s days the venue\'s own goes to the template', async () => {
-  setUp({ placeId: 'ChIJforecastReview1a00000', phrasing: true });
-  const { low, top } = await cardWeek();
-  const quiet = LONG[low.weekday];
-  const busy = LONG[top.weekday];
-  const drafts = [
-    (f) => ({ answer: `${quiet} is your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}} against {{fact:${idFor(f, busy, 'score')}}} on ${busy}.`, points: ['For a bar like yours, a weekly trivia night is the classic way to fill it.'] }),
-    (f) => ({
-      answer: `Fill ${quiet}: Flock's forecast for places like yours has it as the quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}} against {{fact:${idFor(f, busy, 'score')}}} on ${busy}.`,
-      points: [`Give ${quiet}, your slowest day, one recurring reason to visit.`, `${busy} is your busiest night, so keep the promo off it.`],
-    }),
-    (f) => ({ answer: `Your forecast has ${quiet} as the quiet one at {{fact:${idFor(f, quiet, 'score')}}}, which is low for places like yours.`, points: [] }),
-    (f) => ({ answer: `Unlike places like yours, your own week bottoms out on ${quiet} at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] }),
-    // Used first, said second: the "like yours" further down vouches for nothing above it.
-    (f) => ({ answer: `${quiet} is the quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: ['That is Flock\'s forecast for places like yours.'] }),
-  ];
-  for (const draft of drafts) {
-    draftFor = (role, p) => draft(payloadFacts(p));
-    const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-    assert.strictEqual(r.body.mode, 'template', `${JSON.stringify(draft(payloadFacts(modelCalls[modelCalls.length - 1].payload)))} -> ${r.body.text}`);
-    assert.match(r.body.text, /^Fill \w+\. In Flock's forecast for places like yours, it is the quietest day this week/);
-  }
-  // The playbook's own "your slowest day" never reaches the model beside the card.
-  const payload = modelCalls[modelCalls.length - 1].payload;
-  assert.match(payload, /"move":"Give that day one recurring reason to visit/);
-  assert.ok(!/your (?:slowest|quietest) day/i.test(payload.slice(payload.indexOf('PLAYBOOK MOVE'))), payload);
-
-  // The live model's own wording (2026-11-03 live check): the ranking said as
-  // the forecast's, attribution first in its own sentence. That is the card
-  // said plainly, and it is served.
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return {
-      answer: `Flock's forecast for places like yours points to {{fact:${idFor(f, quiet, 'weekday')}}} as your quietest night this week, peaking at only {{fact:${idFor(f, quiet, 'score')}}} around {{fact:${idFor(f, quiet, 'hour')}}}. That leaves the most room to sell.`,
-      points: [`Contrast that with {{fact:${idFor(f, busy, 'weekday')}}}, where typical venues peak at {{fact:${idFor(f, busy, 'score')}}}.`, `Give {{fact:${idFor(f, quiet, 'weekday')}}} one recurring reason to visit, such as trivia, and run it without skipping.`],
-    };
-  };
-  const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-  assert.strictEqual(r.body.mode, 'phrased', r.body.text);
-  assert.ok(r.body.text.startsWith(`Flock's forecast for places like yours points to ${quiet} as your quietest night this week, peaking at only ${low.peakScore} around `), r.body.text);
-});
-
-test('the chip\'s own question words excuse nothing: "Which days look quiet?" is not the owner calling a day quiet', async () => {
-  setUp({ placeId: 'ChIJforecastChipWords000', phrasing: true });
-  const { week } = await cardWeek();
-  const sorted = [...week].sort((a, z) => a.peakScore - z.peakScore);
-  const quiet = LONG[sorted[0].weekday];
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return { answer: `{{fact:${idFor(f, quiet, 'weekday')}}} is your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
-  };
-  let r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
-  assert.strictEqual(r.body.mode, 'template', r.body.text);
-  assert.match(r.body.text, /^In Flock's forecast for places like yours, the quietest day this week is /);
-  // Said as the forecast's, it stands (the live model's quiet-days wording).
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return { answer: `Flock's forecast for places like yours shows {{fact:${idFor(f, quiet, 'weekday')}}} as your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
-  };
-  r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
-  assert.strictEqual(r.body.mode, 'phrased', r.body.text);
-  // "Your forecast" is never the card's, attribution or not.
-  draftFor = (role, p) => {
-    const f = payloadFacts(p);
-    return { answer: `Your forecast, like places like yours, has {{fact:${idFor(f, quiet, 'weekday')}}} at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
-  };
-  r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
-  assert.strictEqual(r.body.mode, 'template', r.body.text);
-});
-
-test('advice built on the card is read for the card in the wordings the first reader missed, and its fallback says whose forecast it is', async () => {
-  const facts = adviceFacts();
-  const texts = ['Should I start a trivia night on Thursday?'];
-  const reasons = [];
-  const reject = (why) => { reasons.push(why); return null; };
-  for (const own of [
-    'Sunday is your lowest night this week, so run a weekly quiz.',
-    'Saturday is your highest night, so keep the promo off it.',
-    'Your quiet nights are Sunday through Tuesday, so run a weekly quiz.',
-    'Sunday is your slow night, so run a weekly quiz.',
-    'Sunday is quieter than the rest of the week, so run a weekly quiz.',
-    'Thursday is one of your stronger nights, behind Friday and Saturday.',
-    'Saturday is when the room peaks, so staff up for it.',
-    'Sunday is the least busy night, so run a quiz there.',
-    'Sunday is dead, so run a quiz there.',
-    'Your quietest night this week? Sunday.',
-    'Look at Sunday. It is the quietest night of the week.',
-    'Sun is your quietest night, so run a quiz there.',
-    'Your best night to fill is Sunday.',
-    'With Sunday at 45, give people one fixed reason to come in.',
-  ]) {
-    reasons.length = 0;
-    assert.strictEqual(advisorPhrasing.internals.checkAnswer(sayAnswer(own), facts, { mode: 'advice', texts, reject }), null, own);
-    assert.match(reasons[0] || '', /^a forecast for places like this one/, `${own}: ${reasons[0]}`);
-    assert.strictEqual(advisorFreeText.applyAdviceValve(sayAnswer(own), facts, { texts }), null, own);
-  }
-  // Through the route: Thursday's evening rides with the question, and an
-  // answer that calls the card's days the venue's own is replaced by the
-  // playbook, whose lead says whose forecast it is and whose move points at
-  // the day it named.
-  setUp({ placeId: 'ChIJforecastReview1b00000', phrasing: true });
-  await cardWeek();
-  route = { mode: 'advice', intentId: 'quiet_nights' };
-  draftFor = () => ({ answer: 'Thursday is one of your stronger nights, behind Friday and Saturday, so trivia can work.', points: ['Your quiet nights are Sunday through Tuesday.'] });
-  const r = await call('/api/venue/advisor/question', { question: 'Should I start a trivia night on Thursday?' });
-  assert.strictEqual(r.body.mode, 'advice');
-  assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook'), JSON.stringify(r.body.sources));
-  assert.ok(!/\byour (?:stronger|quiet) nights\b/i.test(r.body.text), r.body.text);
-  assert.ok(!/\byour (?:slowest|quietest) day\b/i.test(r.body.text), r.body.text);
-});
-
-test('the playbook answer under a card day points its move at that day', () => {
-  const card = advisorFacts.projectionFacts(DEMO_INTEL, { hourOf: venueDashboardRouter.hourOfLabel });
-  const out = roostPlaybook.answer({ question: 'How do I fill a slow Sunday?', intentId: 'quiet_nights', ctx: { profile: { service_style: 'bar_standing', typical_spend_per_person: 28 } }, groundedFacts: card });
-  assert.match(out.text, /^In Flock's forecast for places like yours, Sunday projects as the quietest day this week\. Give that day one recurring reason to visit/);
-  assert.ok(!/\byour (?:slowest|quietest) day\b/i.test(out.text), out.text);
-  // The venue's own forecast keeps the playbook's own words.
-  const own = card.map((f) => ({ ...f, id: f.id.replace('typical_', ''), source: 'model_holdout' }));
-  const mine = roostPlaybook.answer({ question: 'How do I fill a slow Sunday?', intentId: 'quiet_nights', ctx: { profile: { service_style: 'bar_standing', typical_spend_per_person: 28 } }, groundedFacts: own });
-  assert.match(mine.text, /^Sunday projects as your quietest day this week\. Give your slowest day one recurring reason to visit/);
-});
+// ── 7. The review's other findings (2026-11-03) ─────────────────────────────
 
 test('a level week on the card says whose week it is and what would give the venue one of its own', async () => {
   setUp({ placeId: 'ChIJforecastLevelCard0000' });
@@ -756,11 +652,9 @@ test('on a tie the money move names the busiest day the Biggest Night tile names
   const saved = { ...CARD };
   Object.assign(CARD, { Thu: 74, Fri: 74, Sat: 74 });
   try {
-    const { week } = await cardWeek();
-    // The tile: frontend/src/screens/VenueDashboard.js weekPeak.
-    const tile = week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a));
+    const { top } = await cardWeek(); // the tile's own reduce: the first busiest day
     const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-    assert.match(r.body.text.split('\n')[0], new RegExp(`against 74 on ${LONG[tile.weekday]}\\.$`), r.body.text);
+    assert.match(r.body.text.split('\n')[0], new RegExp(`against 74 on ${LONG[top.weekday]}\\.$`), r.body.text);
   } finally {
     Object.assign(CARD, saved);
   }
@@ -775,40 +669,4 @@ test('a lookup that failed is not paid for again in the same question', async ()
   const r = await call('/api/venue/advisor/question', { question: 'How do I fill a slow Monday?' });
   assert.strictEqual(r.body.mode, 'advice', r.body.text);
   assert.strictEqual(placesCalls - before, 1, 'the named day read the failed card a second time');
-});
-
-test('what the owner said, the trade at large, and attribution in other words are not held against an answer', () => {
-  const intakeBusy = advisorFacts.makeFact({ id: 'intake_owner_busy_nights', value: ['friday', 'saturday'], source: 'intake', asOf: 'owner-set 2026-10-01' });
-  const facts = adviceFacts([intakeBusy]);
-  const fine = [
-    // Numbers that only equal a card number.
-    ['Run a 45-minute happy hour, and give it 6 weeks.', ''],
-    ['Book the 74-seat room for a private party.', ''],
-    ['At 48 a head that is a strong check.', ''],
-    ['Aim for 64 regulars on the list by spring.', ''],
-    ['Keep labour near 25 to 30% of sales.', ''],
-    ['Read the 45 most recent reviews first.', ''],
-    ['Track it: 45 of 80 deal guests came back.', ''],
-    // The owner's own words.
-    ['You said Sunday brings in about 45 people, so a quiz fits.', 'Sunday brings in about 45 people, what should I run?'],
-    ['Since Sunday is your slowest night, run a quiz.', 'How do I fill my slowest night, Sunday?'],
-    ['You told us Friday and Saturday are your busiest nights, so keep promos off them.', ''],
-    // The trade at large.
-    ['Saturday is the busiest night for most bars, so keep the promo off it.', ''],
-    ['For most bars the quietest nights are Sunday through Tuesday.', ''],
-    // Attribution in other words.
-    ['For venues of your type, Sunday is the quietest night, at 45.', ''],
-    ['Similar bars see Sunday as the quietest night, at 45.', ''],
-    ['A typical bar has Sunday as its quietest night, at 45.', ''],
-    ['For places like your bar, Sunday is the quietest night, at 45.', ''],
-    ['For spots like this, Sunday is the quietest night, at 45.', ''],
-    ['Bars in your category see Sunday at 45.', ''],
-    ['For places such as yours, Sunday is the quietest night, at 45.', ''],
-    ['Comparable venues see Sunday as the quietest night, at 45.', ''],
-    ['The category forecast has Sunday as the quietest night, at 45.', ''],
-  ];
-  for (const [answer, question] of fine) {
-    const out = advisorFreeText.applyAdviceValve(sayAnswer(answer), facts, { texts: question ? [question] : [] });
-    assert.ok(out, `${answer} (asked: ${question})`);
-  }
 });

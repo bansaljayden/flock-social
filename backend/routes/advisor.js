@@ -64,7 +64,7 @@ const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
-const { KIND_FORECAST, isKindForecast, holdsCard, unownDays } = require('../services/kindForecast');
+const { KIND_FORECAST, isKindForecast, unownDays, cardQuietDay } = require('../services/kindForecast');
 
 // THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
 // point when the facts point at one (advisorPrompt, the venue's own numbers
@@ -104,10 +104,11 @@ function chipTactics(answer, intentId, block) {
 }
 
 // A playbook move as a chip's template shows it: in the playbook's own words,
-// or, beside a no-history venue's Week Ahead card, pointed at the day the
+// or, beside a no-history venue's Week Ahead card, naming the quiet day the
 // answer named instead of "your slowest day" (services/kindForecast.js).
 function moveText(text, block) {
-  return holdsCard(block && block.facts) ? unownDays(text) : text;
+  const day = cardQuietDay(block && block.facts);
+  return day ? unownDays(text, day) : text;
 }
 
 // What the chat sends back as `previous` with the owner's next typed

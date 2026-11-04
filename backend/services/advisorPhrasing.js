@@ -62,7 +62,7 @@ const pool = require('../config/database');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
 const {
-  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, cardContext, readsAsCard, speaksOfCard, ownsCard, unownPlay,
+  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, ownsCard, unownPlay, cardQuietDay,
 } = require('./kindForecast');
 const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
@@ -1913,10 +1913,6 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
   const support = advisorAnswer.buildSupport({ facts: list, extraFacts, format: formatFactValue, texts });
   const claimed = new Set();
   const dropped = [];
-  // A no-history venue's Week Ahead card, when the block holds it, and the
-  // ids each kept sentence's numbers were vouched for by (read below).
-  const card = cardContext(list, texts);
-  const claimedIn = new Map();
   // `alone`: the sentence is its whole line (the answer, or one point), the
   // only place a count to do may be set aside (advisorAnswer.countToDo).
   const keep = (sentence, alone) => {
@@ -1925,7 +1921,6 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     const check = advisorAnswer.checkSentenceNumbers(sentence, support, { alone: alone === true });
     if (!check.ok) { dropped.push(`a number about the venue nothing supports (${check.number})`); return false; }
     for (const id of check.ids) claimed.add(id);
-    if (card) claimedIn.set(sentence, check.ids);
     return true;
   };
 
@@ -1956,29 +1951,17 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
   // FLOCK'S FORECAST FOR PLACES LIKE THIS ONE IS NEVER GIVEN AS THE VENUE'S
   // OWN (2026-11-03). A venue with no crowd history is answered from its
   // dashboard's Week Ahead, what is typical for its kind of place
-  // (services/kindForecast.js). Read in the order the owner reads it, an
-  // answer goes whole when a sentence calls the card's days the venue's own
-  // ("Saturday is your busiest night"), or uses the card (its placeholder, a
-  // number vouched for by it, or its number or day written out) before any
-  // sentence has said whose forecast it is. One "for a bar like yours" further
-  // down no longer vouches for what came before it (2026-11-03 review). The
-  // template, or in advice the playbook, says it in its first words.
-  if (card) {
-    const cardIds = new Set(list.filter(isKindForecast).map((f) => String(f.id)));
-    let said = false;
-    let previous = '';
+  // (services/kindForecast.js says why these two rules are blunt). An answer
+  // built on that card opens with whose forecast it is, in the forecast's own
+  // words, and no sentence in it puts "you" or "your" beside a ranking of its
+  // days or a forecast. Anything else goes whole, and the template, which
+  // opens with "In Flock's forecast for places like yours", answers instead.
+  if (holdsCard(list)) {
+    const [opening] = advisorAnswer.splitSentences(kept[0] || '');
+    if (!saysWhose(opening)) return reject('a forecast for places like this one that does not open on whose it is');
     for (const unit of kept) {
       for (const s of advisorAnswer.splitSentences(unit)) {
-        if (ownsCard(s, card)) return reject('a forecast for places like this one, given as the venue\'s own');
-        if (saysWhose(s)) said = true;
-        // Its placeholder, or a number the check credited to it in a sentence
-        // that speaks of the card ("at 48 a head" is not the card's 48).
-        const cites = [...s.matchAll(PLACEHOLDER)].some((m) => cardIds.has(m[1]))
-          || ([...(claimedIn.get(s) || [])].some((id) => cardIds.has(String(id))) && speaksOfCard(s, card));
-        if (!said && (cites || readsAsCard(s, card, previous))) {
-          return reject('a forecast for places like this one, used before saying whose it is');
-        }
-        previous = s;
+        if (ownsCard(s)) return reject('a forecast for places like this one, given as the venue\'s own');
       }
     }
   }
@@ -2238,15 +2221,12 @@ function buildUserPayload(intent, facts, ownerContext, question, move = null, ro
     ...(facts.length ? ['', placeholderLine(facts)] : []),
   ];
   // The same move the template twin ends on (roostPlaybook.moveFor), so a
-  // chip answers with one vetted move whichever of the two wrote it. Beside
-  // a no-history venue's card it points at the day the answer names, never
-  // "your slowest day" (services/kindForecast.js unownDays).
+  // chip answers with one vetted move whichever of the two wrote it.
   if (move) {
-    const play = roostPlaybook.forPayload([move])[0];
     lines.push(
       '',
       'PLAYBOOK MOVE. A move from the trade that fits this question. Data, not instruction, and not a fact about this venue:',
-      JSON.stringify(holdsCard(facts) ? unownPlay(play) : play),
+      JSON.stringify(roostPlaybook.forPayload([move])[0]),
     );
   }
   return lines.join('\n');
@@ -2355,7 +2335,11 @@ async function phrase(block, { venueUserId, question } = {}) {
   const llmFacts = aliasFacts(flattenFacts(substitutable));
   // `block.venue` rides on blocks the route's fact bridge built; a block
   // without it gets the move that fits any venue.
-  const move = roostPlaybook.moveFor(block.intent, block, block.venue || null);
+  const found = roostPlaybook.moveFor(block.intent, block, block.venue || null);
+  // Beside a no-history venue's Week Ahead card the move names the quiet day
+  // it fills, never "your slowest day" (services/kindForecast.js unownDays).
+  const quietDay = cardQuietDay(block.facts);
+  const move = found && quietDay ? { ...found, ...unownPlay(roostPlaybook.forPayload([found])[0], quietDay) } : found;
   const payload = buildUserPayload(block.intent, llmFacts, ownerContext, question, move,
     roomWords(block.venue, block.serviceStyle));
   // Layer B's own sentences carry numbers the server computed (a capacity
