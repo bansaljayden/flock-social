@@ -40,10 +40,12 @@ const PAPER_PAGES = 30;
 // counter's figures are owl-4.9 and the heat rule as deployed on the six real
 // benchmark sets, which also guided Owl's development (paper Table 17).
 // owl-5's exam is the paper's Section 14.7 and Table 22: the gate's 1,593
-// frames and their 333 with three or more people, and the three benchmark
-// sets it lost more than 2 points on (PUT -3.1, OpenThermalPose2 -3.4, IISER
-// -6.0). owl-5 runs on Flux from 2026-11-03 by the owner's decision although
-// that exam failed (paper Sections 14.7 and 18). The forecast's retrain is
+// frames, and the three benchmark sets it lost more than 2 points on (PUT
+// -3.1, OpenThermalPose2 -3.4, IISER -6.0). owl-5.1 replaced it on Flux on
+// 2026-11-03 by the owner's decision (paper Section 14.7): within 1 point of
+// owl-4.9 on all six sets' validation frames (rule ii, met), and 48.4% exact
+// on the 909-frame new test against owl-5's 48.1% and owl-4.9's 32.8% (rule i,
+// within 1 point of owl-5, not shown: +0.33 [-3.69, +4.60]). The forecast's retrain is
 // Section 7.2's: late November, thresholds
 // committed on 25 and 26 September. It "ships only if it passes them", not
 // "if it beats today's numbers": production has served v2.6.0 in model mode
@@ -230,24 +232,28 @@ export default function ResearchPage() {
                 libraries. The counter has been tested on six research datasets
                 and in sixteen sealed tests on public footage, including a café
                 and a restaurant, and not yet inside a working venue. Its
-                November retrain, owl-5, has run in Flux since 3 November: on
-                1,593 frames neither version had trained on, it counted 37.2%
-                exactly against owl-4.9's 31.5%, and 9.3 points more on frames of
-                three or more people. It lost 3 to 6 points on three of the six
-                benchmark sets, so it failed the test fixed before it trained;
-                Flock put it on Flux anyway, and its successor, owl-5.1,
-                replaces it only after a new untouched test.
+                November retrain, owl-5, counted 37.2% of 1,593 frames neither
+                version had trained on exactly, against owl-4.9's 31.5%, but lost
+                3 to 6 points on three of the six benchmark sets, so it failed the
+                test fixed before it trained. Its successor, owl-5.1, went into
+                Flux on 3 November. It gives owl-4.9's original data a bigger
+                share of training and comes within a point of owl-4.9 on all six
+                benchmark sets' validation frames. On 909 new held-out frames it
+                counted 48.4% exactly, against owl-5's 48.1% and owl-4.9's 32.8%;
+                that test, also fixed before it trained, was too small to prove
+                it within a point of owl-5.
               </p>
             </div>
             <div>
               <h2>What's next</h2>
               <p>
-                Owl's retrain is done and in the paper. The crowd forecast's
+                Owl's retrains are done and in the paper. The crowd forecast's
                 retrain runs in late November. It is scored on 14 days it never
                 saw, against thresholds set in September, and ships only if it
                 passes them. Owl's next test is a recording on Flux's own camera
                 of a real room with one to fifteen people, counted as it is
-                filmed and kept unseen until owl-5 and owl-5.1 are scored on it.
+                filmed, kept unseen, and scored once with owl-4.9, owl-5 and
+                owl-5.1 together.
                 After that, the plan is to put a Flux sensor in a venue Flock
                 already reads and compare its counts with the forecast hour by
                 hour.
