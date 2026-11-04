@@ -60,6 +60,10 @@ const {
   // "no" instead of throwing; presence is not attention either way, and
   // services/pushHelper.js writes out at length why.
   deliveredToLiveSocket,
+  // A DM's vote tally as one person is sent it: each option carries the deal
+  // that person's venue page leads with, a drink deal only for a person known
+  // to be 21. The socket vote sends the same, so the transports agree.
+  dmVotesFor,
 } = require('../sockets/handlers');
 const { pushIfOfflineDebounced, pushBadgeSync } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
@@ -2501,7 +2505,12 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4
        GROUP BY venue_name ORDER BY vote_count DESC`,
       [user1, user2]
     );
-    res.json({ votes: result.rows });
+    // The reader's own view of each option's deal (sockets/handlers.js
+    // dmVotesFor): a drink deal only when we know the reader is 21, whatever
+    // the other person may see. A failed deals read answers the tally without
+    // its deals.
+    const votesOf = await dmVotesFor(result.rows, [req.user.id]);
+    res.json({ votes: votesOf(req.user.id) });
   } catch (err) {
     console.error('DM venue votes error:', err);
     res.status(500).json({ error: 'Failed to get votes' });
@@ -2599,7 +2608,9 @@ router.post('/dm/:userId/venue-votes',
       } finally {
         voteClient.release();
       }
-      // Return updated tallies
+      // Return updated tallies, as the voter's own view of each option's deal
+      // (dmVotesFor, the read dm_vote_venue makes). The toggle is the un-vote
+      // too, so what is left after one is told the same way.
       const result = await pool.query(
         `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
          FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
@@ -2607,7 +2618,8 @@ router.post('/dm/:userId/venue-votes',
          GROUP BY venue_name ORDER BY vote_count DESC`,
         [user1, user2]
       );
-      res.json({ votes: result.rows });
+      const votesOf = await dmVotesFor(result.rows, [req.user.id]);
+      res.json({ votes: votesOf(req.user.id) });
     } catch (err) {
       console.error('DM venue vote error:', err);
       res.status(500).json({ error: 'Failed to vote' });

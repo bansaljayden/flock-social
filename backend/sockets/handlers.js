@@ -1464,6 +1464,41 @@ async function broadcastGuestRsvp(io, flockId, payload) {
   return emitToFlockMembers(io, flockId, 'guest_rsvp', payload);
 }
 
+// --- A DM's venue vote, as each of the two is sent it -----------------------
+//
+// THE DEAL ON EACH OPTION (2026-11-03). A flock's vote carries, on each option
+// with a place id, the deal that member's venue page leads with
+// (routes/venues.js voteDealsFor, the venue page's own rules in
+// utils/venueDeals.js). Two people choosing a place in a DM were told nothing
+// of it, so their options now carry the same thing through the same read, as
+// { title, time_slot, days }. Per person, because the rules are: a drink deal
+// reaches only a person we know is 21, so in a thread between a 25-year-old
+// and a 19-year-old the 19-year-old is told about the food deal or nothing,
+// whichever of the two cast the vote.
+//
+// One deals statement for every option and one birthday read for both people,
+// only when a drink deal is among the deals. An option with no deal for that
+// person carries no `deal` key, so a tally with none is the shape it always
+// was. A failed read costs the options their deals and never the tally:
+// voteDealsFor answers none when its read throws, and every caller has already
+// committed its vote, or only reads, by the time this runs.
+//
+// dm_vote_venue below and its REST twins in routes/messages.js (GET and POST
+// /api/dm/:userId/venue-votes, the POST being the un-vote too) all take this
+// function, so the two transports cannot tell one person two different things
+// about an option. Answers a function from a person's id to the tally as that
+// person is sent it.
+async function dmVotesFor(rows, viewerIds) {
+  const dealsOf = await voteDealsFor(rows, viewerIds);
+  return (viewerId) => {
+    const deals = dealsOf(viewerId);
+    return (rows || []).map((row) => {
+      const deal = row.venue_id ? deals.get(row.venue_id) : null;
+      return deal ? { ...row, deal } : row;
+    });
+  };
+}
+
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
 
@@ -3310,8 +3345,14 @@ function registerHandlers(io, socket) {
       // out and the recipient themselves in the echo, so neither client could
       // tell whether an arriving tally was for the thread on screen. A vote in
       // any other conversation overwrote the list the user was looking at.
-      const tally = { voter: { userId: user.id, name: user.name }, venue_name, votes: votes.rows };
-      socket.to(`user:${receiverId}`).emit('dm_new_vote', { ...tally, withUserId: user.id });
+      //
+      // The two copies differ in their votes too, since 2026-11-03: each of
+      // the two is sent their own view of each option's deal (dmVotesFor
+      // above), so a drink deal the voter may see never rides the copy that
+      // goes to a person we do not know is 21, and the other way round.
+      const votesOf = await dmVotesFor(votes.rows, [receiverId, user.id]);
+      const tally = { voter: { userId: user.id, name: user.name }, venue_name };
+      socket.to(`user:${receiverId}`).emit('dm_new_vote', { ...tally, votes: votesOf(receiverId), withUserId: user.id });
       // The account room rather than this socket, for the reason written out
       // over dm_react above. Only the delivery changes: the two payloads stay
       // different, because each side has to be told who the OTHER side is, and
@@ -3321,7 +3362,7 @@ function registerHandlers(io, socket) {
       // response and there is nothing to echo. Over the socket there is no
       // response, which makes this the only thing the voter's other devices
       // ever hear.
-      io.to(`user:${user.id}`).emit('dm_new_vote', { ...tally, withUserId: receiverId });
+      io.to(`user:${user.id}`).emit('dm_new_vote', { ...tally, votes: votesOf(user.id), withUserId: receiverId });
     } catch (err) {
       console.error('dm_vote_venue error:', err);
     }
@@ -4027,6 +4068,11 @@ module.exports = {
   // second membership query would buy nothing), so it takes the builder rather
   // than spelling the keys a second time and drifting.
   flockReadPayload,
+  // A DM's vote tally as each of the two is sent it, each option's deal by
+  // that person's venue page. routes/messages.js answers its GET and POST
+  // /api/dm/:userId/venue-votes through it, so the REST tally and the
+  // dm_new_vote above never tell one person two different things.
+  dmVotesFor,
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.
   allowEvent,

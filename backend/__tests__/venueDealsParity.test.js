@@ -1,7 +1,7 @@
 // Run: node --test  (from backend/)
 //
-// ONE DEALS READ FOR THE VENUE PAGE, A FLOCK'S VOTE AND BIRDIE, ON A REAL
-// DATABASE (utils/venueDeals.js, 2026-11-03).
+// ONE DEALS READ FOR THE VENUE PAGE, A FLOCK'S VOTE, A DM'S VOTE AND BIRDIE,
+// ON A REAL DATABASE (utils/venueDeals.js, 2026-11-03).
 //
 // The venue page (GET /api/venue-dashboard/public-promotions/:placeId) is the
 // reference: whatever it shows a person is what a vote option and a Birdie card
@@ -19,6 +19,11 @@
 //   3. a flock's vote, through the real vote routes: GET /votes for each member,
 //      and the new_vote each member is sent when somebody votes. Each option's
 //      deal is the first deal that member's venue page shows, or none.
+//   4. a DM's vote, through the real DM routes: GET /api/dm/:userId/venue-votes
+//      for each of the two, and the POST answer for a vote and for the un-vote
+//      it toggles, held to the same rule. (The socket's dm_new_vote takes the
+//      same function, sockets/handlers.js dmVotesFor, and is walked copy by
+//      copy in dmVoteDeals.test.js.)
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -70,6 +75,8 @@ test.before(async () => {
   app.set('io', fakeIo);
   app.use('/api/venue-dashboard', require('../routes/venueDashboard'));
   app.use('/api/flocks', require('../routes/venues'));
+  // The DM routes, mounted where server.js mounts them (/api/dm/...).
+  app.use('/api', require('../routes/messages'));
   server = await new Promise((resolve) => {
     const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -327,12 +334,78 @@ test('a vote: the voter\'s answer and every member\'s new_vote carry that member
   assert.ok(!('deal' in brunchFor(viewers.noDob)), 'an account with no date of birth was sent the drink deal');
 });
 
-test('a takedown, a delete and a lost badge come off the vote option exactly as they come off the page', async () => {
+// ---------------------------------------------------------------------------
+// A DM's vote
+// ---------------------------------------------------------------------------
+
+// Ada (30) and Tess (19 or 20) in a direct message, friends, Ada's vote on the
+// taqueria and Tess's on the brunch spot. Set afresh on every call.
+async function dmFixture() {
+  const ada = viewers.adult;
+  const tess = viewers.twenty;
+  await pool.query(
+    "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'accepted') ON CONFLICT DO NOTHING",
+    [ada.id, tess.id]
+  );
+  const [u1, u2] = ada.id < tess.id ? [ada.id, tess.id] : [tess.id, ada.id];
+  await pool.query('DELETE FROM dm_venue_votes WHERE user1_id = $1 AND user2_id = $2', [u1, u2]);
+  const vote = (v, name, place) => pool.query(
+    'INSERT INTO dm_venue_votes (user1_id, user2_id, user_id, venue_name, venue_id) VALUES ($1, $2, $3, $4, $5)',
+    [u1, u2, v.id, name, place]
+  );
+  await vote(ada, 'Taqueria', PLACE.taqueria);
+  await vote(tess, 'Brunch Spot', PLACE.brunch);
+  return { ada, tess };
+}
+
+async function dmVotes(who, other) {
+  const r = await call('GET', `/api/dm/${other.id}/venue-votes`, who);
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  return r.body.votes;
+}
+
+test('a DM\'s vote: each of the two reads, and the voter is answered, the deal their own venue page leads with', async () => {
+  const { ada, tess } = await dmFixture();
+  for (const [who, other] of [[ada, tess], [tess, ada]]) {
+    await assertOptionsMatchPages(who, await dmVotes(who, other), `${who.name}'s DM tally`);
+  }
+  const byName = async (who, other) => Object.fromEntries((await dmVotes(who, other)).map((o) => [o.venue_name, o]));
+  const adaSees = await byName(ada, tess);
+  assert.deepStrictEqual(adaSees.Taqueria.deal, { title: 'Wings basket', time_slot: '5 to 7, happy hour', days: 'Daily' });
+  assert.deepStrictEqual(adaSees['Brunch Spot'].deal, { title: 'Bottomless mimosas', time_slot: 'Weekend Brunch', days: 'Weekends' });
+  const tessSees = await byName(tess, ada);
+  assert.deepStrictEqual(tessSees.Taqueria.deal, { title: 'Free churros with any entree', time_slot: '5 to 7pm', days: 'Tuesday to Thursday' });
+  assert.ok(!('deal' in tessSees['Brunch Spot']), 'a person under 21 was shown a drink deal in a DM, beside one who may see it');
+
+  // Reading a DM's vote is not a view of the venue's page.
+  const views = async () => (await pool.query('SELECT SUM(views)::int AS n FROM venue_promotions')).rows[0].n;
+  const viewsBefore = await views();
+  await dmVotes(tess, ada);
+  await dmVotes(ada, tess);
+  assert.strictEqual(await views(), viewsBefore, 'reading the DM vote counted a view');
+
+  // A vote through the real toggle: Tess switches to the taqueria.
+  const voted = await call('POST', `/api/dm/${ada.id}/venue-votes`, tess, { venue_name: 'Taqueria', venue_id: PLACE.taqueria });
+  assert.strictEqual(voted.status, 200, JSON.stringify(voted.body));
+  assert.deepStrictEqual(voted.body.votes.map((o) => [o.venue_name, o.vote_count]), [['Taqueria', 2]]);
+  await assertOptionsMatchPages(tess, voted.body.votes, 'Tess\'s answer to her vote');
+  // And the un-vote: Ada takes hers back and is told what is left, as she sees it.
+  const unvoted = await call('POST', `/api/dm/${tess.id}/venue-votes`, ada, { venue_name: 'Taqueria', venue_id: PLACE.taqueria });
+  assert.strictEqual(unvoted.status, 200, JSON.stringify(unvoted.body));
+  assert.deepStrictEqual(unvoted.body.votes.map((o) => [o.venue_name, o.vote_count]), [['Taqueria', 1]]);
+  await assertOptionsMatchPages(ada, unvoted.body.votes, 'Ada\'s answer to her un-vote');
+  assert.strictEqual(unvoted.body.votes[0].deal.title, 'Wings basket');
+});
+
+test('a takedown, a delete and a lost badge come off the vote option, a flock\'s or a DM\'s, exactly as they come off the page', async () => {
   const id = await voteFixture();
   const taqueriaFor = async (who) => (await call('GET', `/api/flocks/${id}/votes`, who)).body.votes.find((o) => o.venue_name === 'Taqueria');
+  const { ada, tess } = await dmFixture();
+  const dmTaqueriaFor = async (who, other) => (await dmVotes(who, other)).find((o) => o.venue_name === 'Taqueria');
 
   await pool.query('UPDATE venue_promotions SET is_hidden = true WHERE id = $1', [ids.basket]);
   assert.strictEqual((await taqueriaFor(viewers.adult)).deal.title, 'Free churros with any entree');
+  assert.strictEqual((await dmTaqueriaFor(ada, tess)).deal.title, 'Free churros with any entree');
   await assertOptionsMatchPages(viewers.adult, (await call('GET', `/api/flocks/${id}/votes`, viewers.adult)).body.votes, 'after the takedown');
 
   // The owner's own delete, through the real route.
@@ -342,10 +415,15 @@ test('a takedown, a delete and a lost badge come off the vote option exactly as 
   assert.strictEqual(del.status, 200, JSON.stringify(del.body));
   assert.strictEqual((await taqueriaFor(viewers.minor)).deal.title, 'Half-price wings');
   assert.strictEqual((await taqueriaFor(viewers.adult)).deal.title, '$5 drafts');
+  assert.strictEqual((await dmTaqueriaFor(tess, ada)).deal.title, 'Half-price wings');
+  assert.strictEqual((await dmTaqueriaFor(ada, tess)).deal.title, '$5 drafts');
 
   await pool.query('UPDATE venue_profiles SET verified = false WHERE user_id = $1', [taqOwner]);
   for (const v of Object.values(viewers)) {
     assert.ok(!('deal' in await taqueriaFor(v)), `${v.name}: an unverified owner's deal on a vote option`);
     assert.deepStrictEqual(await page(v, PLACE.taqueria), []);
+  }
+  for (const [who, other] of [[ada, tess], [tess, ada]]) {
+    assert.ok(!('deal' in await dmTaqueriaFor(who, other)), `${who.name}: an unverified owner's deal on a DM's vote option`);
   }
 });
