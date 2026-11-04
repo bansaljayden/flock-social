@@ -968,12 +968,29 @@ export default function VenueDashboard({
       );
     };
 
-    const weekPeak = intelReady && venueIntel.week?.length
-      ? venueIntel.week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a))
+    // A day with no number (closed by the venue's listed hours) is never the
+    // biggest one.
+    const weekScored = intelReady && Array.isArray(venueIntel.week)
+      ? venueIntel.week.filter((d) => Number.isFinite(d.peakScore))
+      : [];
+    const weekPeak = weekScored.length
+      ? weekScored.reduce((a, b) => (b.peakScore > a.peakScore ? b : a))
       : null;
-    const tonightPeak = intelReady && venueIntel.todayHourly?.length
-      ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
-      : null;
+    // The server reads each day on the venue's own hours, or the window for
+    // its kind (routes/venueDashboard.js dayScanHours): an evening for a bar,
+    // a club or a restaurant, the day for a cafe or a bakery. Its words follow
+    // the hours read, so a cafe's tiles never say "night" or "tonight".
+    const weekByDay = intelReady && venueIntel.peakWindow === 'day';
+    // Today's peak, read by the server on today's hours. An answer from before
+    // the server sent one keeps the old reading: the strongest of the last
+    // eight bars, an evening.
+    const todayIntel = intelReady && venueIntel.today && typeof venueIntel.today === 'object' ? venueIntel.today : null;
+    const tonightPeak = todayIntel
+      ? (Number.isFinite(todayIntel.peakScore) ? { score: todayIntel.peakScore, hour: todayIntel.peakHour } : null)
+      : (intelReady && venueIntel.todayHourly?.length
+        ? venueIntel.todayHourly.slice(-8).reduce((a, b) => (b.score > a.score ? b : a))
+        : null);
+    const todayByDay = todayIntel ? (todayIntel.window || venueIntel.peakWindow) === 'day' : false;
     // What made the strip's peak bars, one per venue, from the peak source
     // and peak method the server attaches to each row while a serving switch
     // is on. A rule-engine peak is read too, so a strip of category figures
@@ -1501,9 +1518,9 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? (venueIntel.now.method === 'ml' ? venueIntel.now.label : `${venueIntel.now.label} · typical for your category`) : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{todayByDay ? "Today's Peak" : "Tonight's Peak"}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${spokenHourLabel(tonightPeak.hour)}` : ''}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${spokenHourLabel(tonightPeak.hour)}` : (todayIntel && todayIntel.closed ? 'Closed today' : '')}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               {/* One name for one list. This tile, the section on the Events
@@ -1522,7 +1539,7 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{weekByDay ? 'Biggest Day Ahead' : 'Biggest Night Ahead'}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
               {/* Each night runs into its small hours and keeps its evening's
                   name (routes/venueDashboard.js, /intelligence), so a club's
@@ -1624,10 +1641,12 @@ export default function VenueDashboard({
               card above). */}
           <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} grantConsent={grantRoostConsent} withdrawConsent={withdrawRoostConsent} colors={colors} unverifiedNote={venueIsVerified ? null : 'Questions open once your venue is verified.'} />
 
-          {/* Week ahead — projected peak per evening */}
+          {/* Week ahead: the projected peak per day, read on the hours the
+              server read it on (weekByDay above), so "evening" is said only
+              of a week of evenings. */}
           {intelReady && venueIntel.week?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Week Ahead (projected evening peak)</h3>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>{weekByDay ? 'Week Ahead (projected peak)' : 'Week Ahead (projected evening peak)'}</h3>
               {(() => {
                 // A busy venue's projected evenings all land in one band, and
                 // this chart used to colour by band alone (>70 red, >45 amber,
@@ -1694,6 +1713,12 @@ export default function VenueDashboard({
                   </div>
                 );
               })()}
+              {/* A day the venue's Google listing has it closed carries no
+                  number (the server forecasts nothing for it), and the dash
+                  under it says why rather than reading as missing data. */}
+              {venueIntel.week.some((d) => d.closed) && (
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.5 }}>A dash marks a day your Google listing shows you closed.</p>
+              )}
             </div>
           )}
 

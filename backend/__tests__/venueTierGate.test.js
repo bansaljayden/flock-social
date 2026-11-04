@@ -609,8 +609,14 @@ test('the internal ordering field never reaches the owner', async () => {
 });
 
 test('the route ranks through crowdEngine.orderingAxis rather than its own argmax', () => {
-  const route = SOURCE.slice(SOURCE.indexOf("cacheSet(`intel:") - 4000, SOURCE.indexOf("cacheSet(`intel:"));
-  assert.match(route, /crowdEngine\.orderingAxis\(evening\)\.valueOf/,
+  // The whole build, from its first line to the cache write. Each day and
+  // today pick their peak through peakOf (2026-11-04), which ranks on the
+  // ordering axis.
+  const route = SOURCE.slice(SOURCE.indexOf('async function buildIntelligence('), SOURCE.indexOf("cacheSet(`intel:"));
+  assert.match(route, /const peak = peakOf\(read\);/, 'each day ahead');
+  assert.match(route, /peakOf\(scanEntries\(todayHourly, own\)\)/, 'today');
+  const peakOf = SOURCE.slice(SOURCE.indexOf('function peakOf('), SOURCE.indexOf('function peakOf(') + 400);
+  assert.match(peakOf, /crowdEngine\.orderingAxis\(entries\.map\(\(e\) => e\.bar\)\)\.valueOf/,
     'one definition of which number ranks hours, shared with the card');
   assert.ok(!/b\.score > a\.score/.test(route),
     'the model-score argmax must be gone, not merely shadowed');

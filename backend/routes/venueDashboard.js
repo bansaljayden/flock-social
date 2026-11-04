@@ -2009,6 +2009,12 @@ async function fetchVenueBasics(placeId, userId) {
     primary_type: typeof p.primaryType === 'string' && p.primaryType ? p.primaryType : null,
     location: p.location || null,
     isOpen: p.currentOpeningHours?.openNow ?? null,
+    // The listing's opening hours for the days ahead, one window list per
+    // weekday (crowdEngine.buildHoursByDay), or null when it lists none. The
+    // field mask has always asked for currentOpeningHours and only `openNow`
+    // was read; the Week Ahead now reads each day on these hours
+    // (dayScanHours below).
+    hoursByDay: crowdEngine.buildHoursByDay(p.currentOpeningHours?.periods),
     // Nullable: Google omits it for some places, and callers fall back to the
     // server clock when it is null.
     utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
@@ -2091,13 +2097,14 @@ async function buildIntelligence(placeId, userId, clockKey) {
   // inside todayHourly itself, so todayHourly is read only below this line.
   const current = await mlPredictor.agreeWithStrip(scored, todayHourly, venue, weather, scoreTime);
 
-  // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
+  // THE SIX DAYS ARE ONE ROUND, NOT SIX. Each iteration built its own
   // `day` from venueBase and read nothing from the iteration before it, so six
   // independent forecast passes — each one an init(), a weather read, an event
-  // prefetch and seven per-hour predictions — were awaited strictly one after
-  // another on the one path that pays the whole cold-cache cost of this route.
-  // The days are six disjoint date windows, so the event prefetch buys the same
-  // six lookups either way, and weatherService coalesces its forecast by key.
+  // prefetch and a run of per-hour predictions — were awaited strictly one
+  // after another on the one path that pays the whole cold-cache cost of this
+  // route. The days are six disjoint date windows, so the event prefetch buys
+  // the same six lookups either way, and weatherService coalesces its forecast
+  // by key.
   //
   // AFTER the pair above, deliberately. By the time these six start, that pair
   // has warmed every per-venue cache they share — the whole-week baseline
@@ -2106,6 +2113,9 @@ async function buildIntelligence(placeId, userId, clockKey) {
   // would each miss those caches and turn one read into six: the sequencing
   // here is what makes the concurrency free, and hoisting this batch above the
   // pair would undo it.
+  //
+  // Each `day` is set to 5 PM only to name its date and weekday; the forecast
+  // for it starts at the first hour that day is read on (dayScanHours).
   const days = [];
   for (let d = 1; d <= 6; d++) {
     const day = new Date(venueBase);
@@ -2122,59 +2132,93 @@ async function buildIntelligence(placeId, userId, clockKey) {
   // every hour from midnight up to it. Each evening is scanned to the end of
   // its own night and keeps its own day's name. The curve is the one today's
   // strip just read (mlPredictor.venueCurveRows), so no second query. Without
-  // a curve to read, the evening alone, as before.
+  // a curve to read, the evening alone, as before. A venue whose listing has
+  // hours reads its night off those instead (dayScanHours).
   let nightTail = () => [];
   try {
     const rows = await mlPredictor.venueCurveRows(venue.place_id || placeId, userId);
     const openByDay = advisorFacts.openHoursByDay((rows || []).map((r) => ({
       day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline),
     })));
-    nightTail = (day) => advisorFacts.nightTailHours(openByDay, (day.getDay() + 1) % 7);
+    nightTail = (weekday) => advisorFacts.nightTailHours(openByDay, (weekday + 1) % 7);
   } catch { /* the evening alone */ }
-  const EVENING_HOURS = 7;
-  const evenings = await Promise.all(
-    days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, EVENING_HOURS + nightTail(day).length, day))
-  );
+  // The hours each day is read on, fit to the venue: its listed hours, else
+  // the window for its kind (dayScanHours below).
+  const fit = { listed: listedOpenHours(venue.hoursByDay), kind: weekAheadKind(venue), curveTail: nightTail };
+  const scans = days.map((day) => dayScanHours(day.getDay(), fit));
+  const runs = await Promise.all(days.map((day, i) => {
+    // A day the listing has the venue closed is not forecast at all.
+    if (!scans[i].length) return [];
+    const { start, count } = scanRun(scans[i]);
+    return mlPredictor.predictHourlyForecast(venue, weather, start, count, day);
+  }));
   // Mapped over `days` rather than pushed from the resolved order, so the week
   // the owner reads stays in date order whatever order the six settled in.
   const week = days.map((day, i) => {
-    // The night's own hours only: on the night the clocks spring forward the
-    // strip walks past the hour that does not exist and on into 5 AM, which
-    // is the next morning, not this night (review, 2026-11-03).
-    const evening = evenings[i].filter((b) => {
-      const h = hourOfLabel(b.hour);
-      return h === null || h >= 17 || h <= advisorFacts.NIGHT_TAIL_LAST_HOUR;
-    });
-    // WHICH evening hour is the peak is an ordering question, and ordering
-    // is not the model's job any more: on within-night hour pairs the
-    // trained delta layer scores 62.7% against the popular-times curve's
-    // 63.1%, negative in every gap bucket (scripts/ml/HOUR-RANKING-EVAL.md).
+    const date = day.toISOString().slice(0, 10);
+    const weekday = day.toLocaleDateString('en-US', { weekday: 'short' });
+    // Closed all day by the venue's own listed hours: no peak to draw.
+    if (!scans[i].length) return { date, weekday, peakScore: null, peakHour: null, method: null, closed: true };
+    // The day's own hours only: a split day's gap is not read, and on the
+    // night the clocks spring forward the strip walks past the hour that does
+    // not exist and on into 5 AM, which is the next morning, not this night
+    // (review, 2026-11-03).
+    const read = scanEntries(runs[i], scans[i]);
+    // WHICH hour is the peak is an ordering question, and ordering is not
+    // the model's job any more: on within-night hour pairs the trained delta
+    // layer scores 62.7% against the popular-times curve's 63.1%, negative in
+    // every gap bucket (scripts/ml/HOUR-RANKING-EVAL.md).
     // crowdEngine.orderingAxis is the one definition of which number ranks
-    // hours, and it picks the axis for the whole evening at once, falling
-    // back to model scores when any hour lacks a baseline. HOW BUSY that
-    // hour is stays the model's number, read at the hour just named, so the
-    // pair the owner reads describes one hour rather than two.
-    const rank = crowdEngine.orderingAxis(evening).valueOf;
-    let at = -1;
-    evening.forEach((b, i) => { if (at < 0 || rank(b) > rank(evening[at])) at = i; });
-    const peak = at >= 0 ? evening[at] : null;
-    const peakClock = peak ? hourOfLabel(peak.hour) : null;
-    const afterMidnight = peakClock !== null ? peakClock <= advisorFacts.NIGHT_TAIL_LAST_HOUR : at >= EVENING_HOURS;
+    // hours, and it picks the axis for the whole day at once, falling back to
+    // model scores when any hour lacks a baseline. HOW BUSY that hour is
+    // stays the model's number, read at the hour just named, so the pair the
+    // owner reads describes one hour rather than two.
+    const peak = peakOf(read);
     return {
-      date: day.toISOString().slice(0, 10),
-      weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
-      peakScore: peak ? (peak.score ?? null) : null,
-      peakHour: peak ? (peak.hour ?? null) : null,
+      date,
+      weekday,
+      peakScore: peak ? (peak.bar.score ?? null) : null,
+      peakHour: peak ? (peak.bar.hour ?? null) : null,
       // What made the peak's number, the way `now` carries its method: 'ml',
       // or a rule_engine* category prior for a venue with no curve of its
       // own. Roost reads it to say whose forecast the week is
       // (advisorFacts.buildWeekProjection); the chart does not.
-      method: peak ? (peak.predictionMethod || null) : null,
+      method: peak ? (peak.bar.predictionMethod || null) : null,
       // A peak in the small hours belongs to this evening's night, and the
       // tile says so ("at 1 AM that night"), never the next day's.
-      ...(afterMidnight ? { afterMidnight: true } : {}),
+      ...(peak && peak.next ? { afterMidnight: true } : {}),
     };
   });
+  // TODAY, ON THE SAME HOURS (2026-11-04). "Tonight's Peak" took the
+  // strongest of today's last eight bars, 4 PM to 11 PM, for every venue, so
+  // a cafe was given its 6 PM. Today is read on the hours its weekday is read
+  // on in the week, from the bars already drawn (6 AM to 11 PM, so a night's
+  // small hours are not in it), and ranked the way the week is. Roost answers
+  // "How does today look?" for a venue with no crowd history from this same
+  // entry (advisorFacts.buildTodayProjection).
+  const todayScan = dayScanHours(localDay, fit);
+  const todayAt = new Date(venueBase);
+  todayAt.setHours(17, 0, 0, 0);
+  const todayBase = { date: todayAt.toISOString().slice(0, 10), weekday: todayAt.toLocaleDateString('en-US', { weekday: 'short' }) };
+  let today = { ...todayBase, peakScore: null, peakHour: null, method: null, closed: true };
+  if (todayScan.length) {
+    const own = todayScan.filter((x) => !x.next);
+    const peak = peakOf(scanEntries(todayHourly, own));
+    today = {
+      ...todayBase,
+      peakScore: peak ? (peak.bar.score ?? null) : null,
+      peakHour: peak ? (peak.bar.hour ?? null) : null,
+      method: peak ? (peak.bar.predictionMethod || null) : null,
+      // 'evening' or 'day': which word the tile uses, "Tonight's" or "Today's".
+      window: scanWindow(own.length ? own : todayScan),
+    };
+  }
+  // The words the card and the Biggest tile use: 'evening' when every day
+  // ahead is read on evening hours, 'day' when any is not.
+  const scanned = scans.filter((s) => s.length);
+  const peakWindow = scanned.length
+    ? (scanned.every((s) => scanWindow(s) === 'evening') ? 'evening' : 'day')
+    : (fit.kind === 'day' ? 'day' : 'evening');
 
   const result = {
     available: true,
@@ -2187,10 +2231,19 @@ async function buildIntelligence(placeId, userId, clockKey) {
     // published level per hour is the model's, which is what these bars are.
     todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
     week,
-    // Whether the evenings `week` scans are the hours this kind of place
-    // peaks in: bars, clubs and restaurants, by the strip's own rule
-    // (stripPeakWindow). A cafe or a bakery is drawn here from evening hours
-    // it may not open, so Roost reads this week only when they are
+    // Today's peak on today's hours, for "Tonight's Peak" (or "Today's").
+    today,
+    // 'evening' when every day ahead was read on evening hours, else 'day',
+    // so the card and the Biggest tile say "evening" and "night" only then.
+    peakWindow,
+    // Where the hours every day was read on came from: 'hours' (the venue's
+    // own opening hours on its Google listing), 'kind' (no hours listed, so
+    // the window for its kind: the evening for a bar, a club or a restaurant,
+    // the day for a cafe or a bakery), or 'default' (no hours and a kind with
+    // no window of its own, so the evening, as the card always read).
+    scanFrom: fit.listed ? 'hours' : (fit.kind ? 'kind' : 'default'),
+    // Whether this is a bar, a club or a restaurant, by the strip's own rule
+    // (stripPeakWindow): the kinds of place Roost reads this week for
     // (advisorFacts.projectionFacts).
     eveningPlace: stripPeakWindow(stripComparisonTypes(venue)) === 'evening',
     model: current.modelVersion || null,
@@ -2343,6 +2396,138 @@ const STRIP_PEAK_WINDOWS = Object.freeze({
 function stripPeakWindow(includedTypes) {
   const types = Array.isArray(includedTypes) ? includedTypes : [];
   return types.some((t) => STRIP_NIGHTLIFE_TYPES.includes(t)) ? 'evening' : 'day';
+}
+
+// ─── THE HOURS THE WEEK AHEAD READS, FIT TO THE VENUE ────────────────────────
+//
+// THE CARD SCANNED 5 PM TO MIDNIGHT FOR EVERY VENUE until 2026-11-04, so a
+// cafe that opens 7 to 3 was given a 6 PM peak on every day of its week, on
+// "Biggest Night Ahead", "Tonight's Peak" and all six bars: hours it is shut.
+// Each day is now read on hours the venue keeps:
+//   * its own opening hours, when its Google listing has them. They arrive
+//     with the card's own Places lookup (currentOpeningHours was always in the
+//     field mask, and only openNow was read), so this costs no extra call. A
+//     day the listing has the venue closed gets no peak and no forecast run.
+//     A bar, a club or a restaurant still reads the evening part of its
+//     hours, and its whole open day only on a day it does not open in the
+//     evening. A night the hours run past midnight is read to its close and
+//     keeps its evening's name, the rule Roost's week reads off the curve
+//     (advisorFacts.nightTailHours).
+//   * no hours listed: the window for its kind. The evening, as before, for
+//     a bar, a club or a restaurant (the strip's rule), and the day, 6 AM to
+//     5 PM, for a cafe, a bakery or another kind of place that trades by day.
+//   * no hours and neither kind: the evening, as before.
+// The owner's own rows in venue settings (venue_profiles.operating_hours) are
+// free text, and the app fills them from this same listing's weekday text
+// when the owner has none, so the listing's structured hours are what is read.
+// The dashboard's words follow the hours read (peakWindow), and Roost reads
+// the week only where they are the venue's or its kind's (scanFrom).
+const DAYTIME_TYPES = new Set([
+  'cafe', 'coffee_shop', 'coffee_stand', 'coffee_roastery', 'tea_house', 'juice_shop', 'acai_shop',
+  'bakery', 'bagel_shop', 'donut_shop', 'breakfast_restaurant', 'brunch_restaurant',
+  'cafeteria', 'deli', 'sandwich_shop', 'cat_cafe', 'dog_cafe',
+]);
+const EVENING_FIRST_HOUR = 17;
+// The day, for a daytime kind with no hours listed: 6 AM to 5 PM, the hours
+// before the evening this card read for everyone.
+const DAY_WINDOW = Object.freeze({ firstHour: 6, lastHour: 16 });
+
+// 'evening' (a bar, a club or a restaurant), 'day' (a kind that trades by
+// day), or null. The listing's primary type speaks first, so a coffee shop
+// that also lists 'restaurant' is a coffee shop.
+function weekAheadKind(venue) {
+  const primary = typeof venue?.primary_type === 'string' ? venue.primary_type : null;
+  if (primary && DAYTIME_TYPES.has(primary)) return 'day';
+  if (stripPeakWindow(stripComparisonTypes(venue)) === 'evening') return 'evening';
+  const types = Array.isArray(venue?.types) ? venue.types : [];
+  return types.some((t) => DAYTIME_TYPES.has(t)) ? 'day' : null;
+}
+
+// The hours each weekday (0 is Sunday) is open by the listing, ascending, with
+// a window that runs past midnight counted on both days the way the engine
+// reads it (crowdEngine.isOpenAt); null when the listing has no hours. A week
+// with no open hour in it at all is read as no hours: periods none of which
+// parse come back as seven empty days, and a venue shut all week does not get
+// a Week Ahead of dashes on the strength of them.
+function listedOpenHours(hoursByDay) {
+  if (!hoursByDay) return null;
+  const listing = { hoursByDay };
+  const days = Array.from({ length: 7 }, (_, day) => {
+    const open = [];
+    for (let h = 0; h < 24; h += 1) if (crowdEngine.isOpenAt(listing, h, day)) open.push(h);
+    return open;
+  });
+  return days.some((d) => d.length) ? days : null;
+}
+
+const hoursBetween = (first, last) => Array.from({ length: last - first + 1 }, (_, i) => ({ h: first + i, next: false }));
+
+/**
+ * The hours one weekday is read on, in clock order: [{ h, next }], `next` for
+ * the small hours after midnight that carry its night on. Empty when the
+ * listing has the venue closed that day.
+ */
+function dayScanHours(weekday, { listed, kind, curveTail }) {
+  if (listed) {
+    // The day's own small hours that are last night's go to last night.
+    const lastNight = new Set(advisorFacts.nightTailHours(listed, weekday));
+    const open = [
+      ...listed[weekday].filter((h) => !lastNight.has(h)).map((h) => ({ h, next: false })),
+      ...advisorFacts.nightTailHours(listed, (weekday + 1) % 7).map((h) => ({ h, next: true })),
+    ];
+    if (kind === 'evening') {
+      const evening = open.filter((x) => x.next || x.h >= EVENING_FIRST_HOUR);
+      if (evening.length) return evening;
+    }
+    return open;
+  }
+  if (kind === 'day') return hoursBetween(DAY_WINDOW.firstHour, DAY_WINDOW.lastHour);
+  return [
+    ...hoursBetween(EVENING_FIRST_HOUR, 23),
+    ...curveTail(weekday).map((h) => ({ h, next: true })),
+  ];
+}
+
+// 'evening' when every hour read is in the evening or the night after it.
+const scanWindow = (hours) => (hours.every((x) => x.next || x.h >= EVENING_FIRST_HOUR) ? 'evening' : 'day');
+
+// The one forecast run that covers a day's hours: from its first hour to its
+// last, a split day's gap included (scanEntries leaves the gap out).
+function scanRun(hours) {
+  const first = hours[0];
+  const last = hours[hours.length - 1];
+  return { start: first.h, count: (last.next ? 24 : 0) + last.h - first.h + 1 };
+}
+
+// The bars of a run that fall on the day's hours, each with whether it is
+// past midnight. A run's clock only goes up until it passes midnight, so a bar
+// earlier on the clock than the one before it starts the next morning, and
+// every bar after it is the next morning's too: the extra hour a
+// spring-forward strip walks on into is never read as this day's.
+function scanEntries(bars, hours) {
+  if (!Array.isArray(bars) || !hours.length) return [];
+  const want = new Set(hours.map((x) => (x.next ? 24 : 0) + x.h));
+  const out = [];
+  let prev = null;
+  let next = false;
+  for (const bar of bars) {
+    const h = hourOfLabel(bar && bar.hour);
+    if (h === null) continue;
+    if (prev !== null && h < prev) next = true;
+    prev = h;
+    if (want.has((next ? 24 : 0) + h)) out.push({ bar, next });
+  }
+  return out;
+}
+
+// The peak of those bars on the one ordering axis (crowdEngine.orderingAxis),
+// the first of equals, or null.
+function peakOf(entries) {
+  if (!entries.length) return null;
+  const rank = crowdEngine.orderingAxis(entries.map((e) => e.bar)).valueOf;
+  let at = 0;
+  entries.forEach((e, i) => { if (rank(e.bar) > rank(entries[at].bar)) at = i; });
+  return entries[at];
 }
 
 // GET /api/venue-dashboard/strip — you vs the venues around you, tonight for

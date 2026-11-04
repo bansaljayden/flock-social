@@ -936,17 +936,23 @@ async function sendsTheStatementsItSentBefore() {
     Date.now = realNow;
   }
   // Measured on the code before the change, three runs, identical each time.
-  // A cold strip reads each unprimed hour's slot (24 for the card, 61 for the
-  // dashboard's day and six evenings); a full curve is one whole-curve read
+  // A cold strip reads each unprimed hour's slot (24 for the card, 90 for the
+  // dashboard's day and six nights); a full curve is one whole-curve read
   // and the headline's one slot. Each card total is one more since
   // 2026-10-14: the card reads the verified owner's own capacity
   // (ownerReports.getOwnerCapacity), one statement, switch or no switch.
+  // The dashboard's count was 61 until 2026-11-04: its days are read on the
+  // listing's own hours since then (routes/venueDashboard.js dayScanHours),
+  // and this bar is listed open round the clock, so each of its six evenings
+  // is read on to 4 AM, twelve hours where it was seven (18 + 6 x 12 = 90; the
+  // headline's slot is then one a night already read). Still no presence
+  // probe and one curve read, as before.
   const same = (presence, slot, curve, total) => ({ presence, slot, curve, total });
   assert.deepStrictEqual(counts, {
     'card cold': same(0, 24, 1, 31),
     'demo cold': same(0, 24, 1, 27),
     'birdie cold': same(0, 24, 1, 28),
-    'intelligence cold': same(0, 61, 1, 65),
+    'intelligence cold': same(0, 90, 1, 94),
     'strip cold': same(0, 8, 1, 12),
     'card curved': same(0, 1, 1, 9),
     'demo curved': same(0, 1, 1, 5),

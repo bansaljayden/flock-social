@@ -10,6 +10,12 @@
  * a Friday 1 AM peak never reads as Saturday's. The scan itself is pinned in
  * backend/__tests__/roostBiggestNightTile.test.js.
  *
+ * Since 2026-11-04 each day is read on the venue's own listed hours, or the
+ * window for its kind (backend routes/venueDashboard.js dayScanHours, pinned
+ * in backend/__tests__/weekAheadWindow.test.js), and a week read by day, a
+ * cafe's, makes this the "Biggest Day Ahead" (weekAheadDayWords.test.js
+ * renders it).
+ *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false --testPathPattern biggestNightTile
  */
@@ -23,7 +29,7 @@ const DASH = read('frontend', 'src', 'screens', 'VenueDashboard.js');
 const ROUTE = read('backend', 'routes', 'venueDashboard.js');
 
 function tile() {
-  const start = DASH.indexOf('Biggest Night Ahead</p>');
+  const start = DASH.indexOf("{weekByDay ? 'Biggest Day Ahead' : 'Biggest Night Ahead'}</p>");
   expect(start).toBeGreaterThan(-1);
   return DASH.slice(start, DASH.indexOf('</div>', start));
 }
@@ -33,10 +39,20 @@ test('the tile names the evening and says a small-hours peak belongs to that nig
   expect(tile()).toMatch(/at \$\{spokenHourLabel\(weekPeak\.peakHour\)\}\$\{weekPeak\.afterMidnight \? ' that night' : ''\}/);
 });
 
-test('the server scans each evening into the small hours its curve keeps open, and flags a peak there', () => {
-  expect(ROUTE).toMatch(/predictHourlyForecast\(venue, weather, 17, EVENING_HOURS \+ nightTail\(day\)\.length, day\)/);
-  expect(ROUTE).toMatch(/advisorFacts\.nightTailHours\(openByDay, \(day\.getDay\(\) \+ 1\) % 7\)/);
-  expect(ROUTE).toMatch(/\.\.\.\(afterMidnight \? \{ afterMidnight: true \} : \{\}\)/);
-  // The night's own hours only, so a spring-forward strip's 5 AM is never it.
-  expect(ROUTE).toMatch(/h >= 17 \|\| h <= advisorFacts\.NIGHT_TAIL_LAST_HOUR/);
+test('the server reads each evening into the small hours its curve keeps open, and flags a peak there', () => {
+  // With no hours on the listing, a bar's evening runs on into its curve's
+  // small hours, marked as the next morning's clock.
+  expect(ROUTE).toMatch(/nightTail = \(weekday\) => advisorFacts\.nightTailHours\(openByDay, \(weekday \+ 1\) % 7\)/);
+  expect(ROUTE).toMatch(/\.\.\.curveTail\(weekday\)\.map\(\(h\) => \(\{ h, next: true \}\)\)/);
+  // One run per day, over the hours it is read on.
+  expect(ROUTE).toMatch(/const \{ start, count \} = scanRun\(scans\[i\]\);\s*return mlPredictor\.predictHourlyForecast\(venue, weather, start, count, day\);/);
+  expect(ROUTE).toMatch(/\.\.\.\(peak && peak\.next \? \{ afterMidnight: true \} : \{\}\)/);
+  // The night's own hours only, so a spring-forward strip's 5 AM is never it:
+  // once the clock goes back past midnight, every bar after is the next day's.
+  expect(ROUTE).toMatch(/if \(prev !== null && h < prev\) next = true;/);
+});
+
+test('a week the server read by day is the biggest DAY ahead, and a day with no number is never the biggest', () => {
+  expect(DASH).toMatch(/const weekByDay = intelReady && venueIntel\.peakWindow === 'day';/);
+  expect(DASH).toMatch(/venueIntel\.week\.filter\(\(d\) => Number\.isFinite\(d\.peakScore\)\)/);
 });
