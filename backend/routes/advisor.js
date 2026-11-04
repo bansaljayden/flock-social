@@ -64,6 +64,7 @@ const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
+const { isKindForecast } = require('../services/kindForecast');
 
 // THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
 // point when the facts point at one (advisorPrompt, the venue's own numbers
@@ -317,13 +318,16 @@ const INTENT_PLANS = {
       })];
     }
     const quietest = scored.slice(0, 2);
+    // Flock's forecast for places like this venue is the quiet end of that
+    // forecast's week, not of the venue's own (advisorFacts.buildWeekProjection).
+    const whose = (e) => (isKindForecast(e) ? 'the week Flock forecasts for places like this one' : 'this venue\'s week');
     return quietest.map((e, i) => ({
       ...e,
       note: [
         e.note,
         i === 0
-          ? 'This is the LOWEST projected day in the week ahead. It is the quiet end of this venue\'s week, not a busy day.'
-          : 'This is the second lowest projected day in the week ahead. It is the quiet end of this venue\'s week, not a busy day.',
+          ? `This is the LOWEST projected day in the week ahead. It is the quiet end of ${whose(e)}, not a busy day.`
+          : `This is the second lowest projected day in the week ahead. It is the quiet end of ${whose(e)}, not a busy day.`,
       ].filter(Boolean).join(' '),
     }));
   },
@@ -475,6 +479,26 @@ const INTENT_PLANS = {
   },
 };
 
+// A VENUE WITH NO CROWD HISTORY OF ITS OWN STILL HAS A WEEK AHEAD on its
+// dashboard: Flock's forecast for places like it, every number a category
+// prior (advisorFacts.buildWeekProjection says why that card exists and what
+// its numbers are). Roost read the corpus alone, so "What is our best money
+// move this week?" refused under a card showing six numbers (2026-11-03
+// demo). Where the corpus gate is the one reason the week would refuse, the
+// week is that card, from the card's own function, each fact labelled as
+// Flock's forecast for places like this one. With no card to read, the
+// refusal stands as it was. Today is not on that card, so tonight's outlook
+// (`tonight` below) keeps the corpus week, and the listing lines, which set
+// the venue's own forecast beside what the owner told us, read the venue's
+// own week only (`ownWeek`).
+async function weekFor(ctx, opts, ownWeek) {
+  if (advisorFacts.corpusGate(ctx.profile) && typeof advisorFacts.buildWeekProjection === 'function') {
+    const projected = await advisorFacts.buildWeekProjection(ctx, opts);
+    if (projected.length) return projected;
+  }
+  return ownWeek();
+}
+
 async function bridgeFactBlock(userId, intentId) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile.google_place_id) {
@@ -492,14 +516,18 @@ async function bridgeFactBlock(userId, intentId) {
   const memo = {};
   const b = {
     ctx,
-    week: () => (memo.week = memo.week || advisorFacts.buildWeekAhead(ctx, opts)),
+    // The venue's own week: its corpus forecast, or the corpus refusal, which
+    // is a field read and costs nothing.
+    ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
+    // The week a question about the week ahead reads (weekFor above).
+    week: () => (memo.week = memo.week || weekFor(ctx, opts, b.ownWeek)),
     // The same week, started from last night's evening while that night is
     // still running: what "tonight" means at 12:30 AM.
     tonight: () => (memo.tonight = memo.tonight || advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
-      || Promise.resolve(b.week()).then((week) => advisorFacts.buildListingReadBack(ctx, week, opts))),
+      || Promise.resolve(b.ownWeek()).then((week) => advisorFacts.buildListingReadBack(ctx, week, opts))),
     verdict: () => (memo.verdict = memo.verdict
       || (lastNightVerdict
         ? lastNightVerdict.buildLastDayVerdict(ctx, opts)

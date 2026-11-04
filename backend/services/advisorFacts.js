@@ -971,6 +971,124 @@ async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress =
   return out;
 }
 
+// ─── The week ahead for a venue with no crowd history of its own ─────────────
+//
+// THE DASHBOARD HAD A WEEK AND ROOST DID NOT (2026-11-03). Filming the demo on
+// a new venue, "What is our best money move this week?" answered "We can't
+// answer that yet. We have no crowd history for this venue." under the
+// dashboard's own Week Ahead card, which read Sat 74, Sun 45, Mon 48, Tue 48,
+// Wed 48, Thu 64. Both were true. That card is GET
+// /api/venue-dashboard/intelligence, which scores any listed venue, and for a
+// venue with no curve of its own every one of its numbers is a category prior
+// (the rule engine, or the category table under CROWD_NO_CURVE_FALLBACK):
+// what is typical for that kind of place at that hour. buildWeekAhead above
+// suppresses those numbers for a corpus venue, on purpose, because beside a
+// venue's own curve a category prior is not its forecast.
+//
+// For a venue with no curve at all it is the only forecast there is, and the
+// owner is already looking at it. So where the corpus gate is the reason for
+// the refusal, Roost's week is that card (routes/advisor.js weekFor): the
+// card's own function (routes/venueDashboard.js venueIntelligence), and
+// within the hour its own cache entry, never a second estimate. Each fact
+// says what it is:
+//   * source 'category_pattern', the vocabulary's word for a category prior,
+//     so the sources line, the templates and the answer check can tell it
+//     from the venue's own forecast (services/kindForecast.js);
+//   * an id of its own, typical_peak_<date>, so nothing that reads the
+//     venue's forecast by its peak_ id (the kitchen line, the capacity sum,
+//     the strongest-day read in buildListingReadBack) takes it for one;
+//   * a label and a note that call it Flock's forecast for places like this
+//     one, never the venue's own.
+// Only when every scored day is a category prior: a model number means the
+// venue has a curve its profile has not caught up with, and that week is not
+// "typical for places like yours". No card, no facts, and the refusal stands.
+const { KIND_FORECAST_SOURCE, KIND_FORECAST } = require('./kindForecast');
+
+// The card's day labels ('Sat', from toLocaleDateString), as the forecast
+// writes a weekday. The card's label is what the owner sees over the bar, so
+// it names the day; the date names it only when the label is missing.
+const CARD_WEEKDAYS = Object.freeze({
+  Sun: 'Sunday', Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday',
+});
+
+// rule_engine, rule_engine_no_baseline, rule_engine_baseline_refused and
+// _error, rule_engine_fallback, and the category table's
+// rule_engine_category_table, whose name starts the same way on purpose
+// (mlPredictor, NO_CURVE_FALLBACK_METHOD): every one is a category prior.
+const CATEGORY_PRIOR = /^rule_engine/;
+
+const KIND_FORECAST_NOTE = 'This is Flock\'s forecast for places like this one: what is typical for its kind of place, because we hold no crowd history for this venue itself. It is not this venue\'s own forecast and not its readings.';
+
+function kindForecastPeakLabel({ weekday, hour, score, afterMidnight = false }) {
+  return `${weekday}${afterMidnight ? ' night' : ''} projects busiest around ${hour12(hour)}, at ${score} on our 0 to 100 index, in ${KIND_FORECAST}.`;
+}
+
+/**
+ * The dashboard's Week Ahead (GET /api/venue-dashboard/intelligence, as
+ * venueIntelligence returns it) as Roost facts, or [] when it is not a week
+ * of category priors. `hourOf` reads the card's hour labels ("9 PM"), and is
+ * the dashboard's own reader unless a caller hands one in.
+ */
+function projectionFacts(intel, { hourOf = null } = {}) {
+  if (!intel || typeof intel !== 'object' || intel.available !== true || !Array.isArray(intel.week)) return [];
+  const asOf = typeof intel.generatedAt === 'string' && intel.generatedAt ? intel.generatedAt : null;
+  if (!asOf) return [];
+  // eslint-disable-next-line global-require
+  const readHour = typeof hourOf === 'function' ? hourOf : require('../routes/venueDashboard').hourOfLabel;
+  const days = [];
+  for (const d of intel.week) {
+    if (!d || typeof d !== 'object') continue;
+    const date = typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null;
+    const score = typeof d.peakScore === 'number' && Number.isFinite(d.peakScore) ? d.peakScore : null;
+    const hour = readHour(d.peakHour);
+    // A day the card draws as a dash has nothing to say here either.
+    if (!date || score === null || !Number.isInteger(hour)) continue;
+    days.push({ d, date, score, hour });
+  }
+  if (!days.length) return [];
+  if (!days.every(({ d }) => typeof d.method === 'string' && CATEGORY_PRIOR.test(d.method))) return [];
+  return days.map(({ d, date, score, hour }) => {
+    const weekday = CARD_WEEKDAYS[d.weekday] || WEEKDAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
+    const afterMidnight = d.afterMidnight === true;
+    return makeFact({
+      id: `typical_peak_${date}`,
+      value: {
+        date, weekday, peakHour: hour, peakScore: score,
+        ...(afterMidnight ? { afterMidnight: true } : {}),
+      },
+      source: KIND_FORECAST_SOURCE,
+      asOf,
+      predictionMethod: d.method,
+      unit: '0-100 index',
+      note: [KIND_FORECAST_NOTE, afterMidnight ? afterMidnightNote(weekday) : null].filter(Boolean).join(' '),
+      label: kindForecastPeakLabel({ weekday, hour, score, afterMidnight }),
+    });
+  });
+}
+
+/**
+ * The dashboard's Week Ahead for a venue with no crowd history, as facts, or
+ * [] when there is none to read (the lookup failed, the Places budget said
+ * no, or the week holds a model number). Never throws.
+ */
+async function buildWeekProjection(ctx, { userId } = {}) {
+  const p = ctx && ctx.profile;
+  // The card is served to a linked, verified venue only, and its cache is
+  // keyed by place id, so the same two checks come first here (and again in
+  // venueIntelligence itself).
+  if (!p || !p.google_place_id || !p.verified) return [];
+  try {
+    // eslint-disable-next-line global-require
+    const dashboard = require('../routes/venueDashboard');
+    if (typeof dashboard.venueIntelligence !== 'function') return [];
+    const intel = await dashboard.venueIntelligence(p, userId);
+    return projectionFacts(intel, { hourOf: dashboard.hourOfLabel });
+  } catch (err) {
+    console.warn('advisorFacts: the dashboard week ahead could not be read:', err.message);
+    return [];
+  }
+}
+
 // ─── The street the OWNER says they are on ───────────────────────────────────
 //
 // anchor_types and anchor_note belong to the street card, because that is
@@ -1735,6 +1853,11 @@ module.exports = {
   // context + cards
   getVenueContext,
   buildWeekAhead,
+  // a venue with no crowd history: the dashboard's Week Ahead, as facts
+  buildWeekProjection,
+  projectionFacts,
+  kindForecastPeakLabel,
+  KIND_FORECAST_NOTE,
   buildAroundYou,
   buildListingReadBack,
   buildReadingsVsServed,

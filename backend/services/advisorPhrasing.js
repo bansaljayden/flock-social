@@ -61,6 +61,7 @@ const { GoogleGenAI } = require('@google/genai');
 const pool = require('../config/database');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
+const { KIND_FORECAST, isKindForecast, saysWhose } = require('./kindForecast');
 const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
 
@@ -1154,6 +1155,23 @@ const dayName = (f) => `${f.value.weekday}${f.value.afterMidnight === true ? ' n
 
 const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 
+// WHOSE WEEK IT IS (2026-11-03). A venue with no crowd history of its own is
+// answered from its dashboard's Week Ahead, Flock's forecast for places like
+// it (advisorFacts.buildWeekProjection, services/kindForecast.js). Its lines
+// open on whose forecast that is, and never call a day "your busiest day":
+// the venue's own numbers say "your", the forecast for places like it says
+// "the". The venue's own forecast reads exactly as it always has.
+function weekVoice(days) {
+  const kind = days.some(isKindForecast);
+  // "The" and "No" fold into the opening clause; a weekday keeps its capital.
+  const fold = (s) => (/^(?:The|No|It)\b/.test(s) ? `${s.charAt(0).toLowerCase()}${s.slice(1)}` : s);
+  return {
+    open: (s) => (kind ? `In ${KIND_FORECAST}, ${fold(s)}` : s),
+    your: kind ? 'the' : 'your',
+    Your: kind ? 'The' : 'Your',
+  };
+}
+
 function shapeWeek(which) {
   return (facts, { named = null } = {}) => {
     const days = facts.filter(isPeakFact).sort(byScore);
@@ -1161,6 +1179,7 @@ function shapeWeek(which) {
     const rest = facts.filter((f) => !isPeakFact(f));
     const top = days[0];
     const low = days[days.length - 1];
+    const v = weekVoice(days);
     // A QUESTION THAT NAMES A DAY IS ANSWERED ABOUT THAT DAY. "How busy will
     // Friday be" got "Your busiest day this week is Saturday" (2026-10-28):
     // true, and an answer to a different question. The named day leads; the
@@ -1172,7 +1191,7 @@ function shapeWeek(which) {
     // second review). From a partial block the named day's own line stands alone.
     if (asked && days.length < 6) {
       return {
-        lead: `${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        lead: v.open(`${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`),
         points: rest.map(templateLine),
         used: [asked, ...rest],
       };
@@ -1185,13 +1204,13 @@ function shapeWeek(which) {
         points.push(`No day stands out this week: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}.`);
         used.push(top, low);
       } else {
-        if (top !== asked) { points.push(`Your busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
+        if (top !== asked) { points.push(`${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
         if (low !== asked && low !== top) { points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`); used.push(low); }
-        if (top === asked) points.unshift('That makes it your busiest day this week.');
-        if (low === asked) points.unshift('That makes it your quietest day this week.');
+        if (top === asked) points.unshift(`That makes it ${v.your} busiest day this week.`);
+        if (low === asked) points.unshift(`That makes it ${v.your} quietest day this week.`);
       }
       return {
-        lead: `${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        lead: v.open(`${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`),
         points: [...points, ...rest.map(templateLine)],
         used: [...new Set(used), ...rest],
       };
@@ -1201,7 +1220,7 @@ function shapeWeek(which) {
       // week before it gets here (routes/advisor.js quiet_nights).
       const [first, second] = [...days].reverse();
       return {
-        lead: `Your quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`,
+        lead: v.open(`${v.Your} quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`),
         points: [`${dayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
         used: [first, second, ...rest],
       };
@@ -1211,7 +1230,7 @@ function shapeWeek(which) {
     // gap is noise, and naming a winner inside it reads as advice to staff it.
     if (Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
       return {
-        lead: `No day stands out ${scope}: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`,
+        lead: v.open(`No day stands out ${scope}: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
         points: rest.map(templateLine),
         used: [top, low, ...rest],
       };
@@ -1225,7 +1244,7 @@ function shapeWeek(which) {
       used.push(low);
     }
     return {
-      lead: `Your busiest day ${scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`,
+      lead: v.open(`${v.Your} busiest day ${scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`),
       points: [...points, ...rest.map(templateLine)],
       used: [...used, ...rest],
     };
@@ -1325,15 +1344,16 @@ function shapeMoneyMove(facts) {
   const top = days[0];
   const low = days[days.length - 1];
   const rest = facts.filter((f) => !isPeakFact(f));
+  const v = weekVoice(days);
   if (days.length < 2 || Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
     return {
-      lead: `No day stands out this week, so the money is in each check rather than in one day: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`,
+      lead: v.open(`No day stands out this week, so the money is in each check rather than in one day: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
       points: rest.map(templateLine),
       used: [...new Set([low, top]), ...rest],
     };
   }
   return {
-    lead: `Fill ${dayName(low)}. It is your quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${dayName(top)}.`,
+    lead: `Fill ${dayName(low)}. ${v.open(`It is ${v.your} quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${dayName(top)}.`)}`,
     points: rest.map(templateLine),
     used: [low, top, ...rest],
   };
@@ -1945,9 +1965,21 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     }
   }
   for (const id of claimed) if (byId.has(id)) used.add(id);
+  const text = advisorAnswer.assemble({ structured: parsed.structured, answer: out.answer, points: out.points });
+
+  // FLOCK'S FORECAST FOR PLACES LIKE THIS ONE IS NEVER GIVEN AS THE VENUE'S
+  // OWN (2026-11-03). A venue with no crowd history is answered from its
+  // dashboard's Week Ahead, what is typical for its kind of place
+  // (services/kindForecast.js). An answer that uses one of those numbers or
+  // days and never says whose forecast it is ("Sunday is your quietest day,
+  // at 45") reads as the venue's own, so it goes whole: the template, or in
+  // advice the playbook, says it in its first words.
+  if ([...used].some((id) => isKindForecast(byId.get(id))) && !saysWhose(text)) {
+    return reject('a forecast for places like this one, given as the venue\'s own');
+  }
 
   return {
-    text: advisorAnswer.assemble({ structured: parsed.structured, answer: out.answer, points: out.points }),
+    text,
     sources: [...used].map((id) => answerSource(byId.get(id), id)),
   };
 }
@@ -2457,6 +2489,7 @@ function __copyStrings() {
     ...Object.values(SOURCE_PHRASES),
     ...Object.values(SERVED_SOURCE_PHRASES),
     CARRIED_READING_PHRASE,
+    KIND_FORECAST,
     ...Object.keys(ADVISOR_INTENTS).map((k) => ADVISOR_INTENTS[k].chip),
   ];
 }
