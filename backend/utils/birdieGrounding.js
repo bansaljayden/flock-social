@@ -395,16 +395,19 @@ function formPattern(form) {
   return new RegExp(`(?<![\\p{L}\\p{N}])${body}${dot}(?![\\p{L}\\p{N}])`, 'giu');
 }
 
-// Every place a known venue is named in the text, longest names first, no two
-// overlapping.
-function findMentions(text, venues) {
-  const found = [];
+// Every form of every known venue's name as a pattern, longest first. Built
+// once per reply and read for each sentence.
+function mentionPatterns(venues) {
   const candidates = [];
-  for (const v of venues) for (const f of nameForms(v.name)) candidates.push({ v, f });
-  candidates.sort((a, b) => b.f.length - a.f.length);
-  for (const { v, f } of candidates) {
-    const re = formPattern(f);
-    if (!re) continue;
+  for (const v of venues) for (const f of nameForms(v.name)) candidates.push({ v, f, re: formPattern(f) });
+  return candidates.filter((c) => c.re).sort((a, b) => b.f.length - a.f.length);
+}
+
+// Every place a known venue is named in the text, longest names first, no two
+// overlapping. `patterns` is mentionPatterns(venues).
+function findMentions(text, patterns) {
+  const found = [];
+  for (const { v, re } of patterns) {
     for (const m of text.matchAll(re)) {
       const start = m.index;
       const end = start + m[0].length;
@@ -430,8 +433,8 @@ const ABBREV = /(?:\b(?:st|ave|rd|blvd|dr|mt|ft|jr|sr|no|vs|approx|co|inc|ltd|st
 
 // Sentences as [start, end) offsets: a run ending in . ! or ? (and any closing
 // quote) followed by space, or a line break. Not after a short abbreviation.
-// A sentence starts at its first character, so the space before it stays the
-// space between two sentences.
+// A sentence starts at its first character and ends before a line break, so
+// the space or the break before the next one stays between the two.
 function pushSentence(out, masked, start, end) {
   let from = start;
   while (from < end && /\s/.test(masked[from])) from += 1;
@@ -443,8 +446,9 @@ function splitSentences(masked) {
   const re = /[.!?]+["'”’)]*(?=\s)|\n+/g;
   let m;
   while ((m = re.exec(masked))) {
-    const end = m.index + m[0].length;
-    if (m[0][0] !== '\n' && ABBREV.test(masked.slice(Math.max(0, m.index - 6), m.index + 1))) continue;
+    const lineBreak = m[0][0] === '\n';
+    if (!lineBreak && ABBREV.test(masked.slice(Math.max(0, m.index - 6), m.index + 1))) continue;
+    const end = lineBreak ? m.index : m.index + m[0].length;
     pushSentence(out, masked, start, end);
     start = end;
   }
@@ -496,7 +500,8 @@ function groundVenueDetails(text, facts) {
   const venues = facts && typeof facts.list === 'function' ? facts.list() : [];
   if (!original.trim() || !venues.length) return { text: original, removed: [] };
 
-  const mentions = findMentions(original, venues);
+  const patterns = mentionPatterns(venues);
+  const mentions = findMentions(original, patterns);
   const masked = mask(original, mentions);
   const sentences = splitSentences(masked);
   const removed = [];
@@ -566,7 +571,7 @@ function groundVenueDetails(text, facts) {
       // removed clause goes with it.
       const lead = firstNamed;
       const said = lead ? sMentions.find((m) => m.venue.key === lead.key) : null;
-      const keptMentions = findMentions(rebuilt, venues).map((m) => m.venue.key);
+      const keptMentions = findMentions(rebuilt, patterns).map((m) => m.venue.key);
       const namedLater = mentions.some((m) => m.start >= s.end && m.venue.key === (lead && lead.key));
       if (said && !keptMentions.includes(lead.key) && !namedSoFar.has(lead.key) && !namedLater) {
         rebuilt = `${sOrig.slice(said.start, said.end)}.${rebuilt ? ` ${rebuilt}` : ''}`;
@@ -574,7 +579,7 @@ function groundVenueDetails(text, facts) {
     }
     if (rebuilt) {
       pieces.push((pieces.length ? between : between.replace(/^\s+/, '')) + rebuilt);
-      for (const m of findMentions(rebuilt, venues)) namedSoFar.add(m.venue.key);
+      for (const m of findMentions(rebuilt, patterns)) namedSoFar.add(m.venue.key);
     }
     if (sMentions.length) lastVenue = sMentions[sMentions.length - 1].venue;
   }
@@ -631,5 +636,5 @@ module.exports = {
   notePlan,
   groundVenueDetails,
   // For __tests__/birdieGrounding.test.js.
-  __internals: { findClaims, findMentions, splitSentences, segmentsOf, norm, stem, nameForms },
+  __internals: { findClaims, findMentions, mentionPatterns, splitSentences, segmentsOf, norm, stem, nameForms },
 };

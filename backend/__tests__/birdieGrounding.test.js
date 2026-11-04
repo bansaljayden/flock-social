@@ -133,6 +133,10 @@ test('what is left reads as plain sentences', () => {
   assert.strictEqual(
     ground('Thistle & Crust. The patio is huge. It is at 40 right now.', searched(THISTLE)).text,
     'Thistle & Crust. It is at 40 right now.');
+  // And so does a line break, after a line that was put back together.
+  assert.strictEqual(
+    ground('Thistle & Crust, cheap with a big patio\n\nIt is at 40 right now.', searched(THISTLE)).text,
+    'Thistle & Crust, cheap\n\nIt is at 40 right now.');
 });
 
 test('an answer is never emptied, sentence or no sentence', () => {
