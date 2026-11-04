@@ -200,6 +200,10 @@ import { lsSet } from '../lib/storage';
    TableAvailability's. */
 import { flockTablePlaceIds, tablePartyFor, useTableSummaries } from '../lib/tableSummaries';
 import TableAvailability, { tableCompactText } from '../components/venue/TableAvailability';
+/* A venue's deal on its vote option, as this member's venue page leads with
+   it; the server sends it per member on each vote row (normalizeVotes keeps
+   it as `deal`). */
+import VenueDealLine, { dealSpokenText } from '../components/venue/VenueDealLine';
 import { isNightOver } from '../lib/planNight';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
    design; that file's header says why there is no routing call behind it. */
@@ -1458,6 +1462,9 @@ export default function ChatDetail({
     // asking stops with it. An empty list asks nothing and reads back {}.
     const tablesOver = !!flock && (flock.status === 'completed' || flock.status === 'cancelled' || isNightOver(flock));
     const tableSummaries = useTableSummaries(tablesOver ? [] : flockTablePlaceIds(flock), tableParty);
+    // A vote option's deal line ends with the plan by the same rule: a deal
+    // under last Friday's venue is the venue's, not the plan's.
+    const dealsShown = !tablesOver;
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
     // React answers by unmounting the entire app.
@@ -2612,6 +2619,9 @@ export default function ChatDetail({
             // a numeric rating and nothing at all otherwise, so passing a
             // guess here would put a figure on screen the server never sent.
             ...(typeof v.rating === 'number' ? { rating: v.rating } : {}),
+            // The same rule for the deal: only the one the server sent this
+            // member, and none once the plan is over (dealsShown).
+            ...(dealsShown && v.deal ? { deal: v.deal } : {}),
           }));
         return (
           <PollCard
@@ -4679,6 +4689,11 @@ export default function ChatDetail({
                       // screen reader, so a line drawn inside it alone is
                       // read by nobody.
                       const tableLine = v.place_id && tableSummaries[v.place_id] ? tableCompactText(tableSummaries[v.place_id], tableParty) : null;
+                      // The deal line's words, for the same reason: the deal
+                      // the server sent this member for this venue, said in
+                      // the row's name as well as drawn inside it.
+                      const deal = dealsShown && v.deal ? v.deal : null;
+                      const dealSaid = deal ? dealSpokenText(deal) : '';
                       const votePercent = totalVoters > 0 ? Math.round((count / totalVoters) * 100) : 0;
                       // Two venues at the same count are not "Leading" and a flame;
                       // the host reads that as the group's pick.
@@ -4705,7 +4720,7 @@ export default function ChatDetail({
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
+                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}${dealSaid ? `, ${dealSaid}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
                             <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                             </div>
@@ -4724,6 +4739,9 @@ export default function ChatDetail({
                               {v.place_id && tableSummaries[v.place_id] && (
                                 <TableAvailability summary={tableSummaries[v.place_id]} party={tableParty} compact style={{ marginTop: '1px' }} />
                               )}
+                              {/* The venue's deal, in the venue page's deal
+                                  style, on one line that truncates. */}
+                              {deal && <VenueDealLine deal={deal} iconColor={colors.steel} style={{ marginTop: '2px' }} />}
                               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
                                 const guests = v.guestCount || 0;
                                 const names = v.voters.join(', ');

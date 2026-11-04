@@ -71,6 +71,9 @@ import { localeDate, localeDateTime } from '../lib/localeFormat';
 // (lib/tableSummaries.js reads, TableAvailability writes the words).
 import { tablePartyFor, useTableSummary } from '../lib/tableSummaries';
 import TableAvailability from '../components/venue/TableAvailability';
+// A venue's deal on its vote row, as this member's venue page leads with it
+// (the server sends it per member on each vote row).
+import VenueDealLine from '../components/venue/VenueDealLine';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -862,6 +865,9 @@ export default function FlockDetail({
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '5px' }}>{isMyVote && Icons.check(colors.steel, 12)}{v.venue}</span>
                       {v.type && <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</span>}
+                      {/* The venue's deal, not once the plan is over: the
+                          same rule as the table line (tablesOver above). */}
+                      {!tablesOver && v.deal && <VenueDealLine deal={v.deal} iconColor={colors.steel} style={{ margin: '2px 0 0' }} />}
                       <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{[v.voters.join(', '), (v.guestCount || 0) > 0 ? `${v.guestCount} guest${v.guestCount !== 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ')}</span>
                     </span>
                     {/* navyMidBg, not navyBg: in dark mode navyBg equals

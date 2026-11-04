@@ -42,10 +42,17 @@
  * parseable one, and once that deadline has passed the rows stop taking
  * votes: a card that prints "Voting closed" over controls that still fire is
  * a card arguing with itself in front of the group.
+ *
+ * A DEAL, WHEN THE OPTION CARRIES ONE. The venue's deal as this member's
+ * venue page would lead with it (the server decides it per member), on one
+ * truncating line under the name (components/venue/VenueDealLine.js). Name and
+ * deal stack inside the row's 44px, so a row with a deal is no taller and the
+ * count, the Tied chip and Lock it in keep their places.
  */
 import React, { useEffect, useState } from 'react';
 import { CardShell } from './SystemRow';
 import Icons from '../../ui/Icons';
+import VenueDealLine from '../../venue/VenueDealLine';
 import './cards.css';
 import { localeDate, localeTime } from '../../../lib/localeFormat';
 
@@ -224,12 +231,24 @@ export default function PollCard({
                   }}
                 />
 
-                <span
-                  className="chat-truncate"
-                  style={{ position: 'relative', flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}
-                >
-                  {o.name}
-                </span>
+                {o.deal ? (
+                  <span style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+                    <span
+                      className="chat-truncate"
+                      style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
+                    >
+                      {o.name}
+                    </span>
+                    <VenueDealLine deal={o.deal} iconColor="var(--chat-accent)" style={{ fontSize: '12px', lineHeight: '16px' }} />
+                  </span>
+                ) : (
+                  <span
+                    className="chat-truncate"
+                    style={{ position: 'relative', flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}
+                  >
+                    {o.name}
+                  </span>
+                )}
 
                 {rating !== null && (
                   <span

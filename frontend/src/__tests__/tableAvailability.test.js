@@ -484,7 +484,9 @@ describe('the chat and the plan', () => {
     // it wraps; the line drawn inside is read by nobody unless it is in the name.
     expect(CHAT).toContain("import TableAvailability, { tableCompactText } from '../components/venue/TableAvailability';");
     expect(CHAT).toContain('const tableLine = v.place_id && tableSummaries[v.place_id] ? tableCompactText(tableSummaries[v.place_id], tableParty) : null;');
-    expect(CHAT).toContain("aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}`}");
+    // The venue's deal follows the table line in the same name since
+    // 2026-11-03 (venueDealOnVotes.test.js reads the rendered name).
+    expect(CHAT).toContain("aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}${dealSaid ? `, ${dealSaid}` : ''}`}");
     expect(CARD).toContain('const tableLine = tables ? tableCompactText(tables, tableParty) : null;');
     expect(CARD).toContain("? `${venue.name}${address ? `, ${address}` : ''}${tableLine ? `. ${tableLine}` : ''}. Open the place.`");
     // And the drawn line is not hidden from the tree either.

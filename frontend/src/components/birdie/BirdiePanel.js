@@ -97,6 +97,8 @@ import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { birdieBackText } from '../../lib/meterResets';
 import { venuesByMention } from '../../lib/birdieCardOrder';
+// A venue's deal on its card, the line a vote option draws too.
+import VenueDealLine from '../venue/VenueDealLine';
 
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
@@ -606,6 +608,11 @@ export default function BirdiePanel({
                                 <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.address.split(',')[0]}</span>
                               )}
                             </div>
+
+                            {/* The venue's deal, the one its page leads with for
+                                this person (the server's choice, per person),
+                                drawn the way a vote option draws it. */}
+                            {v.deal && <VenueDealLine deal={v.deal} iconColor={colors.steel} style={{ marginTop: '6px' }} />}
 
                             {/* Crowd row — only when Birdie actually checked */}
                             {crowd != null && (

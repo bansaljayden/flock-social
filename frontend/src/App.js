@@ -2856,6 +2856,14 @@ const normalizeVotes = (raw, me, previous = []) => {
       }).filter(Boolean);
       const guestCount = Number(v.guest_count ?? v.guestCount ?? 0) || 0;
       const counted = v.vote_count == null ? NaN : Number(v.vote_count);
+      // THE DEAL THIS READER'S VENUE PAGE LEADS WITH, when the venue has one
+      // for them: the server decides it per member (backend routes/venues.js
+      // voteDealsFor), so a drink deal never arrives for a reader it may not
+      // reach. No key means no deal, never "keep the last one": a deal taken
+      // down, deleted or out of this reader's reach is gone on the next tally.
+      const deal = v.deal && typeof v.deal === 'object' && typeof v.deal.title === 'string' && v.deal.title.trim()
+        ? v.deal
+        : null;
       return {
         venue,
         type: v.type || prior?.type || 'Venue',
@@ -2863,6 +2871,7 @@ const normalizeVotes = (raw, me, previous = []) => {
         voters,
         guestCount,
         unnamedVotes: Number.isFinite(counted) ? Math.max(0, counted - voters.length) : guestCount,
+        ...(deal ? { deal } : {}),
       };
     })
     .filter((v) => v.venue);
