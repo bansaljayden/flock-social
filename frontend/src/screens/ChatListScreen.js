@@ -95,6 +95,9 @@ export default function ChatListScreen({
   directMessages,
   dmsError,
   dmsLoading,
+  // How far the docked SOS button reaches up from the tab bar (App.js
+  // dockedRowHeight). Zero for a caller that hands none.
+  dockedRowHeight = 0,
   editingFlockList,
   feedScroll,
   flockOrder,
@@ -241,7 +244,12 @@ export default function ChatListScreen({
           )}
         </div>
 
-        <div ref={feedScroll.chat.ref} onScroll={feedScroll.chat.onScroll} style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 12px' }}>
+        {/* The last conversation scrolls clear of the docked SOS button
+            (2026-11-03). It used to end 12px above the tab bar, so on a
+            390x667 phone, scrolled to the end, SOS sat over the last row's
+            right end, where its member count and unread badge are. The
+            docked row's height is kept clear on top of the 12px. */}
+        <div ref={feedScroll.chat.ref} onScroll={feedScroll.chat.onScroll} style={{ flex: 1, overflowY: 'auto', padding: `8px 12px ${12 + dockedRowHeight}px` }}>
           {/* Direct Messages section */}
           {filteredDms.length > 0 && (
             <>

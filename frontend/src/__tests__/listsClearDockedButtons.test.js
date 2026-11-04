@@ -41,3 +41,15 @@ test('the Nest keeps the docked row clear under its last card', () => {
   const feed = home.slice(home.indexOf('<div ref={feedScroll.home.ref}'), home.indexOf('>', home.indexOf('<div ref={feedScroll.home.ref}')) + 1);
   expect(feed).toContain('padding: `4px 16px ${dockedRowHeight}px`');
 });
+
+// The same sweep found the Messages list doing it with SOS: on a 390x667
+// phone, scrolled to the end, SOS covered 2,366 px2 of the last conversation
+// row's right end, where the member count and the unread badge sit.
+test('the Messages list is handed the row and keeps it clear on top of its own 12px', () => {
+  const LIST = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatListScreen.js'), 'utf8').replace(/\r\n/g, '\n');
+  const props = APP.slice(APP.indexOf('const chatListScreenProps = {'), APP.indexOf('};', APP.indexOf('const chatListScreenProps = {')));
+  expect(props).toMatch(/\n\s+dockedRowHeight,\n/);
+  expect(LIST).toMatch(/\n\s+dockedRowHeight = 0,\n/);
+  const scroller = LIST.slice(LIST.indexOf('<div ref={feedScroll.chat.ref}'), LIST.indexOf('>', LIST.indexOf('<div ref={feedScroll.chat.ref}')) + 1);
+  expect(scroller).toContain('padding: `8px 12px ${12 + dockedRowHeight}px`');
+});

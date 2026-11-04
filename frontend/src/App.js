@@ -9686,7 +9686,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const FAB_SIZE = 52;
   // How far the docked row reaches up from the top of the tab bar, which a
   // list that scrolls above it leaves clear under its last row so the row can
-  // scroll out from under the buttons (the Nest, below).
+  // scroll out from under the buttons (the Nest below, and the Messages list,
+  // which is handed it).
   const dockedRowHeight = FAB_DOCK_GAP + FAB_SIZE;
 
   // Distance from the bottom of the phone frame to the bottom of a docked FAB.
@@ -20766,6 +20767,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           directMessages,
           dmsError,
           dmsLoading,
+          dockedRowHeight,
           editingFlockList,
           feedScroll,
           flockOrder,
