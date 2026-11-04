@@ -1,4 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+// flushSync for the floating buttons' release only: the snap glides from the
+// drop point, so the new corner has to be laid out before the release returns
+// (lib/fabGlide.js).
+import { flushSync } from 'react-dom';
 import { useTheme } from './context/ThemeContext';
 // An ES import, not a require() down by the providers: a require marked every
 // export of the package used, so GoogleLogin and one-tap shipped with it.
@@ -59,6 +63,7 @@ import { createSosFollowUp } from './services/sosFollowUp';
 // site keeps all of it off the boot path.
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet, lsRemove } from './lib/storage';
+import { glideFabHome, stopFabGlide } from './lib/fabGlide';
 import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
 // `process.env.REACT_APP_PURCHASES !== 'off'` below is the App Store build's
 // switch: off, there is no purchase surface at all. lib/purchasesBuild.js has
@@ -9730,6 +9735,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const el = e.currentTarget;
     try { el.setPointerCapture(e.pointerId); } catch (_) { /* synthetic/stale pointer ids have no capture */ }
     dragRef.current = { id, el, startX: e.clientX, startY: e.clientY, moved: false };
+    // A glide still landing must not switch the transition back on mid-drag.
+    stopFabGlide(el);
     el.style.transition = 'none';
     el.style.willChange = 'transform';
     el.style.zIndex = '30';
@@ -9750,7 +9757,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const d = dragRef.current;
     if (!d) return false;
     const wasDrag = d.moved;
-    // Reset transform — CSS transition in .fab-corner handles the snap animation
+    // Where the button is drawn as the finger lets go, the drag's transform
+    // included: the glide home starts here.
+    const dropped = wasDrag ? d.el.getBoundingClientRect() : null;
+    // Reset transform. The transition stays off until glideFabHome below has
+    // the new corner laid out, then the snap plays from the drop point
+    // (THE FLOATING BUTTONS GLIDE TO THEIR CORNER, lib/fabGlide.js).
     d.el.style.transform = '';
     d.el.style.willChange = '';
     d.el.style.cursor = 'grab';
@@ -9765,17 +9777,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const isLeft = cx < rect.width / 2;
       const isTop = cy < rect.height / 2;
       const corner = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}`;
+      // Committed now rather than after this handler, so the corner is in the
+      // DOM for the glide to measure.
       if (d.id === 'birdie') {
-        setBirdieCorner(corner);
+        flushSync(() => setBirdieCorner(corner));
         lsSet('flock_birdie_corner', corner);
         queueSync({ birdieCorner: corner });
       } else {
         // SOS only moves left/right — it stays docked above the tab bar.
         const sos = isLeft ? 'bottom-left' : 'bottom-right';
-        setSosCorner(sos);
+        flushSync(() => setSosCorner(sos));
         lsSet('flock_sos_corner', sos);
         queueSync({ sosCorner: sos });
       }
+      glideFabHome(d.el, dropped);
+    } else {
+      // A tap moved nothing: the transition the drag switched off comes back.
+      d.el.style.transition = '';
     }
     dragRef.current = null;
     return wasDrag;
