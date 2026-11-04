@@ -110,7 +110,9 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
 
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('venue-apple-year');
-    expect(document.activeElement).toBe(field);
+    // The year field is focused by an effect after the step changes; under a
+    // loaded full run that effect can land just after this line, so wait for it.
+    await waitFor(() => expect(document.activeElement).toBe(field));
     expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
     // Nothing failed, so nothing is red, and "tap Continue with Apple again"
     // is exactly what the step makes unnecessary.
@@ -215,7 +217,9 @@ describe('the venue sign-up half', () => {
     expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('venue-apple-year');
-    expect(document.activeElement).toBe(field);
+    // The year field is focused by an effect after the step changes; under a
+    // loaded full run that effect can land just after this line, so wait for it.
+    await waitFor(() => expect(document.activeElement).toBe(field));
     expect(utils.queryByRole('alert')).toBeNull();
     // The form's own year field steps aside, so there is one on screen.
     expect(yearFields(utils).length).toBe(1);
