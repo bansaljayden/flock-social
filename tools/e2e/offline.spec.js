@@ -140,7 +140,7 @@ async function newPerson(browser, tag, firstName = 'Ada') {
   await page.getByRole('textbox', { name: /password/i }).first().fill(PASSWORD);
   const dob = page.getByRole('textbox', { name: /birth|date/i }).first();
   if (await dob.count()) await dob.fill(adultDob());
-  await page.getByRole('button', { name: /create account|sign up|continue/i }).first().click();
+  await page.getByRole('button', { name: /^create account$/i }).click();
 
   await expect(page.getByRole('heading', { name: /confirm your email/i })).toBeVisible({ timeout: 30_000 });
   await confirmEmail(email);

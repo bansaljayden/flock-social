@@ -98,7 +98,7 @@ async function signUp(page, tag, name = 'Ada Tester') {
   const dob = page.getByRole('textbox', { name: /birth|date/i }).first();
   if (await dob.count()) await dob.fill(adultDob().slice(0, 4));
 
-  await page.getByRole('button', { name: /create account|sign up|continue/i }).first().click();
+  await page.getByRole('button', { name: /^create account$/i }).click();
   return { email, name, offences };
 }
 

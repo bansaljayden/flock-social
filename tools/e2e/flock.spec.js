@@ -94,7 +94,7 @@ async function newPerson(browser, tag, firstName) {
   await page.getByRole('textbox', { name: /password/i }).first().fill('E2eTesting!2026');
   const dob = page.getByRole('textbox', { name: /birth|date/i }).first();
   if (await dob.count()) await dob.fill(adultDob());
-  await page.getByRole('button', { name: /create account|sign up|continue/i }).first().click();
+  await page.getByRole('button', { name: /^create account$/i }).click();
 
   // A password signup does not land in the app. It lands on "Confirm your
   // email", which is correct and is why confirmEmail exists.
