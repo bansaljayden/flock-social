@@ -5,13 +5,17 @@
    Every app screen is the web app's dark theme at 390 x 844, shipped at 2x
    (780 x 1688) with a 480px cut; the Flux screen is the sensor's own 1024 x
    600 panel, landscape, at 2x. The app screens are real interface on a seeded
-   account in Old City, Philadelphia (2026-10-21): the five friends are made
-   up, the places are real ones from Google Places, with their Google Maps
-   photos, Birdie's answer is a live reply, and the crowd figures are the live
-   model's. The venue-side screens elsewhere on the site keep the invented
-   The Copper Finch, so no real business is shown with deals or reviews it
-   never posted. The Flux readings are samples. `width` and `height` are the
-   2x file's own.
+   account in Old City, Philadelphia (2026-10-21): the five friends are seeded
+   accounts with drawn birds for pictures (two of the names, Jayden Bansal and
+   Asad Ali, are the people who make Flock), the places are real ones from
+   Google Places, with their Google Maps photos, Birdie's answer is a live
+   reply, and the crowd figures are Flock's estimates from typical patterns for
+   each kind of place, not the crowd model's: the crowd dial reads ESTIMATED,
+   "An estimate from typical patterns for this kind of place." (see
+   public/screenshots/WIRING.md). The venue-side screens elsewhere on the site
+   keep the invented The Copper Finch, so no real business is shown with deals
+   or reviews it never posted. The Flux readings are samples. `width` and
+   `height` are the 2x file's own.
 
    Every path is written out in full: publicScreenshotsShipped.test.js and the
    capture rig decide what ships by finding these names literally in source.
