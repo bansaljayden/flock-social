@@ -3,6 +3,7 @@ import { BirdieStill, BirdNote } from './ui/BirdieBird';
 import { SkeletonBar } from './ui/Skeleton';
 import { signInKey } from '../lib/sessionIdentity';
 import { isNativeShell } from '../lib/nativeShell';
+import { landingTop, awayFromEnd } from '../lib/threadLanding';
 
 // Roost, the chat half of the venue advisor: a Q&A thread on the venue
 // dashboard, below the insight cards.
@@ -379,8 +380,9 @@ const ThreadTurn =({ turn, first, navy, navyBg, onRetry, next = [], onNext }) =>
           turn goes from pending to answered: the words simply arrive under a
           bird who was already there. `flex-start` puts his head level with the
           first line and his feet a couple of lines down, which is where a
-          photographed bird wants to stand. */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '10px 0 0' }}>
+          photographed bird wants to stand. The thread lands a tall answer on
+          this row's top. */}
+      <div data-roost-answer="" style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', margin: `${ANSWER_GAP_PX}px 0 0` }}>
         <span
           /* The two classes are the ONLY difference between a turn in flight
              and a turn that has resolved. They are added when the turn opens
@@ -467,6 +469,11 @@ const COMPOSER_MAX_HEIGHT = 132;
 // just makes the card taller; a long one keeps the composer where the thumb
 // left it, and the conversation above it is scrolled, not the dashboard.
 const THREAD_MAX_HEIGHT = 340;
+
+// The room between the owner's question and Roost's answer under it. An answer
+// that lands at the top of the scrollback keeps it, so its first line is never
+// drawn against the edge it was cut under.
+const ANSWER_GAP_PX = 10;
 
 // The invitation. It names both halves of what the field takes, because an
 // owner who reads "ask about your venue" will only ever ask for numbers, and
@@ -668,6 +675,12 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
   const alive = useRef(true);
   const boxRef = useRef(null);
   const scrollRef = useRef(null);
+  // What the landing effect below knows about the scrollback: the box and the
+  // newest turn it last saw, where it last put the thread itself, and whether
+  // the owner scrolled away from the end on purpose.
+  const landedRef = useRef({ box: null, key: null, status: null });
+  const autoTopRef = useRef(null);
+  const readerAwayRef = useRef(false);
   const keyboardPointer = useMemo(hasKeyboardPointer, []);
   // Re-arm on mount, not just disarm on unmount. A ref initialised to true
   // is only true for the first mount: React 18 StrictMode mounts, unmounts and
@@ -861,18 +874,60 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
     return () => window.removeEventListener('resize', fitBox);
   }, [fitBox]);
 
-  // A new turn belongs at the bottom of the scrollback, which is where the
-  // owner is looking: they just pressed send. Before paint, not after, because
-  // this also runs on the remount that restores a thread and landing at the
-  // top of an old conversation and then jumping is worse than either.
+  // WHERE THE THREAD LANDS WHEN IT CHANGES (2026-11-03).
+  //
+  // It pinned to its end on every change. Filming the LionCage demo, the
+  // answer to "How did we do yesterday?" was taller than the scrollback, and
+  // pinned to the end its first line ("Thursday came in 20 points above...")
+  // sat cut under the card's top edge: the lead sentence, the one that
+  // matters, was the one scrolled out of view.
+  //
+  // Now the owner's own question pins to the end, with Birdie standing where
+  // the answer will land. An answer that fits pins to the end too, as before.
+  // One taller than the scrollback, points and follow-up chips together,
+  // lands with its first line at the top (lib/threadLanding.js, the geometry
+  // Birdie's panel lands its answers with), keeping the room it has under its
+  // question. The view never moves for an answer if the owner scrolled away
+  // to read something while it was coming (onThreadScroll); their next
+  // question brings them back down.
+  //
+  // A remount that restores the thread (the dashboard unmounts this card on
+  // every tab switch) lands the way an answer does. Before paint, not after,
+  // because landing on an old conversation and then jumping is worse than
+  // either. `state` is in here because a restored thread is already in hand
+  // on the first render and the card is still drawing its skeleton, so the
+  // scroller does not exist yet and the thread never changes again. Without
+  // it a remount landed the owner at the top of an old conversation.
   useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
-    // `state` is in here because a restored thread is already in hand on the
-    // first render and the card is still drawing its skeleton, so the scroller
-    // does not exist yet and the thread never changes again. Without it a
-    // remount landed the owner at the top of an old conversation.
+    const box = scrollRef.current;
+    if (!box || typeof box.scrollHeight !== 'number') return;
+    const last = thread.length > 0 ? thread[thread.length - 1] : null;
+    const seen = landedRef.current;
+    landedRef.current = { box, key: last ? last.key : null, status: last ? last.status : null };
+    // A scroller that was not there last time has no place of the owner's to
+    // keep: it starts at the top whatever they did in the one before it.
+    const reopened = seen.box !== box;
+    const asked = !!last && last.status === 'pending' && last.key !== seen.key;
+    const answered = !!last && last.status !== 'pending' && last.key === seen.key && seen.status === 'pending';
+    if (asked || reopened) readerAwayRef.current = false;
+    if (!asked && !answered && !reopened) return;
+    if (!asked && readerAwayRef.current) return;
+    const rows = asked ? [] : box.querySelectorAll('[data-roost-answer]');
+    const top = landingTop(box, rows[rows.length - 1], ANSWER_GAP_PX);
+    autoTopRef.current = top;
+    box.scrollTop = top != null ? top : box.scrollHeight;
   }, [thread, state]);
+
+  // The owner's own scrolling: away from the end on purpose, or back at it. A
+  // scroll the effect above made lands where it was put and says nothing about
+  // the owner, and neither does arriving at the end it pinned to.
+  const onThreadScroll = useCallback((e) => {
+    const box = e.currentTarget;
+    const auto = autoTopRef.current;
+    if (auto != null && Math.abs(box.scrollTop - auto) <= 2) return;
+    autoTopRef.current = null;
+    readerAwayRef.current = awayFromEnd(box);
+  }, []);
 
   // One turn, whichever door it came in by. `run` is the call that produces the
   // answer; the thread does not care which endpoint answered, only that the
@@ -1225,6 +1280,8 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
           </div>
           <div
             ref={scrollRef}
+            onScroll={onThreadScroll}
+            data-roost="thread"
             style={{ position: 'relative', maxHeight: `${THREAD_MAX_HEIGHT}px`, overflowY: 'auto' }}
           >
             {thread.map((turn, i) => (

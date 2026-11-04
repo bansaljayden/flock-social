@@ -97,6 +97,7 @@ import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { birdieBackText } from '../../lib/meterResets';
 import { venuesByMention } from '../../lib/birdieCardOrder';
+import { landingTop, awayFromEnd } from '../../lib/threadLanding';
 // A venue's deal on its card, the line a vote option draws too.
 import VenueDealLine from '../venue/VenueDealLine';
 
@@ -109,20 +110,16 @@ function chirpsBackText(aiResetsAt) {
 // The thread's own top padding: an answer that lands at the top keeps the gap
 // the first message has.
 const THREAD_TOP_GAP_PX = 12;
-// Within this of the end, the reader is reading the end, not away from it.
-const THREAD_END_SLACK_PX = 48;
 
 // Where the thread scrolls to put the newest answer's first line at its top,
 // or null when that answer is a question, is missing, or fits pinned to the
 // end (pinned there, its first line would still be in view). Read off the
-// laid-out rows, so the answer's venue cards count toward its height.
+// laid-out rows, so the answer's venue cards count toward its height. The
+// geometry is lib/threadLanding.js, shared with Roost's chat on the venue
+// dashboard, which lands its answers the same way.
 function answerTopOf(box, last, index) {
   if (!last || last.role === 'user') return null;
-  const row = box.querySelector(`[data-birdie-turn="${index}"]`);
-  if (!row) return null;
-  const top = box.scrollTop + (row.getBoundingClientRect().top - box.getBoundingClientRect().top) - THREAD_TOP_GAP_PX;
-  const endTop = box.scrollHeight - box.clientHeight;
-  return top < endTop - 1 ? Math.max(0, top) : null;
+  return landingTop(box, box.querySelector(`[data-birdie-turn="${index}"]`), THREAD_TOP_GAP_PX);
 }
 
 export default function BirdiePanel({
@@ -280,7 +277,7 @@ export default function BirdiePanel({
     const auto = threadAutoTopRef.current;
     if (auto != null && Math.abs(box.scrollTop - auto) <= 2) return;
     threadAutoTopRef.current = null;
-    readerAwayRef.current = box.scrollHeight - box.scrollTop - box.clientHeight > THREAD_END_SLACK_PX;
+    readerAwayRef.current = awayFromEnd(box);
   };
 
   return (
