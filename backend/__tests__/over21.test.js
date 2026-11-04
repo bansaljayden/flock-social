@@ -493,12 +493,19 @@ test('the crowd card drops a drink event\'s name for every viewer', () => {
   assert.match(src, /eventName: mentionsOver21\(crowdResult\.eventAlert\.eventName\) \? null : crowdResult\.eventAlert\.eventName,/);
 });
 
-test('Birdie is handed no promotion and no event, so it has none to repeat', () => {
+test('Birdie is handed a deal only through the 21 rule, and no event', () => {
   // Its tools and its context line were read for this: venues, crowd numbers
-  // without the event alert, the user's own plans and friends, weather. If any
-  // of these ever appears here, the 21 rule has to come with it.
+  // without the event alert, the user's own plans and friends, weather. Since
+  // 2026-11-03 a search result also carries the venue's deal (routes/ai.js
+  // withVenueDeals), and it is read through utils/venueDeals.js, which applies
+  // the 21 rule for the person asking. Birdie still reads no deal or event
+  // table itself, so the one door a deal has is the one with the rule on it;
+  // birdieVenueDeals.test.js walks it with minors and accounts with no age.
   const src = read('routes/ai.js');
   assert.doesNotMatch(src, /venue_promotions|venue_events|eventAlert|nearestName|app\.ticketmaster\.com|\/api\/events/);
+  assert.match(src, /require\('\.\.\/utils\/venueDeals'\)/);
+  assert.match(src, /activeDealsForVenues\(result\.venues\.map\(\(v\) => v && v\.place_id\), \{ userId \}\)/);
+  assert.match(read('utils/venueDeals.js'), /dealsSeenBy\(byPlace, await viewerKnownOver21\(db, viewer \? viewer\.userId : null, now\)\)/);
 });
 
 test('venue events reach their owner, admins, moderators, and the venue card through ONE gated read', () => {

@@ -41,6 +41,9 @@ const ownerReports = require('../services/ownerReports');
 const gameNights = require('../services/gameNights');
 // The public table summary for search results (withTableSummaries below).
 const tableHistory = require('../services/tableHistory');
+// A venue's deal on a search result, by the venue page's own rules
+// (withVenueDeals below).
+const { activeDealsForVenues, leadDeals } = require('../utils/venueDeals');
 const venueLabel = require('../utils/venueLabel');
 const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError, warnOnce } = require('../services/entitlements');
@@ -1065,6 +1068,42 @@ async function withTableSummaries(result) {
     const s = summaries[v.place_id];
     if (!s || s.stale) continue;
     v.tables = { open_tables: s.open, party_of_two_fits_now: s.fits_now, wait_minutes: s.wait_minutes };
+  }
+  return result;
+}
+
+// A DEAL ON A SEARCH RESULT (2026-11-03). A venue whose verified owner posts a
+// deal on Flock gets the one its venue page would lead with for this person,
+// by the page's own rules (utils/venueDeals.js): the newest deal they may see,
+// as { title, time_slot, days }. A drink deal goes only to an account we know
+// is 21, so nobody treated as under 18, nobody 18 to 20 and no account without
+// a date of birth is handed one, in what the model reads or on a card. The
+// model reads it beside the venue, so Birdie can say what the deal is, and the
+// card carries the same line the vote does. The words are the owner's, so they
+// go through promptSafe like every value somebody else wrote, cut at the deal
+// editor's own limits. Per caller and after the cache, like the tables and the
+// distances: one person's deal never rides into the next person's search. A
+// failed read leaves the venues as they were.
+const MAX_DEAL_TITLE_CHARS = 80;
+const MAX_DEAL_WHEN_CHARS = 60;
+async function withVenueDeals(result, userId) {
+  if (!result || !Array.isArray(result.venues) || !result.venues.length) return result;
+  let lead;
+  try {
+    lead = leadDeals(await activeDealsForVenues(result.venues.map((v) => v && v.place_id), { userId }));
+  } catch (err) {
+    console.error('Birdie venue deals failed:', err.message);
+    return result;
+  }
+  for (const v of result.venues) {
+    const d = v ? lead.get(v.place_id) : null;
+    const title = d ? promptSafe(d.title, MAX_DEAL_TITLE_CHARS) : '';
+    if (!title) continue;
+    v.deal = {
+      title,
+      time_slot: promptSafe(d.time_slot, MAX_DEAL_WHEN_CHARS) || null,
+      days: promptSafe(d.days, MAX_DEAL_WHEN_CHARS) || null,
+    };
   }
   return result;
 }
@@ -3465,6 +3504,10 @@ router.post('/chat',
                 if (d) Object.assign(v, d);
               }
             }
+            // The venue's deal as its page would show this person (A DEAL ON A
+            // SEARCH RESULT), on this turn's own copy, after the bars are gone
+            // and before the model reads it or a card is built from it.
+            if (name === 'search_venues' && Array.isArray(result?.venues)) await withVenueDeals(result, userId);
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
             // an upstream 404, a spent Places budget or a thrown tool all leave
@@ -3669,6 +3712,8 @@ router.post('/chat',
             photo_url: v.photo_url || null,
             crowd: typeof v.crowd === 'number' ? v.crowd : null,
             crowd_label: v.crowd_label || null,
+            // Only on a venue with a deal for this person (withVenueDeals).
+            ...(v.deal ? { deal: v.deal } : {}),
           });
         }
       }
