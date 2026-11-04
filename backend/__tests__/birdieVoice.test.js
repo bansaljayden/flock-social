@@ -113,9 +113,18 @@ test('the reason for a pick comes from the tools, and the example shows one that
   const example = prompt.split('\n').find((l) => l.startsWith('- Pick ONE spot'));
   assert.ok(example.includes('"Oakwood. Dead till 9, and it\'s the cheap one."'), example);
   assert.ok(!/patio|menu|lighting/i.test(example), 'the example models a detail no tool returns');
-  assert.match(prompt, /Your reasons for a spot come from what the tools returned: how busy it is and when, whether it is open, its price level and rating, open tables, and the kind of place its listing says it is\./);
-  assert.match(prompt, /No tool tells you a menu, a dish, a drink, the decor, the lighting, the music, the seating, the staff or what a place is known for, so never say any of those/);
-  assert.match(prompt, /never say how close it is or how long it takes to get there unless a tool gave you a distance\./);
+  // 2026-11-03, the LionCage demo: "The booths in the back fit six easily and
+  // the wood-fired pies are the whole reason to go" for a venue whose data
+  // said pizza_restaurant, 4.6 and 301 ratings. A detail is held to THAT
+  // venue's own result now, and the rule carries one bad and one good example
+  // (utils/birdieGrounding.js is the check after the model answers).
+  assert.match(prompt, /Your reasons for a spot come from what the tools returned for that spot: how busy it is and when, whether it is open, its price level and rating, open tables, how far it is, the group's votes, and the kind of place its listing says it is\./);
+  assert.match(prompt, /A detail about the place itself \(its seating or booths, a dish, the oven, the menu, a drink, the decor, a patio or rooftop, the music, the vibe, specials, how many people it fits, what it is known for\) goes in only when it is in that venue's own tool result, never because places like it usually have one\./);
+  assert.match(prompt, /Bad: "Oakwood\. The booths in the back fit six and the wood-fired pies are the reason to go\." Good: "Oakwood\. Pizza place, rated 4\.6, and only at 40 right now\."/);
+  const rule = prompt.split('\n').find((l) => l.startsWith('- Your reasons for a spot'));
+  assert.strictEqual((rule.match(/\bBad:/g) || []).length, 1, 'one bad example, not a list of them');
+  assert.strictEqual((rule.match(/\bGood:/g) || []).length, 1, 'one good example');
+  assert.match(prompt, /Never say how close it is or how long it takes to get there unless a tool gave you a distance\./);
   assert.ok(prompt.indexOf('Hard rules:') < prompt.indexOf('Your reasons for a spot'), 'the rule sits with the other hard rules');
 });
 

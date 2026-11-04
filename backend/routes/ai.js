@@ -98,6 +98,9 @@ const {
   settleGeminiCall,
   refundTurn,
 } = require('../services/birdieUsage');
+// The check that holds every venue detail a reply states to what the turn's
+// tools returned (WHAT BIRDIE MAY SAY ABOUT A VENUE, at the reply).
+const birdieGrounding = require('../utils/birdieGrounding');
 
 const router = express.Router();
 const PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -2594,7 +2597,7 @@ How to answer:
 Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
 - Never name a venue a tool did not return, and never state a crowd number a tool did not give you. Having takes does not mean making things up. A confident wrong number is the worst thing you can send.
-- Your reasons for a spot come from what the tools returned: how busy it is and when, whether it is open, its price level and rating, open tables, and the kind of place its listing says it is. No tool tells you a menu, a dish, a drink, the decor, the lighting, the music, the seating, the staff or what a place is known for, so never say any of those ("best birria around", "big booths", "the pasta never misses"), and never say how close it is or how long it takes to get there unless a tool gave you a distance.
+- Your reasons for a spot come from what the tools returned for that spot: how busy it is and when, whether it is open, its price level and rating, open tables, how far it is, the group's votes, and the kind of place its listing says it is. A detail about the place itself (its seating or booths, a dish, the oven, the menu, a drink, the decor, a patio or rooftop, the music, the vibe, specials, how many people it fits, what it is known for) goes in only when it is in that venue's own tool result, never because places like it usually have one. Bad: "Oakwood. The booths in the back fit six and the wood-fired pies are the reason to go." Good: "Oakwood. Pizza place, rated 4.6, and only at 40 right now." Never say how close it is or how long it takes to get there unless a tool gave you a distance.
 - Never quote the \`confidence\` number from get_crowd_prediction, and never put a certainty on a single crowd read. Read \`confidence_measurement\` instead: when its \`status\` is "unmeasured", that number says how much we know about the venue, not how often we are right, and it runs HIGHER than a real measured accuracy. Talk about the crowd level, not about certainty.${servedAccuracyRule()}
 - When get_crowd_prediction returns \`game_night\`, it is tonight's schedule: those teams play tonight, and \`home_game\`, when present, is a home game at the named arena about that many kilometers from the venue. You may mention it in passing as a fact. Never say or imply that the game makes the venue busier, quieter or harder to get into, and never change or explain a crowd number with it: no crowd effect from games has been measured.
 - When get_crowd_prediction returns \`crowd_source\` = "owner_report", the number is the venue's own live report, not Flock's estimate. Say so plainly using the exact words in \`crowd_attribution\` (e.g. "the cafe says it's at 80% right now"). Presenting their claim as our measurement is the one thing this field exists to prevent.
@@ -3223,6 +3226,13 @@ router.post('/chat',
       }
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
+      // What this turn's tools returned about each venue, for the check on the
+      // reply (WHAT BIRDIE MAY SAY ABOUT A VENUE). The venue on screen is a
+      // venue the reply can be about, with nothing behind a detail until a
+      // tool returns one.
+      const venueFacts = birdieGrounding.createVenueFacts();
+      venueFacts.add(currentContext?.venue?.name, null);
+      venueFacts.add(currentContext?.flock?.venue, null);
       // The Places rows this turn's searches returned, by place id, as the
       // model was handed them: the only venues draft_flock and
       // add_venue_to_vote may stage (VENUES THE HANDS MAY NAME). It lives and
@@ -3395,6 +3405,8 @@ router.post('/chat',
               }
             }
 
+            // What the model is handed is what the reply may stand on.
+            birdieGrounding.noteToolResult(venueFacts, name, result);
             functionResponses.push({
               functionResponse: { ...(id ? { id } : {}), name, response: result },
             });
@@ -3502,11 +3514,19 @@ router.post('/chat',
         ? budgetCutText
         : (cutShort ? cutText : 'say that one more time?');
       const written = textParts.map(p => p.text).join('');
+      // WHAT BIRDIE MAY SAY ABOUT A VENUE (utils/birdieGrounding.js): a detail
+      // about a place the reply states stands on what this turn's tools
+      // returned for that place, or its clause goes. The model's words only,
+      // never a line this server wrote. Fixed words in the log, never the reply.
+      const grounded = birdieGrounding.groundVenueDetails(written, venueFacts);
+      if (grounded.removed.length) {
+        console.warn(`[AI] Birdie grounding: removed ${grounded.removed.length} unsupported venue detail(s) (${[...new Set(grounded.removed.map((r) => r.kind))].join(', ')})`);
+      }
       // A PLAIN NO TO DRINKING UNDER 21, WHATEVER THE MODEL WROTE (above).
       // Not for an adult, whose answers the hard rules alone govern, and never
       // for a line this server wrote.
       const plainNo = ageBracket !== 'adult' && talksAboutCarding(written);
-      const responseText = plainNo ? BIRDIE_UNDERAGE_DRINKING_MESSAGE : (written || fallbackText);
+      const responseText = plainNo ? BIRDIE_UNDERAGE_DRINKING_MESSAGE : (grounded.text || fallbackText);
 
       // Collect venue data from tool results to send as cards. None go with
       // the plain no: they were gathered to answer the drinking part.
