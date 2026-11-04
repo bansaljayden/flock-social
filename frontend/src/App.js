@@ -3415,6 +3415,12 @@ const toAiWireContext = (ctx) => {
       venue: c.flock.venue && c.flock.venue !== 'TBD' ? aiContextName(c.flock.venue) : null,
       status: c.flock.status || null,
     };
+    // Which flock, so the server can read its plan (how many are going, the
+    // vote's picks and their counts, the venue it is locked in at) for a
+    // member of it, and Birdie answers inside the group's own picks (backend
+    // routes/ai.js THE GROUP'S PLAN). A saved flock's id only: a plan still
+    // being created has none, and goes without.
+    if (Number.isInteger(c.flock.id) && c.flock.id > 0) out.flock.id = c.flock.id;
   }
   if (c.activeVenue) {
     out.venue = {

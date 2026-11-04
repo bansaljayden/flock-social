@@ -460,6 +460,19 @@ describe('toAiWireContext', () => {
     expect(toAiWireContext(null)).toEqual({ screen: undefined, tab: undefined });
   });
 
+  // THE GROUP'S PLAN (backend routes/ai.js, 2026-11-03): asked from inside a
+  // flock, the server reads that flock's plan for a member of it, so the app
+  // names which flock. A saved flock's id only; anything else goes without.
+  test('the flock Birdie is asked from is named by its id, and only a saved one is', () => {
+    const { toAiWireContext } = lift();
+    expect(toAiWireContext({ currentScreen: 'chatDetail', currentTab: 'chat', flock: { id: 412, name: 'Friday night', venue: 'TBD', status: 'voting' } }))
+      .toEqual({ screen: 'chatDetail', tab: 'chat', flock: { id: 412, name: 'Friday night', venue: null, status: 'voting' } });
+    for (const id of [undefined, null, 0, -3, 1.5, '412', NaN]) {
+      const out = toAiWireContext({ flock: { id, name: 'Friday night' } });
+      expect(out.flock).not.toHaveProperty('id');
+    }
+  });
+
   test('sendAiMessage builds its context through it', () => {
     const start = appSource.indexOf('const sendAiMessage = useCallback');
     const send = appSource.slice(start, appSource.indexOf('const fillAiInput = useCallback', start));
