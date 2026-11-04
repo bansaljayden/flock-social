@@ -125,6 +125,17 @@ table, the ship switch and rollback. What a readiness audit of every step on
   its 0.05 ceiling, so live rows carry about 90% of the loss rather than the
   80% described below; `sample_weight_policy.realtime_loss_share` records the
   share the run trained with.
+- **The provider after the ship (added 2026-11-03, before the export).** The
+  BestTime plan stays for two to three weeks after the crowd model ships,
+  instead of being cancelled when its current cycle ends on 2026-11-29, so
+  that a final refit that ships (2.8.1-starling) is scored forward as the
+  November runbook registers: the 14 days of live readings after it ships,
+  replayed with `train/bandEval.js` against rule (b), and a rollback to the
+  gated artifact if its within-one-band share falls more than 1.0 point below
+  rule (b)'s (95% interval). The check needs readings taken after the ship;
+  without them the five live features and rule (b)'s hour-old reading and
+  offset would sit at their no-reading values. Only the cancellation moves:
+  the export still waits for the end of the current cycle.
 
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
