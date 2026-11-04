@@ -2738,8 +2738,16 @@ const SHARE_FIX_FRESH_MS = 60 * 1000;
 // that already offers "Weekends". A deal saved with either opens as Custom with
 // that word in the box, the card prints it exactly as before, and the server
 // still takes it from an older app, because both fields are free text there.
+//
+// One day a week joined the Days menu on 2026-11-03, Mondays through Sundays.
+// Roost's own advice for a slow night is one fixed reason to come in every
+// Monday, and the menu could not say it: a Monday quiz night posted as
+// "Weekdays" or went under Custom. They are worded like Weekdays and Weekends,
+// so the deal line reads "Quiz night · All Day · Mondays". The server takes
+// them as it takes any days (free text, 60 characters), and the drink-deal
+// rule reads them like any other words: a day's name is never a drink word.
 const PROMO_TIME_SLOTS = ['Happy Hour', 'Late Night', 'Weekend Brunch', 'All Day'];
-const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Fri-Sun'];
+const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Fri-Sun', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
 
 const newestFromOthers = (messages) => {
   let newest = null;
@@ -4701,6 +4709,13 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
               <option value="Weekdays">Weekdays</option>
               <option value="Weekends">Weekends</option>
               <option value="Fri-Sun">Fri-Sun</option>
+              <option value="Mondays">Mondays</option>
+              <option value="Tuesdays">Tuesdays</option>
+              <option value="Wednesdays">Wednesdays</option>
+              <option value="Thursdays">Thursdays</option>
+              <option value="Fridays">Fridays</option>
+              <option value="Saturdays">Saturdays</option>
+              <option value="Sundays">Sundays</option>
               <option value={PROMO_CUSTOM}>Custom</option>
             </select>
             {form.days === PROMO_CUSTOM && (

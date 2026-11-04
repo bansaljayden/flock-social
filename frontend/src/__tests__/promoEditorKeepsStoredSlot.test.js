@@ -50,7 +50,13 @@ test('the named options are exactly the lists the editor checks a stored value a
 test('the menus offer no duplicate: no Mon-Fri beside Weekdays, no Weekend slot beside Weekends', () => {
   render(<PromoModal editing={null} onSave={jest.fn()} onCancel={() => {}} colors={colors} />);
   expect(optionValues(screen.getByLabelText('Time Slot'))).toEqual(['Happy Hour', 'Late Night', 'Weekend Brunch', 'All Day', 'custom']);
-  expect(optionValues(screen.getByLabelText('Days Active'))).toEqual(['Daily', 'Weekdays', 'Weekends', 'Fri-Sun', 'custom']);
+  // One day a week since 2026-11-03 (promoSingleDays.test.js): none of them
+  // says what a group already says.
+  expect(optionValues(screen.getByLabelText('Days Active'))).toEqual([
+    'Daily', 'Weekdays', 'Weekends', 'Fri-Sun',
+    'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays',
+    'custom',
+  ]);
   // The quick-deal chips on the dashboard dropped the slot too.
   expect(DASH).toContain("{['Happy Hour', 'Late Night', 'All Day'].map(slot =>");
 });
