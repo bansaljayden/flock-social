@@ -2,23 +2,27 @@
 """Grade the sealed Flux recordings, once (OWL-RECORDING-PROTOCOL.md, section 14).
 
     python score_sealed.py --unsealed <dir> --sums <dir with *.SHA256SUMS> --freeze FREEZE.txt \\
-        --models <dir with people.onnx and people-fine.onnx> --out <report dir> [--rerun-reason "<text>"]
+        --models <name>=<dir with people.onnx and people-fine.onnx> (once per model in FREEZE.txt) \\
+        --out <report dir> [--rerun-reason "<text>"]
 
 In order: every hash is checked before anything is read (14.1); the two counters' tally exports are
 loaded and each count is tied to its beep (14.2); the phone and Pi clocks are lined up from the
 palm-over-the-lens SYNC marks (14.3); each beep gets the frame nearest beep + 1.0 s (14.4); that frame
-is counted by Owl and by the heat-cluster rule exactly as the sensor counts it (14.5); and the scores,
-intervals and pre-registered bars are written as items.csv, report.md, report.json and GRADED.lock
-(14.6, 14.7). Nothing written holds a temperature or an image: numbers and codes only.
+is counted by each frozen Owl model and by the heat-cluster rule exactly as the sensor that shipped it
+counts it (14.5); and the scores, intervals and pre-registered bars are written as items.csv, report.md,
+report.json and GRADED.lock (14.6, 14.7). The bars grade the model on Flux; the others are scored the
+same way beside it. Nothing written holds a temperature or an image: numbers and codes only.
 """
 import argparse
 import csv
 import datetime
 import hashlib
+import importlib.util
 import json
 import math
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -69,21 +73,55 @@ def parse_sums(path):
     return out
 
 
+MODEL_FILES = ('people.onnx', 'people-fine.onnx')
+
+
 def parse_freeze(path):
-    """The hashes FREEZE.txt pins: the two model files and this scorer."""
+    """What FREEZE.txt pins (OWL-RECORDING-PROTOCOL.md section 11): this scorer's sha256, which model
+    is on Flux, and one block per model, opened by its Name: line, with its two files' sha256, the
+    main.py commit that shipped it and that commit's settings."""
     text = Path(path).read_text(encoding='utf-8')
-    found = {}
-    for name in ('people.onnx', 'people-fine.onnx', 'score_sealed.py'):
-        m = re.search(re.escape(name) + r'\b[^\n]*?sha256\s+([0-9a-fA-F]{64})', text)
-        if not m:
-            raise Refused(f'FREEZE.txt has no sha256 for {name}')
-        found[name] = m.group(1).lower()
-    return found
+    m = re.search(r'score_sealed\.py\b[^\n]*?sha256\s+([0-9a-fA-F]{64})', text)
+    if not m:
+        raise Refused('FREEZE.txt has no sha256 for score_sealed.py')
+    scorer = m.group(1).lower()
+    flux = re.search(r'^\s*On Flux:\s*(\S+)\s*$', text, re.M)
+    if not flux:
+        raise Refused('FREEZE.txt does not say which model is on Flux (an "On Flux:" line)')
+    starts = [(n.start(), n.group(1)) for n in re.finditer(r'^\s*Name:\s*(\S+)\s*$', text, re.M)]
+    if not starts:
+        raise Refused('FREEZE.txt names no model (a "Name:" line opens each model\'s block)')
+    models = {}
+    for k, (pos, name) in enumerate(starts):
+        block = text[pos:starts[k + 1][0] if k + 1 < len(starts) else len(text)]
+        if name in models:
+            raise Refused(f'FREEZE.txt names {name} twice')
+        entry = {}
+        for f in MODEL_FILES:
+            n = re.search(re.escape(f) + r'\b[^\n]*?sha256\s+([0-9a-fA-F]{64})', block)
+            if not n:
+                raise Refused(f'FREEZE.txt has no sha256 for {name}\'s {f}')
+            entry[f] = n.group(1).lower()
+        n = re.search(r'^\s*Decoder:[^\n]*?\b([0-9a-f]{7,40})\b', block, re.M)
+        if not n:
+            raise Refused(f'FREEZE.txt gives no main.py commit (Decoder:) for {name}')
+        entry['decoder'] = n.group(1)
+        t_ = re.search(r'THERMAL_MODEL_THRESHOLD=([0-9.]+)', block)
+        c_ = re.search(r'CROWD_AT=([0-9]+)', block)
+        if not t_ or not c_:
+            raise Refused(f'FREEZE.txt gives no THERMAL_MODEL_THRESHOLD and CROWD_AT for {name}')
+        entry['settings'] = (float(t_.group(1)), int(c_.group(1)))
+        models[name] = entry
+    if flux.group(1) not in models:
+        raise Refused(f'FREEZE.txt says {flux.group(1)} is on Flux but has no block for it')
+    return {'score_sealed.py': scorer, 'on_flux': flux.group(1), 'models': models}
 
 
 def verify(unsealed, sums, freeze_path, models, out, rerun_reason, scorer=Path(__file__)):
-    """14.1. Everything is checked before a frame or a count is read. Returns what was checked."""
-    unsealed, sums, models, out = Path(unsealed), Path(sums), Path(models), Path(out)
+    """14.1. Everything is checked before a frame or a count is read. `models` maps each model's
+    name to its folder. Returns what was checked."""
+    unsealed, sums, out = Path(unsealed), Path(sums), Path(out)
+    models = {name: Path(d) for name, d in models.items()}
     freeze = parse_freeze(freeze_path)
     checked = {}
     sum_files = sorted(sums.glob('*.SHA256SUMS'))
@@ -115,21 +153,35 @@ def verify(unsealed, sums, freeze_path, models, out, rerun_reason, scorer=Path(_
     stray = sorted(p.name for p in unsealed.iterdir() if p.is_dir() and p.name not in sessions)
     if stray:
         raise Refused(f'{unsealed} holds sessions with no .SHA256SUMS: {", ".join(stray)}')
-    for name in ('people.onnx', 'people-fine.onnx'):
-        p = models / name
-        if not p.is_file():
-            raise Refused(f'{p} is missing')
-        got = sha256_file(p)
-        if got != freeze[name]:
-            raise Refused(f'{name} has sha256 {got[:12]}, FREEZE.txt says {freeze[name][:12]}')
-        checked[str(p)] = got
+    missing = sorted(set(freeze['models']) - set(models))
+    extra = sorted(set(models) - set(freeze['models']))
+    if missing or extra:
+        raise Refused('--models must name exactly the models FREEZE.txt freezes'
+                      + (f'; missing {", ".join(missing)}' if missing else '')
+                      + (f'; not frozen {", ".join(extra)}' if extra else ''))
+    decoders = {}
+    for name, entry in freeze['models'].items():
+        for f in MODEL_FILES:
+            p = models[name] / f
+            if not p.is_file():
+                raise Refused(f'{p} is missing')
+            got = sha256_file(p)
+            if got != entry[f]:
+                raise Refused(f'{name}\'s {f} has sha256 {got[:12]}, FREEZE.txt says {entry[f][:12]}')
+            checked[str(p)] = got
+        mod, info = decoder(entry['decoder'])
+        if shipped_settings(mod) != entry['settings']:
+            raise Refused(f'{name}: main.py at {info["commit"][:12]} ships THERMAL_MODEL_THRESHOLD and CROWD_AT '
+                          f'{shipped_settings(mod)}, FREEZE.txt says {entry["settings"]}')
+        checked[f'main.py@{info["commit"]}'] = info['sha256']
+        decoders[name] = info
     me = sha256_file(scorer)
     if me != freeze['score_sealed.py']:
         raise Refused(f'this scorer has sha256 {me[:12]}, FREEZE.txt says {freeze["score_sealed.py"][:12]}')
     checked['score_sealed.py'] = me
     if (out / 'report.json').exists() and not rerun_reason:
         raise Refused(f'{out} already holds a report.json: the set is graded once (a rerun needs --rerun-reason)')
-    return {'sessions': sessions, 'hashes': checked, 'freeze': freeze}
+    return {'sessions': sessions, 'hashes': checked, 'freeze': freeze, 'decoders': decoders}
 
 
 # ------------------------------------------------------------------ 14.2 counts
@@ -283,18 +335,44 @@ def sensor():
     return _SENSOR
 
 
-def owl_settings():
-    """The threshold and crowd hand-off main.py ships with, read from its own defaults so each
-    model is scored as the sensor runs it, and nothing set on this computer can change them."""
-    s = sensor()
-    return float(s.DEFAULTS['THERMAL_MODEL_THRESHOLD']), s.PeopleModel.CROWD_AT
+_DECODERS = {}
 
 
-def load_owl(models):
-    s = sensor()
-    threshold, crowd_at = owl_settings()
-    m = s.PeopleModel(Path(models) / 'people.onnx', threshold)
-    m.fine = s.PeopleModel(Path(models) / 'people-fine.onnx', threshold)
+def decoder(commit):
+    """flock-sensor/main.py as it was at `commit`, the sensor that shipped a model, imported on its own
+    so several commits sit side by side, with the device paths sensor() points at a temporary folder.
+    Returns (module, {'commit': full hash, 'sha256': of that main.py})."""
+    if commit not in _DECODERS:
+        sensor()
+        try:
+            full = subprocess.run(['git', '-C', str(SENSOR_DIR), 'rev-parse', '--verify', f'{commit}^{{commit}}'],
+                                  capture_output=True, check=True, text=True).stdout.strip()
+            src = subprocess.run(['git', '-C', str(SENSOR_DIR), 'show', f'{full}:flock-sensor/main.py'],
+                                 capture_output=True, check=True).stdout
+        except (OSError, subprocess.CalledProcessError) as e:
+            raise Refused(f'cannot read flock-sensor/main.py at commit {commit}: {e}')
+        path = Path(tempfile.mkdtemp(prefix='score-sealed-decoder-')) / f'main_{full[:12]}.py'
+        path.write_bytes(src)
+        spec = importlib.util.spec_from_file_location(f'flux_main_{full[:12]}', path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _DECODERS[commit] = (mod, {'commit': full, 'sha256': hashlib.sha256(src).hexdigest()})
+    return _DECODERS[commit]
+
+
+def shipped_settings(mod):
+    """The threshold and crowd hand-off a main.py ships with, read from its own defaults, so a model
+    is scored as the sensor that shipped it runs it and nothing set on this computer changes them."""
+    return float(mod.DEFAULTS['THERMAL_MODEL_THRESHOLD']), int(mod.PeopleModel.CROWD_AT)
+
+
+def load_owl(models, mod=None):
+    """One Owl model from its folder, decoded by `mod` (a main.py; the current one if None) at that
+    main.py's shipped settings."""
+    mod = mod or sensor()
+    threshold, crowd_at = shipped_settings(mod)
+    m = mod.PeopleModel(Path(models) / 'people.onnx', threshold)
+    m.fine = mod.PeopleModel(Path(models) / 'people-fine.onnx', threshold)
     m.CROWD_AT = crowd_at
     return m
 
@@ -442,9 +520,12 @@ def sensitivity(items, uncertain_sessions):
 
 
 # ------------------------------------------------------------------ one session
-def score_session(folder, owl, steps):
-    """Items for one unsealed session folder, counted. `steps` collects the drop counts."""
-    s = sensor()
+def score_session(folder, owls, steps, flux, s=None):
+    """Items for one unsealed session folder, counted by every model in `owls` (name -> model) and by
+    the rule of `s` (a main.py; the current one if None). The item's owl, owl_main and owl_med15 are
+    the `flux` model's; every model's are also kept as owl:<name>, owl_main:<name> and
+    owl_med15:<name>. `steps` collects the drop counts."""
+    s = s or sensor()
     frames_files = sorted(Path(folder).glob('*.frames'))
     if len(frames_files) != 1:
         raise Refused(f'{folder} should hold exactly one .frames file, it holds {len(frames_files)}')
@@ -476,12 +557,12 @@ def score_session(folder, owl, steps):
     excluded = {i for i, t in enumerate(times) for ev in clock['event_times'] if abs(t - ev) <= SYNC_EXCLUDE_S}
     bg = s.SceneBackground()
     rule_bg = [s.count_people(c, bg) for c in temps]
-    owl_cache = {}
+    owl_cache = {name: {} for name in owls}
 
-    def owl_count(i):
-        if i not in owl_cache:
-            owl_cache[i] = owl.read_crowd(temps[i])[2]
-        return owl_cache[i]
+    def owl_count(name, i):
+        if i not in owl_cache[name]:
+            owl_cache[name][i] = owls[name].read_crowd(temps[i])[2]
+        return owl_cache[name][i]
 
     items = []
     for rem in sorted((r for r in a_rows if r['type'] == 'reminder'), key=lambda r: r['t']):
@@ -501,12 +582,17 @@ def score_session(folder, owl, steps):
             continue
         away, seats, things = note_fields(notes, rem['t'], scene_start)
         b = b_counts.get(rem['slot'])
-        window = [owl_count(j) for j in range(max(0, i - 14), i + 1)]
+        counts = {}
+        for name, owl in owls.items():
+            window = [owl_count(name, j) for j in range(max(0, i - 14), i + 1)]
+            counts[f'owl:{name}'] = owl_count(name, i)
+            counts[f'owl_main:{name}'] = len(owl.read(temps[i])[0])
+            counts[f'owl_med15:{name}'] = int(round(median(window)))
         items.append({
             'session': Path(folder).name, 'slot': rem['slot'], 'beep_time': rem.get('iso_time', ''),
             'T': int(a['value']), 'B': int(b['value']) if b is not None else None,
-            'owl': owl_count(i), 'owl_main': len(owl.read(temps[i])[0]),
-            'owl_med15': int(round(median(window))), 'rule': s.count_thermal_clusters(temps[i]),
+            'owl': counts[f'owl:{flux}'], 'owl_main': counts[f'owl_main:{flux}'],
+            'owl_med15': counts[f'owl_med15:{flux}'], **counts, 'rule': s.count_thermal_clusters(temps[i]),
             'rule_bg': rule_bg[i], 'scene': scene, 'placement': placement,
             'hidden': int(a['occlusion']) if str(a.get('occlusion', '')).strip() != '' else None,
             'edge': int(a.get('edge') or 0), 'away': away, 'seats': seats, 'things': things,
@@ -522,13 +608,21 @@ ITEM_COLS = ['session', 'slot', 'beep_time', 'T', 'B', 'owl', 'owl_main', 'owl_m
              'clock_uncertain']
 
 
+def as_model(items, name):
+    """The items with one model's counts in the owl, owl_main and owl_med15 places."""
+    return [dict(it, owl=it[f'owl:{name}'], owl_main=it[f'owl_main:{name}'], owl_med15=it[f'owl_med15:{name}'])
+            for it in items]
+
+
 def write_outputs(out, items, report):
     out.mkdir(parents=True, exist_ok=True)
+    names = list(report.get('models') or {})
+    cols = ITEM_COLS[:8] + [f'{k}:{n}' for n in names for k in ('owl', 'owl_main', 'owl_med15')] + ITEM_COLS[8:]
     with open(out / 'items.csv', 'w', newline='', encoding='utf-8') as f:
-        w = csv.DictWriter(f, fieldnames=ITEM_COLS)
+        w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for it in items:
-            w.writerow({k: ('' if it.get(k) is None else it[k]) for k in ITEM_COLS})
+            w.writerow({k: ('' if it.get(k) is None else it[k]) for k in cols})
     rj = out / 'report.json'
     rj.write_text(json.dumps(report, indent=2), encoding='utf-8')
     (out / 'report.md').write_text(report_md(report), encoding='utf-8')
@@ -553,8 +647,20 @@ def report_md(r):
         lines += ['', f"Session-block bootstrap ({BOOTSTRAP} resamples, seed {SEED}, {boot.get('sessions')} sessions): "
                       f"Owl exact {boot['owl']['exact']}, rule exact {boot['rule']['exact']}, "
                       f"Owl minus rule exact {boot.get('exact_difference')}."]
-    lines += ['', '| Bar | Result |', '|---|---|']
+    lines += ['', f"The bars grade {r['on_flux']}, the model on Flux at the freeze.", '',
+              '| Bar | Result |', '|---|---|']
     lines += [f"| {k} | {v['result']} |" for k, v in r['bars'].items()]
+    if r.get('models'):
+        lines += ['', 'Every frozen model, scored the same way:', '',
+                  '| Model | Main.py commit | Threshold | CROWD_AT | Items | Exact % | Within one % | MAE | Bias | '
+                  'B1 | B2 | B3 | B4 | B5 |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|---|']
+        for name, mr in r['models'].items():
+            m = mr['summary']['overall']['owl']
+            label = f"{name} (on Flux)" if name == r['on_flux'] else name
+            lines.append(f"| {label} | {mr['decoder_commit'][:12]} | {mr['settings']['THERMAL_MODEL_THRESHOLD']} | "
+                         f"{mr['settings']['CROWD_AT']} | {m.get('n', 0)} | {m.get('exact')} | {m.get('within_one')} | "
+                         f"{m.get('mae')} | {m.get('bias')} | "
+                         + ' | '.join(mr['bars'][b]['result'] for b in ('B1', 'B2', 'B3', 'B4', 'B5')) + ' |')
     if r.get('rerun_reason'):
         lines += ['', f"Rerun: {r['rerun_reason']}"]
     return '\n'.join(lines) + '\n'
@@ -565,32 +671,52 @@ def main(argv=None):
     ap.add_argument('--unsealed', required=True)
     ap.add_argument('--sums', required=True)
     ap.add_argument('--freeze', required=True)
-    ap.add_argument('--models', required=True)
+    ap.add_argument('--models', required=True, action='append',
+                    help='<name>=<dir with people.onnx and people-fine.onnx>, once for each model in FREEZE.txt')
     ap.add_argument('--out', required=True)
     ap.add_argument('--rerun-reason', default='')
     a = ap.parse_args(argv)
     try:
-        checked = verify(a.unsealed, a.sums, a.freeze, a.models, a.out, a.rerun_reason)
+        dirs = {}
+        for spec in a.models:
+            name, sep, d = spec.partition('=')
+            if not sep or not name.strip() or not d.strip():
+                raise Refused(f'--models {spec!r} is not <name>=<dir>')
+            if name.strip() in dirs:
+                raise Refused(f'--models names {name.strip()} twice')
+            dirs[name.strip()] = d.strip()
+        checked = verify(a.unsealed, a.sums, a.freeze, dirs, a.out, a.rerun_reason)
         out = Path(a.out)
         if a.rerun_reason and (out / 'report.json').exists():
             out = out / ('rerun-' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
-        owl = load_owl(a.models)
+        frozen = checked['freeze']['models']
+        flux = checked['freeze']['on_flux']
+        mods = {name: decoder(entry['decoder'])[0] for name, entry in frozen.items()}
+        owls = {name: load_owl(dirs[name], mods[name]) for name in frozen}
         steps = {'beeps': 0, 'late_counts_dropped': 0, 'no_count_from_A': 0,
                  'clock_uncertain_moving_dropped': 0, 'no_frame': 0, 'kept': 0}
         items, clocks = [], {}
         for session in checked['sessions']:
-            got, clock = score_session(Path(a.unsealed) / session, owl, steps)
+            got, clock = score_session(Path(a.unsealed) / session, owls, steps, flux, mods[flux])
             items += got
             clocks[session] = clock
     except Refused as e:
         print(f'refused: {e}', file=sys.stderr)
         return 2
     uncertain = {s for s, c in clocks.items() if c['clock_uncertain']}
+    models = {}
+    for name, entry in frozen.items():
+        sub = as_model(items, name)
+        info = checked['decoders'][name]
+        models[name] = {'on_flux': name == flux, 'decoder_commit': info['commit'], 'decoder_sha256': info['sha256'],
+                        'files': {f: entry[f] for f in MODEL_FILES},
+                        'settings': dict(zip(('THERMAL_MODEL_THRESHOLD', 'CROWD_AT'), shipped_settings(mods[name]))),
+                        'summary': summary(sub), 'bars': bars(sub), 'sensitivity': sensitivity(sub, uncertain)}
     report = {'graded_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
               'scorer_sha256': checked['hashes']['score_sealed.py'], 'hashes_checked': checked['hashes'],
-              'owl_settings': dict(zip(('THERMAL_MODEL_THRESHOLD', 'CROWD_AT'), owl_settings())),
-              'rerun_reason': a.rerun_reason or None, 'steps': steps, 'clocks': clocks,
-              'summary': summary(items), 'bars': bars(items), 'sensitivity': sensitivity(items, uncertain)}
+              'rerun_reason': a.rerun_reason or None, 'steps': steps, 'clocks': clocks, 'on_flux': flux,
+              'summary': models[flux]['summary'], 'bars': models[flux]['bars'],
+              'sensitivity': models[flux]['sensitivity'], 'models': models}
     write_outputs(out, items, report)
     print(f"graded {len(items)} items from {len(clocks)} sessions; report in {out}")
     return 0

@@ -53,7 +53,7 @@ names kinds of things and cannot tell one person from another.
 | `train.py` | the PC | Trains it, compares it with the rule on held-out frames, exports `people.onnx` |
 | `record.py` | the Pi | Records real frames into `~/flux-training/<room>/`, with consent |
 | `frames.py` | both | The recording file format: one session per file, one frame per line |
-| `score_sealed.py` | the PC | Grades the sealed real-room recordings once, after the model is frozen |
+| `score_sealed.py` | the PC | Grades the sealed real-room recordings once, after the models are frozen |
 | `test_score_sealed.py` | the PC | Its checks, on generated frames and made-up counts |
 | `test_dining.py` | the PC | Checks synth's dining room (`scene_dining`, opt-in) and the posture targets (off by default); `measure N` runs the shipped Owl (`models/people.onnx`) on N dining frames |
 | `POSTURE-PLAN.md` | | The proposed sitting/standing head, how `main.py` would read it and how `TableTracker` would use it. Not built |
@@ -99,18 +99,23 @@ they happen. Every frame is a thermal image of whoever is in view, so:
 ## Grading a sealed test
 
 Recordings made for the sealed test are counted in the room by two people at a
-beep every 30 seconds, then encrypted, and nobody looks at them until the model
-is frozen. They are graded once:
+beep every 30 seconds, then encrypted, and nobody looks at them until the models
+are frozen. They are graded once, every frozen model in the same run (owl-4.9,
+owl-5 and the model on Flux):
 
 ```bash
 python score_sealed.py --unsealed <dir> --sums <dir> --freeze FREEZE.txt \
-    --models ../models --out <report dir>
+    --models owl-4.9=<dir> --models owl-5=<dir> --models owl-5.1=<dir> --out <report dir>
 ```
 
-Before it reads a frame or a count it refuses if any file differs from its
-SHA256SUMS listing, if the model files or the scorer itself differ from
-FREEZE.txt, or if a report is already there (a rerun needs `--rerun-reason`,
-and keeps both reports). Each count is tied to its beep, the phone and Pi
+Each model is decoded by flock-sensor/main.py as it was at the commit that
+shipped it (read from git), at that main.py's shipped threshold and crowd
+hand-off, so its count is the count that sensor made. Before it reads a frame or
+a count it refuses if any file differs from its SHA256SUMS listing, if a model's
+files, its settings or the scorer itself differ from FREEZE.txt, if `--models`
+names other models than FREEZE.txt freezes, or if a report is already there (a
+rerun needs `--rerun-reason`, and keeps both reports). The bars grade the model
+FREEZE.txt names on Flux; the others are scored the same way beside it. Each count is tied to its beep, the phone and Pi
 clocks are lined up from a palm held over the lens at the start and end, and
 the frame nearest one second after each beep is counted exactly as the sensor
 counts it, by the model and by the rule. It writes `items.csv`, `report.md`,
