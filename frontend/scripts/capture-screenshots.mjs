@@ -340,7 +340,18 @@ function inviteLinkToken() {
 }
 
 async function seed(dbUrl) {
-  const db = new Client({ connectionString: dbUrl });
+  // THE SEED WRITES WHAT PRODUCTION WRITES (2026-11-03). The naive TIMESTAMP
+  // columns (flocks.event_time, every created_at in 000_bootstrap.sql) hold UTC
+  // wall-clock: the backend's pool runs its sessions in UTC
+  // (config/database.js) and server.js runs the process in UTC, so it reads
+  // them back as UTC. This client used the embedded server's default zone,
+  // which initdb takes from the machine (America/New_York here), and sent its
+  // Dates in local time, so its rows held New York wall-clock and every seeded
+  // plan, message and member row read back four or five hours early once the
+  // backend stopped borrowing the machine's zone (while the night-of plan,
+  // seeded in UTC wall-clock, had read five hours late before that). The
+  // session is UTC here too, and the plan times below go in as instants.
+  const db = new Client({ connectionString: dbUrl, options: '-c TimeZone=UTC' });
   await db.connect();
   const q = (text, params) => db.query(text, params);
   const hash = await bcrypt.hash(DEMO.password, 10);
@@ -375,14 +386,16 @@ async function seed(dbUrl) {
   await q(`UPDATE users SET total_plans_joined = 6, total_plans_attended = 5, reliability_score = 92 WHERE id = $1`, [maya]);
 
   // Next occurrence of a weekday at a local hour, always in the future, so
-  // "Friday Night Crew" really lands on a Friday chip.
+  // "Friday Night Crew" really lands on a Friday chip. Sent as the instant's
+  // ISO string, which a naive column stores as UTC wall-clock, the way the app
+  // sends a plan's time (the create screen posts toISOString()).
   const nextOccurrence = (dow, hour) => {
     const d = new Date();
     d.setHours(hour, 0, 0, 0);
     let ahead = (dow - d.getDay() + 7) % 7;
     if (ahead === 0 && d <= new Date()) ahead = 7;
     d.setDate(d.getDate() + ahead);
-    return d;
+    return d.toISOString();
   };
 
   // ---- The flock -----------------------------------------------------------

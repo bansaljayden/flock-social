@@ -1,4 +1,22 @@
 require('./instrument'); // Sentry — must load before everything else (B3)
+// THE PROCESS CLOCK READS UTC, BY THIS FILE'S SAY-SO (2026-11-03).
+//
+// config/database.js pins every Postgres session to UTC because the naive
+// TIMESTAMP columns (flocks.event_time, every created_at in the bootstrap
+// schema) hold UTC wall-clock. The other half of that contract is this
+// process: node-pg reads a naive TIMESTAMP back in the process's own zone, so
+// under America/New_York a plan made for 7 PM came back for 11 PM, which is
+// what every local stack that forgot TZ=UTC filmed. The same zone shifted the
+// reschedule guard's "before it was created" test by the offset, scored the
+// pre-event crowd alert at the wrong hour, cut the time-to-close figure short,
+// and in the evening put tomorrow's date on each day of Roost's week ahead
+// (services/advisorFacts.js reads the venue's day off local getters and
+// writes it with toISOString). Railway runs in UTC, so production never saw
+// any of it; that was a fact about a hosting image, not about this code. Set
+// right after Sentry, which must stay the first require, and before any module
+// that reads a Date. It also overrules a TZ in backend/.env, which instrument.js
+// has already loaded.
+process.env.TZ = 'UTC';
 require('dotenv').config();
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? '[configured]' : '[missing]');
 

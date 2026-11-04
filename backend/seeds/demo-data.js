@@ -23,9 +23,17 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
 // make sure it only ever gets pointed at a remote one.
 const usingLocalDb = /^(|localhost|127\.0\.0\.1|::1|\[::1\])$/.test(dbHostname());
 
+// IN UTC, WHEREVER THIS RUNS (2026-11-03). The plan and message times below
+// are JS Dates bound into naive TIMESTAMP columns, which hold UTC wall-clock
+// (config/database.js pins the backend's sessions to UTC and server.js its
+// process). Sent in the local zone of the machine running this, a New York
+// laptop wrote New York wall-clock, so every seeded plan read back four or
+// five hours off. Dates go over as UTC, and the session's NOW() is UTC too.
+require('pg').defaults.parseInputDatesAsUTC = true;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: usingLocalDb ? false : { rejectUnauthorized: false },
+  options: '-c TimeZone=UTC',
 });
 
 const SALT_ROUNDS = 10;
