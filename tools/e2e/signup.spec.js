@@ -175,7 +175,7 @@ test('an address that already has an account is refused in words that say so', a
   await openSignupForm(page);
   await submitSignup(page, { email });
 
-  await expect(page.getByText(/already registered/i)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/already has a Flock account/i)).toBeVisible({ timeout: 20_000 });
   // Still on the form, with a route to the account they evidently have.
   await expect(page.getByRole('heading', { name: /create your account/i })).toBeVisible();
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeVisible();
