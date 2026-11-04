@@ -159,10 +159,12 @@ const SUITE_SLOTS = {
                                  // Far from 69-72, which suites written the
                                  // same day in other branches are likeliest
                                  // to take.
-  birdiePlanRealDb: 86,          // new in 2026-11-03; the plan Birdie reads for
+  birdiePlanRealDb: 53,          // new in 2026-11-03; the plan Birdie reads for
                                  // a member asking from inside a flock: the
                                  // membership gate, the going count and the
-                                 // picks, on a real, migrated schema.
+                                 // picks, on a real, migrated schema. Not 86,
+                                 // which a suite written the same day in
+                                 // another branch took.
   birdieConsentCopyRealDb: 90,   // new in 2026-10-06; which question a Birdie
                                  // yes answered (migration 122) and the zone
                                  // /chat reads on it, through the real router.
