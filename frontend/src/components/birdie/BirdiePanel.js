@@ -65,11 +65,13 @@
  *
  * WHAT ELSE CAME WITH THE JSX
  *
- * Two effects, and they are the only hooks in this file. Both reach into this
- * panel's own DOM through the refs above, and both used to sit in
- * FlockAppInner beside the rest of the Birdie state: one focuses the box when
- * there is already a thread to continue, the other pins the transcript to its
- * newest message. Neither could stay up there once the panel became lazy. The
+ * Two effects, and with the refs the second one keeps they are the only hooks
+ * in this file. Both reach into this panel's own DOM through the refs above,
+ * and both used to sit in FlockAppInner beside the rest of the Birdie state:
+ * one focuses the box when there is already a thread to continue, the other
+ * decides where the transcript lands when it changes (WHERE THE THREAD LANDS,
+ * below; it pinned to the newest message until 2026-11-03). Neither could stay
+ * up there once the panel became lazy. The
  * commit that flips aiChatMode does not contain this subtree on a first open,
  * warm chunk or cold, because React.lazy suspends on the first render of a
  * fresh lazy element even for a module already in the webpack cache, and React
@@ -87,7 +89,7 @@
  * The JSX below is a character-for-character copy of the deleted lines,
  * original indentation included, so a diff against the removed block is empty.
  */
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import Icons from '../ui/Icons';
 import BirdieBird, { BirdieStill, WARM_BIRD } from '../ui/BirdieBird';
 import { BASE_URL } from '../../services/api';
@@ -100,6 +102,25 @@ import { venuesByMention } from '../../lib/birdieCardOrder';
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
 function chirpsBackText(aiResetsAt) {
   return birdieBackText(aiResetsAt);
+}
+
+// The thread's own top padding: an answer that lands at the top keeps the gap
+// the first message has.
+const THREAD_TOP_GAP_PX = 12;
+// Within this of the end, the reader is reading the end, not away from it.
+const THREAD_END_SLACK_PX = 48;
+
+// Where the thread scrolls to put the newest answer's first line at its top,
+// or null when that answer is a question, is missing, or fits pinned to the
+// end (pinned there, its first line would still be in view). Read off the
+// laid-out rows, so the answer's venue cards count toward its height.
+function answerTopOf(box, last, index) {
+  if (!last || last.role === 'user') return null;
+  const row = box.querySelector(`[data-birdie-turn="${index}"]`);
+  if (!row) return null;
+  const top = box.scrollTop + (row.getBoundingClientRect().top - box.getBoundingClientRect().top) - THREAD_TOP_GAP_PX;
+  const endTop = box.scrollHeight - box.clientHeight;
+  return top < endTop - 1 ? Math.max(0, top) : null;
 }
 
 export default function BirdiePanel({
@@ -157,6 +178,14 @@ export default function BirdiePanel({
   toggleAiFullscreen,
   transmitFlockMessage,
 }) {
+  // The thread's scroll box, and what the landing effect below knows about
+  // it: whether the reader scrolled away from the end on purpose, where it
+  // last put the thread itself, and the mode it last landed in.
+  const threadRef = useRef(null);
+  const readerAwayRef = useRef(false);
+  const threadAutoTopRef = useRef(null);
+  const threadModeRef = useRef(null);
+
   // Focus the input only when there is already a conversation to continue.
   //
   // ON A REAL DEVICE THIS EFFECT WAS THE WHOLE "BIRDIE DOES NOT OPEN RIGHT"
@@ -186,19 +215,71 @@ export default function BirdiePanel({
     }
   }, [isAiPanel, isAiFullscreen]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll AI chat to bottom when messages change
+  // WHERE THE THREAD LANDS WHEN IT CHANGES (2026-11-03).
+  //
+  // It used to pin to its end on every change. Filming the LionCage demo, an
+  // answer came with four venue cards, and pinned to the end the panel showed
+  // the last card and nothing of the answer above it: the words Birdie had
+  // just said were scrolled out of view as they arrived.
+  //
+  // Now: your own question pins to the end, with Birdie's typing dots under
+  // it. An answer that lands and fits pins to the end too, as before. One that
+  // is taller than the thread, words and cards together, lands with its first
+  // line at the top (answerTopOf), so it is read from the start, the question
+  // just above it and the cards below. And the view never moves for an answer if
+  // you scrolled away to read something on purpose (onThreadScroll): it waits
+  // where you are, and your next question brings you back down.
+  //
+  // Opening the panel on a thread, or switching to full screen and back, lands
+  // the same way an answer does. A change that adds nothing (a card on an
+  // older turn changing state) moves nothing.
+  //
+  // aiMsgCountRef is still FlockAppInner's ref, so what the reader has
+  // already seen survives closing and reopening Birdie. Both refs are named in
+  // the dependency list below rather than silenced with a disable. They arrive
+  // as props, so the rule cannot know they are stable objects, and naming them
+  // costs nothing: a ref identity does not change for the life of
+  // FlockAppInner, so this effect still runs exactly when the transcript, the
+  // typing indicator or the mode changes.
   useEffect(() => {
-    if (aiChatEndRef.current) {
-      const isNew = aiMessages.length !== aiMsgCountRef.current;
-      aiMsgCountRef.current = aiMessages.length;
-      requestAnimationFrame(() => aiChatEndRef.current?.scrollIntoView({ behavior: isNew ? 'auto' : 'auto' }));
-    }
-    // Both refs are named in the dependency list below rather than silenced
-    // with a disable. They arrive as props, so the rule cannot know they are
-    // stable objects, and naming them costs nothing: a ref identity does not
-    // change for the life of FlockAppInner, so this effect still runs exactly
-    // when the transcript, the typing indicator or the mode changes.
+    if (!aiChatEndRef.current) return;
+    const seen = aiMsgCountRef.current;
+    const count = aiMessages.length;
+    aiMsgCountRef.current = count;
+    const mode = isAiFullscreen ? 'fullscreen' : 'panel';
+    const reopened = threadModeRef.current !== mode;
+    threadModeRef.current = mode;
+    const last = count > 0 ? aiMessages[count - 1] : null;
+    const asked = count > seen && last?.role === 'user';
+    const answered = count > seen && !!last && last.role !== 'user';
+    if (asked) readerAwayRef.current = false;
+    if (!asked && !answered && !reopened && !aiTyping && count >= seen) return;
+    requestAnimationFrame(() => {
+      const box = threadRef.current;
+      const end = aiChatEndRef.current;
+      if (!box || !end) return;
+      if (!asked && readerAwayRef.current) return;
+      const top = asked || aiTyping ? null : answerTopOf(box, last, count - 1);
+      if (top != null) {
+        threadAutoTopRef.current = top;
+        box.scrollTop = top;
+      } else {
+        threadAutoTopRef.current = null;
+        end.scrollIntoView({ behavior: 'auto' });
+      }
+    });
   }, [aiMessages, aiTyping, isAiPanel, isAiFullscreen, aiChatEndRef, aiMsgCountRef]);
+
+  // The reader's own scrolling: away from the end on purpose, or back at it. A
+  // scroll the effect above made lands where it was put and says nothing about
+  // the reader, and neither does arriving at the end it pinned to.
+  const onThreadScroll = (e) => {
+    const box = e.currentTarget;
+    const auto = threadAutoTopRef.current;
+    if (auto != null && Math.abs(box.scrollTop - auto) <= 2) return;
+    threadAutoTopRef.current = null;
+    readerAwayRef.current = box.scrollHeight - box.scrollTop - box.clientHeight > THREAD_END_SLACK_PX;
+  };
 
   return (
       <div onClick={(e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={{
@@ -348,7 +429,7 @@ export default function BirdiePanel({
             </div>
           ) : (<>
           {/* Messages */}
-          <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+          <div ref={threadRef} onScroll={onThreadScroll} data-birdie-thread="" className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
             {/* Once the chat starts he steps aside: a whisper behind the
                 thread rather than a second thing to read. */}
             {aiMessages.length > 0 && (
@@ -411,7 +492,7 @@ export default function BirdiePanel({
                   </p>
                 </div>
               )}
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
+              <div data-birdie-turn={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
