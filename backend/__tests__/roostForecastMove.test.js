@@ -670,3 +670,150 @@ test('a lookup that failed is not paid for again in the same question', async ()
   assert.strictEqual(r.body.mode, 'advice', r.body.text);
   assert.strictEqual(placesCalls - before, 1, 'the named day read the failed card a second time');
 });
+
+// ── 8. Roost's own card and chips (2026-11-03, second pass) ─────────────────
+//
+// The same gap in two more places: Roost's own Week ahead card refused under
+// the dashboard card's numbers, and the four week chips were never offered to
+// a venue with no crowd history, though their answers now come from that card.
+
+const cardById = (body, id) => (body.cards || []).find((c) => c.id === id);
+const offeredIds = (body) => [
+  ...(body.lead || []).map((q) => q.id),
+  ...(body.groups || []).flatMap((g) => g.questions.map((q) => q.id)),
+];
+const WEEK_CHIPS = ['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook'];
+
+test('Roost\'s own Week ahead card shows the dashboard\'s Week Ahead for a no-history bar, framed, from the same build', async () => {
+  setUp({ placeId: 'ChIJforecastCardsBar00000' });
+  const { intel, week } = await cardWeek();
+  const before = { evenings: eveningCalls, places: placesCalls };
+  const r = await call('/api/venue/advisor/cards');
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const card = cardById(r.body, 'week_ahead');
+  assert.strictEqual(card.status, 'ok', JSON.stringify(card));
+  assert.deepStrictEqual(card.facts.map((f) => f.id), week.map((d) => `typical_peak_${d.date}`));
+  for (const [i, f] of card.facts.entries()) {
+    assert.strictEqual(f.source, 'category_pattern');
+    assert.strictEqual(f.value.date, week[i].date, 'the client files each fact under its day');
+    assert.strictEqual(f.value.peakScore, week[i].peakScore, 'the dashboard card\'s own number');
+    assert.match(f.label, /in Flock's forecast for places like yours\.$/);
+    assert.match(f.note, /^This is Flock's forecast for places like this one/);
+    assert.strictEqual(f.asOf, intel.generatedAt);
+  }
+  assert.deepStrictEqual({ evenings: eveningCalls, places: placesCalls }, before, 'the card was built a second time');
+  // The listing card sets the owner's answers beside the venue's OWN week, and
+  // there is none, so it is as it was.
+  const listing = cardById(r.body, 'listing_read_back');
+  assert.ok(!listing.facts.some((f) => f.source === 'category_pattern'), JSON.stringify(listing.facts));
+});
+
+test('a cafe\'s Week ahead card, and a bar\'s with no card to read, keep the refusal', async () => {
+  const cases = [
+    ['ChIJforecastCardsCafe0000', () => { placeTypes = ['cafe']; }],
+    ['ChIJforecastCardsDown0000', () => { placesUp = false; }],
+    ['ChIJforecastCardsModel000', () => { method = 'ml'; }],
+  ];
+  for (const [placeId, arrange] of cases) {
+    setUp({ placeId });
+    arrange();
+    const r = await call('/api/venue/advisor/cards');
+    const card = cardById(r.body, 'week_ahead');
+    assert.strictEqual(card.status, 'refused', `${placeId}: ${JSON.stringify(card)}`);
+    assert.strictEqual(card.facts.length, 1, placeId);
+    assert.match(card.facts[0].reason, /no crowd history/i, placeId);
+    assert.ok(!card.facts.some((f) => f.source === 'category_pattern'), placeId);
+  }
+});
+
+test('the week chips are offered to a no-history venue exactly when the card answers them', async () => {
+  // A card with a quiet day on it: all four, and each one then answers from it.
+  setUp({ placeId: 'ChIJforecastChipsCard0000' });
+  let r = await call('/api/venue/advisor/questions');
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  let offered = offeredIds(r.body);
+  for (const id of WEEK_CHIPS) assert.ok(offered.includes(id), `${id} not offered: ${offered.join(', ')}`);
+  assert.ok(!offered.includes('tonight_outlook'), 'today is not on the card, so that chip would refuse');
+  assert.ok(!offered.includes('cohort_typical'), 'the city comparison needs a curve the card does not have');
+  for (const id of WEEK_CHIPS) {
+    const a = await call('/api/venue/advisor/ask', { intentId: id });
+    assert.notStrictEqual(a.body.mode, 'refusal', `${id}: ${a.body.text}`);
+    assert.ok(a.body.sources.some((s) => s.source === 'category_pattern'), `${id}: ${JSON.stringify(a.body.sources)}`);
+  }
+
+  // A level week: the quiet-days plan refuses a week with no quiet day, so
+  // that chip goes, and the other three stay.
+  const saved = { ...CARD };
+  Object.assign(CARD, { Sat: 52, Sun: 45, Mon: 48, Tue: 48, Wed: 48, Thu: 50, Fri: 51 });
+  try {
+    setUp({ placeId: 'ChIJforecastChipsLevel000' });
+    r = await call('/api/venue/advisor/questions');
+    offered = offeredIds(r.body);
+    assert.ok(!offered.includes('quiet_nights'), offered.join(', '));
+    for (const id of ['money_move', 'peak_hours', 'weekend_outlook']) {
+      assert.ok(offered.includes(id), `${id}: ${offered.join(', ')}`);
+      const a = await call('/api/venue/advisor/ask', { intentId: id });
+      assert.notStrictEqual(a.body.mode, 'refusal', `${id} was offered on a level week and refused: ${a.body.text}`);
+    }
+    const q = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+    assert.strictEqual(q.body.mode, 'refusal', 'the chip that was held back would have refused');
+  } finally {
+    Object.assign(CARD, saved);
+  }
+
+  // No card, for any of its reasons: none of the four, and each would refuse.
+  const cases = [
+    ['ChIJforecastChipsDown0000', () => { placesUp = false; }],
+    ['ChIJforecastChipsCafe0000', () => { placeTypes = ['cafe']; }],
+    ['ChIJforecastChipsModel000', () => { method = 'ml'; }],
+  ];
+  for (const [placeId, arrange] of cases) {
+    setUp({ placeId });
+    arrange();
+    r = await call('/api/venue/advisor/questions');
+    offered = offeredIds(r.body);
+    for (const id of WEEK_CHIPS) assert.ok(!offered.includes(id), `${placeId}: ${id} offered with no card`);
+    for (const id of WEEK_CHIPS) {
+      const a = await call('/api/venue/advisor/ask', { intentId: id });
+      assert.strictEqual(a.body.mode, 'refusal', `${placeId}: ${id} answered: ${a.body.text}`);
+    }
+  }
+});
+
+test('a corpus venue\'s chips are as they were, and never read the card', async () => {
+  setUp({ placeId: 'ChIJforecastChipsCorpus00', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 } });
+  const realProjection = advisorFacts.buildWeekProjection;
+  let projectionReads = 0;
+  advisorFacts.buildWeekProjection = async (...a) => { projectionReads += 1; return realProjection(...a); };
+  try {
+    const r = await call('/api/venue/advisor/questions');
+    const offered = offeredIds(r.body);
+    for (const id of [...WEEK_CHIPS, 'tonight_outlook']) assert.ok(offered.includes(id), `${id}: ${offered.join(', ')}`);
+    assert.strictEqual(projectionReads, 0);
+  } finally {
+    advisorFacts.buildWeekProjection = realProjection;
+  }
+});
+
+test('the dashboard, Roost\'s card and Roost\'s chips opening together build the card once', async () => {
+  setUp({ placeId: 'ChIJforecastTogether00000' });
+  const before = { evenings: eveningCalls, places: placesCalls };
+  const [intel, cards, questions] = await Promise.all([
+    call('/api/venue-dashboard/intelligence'),
+    call('/api/venue/advisor/cards'),
+    call('/api/venue/advisor/questions'),
+  ]);
+  assert.strictEqual(intel.body.available, true, JSON.stringify(intel.body));
+  assert.strictEqual(cardById(cards.body, 'week_ahead').status, 'ok');
+  assert.ok(offeredIds(questions.body).includes('money_move'));
+  assert.strictEqual(placesCalls - before.places, 1, 'one Places lookup for the three');
+  assert.strictEqual(eveningCalls - before.evenings, 6, 'one run of the six evenings for the three');
+
+  // A lookup that failed is not kept: the next ask tries again, as before.
+  setUp({ placeId: 'ChIJforecastTogetherDown0' });
+  placesUp = false;
+  const calls = placesCalls;
+  await call('/api/venue-dashboard/intelligence');
+  await call('/api/venue-dashboard/intelligence');
+  assert.strictEqual(placesCalls - calls, 2);
+});

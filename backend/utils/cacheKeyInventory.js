@@ -512,7 +512,7 @@ const INVENTORY = [
     denominator: 'cache entries, 60 min TTL',
     bound: '500 entries, expire-then-hard-oldest-first',
     verdict: 'SAFE',
-    why: 'Two keys per venue profile, gated behind requirePro (Roost) plus a verified claim, and a relink flood is bounded by the shared Places budget.',
+    why: 'Two keys per venue profile, gated behind requirePro (Roost) plus a verified claim, and a relink flood is bounded by the shared Places budget. Since 2026-11-03 an intel: entry can also hold a build still under way (venueIntelligence), so the dashboard and Roost\'s cards and chips, which open together, share one Places lookup; a build that fails or is refused is removed, so it is never served as a result and the next ask pays as it always did.',
   },
 
   // ── routes/venueSearch.js ─────────────────────────────────────────────────

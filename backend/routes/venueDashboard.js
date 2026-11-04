@@ -2040,31 +2040,11 @@ async function fetchVenueBasics(placeId, userId) {
 // above carries verification_requested_at) is passed at every use site.
 const { unverifiedReason, liveNumberRefusal } = require('../utils/verificationCopy');
 
-// THE OWNER'S FORECAST, BUILT IN ONE PLACE (2026-11-03). GET /intelligence
-// serves it, and Roost reads this same function for a venue with no crowd
-// history of its own (services/advisorFacts.js buildWeekProjection): the
-// money move then names the numbers the Week Ahead card draws, from the same
-// computation and, within the hour, the same cache entry. Never a second
-// estimate beside the card.
-//
-// `ctx` is the venue_profiles row (google_place_id, verified). Answers the
-// published result, BUDGET_EXCEEDED when the shared Places budget refused the
-// lookup, or null when the venue is not linked and verified or the listing
-// could not be read.
-async function venueIntelligence(ctx, userId) {
-  // LINKED AND VERIFIED BEFORE THE CACHE, FOR EVERY CALLER. The cache is keyed
-  // by place id, so a check after cacheGet would hand an unverified claimant
-  // the verified owner's forecast (the gate note above unverifiedReason). The
-  // route answers both cases in its own words before it gets here; Roost is
-  // held to the same two checks by this line.
-  if (!ctx?.google_place_id || !ctx.verified) return null;
-  const placeId = ctx.google_place_id;
-  // The hour is in the key because `now` below is an hour-granular score:
-  // see THE CLOCK IN THE KEY above cacheClock.
-  const clockKey = cacheClock();
-  const cached = cacheGet(`intel:${placeId}:${clockKey}`);
-  if (cached) return cached;
-
+// The owner's forecast itself: one Places lookup and the forecast runs, kept
+// under this venue and hour when it succeeds. Read through venueIntelligence
+// below, which checks the venue first and shares a build already under way.
+// Answers the result, BUDGET_EXCEEDED, or null.
+async function buildIntelligence(placeId, userId, clockKey) {
   const venue = await fetchVenueBasics(placeId, userId);
   if (venue === BUDGET_EXCEEDED) return BUDGET_EXCEEDED;
   if (!venue) return null;
@@ -2227,6 +2207,53 @@ async function venueIntelligence(ctx, userId) {
     generatedAt: new Date().toISOString(),
   };
   cacheSet(`intel:${placeId}:${clockKey}`, result);
+  return result;
+}
+
+// THE OWNER'S FORECAST, BUILT IN ONE PLACE (2026-11-03). GET /intelligence
+// serves it, and Roost reads this same function for a venue with no crowd
+// history of its own (services/advisorFacts.js buildWeekProjection): the
+// money move then names the numbers the Week Ahead card draws, from the same
+// computation and, within the hour, the same cache entry. Never a second
+// estimate beside the card.
+//
+// `ctx` is the venue_profiles row (google_place_id, verified). Answers the
+// published result, BUDGET_EXCEEDED when the shared Places budget refused the
+// lookup, or null when the venue is not linked and verified or the listing
+// could not be read.
+async function venueIntelligence(ctx, userId) {
+  // LINKED AND VERIFIED BEFORE THE CACHE, FOR EVERY CALLER. The cache is keyed
+  // by place id, so a check after cacheGet would hand an unverified claimant
+  // the verified owner's forecast (the gate note above unverifiedReason). The
+  // route answers both cases in its own words before it gets here; Roost is
+  // held to the same two checks by this line.
+  if (!ctx?.google_place_id || !ctx.verified) return null;
+  const placeId = ctx.google_place_id;
+  // The hour is in the key because `now` below is an hour-granular score:
+  // see THE CLOCK IN THE KEY above cacheClock.
+  const clockKey = cacheClock();
+  const cached = cacheGet(`intel:${placeId}:${clockKey}`);
+  if (cached) return cached;
+  // A finished result, or a build already under way for this venue and hour:
+  // ONE BUILD FOR THE THREE THAT ASK AT ONCE. The dashboard's own request,
+  // Roost's cards and Roost's question list all open with the Analytics tab,
+  // and for a venue with no crowd history all three read this week, so three
+  // cold builds would pay three Places lookups and eighteen evening forecasts
+  // for one card. The build waits in the entry its result will replace, and
+  // every caller awaits what it finds there.
+  const key = `intel:${placeId}:${clockKey}`;
+  const building = buildIntelligence(placeId, userId, clockKey);
+  cacheSet(key, building);
+  let result;
+  try {
+    result = await building;
+  } catch (err) {
+    intelCache.delete(key);
+    throw err;
+  }
+  // Only a result is kept: a refused or failed lookup is asked again next
+  // time, as it always was.
+  if (!result || result === BUDGET_EXCEEDED) intelCache.delete(key);
   return result;
 }
 

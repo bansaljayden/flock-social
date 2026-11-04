@@ -696,6 +696,17 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
     const weekFacts = tierCovers(tier, weekDef.tier)
       ? await advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })
       : null;
+    // A venue with no crowd history of its own: the dashboard's Week Ahead,
+    // framed as Flock's forecast for places like it, where the card has one
+    // to show (weekFor's rule, the same function and cache entry). This card
+    // used to refuse under the dashboard card's six numbers. The listing card
+    // below keeps the venue's own week, which is what it sets the owner's
+    // answers beside.
+    let shownWeek = weekFacts;
+    if (weekFacts && advisorFacts.corpusGate(ctx.profile) && typeof advisorFacts.buildWeekProjection === 'function') {
+      const projected = await advisorFacts.buildWeekProjection(ctx, opts);
+      if (projected.length) shownWeek = projected;
+    }
 
     const cards = [];
     if (lastNightVerdict) {
@@ -703,7 +714,7 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
         ? finishedCard(verdictDef, await lastNightVerdict.buildLastDayVerdict(ctx, opts))
         : lockedCard(verdictDef));
     }
-    cards.push(weekFacts ? finishedCard(weekDef, weekFacts) : lockedCard(weekDef));
+    cards.push(shownWeek ? finishedCard(weekDef, shownWeek) : lockedCard(weekDef));
     cards.push(tierCovers(tier, aroundDef.tier)
       ? finishedCard(aroundDef, await advisorFacts.buildAroundYou(ctx, opts))
       : lockedCard(aroundDef));
@@ -767,7 +778,8 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
 const ALWAYS_AVAILABLE = new Set(['around_you', 'data_status', 'last_night_verdict']);
 // `cohort_typical` is a corpus question: it places the venue's own Google curve
 // inside the frozen distribution of its city and category, so without a curve
-// there is nothing to place.
+// there is nothing to place. Four of these are also offered to a venue outside
+// the corpus whose dashboard Week Ahead card answers them (CARD_INTENTS below).
 const NEEDS_CORPUS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'weekend_outlook', 'quiet_nights', 'cohort_typical']);
 // `cohort_same_night` is a history question for a reason that is about honesty
 // rather than plumbing: "was it just us" needs a your-side, and a venue that
@@ -848,18 +860,45 @@ async function hasRecentHistory(placeId) {
   }
 }
 
-async function availableIntents(ctx) {
+// THE WEEK QUESTIONS A VENUE WITH NO CROWD HISTORY CAN NOW BE ANSWERED FROM
+// (2026-11-03). Their answers come from the dashboard's Week Ahead card when
+// there is one (weekFor), so these chips are offered to such a venue exactly
+// when that is where the answer would come from, and never when it would
+// refuse: no card (a daytime place, a failed lookup, a week holding a model
+// number) means no chip, and a level week means no quiet-days chip, because
+// that plan refuses a week with no quiet day. Each chip's own plan is run over
+// the card and asked whether it finds anything. Street facts only ever add to
+// the weekend's card days, so they are not read for this.
+const CARD_INTENTS = Object.freeze(['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+
+async function cardAnswers(ctx, userId) {
+  if (typeof advisorFacts.buildWeekProjection !== 'function') return new Set();
+  const card = await advisorFacts.buildWeekProjection(ctx, { userId });
+  if (!card.length) return new Set();
+  const b = { ctx, week: async () => card, around: async () => [] };
+  const answered = new Set();
+  for (const id of CARD_INTENTS) {
+    const entries = await INTENT_PLANS[id](b);
+    if (entries.some((e) => !advisorFacts.isRefusal(e))) answered.add(id);
+  }
+  return answered;
+}
+
+async function availableIntents(ctx, userId) {
   const profile = ctx ? ctx.profile : null;
   const inCorpus = !!profile && advisorFacts.corpusGate(profile) === null;
-  const [history, tables] = await Promise.all([
+  const [history, tables, fromCard] = await Promise.all([
     hasRecentHistory(profile && profile.google_place_id),
     hasTableHistory(profile && profile.google_place_id),
+    // Read only for a venue the corpus cannot answer: a corpus venue's week is
+    // its own forecast, and its chips are offered as they always were.
+    inCorpus || !profile ? Promise.resolve(new Set()) : cardAnswers(ctx, userId).catch(() => new Set()),
   ]);
   return advisorPhrasing.CHIP_PRIORITY.filter((id) => {
     if (!advisorPhrasing.isKnownIntent(id)) return false;
     if (ALWAYS_AVAILABLE.has(id)) return true;
     if (NEEDS_TABLES.has(id)) return tables;
-    if (NEEDS_CORPUS.has(id)) return inCorpus;
+    if (NEEDS_CORPUS.has(id)) return inCorpus || fromCard.has(id);
     if (NEEDS_HISTORY.has(id)) return history;
     const column = NEEDS_CORPUS_AND_INTAKE[id];
     if (column) return inCorpus && intakeFilled(profile, column);
@@ -909,7 +948,7 @@ router.get('/questions', authenticate, requirePro, async (req, res) => {
     if (advisorFacts && typeof advisorFacts.getVenueContext === 'function') {
       const ctx = await advisorFacts.getVenueContext(req.user.id);
       if (ctx && ctx.profile && ctx.profile.google_place_id && ctx.profile.verified) {
-        offered = await availableIntents(ctx);
+        offered = await availableIntents(ctx, req.user.id);
       } else if (ctx && ctx.profile) {
         // Unlinked or unverified: every chip would answer the same refusal
         // (the route's own comment called that a menu of dead buttons). Say

@@ -36,6 +36,23 @@ process.env.JWT_SECRET = 'advisor-cards-test-secret';
 process.env.GOOGLE_PLACES_API_KEY = 'test-places-key';
 process.env.TICKETMASTER_API_KEY = 'test-tm-key';
 
+// ── Google Places: the dashboard card's one lookup ───────────────────────────
+// For a venue with no crowd history, the Week ahead card shows the dashboard's
+// Week Ahead when that card has numbers (GET /cards, 2026-11-03), and the
+// dashboard card reads the listing first. Nothing in this file is meant to
+// reach Google, so that lookup answers as a listing that could not be read: no
+// card, and the refusal these tests expect. The card with numbers on it is
+// covered in roostForecastMove.test.js.
+const realFetch = global.fetch;
+let placesLookups = 0;
+global.fetch = (url, opts) => {
+  if (String(url).startsWith('https://places.googleapis.com/')) {
+    placesLookups += 1;
+    return Promise.resolve({ status: 503, json: async () => ({ error: { code: 503, message: 'unavailable' } }) });
+  }
+  return realFetch(url, opts);
+};
+
 // ── pg fake: scripted per test via `handlers`; every statement is logged ────
 const pool = require('../config/database');
 let handlers = [];
@@ -100,7 +117,7 @@ const server = http.createServer(app);
 test.before(() => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; resolve(); });
 }));
-test.after(() => new Promise((resolve) => { server.close(() => resolve()); }));
+test.after(() => new Promise((resolve) => { global.fetch = realFetch; server.close(() => resolve()); }));
 
 async function getCards() {
   const res = await fetch(`${base}/api/venue/advisor/cards`);
@@ -870,8 +887,10 @@ test('the modal case: an absent-corpus venue gets refusal cards that name the mi
     profile: profileRow({ corpus_status: 'absent', corpus_baseline_rows: 0, kitchen_last_order: null, owner_busy_nights: null, capacity: null }),
     mlVenue: null,
   });
+  const lookupsBefore = placesLookups;
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
+  assert.strictEqual(placesLookups - lookupsBefore, 1, 'the dashboard card is read once, and here it has nothing to show');
   assert.strictEqual(body.cards.length, 6, 'the refusal screen is the main screen, every card renders');
   // The cohort card refuses twice over for this venue and both refusals carry
   // a path: no row on the measured map means no city and category group to
