@@ -506,12 +506,11 @@ const INTENT_PLANS = {
 // demo). Where the corpus gate is the one reason the week would refuse, the
 // week is that card, from the card's own function, each fact labelled as
 // Flock's forecast for places like this one. With no card to read, the
-// refusal stands as it was. Today is not on that card, so tonight's outlook
-// (`tonight` below) keeps the corpus week, and the listing lines, which set
-// the venue's own forecast beside what the owner told us, read the venue's
-// own week only (`ownWeek`). Whether the card was read is kept on `memo`
-// (true or false once tried), so a question that would read it a second time
-// in the same request does not pay a second lookup that just failed.
+// refusal stands as it was. The listing lines, which set the venue's own
+// forecast beside what the owner told us, read the venue's own week only
+// (`ownWeek`). Whether the card was read is kept on `memo` (true or false once
+// tried), so a question that would read it a second time in the same request
+// does not pay a second lookup that just failed.
 async function weekFor(ctx, opts, ownWeek, memo = {}) {
   if (advisorFacts.corpusGate(ctx.profile) && typeof advisorFacts.buildWeekProjection === 'function') {
     const projected = await advisorFacts.buildWeekProjection(ctx, opts);
@@ -519,6 +518,24 @@ async function weekFor(ctx, opts, ownWeek, memo = {}) {
     if (projected.length) return projected;
   }
   return ownWeek();
+}
+
+// TODAY, FOR THE SAME VENUE, OFF THE SAME CARD (2026-11-04). The card's week
+// starts tomorrow, and "How does today look?" refused under a dashboard that
+// draws today's peak. The card's own function reads today on today's hours
+// (venueIntelligence `today`), so where the corpus gate is the reason today
+// would refuse, today is that one entry, framed like the week's days
+// (advisorFacts.buildTodayProjection), from the same cache entry as the week.
+// Nothing to read (no card, today closed by the listing, a model number) keeps
+// the refusal. A card this request already failed to read is not asked again.
+async function tonightFor(ctx, opts, ownTonight, memo = {}) {
+  if (memo.cardRead !== false && advisorFacts.corpusGate(ctx.profile)
+      && typeof advisorFacts.buildTodayProjection === 'function') {
+    const today = await advisorFacts.buildTodayProjection(ctx, opts);
+    if (typeof memo.cardRead !== 'boolean') memo.cardRead = today.length > 0;
+    if (today.length) return today;
+  }
+  return ownTonight();
 }
 
 async function bridgeFactBlock(userId, intentId) {
@@ -544,8 +561,10 @@ async function bridgeFactBlock(userId, intentId) {
     // The week a question about the week ahead reads (weekFor above).
     week: () => (memo.week = memo.week || weekFor(ctx, opts, b.ownWeek, memo)),
     // The same week, started from last night's evening while that night is
-    // still running: what "tonight" means at 12:30 AM.
-    tonight: () => (memo.tonight = memo.tonight || advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })),
+    // still running: what "tonight" means at 12:30 AM. For a venue with no
+    // crowd history, today off its dashboard card (tonightFor above).
+    tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx, opts,
+      () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), memo)),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
@@ -778,7 +797,7 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
 const ALWAYS_AVAILABLE = new Set(['around_you', 'data_status', 'last_night_verdict']);
 // `cohort_typical` is a corpus question: it places the venue's own Google curve
 // inside the frozen distribution of its city and category, so without a curve
-// there is nothing to place. Four of these are also offered to a venue outside
+// there is nothing to place. Five of these are also offered to a venue outside
 // the corpus whose dashboard Week Ahead card answers them (CARD_INTENTS below).
 const NEEDS_CORPUS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'weekend_outlook', 'quiet_nights', 'cohort_typical']);
 // `cohort_same_night` is a history question for a reason that is about honesty
@@ -864,18 +883,22 @@ async function hasRecentHistory(placeId) {
 // (2026-11-03). Their answers come from the dashboard's Week Ahead card when
 // there is one (weekFor), so these chips are offered to such a venue exactly
 // when that is where the answer would come from, and never when it would
-// refuse: no card (a daytime place, a failed lookup, a week holding a model
-// number) means no chip, and a level week means no quiet-days chip, because
-// that plan refuses a week with no quiet day. Each chip's own plan is run over
-// the card and asked whether it finds anything. Street facts only ever add to
-// the weekend's card days, so they are not read for this.
-const CARD_INTENTS = Object.freeze(['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+// refuse: no card (a failed lookup, a week holding a model number, a week not
+// read on hours the venue keeps) means no chip, and a level week means no
+// quiet-days chip, because that plan refuses a week with no quiet day. Each
+// chip's own plan is run over the card and asked whether it finds anything.
+// Street facts only ever add to the card's days, so they are not read for
+// this. Today's chip (2026-11-04) reads today off the same card (tonightFor),
+// so a today closed by the venue's listed hours offers no today chip.
+const CARD_INTENTS = Object.freeze(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
 
 async function cardAnswers(ctx, userId) {
-  if (typeof advisorFacts.buildWeekProjection !== 'function') return new Set();
-  const card = await advisorFacts.buildWeekProjection(ctx, { userId });
-  if (!card.length) return new Set();
-  const b = { ctx, week: async () => card, around: async () => [] };
+  if (typeof advisorFacts.buildCardProjection !== 'function') return new Set();
+  // The week and today off one read of the card, so a lookup that fails is
+  // paid for once.
+  const { week: card, today } = await advisorFacts.buildCardProjection(ctx, { userId });
+  if (!card.length && !today.length) return new Set();
+  const b = { ctx, week: async () => card, tonight: async () => today, around: async () => [] };
   const answered = new Set();
   for (const id of CARD_INTENTS) {
     const entries = await INTENT_PLANS[id](b);

@@ -1001,9 +1001,15 @@ async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress =
 //     one, never the venue's own.
 // Only when every scored day is a category prior: a model number means the
 // venue has a curve its profile has not caught up with, and that week is not
-// "typical for places like yours". And only for a kind of place that peaks in
-// the evening the card scans (a bar, a club, a restaurant). No card, no
-// facts, and the refusal stands.
+// "typical for places like yours". And only when the card read each day on
+// hours the venue keeps (routes/venueDashboard.js scanFrom, 2026-11-04): its
+// own listed hours, or the window for its kind, the evening for a bar, a club
+// or a restaurant and the day for a cafe or a bakery. Until then the card read
+// every venue on the evening, so a cafe's week was hours it is shut and was
+// not answered from; a kind with no window of its own and no hours listed is
+// still drawn on the evening, and still not answered from. Today comes off the
+// same card, read on today's hours (todayProjectionFacts). No card, no facts,
+// and the refusal stands.
 const { KIND_FORECAST_SOURCE, KIND_FORECAST } = require('./kindForecast');
 
 // The card's day labels ('Sat', from toLocaleDateString), as the forecast
@@ -1025,75 +1031,139 @@ function kindForecastPeakLabel({ weekday, hour, score, afterMidnight = false }) 
   return `${weekday}${afterMidnight ? ' night' : ''} projects busiest around ${hour12(hour)}, at ${score} on our 0 to 100 index, in ${KIND_FORECAST}.`;
 }
 
+// The card's hours are the venue's own listed hours ('hours') or the window
+// for its kind ('kind'); 'default' is the evening drawn for a kind with
+// neither, and a card from before the field has none.
+const FITTING_SCANS = new Set(['hours', 'kind']);
+
+/** True for a card Roost may read: drawn, dated, and read on hours the venue keeps. */
+function readableCard(intel) {
+  return Boolean(intel) && typeof intel === 'object' && intel.available === true
+    && FITTING_SCANS.has(intel.scanFrom)
+    && typeof intel.generatedAt === 'string' && intel.generatedAt !== '';
+}
+
+const isCategoryPrior = (d) => typeof d.method === 'string' && CATEGORY_PRIOR.test(d.method);
+
+// One day of the card ({ date, weekday, peakScore, peakHour, method }) with its
+// hour read, or null for a day the card draws as a dash, which has nothing to
+// say here either.
+function cardDay(d, readHour) {
+  if (!d || typeof d !== 'object') return null;
+  const date = typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null;
+  const score = typeof d.peakScore === 'number' && Number.isFinite(d.peakScore) ? d.peakScore : null;
+  const hour = readHour(d.peakHour);
+  if (!date || score === null || !Number.isInteger(hour)) return null;
+  return { d, date, score, hour };
+}
+
+function kindForecastFact({ d, date, score, hour }, asOf) {
+  const weekday = CARD_WEEKDAYS[d.weekday] || WEEKDAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
+  const afterMidnight = d.afterMidnight === true;
+  return makeFact({
+    id: `typical_peak_${date}`,
+    value: {
+      date, weekday, peakHour: hour, peakScore: score,
+      ...(afterMidnight ? { afterMidnight: true } : {}),
+    },
+    source: KIND_FORECAST_SOURCE,
+    asOf,
+    predictionMethod: d.method,
+    unit: '0-100 index',
+    note: [KIND_FORECAST_NOTE, afterMidnight ? afterMidnightNote(weekday) : null].filter(Boolean).join(' '),
+    label: kindForecastPeakLabel({ weekday, hour, score, afterMidnight }),
+  });
+}
+
+// The dashboard's own reader of its hour labels, unless a caller hands one in.
+// eslint-disable-next-line global-require
+const cardHourReader = (hourOf) => (typeof hourOf === 'function' ? hourOf : require('../routes/venueDashboard').hourOfLabel);
+
 /**
  * The dashboard's Week Ahead (GET /api/venue-dashboard/intelligence, as
  * venueIntelligence returns it) as Roost facts, or [] when it is not a week
- * of category priors. `hourOf` reads the card's hour labels ("9 PM"), and is
- * the dashboard's own reader unless a caller hands one in.
+ * of category priors read on hours the venue keeps. `hourOf` reads the card's
+ * hour labels ("9 PM").
  */
 function projectionFacts(intel, { hourOf = null } = {}) {
-  if (!intel || typeof intel !== 'object' || intel.available !== true || !Array.isArray(intel.week)) return [];
-  // The card scans evenings. For a cafe or a bakery those are hours it may not
-  // open, and "fill Sunday" chosen from them is advice about a room that is
-  // shut (2026-11-03 review), so only a kind of place that peaks in the
-  // evening is answered from it (venueIntelligence, eveningPlace).
-  if (intel.eveningPlace !== true) return [];
-  const asOf = typeof intel.generatedAt === 'string' && intel.generatedAt ? intel.generatedAt : null;
-  if (!asOf) return [];
-  // eslint-disable-next-line global-require
-  const readHour = typeof hourOf === 'function' ? hourOf : require('../routes/venueDashboard').hourOfLabel;
-  const days = [];
-  for (const d of intel.week) {
-    if (!d || typeof d !== 'object') continue;
-    const date = typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null;
-    const score = typeof d.peakScore === 'number' && Number.isFinite(d.peakScore) ? d.peakScore : null;
-    const hour = readHour(d.peakHour);
-    // A day the card draws as a dash has nothing to say here either.
-    if (!date || score === null || !Number.isInteger(hour)) continue;
-    days.push({ d, date, score, hour });
-  }
+  if (!readableCard(intel) || !Array.isArray(intel.week)) return [];
+  const readHour = cardHourReader(hourOf);
+  const days = intel.week.map((d) => cardDay(d, readHour)).filter(Boolean);
   if (!days.length) return [];
-  if (!days.every(({ d }) => typeof d.method === 'string' && CATEGORY_PRIOR.test(d.method))) return [];
-  return days.map(({ d, date, score, hour }) => {
-    const weekday = CARD_WEEKDAYS[d.weekday] || WEEKDAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()];
-    const afterMidnight = d.afterMidnight === true;
-    return makeFact({
-      id: `typical_peak_${date}`,
-      value: {
-        date, weekday, peakHour: hour, peakScore: score,
-        ...(afterMidnight ? { afterMidnight: true } : {}),
-      },
-      source: KIND_FORECAST_SOURCE,
-      asOf,
-      predictionMethod: d.method,
-      unit: '0-100 index',
-      note: [KIND_FORECAST_NOTE, afterMidnight ? afterMidnightNote(weekday) : null].filter(Boolean).join(' '),
-      label: kindForecastPeakLabel({ weekday, hour, score, afterMidnight }),
-    });
-  });
+  if (!days.every(({ d }) => isCategoryPrior(d))) return [];
+  return days.map((day) => kindForecastFact(day, intel.generatedAt));
+}
+
+/**
+ * TODAY OFF THE SAME CARD (2026-11-04). "How does today look?" refused a venue
+ * with no crowd history while the dashboard drew today's peak above it.
+ * venueIntelligence reads today on today's hours, the same hours its weekday
+ * is read on in the week, from the bars the dashboard draws, and this is that
+ * one entry as a one-fact list, said the way the week's days are. [] when
+ * there is nothing to read: no card, a card not read on hours the venue keeps,
+ * today closed by its listed hours, or a model number on today or on any day
+ * of the week (a venue with a curve its profile has not caught up with).
+ */
+function todayProjectionFacts(intel, { hourOf = null } = {}) {
+  if (!readableCard(intel) || !intel.today) return [];
+  const readHour = cardHourReader(hourOf);
+  const today = cardDay(intel.today, readHour);
+  if (!today || !isCategoryPrior(today.d)) return [];
+  const week = (Array.isArray(intel.week) ? intel.week : []).map((d) => cardDay(d, readHour)).filter(Boolean);
+  if (!week.every(({ d }) => isCategoryPrior(d))) return [];
+  return [kindForecastFact(today, intel.generatedAt)];
+}
+
+// The dashboard's card for a venue with no crowd history, or null when there
+// is none to read (not linked and verified, the lookup failed, the Places
+// budget said no). Never throws.
+async function readCard(ctx, userId) {
+  const p = ctx && ctx.profile;
+  // The card is served to a linked, verified venue only, and its cache is
+  // keyed by place id, so the same two checks come first here (and again in
+  // venueIntelligence itself).
+  if (!p || !p.google_place_id || !p.verified) return null;
+  try {
+    // eslint-disable-next-line global-require
+    const dashboard = require('../routes/venueDashboard');
+    if (typeof dashboard.venueIntelligence !== 'function') return null;
+    const intel = await dashboard.venueIntelligence(p, userId);
+    return intel && typeof intel === 'object' ? { intel, hourOf: dashboard.hourOfLabel } : null;
+  } catch (err) {
+    console.warn('advisorFacts: the dashboard week ahead could not be read:', err.message);
+    return null;
+  }
 }
 
 /**
  * The dashboard's Week Ahead for a venue with no crowd history, as facts, or
  * [] when there is none to read (the lookup failed, the Places budget said
- * no, or the week holds a model number). Never throws.
+ * no, the week holds a model number, or it was not read on hours the venue
+ * keeps). Never throws.
  */
 async function buildWeekProjection(ctx, { userId } = {}) {
-  const p = ctx && ctx.profile;
-  // The card is served to a linked, verified venue only, and its cache is
-  // keyed by place id, so the same two checks come first here (and again in
-  // venueIntelligence itself).
-  if (!p || !p.google_place_id || !p.verified) return [];
-  try {
-    // eslint-disable-next-line global-require
-    const dashboard = require('../routes/venueDashboard');
-    if (typeof dashboard.venueIntelligence !== 'function') return [];
-    const intel = await dashboard.venueIntelligence(p, userId);
-    return projectionFacts(intel, { hourOf: dashboard.hourOfLabel });
-  } catch (err) {
-    console.warn('advisorFacts: the dashboard week ahead could not be read:', err.message);
-    return [];
-  }
+  const card = await readCard(ctx, userId);
+  return card ? projectionFacts(card.intel, { hourOf: card.hourOf }) : [];
+}
+
+/**
+ * Today on that card, as one fact, or [] when there is nothing to read
+ * (todayProjectionFacts). Within the hour the same cache entry as the week,
+ * so asking both costs one lookup. Never throws.
+ */
+async function buildTodayProjection(ctx, { userId } = {}) {
+  const card = await readCard(ctx, userId);
+  return card ? todayProjectionFacts(card.intel, { hourOf: card.hourOf }) : [];
+}
+
+/** The week and today off one read of the card: { week, today }, each [] when there is none. */
+async function buildCardProjection(ctx, { userId } = {}) {
+  const card = await readCard(ctx, userId);
+  if (!card) return { week: [], today: [] };
+  return {
+    week: projectionFacts(card.intel, { hourOf: card.hourOf }),
+    today: todayProjectionFacts(card.intel, { hourOf: card.hourOf }),
+  };
 }
 
 // ─── The street the OWNER says they are on ───────────────────────────────────
@@ -1862,7 +1932,10 @@ module.exports = {
   buildWeekAhead,
   // a venue with no crowd history: the dashboard's Week Ahead, as facts
   buildWeekProjection,
+  buildTodayProjection,
+  buildCardProjection,
   projectionFacts,
+  todayProjectionFacts,
   kindForecastPeakLabel,
   KIND_FORECAST_NOTE,
   buildAroundYou,

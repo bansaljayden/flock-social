@@ -2240,12 +2240,10 @@ async function buildIntelligence(placeId, userId, clockKey) {
     // own opening hours on its Google listing), 'kind' (no hours listed, so
     // the window for its kind: the evening for a bar, a club or a restaurant,
     // the day for a cafe or a bakery), or 'default' (no hours and a kind with
-    // no window of its own, so the evening, as the card always read).
+    // no window of its own, so the evening, as the card always read). Roost
+    // answers a venue with no crowd history from this week and from `today`
+    // only for the first two (advisorFacts.projectionFacts).
     scanFrom: fit.listed ? 'hours' : (fit.kind ? 'kind' : 'default'),
-    // Whether this is a bar, a club or a restaurant, by the strip's own rule
-    // (stripPeakWindow): the kinds of place Roost reads this week for
-    // (advisorFacts.projectionFacts).
-    eveningPlace: stripPeakWindow(stripComparisonTypes(venue)) === 'evening',
     model: current.modelVersion || null,
     // Which arithmetic made the dial's number when a serving switch changed
     // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock

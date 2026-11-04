@@ -1364,8 +1364,23 @@ function shapeMoneyMove(facts) {
   };
 }
 
+// "How does today look?" for a venue with no crowd history is answered off
+// its dashboard card's today (routes/advisor.js tonightFor), and opens on
+// whose forecast it is, the way the week's answers do. The venue's own today
+// reads its fact's own sentence, as it always has.
+function shapeToday(facts) {
+  const [first, ...rest] = facts;
+  if (!isPeakFact(first) || !isKindForecast(first)) return null;
+  return {
+    lead: `In ${KIND_FORECAST}, today peaks ${peakAt(first)} on our 0 to 100 index.`,
+    points: rest.map(templateLine),
+    used: facts,
+  };
+}
+
 const TEMPLATE_SHAPERS = Object.freeze({
   money_move: shapeMoneyMove,
+  tonight_outlook: shapeToday,
   peak_hours: shapeWeek('week'),
   quiet_nights: shapeWeek('quiet'),
   weekend_outlook: shapeWeek('weekend'),

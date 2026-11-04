@@ -22,6 +22,8 @@
 //                                      own, answered from its dashboard's Week
 //                                      Ahead card; by name only, never in the
 //                                      default run
+//   ... --venue=newcafe                the same for a cafe, whose card is read
+//                                      by day; by name only too
 //   ... --out=roost-eval.json          also write every answer as JSON
 //   ... --q=saturday                   only the items whose question (or
 //                                      chip id) contains this text; several
@@ -360,43 +362,67 @@ const VENUES = {
       profile: { corpus_status: 'absent', corpus_baseline_rows: 0, capacity: 90, service_style: 'bar_standing', typical_spend_per_person: 28, updated_at: '2026-10-01T00:00:00Z' },
       mlVenue: null,
     },
-    card: cardWeek({ Sat: [22, 74], Sun: [20, 45], Mon: [21, 48], Tue: [21, 48], Wed: [21, 48], Thu: [22, 64], Fri: [22, 66] }),
-    chips: ['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook'],
+    card: cardWeek({ Sat: [22, 74], Sun: [20, 45], Mon: [21, 48], Tue: [21, 48], Wed: [21, 48], Thu: [22, 64], Fri: [22, 66] }, 'evening'),
+    chips: ['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook'],
+  },
+  // A cafe Flock has never collected (2026-11-04): its dashboard card is read
+  // by day, so its peaks are mornings and its money move a quiet morning.
+  // Run by name only (--venue=newcafe).
+  newcafe: {
+    optIn: true,
+    noHistory: true,
+    ctx: {
+      profile: { corpus_status: 'absent', corpus_baseline_rows: 0, capacity: 28, service_style: 'counter_order', typical_spend_per_person: 11, updated_at: '2026-10-01T00:00:00Z' },
+      mlVenue: null,
+    },
+    card: cardWeek({ Sat: [9, 66], Sun: [10, 70], Mon: [8, 44], Tue: [8, 38], Wed: [8, 47], Thu: [8, 49], Fri: [8, 55] }, 'day'),
+    chips: ['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook'],
   },
 };
 
 // The dashboard's Week Ahead as GET /api/venue-dashboard/intelligence serves
-// it: the six evenings after today, each with the card's short day label, its
+// it: the six days after today, each with the card's short day label, its
 // peak, the hour label and what made it (a category prior for a venue with no
-// curve of its own), for a kind of place that peaks in the evening.
-function cardWeek(byDay) {
+// curve of its own), and today on the same hours, read on the window for the
+// venue's kind ('evening' for a bar, 'day' for a cafe).
+function cardWeek(byDay, window) {
   const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const label = (h) => (h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`);
-  const week = [1, 2, 3, 4, 5, 6].map((d) => {
+  const on = (d) => {
     const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
     const weekday = SHORT[new Date(`${date}T12:00:00Z`).getUTCDay()];
     const [hour, score] = byDay[weekday];
     return { date, weekday, peakScore: score, peakHour: label(hour), method: 'rule_engine_no_baseline' };
-  });
-  return { available: true, week, eveningPlace: true, generatedAt: ASOF };
+  };
+  return {
+    available: true,
+    week: [1, 2, 3, 4, 5, 6].map(on),
+    today: { ...on(0), window },
+    peakWindow: window,
+    scanFrom: 'kind',
+    generatedAt: ASOF,
+  };
 }
 
 // A no-history venue's blocks, built the way the real fact bridge builds them
-// (routes/advisor.js weekFor): the card through advisorFacts.projectionFacts
-// and the route's own plans, and the corpus refusal for everything the card
-// does not carry.
-const CARD_INTENTS = new Set(['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+// (routes/advisor.js weekFor and tonightFor): the card through
+// advisorFacts.projectionFacts and todayProjectionFacts and the route's own
+// plans, and the corpus refusal for everything the card does not carry.
+const CARD_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
 async function noHistoryBlock(v, intentId) {
   const refusalText = (r) => [r.reason, r.whatWouldUnlock].filter(Boolean).join(' ');
   const gate = advisorFacts.corpusGate(v.ctx.profile);
   if (!CARD_INTENTS.has(intentId)) return { intent: intentId, facts: [], refusals: [refusalText(gate)] };
   const card = advisorFacts.projectionFacts(v.card);
+  const today = advisorFacts.todayProjectionFacts(v.card);
   const plans = require(path.join(B, 'routes', 'advisor')).__INTENT_PLANS;
-  const entries = await plans[intentId]({ ctx: v.ctx, week: async () => card, around: async () => [] });
+  const entries = await plans[intentId]({ ctx: v.ctx, week: async () => card, tonight: async () => today, around: async () => [] });
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
+  const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
+  // Nothing on the card for it: the corpus refusal, as the bridge gives.
   return facts.length
     ? { intent: intentId, facts, refusals: [] }
-    : { intent: intentId, facts: [], refusals: entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText) };
+    : { intent: intentId, facts: [], refusals: refusals.length ? refusals : [refusalText(gate)] };
 }
 
 // The block a chip gets, carrying what the real fact bridge adds beside the
@@ -520,9 +546,11 @@ const TYPED = [
   { q: 'how busy was saturday', expect: ['grounded'], readings: true },
   { q: 'was last friday any good', expect: ['grounded'], readings: true },
   // A venue with no crowd history of its own (2026-11-03): the first chip's
-  // words typed, and the advice question the demo asked beside it.
-  { q: 'What is our best money move this week?', expect: ['grounded'], kinds: ['newbar'] },
-  { q: 'How do I fill a slow Monday?', expect: ['advice'], kinds: ['newbar'] },
+  // words typed, and the advice question the demo asked beside it. Today's
+  // chip typed, answered off the same card (2026-11-04).
+  { q: 'What is our best money move this week?', expect: ['grounded'], kinds: ['newbar', 'newcafe'] },
+  { q: 'How do I fill a slow Monday?', expect: ['advice'], kinds: ['newbar', 'newcafe'] },
+  { q: 'How does today look?', expect: ['grounded'], kinds: ['newbar', 'newcafe'] },
 ];
 
 // ── Scoring ─────────────────────────────────────────────────────────────────

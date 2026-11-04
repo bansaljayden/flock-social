@@ -98,17 +98,22 @@ let method = 'rule_engine_no_baseline';
 let eveningCalls = 0;
 mlPredictor.predictBusyness = async () => ({ score: 40, label: 'Moderate', predictionMethod: method, modelVersion: null });
 mlPredictor.agreeWithStrip = async (scored) => scored;
+// The run of a model number on one day only, for the tests of a card that
+// holds one (`method` above puts one on every hour).
+let modelOnDate = null;
 mlPredictor.predictHourlyForecast = async (_venue, _weather, startHour, count, day) => {
   if (startHour === 17) eveningCalls += 1;
   const peak = CARD[SHORT[new Date(day).getDay()]];
   const hours = [];
   for (let i = 0; i < count; i += 1) hours.push((startHour + i) % 24);
-  // Each evening peaks at 9 PM, at the card's number for that weekday.
+  const onDate = modelOnDate && new Date(day).toISOString().slice(0, 10) === modelOnDate;
+  // Each day peaks at the card's number for that weekday twice, at 8 AM and
+  // at 9 PM, so a venue read by day and one read on the evening each find it.
   return hours.map((h) => ({
     hour: label(h),
-    score: h === 21 ? peak : Math.max(1, peak - 12 - Math.abs(21 - h)),
+    score: h === 21 || h === 8 ? peak : Math.max(1, peak - 12 - Math.min(Math.abs(21 - h), Math.abs(8 - h))),
     baselineScore: null,
-    predictionMethod: method,
+    predictionMethod: onDate ? 'ml' : method,
   }));
 };
 
@@ -117,6 +122,10 @@ let placesUp = true;
 let placesCalls = 0;
 // What Google says the place is: a bar, unless a test makes it a cafe.
 let placeTypes = ['bar'];
+// Google's primary type, and the listing's opening hours (periods), when a
+// test gives the place either.
+let placePrimary = null;
+let placePeriods = null;
 // How long Google takes to answer. Zero answers at once; a test that needs
 // requests to overlap gives the lookup time to still be under way.
 let placesDelayMs = 0;
@@ -134,8 +143,9 @@ global.fetch = (url, opts) => {
         rating: 4.4,
         userRatingCount: 320,
         types: placeTypes,
+        ...(placePrimary ? { primaryType: placePrimary } : {}),
         location: { latitude: 39.95, longitude: -75.16 },
-        currentOpeningHours: { openNow: true },
+        currentOpeningHours: placePeriods ? { openNow: true, periods: placePeriods } : { openNow: true },
         utcOffsetMinutes: 0,
       } : { error: { code: 503, message: 'unavailable' } }),
     };
@@ -193,8 +203,11 @@ function setUp({ placeId, phrasing = false, extra = {} } = {}) {
   process.env.ADVISOR_PHRASING_ENABLED = phrasing ? 'true' : 'false';
   advisorPhrasing.__resetAdvisorSpend();
   method = 'rule_engine_no_baseline';
+  modelOnDate = null;
   placesUp = true;
   placeTypes = ['bar'];
+  placePrimary = null;
+  placePeriods = null;
   placesDelayMs = 0;
   route = null;
   draftFor = null;
@@ -233,7 +246,8 @@ const idFor = (facts, weekday, part) => facts.find((f) => f.id.startsWith(`typic
 // route: the six evenings from a Friday, as filmed.
 const DEMO_INTEL = {
   available: true,
-  eveningPlace: true,
+  scanFrom: 'kind',
+  peakWindow: 'evening',
   generatedAt: '2026-11-03T12:00:00Z',
   week: [
     ['2026-11-07', 'Sat', 74, '10 PM'], ['2026-11-08', 'Sun', 45, '8 PM'], ['2026-11-09', 'Mon', 48, '9 PM'],
@@ -249,7 +263,9 @@ test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as
   const { intel, week } = await cardWeek();
   // The card says what made each number; a venue with no curve is a category prior.
   assert.ok(week.every((d) => d.method === 'rule_engine_no_baseline'), JSON.stringify(week));
-  assert.strictEqual(intel.eveningPlace, true, 'a bar peaks in the evenings the card scans');
+  // A bar with no hours on its listing is read on the evening, its kind's window.
+  assert.strictEqual(intel.scanFrom, 'kind');
+  assert.strictEqual(intel.peakWindow, 'evening');
   const facts = advisorFacts.projectionFacts(intel);
   assert.strictEqual(facts.length, 6, 'one fact per evening on the card');
   for (const [i, f] of facts.entries()) {
@@ -269,7 +285,7 @@ test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as
   assert.ok(facts.every((f) => !f.id.startsWith('peak_')));
 });
 
-test('a card that is not a week of category priors for an evening place is no week at all', async () => {
+test('a card that is not a week of category priors read on hours the venue keeps is no week at all', async () => {
   setUp({ placeId: 'ChIJforecastNotKind000000' });
   const { intel } = await cardWeek();
   // One model number means the venue has a curve its profile has not caught
@@ -278,7 +294,11 @@ test('a card that is not a week of category priors for an evening place is no we
   assert.deepStrictEqual(advisorFacts.projectionFacts(oneModelDay), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, week: intel.week.map(({ method: _m, ...d }) => d) }), [],
     'a week that does not say what made it is not vouched for');
-  assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, eveningPlace: false }), [], 'a daytime place\'s evening scan');
+  // The evening drawn for a kind with no window of its own and no hours, and
+  // a card from before the card said where its hours came from.
+  assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, scanFrom: 'default' }), [], 'a kind with no window of its own');
+  assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, scanFrom: undefined }), [], 'a card that does not say');
+  assert.strictEqual(advisorFacts.projectionFacts({ ...intel, scanFrom: 'hours' }).length, 6, 'the venue\'s own listed hours');
   assert.deepStrictEqual(advisorFacts.projectionFacts(null), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ available: false, reason: 'x' }), []);
   assert.deepStrictEqual(advisorFacts.projectionFacts({ ...intel, generatedAt: null }), []);
@@ -356,10 +376,12 @@ test('the other week questions answer from the card the same way, and what the c
     assert.ok(r.body.sources.length > 0 && r.body.sources.every((s) => s.source === 'category_pattern' || s.source === 'roost_playbook'), JSON.stringify(r.body.sources));
   }
 
-  // Today is not on the card: tonight keeps the corpus refusal.
+  // Today comes off the same card, read on today's hours (2026-11-04).
+  const { intel } = await cardWeek();
   const tonight = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
-  assert.strictEqual(tonight.body.mode, 'refusal', tonight.body.text);
-  assert.match(tonight.body.text, /no crowd history for this venue/i);
+  assert.strictEqual(tonight.body.mode, 'template', tonight.body.text);
+  assert.strictEqual(intel.today.peakScore, CARD[intel.today.weekday], 'today\'s number on the card');
+  assert.strictEqual(tonight.body.text, `In Flock's forecast for places like yours, today peaks around 9 PM at ${intel.today.peakScore} on our 0 to 100 index.`);
   // The kitchen line sets the venue's own forecast beside its last orders,
   // never a forecast for places like it: it reads back what the owner told
   // us, as it did before the card was read, and does not read the card.
@@ -572,6 +594,11 @@ test('with no crowd history and no card to read, the refusal stands word for wor
   assert.strictEqual(r.body.text, refusal(profile));
   assert.match(r.body.text, /^We can't answer that yet\. We have no crowd history for this venue\./);
   assert.deepStrictEqual(r.body.sources, []);
+  // Today has nothing to read either, and refuses as it always did: the
+  // corpus gate first, then the street it cannot look up.
+  r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.ok(r.body.text.startsWith(refusal(profile)), r.body.text);
   assert.deepStrictEqual(modelCalls, [], 'a refusal cost a model call');
 
   // A card with a model number on it is not Flock's forecast for places like
@@ -636,22 +663,37 @@ test('a level week on the card says whose week it is and what would give the ven
   }
 });
 
-test('a cafe\'s evening card is not its week: Roost keeps the refusal, and the card still draws', async () => {
-  setUp({ placeId: 'ChIJforecastCafe00000000' });
+test('a cafe\'s card is read by day now, and Roost answers from its mornings; a kind with no window of its own keeps the refusal', async () => {
+  // Until 2026-11-04 a cafe's card was its evenings, hours it may be shut,
+  // and Roost refused it. The card now reads a cafe by day.
+  setUp({ placeId: 'ChIJforecastCafe00000000', extra: { service_style: 'counter_order', typical_spend_per_person: 11 } });
   placeTypes = ['cafe', 'food'];
-  const { intel } = await cardWeek();
-  assert.strictEqual(intel.eveningPlace, false);
-  assert.strictEqual(intel.week.length, 6, 'the dashboard card is unchanged');
+  const { intel, low, top } = await cardWeek();
+  assert.strictEqual(intel.scanFrom, 'kind');
+  assert.strictEqual(intel.peakWindow, 'day');
+  assert.ok(intel.week.every((d) => d.peakHour === '8 AM'), JSON.stringify(intel.week));
   const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
-  assert.strictEqual(r.body.mode, 'refusal');
-  assert.match(r.body.text, /^We can't answer that yet\. We have no crowd history for this venue\./);
-  // A bar's, a club's and a restaurant's evenings are their week.
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.strictEqual(r.body.text.split('\n')[0], `Fill ${LONG[low.weekday]}. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around 8 AM at ${low.peakScore} on our 0 to 100 index, against ${top.peakScore} on ${LONG[top.weekday]}.`);
+  assert.ok(!/\byour (?:quietest|busiest|slowest)\b/i.test(r.body.text), r.body.text);
+  // A bar's, a club's and a restaurant's evenings are their week, as before.
   for (const [i, types] of [['bar'], ['night_club'], ['italian_restaurant', 'restaurant']].entries()) {
     setUp({ placeId: `ChIJforecastKind${i}0000000` });
     placeTypes = types;
     const card = await cardWeek();
-    assert.strictEqual(card.intel.eveningPlace, true, types.join(','));
+    assert.strictEqual(card.intel.scanFrom, 'kind', types.join(','));
+    assert.strictEqual(card.intel.peakWindow, 'evening', types.join(','));
   }
+  // A kind with no window of its own and no hours listed is drawn on the
+  // evening, as the card always was, and that is not its week.
+  setUp({ placeId: 'ChIJforecastGym000000000' });
+  placeTypes = ['gym'];
+  placePrimary = 'gym';
+  const gym = await cardWeek();
+  assert.strictEqual(gym.intel.scanFrom, 'default');
+  const g = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+  assert.strictEqual(g.body.mode, 'refusal');
+  assert.match(g.body.text, /^We can't answer that yet\. We have no crowd history for this venue\./);
 });
 
 test('on a tie the money move names the busiest day the Biggest Night tile names', async () => {
@@ -689,7 +731,8 @@ const offeredIds = (body) => [
   ...(body.lead || []).map((q) => q.id),
   ...(body.groups || []).flatMap((g) => g.questions.map((q) => q.id)),
 ];
-const WEEK_CHIPS = ['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook'];
+// The four week chips and today's (2026-11-04), all answered off the card.
+const WEEK_CHIPS = ['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook'];
 
 test('Roost\'s own Week ahead card shows the dashboard\'s Week Ahead for a no-history bar, framed, from the same build', async () => {
   setUp({ placeId: 'ChIJforecastCardsBar00000' });
@@ -715,9 +758,9 @@ test('Roost\'s own Week ahead card shows the dashboard\'s Week Ahead for a no-hi
   assert.ok(!listing.facts.some((f) => f.source === 'category_pattern'), JSON.stringify(listing.facts));
 });
 
-test('a cafe\'s Week ahead card, and a bar\'s with no card to read, keep the refusal', async () => {
+test('a Week ahead card with no card to read, or one not read on hours the venue keeps, keeps the refusal', async () => {
   const cases = [
-    ['ChIJforecastCardsCafe0000', () => { placeTypes = ['cafe']; }],
+    ['ChIJforecastCardsGym00000', () => { placeTypes = ['gym']; placePrimary = 'gym'; }],
     ['ChIJforecastCardsDown0000', () => { placesUp = false; }],
     ['ChIJforecastCardsModel000', () => { method = 'ml'; }],
   ];
@@ -740,7 +783,6 @@ test('the week chips are offered to a no-history venue exactly when the card ans
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   let offered = offeredIds(r.body);
   for (const id of WEEK_CHIPS) assert.ok(offered.includes(id), `${id} not offered: ${offered.join(', ')}`);
-  assert.ok(!offered.includes('tonight_outlook'), 'today is not on the card, so that chip would refuse');
   assert.ok(!offered.includes('cohort_typical'), 'the city comparison needs a curve the card does not have');
   for (const id of WEEK_CHIPS) {
     const a = await call('/api/venue/advisor/ask', { intentId: id });
@@ -768,10 +810,10 @@ test('the week chips are offered to a no-history venue exactly when the card ans
     Object.assign(CARD, saved);
   }
 
-  // No card, for any of its reasons: none of the four, and each would refuse.
+  // No card, for any of its reasons: none of the five, and each would refuse.
   const cases = [
     ['ChIJforecastChipsDown0000', () => { placesUp = false; }],
-    ['ChIJforecastChipsCafe0000', () => { placeTypes = ['cafe']; }],
+    ['ChIJforecastChipsGym00000', () => { placeTypes = ['gym']; placePrimary = 'gym'; }],
     ['ChIJforecastChipsModel000', () => { method = 'ml'; }],
   ];
   for (const [placeId, arrange] of cases) {
@@ -833,4 +875,172 @@ test('the dashboard, Roost\'s card and Roost\'s chips opening together build the
   assert.strictEqual(cardById(downCards.body, 'week_ahead').status, 'refused');
   await call('/api/venue-dashboard/intelligence');
   assert.strictEqual(placesCalls - calls, 2, 'a failed lookup was kept as the answer');
+});
+
+// ── 9. Any kind the card reads on its hours, and today (2026-11-04) ─────────
+//
+// The card read every venue on the evening, so a cafe or a bakery was refused.
+// It now reads each day on the venue's own listed hours, or the window for its
+// kind (routes/venueDashboard.js dayScanHours), and Roost answers any venue
+// read that way, under the same rules as a bar. "How does today look?" is
+// answered off the card's today, which the card's own function reads on
+// today's hours although its week starts tomorrow.
+
+// Google's periods: one window per listed weekday (0 is Sunday).
+const periodsOf = (byDay) => Object.entries(byDay).map(([day, [open, close]]) => ({
+  open: { day: Number(day), hour: open, minute: 0 }, close: { day: Number(day), hour: close, minute: 0 },
+}));
+const NO_YOUR_RANKING = /\byour (?:quietest|busiest|slowest)\b/i;
+
+test('a no-history bakery with hours on its listing answers every week chip from them, framed, and a day it is shut is never its quiet day', async () => {
+  setUp({ placeId: 'ChIJforecastBakeryHours00', extra: { service_style: 'counter_order', typical_spend_per_person: 9 } });
+  placeTypes = ['bakery', 'food', 'store'];
+  placePrimary = 'bakery';
+  // 6 AM to 2 PM, and closed on Sundays, the card's quietest day (on Mondays
+  // when today is a Sunday, so the closed day is always in the week ahead).
+  const shut = new Date().getUTCDay() === 0 ? 1 : 0;
+  placePeriods = periodsOf(Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter((d) => d !== shut).map((d) => [d, [6, 14]])));
+  const { intel, week } = await cardWeek();
+  assert.strictEqual(intel.scanFrom, 'hours');
+  const open = week.filter((d) => !d.closed);
+  assert.ok(week.some((d) => d.weekday === SHORT[shut] && d.closed), JSON.stringify(week));
+  assert.ok(open.every((d) => d.peakHour === '8 AM'), JSON.stringify(open));
+  const low = open.reduce((a, b) => (b.peakScore < a.peakScore ? b : a));
+  const top = open.reduce((a, b) => (b.peakScore > a.peakScore ? b : a));
+
+  const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.strictEqual(r.body.text.split('\n')[0], `Fill ${LONG[low.weekday]}. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around 8 AM at ${low.peakScore} on our 0 to 100 index, against ${top.peakScore} on ${LONG[top.weekday]}.`);
+  assert.ok(!r.body.text.includes(LONG[SHORT[shut]]), 'a day the listing has it closed was named');
+
+  // Every week chip and today's is offered, and each answers off the card, framed.
+  const q = await call('/api/venue/advisor/questions');
+  const offered = offeredIds(q.body);
+  for (const id of WEEK_CHIPS) {
+    assert.ok(offered.includes(id), `${id}: ${offered.join(', ')}`);
+    const a = await call('/api/venue/advisor/ask', { intentId: id });
+    assert.notStrictEqual(a.body.mode, 'refusal', `${id}: ${a.body.text}`);
+    assert.match(a.body.text, /^(?:Fill \w+\. )?In Flock's forecast for places like yours, /, `${id}: ${a.body.text}`);
+    // The card's reading never says "your"; beside it the playbook's quiet-day
+    // words name the day, and its busy-hour words are about the owner's own
+    // room and stay (services/kindForecast.js unownDays).
+    assert.ok(!NO_YOUR_RANKING.test(a.body.text.split('\n')[0]), `${id}: ${a.body.text}`);
+    assert.ok(!/\byour (?:quietest|slowest)\b/i.test(a.body.text), `${id}: ${a.body.text}`);
+    assert.ok(a.body.sources.some((s) => s.source === 'category_pattern'), `${id}: ${JSON.stringify(a.body.sources)}`);
+  }
+  // Roost's own Week ahead card shows the five open days.
+  const cards = await call('/api/venue/advisor/cards');
+  const card = cardById(cards.body, 'week_ahead');
+  assert.strictEqual(card.status, 'ok', JSON.stringify(card));
+  assert.deepStrictEqual(card.facts.map((f) => f.value.date), open.map((d) => d.date));
+});
+
+test('"How does today look?" answers off the card\'s today for a no-history bar and a cafe, framed, from the same cache entry', async () => {
+  for (const [placeId, arrange, hour] of [
+    ['ChIJforecastTodayBar00000', () => {}, '9 PM'],
+    ['ChIJforecastTodayCafe0000', () => { placeTypes = ['cafe', 'food']; placePrimary = 'cafe'; }, '8 AM'],
+  ]) {
+    setUp({ placeId });
+    arrange();
+    const { intel } = await cardWeek();
+    assert.strictEqual(intel.today.peakHour, hour, placeId);
+    const before = { evenings: eveningCalls, places: placesCalls };
+    const r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+    assert.strictEqual(r.body.mode, 'template', r.body.text);
+    assert.strictEqual(r.body.text, `In Flock's forecast for places like yours, today peaks around ${hour} at ${intel.today.peakScore} on our 0 to 100 index.`);
+    assert.deepStrictEqual(r.body.sources.map((s) => [s.id, s.source, s.asOf]), [[`typical_peak_${intel.today.date}`, 'category_pattern', intel.generatedAt]]);
+    assert.deepStrictEqual({ evenings: eveningCalls, places: placesCalls }, before, 'Roost computed a second estimate');
+    // The chip is offered, and what to ask next is the week's peaks.
+    assert.ok(offeredIds((await call('/api/venue/advisor/questions')).body).includes('tonight_outlook'), placeId);
+    assert.ok(r.body.followUps.some((f) => f.kind === 'question' && f.text === 'How should I staff today?'), JSON.stringify(r.body.followUps));
+  }
+});
+
+test('today phrased: the model is handed today\'s fact with its source, and a draft that gives it as the venue\'s own goes to the template', async () => {
+  setUp({ placeId: 'ChIJforecastTodayPhrased0', phrasing: true });
+  const { intel } = await cardWeek();
+  const day = LONG[intel.today.weekday];
+  let payload = null;
+  const ids = (p) => {
+    const f = payloadFacts(p);
+    return { s: idFor(f, day, 'score'), h: idFor(f, day, 'hour') };
+  };
+  draftFor = (role, p) => {
+    payload = p;
+    const i = ids(p);
+    return { answer: `Flock's forecast for places like yours has today peaking around {{fact:${i.h}}} at {{fact:${i.s}}} on our index.`, points: ['Have your second bartender on before the rush builds.'] };
+  };
+  let r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+  assert.strictEqual(r.body.mode, 'phrased', r.body.text);
+  assert.strictEqual(r.body.text.split('\n')[0], `Flock's forecast for places like yours has today peaking around 9 PM at ${intel.today.peakScore} on our index.`);
+  const facts = payloadFacts(payload);
+  assert.ok(facts.length > 0 && facts.every((f) => f.source === 'category_pattern' && f.id.startsWith('typical_peak_')), JSON.stringify(facts));
+
+  for (const bad of [
+    (i) => ({ answer: `Today looks quiet for you, peaking at {{fact:${i.s}}} around {{fact:${i.h}}}.`, points: [] }),
+    (i) => ({ answer: `Flock's forecast for places like yours has today as your busiest stretch, at {{fact:${i.s}}}.`, points: [] }),
+    (i) => ({ answer: `Flock's forecast for places like yours puts today at {{fact:${i.s}}}.`, points: [`You are busiest around {{fact:${i.h}}}.`] }),
+  ]) {
+    let shown = null;
+    draftFor = (role, p) => { shown = bad(ids(p)); return shown; };
+    r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+    assert.strictEqual(r.body.mode, 'template', `${JSON.stringify(shown)} -> ${r.body.text}`);
+    assert.match(r.body.text, /^In Flock's forecast for places like yours, today peaks around 9 PM at \d+ on our 0 to 100 index\.$/);
+  }
+});
+
+test('today with nothing to read keeps the refusal: closed today by its listing, or a model number on the card', async () => {
+  const gateText = (p) => {
+    const gate = advisorFacts.corpusGate(p);
+    return `We can't answer that yet. ${gate.reason} ${gate.whatWouldUnlock}`;
+  };
+  // Closed today by its listed hours, open every other day: today refuses,
+  // and the week still answers.
+  setUp({ placeId: 'ChIJforecastTodayClosed00' });
+  const todayDow = new Date().getUTCDay();
+  placePeriods = periodsOf(Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter((d) => d !== todayDow).map((d) => [d, [16, 23]])));
+  const { intel } = await cardWeek();
+  assert.strictEqual(intel.today.closed, true, JSON.stringify(intel.today));
+  let r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+  assert.strictEqual(r.body.mode, 'refusal', r.body.text);
+  assert.ok(r.body.text.startsWith(gateText(profile)), r.body.text);
+  r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+  assert.notStrictEqual(r.body.mode, 'refusal', r.body.text);
+  const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
+  assert.ok(!offered.includes('tonight_outlook'), 'a today chip that would refuse');
+  assert.ok(offered.includes('money_move'), offered.join(', '));
+
+  // One model number on the card: the venue has a curve its profile has not
+  // caught up with, so neither the week nor today is read as places like it.
+  setUp({ placeId: 'ChIJforecastTodayModelA00' });
+  const { week } = await cardWeek();
+  setUp({ placeId: 'ChIJforecastTodayModelB00' });
+  modelOnDate = week[0].date;
+  for (const id of ['tonight_outlook', 'money_move']) {
+    r = await call('/api/venue/advisor/ask', { intentId: id });
+    assert.strictEqual(r.body.mode, 'refusal', `${id}: ${r.body.text}`);
+    assert.ok(r.body.text.startsWith(gateText(profile)), r.body.text);
+  }
+});
+
+test('typed, "how does today look" is answered off the card the same way, and the advice model is never handed today\'s fact', async () => {
+  setUp({ placeId: 'ChIJforecastTodayTyped000', phrasing: true });
+  const { intel } = await cardWeek();
+  route = { mode: 'grounded', intentId: 'tonight_outlook' };
+  draftFor = () => null; // the phrasing call fails: the template answers
+  let r = await call('/api/venue/advisor/question', { question: 'how does today look' });
+  assert.strictEqual(r.body.intentId, 'tonight_outlook');
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.strictEqual(r.body.text, `In Flock's forecast for places like yours, today peaks around 9 PM at ${intel.today.peakScore} on our 0 to 100 index.`);
+
+  route = { mode: 'advice', intentId: 'tonight_outlook' };
+  let advicePayload = null;
+  draftFor = (role, p) => {
+    advicePayload = p;
+    return { answer: 'Put your strongest bartender on the well from the first hour, and stagger the second shift to arrive as it fills.', points: [] };
+  };
+  r = await call('/api/venue/advisor/question', { question: 'how should I staff tonight' });
+  assert.strictEqual(r.body.mode, 'advice', r.body.text);
+  assert.ok(advicePayload, 'the advice model was asked');
+  assert.ok(!/category_pattern|typical_peak_/.test(advicePayload), 'today\'s fact reached the advice model');
 });
