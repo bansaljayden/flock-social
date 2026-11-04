@@ -420,6 +420,36 @@ test('the answer check holds a forecast for places like this one to saying so, a
   assert.strictEqual(advisorFreeText.applyAdviceValve(say('Sunday is your quiet day at {{fact:typical_peak_score}}, so run a weekly reason to come in.'), kind), null);
   assert.ok(advisorFreeText.applyAdviceValve(say('Flock\'s forecast for places like yours has Sunday at {{fact:typical_peak_score}}, so run a weekly reason to come in.'), kind));
   assert.ok(kindForecast.saysWhose('venues like you') && !kindForecast.saysWhose('your quietest day'));
+
+  // AND WITHOUT ITS PLACEHOLDER. Advice needs no source, so the card's number
+  // written as a plain number, or its quiet day named as the venue's own,
+  // passed with none at all until this rule.
+  const card = [
+    advisorFacts.makeFact({ id: 'typical_peak_score', value: 45, source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' }),
+    advisorFacts.makeFact({ id: 'typical_peak_weekday', value: 'Sunday', source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' }),
+    advisorFacts.makeFact({ id: 'intake_typical_spend_per_person', value: 28, source: 'intake', asOf: 'owner-set 2026-10-01', unit: 'usd' }),
+  ];
+  for (const own of [
+    'Sunday is your quietest day this week, at 45, so run a weekly quiz.',
+    'With Sunday at 45, give people one fixed reason to come in.',
+    'Sunday is your slowest day, so run a weekly quiz.',
+    'Your Sundays are the quietest, so run a weekly quiz.',
+  ]) {
+    assert.strictEqual(advisorFreeText.applyAdviceValve(say(own), card), null, own);
+    assert.strictEqual(advisorPhrasing.applyValve(say(own), { facts: card }), null, own);
+  }
+  for (const fine of [
+    'Flock\'s forecast for places like yours has Sunday as the quietest day at 45, so run a weekly quiz.',
+    'Run a weekly quiz on Sundays at 8 PM, and give it 6 weeks.',
+    'Aim for 45 more covers a month, and at $28 a head that is $1,260.',
+    'Sunday is a good night for a quiz, so run one every week.',
+    'Sunday is the best night to try a quiz, so run one every week.',
+  ]) {
+    assert.ok(advisorFreeText.applyAdviceValve(say(fine), card), fine);
+  }
+  // A venue whose block holds no card is never held to it.
+  const ownWeek = [advisorFacts.makeFact({ id: 'peak_score', value: 45, source: 'model_holdout', asOf: 'x' })];
+  assert.ok(advisorFreeText.applyAdviceValve(say('Sunday is your quietest day this week, at 45, so run a weekly quiz.'), ownWeek));
 });
 
 test('typed, the money move routes to the card; advice built on it says whose forecast it is or the playbook does', async () => {

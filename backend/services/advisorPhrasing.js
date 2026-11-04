@@ -61,7 +61,7 @@ const { GoogleGenAI } = require('@google/genai');
 const pool = require('../config/database');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
-const { KIND_FORECAST, isKindForecast, saysWhose } = require('./kindForecast');
+const { KIND_FORECAST, isKindForecast, saysWhose, readsAsCard } = require('./kindForecast');
 const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
 
@@ -1973,8 +1973,10 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
   // (services/kindForecast.js). An answer that uses one of those numbers or
   // days and never says whose forecast it is ("Sunday is your quietest day,
   // at 45") reads as the venue's own, so it goes whole: the template, or in
-  // advice the playbook, says it in its first words.
-  if ([...used].some((id) => isKindForecast(byId.get(id))) && !saysWhose(text)) {
+  // advice the playbook, says it in its first words. Used means cited, or
+  // written out without its placeholder (kindForecast.readsAsCard).
+  const usesCard = [...used].some((id) => isKindForecast(byId.get(id))) || readsAsCard(text, list);
+  if (usesCard && !saysWhose(text)) {
     return reject('a forecast for places like this one, given as the venue\'s own');
   }
 
