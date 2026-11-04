@@ -162,7 +162,7 @@ const SOURCE_WORDS = {
   arithmetic: 'arithmetic on your numbers',
   model_holdout: 'forecast',
   model_unverified_axis: 'forecast',
-  category_pattern: 'category pattern',
+  category_pattern: "Flock's forecast for places like yours",
   user_reports: 'user reports',
   served_prediction: 'served estimates',
   google_baseline: 'your Google profile',
