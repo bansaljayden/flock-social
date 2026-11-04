@@ -352,8 +352,14 @@ test('the clock a venue is scored on is the venue\'s hour on a nearby date', () 
       assert.equal(time.getDay(), day);
       assert.equal(time.getHours(), hour);
       assert.equal(time.getMinutes(), 0);
-      const daysAway = Math.abs(time - new Date()) / 86400000;
-      assert.ok(daysAway < 4, `scored a card ${daysAway.toFixed(1)} days from today`);
+      // Counted in calendar dates, not elapsed milliseconds: a week that
+      // crosses a daylight-saving change is an hour longer or shorter, so the
+      // worst case here (three days away at the far hour) measured 4.0 days on
+      // 2026-11-03 in New York, three days after the clocks went back.
+      const now = new Date();
+      const dateOf = (d) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+      const datesAway = Math.abs(dateOf(time) - dateOf(now)) / 86400000;
+      assert.ok(datesAway <= 3, `scored a card ${datesAway} dates from today`);
     }
   }
   // The exact bug: a UTC Sunday looking at a Saturday-evening venue.
