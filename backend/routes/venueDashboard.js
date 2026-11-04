@@ -2040,6 +2040,190 @@ async function fetchVenueBasics(placeId, userId) {
 // above carries verification_requested_at) is passed at every use site.
 const { unverifiedReason, liveNumberRefusal } = require('../utils/verificationCopy');
 
+// THE OWNER'S FORECAST, BUILT IN ONE PLACE (2026-11-03). GET /intelligence
+// serves it, and Roost reads this same function for a venue with no crowd
+// history of its own (services/advisorFacts.js buildWeekProjection): the
+// money move then names the numbers the Week Ahead card draws, from the same
+// computation and, within the hour, the same cache entry. Never a second
+// estimate beside the card.
+//
+// `ctx` is the venue_profiles row (google_place_id, verified). Answers the
+// published result, BUDGET_EXCEEDED when the shared Places budget refused the
+// lookup, or null when the venue is not linked and verified or the listing
+// could not be read.
+async function venueIntelligence(ctx, userId) {
+  // LINKED AND VERIFIED BEFORE THE CACHE, FOR EVERY CALLER. The cache is keyed
+  // by place id, so a check after cacheGet would hand an unverified claimant
+  // the verified owner's forecast (the gate note above unverifiedReason). The
+  // route answers both cases in its own words before it gets here; Roost is
+  // held to the same two checks by this line.
+  if (!ctx?.google_place_id || !ctx.verified) return null;
+  const placeId = ctx.google_place_id;
+  // The hour is in the key because `now` below is an hour-granular score:
+  // see THE CLOCK IN THE KEY above cacheClock.
+  const clockKey = cacheClock();
+  const cached = cacheGet(`intel:${placeId}:${clockKey}`);
+  if (cached) return cached;
+
+  const venue = await fetchVenueBasics(placeId, userId);
+  if (venue === BUDGET_EXCEEDED) return BUDGET_EXCEEDED;
+  if (!venue) return null;
+
+  const lat = venue.location?.latitude;
+  const lng = venue.location?.longitude;
+  const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
+
+  const now = new Date();
+  // Score on the VENUE's wall clock, not Railway's UTC. Same contract as
+  // routes/crowd.js: venueLocalNow turns Google's utcOffsetMinutes into the
+  // hour/day the doors actually run on, and weekdayOffset lands the base date
+  // on the venue's own weekday (nearest match) so the holiday / special-night
+  // features and the 6-day outlook walk the venue's calendar, not the
+  // server's. Falls back to the server clock when Google gives us no offset.
+  const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now, venue.timeZone);
+  const localHour = venueClock ? venueClock.hour : now.getHours();
+  const localDay = venueClock ? venueClock.day : now.getDay();
+  const venueBase = new Date(now);
+  venueBase.setDate(venueBase.getDate() + crowdEngine.weekdayOffset(venueBase.getDay(), localDay));
+  const scoreTime = new Date(venueBase);
+  scoreTime.setHours(localHour, 0, 0, 0);
+
+  // THE TWO HALVES OF TODAY, TOGETHER. Same venue, same weather object, and
+  // neither reads the other — `current` becomes the dial and `todayHourly` the
+  // bars, and the response object below is the first thing that touches
+  // either. predictHourlyForecast internally awaits init(), a weather forecast,
+  // an event prefetch and eighteen per-hour predictions, so awaiting the
+  // single-hour score in front of it put a whole prediction pass on this
+  // route's response time for no ordering anybody needs. The /strip route in
+  // this same file already runs exactly this pair under one Promise.all (see
+  // scoreOne).
+  const [scored, todayHourly] = await Promise.all([
+    mlPredictor.predictBusyness(venue, weather, scoreTime),
+    // Full day today, 6 AM start.
+    mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase),
+  ]);
+  // The dial and the bars agree on whether the venue has a curve: a dial
+  // that decided on a no from before the collector reached the venue, while
+  // the bars read its first rows, is scored again (mlPredictor
+  // .agreeWithStrip). Any other dial, and every dial with
+  // CROWD_NO_CURVE_FALLBACK off, comes back as it went in. A bar taken
+  // from the category table before those rows were read is scored again
+  // inside todayHourly itself, so todayHourly is read only below this line.
+  const current = await mlPredictor.agreeWithStrip(scored, todayHourly, venue, weather, scoreTime);
+
+  // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
+  // `day` from venueBase and read nothing from the iteration before it, so six
+  // independent forecast passes — each one an init(), a weather read, an event
+  // prefetch and seven per-hour predictions — were awaited strictly one after
+  // another on the one path that pays the whole cold-cache cost of this route.
+  // The days are six disjoint date windows, so the event prefetch buys the same
+  // six lookups either way, and weatherService coalesces its forecast by key.
+  //
+  // AFTER the pair above, deliberately. By the time these six start, that pair
+  // has warmed every per-venue cache they share — the whole-week baseline
+  // curve, the feedback average, the venue's own baselines, the neighbour box —
+  // so the six passes run off warm entries. Six cold passes starting at once
+  // would each miss those caches and turn one read into six: the sequencing
+  // here is what makes the concurrency free, and hoisting this batch above the
+  // pair would undo it.
+  const days = [];
+  for (let d = 1; d <= 6; d++) {
+    const day = new Date(venueBase);
+    day.setDate(day.getDate() + d);
+    day.setHours(17, 0, 0, 0);
+    days.push(day);
+  }
+  // THE WHOLE NIGHT, NOT 5 TO 11 PM (2026-11-03). A club that peaks at 1 AM
+  // showed its 11 PM hour on "Biggest Night Ahead" while Roost named 1 AM,
+  // because this scan stopped at 11 PM. A night runs from its evening into
+  // the small hours that carry it on, the rule Roost's own week uses
+  // (advisorFacts.nightTailHours): an hour from midnight to 4 AM belongs to
+  // the night before when the venue's curve has the room open at 11 PM and
+  // every hour from midnight up to it. Each evening is scanned to the end of
+  // its own night and keeps its own day's name. The curve is the one today's
+  // strip just read (mlPredictor.venueCurveRows), so no second query. Without
+  // a curve to read, the evening alone, as before.
+  let nightTail = () => [];
+  try {
+    const rows = await mlPredictor.venueCurveRows(venue.place_id || placeId, userId);
+    const openByDay = advisorFacts.openHoursByDay((rows || []).map((r) => ({
+      day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline),
+    })));
+    nightTail = (day) => advisorFacts.nightTailHours(openByDay, (day.getDay() + 1) % 7);
+  } catch { /* the evening alone */ }
+  const EVENING_HOURS = 7;
+  const evenings = await Promise.all(
+    days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, EVENING_HOURS + nightTail(day).length, day))
+  );
+  // Mapped over `days` rather than pushed from the resolved order, so the week
+  // the owner reads stays in date order whatever order the six settled in.
+  const week = days.map((day, i) => {
+    // The night's own hours only: on the night the clocks spring forward the
+    // strip walks past the hour that does not exist and on into 5 AM, which
+    // is the next morning, not this night (review, 2026-11-03).
+    const evening = evenings[i].filter((b) => {
+      const h = hourOfLabel(b.hour);
+      return h === null || h >= 17 || h <= advisorFacts.NIGHT_TAIL_LAST_HOUR;
+    });
+    // WHICH evening hour is the peak is an ordering question, and ordering
+    // is not the model's job any more: on within-night hour pairs the
+    // trained delta layer scores 62.7% against the popular-times curve's
+    // 63.1%, negative in every gap bucket (scripts/ml/HOUR-RANKING-EVAL.md).
+    // crowdEngine.orderingAxis is the one definition of which number ranks
+    // hours, and it picks the axis for the whole evening at once, falling
+    // back to model scores when any hour lacks a baseline. HOW BUSY that
+    // hour is stays the model's number, read at the hour just named, so the
+    // pair the owner reads describes one hour rather than two.
+    const rank = crowdEngine.orderingAxis(evening).valueOf;
+    let at = -1;
+    evening.forEach((b, i) => { if (at < 0 || rank(b) > rank(evening[at])) at = i; });
+    const peak = at >= 0 ? evening[at] : null;
+    const peakClock = peak ? hourOfLabel(peak.hour) : null;
+    const afterMidnight = peakClock !== null ? peakClock <= advisorFacts.NIGHT_TAIL_LAST_HOUR : at >= EVENING_HOURS;
+    return {
+      date: day.toISOString().slice(0, 10),
+      weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
+      peakScore: peak ? (peak.score ?? null) : null,
+      peakHour: peak ? (peak.hour ?? null) : null,
+      // What made the peak's number, the way `now` carries its method: 'ml',
+      // or a rule_engine* category prior for a venue with no curve of its
+      // own. Roost reads it to say whose forecast the week is
+      // (advisorFacts.buildWeekProjection); the chart does not.
+      method: peak ? (peak.predictionMethod || null) : null,
+      // A peak in the small hours belongs to this evening's night, and the
+      // tile says so ("at 1 AM that night"), never the next day's.
+      ...(afterMidnight ? { afterMidnight: true } : {}),
+    };
+  });
+
+  const result = {
+    available: true,
+    venue: { name: venue.name, placeId: venue.place_id },
+    now: { score: current.score, label: current.label, method: current.predictionMethod || (current.dataSourcesUsed?.includes('ml_model') ? 'ml' : 'rule_engine') },
+    // `baselineScore` is a SERVE-PATH field, dropped here exactly as
+    // routes/crowd.js drops it from the consumer card: it is the number
+    // orderingAxis ranks on, and publishing it invites a client to re-derive
+    // an ordering of its own beside the one the server already decided. The
+    // published level per hour is the model's, which is what these bars are.
+    todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
+    week,
+    model: current.modelVersion || null,
+    // Which arithmetic made the dial's number when a serving switch changed
+    // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock
+    // crowd model v..." off `model` otherwise, which with curve_offset on
+    // would credit a model that did not run. Absent with both switches off.
+    // Through describePublishedArithmetic like every surface; this dial
+    // blends no reports and applies no owner reading, so the served source
+    // is the published one.
+    ...(crowdEngine.describePublishedArithmetic(current)
+      ? { numberSource: crowdEngine.describePublishedArithmetic(current) }
+      : {}),
+    generatedAt: new Date().toISOString(),
+  };
+  cacheSet(`intel:${placeId}:${clockKey}`, result);
+  return result;
+}
+
 // GET /api/venue-dashboard/intelligence — the owner's own forecast
 router.get('/intelligence', requirePro, async (req, res) => {
   try {
@@ -2051,167 +2235,14 @@ router.get('/intelligence', requirePro, async (req, res) => {
       return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so forecasts are off. Write to social@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
-    // The hour is in the key because `now` below is an hour-granular score:
-    // see THE CLOCK IN THE KEY above cacheClock.
-    const clockKey = cacheClock();
-    const cached = cacheGet(`intel:${ctx.google_place_id}:${clockKey}`);
-    if (cached) return res.json(cached);
 
-    const venue = await fetchVenueBasics(ctx.google_place_id, req.user.id);
-    if (venue === BUDGET_EXCEEDED) return budgetRefusal(res, req.user.id);
+    const result = await venueIntelligence(ctx, req.user.id);
+    if (result === BUDGET_EXCEEDED) return budgetRefusal(res, req.user.id);
     // A lookup that did not answer is the one unavailable state here that a
     // second attempt can change, so it says so and the dashboard puts a Try
     // again under it. The two above it (no listing, unverified) are settled,
     // and a retry button under a settled fact is a button that lies.
-    if (!venue) return res.json({ available: false, code: 'lookup_failed', reason: 'Could not reach your Google listing right now' });
-
-    const lat = venue.location?.latitude;
-    const lng = venue.location?.longitude;
-    const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
-
-    const now = new Date();
-    // Score on the VENUE's wall clock, not Railway's UTC. Same contract as
-    // routes/crowd.js: venueLocalNow turns Google's utcOffsetMinutes into the
-    // hour/day the doors actually run on, and weekdayOffset lands the base date
-    // on the venue's own weekday (nearest match) so the holiday / special-night
-    // features and the 6-day outlook walk the venue's calendar, not the
-    // server's. Falls back to the server clock when Google gives us no offset.
-    const venueClock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now, venue.timeZone);
-    const localHour = venueClock ? venueClock.hour : now.getHours();
-    const localDay = venueClock ? venueClock.day : now.getDay();
-    const venueBase = new Date(now);
-    venueBase.setDate(venueBase.getDate() + crowdEngine.weekdayOffset(venueBase.getDay(), localDay));
-    const scoreTime = new Date(venueBase);
-    scoreTime.setHours(localHour, 0, 0, 0);
-
-    // THE TWO HALVES OF TODAY, TOGETHER. Same venue, same weather object, and
-    // neither reads the other — `current` becomes the dial and `todayHourly` the
-    // bars, and the response object below is the first thing that touches
-    // either. predictHourlyForecast internally awaits init(), a weather forecast,
-    // an event prefetch and eighteen per-hour predictions, so awaiting the
-    // single-hour score in front of it put a whole prediction pass on this
-    // route's response time for no ordering anybody needs. The /strip route in
-    // this same file already runs exactly this pair under one Promise.all (see
-    // scoreOne).
-    const [scored, todayHourly] = await Promise.all([
-      mlPredictor.predictBusyness(venue, weather, scoreTime),
-      // Full day today, 6 AM start.
-      mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase),
-    ]);
-    // The dial and the bars agree on whether the venue has a curve: a dial
-    // that decided on a no from before the collector reached the venue, while
-    // the bars read its first rows, is scored again (mlPredictor
-    // .agreeWithStrip). Any other dial, and every dial with
-    // CROWD_NO_CURVE_FALLBACK off, comes back as it went in. A bar taken
-    // from the category table before those rows were read is scored again
-    // inside todayHourly itself, so todayHourly is read only below this line.
-    const current = await mlPredictor.agreeWithStrip(scored, todayHourly, venue, weather, scoreTime);
-
-    // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
-    // `day` from venueBase and read nothing from the iteration before it, so six
-    // independent forecast passes — each one an init(), a weather read, an event
-    // prefetch and seven per-hour predictions — were awaited strictly one after
-    // another on the one path that pays the whole cold-cache cost of this route.
-    // The days are six disjoint date windows, so the event prefetch buys the same
-    // six lookups either way, and weatherService coalesces its forecast by key.
-    //
-    // AFTER the pair above, deliberately. By the time these six start, that pair
-    // has warmed every per-venue cache they share — the whole-week baseline
-    // curve, the feedback average, the venue's own baselines, the neighbour box —
-    // so the six passes run off warm entries. Six cold passes starting at once
-    // would each miss those caches and turn one read into six: the sequencing
-    // here is what makes the concurrency free, and hoisting this batch above the
-    // pair would undo it.
-    const days = [];
-    for (let d = 1; d <= 6; d++) {
-      const day = new Date(venueBase);
-      day.setDate(day.getDate() + d);
-      day.setHours(17, 0, 0, 0);
-      days.push(day);
-    }
-    // THE WHOLE NIGHT, NOT 5 TO 11 PM (2026-11-03). A club that peaks at 1 AM
-    // showed its 11 PM hour on "Biggest Night Ahead" while Roost named 1 AM,
-    // because this scan stopped at 11 PM. A night runs from its evening into
-    // the small hours that carry it on, the rule Roost's own week uses
-    // (advisorFacts.nightTailHours): an hour from midnight to 4 AM belongs to
-    // the night before when the venue's curve has the room open at 11 PM and
-    // every hour from midnight up to it. Each evening is scanned to the end of
-    // its own night and keeps its own day's name. The curve is the one today's
-    // strip just read (mlPredictor.venueCurveRows), so no second query. Without
-    // a curve to read, the evening alone, as before.
-    let nightTail = () => [];
-    try {
-      const rows = await mlPredictor.venueCurveRows(venue.place_id || ctx.google_place_id, req.user.id);
-      const openByDay = advisorFacts.openHoursByDay((rows || []).map((r) => ({
-        day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline),
-      })));
-      nightTail = (day) => advisorFacts.nightTailHours(openByDay, (day.getDay() + 1) % 7);
-    } catch { /* the evening alone */ }
-    const EVENING_HOURS = 7;
-    const evenings = await Promise.all(
-      days.map((day) => mlPredictor.predictHourlyForecast(venue, weather, 17, EVENING_HOURS + nightTail(day).length, day))
-    );
-    // Mapped over `days` rather than pushed from the resolved order, so the week
-    // the owner reads stays in date order whatever order the six settled in.
-    const week = days.map((day, i) => {
-      // The night's own hours only: on the night the clocks spring forward the
-      // strip walks past the hour that does not exist and on into 5 AM, which
-      // is the next morning, not this night (review, 2026-11-03).
-      const evening = evenings[i].filter((b) => {
-        const h = hourOfLabel(b.hour);
-        return h === null || h >= 17 || h <= advisorFacts.NIGHT_TAIL_LAST_HOUR;
-      });
-      // WHICH evening hour is the peak is an ordering question, and ordering
-      // is not the model's job any more: on within-night hour pairs the
-      // trained delta layer scores 62.7% against the popular-times curve's
-      // 63.1%, negative in every gap bucket (scripts/ml/HOUR-RANKING-EVAL.md).
-      // crowdEngine.orderingAxis is the one definition of which number ranks
-      // hours, and it picks the axis for the whole evening at once, falling
-      // back to model scores when any hour lacks a baseline. HOW BUSY that
-      // hour is stays the model's number, read at the hour just named, so the
-      // pair the owner reads describes one hour rather than two.
-      const rank = crowdEngine.orderingAxis(evening).valueOf;
-      let at = -1;
-      evening.forEach((b, i) => { if (at < 0 || rank(b) > rank(evening[at])) at = i; });
-      const peak = at >= 0 ? evening[at] : null;
-      const peakClock = peak ? hourOfLabel(peak.hour) : null;
-      const afterMidnight = peakClock !== null ? peakClock <= advisorFacts.NIGHT_TAIL_LAST_HOUR : at >= EVENING_HOURS;
-      return {
-        date: day.toISOString().slice(0, 10),
-        weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
-        peakScore: peak ? (peak.score ?? null) : null,
-        peakHour: peak ? (peak.hour ?? null) : null,
-        // A peak in the small hours belongs to this evening's night, and the
-        // tile says so ("at 1 AM that night"), never the next day's.
-        ...(afterMidnight ? { afterMidnight: true } : {}),
-      };
-    });
-
-    const result = {
-      available: true,
-      venue: { name: venue.name, placeId: venue.place_id },
-      now: { score: current.score, label: current.label, method: current.predictionMethod || (current.dataSourcesUsed?.includes('ml_model') ? 'ml' : 'rule_engine') },
-      // `baselineScore` is a SERVE-PATH field, dropped here exactly as
-      // routes/crowd.js drops it from the consumer card: it is the number
-      // orderingAxis ranks on, and publishing it invites a client to re-derive
-      // an ordering of its own beside the one the server already decided. The
-      // published level per hour is the model's, which is what these bars are.
-      todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
-      week,
-      model: current.modelVersion || null,
-      // Which arithmetic made the dial's number when a serving switch changed
-      // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock
-      // crowd model v..." off `model` otherwise, which with curve_offset on
-      // would credit a model that did not run. Absent with both switches off.
-      // Through describePublishedArithmetic like every surface; this dial
-      // blends no reports and applies no owner reading, so the served source
-      // is the published one.
-      ...(crowdEngine.describePublishedArithmetic(current)
-        ? { numberSource: crowdEngine.describePublishedArithmetic(current) }
-        : {}),
-      generatedAt: new Date().toISOString(),
-    };
-    cacheSet(`intel:${ctx.google_place_id}:${clockKey}`, result);
+    if (!result) return res.json({ available: false, code: 'lookup_failed', reason: 'Could not reach your Google listing right now' });
     res.json(result);
   } catch (err) {
     console.error('Venue intelligence error:', err);
@@ -3040,6 +3071,12 @@ router.get('/this-week', requirePro, async (req, res) => {
 });
 
 module.exports = router;
+
+// Roost's week for a venue with no crowd history of its own is this route's
+// Week Ahead (services/advisorFacts.js buildWeekProjection): the function that
+// builds it, and the one reading of its hour labels ("9 PM" is 21).
+module.exports.venueIntelligence = venueIntelligence;
+module.exports.hourOfLabel = hourOfLabel;
 
 // Exposed for backend/__tests__/venueIntegrity.test.js only. The view window is
 // process-wide state, so a test that cannot reset it or see its bound is a test
