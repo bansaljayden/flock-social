@@ -629,6 +629,64 @@ function groundVenueDetails(text, facts) {
   return { text: out, removed };
 }
 
+// ── What may not be said at all ─────────────────────────────────────────────
+
+// A remainder that is only the opener of the talk that went ("Heads up, they
+// card at the door." leaves "Heads up.") goes with it.
+const BARE_OPENER = /^(?:heads up|fair warning|warning|fyi|btw|by the way|just so you know|just know|note|quick note|one thing|real talk|honestly|careful|also|but|and|so|plus|though|just)$/i;
+
+/**
+ * THE REPLY WITH THE TALK `offLimits` NAMES TAKEN OUT (2026-11-04).
+ * groundVenueDetails takes out a detail no tool stood behind; this takes out
+ * talk that may not stand whatever stands behind it, read and put back
+ * together the same way: venue names covered (a word inside a name is never
+ * talk), the same sentences and clauses, every clause `offLimits` matches taken
+ * out with the phrases that hang off it, and the sentence rebuilt as a plain
+ * one. A sentence that still says it once rebuilt, or whose talk runs across
+ * its clauses, goes whole. Unlike groundVenueDetails it can empty a reply:
+ * what it removes may not stand, so the caller says what goes in its place.
+ * routes/ai.js uses it for drinks, ID and the door in an answer about a plan
+ * locked in at a bar, for someone under 21 (utils/birdieDoorTalk.js).
+ * Returns { text, removed }, `removed` the number of sentences it changed.
+ */
+function withoutClauses(text, facts, offLimits) {
+  const original = typeof text === 'string' ? text : '';
+  if (!original.trim() || !(offLimits instanceof RegExp)) return { text: original, removed: 0 };
+  const says = (s) => {
+    offLimits.lastIndex = 0;
+    return offLimits.test(s);
+  };
+  const venues = facts && typeof facts.list === 'function' ? facts.list() : [];
+  const patterns = mentionPatterns(venues);
+  const covered = (s) => mask(s, findMentions(s, patterns));
+  const masked = covered(original);
+  let removed = 0;
+  const pieces = [];
+  let cursor = 0;
+  for (const s of splitSentences(masked)) {
+    const between = original.slice(cursor, s.start);
+    cursor = s.end;
+    const sOrig = original.slice(s.start, s.end);
+    const sMasked = masked.slice(s.start, s.end);
+    let kept = sOrig;
+    if (says(sMasked)) {
+      removed += 1;
+      const segs = segmentsOf(sMasked);
+      const drop = new Set();
+      segs.forEach((g, i) => {
+        if (!says(sMasked.slice(g.start, g.end))) return;
+        drop.add(i);
+        if (!g.modifier) for (let j = i + 1; j < segs.length && segs[j].modifier; j++) drop.add(j);
+      });
+      kept = drop.size ? rebuild(sOrig, segs, drop) : '';
+      if (kept && (says(covered(kept)) || BARE_OPENER.test(kept.replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim()))) kept = '';
+    }
+    if (kept) pieces.push((pieces.length ? between : between.replace(/^\s+/, '')) + kept);
+  }
+  if (!removed) return { text: original, removed: 0 };
+  return { text: pieces.join('').replace(/[ \t]+$/g, ''), removed };
+}
+
 // A sentence with segments `drop` taken out, put back together as a plain
 // sentence (see WHAT IS REMOVED in the header).
 function rebuild(sOrig, segs, drop) {
@@ -673,6 +731,7 @@ module.exports = {
   noteCarded,
   CARDED_MAX,
   groundVenueDetails,
+  withoutClauses,
   // For __tests__/birdieGrounding.test.js.
   __internals: { findClaims, findMentions, mentionPatterns, splitSentences, segmentsOf, norm, stem, nameForms },
 };
