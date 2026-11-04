@@ -278,11 +278,36 @@ test('the card\'s week becomes Roost facts with the card\'s numbers, labelled as
     assert.deepStrictEqual(f.value, { date: d.date, weekday: LONG[d.weekday], peakHour: 21, peakScore: d.peakScore });
     assert.strictEqual(f.value.peakScore, CARD[d.weekday], 'the number on the card, unchanged');
     assert.strictEqual(f.label, `${LONG[d.weekday]} projects busiest around 9 PM, at ${d.peakScore} on our 0 to 100 index, in Flock's forecast for places like yours.`);
-    assert.strictEqual(f.note, advisorFacts.KIND_FORECAST_NOTE);
-    assert.match(f.note, /not this venue's own forecast and not its readings/);
+    // Said once, in the label; the sources line attributes it. No note says
+    // it a third time (2026-11-04).
+    assert.ok(!('note' in f), JSON.stringify(f));
   }
   // Nothing that reads the venue's own forecast by its peak_ id can take one.
   assert.ok(facts.every((f) => !f.id.startsWith('peak_')));
+});
+
+test('each projected day says whose forecast it is once, in its label, with every number: no note repeats it, and a small-hours peak keeps the note naming its night', () => {
+  // Saturday's peak at 1 AM, the tail of Saturday night.
+  const intel = {
+    ...DEMO_INTEL,
+    week: DEMO_INTEL.week.map((d, i) => (i === 0 ? { ...d, peakHour: '1 AM', afterMidnight: true } : d)),
+    today: { date: '2026-11-06', weekday: 'Fri', peakScore: 66, peakHour: '10 PM', method: 'rule_engine_no_baseline', window: 'evening' },
+  };
+  const hourOf = venueDashboardRouter.hourOfLabel;
+  const facts = [...advisorFacts.projectionFacts(intel, { hourOf }), ...advisorFacts.todayProjectionFacts(intel, { hourOf })];
+  assert.strictEqual(facts.length, 7);
+  for (const f of facts) {
+    const said = `${f.label} ${f.note || ''}`.match(/forecast for places like/gi) || [];
+    assert.strictEqual(said.length, 1, JSON.stringify(f));
+    assert.match(f.label, new RegExp(`projects busiest around \\d{1,2} [AP]M, at ${f.value.peakScore} on our 0 to 100 index, in Flock's forecast for places like yours\\.$`));
+    // The source is what the sources line attributes.
+    assert.strictEqual(f.source, 'category_pattern');
+  }
+  assert.strictEqual(facts[0].label, 'Saturday night projects busiest around 1 AM, at 74 on our 0 to 100 index, in Flock\'s forecast for places like yours.');
+  assert.strictEqual(facts[0].note, advisorFacts.afterMidnightNote('Saturday'));
+  assert.ok(facts.slice(1).every((f) => !('note' in f)), JSON.stringify(facts.slice(1)));
+  // Today's fact: Friday, 10 PM, 66.
+  assert.deepStrictEqual(facts[6].value, { date: '2026-11-06', weekday: 'Friday', peakHour: 22, peakScore: 66 });
 });
 
 test('a card that is not a week of category priors read on hours the venue keeps is no week at all', async () => {
@@ -425,12 +450,14 @@ test('the model is handed the card\'s facts with their source and note, and an a
   assert.ok(r.body.text.includes(`places like yours peak highest on ${busy} around 9 PM, reaching ${top.peakScore}.`), r.body.text);
   assert.ok(r.body.sources.every((s) => s.source === 'category_pattern'), JSON.stringify(r.body.sources));
 
-  // What the model was given: the two days, their source and their note, the
-  // ids it may write, and the playbook's move naming the quiet day.
+  // What the model was given: the two days and their source, which the
+  // system prompt reads as Flock's forecast for places like this one (no note
+  // says it again since 2026-11-04, the notes say which end of the week a day
+  // is), the ids it may write, and the playbook's move naming the quiet day.
   const facts = payloadFacts(payload);
   assert.ok(facts.length >= 6 && facts.every((f) => f.source === 'category_pattern' && f.id.startsWith('typical_peak_')), JSON.stringify(facts));
-  assert.ok(facts.every((f) => f.note.includes(advisorFacts.KIND_FORECAST_NOTE)));
-  assert.ok(facts.some((f) => f.note.includes('LOWEST projected day in the week ahead')));
+  assert.ok(facts.every((f) => !/forecast for places like/i.test(f.note || '')), JSON.stringify(facts));
+  assert.ok(facts.some((f) => (f.note || '').includes('LOWEST projected day in the week ahead')));
   assert.match(payload, /^PLACEHOLDER IDS\. .*typical_peak_score/m);
   assert.match(payload, new RegExp(`"move":"Give ${quiet} one recurring reason to visit`));
   assert.ok(!/your (?:slowest|quietest) day/i.test(payload.slice(payload.indexOf('PLAYBOOK MOVE'))), payload);
@@ -748,7 +775,9 @@ test('Roost\'s own Week ahead card shows the dashboard\'s Week Ahead for a no-hi
     assert.strictEqual(f.value.date, week[i].date, 'the client files each fact under its day');
     assert.strictEqual(f.value.peakScore, week[i].peakScore, 'the dashboard card\'s own number');
     assert.match(f.label, /in Flock's forecast for places like yours\.$/);
-    assert.match(f.note, /^This is Flock's forecast for places like this one/);
+    // Said once per day, in its label, with the source attributing it; no
+    // note repeats it.
+    assert.ok(!('note' in f), JSON.stringify(f));
     assert.strictEqual(f.asOf, intel.generatedAt);
   }
   assert.deepStrictEqual({ evenings: eveningCalls, places: placesCalls }, before, 'the card was built a second time');

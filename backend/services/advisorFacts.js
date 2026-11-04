@@ -997,8 +997,11 @@ async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress =
 //   * an id of its own, typical_peak_<date>, so nothing that reads the
 //     venue's forecast by its peak_ id (the kitchen line, the capacity sum,
 //     the strongest-day read in buildListingReadBack) takes it for one;
-//   * a label and a note that call it Flock's forecast for places like this
-//     one, never the venue's own.
+//   * a label that calls it Flock's forecast for places like this one, never
+//     the venue's own. The sources line under it names the source in the
+//     same words, and that is the second and last time the card says it
+//     (2026-11-04): a note on every day said it a third time, so the note now
+//     carries only what the label does not (a small-hours peak's night).
 // Only when every scored day is a category prior: a model number means the
 // venue has a curve its profile has not caught up with, and that week is not
 // "typical for places like yours". And only when the card read each day on
@@ -1024,8 +1027,6 @@ const CARD_WEEKDAYS = Object.freeze({
 // rule_engine_category_table, whose name starts the same way on purpose
 // (mlPredictor, NO_CURVE_FALLBACK_METHOD): every one is a category prior.
 const CATEGORY_PRIOR = /^rule_engine/;
-
-const KIND_FORECAST_NOTE = 'This is Flock\'s forecast for places like this one: what is typical for its kind of place, because we hold no crowd history for this venue itself. It is not this venue\'s own forecast and not its readings.';
 
 function kindForecastPeakLabel({ weekday, hour, score, afterMidnight = false }) {
   return `${weekday}${afterMidnight ? ' night' : ''} projects busiest around ${hour12(hour)}, at ${score} on our 0 to 100 index, in ${KIND_FORECAST}.`;
@@ -1070,7 +1071,11 @@ function kindForecastFact({ d, date, score, hour }, asOf) {
     asOf,
     predictionMethod: d.method,
     unit: '0-100 index',
-    note: [KIND_FORECAST_NOTE, afterMidnight ? afterMidnightNote(weekday) : null].filter(Boolean).join(' '),
+    // Whose forecast it is is said once, in the label, and the sources line
+    // attributes it; the phrasing model reads the source itself
+    // (advisorPrompt, category_pattern). A small-hours peak's night is the
+    // one thing a note adds.
+    ...(afterMidnight ? { note: afterMidnightNote(weekday) } : {}),
     label: kindForecastPeakLabel({ weekday, hour, score, afterMidnight }),
   });
 }
@@ -1937,7 +1942,6 @@ module.exports = {
   projectionFacts,
   todayProjectionFacts,
   kindForecastPeakLabel,
-  KIND_FORECAST_NOTE,
   buildAroundYou,
   buildListingReadBack,
   buildReadingsVsServed,
