@@ -478,14 +478,17 @@ test('with no crowd history and no card to read, the refusal stands word for wor
     const gate = advisorFacts.corpusGate(p);
     return `We can't answer that yet. ${gate.reason} ${gate.whatWouldUnlock}`;
   };
-  // The listing could not be read, so there is no card.
-  setUp({ placeId: 'ChIJforecastNoCard0000000' });
+  // The listing could not be read, so there is no card. Phrasing is on, and
+  // a refusal still never reaches the model.
+  setUp({ placeId: 'ChIJforecastNoCard0000000', phrasing: true });
   placesUp = false;
+  draftFor = () => ({ answer: 'Fill Sunday.', points: [] });
   let r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
   assert.strictEqual(r.body.mode, 'refusal');
   assert.strictEqual(r.body.text, refusal(profile));
   assert.match(r.body.text, /^We can't answer that yet\. We have no crowd history for this venue\./);
   assert.deepStrictEqual(r.body.sources, []);
+  assert.deepStrictEqual(modelCalls, [], 'a refusal cost a model call');
 
   // A card with a model number on it is not Flock's forecast for places like
   // yours, so it is not read as one.
