@@ -88,7 +88,10 @@ const SOURCE_LABELS = {
   model_holdout: 'our estimate',
   model_unverified_axis: 'our estimate, thin data',
   user_reports: 'people who were there',
-  category_pattern: 'category pattern',
+  // What is typical for this kind of place: for a venue with no crowd history
+  // of its own, the Week ahead card shows the dashboard's Week Ahead (backend
+  // services/kindForecast.js), and its days say whose forecast they are.
+  category_pattern: "Flock's forecast for places like yours",
   intake: 'you told us',
   owner_report: 'your reading',
   votes: 'group votes',

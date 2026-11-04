@@ -621,6 +621,9 @@ const SOURCE_PHRASES = Object.assign(Object.create(null), {
   // median over at least five reporting venues (services/advisorCohort.js).
   cohort_reported: 'readings from venues like yours',
   table_sensor: 'your table sensor',
+  // A no-history venue's Week Ahead (services/kindForecast.js), in the words
+  // the client's sources line uses for it.
+  category_pattern: KIND_FORECAST,
 });
 
 function sourcePhrase(source) {

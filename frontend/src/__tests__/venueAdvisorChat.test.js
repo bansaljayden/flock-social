@@ -278,6 +278,29 @@ describe('Roost chat: the three answers are told apart', () => {
     ])).toBe("Sources: your own readings (Oct 27), your settings, your Google profile's pattern.");
   });
 
+  test('an answer from the dashboard\'s Week Ahead names it the way the answer does, never by its key', async () => {
+    // A venue with no crowd history, answered from the card (backend
+    // services/kindForecast.js): the answer opens on whose forecast it is, and
+    // the sources line under it says the same in the same words.
+    const CARD_MOVE = {
+      mode: 'template',
+      intentId: 'money_move',
+      text: "Fill Sunday. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around 8 PM at 45 on our 0 to 100 index, against 74 on Saturday.",
+      sources: [
+        { id: 'typical_peak_2026-11-08', source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' },
+        { id: 'typical_peak_2026-11-07', source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' },
+        { id: 'roost_playbook', source: 'roost_playbook', asOf: null },
+      ],
+    };
+    const { sourcesLine } = require('../components/VenueAdvisorChat');
+    const year = new Date().getFullYear();
+    expect(sourcesLine([{ source: 'category_pattern', asOf: `${year}-11-03T12:00:00Z` }]))
+      .toBe("Sources: Flock's forecast for places like yours (Nov 3).");
+    await askWith(CARD_MOVE);
+    expect(screen.getByText(/^Sources: Flock's forecast for places like yours \(Nov 3(, 2026)?\), Roost playbook\.$/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/category[ _]pattern/i);
+  });
+
   test('an answer reads as a short answer and a list of points, with one sources line naming the trade beside the venue\'s own numbers', async () => {
     mount({ askQuestion: async () => SHAPED });
     const input = await waitFor(field);

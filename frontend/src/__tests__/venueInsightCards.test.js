@@ -219,6 +219,55 @@ describe('Roost: the week scrubber', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A VENUE WITH NO CROWD HISTORY OF ITS OWN (2026-11-03). Its Week ahead card
+// holds the dashboard's Week Ahead (backend routes/advisor.js GET /cards):
+// six evenings from tomorrow, each a category_pattern fact whose label and
+// note say it is Flock's forecast for places like this one. The card used to
+// refuse under the dashboard card's numbers.
+// ---------------------------------------------------------------------------
+describe('Roost: a no-history venue\'s Week ahead is the dashboard\'s, said whose it is', () => {
+  const KIND_NOTE = "This is Flock's forecast for places like this one: what is typical for its kind of place, because we hold no crowd history for this venue itself. It is not this venue's own forecast and not its readings.";
+  const kindFact = (n, hour, score) => ({
+    id: `typical_peak_${D(n)}`,
+    value: { date: D(n), weekday: wd(n), peakHour: hour, peakScore: score },
+    source: 'category_pattern',
+    asOf: '2026-08-19T20:00:00Z',
+    predictionMethod: 'rule_engine_no_baseline',
+    unit: '0-100 index',
+    note: KIND_NOTE,
+    label: `${wd(n)} night projects busiest around ${hour - 12} PM, at ${score} on our 0 to 100 index, in Flock's forecast for places like yours.`,
+  });
+  const KIND_WEEK = [kindFact(20, 21, 64), kindFact(21, 22, 74), kindFact(22, 22, 74), kindFact(23, 20, 45), kindFact(24, 21, 48), kindFact(25, 21, 48)];
+  const kindPayload = () => Promise.resolve({
+    available: true,
+    generatedAt: '2026-08-19T20:00:00Z',
+    cards: [{ id: 'week_ahead', title: 'Week ahead', status: 'ok', facts: KIND_WEEK }],
+  });
+
+  test('the scrubber opens on the card\'s first day, and every line says whose forecast it is', async () => {
+    mount({ fetchCards: kindPayload });
+    await screen.findByText('Week ahead');
+    const group = screen.getByRole('group', { name: 'Pick a day' });
+    const chips = within(group).getAllByRole('button');
+    expect(chips.length).toBe(6);
+    // Today is not on the card, so the first day it holds is selected.
+    const pressed = chips.filter((c) => c.getAttribute('aria-pressed') === 'true');
+    expect(pressed.length).toBe(1);
+    expect(pressed[0].textContent).toContain('20');
+    expect(screen.getByText(KIND_WEEK[0].label)).toBeInTheDocument();
+    expect(screen.getByText(KIND_NOTE)).toBeInTheDocument();
+    expect(screen.getByText("Flock's forecast for places like yours, as of Aug 19.")).toBeInTheDocument();
+    // Any other day reads the same way.
+    fireEvent.click(chips.find((c) => c.textContent.includes('23')));
+    expect(screen.getByText(KIND_WEEK[3].label)).toBeInTheDocument();
+    expect(screen.getByText("Flock's forecast for places like yours, as of Aug 19.")).toBeInTheDocument();
+    // The key never reaches the screen, and nothing calls it the venue's own.
+    expect(document.body.textContent).not.toMatch(/category[ _]pattern/i);
+    expect(document.body.textContent).not.toMatch(/our estimate/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ONE FACT, ONE PLACE ON THE SCREEN.
 //
 // Events and weather are dated, and three things used to join them by date at

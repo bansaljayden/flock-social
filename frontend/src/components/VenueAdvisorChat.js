@@ -137,7 +137,10 @@ const SOURCE_LABELS = {
   served_prediction: 'what Flock served',
   google_baseline: "your Google profile's pattern",
   arithmetic: 'arithmetic on your numbers',
-  category_pattern: 'category pattern',
+  // What is typical for this kind of place: for a venue with no crowd history
+  // of its own, the dashboard's Week Ahead that Roost answers from (backend
+  // services/kindForecast.js). Said the way the answer itself says it.
+  category_pattern: "Flock's forecast for places like yours",
   cohort_reported: 'readings from venues like yours',
   table_sensor: 'your table sensor',
   // An advice answer's own source: what works in the trade. The server adds
