@@ -9682,6 +9682,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const TAB_BAR_H = 89;             // nav[aria-label="Main"]
   const DISCOVER_FILTER_BAR_H = 49; // Discover's Filters row sits above the tab bar
   const FAB_DOCK_GAP = 12;
+  // The docked buttons themselves: SafetyButton and AIBubble draw 52px discs.
+  const FAB_SIZE = 52;
+  // How far the docked row reaches up from the top of the tab bar, which a
+  // list that scrolls above it leaves clear under its last row so the row can
+  // scroll out from under the buttons (the Nest, below).
+  const dockedRowHeight = FAB_DOCK_GAP + FAB_SIZE;
 
   // Distance from the bottom of the phone frame to the bottom of a docked FAB.
   const fabDockBottom = useMemo(() => {
@@ -17903,7 +17909,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       </div>
 
       {/* Scrollable Content */}
-      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: '4px 16px 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      {/* THE LAST PLAN SCROLLS CLEAR OF THE DOCKED BUTTONS (2026-11-03).
+          Birdie and SOS dock 12px above the tab bar, and this list ended 30px
+          above it, so once it scrolled (a fourth plan at 390x844, or three on
+          a shorter phone) the last card's faces sat under Birdie and its time
+          chip under SOS, or under Birdie moved to that corner. The bottom
+          padding is the docked row's height; the list's own 14px margin is the
+          gap above it. */}
+      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `4px 16px ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* An unconfirmed address, said before either button below is
             tapped. See checkEmailConfirmed for the rest. The empty state's
