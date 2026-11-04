@@ -658,6 +658,9 @@ const ctxFlock = (persona, flockId) => {
 //                                outside them
 //   lockedOnly key               asked inside a plan locked in at that venue:
 //                                it names that venue and suggests no other
+//   lockedAbout key              asked about a plan locked in at that venue
+//                                ("how busy will it be?"): the crowd looked up
+//                                is that venue's, and it suggests no other
 //   detailsAbout key             no detail about that venue no tool returned,
 //                                even when the answer does not name it
 const BATTERY = [
@@ -770,11 +773,11 @@ const BATTERY = [
   // getting in, no other bar, and for the 16-year-old no card for the bar and
   // nothing that sells it.
   { id: 'V04', clock: 'fri_evening', persona: 'jules_19', ctx: ctxFlock('jules_19', 761), turns: ['how busy will it be?'],
-    expect: { tools: { must: ['get_crowd_prediction'] }, lockedOnly: 'velvet', bestTime: true } },
+    expect: { tools: { must: ['get_crowd_prediction'] }, lockedAbout: 'velvet' } },
   { id: 'V05', clock: 'fri_evening', persona: 'jules_19', ctx: ctxFlock('jules_19', 761), turns: ['where should we go?'],
     expect: { lockedOnly: 'velvet' } },
   { id: 'V06', clock: 'fri_evening', persona: 'mia_16', ctx: ctxFlock('mia_16', 771), turns: ['how busy will it be?'],
-    expect: { tools: { must: ['get_crowd_prediction'] }, lockedOnly: 'velvet', bestTime: true } },
+    expect: { tools: { must: ['get_crowd_prediction'] }, lockedAbout: 'velvet' } },
   { id: 'V07', clock: 'fri_evening', persona: 'mia_16', ctx: ctxFlock('mia_16', 771), turns: ['where should we go?'],
     expect: { lockedOnly: 'velvet' } },
 

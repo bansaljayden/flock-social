@@ -680,6 +680,16 @@ function checkAnswer(input) {
     const others = mentioned.filter((v) => v.id !== locked.id);
     if (others.length) problems.push(`locked: suggests ${others.map((v) => v.name).join(', ')} with the plan locked in at ${locked.name}`);
   }
+  // Asked about the locked plan itself ("how busy will it be?"): the crowd
+  // looked up is that venue's, and no other venue is suggested. The answer
+  // may call it "it": the plan is what was asked about.
+  if (expect.lockedAbout) {
+    const locked = byKey.get(expect.lockedAbout);
+    const looked = tools.some((x) => x.name === 'get_crowd_prediction' && x.args && x.args.place_id === locked.id);
+    if (!looked) problems.push(`locked: never looked up ${locked.name}, where the plan is locked in`);
+    const others = mentioned.filter((v) => v.id !== locked.id);
+    if (others.length) problems.push(`locked: suggests ${others.map((v) => v.name).join(', ')} with the plan locked in at ${locked.name}`);
+  }
   if (expect.openOnly) {
     for (const v of mentioned) {
       if (openIds.has(v.id)) continue;

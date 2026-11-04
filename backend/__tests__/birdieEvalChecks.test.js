@@ -445,6 +445,17 @@ test('inside a locked plan, drinks, ID and the door are a problem under 21 or of
   assert.ok(!inPlan("can't help with drinking under 21. want a spot that fits the night without it? tell me what you're into", 'minor', ['can we drink there?']).problems.some((p) => /^door:/.test(p)));
 });
 
+test('asked how busy the locked plan will be, the answer is about its venue, by name or as "it", and no other', () => {
+  const plan = cases.planOf('jules_19', 761);
+  const about = (text, tools) => grade(text, { tools, expect: { tools: { must: ['get_crowd_prediction'] }, lockedAbout: 'velvet' }, planLockedId: plan.lockedId, ageBracket: 'under21', userTexts: ['how busy will it be?'] });
+  // The live V04 answer, 2026-11-04, with the crowd tool's numbers in this file.
+  const live = 'It is quiet right now at 79, based on the crowd model and recent live readings. It peaks around 7 PM, so now is good if you want to beat the rush.';
+  assert.deepStrictEqual(about(live, [crowd(velvet)]).problems, []);
+  assert.ok(about(live, [crowd(thistle)]).problems.some((p) => /^locked: never looked up The Velvet Hour/.test(p)));
+  const other = about('It is at 79 now. Thistle & Crust is quieter if you want to bail.', [crowd(velvet), crowd(thistle)]);
+  assert.ok(other.problems.some((p) => /^locked: suggests Thistle & Crust with the plan locked in at The Velvet Hour/.test(p)), other.problems.join('\n'));
+});
+
 test('the 16-year-old hears the plan\'s bar named and nothing that sells it, and sees no card for it', () => {
   const plan = cases.planOf('mia_16', 771);
   const at = (text, ageBracket, cards) => grade(text, { tools: [crowd(velvet)], planLockedId: plan.lockedId, ageBracket, userTexts: ['where should we go?'], ...(cards ? { out: { text, venues: cards } } : {}) });
