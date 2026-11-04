@@ -165,6 +165,52 @@ test('a question, a denial and a reply about no venue the turn knows claim nothi
   assert.strictEqual(ground(DEMO, createVenueFacts()).text, DEMO);
 });
 
+// The live V02 answer, 2026-11-04: asked "where should we go?" inside a plan
+// locked in at Pixel Pier Arcade, with no tool called, so the venue the turn
+// knows is the plan's, with nothing behind a detail. The valve cut the ask and
+// sent "...tonight. If you're looking to switch it up."
+const V02 = "You're already locked in for Pixel Pier Arcade tonight. If you're looking to switch it up, tell me what vibe you want instead.";
+const lockedAt = (name) => {
+  const facts = createVenueFacts();
+  notePlan(facts, { going: 5, locked: { name, placeId: 'ChIJevalPixelPier0001' }, venueSoFar: null, picks: [] });
+  return facts;
+};
+
+test('a clause that asks them what they want claims nothing: the V02 answer goes out whole', () => {
+  const facts = lockedAt('Pixel Pier Arcade');
+  assert.deepStrictEqual(ground(V02, facts), { text: V02, removed: [] });
+  for (const said of [
+    'Pixel Pier Arcade tonight. Tell me what music you like and I will find something.',
+    "Pixel Pier Arcade it is. Let me know what vibe you're after.",
+    'Pixel Pier Arcade is locked in. Do you want a patio or inside.',
+    'Pixel Pier Arcade. What kind of music are you into.',
+    'Pixel Pier Arcade. Want a rooftop instead, say so.',
+    'lmk what vibe you want and we can switch from Pixel Pier Arcade.',
+  ]) assert.deepStrictEqual(ground(said, facts), { text: said, removed: [] }, said);
+  // A claim beside the ask, in a clause of its own, is still a claim.
+  assert.strictEqual(ground('Thistle & Crust has a great vibe, tell me what you want.', searched(THISTLE)).text, 'Thistle & Crust. Tell me what you want.');
+  // And "what you want" that asks nothing is no ask: the details in it go.
+  const r = ground("Thistle & Crust. It's exactly what you want, wood-fired pies and a patio.", searched(THISTLE));
+  assert.strictEqual(r.text, "Thistle & Crust. It's exactly what you want.");
+  assert.deepStrictEqual(kinds(r).sort(), ['outdoor', 'preparation']);
+});
+
+test('a cut never leaves a fragment: a sentence that would be one goes whole, and the others stay', () => {
+  const facts = searched(THISTLE);
+  // A leading "if" clause whose main clause went.
+  assert.strictEqual(ground("Thistle & Crust is at 40. If you're looking to switch it up, the rooftop is open.", facts).text, 'Thistle & Crust is at 40.');
+  // The same, with the pick named only in what went: the pick keeps its name.
+  assert.strictEqual(ground('If you want it quiet, Thistle & Crust has a back room.', facts).text, 'Thistle & Crust.');
+  // A sentence that now ends on a conjunction.
+  assert.strictEqual(ground('Thistle & Crust is open late and with a patio out back. It is at 40.', facts).text, 'Thistle & Crust. It is at 40.');
+  // A sentence ending on a clause that waited for the one cut after it.
+  assert.strictEqual(ground('Thistle & Crust is at 40, and if you go, grab a booth. Go now.', facts).text, 'Thistle & Crust. Go now.');
+  // Not a fragment: a time, not a clause, and a main clause that stayed.
+  assert.strictEqual(ground('After 9 it gets loud at Thistle & Crust, and the patio fills up.', facts).text, 'After 9 it gets loud at Thistle & Crust.');
+  assert.strictEqual(ground('If you want it quiet, go now, and the patio is calm.', facts).text, 'If you want it quiet, go now.');
+  assert.strictEqual(ground('Because the patio is huge, Thistle & Crust is the call. It is at 40 right now.', facts).text, 'Thistle & Crust is the call. It is at 40 right now.');
+});
+
 test('a word after a comparison can be about another venue the turn knows', () => {
   const facts = searched({ name: 'Saffron Room', types: ['indian_restaurant', 'restaurant', 'food'], rating: 4.5, price_level: 2 }, THISTLE);
   const said = 'Saffron Room is at 68 right now. It is $$, rated 4.5, and much more lowkey than the pizza rush around the corner.';

@@ -38,11 +38,17 @@
 // with, named only inside a removed clause, keeps its name as a sentence of its
 // own ("Thistle & Crust."), so the pick is never lost with the made-up reason
 // for it. An answer is never emptied: if nothing else stands, it is the
-// venue's name.
+// venue's name. And a cut never leaves a fragment (2026-11-04): a sentence
+// whose cut leaves it without a main clause ("If you want it quiet." once
+// "Thistle & Crust has a back room" went), ending on a clause that waited for
+// the one cut after it, or ending on "and" or "the", goes whole, and the
+// reply's other sentences stay.
 //
-// WHAT IS NOT. A sentence that asks ("want a booth?"), and a clause that denies
-// or does not know ("no word on a patio", "can't tell if it has booths"),
-// claim nothing. A reply that names no venue the turn knows, about no venue the
+// WHAT IS NOT. A sentence that asks ("want a booth?"), a clause that asks them
+// what they want ("tell me what vibe you want instead", "let me know what
+// music you're into", "do you want a patio"), and a clause that denies or does
+// not know ("no word on a patio", "can't tell if it has booths"), claim
+// nothing. A reply that names no venue the turn knows, about no venue the
 // turn knows, is left alone: there is nothing to hold it to. Words inside a
 // venue's own name are not claims ("Brick Oven Pie Co.", "Luna Rooftop
 // Lounge"), and a name can support its own detail.
@@ -335,6 +341,23 @@ const DISH_WORD_SET = new Set(DISH_WORDS.map((w) => norm(w).trim()));
 const DENIES = /\b(?:no|not|never|without|unsure|unknown|whether|unclear)\b|n['’]t\b/i;
 // A comparison, after which a word can be about the other side of it.
 const COMPARED = /\b(?:than|unlike|instead of|compared to|versus|vs)\b/i;
+// A CLAUSE THAT ASKS THEM WHAT THEY WANT (2026-11-04) claims nothing about a
+// place: the feature words in it are theirs to pick. On a live run this valve
+// cut "tell me what vibe you want instead" out of "If you're looking to switch
+// it up, tell me what vibe you want instead." and sent "If you're looking to
+// switch it up." An ask to tell or let Birdie know what, which or whether; a
+// "what kind of", "what vibe are you", "do you want" with or without its
+// question mark; a clause that opens on "want". Read in the claim's own
+// clause, from before the claim, so "Thistle has a great vibe, tell me what
+// you want" still holds the vibe to Thistle.
+const ASKS_THEM = new RegExp([
+  "\\b(?:tell|let|show|text|send|give|ask)\\s+(?:me|us|birdie)\\b(?:\\s+know)?[^.?!,;]{0,12}?\\b(?:what|which|how|if|whether)\\b",
+  '\\blmk\\s+(?:what|which|if|how|whether)\\b',
+  "\\b(?:what|which)\\s+(?:kind|sort|type)s?\\s+of\\b[^.?!,;]{0,30}?\\b(?:are|do|would|were)\\s+(?:you|u|y'?all)\\b",
+  "\\b(?:what|which)\\s+[\\w'-]+\\s+(?:are|do|would|were)\\s+(?:you|u|y'?all)\\b",
+  "\\b(?:do|would|did)\\s+(?:you|u|y'?all)\\s+(?:want|like|prefer|need|feel like)\\b",
+  '^\\s*(?:want|wanna)\\b',
+].join('|'), 'i');
 // A clause that carries a crowd reading: its "vibe" is the crowd.
 const CROWD_WORDS = /\b(?:quiet|quieter|busy|busier|packed|dead|steady|slow|empty|crowded|slammed|mobbed|lowkey|low-key|chill|calm|mellow)\b|\b\d{1,3}\s?%|\bat \d{1,3}\b/i;
 
@@ -586,6 +609,9 @@ function groundVenueDetails(text, facts) {
       const segText = sMasked.slice(seg.start, seg.end);
       const outside = segText.slice(0, c.start - seg.start) + ' ' + segText.slice(c.end - seg.start);
       if (DENIES.test(outside)) continue;
+      // Asking them what they want is not a claim (ASKS_THEM).
+      const asked = segText.search(ASKS_THEM);
+      if (asked >= 0 && asked <= c.start - seg.start) continue;
       if (c.crowdExempt && CROWD_WORDS.test(outside)) continue;
       if (claimSupported(c, venue)) continue;
       // "than the pizza rush around the corner": a word after a comparison is
@@ -602,6 +628,8 @@ function groundVenueDetails(text, facts) {
     let rebuilt = sOrig;
     if (drop.size) {
       rebuilt = rebuild(sOrig, segs, drop);
+      // What is left is a sentence or it goes whole (NEVER A FRAGMENT).
+      if (leftHanging(sOrig, segs, drop, rebuilt)) rebuilt = '';
       // The pick (the venue the answer leads with), named only in what went,
       // keeps its name as a sentence of its own. Another venue named only in a
       // removed clause goes with it.
@@ -627,6 +655,38 @@ function groundVenueDetails(text, facts) {
     out = `${v.name}.`;
   }
   return { text: out, removed };
+}
+
+// ── Never a fragment ────────────────────────────────────────────────────────
+
+// NEVER A FRAGMENT (2026-11-04). A cut can leave what is not a sentence: a
+// clause opening on "if", "because", "although" and the like ("since",
+// "after", "before" and "until" only before a subject, since "after 9" is a
+// time) whose main clause went, or words that end on what needed more ("open
+// late and", "the"). On a live run "If you're looking to switch it up, tell
+// me what vibe you want instead." went out as "If you're looking to switch it
+// up." Such a sentence goes whole instead, and the reply's other sentences
+// stay. Read on the sentence's own clauses, as rebuild put them back.
+const SUBORDINATE_START = /^(?:if|when|whenever|because|'?cause|although|though|while|whilst|unless|once|whether|even if|even though|so that|in case|as long as|as soon as|whereas|given that|now that|(?:since|after|before|until|till)\s+(?:you|u|y'?all|we|they|it|i|he|she|there|everyone|everybody|people|you're|we're|they're|it's|there's)(?![\p{L}\p{N}]))/iu;
+const DANGLING_END = /\b(?:and|but|or|nor|plus|because|than|the|a|an|your|their|its|our|my)$/i;
+const COORDINATOR = /^(?:and|but|or|so|plus|yet|then|also)\s+/i;
+const subordinate = (clause) => SUBORDINATE_START.test(clause.replace(/^[\s,;:"'(“]+/, '').replace(COORDINATOR, ''));
+
+// Whether `rebuilt`, sentence `sOrig` with segments `drop` cut, is no longer a
+// sentence: it ends on a word that needs more, every clause left is a
+// subordinate one, or it ends on a subordinate clause whose main clause, after
+// it, was cut ("..., and if you go." once "bring ID" went).
+function leftHanging(sOrig, segs, drop, rebuilt) {
+  if (!rebuilt) return false;
+  const body = rebuilt.replace(/[.!?]+["'”’)]*\s*$/, '').replace(/[\s,;:]+$/, '');
+  if (DANGLING_END.test(body)) return true;
+  const clauses = segs.map((g, i) => ({ i, modifier: g.modifier, text: sOrig.slice(g.start, g.end) })).filter((g) => !g.modifier);
+  const kept = clauses.filter((g) => !drop.has(g.i));
+  if (!kept.length) return false;
+  const cut = clauses.some((g) => drop.has(g.i));
+  if (cut && kept.every((g) => subordinate(g.text))) return true;
+  const last = kept[kept.length - 1];
+  return subordinate(last.text) && clauses.some((g) => g.i > last.i && drop.has(g.i));
 }
 
 // ── What may not be said at all ─────────────────────────────────────────────
@@ -679,7 +739,7 @@ function withoutClauses(text, facts, offLimits) {
         if (!g.modifier) for (let j = i + 1; j < segs.length && segs[j].modifier; j++) drop.add(j);
       });
       kept = drop.size ? rebuild(sOrig, segs, drop) : '';
-      if (kept && (says(covered(kept)) || BARE_OPENER.test(kept.replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim()))) kept = '';
+      if (kept && (leftHanging(sOrig, segs, drop, kept) || says(covered(kept)) || BARE_OPENER.test(kept.replace(/[^\p{L}\p{N}' ]+/gu, ' ').replace(/\s+/g, ' ').trim()))) kept = '';
     }
     if (kept) pieces.push((pieces.length ? between : between.replace(/^\s+/, '')) + kept);
   }
@@ -701,11 +761,15 @@ function rebuild(sOrig, segs, drop) {
   parts[0].sep = '';
   parts[0].body = parts[0].body.replace(/^\s+/, '').replace(LEADING_CONJ, '');
   if (startsUpper) parts[0].body = parts[0].body.replace(/^([^A-Za-z]*)([a-z])/, (m, pre, ch) => pre + ch.toUpperCase());
-  // The list repairs count clauses, not the phrases hanging off them.
+  // The list repairs count clauses, not the phrases hanging off them. A
+  // condition and the clause it governs are not a list ("If you want it quiet,
+  // go now" never reads "If you want it quiet and go now"), so a sentence that
+  // opens on one is left with its commas (NEVER A FRAGMENT).
   const clauses = parts.filter((p) => !p.modifier);
+  const list = !(clauses.length && subordinate(clauses[0].body));
   // A clause that went from between two that stayed: "A, and B" reads "A and B".
   // Not after a phrase went: "fries in a booth, and the crowd" keeps its comma.
-  if (clauses.length === 2) {
+  if (list && clauses.length === 2) {
     const [a, b] = clauses;
     const clauseBetween = segs.slice(a.i + 1, b.i).some((g) => !g.modifier);
     if (clauseBetween && /^,\s+$/.test(b.sep) && /^and\s/i.test(b.body)) b.sep = ' ';
@@ -714,7 +778,7 @@ function rebuild(sOrig, segs, drop) {
   const lastKept = parts[parts.length - 1];
   const droppedAfter = segs.slice(lastKept.i + 1);
   const carriedAnd = droppedAfter.some((g) => !g.modifier && /^and\s/i.test(sOrig.slice(g.start, g.end)));
-  if (clauses.length >= 2 && carriedAnd && !lastKept.modifier && /^,\s+$/.test(lastKept.sep) && !LEADING_CONJ.test(lastKept.body)) {
+  if (list && clauses.length >= 2 && carriedAnd && !lastKept.modifier && /^,\s+$/.test(lastKept.sep) && !LEADING_CONJ.test(lastKept.body)) {
     if (clauses.length === 2) lastKept.sep = ' ';
     lastKept.body = `and ${lastKept.body}`;
   }

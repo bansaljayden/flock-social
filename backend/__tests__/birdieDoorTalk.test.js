@@ -74,6 +74,11 @@ test('the clause goes and the answer around it stays, put back together as a pla
   }
 });
 
+test('a cut that would leave a fragment takes the whole sentence, and the others stay', () => {
+  assert.deepStrictEqual(strip("If you're 19, they card at the door. The Velvet Hour is at 26 right now."), { text: 'The Velvet Hour is at 26 right now.', removed: 1 });
+  assert.deepStrictEqual(strip('Stick with The Velvet Hour, and if you go, bring ID. It is at 26.'), { text: 'It is at 26.', removed: 1 });
+});
+
 test('a reply that was only that talk comes back empty, for the caller to fill', () => {
   for (const said of ["The Velvet Hour is 21 and up, so you won't get in.", 'Heads up: they card at the door.', 'Bring ID. They card hard.']) {
     const r = strip(said);
