@@ -89,6 +89,9 @@ import { holdStatusBarOverDark } from '../services/systemBars';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import Icons from '../components/ui/Icons';
+/* A venue's deal on its vote option, as this reader's venue page leads with
+   it; the server sends it per person on each row of the DM's tally. */
+import VenueDealLine, { dealOf } from '../components/venue/VenueDealLine';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 // The photo viewer's wait, the same one ChatDetail's viewer draws.
 import { SkeletonBlock } from '../components/ui/Skeleton';
@@ -1184,6 +1187,17 @@ export default function DmDetail({
                     const iconBg = v.isPinned
                       ? colors.navyBg
                       : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                    /* THE DEAL THIS READER'S VENUE PAGE LEADS WITH, when the
+                       venue has one for them. The server decides it per person
+                       (backend sockets/handlers.js dmVotesFor), so a drink deal
+                       never arrives for a reader it may not reach, whatever the
+                       other person is shown. This list is the server's rows as
+                       sent, so the shape is checked here (dealOf), and a row
+                       the server sent no deal with, the pinned place added
+                       above included, draws none. The row's name is read off
+                       its content, so the line drawn inside is said in it too,
+                       as on the flock's poll card and plan screen. */
+                    const deal = dealOf(v.deal);
                     return (
                       <button key={v.venue_name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                         {/* Progress bar background */}
@@ -1198,6 +1212,11 @@ export default function DmDetail({
                               {v.isPinned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
                               {isLeading && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
                             </div>
+                            {/* The venue's deal, in the venue page's deal style,
+                                on one line that truncates: under the name and
+                                above who voted, where the flock's vote sheet
+                                draws it. */}
+                            {deal && <VenueDealLine deal={deal} iconColor={colors.steel} style={{ marginTop: '2px' }} />}
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(v.voters || []).length > 0 ? (v.voters || []).join(', ') : v.isPinned ? 'Current pinned venue. Tap to vote' : 'No votes yet'}</p>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
