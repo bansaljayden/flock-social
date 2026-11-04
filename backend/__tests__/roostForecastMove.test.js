@@ -117,13 +117,16 @@ let placesUp = true;
 let placesCalls = 0;
 // What Google says the place is: a bar, unless a test makes it a cafe.
 let placeTypes = ['bar'];
+// How long Google takes to answer. Zero answers at once; a test that needs
+// requests to overlap gives the lookup time to still be under way.
+let placesDelayMs = 0;
 const realFetch = global.fetch;
 global.fetch = (url, opts) => {
   const u = String(url);
   if (u.startsWith('https://places.googleapis.com/v1/places/')) {
     placesCalls += 1;
     const id = decodeURIComponent(u.slice('https://places.googleapis.com/v1/places/'.length));
-    return Promise.resolve({
+    const answer = {
       status: 200,
       json: async () => (placesUp ? {
         id,
@@ -135,7 +138,10 @@ global.fetch = (url, opts) => {
         currentOpeningHours: { openNow: true },
         utcOffsetMinutes: 0,
       } : { error: { code: 503, message: 'unavailable' } }),
-    });
+    };
+    return placesDelayMs > 0
+      ? new Promise((resolve) => { setTimeout(() => resolve(answer), placesDelayMs); })
+      : Promise.resolve(answer);
   }
   return realFetch(url, opts);
 };
@@ -189,6 +195,7 @@ function setUp({ placeId, phrasing = false, extra = {} } = {}) {
   method = 'rule_engine_no_baseline';
   placesUp = true;
   placeTypes = ['bar'];
+  placesDelayMs = 0;
   route = null;
   draftFor = null;
   modelCalls = [];
@@ -797,6 +804,8 @@ test('a corpus venue\'s chips are as they were, and never read the card', async 
 
 test('the dashboard, Roost\'s card and Roost\'s chips opening together build the card once', async () => {
   setUp({ placeId: 'ChIJforecastTogether00000' });
+  // Google takes a moment, so all three arrive while the first build waits.
+  placesDelayMs = 150;
   const before = { evenings: eveningCalls, places: placesCalls };
   const [intel, cards, questions] = await Promise.all([
     call('/api/venue-dashboard/intelligence'),
@@ -809,11 +818,19 @@ test('the dashboard, Roost\'s card and Roost\'s chips opening together build the
   assert.strictEqual(placesCalls - before.places, 1, 'one Places lookup for the three');
   assert.strictEqual(eveningCalls - before.evenings, 6, 'one run of the six evenings for the three');
 
-  // A lookup that failed is not kept: the next ask tries again, as before.
+  // A lookup that fails is shared the same way, each reader answers it as its
+  // own, and it is not kept: the next ask tries again, as before.
   setUp({ placeId: 'ChIJforecastTogetherDown0' });
   placesUp = false;
+  placesDelayMs = 150;
   const calls = placesCalls;
+  const [downIntel, downCards] = await Promise.all([
+    call('/api/venue-dashboard/intelligence'),
+    call('/api/venue/advisor/cards'),
+  ]);
+  assert.strictEqual(placesCalls - calls, 1, 'the two shared the lookup that failed');
+  assert.strictEqual(downIntel.body.code, 'lookup_failed', JSON.stringify(downIntel.body));
+  assert.strictEqual(cardById(downCards.body, 'week_ahead').status, 'refused');
   await call('/api/venue-dashboard/intelligence');
-  await call('/api/venue-dashboard/intelligence');
-  assert.strictEqual(placesCalls - calls, 2);
+  assert.strictEqual(placesCalls - calls, 2, 'a failed lookup was kept as the answer');
 });
