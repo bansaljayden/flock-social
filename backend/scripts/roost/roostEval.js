@@ -18,6 +18,10 @@
 //   railway run --service "Flock-app-" node scripts/roost/roostEval.js
 //   ... --only=typed | --only=chips    one half
 //   ... --venue=cafe                   one venue
+//   ... --venue=newbar                 the bar with no crowd history of its
+//                                      own, answered from its dashboard's Week
+//                                      Ahead card; by name only, never in the
+//                                      default run
 //   ... --out=roost-eval.json          also write every answer as JSON
 //   ... --q=saturday                   only the items whose question (or
 //                                      chip id) contains this text; several
@@ -56,6 +60,8 @@ pool.query = async (sql) => {
     return { rows: [{ user_id: 1, google_place_id: `eval-${currentVenue}`, verified: true, business_name: `Eval ${currentVenue}`, corpus_status: 'baselines', ...VENUES[currentVenue].ctx.profile }], rowCount: 1 };
   }
   if (currentVenue && /FROM ml_venues WHERE google_place_id/.test(q)) {
+    // A venue Flock never collected has no corpus row at all.
+    if (VENUES[currentVenue].ctx.mlVenue === null) return { rows: [], rowCount: 0 };
     return { rows: [{ name: `Eval ${currentVenue}`, timezone: 'America/New_York', ...VENUES[currentVenue].ctx.mlVenue }], rowCount: 1 };
   }
   return { rows: [], rowCount: 0 };
@@ -341,16 +347,66 @@ const VENUES = {
     },
     week: week([[23, 12], [23, 10], [23, 18], [0, 55], [1, 92], [1, 96], [23, 20]]),
   },
+  // A bar Flock has never collected (2026-11-03): no crowd history of its own,
+  // so its week is the dashboard's Week Ahead card, Flock's forecast for
+  // places like it (advisorFacts.buildWeekProjection). The card's numbers are
+  // the 11-03 demo's (Sat 74, Sun 45, Mon 48, Tue 48, Wed 48, Thu 64), with a
+  // Friday for a run on any other day. Run by name only (--venue=newbar), so
+  // the four-venue battery keeps its count.
+  newbar: {
+    optIn: true,
+    noHistory: true,
+    ctx: {
+      profile: { corpus_status: 'absent', corpus_baseline_rows: 0, capacity: 90, service_style: 'bar_standing', typical_spend_per_person: 28, updated_at: '2026-10-01T00:00:00Z' },
+      mlVenue: null,
+    },
+    card: cardWeek({ Sat: [22, 74], Sun: [20, 45], Mon: [21, 48], Tue: [21, 48], Wed: [21, 48], Thu: [22, 64], Fri: [22, 66] }),
+    chips: ['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook'],
+  },
 };
+
+// The dashboard's Week Ahead as GET /api/venue-dashboard/intelligence serves
+// it: the six evenings after today, each with the card's short day label, its
+// peak, the hour label and what made it (a category prior for a venue with no
+// curve of its own).
+function cardWeek(byDay) {
+  const SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const label = (h) => (h === 0 ? '12 AM' : h < 12 ? `${h} AM` : h === 12 ? '12 PM' : `${h - 12} PM`);
+  const week = [1, 2, 3, 4, 5, 6].map((d) => {
+    const date = new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+    const weekday = SHORT[new Date(`${date}T12:00:00Z`).getUTCDay()];
+    const [hour, score] = byDay[weekday];
+    return { date, weekday, peakScore: score, peakHour: label(hour), method: 'rule_engine_no_baseline' };
+  });
+  return { available: true, week, generatedAt: ASOF };
+}
+
+// A no-history venue's blocks, built the way the real fact bridge builds them
+// (routes/advisor.js weekFor): the card through advisorFacts.projectionFacts
+// and the route's own plans, and the corpus refusal for everything the card
+// does not carry.
+const CARD_INTENTS = new Set(['money_move', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+async function noHistoryBlock(v, intentId) {
+  const refusalText = (r) => [r.reason, r.whatWouldUnlock].filter(Boolean).join(' ');
+  const gate = advisorFacts.corpusGate(v.ctx.profile);
+  if (!CARD_INTENTS.has(intentId)) return { intent: intentId, facts: [], refusals: [refusalText(gate)] };
+  const card = advisorFacts.projectionFacts(v.card);
+  const plans = require(path.join(B, 'routes', 'advisor')).__INTENT_PLANS;
+  const entries = await plans[intentId]({ ctx: v.ctx, week: async () => card, around: async () => [] });
+  const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
+  return facts.length
+    ? { intent: intentId, facts, refusals: [] }
+    : { intent: intentId, facts: [], refusals: entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText) };
+}
 
 // The block a chip gets, carrying what the real fact bridge adds beside the
 // facts (routes/advisor.js bridgeFactBlock): the venue's kind, its service
 // style and its spend per head.
-function blockFor(venue, intentId) {
+async function blockFor(venue, intentId) {
   const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
   const { ctx } = VENUES[venue];
   return {
-    ...rawBlockFor(venue, intentId),
+    ...(await rawBlockFor(venue, intentId)),
     venue: roostPlaybook.venueOf(ctx),
     serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
@@ -360,6 +416,7 @@ function blockFor(venue, intentId) {
 
 function rawBlockFor(venue, intentId) {
   const v = VENUES[venue];
+  if (v.noHistory) return noHistoryBlock(v, intentId);
   const sorted = [...v.week].sort((a, z) => a.value.peakScore - z.value.peakScore);
   switch (intentId) {
     case 'peak_hours': return { intent: intentId, facts: v.week, refusals: [] };
@@ -409,7 +466,8 @@ async function post(route, body) {
 const CHIPS = ['peak_hours', 'quiet_nights', 'weekend_outlook', 'tables_service'];
 
 // expect: the route that is right. money: the answer should carry a dollar
-// figure. Refusals are scored on refusing, never on shape.
+// figure. Refusals are scored on refusing, never on shape. readings: graded
+// on the owner's own past readings, so not asked of the venue with none.
 const TYPED = [
   { q: 'when are we busiest this week', expect: ['grounded'] },
   { q: 'what does the weekend look like', expect: ['grounded'] },
@@ -433,7 +491,7 @@ const TYPED = [
   { q: 'what should I post on instagram', expect: ['advice'] },
   { q: 'how do I get people in before 7pm', expect: ['advice'] },
   { q: 'we are going under, what do I actually do', expect: ['advice'] },
-  { q: 'this is useless, tell me something I do not already know', expect: ['grounded', 'advice'] },
+  { q: 'this is useless, tell me something I do not already know', expect: ['grounded', 'advice'], readings: true },
   { q: 'can I make my server stay late without pay', expect: ['refused'] },
   { q: 'what did the place across the street make last friday', expect: ['refused'] },
   { q: 'one of my cooks keeps fainting, what is wrong with him', expect: ['refused'] },
@@ -457,10 +515,14 @@ const TYPED = [
   { q: 'should we do bottle service', expect: ['advice'], kinds: ['bar', 'club'] },
   { q: 'what beers should i put on tap', expect: ['advice'], kinds: ['bar'] },
   { q: 'how do I fill Tuesdays', expect: ['advice'], then: 'What else could we try?' },
-  { q: 'How did we do yesterday?', expect: ['grounded'], then: 'what about tuesday?', thenExpect: ['grounded', 'advice'] },
+  { q: 'How did we do yesterday?', expect: ['grounded'], then: 'what about tuesday?', thenExpect: ['grounded', 'advice'], readings: true },
   // Past days by name, read from the owner's own readings (pastWeek above).
-  { q: 'how busy was saturday', expect: ['grounded'] },
-  { q: 'was last friday any good', expect: ['grounded'] },
+  { q: 'how busy was saturday', expect: ['grounded'], readings: true },
+  { q: 'was last friday any good', expect: ['grounded'], readings: true },
+  // A venue with no crowd history of its own (2026-11-03): the first chip's
+  // words typed, and the advice question the demo asked beside it.
+  { q: 'What is our best money move this week?', expect: ['grounded'], kinds: ['newbar'] },
+  { q: 'How do I fill a slow Monday?', expect: ['advice'], kinds: ['newbar'] },
 ];
 
 // ── Scoring ─────────────────────────────────────────────────────────────────
@@ -497,6 +559,14 @@ function thrownOut(r) {
   return r.out.mode === 'advice' && (r.out.sources || []).some((s) => s.source === 'roost_playbook');
 }
 
+// A venue with no crowd history is answered from Flock's forecast for places
+// like it (services/kindForecast.js), and an answer built on that says so.
+const kindForecast = require(path.join(B, 'services', 'kindForecast'));
+function kindProblem(out) {
+  const usesCard = (out.sources || []).some((s) => s.source === kindForecast.KIND_FORECAST_SOURCE);
+  return usesCard && !kindForecast.saysWhose(out.text) ? ['a forecast for places like this one, given as the venue\'s own'] : [];
+}
+
 function score(out, { expect = null, money = false, route = null } = {}) {
   const problems = [];
   const text = String(out.text || '');
@@ -517,6 +587,7 @@ function score(out, { expect = null, money = false, route = null } = {}) {
     if (money && !/\$\d/.test(text)) problems.push('a money question with no dollar figure');
     if (!Array.isArray(out.sources) || !out.sources.length) problems.push('no sources');
     if (/[‒-―]/.test(text)) problems.push('a dash');
+    problems.push(...kindProblem(out));
   }
   return problems;
 }
@@ -587,11 +658,11 @@ const picked = (...texts) => !onlyQ || texts.some((t) => onlyQ.some((q) => Strin
 (async () => {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
-  const venues = args.venue ? [args.venue] : Object.keys(VENUES);
+  const venues = args.venue ? [args.venue] : Object.keys(VENUES).filter((v) => !VENUES[v].optIn);
   const results = [];
   for (const venue of venues) {
     if (args.only !== 'typed') {
-      for (const intentId of CHIPS) {
+      for (const intentId of VENUES[venue].chips || CHIPS) {
         if (intentId.startsWith('tables_') && !VENUES[venue].tables) continue;
         if (!picked(intentId, advisorPhrasing.ADVISOR_INTENTS[intentId].chip)) continue;
         results.push(await runChip(venue, intentId));
@@ -602,6 +673,7 @@ const picked = (...texts) => !onlyQ || texts.some((t) => onlyQ.some((q) => Strin
       for (const item of TYPED) {
         // A table question is only fair to a venue with a table unit.
         if (item.tables && !VENUES[venue].tables) continue;
+        if (item.readings && VENUES[venue].noHistory) continue;
         if (item.kinds && !item.kinds.includes(venue)) continue;
         if (!picked(item.q, item.then)) continue;
         const first = await runTyped(venue, item);
