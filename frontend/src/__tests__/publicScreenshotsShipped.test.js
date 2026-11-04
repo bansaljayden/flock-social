@@ -1,10 +1,10 @@
 /**
  * public/screenshots/ ships inside the web build and the 20 MB iPhone bundle,
  * so it carries only the captures something actually references: the two
- * the landing page shows, the four the PWA manifest lists, and the rig's own
- * manifest.json and WIRING.md. The rest of the capture set (every screen in
- * both themes, PNG and WebP) is kept at frontend/screenshots/, tracked but
- * not shipped; the rig moves its own output there after a run.
+ * the landing page shows, the four the PWA manifest lists, the rig's own
+ * manifest.json and the hand-kept WIRING.md. The rest of the capture set
+ * (every screen in both themes, PNG and WebP) is kept at frontend/screenshots/,
+ * tracked but not shipped; the rig moves its own output there after a run.
  *
  * Before this, 34 unreferenced files (7.96 MB) rode along in every IPA.
  */

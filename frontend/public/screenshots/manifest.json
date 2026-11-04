@@ -1,7 +1,7 @@
 {
   "generatedAt": "2026-10-21T23:30:00.000Z",
-  "generator": "frontend/scripts/capture-screenshots.mjs (real-venue run)",
-  "note": "Real captures of the web app on a seeded account in Old City, Philadelphia: the five friends are invented, the places are real ones from Google Places with their Google Maps photos, Birdie's answer is a live reply and the crowd figures are the live model's. The venue-side screens (owner dashboard, venue card) keep the invented The Copper Finch with drawn photos. Every capture the site shows is the dark theme. See WIRING.md for where each one is used.",
+  "generator": "frontend/scripts/capture-screenshots.mjs",
+  "note": "See WIRING.md for what the shipped captures show and where each one is used.",
   "captures": [
     {
       "file": "screenshots/bill-chat-dark-v2-480w.webp",
