@@ -7,6 +7,9 @@ const { getInvisibleUserIds } = require('../utils/blocks');
 const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
+// Which of a venue's deals a person sees, the venue page's own rules
+// (utils/venueDeals.js). See voteDealsFor below.
+const { activeDealsForViewers, leadDeals } = require('../utils/venueDeals');
 
 const router = express.Router();
 
@@ -288,10 +291,54 @@ async function collectVoteRows(flockId) {
   return rows;
 }
 
+// ---------------------------------------------------------------------------
+// THE DEAL ON EACH OPTION (2026-11-03).
+//
+// A deal a venue's owner posts used to show only on the venue's own page, so a
+// group choosing between three places never saw that one of them has half-price
+// wings on Tuesdays. Each option with a place id now carries the deal that
+// member's venue page would lead with: the newest one they may see, as its title
+// and when it runs ({ title, time_slot, days }), decided by the venue page's own
+// rules (utils/venueDeals.js). Per member, because the rules are: a drink deal
+// reaches only a member we know is 21, so the 16-year-old and the account with
+// no date of birth in the same plan are told about the food deal or nothing.
+//
+// One deals statement for every option and one birthday read for every member
+// (only when a drink deal is among the deals), whatever the size of the plan.
+// An option with no deal carries no `deal` key at all, so a plan with none is
+// told exactly what it was told before. A failed read costs the options their
+// deals and nothing else: on every write path the vote has committed by the
+// time this runs, and the tally is worth more than the line under it.
+//
+// Answers a function from a member's id to a Map of place id to that member's
+// deal, for tailorVotes.
+// ---------------------------------------------------------------------------
+async function voteDealsFor(rows, viewerIds) {
+  let seenBy;
+  try {
+    seenBy = await activeDealsForViewers((rows || []).map((r) => r.venue_id), viewerIds);
+  } catch (err) {
+    console.error('[venues] vote deals read failed, the options go without:', err.message);
+    const none = new Map();
+    return () => none;
+  }
+  // At most two answers exist (known to be 21, or not), so each is cut to its
+  // lead deals once however many members there are.
+  const lead = new Map();
+  return (viewerId) => {
+    const seen = seenBy(viewerId);
+    if (!lead.has(seen)) lead.set(seen, leadDeals(seen));
+    return lead.get(seen);
+  };
+}
+
 // Wire shape for one recipient. vote_count is the total the vote bars are drawn
 // from (members + guests); guest_count lets the UI say "+2 guests".
 // voterObjects keeps the { id, name } rows the GET has always returned; the
 // POST/DELETE and socket payloads stay a names array.
+//
+// `deals` is the recipient's own Map from voteDealsFor. A row whose venue has a
+// deal for them carries it as `deal`; a row with none carries no such key.
 //
 // `mine` IS WHICH ROW HOLDS THE RECIPIENT'S OWN VOTE, and a names array
 // cannot say. The app found its own vote by matching its display name, and
@@ -302,7 +349,7 @@ async function collectVoteRows(flockId) {
 // the recipient's id (`viewerId`) is enough to say which row is theirs. It
 // names nobody else and carries no id; the GET's { id, name } rows already let
 // the app match by id, so it goes only on the names shape.
-function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null } = {}) {
+function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null, deals = null } = {}) {
   // Sorted on the SOURCE rows, not on the wire objects: the tiebreak needs
   // member_count, and member_count is not part of the wire shape (payload
   // equality is pinned by __tests__/arrayShapeSweep.test.js, and adding a field
@@ -329,6 +376,8 @@ function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null } 
       if (!voterObjects && viewerId != null) {
         row.mine = v.voter_rows.some(p => Number(p.id) === Number(viewerId));
       }
+      const deal = deals && v.venue_id ? deals.get(v.venue_id) : null;
+      if (deal) row.deal = deal;
       return row;
     });
 }
@@ -422,10 +471,12 @@ async function notifyHostVotesIn(io, flockId, voterId, rows) {
 }
 
 // Broadcast the new tallies to every other accepted member, tailored to what
-// each of them is allowed to see.
+// each of them is allowed to see: whose names, and which deals. Answers the
+// caller's own blocks and deals, for the answer to their own request.
 async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
   const io = req.app.get('io');
   const { ids, sets } = await invisibleSetsForFlock(flockId);
+  const dealsOf = await voteDealsFor(rows, [...ids, req.user.id]);
   if (io && notify) {
     for (const uid of ids) {
       if (uid === req.user.id) continue;
@@ -435,11 +486,11 @@ async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
         flockId: parseInt(flockId, 10),
         voter: { userId: req.user.id, name: req.user.name },
         venue_name,
-        votes: tailorVotes(rows, invisible, { viewerId: uid }),
+        votes: tailorVotes(rows, invisible, { viewerId: uid, deals: dealsOf(uid) }),
       });
     }
   }
-  return sets.get(req.user.id) || new Set();
+  return { invisible: sets.get(req.user.id) || new Set(), deals: dealsOf(req.user.id) };
 }
 
 // THE TALLY AFTER A VOTE HAS COMMITTED: read it, tell the room, and hand the
@@ -459,8 +510,8 @@ async function tallyAfterCommit(req, flockId, venueName, notify, onRows) {
   try {
     const rows = await collectVoteRows(flockId);
     if (typeof onRows === 'function') onRows(rows);
-    const myInvisible = await broadcastVotes(req, flockId, rows, venueName, notify);
-    return { votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) };
+    const { invisible: myInvisible, deals: myDeals } = await broadcastVotes(req, flockId, rows, venueName, notify);
+    return { votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id, deals: myDeals }) };
   } catch (err) {
     console.error('[venues] vote saved, tally after it failed:', err.message);
     return { votes: null, tallyUnavailable: true };
@@ -712,8 +763,10 @@ router.get('/:id/votes', flockIdParam(), async (req, res) => {
 
     const invisible = new Set(await getInvisibleUserIds(req.user.id));
     const rows = await collectVoteRows(flockId);
+    // The reader's own view of each option's deal (voteDealsFor).
+    const dealsOf = await voteDealsFor(rows, [req.user.id]);
 
-    res.json({ votes: tailorVotes(rows, invisible, { voterObjects: true }) });
+    res.json({ votes: tailorVotes(rows, invisible, { voterObjects: true, deals: dealsOf(req.user.id) }) });
   } catch (err) {
     console.error('Get votes error:', err);
     res.status(500).json({ error: 'Failed to get votes' });
@@ -752,12 +805,13 @@ async function broadcastGuestVote(io, flockId, venue_name) {
   try {
     const rows = await collectVoteRows(flockId);
     const { ids, sets } = await invisibleSetsForFlock(flockId);
+    const dealsOf = await voteDealsFor(rows, ids);
     for (const uid of ids) {
       io.to(`user:${uid}`).emit('new_vote', {
         flockId: parseInt(flockId, 10),
         voter: { guest: true },
         venue_name,
-        votes: tailorVotes(rows, sets.get(uid) || new Set(), { viewerId: uid }),
+        votes: tailorVotes(rows, sets.get(uid) || new Set(), { viewerId: uid, deals: dealsOf(uid) }),
       });
     }
   } catch (err) {
@@ -779,6 +833,9 @@ module.exports.broadcastGuestVote = broadcastGuestVote;
 // arithmetic that was not. Sharing the functions makes parity structural.
 module.exports.collectVoteRows = collectVoteRows;
 module.exports.tailorVotes = tailorVotes;
+// Each member's deal on each option, for the socket vote's fan-out, so the two
+// producers of `new_vote` tell a member the same thing about a deal.
+module.exports.voteDealsFor = voteDealsFor;
 module.exports.votingClosedReason = votingClosedReason;
 module.exports.VOTE_PLAN_LOCK_SQL = VOTE_PLAN_LOCK_SQL;
 // The host's "votes are in" push, for the socket vote path, which writes the

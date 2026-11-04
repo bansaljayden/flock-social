@@ -184,7 +184,9 @@ test('the REST vote pushes after answering, and only for a vote that changed som
   // inside tallyAfterCommit, which hands the untailored rows to its caller
   // through onRows and never puts them in the answer.
   const helper = src.slice(src.indexOf('async function tallyAfterCommit('), src.indexOf("router.post('/:id/vote'"));
-  assert.match(helper, /const rows = await collectVoteRows\(flockId\);\s*if \(typeof onRows === 'function'\) onRows\(rows\);[\s\S]{0,200}return \{ votes: tailorVotes\(rows, myInvisible, \{ viewerId: req\.user\.id \}\) \};/);
+  // The answer is the caller's own view: their blocks and, since 2026-11-03,
+  // each option's deal as their venue page would show it (voteDealsFor).
+  assert.match(helper, /const rows = await collectVoteRows\(flockId\);\s*if \(typeof onRows === 'function'\) onRows\(rows\);[\s\S]{0,200}return \{ votes: tailorVotes\(rows, myInvisible, \{ viewerId: req\.user\.id, deals: myDeals \}\) \};/);
   // The route collects those rows, answers, and only then pushes, gated on a
   // vote that changed something and on a tally there was to judge it by.
   const route = src.slice(src.indexOf("router.post('/:id/vote'"), src.indexOf("console.error('Vote error:'"));

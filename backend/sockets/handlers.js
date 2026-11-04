@@ -21,7 +21,7 @@ const {
 } = require('../utils/blocks');
 // The vote tally is routes/venues.js's, not a copy of it. See the note at
 // vote_venue below.
-const { collectVoteRows, tailorVotes, votingClosedReason, VOTE_PLAN_LOCK_SQL, notifyHostVotesIn } = require('../routes/venues');
+const { collectVoteRows, tailorVotes, voteDealsFor, votingClosedReason, VOTE_PLAN_LOCK_SQL, notifyHostVotesIn } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const { SYSTEM_KINDS, writeSystemMessage } = require('../utils/systemMessages');
 const {
@@ -2402,7 +2402,11 @@ function registerHandlers(io, socket) {
       };
       // Per recipient, `mine` included: which row holds that recipient's own
       // vote, which a names array cannot say (routes/venues.js tailorVotes).
-      const tailor = (invisible, viewerId) => tailorVotes(rows, invisible, { viewerId });
+      // And each option's deal as that recipient's venue page would lead with
+      // it, from the same read the REST vote makes (routes/venues.js
+      // voteDealsFor): a drink deal goes only to a member we know is 21.
+      const dealsOf = await voteDealsFor(rows, [...memberIds, user.id]);
+      const tailor = (invisible, viewerId) => tailorVotes(rows, invisible, { viewerId, deals: dealsOf(viewerId) });
 
       socket.emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisibleOf(user.id), user.id) });
       for (const uid of memberIds) {

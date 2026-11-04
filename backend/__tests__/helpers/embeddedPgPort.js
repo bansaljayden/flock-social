@@ -182,6 +182,12 @@ const SUITE_SLOTS = {
                                  // (migration 133), through the real invite,
                                  // socket and suggestion code. Far from every
                                  // slot any branch had taken that day.
+  venueDealsParity: 86,          // new in 2026-11-03; one deals read for the
+                                 // venue page, a flock's vote and Birdie
+                                 // (utils/venueDeals.js): the page and the
+                                 // batch side by side, and each member's view
+                                 // of a vote option's deal, through the real
+                                 // routes. Far from the slots taken that day.
   sensorTableHistoryStatement: 92, // new in 2026-10-23; the table history
                                  // (migration 131): the seatings statement,
                                  // the medians, the waits, the switches and

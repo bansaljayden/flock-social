@@ -171,6 +171,10 @@ pool.query = async (text, params = []) => {
     if (guestVoteFailure) throw guestVoteFailure;
     return { rows: guestVotes, rowCount: guestVotes.length };
   }
+  // ── routes/venues.js, voteDealsFor (utils/venueDeals.js) ─────────────────
+  // Each option's deal, read once for the tally. No venue in this file has a
+  // deal, so the read answers none and the tally is told nothing more.
+  if (has('FROM venue_promotions p')) return { rows: [], rowCount: 0 };
 
   if (has('INSERT INTO flock_members')) {
     // One statement over an id ARRAY now (UNNEST), so the row-by-row rule is
