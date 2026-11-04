@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 29, 2026';
+const EFFECTIVE_DATE = 'November 3, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -506,15 +506,16 @@ export default function PrivacyPolicy() {
                 Every message also carries where you are in the app, because otherwise Birdie
                 cannot answer "is this place busy". That means the screen and tab you are on
                 and, when you have one open, the name of the flock you are looking at with its
-                venue and status, and the name of the venue you are looking at with its Google
-                place identifier. This goes with every message, not only when you ask about a
+                venue and status, how many people are going and, while it is voting, the venues
+                on its vote with their vote counts (never who voted), and the name of the venue
+                you are looking at with its Google place identifier. This goes with every message, not only when you ask about a
                 plan.
               </p>
               <p>
                 On top of that, if you ask Birdie about your plans or your friends, the names,
                 venues and times of your flocks and your friends' display names are included so
-                it can answer. When Birdie looks up a venue, the venue and the crowd numbers we
-                hold for it go with the question.
+                it can answer. When Birdie looks up a venue, the venue, any deal it has posted
+                and the crowd numbers we hold for it go with the question.
               </p>
               <p>
                 What is not sent: we don't send your email, exact coordinates, or messages
