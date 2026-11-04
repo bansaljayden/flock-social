@@ -621,6 +621,48 @@ test('a draft that says whose forecast it is once and then calls the card\'s day
   const payload = modelCalls[modelCalls.length - 1].payload;
   assert.match(payload, /"move":"Give that day one recurring reason to visit/);
   assert.ok(!/your (?:slowest|quietest) day/i.test(payload.slice(payload.indexOf('PLAYBOOK MOVE'))), payload);
+
+  // The live model's own wording (2026-11-03 live check): the ranking said as
+  // the forecast's, attribution first in its own sentence. That is the card
+  // said plainly, and it is served.
+  draftFor = (role, p) => {
+    const f = payloadFacts(p);
+    return {
+      answer: `Flock's forecast for places like yours points to {{fact:${idFor(f, quiet, 'weekday')}}} as your quietest night this week, peaking at only {{fact:${idFor(f, quiet, 'score')}}} around {{fact:${idFor(f, quiet, 'hour')}}}. That leaves the most room to sell.`,
+      points: [`Contrast that with {{fact:${idFor(f, busy, 'weekday')}}}, where typical venues peak at {{fact:${idFor(f, busy, 'score')}}}.`, `Give {{fact:${idFor(f, quiet, 'weekday')}}} one recurring reason to visit, such as trivia, and run it without skipping.`],
+    };
+  };
+  const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+  assert.strictEqual(r.body.mode, 'phrased', r.body.text);
+  assert.ok(r.body.text.startsWith(`Flock's forecast for places like yours points to ${quiet} as your quietest night this week, peaking at only ${low.peakScore} around `), r.body.text);
+});
+
+test('the chip\'s own question words excuse nothing: "Which days look quiet?" is not the owner calling a day quiet', async () => {
+  setUp({ placeId: 'ChIJforecastChipWords000', phrasing: true });
+  const { week } = await cardWeek();
+  const sorted = [...week].sort((a, z) => a.peakScore - z.peakScore);
+  const quiet = LONG[sorted[0].weekday];
+  draftFor = (role, p) => {
+    const f = payloadFacts(p);
+    return { answer: `{{fact:${idFor(f, quiet, 'weekday')}}} is your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
+  };
+  let r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.match(r.body.text, /^In Flock's forecast for places like yours, the quietest day this week is /);
+  // Said as the forecast's, it stands (the live model's quiet-days wording).
+  draftFor = (role, p) => {
+    const f = payloadFacts(p);
+    return { answer: `Flock's forecast for places like yours shows {{fact:${idFor(f, quiet, 'weekday')}}} as your quietest day this week, at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
+  };
+  r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+  assert.strictEqual(r.body.mode, 'phrased', r.body.text);
+  // "Your forecast" is never the card's, attribution or not.
+  draftFor = (role, p) => {
+    const f = payloadFacts(p);
+    return { answer: `Your forecast, like places like yours, has {{fact:${idFor(f, quiet, 'weekday')}}} at {{fact:${idFor(f, quiet, 'score')}}}.`, points: [] };
+  };
+  r = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
 });
 
 test('advice built on the card is read for the card in the wordings the first reader missed, and its fallback says whose forecast it is', async () => {

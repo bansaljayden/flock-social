@@ -41,7 +41,7 @@ const SAYS_WHOSE = new RegExp([
   `\\b(?:this|your|that)\\s+(?:kind|type|sort)\\s+of\\s+${KIND_NOUN}`,
   `\\b${KIND_NOUN}\\s+of\\s+(?:your|this|that)\\s+(?:kind|type|sort)\\b`,
   `\\b(?:similar|comparable)\\s+${KIND_NOUN}`,
-  `\\b(?:a|an|the)\\s+typical\\s+${KIND_NOUN}`,
+  `\\btypical\\s+${KIND_NOUN}`,
   `\\b${KIND_NOUN}\\s+in\\s+your\\s+category\\b`,
   '\\bcategory\\s+(?:forecast|pattern|typical|average)\\b',
 ].join('|'), 'i');
@@ -63,7 +63,9 @@ function saysWhose(text) {
 //     beside a word that sets a day against the week ("quietest", "slow",
 //     "busy", "peaks"), in that sentence or across the sentence after it;
 //   * a sentence OWNS the card when it calls a day or night the venue's own
-//     ("your slowest day", "your busy nights", "your forecast shows").
+//     ("your slowest day", "your busy nights") without having said, earlier
+//     in that same sentence, that this is the forecast for places like it,
+//     or calls the card "your forecast".
 // What the owner said is theirs: a number they typed, a day they named in
 // their question or their settings, and their own word for a day ("how do I
 // fill a slow Monday") are never read as the card. A sentence about the trade
@@ -100,8 +102,11 @@ const PLAIN_NUMBER = /(?<![$\d.,:\-–])\b(\d{1,3})\b(?![.,:]\d)(?!-[a-z])(?!\s*
 const ANY_NUMBER = /\d+(?:\.\d+)?/g;
 
 const OWNER_SOURCES = new Set(['intake', 'owner_report']);
-// A word that names a day or a part of one, for the owner's own words above.
+// A word that names a day or a part of one, a weekday by name, and the
+// owner's own "my" or "our", for reading the owner's own words below.
 const DAY_WORD = /^(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|days?|nights?|evenings?|weekends?|weeknights?|weekdays?|mornings?|afternoons?|shifts?|lunch(?:es)?|dinners?|brunch(?:es)?)$/;
+const WEEKDAY_TOKEN = /^(?:mon|tues|wednes|thurs|fri|satur|sun)days?$/;
+const OWNER_WORD = /^(?:my|our|we|we're|i'm)$/;
 
 function weekdayWords(value, into) {
   const values = Array.isArray(value) ? value : [value];
@@ -154,13 +159,18 @@ function cardContext(facts, texts = []) {
     if (typeof t !== 'string') continue;
     for (const m of t.matchAll(ANY_NUMBER)) ownerNumbers.add(Number(m[0]));
     for (const d of daysIn(t)) ownerDays.add(d);
-    // Their word for a day, said beside one: "a slow Monday", "our quiet
-    // nights", "busy Fridays". "Our best money move this week" calls no day
-    // anything.
-    const words = t.toLowerCase().match(/[a-z]+/g) || [];
+    // Their word for a day, said of one of their own: "a slow Monday",
+    // "Tuesdays are dead", "our quiet nights", "my slowest night". A question
+    // calls no day anything ("which days look quiet?", the chip's own words),
+    // and neither does "our best money move this week".
+    const words = t.toLowerCase().match(/[a-z']+/g) || [];
     words.forEach((w, i) => {
       const family = familyOf(w);
-      if (family && words.slice(Math.max(0, i - 2), i + 3).some((x) => DAY_WORD.test(x))) ownerFamilies.add(family);
+      if (!family) return;
+      const near = words.slice(Math.max(0, i - 2), i + 3);
+      const ownsTheDay = near.some((x) => WEEKDAY_TOKEN.test(x))
+        || (words.slice(Math.max(0, i - 2), i).some((x) => OWNER_WORD.test(x)) && near.some((x) => DAY_WORD.test(x)));
+      if (ownsTheDay) ownerFamilies.add(family);
     });
   }
   if (!scores.size && !days.size) return null;
@@ -215,16 +225,29 @@ const OWN_RANKED = /\byour\s+(?:own\s+)?(quiet(?:er)?|slow(?:er)?|dead|weak(?:er
 // "your forecast shows", "your week bottoms out", "your own pattern puts".
 // Not "your readings": the owner's own posted readings are theirs to be told
 // about, and the attribution rule above holds the card to its words.
-const OWN_FORECAST = /\byour\s+(?:own\s+)?(?:forecast|pattern|curve|history|week|weeks|crowd|index|scores?)\s+(?:shows?|showed|has|have|had|puts?|says?|said|is|are|was|were|peaks?|bottoms?|runs?|ranks?|reads?|sits?|lands?)\b/i;
+// A venue with no crowd history has no forecast of its own, so "your
+// forecast" beside the card is wrong however the sentence goes on.
+const OWN_FORECAST = /\byour\s+(?:own\s+)?forecasts?\b|\byour\s+(?:own\s+)?(?:pattern|curve|history|week|weeks|crowd|index|scores?)\s+(?:shows?|showed|has|have|had|puts?|says?|said|is|are|was|were|peaks?|bottoms?|runs?|ranks?|reads?|sits?|lands?)\b/i;
 
-/** True when `sentence` calls the card's week the venue's own. */
+/**
+ * True when `sentence` calls the card's week the venue's own. A ranking said
+ * as the forecast's, in a sentence that has already said whose forecast it is
+ * ("Flock's forecast for places like yours points to Sunday as your quietest
+ * night", the live model's own wording), is the card said plainly; the same
+ * words with no attribution before them in their sentence ("Saturday is your
+ * busiest night", two points after the attribution) are not. "Your forecast"
+ * and "your week shows" are never the card's.
+ */
 function ownsCard(sentence, ctx) {
   if (!ctx) return false;
   const s = String(sentence === null || sentence === undefined ? '' : sentence);
+  const whose = s.search(SAYS_WHOSE);
   for (const re of [OWN_SUPERLATIVE, OWN_RANKED]) {
     for (const m of s.matchAll(re)) {
       // The owner's own word for their day is theirs to have said back.
-      if (!ctx.ownerFamilies.has(familyOf(m[1]))) return true;
+      if (ctx.ownerFamilies.has(familyOf(m[1]))) continue;
+      if (whose >= 0 && whose < m.index) continue;
+      return true;
     }
   }
   return OWN_FORECAST.test(s);
