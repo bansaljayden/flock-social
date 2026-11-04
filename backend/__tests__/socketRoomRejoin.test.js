@@ -299,8 +299,12 @@ test('a public promotion can be reported from the one screen that shows it', () 
     'the report route refuses the type this button sends');
   assert.match(moderation, /FROM venue_promotions/,
     'the route must derive the owner off the row, since the client sends no user id');
+  // The read moved to utils/venueDeals.js on 2026-11-03 (a flock's vote and
+  // Birdie read deals through it too); the route still reads through it.
   const dash = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
-  assert.match(dash, /SELECT p\.id, p\.title/, '/public-promotions must still serve the row id');
+  assert.match(dash, /activeDealsForVenues\(\[req\.params\.placeId\]/, '/public-promotions no longer reads the shared deals read');
+  const { ONE_VENUE_DEALS_SQL } = require('../utils/venueDeals');
+  assert.match(ONE_VENUE_DEALS_SQL, /SELECT p\.id, p\.title/, '/public-promotions must still serve the row id');
   const sheet = fs.readFileSync(path.join(CLIENT_DIR, 'components', 'ModerationSheet.js'), 'utf8');
   assert.match(sheet, /venue_promotion: '/, 'ModerationSheet has no noun for a promotion');
 });

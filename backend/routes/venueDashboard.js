@@ -23,7 +23,10 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // routes/feedback.js and sockets/handlers.js all validate against this, and so
 // does routes/venueProfile.js as of the 2026-08-14 audit.
 const { isPlaceIdShaped } = require('../utils/places');
-const { promotionIsOver21, venueEventIsOver21, viewerKnownOver21 } = require('../utils/over21');
+const { venueEventIsOver21, viewerKnownOver21 } = require('../utils/over21');
+// Which of a venue's deals a person sees: one decision for the venue page, a
+// flock's vote and Birdie (utils/venueDeals.js).
+const { activeDealsForVenues } = require('../utils/venueDeals');
 // When a venue event is on and whether it has passed: only a real calendar date
 // can be shown to anyone (utils/venueEventDate.js says why).
 const { eventDay, isUpcoming, firstUpcomingDay, soonestFirst, eventDayProblem } = require('../utils/venueEventDate');
@@ -1693,51 +1696,23 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
-    // Only VERIFIED venues publish publicly — an unverified claim on a Google
-    // Place ID must not let a stranger speak as that business (audit 2026-08-12).
-    // Round 4: the join is on the promotion AUTHOR's own profile, not the place
-    // id alone — matching by place id let an unverified claimant's promotion
-    // ride on someone else's verified claim for the same place.
-    //
-    // NO PLAN IS READ HERE, ON PURPOSE. Deals are free on every plan
-    // (VENUE-PRICING.md section 4), so serving one depends on who wrote it,
-    // never on what they pay. This read used to join the grant and the Roost
-    // notice window, because deals belonged to a paid plan and a venue that
-    // stopped paying had to stop being promoted. With no paid deals there is
-    // no downgrade to follow, and a plan read here would only be a way for a
-    // lapsed card to take a venue's deal off its own card. What still stops
-    // a deal being served: an unverified or banned author, a deal the owner
-    // switched off or deleted, and a moderation takedown.
-    const { rows } = await pool.query(
-      `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
-       JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
-         AND vp.google_place_id = p.google_place_id
-         AND vp.verified = true
-       -- A BAN TAKES THE BUSINESS'S WORDS DOWN WITH IT (venue-owner audit,
-       -- 2026-09-05). "Ban user" on the moderation console touched only
-       -- users.is_banned; this read joined on verified alone, so a banned
-       -- owner's promotions kept serving to every consumer, views kept
-       -- counting, and the moderator had no signal a second click was needed.
-       -- Same rule the story and profile reads already apply to a banned
-       -- author (utils/relationships.js, routes/users.js).
-       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
-       WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
-       ORDER BY p.created_at DESC
-       LIMIT 100`,
-      [req.params.placeId]
-    );
-    // A DRINK DEAL REACHES ONLY AN ACCOUNT WE KNOW IS 21 (utils/over21.js,
-    // App Store Guideline 1.4.3). Left out of the response for everyone else,
-    // an account with no date of birth included, which is every account made
-    // in the iPhone app. The birthday is read only when a drink deal is in the
-    // set, so a venue with none costs no extra query.
-    let served = rows;
-    if (rows.some(promotionIsOver21) && !(await viewerKnownOver21(pool, req.user.id))) {
-      served = rows.filter((r) => !promotionIsOver21(r));
-    }
+    // WHICH DEALS THIS PERSON SEES is decided in utils/venueDeals.js, which a
+    // flock's vote and Birdie read too, so the three cannot drift. Its rules
+    // are the ones this route has always applied, and its header has the
+    // reasons: only the deals of a VERIFIED, unbanned owner, written on that
+    // owner's own claim on this place; switched on and not taken down; newest
+    // first, a hundred at most; NO PLAN READ, because deals are free on every
+    // plan; and a DRINK DEAL only for an account we know is 21 (utils/over21.js,
+    // App Store Guideline 1.4.3), with the birthday read only when a drink deal
+    // is in the set. For one place it sends the statement this route always
+    // sent, the place id its only parameter.
+    const deals = await activeDealsForVenues([req.params.placeId], { userId: req.user.id });
+    const served = deals.get(req.params.placeId) || [];
     // Count the view — see the two rules above claimPromotionViews. Bounded by
-    // the LIMIT above, so the ANY($1) set never grows without limit either.
-    // Only what was served counts: a deal left out above was not seen.
+    // the read's own limit (a hundred a venue), so the ANY($1) set never grows
+    // without limit either. Only what was served counts: a deal left out above
+    // was not seen. Only this page counts: a deal on a vote option or a Birdie
+    // card is not a view of the venue's page.
     //
     // A failure here must NOT cost the reader their promotions: the analytic is
     // worth less than the content it is counting, and the old code let an

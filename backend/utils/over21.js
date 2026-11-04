@@ -160,14 +160,32 @@ function knownOver21(dob, now = new Date()) {
 // The viewer's answer, read fresh from users.date_of_birth (req.user carries no
 // birthday). Any failure is "not known", which can only hide a drink deal from
 // somebody who could have seen it, never show one to somebody who should not.
-async function viewerKnownOver21(db, userId) {
+// `now` is the clock the age is read on; every caller in production leaves it
+// to the default.
+async function viewerKnownOver21(db, userId, now = new Date()) {
   if (!db || userId == null) return false;
   try {
     const { rows } = await db.query('SELECT date_of_birth FROM users WHERE id = $1', [userId]);
-    return knownOver21(rows[0] ? rows[0].date_of_birth : null);
+    return knownOver21(rows[0] ? rows[0].date_of_birth : null, now);
   } catch (err) {
     console.error('Viewer age read failed:', err.message);
     return false;
+  }
+}
+
+// The same answer for many viewers in one read: the ids we know are 21, as a
+// Set. Used where one payload goes to every member of a plan, each tailored
+// (utils/venueDeals.js). Same rule and same failure: an id the read does not
+// return, a date that is not a date, or a read that fails is not known.
+async function viewersKnownOver21(db, userIds, now = new Date()) {
+  const ids = [...new Set((Array.isArray(userIds) ? userIds : []).map(Number).filter(Number.isInteger))];
+  if (!db || ids.length === 0) return new Set();
+  try {
+    const { rows } = await db.query('SELECT id, date_of_birth FROM users WHERE id = ANY($1::int[])', [ids]);
+    return new Set(rows.filter((r) => knownOver21(r.date_of_birth, now)).map((r) => Number(r.id)));
+  } catch (err) {
+    console.error('Viewer age read failed:', err.message);
+    return new Set();
   }
 }
 
@@ -184,4 +202,5 @@ module.exports = {
   venueEventIsOver21,
   knownOver21,
   viewerKnownOver21,
+  viewersKnownOver21,
 };

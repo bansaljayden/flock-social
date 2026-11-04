@@ -805,8 +805,14 @@ test('the write path asks whether the caller claims the place it is rating', asy
 test('every publicly-served promotion field is profanity-screened, not just two', async () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
   // The public SELECT names the fields that need screening; the screen has to
-  // cover all of them. Read from the source so the two cannot drift.
-  const publicSelect = /SELECT p\.id, p\.title, p\.description, p\.time_slot, p\.days FROM venue_promotions/.test(src);
+  // cover all of them. Read from the statements themselves so the two cannot
+  // drift. They live in utils/venueDeals.js since 2026-11-03, one for the
+  // venue page and one for many venues at once (a vote, a Birdie search), and
+  // both serve the same four words.
+  const { ONE_VENUE_DEALS_SQL, MANY_VENUE_DEALS_SQL } = require('../utils/venueDeals');
+  const flat = (sql) => sql.replace(/\s+/g, ' ');
+  const publicSelect = /^SELECT p\.id, p\.title, p\.description, p\.time_slot, p\.days FROM venue_promotions/.test(flat(ONE_VENUE_DEALS_SQL))
+    && /^SELECT d\.id, d\.title, d\.description, d\.time_slot, d\.days, d\.google_place_id FROM \( SELECT p\.id, p\.title, p\.description, p\.time_slot, p\.days, p\.google_place_id,/.test(flat(MANY_VENUE_DEALS_SQL));
   assert.ok(publicSelect, 'the public promotion projection changed — re-check the screen below');
   const screens = src.match(/for \(const field of \['title', 'description', 'timeSlot', 'days'\]\)/g) || [];
   assert.strictEqual(screens.length, 2, 'the create and update routes must both screen all four fields');
