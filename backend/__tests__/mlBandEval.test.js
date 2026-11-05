@@ -568,6 +568,38 @@ test('--candidate-serve names a configuration in which the model answers, and th
   assert.deepEqual([...new Set(B.SERVE_CONFIGS.map((c) => c.serveMode))].sort(), [...I.SERVE_MODES].sort());
 });
 
+test('the replay\'s parts are the model path\'s on every row, under model_when_fresh too, while the curve keeps its offset', async () => {
+  const fx = FX.buildFixture();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-bandeval-parts-'));
+  const csv = path.join(dir, 'fixture.csv');
+  FX.writeFixtureCsv(csv, fx);
+  try {
+    B.pinUtcClock();
+    const corpus = await B.readCorpus([csv]);
+    const art = await B.loadArtifact(MODELS_DIR);
+    const prepared = B.prepareRows(corpus.live, corpus, { I: art.I, crowdEngine });
+    // The checked-in artifact as one that took the offset as an input: the
+    // model path then adds none after the model, whichever side a row is on.
+    const learns = { ...art, I: { ...art.I, artifactLearnsOffset: () => true } };
+    let curveRowsWithOffset = 0;
+    for (const serveMode of ['model', 'model_when_fresh', 'curve_offset']) {
+      const scored = await B.scoreArtifact(learns, prepared, { qmap: false, serveMode, nowcast: false });
+      for (const [i, r] of scored.rows.entries()) {
+        if (!r.ml) continue;
+        assert.equal(r.withOffset, r.reconstructed, `${serveMode} row ${i}: the model's parts took an offset`);
+        if (r.curveOffset) {
+          const off = prepared[i].switchedOffset;
+          assert.equal(r.served, art.I.curveOffsetScore(prepared[i].smoothed, off === null ? null : { offset: off }));
+          if (off !== null) curveRowsWithOffset++;
+        }
+      }
+    }
+    assert.ok(curveRowsWithOffset >= 20, `only ${curveRowsWithOffset} curve rows carried an offset`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the gate scores the candidate as --candidate-serve says, records it, and the rows file carries the mix and its parts', async () => {
   const fx = FX.buildFixture();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-bandeval-candserve-'));

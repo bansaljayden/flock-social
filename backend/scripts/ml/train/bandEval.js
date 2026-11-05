@@ -775,10 +775,15 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
     // not fresh, and the model path wherever it is.
     const curveOffset = (mode === 'curve_offset' || (mode === 'model_when_fresh' && !I.isFreshReading(r.nowcastPick)))
       && r.smoothed > 0;
-    // An artifact that takes the offset as an input is not handed it again
-    // after the model (predictBusyness, artifactLearnsOffset).
-    const offset = !curveOffset && I.artifactLearnsOffset(art.meta) ? null
-      : (switchedArithmetic ? r.switchedOffset : r.offset);
+    // The offset the arithmetic adds: the strict one with a switch on, else
+    // the stored median. The model path's parts take it unless the artifact
+    // takes the offset as an input, which is not handed it again after the
+    // model (predictBusyness, artifactLearnsOffset); the curve takes it
+    // always. The parts are the model path's on every row, so under
+    // model_when_fresh they describe the model on the rows the curve answers
+    // too.
+    const offset = switchedArithmetic ? r.switchedOffset : r.offset;
+    const modelOffset = I.artifactLearnsOffset(art.meta) ? null : offset;
     if (!curveOffset && !Number.isFinite(rawDelta)) return; // the catch in predictBusyness answers from the rule engine
     const parts = { reconstructed: null, mapped: null, withOffset: null, modelServed: null };
     if (Number.isFinite(rawDelta)) {
@@ -786,8 +791,8 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
         ? I.reconstructScore(rawDelta, r.smoothed)
         : Math.max(0, Math.min(100, Math.round(rawDelta)));
       const mapped = qmapOn && mapsThisModel ? I.applyScoreQuantileMap(base) : base;
-      const withOffset = (s) => (offset === null ? s
-        : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * offset))));
+      const withOffset = (s) => (modelOffset === null ? s
+        : Math.max(0, Math.min(100, Math.round(s + I.DEVIATION_WEIGHT * modelOffset))));
       parts.reconstructed = base;
       parts.mapped = mapsThisModel ? I.applyScoreQuantileMap(base) : base;
       parts.withOffset = withOffset(base);
