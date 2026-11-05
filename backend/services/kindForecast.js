@@ -116,6 +116,19 @@ function cardQuietDay(facts) {
   return low ? low.weekday : null;
 }
 
+/**
+ * A playbook line as Roost shows it under an answer built on `facts`: in the
+ * playbook's own words, or, when the facts hold the card, naming the card's
+ * quiet day instead of "your slowest day". The chip's template
+ * (routes/advisor.js) and the Monday email's money move
+ * (advisorMoneyMove.digestCard) both show a move through this one function,
+ * so the email says what the chip says.
+ */
+function besideCard(text, facts) {
+  const day = cardQuietDay(facts);
+  return day ? unownDays(text, day) : text;
+}
+
 module.exports = {
   KIND_FORECAST_SOURCE,
   KIND_FORECAST,
@@ -126,4 +139,5 @@ module.exports = {
   unownDays,
   unownPlay,
   cardQuietDay,
+  besideCard,
 };

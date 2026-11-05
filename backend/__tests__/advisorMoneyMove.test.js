@@ -15,6 +15,9 @@ pool.query = async () => ({ rows: [], rowCount: 0 });
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const venueDigest = require('../services/venueDigest');
 const { renderDigestText, renderDigestHtml } = require('../templates/venueDigestEmail');
+const { renderTemplate } = require('../services/advisorPhrasing');
+const roostPlaybook = require('../services/roostPlaybook');
+const { KIND_FORECAST_SOURCE, unownDays } = require('../services/kindForecast');
 
 const isRefusal = (e) => Boolean(e && e.refusal === true);
 const DAY = (weekday, peakHour, peakScore, i) => ({
@@ -82,6 +85,25 @@ test('with no spend on file the email still names the day and the move, and stat
   });
   assert.strictEqual(card.facts.length, 2);
   assert.ok(!card.facts.some((f) => /\$/.test(f.label)));
+});
+
+test('beside a no-history venue\'s Week Ahead card the email\'s move names the quiet day, as the chip\'s template does', () => {
+  const renderLead = (block) => String(renderTemplate(block).text || '').split('\n')[0] || null;
+  const card = WEEK.map((f) => ({ ...f, id: f.id.replace('peak_', 'typical_peak_'), source: KIND_FORECAST_SOURCE }));
+  const move = roostPlaybook.moveFor('money_move', { facts: WEEK }, roostPlaybook.venueOf(CTX(38))).move;
+  assert.match(move, /\byour slowest day\b/, 'the playbook writes the move for the venue\'s own week');
+
+  const kind = advisorMoneyMove.digestCard({ weekFacts: card, ctx: CTX(38), isRefusal, renderLead });
+  assert.deepStrictEqual(kind.facts.map((f) => f.label), [
+    'Fill Tuesday. In Flock\'s forecast for places like yours, it is the quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.',
+    unownDays(move, 'Tuesday'),
+    'At your $38 a head, every 10 extra covers on Tuesday is $380 a week, about $19,760 a year.',
+  ]);
+  assert.ok(!/\byour (?:quietest|slowest)\b/i.test(kind.facts.map((f) => f.label).join(' ')));
+  assert.deepStrictEqual(kind.facts.map((f) => f.source), [KIND_FORECAST_SOURCE, 'roost_playbook', 'intake']);
+  // The venue's own week keeps the playbook's own words.
+  const own = advisorMoneyMove.digestCard({ weekFacts: WEEK, ctx: CTX(38), isRefusal, renderLead });
+  assert.strictEqual(own.facts[1].label, move);
 });
 
 test('a week with nothing scored has no money move section', () => {

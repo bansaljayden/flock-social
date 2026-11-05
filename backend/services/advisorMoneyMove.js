@@ -20,6 +20,7 @@
 // ---------------------------------------------------------------------------
 
 const roostPlaybook = require('./roostPlaybook');
+const { besideCard } = require('./kindForecast');
 
 const LOWEST_NOTE = 'This is the LOWEST projected day in the week ahead: the room with the most seats to sell, which is where this week\'s money move is.';
 const LEVEL_NOTE = 'This week projects level: no day sits far enough from the rest to be worth filling on its own, so the money is in each check.';
@@ -83,7 +84,10 @@ const DIGEST_TITLE = 'This week\'s money move';
 /**
  * The Monday email's money move section, or null when the week has nothing
  * to say. `lead` is the chip's own first sentence (advisorPhrasing renders
- * it), so the email and the chat say the same thing.
+ * it), so the email and the chat say the same thing. The move and the money
+ * read as the chip's template shows them: beside a no-history venue's Week
+ * Ahead card the move names the quiet day the lead named, never "your slowest
+ * day" (services/kindForecast.js besideCard).
  */
 function digestCard({ weekFacts, ctx, isRefusal, renderLead }) {
   const picked = pickFacts(weekFacts, isRefusal).filter((e) => !isRefusal(e));
@@ -100,7 +104,7 @@ function digestCard({ weekFacts, ctx, isRefusal, renderLead }) {
   });
   const facts = [
     { id: 'money_move_day', label: lead, source: picked[0].source, asOf: picked[0].asOf },
-    ...lines.map((text, i) => ({ id: `money_move_${i ? 'money' : 'play'}`, label: text, source: sources[i].source, asOf: sources[i].asOf })),
+    ...lines.map((text, i) => ({ id: `money_move_${i ? 'money' : 'play'}`, label: besideCard(text, picked), source: sources[i].source, asOf: sources[i].asOf })),
   ];
   return { id: 'money_move', title: DIGEST_TITLE, facts, status: 'ok' };
 }
