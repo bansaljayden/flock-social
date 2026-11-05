@@ -158,14 +158,15 @@ router.post('/waitlist/announce', async (req, res) => {
       return res.json({ dry_run: true, ...summary });
     }
 
-    // A launch mail whose button opens a web signup form is the wrong mail
-    // for an iOS app, and the only thing that points the button at the store
-    // is APP_STORE_URL (services/emailService.js sendWaitlistLaunchEmail).
-    // Refuse a real send without it. The dry run above still answers, so the
-    // switch can be rehearsed before the variable exists.
-    if (!process.env.APP_STORE_URL) {
+    // A launch mail whose button opens anything but the App Store listing is
+    // the wrong mail for an iOS launch. The button's link is
+    // emailService.waitlistLaunchUrl(): the listing (live since 2026-11-04),
+    // or APP_STORE_URL if the service sets one. Refuse a real send unless it
+    // resolves to an App Store listing. The dry run above still answers.
+    const launchUrl = emailService.waitlistLaunchUrl();
+    if (!/^https:\/\/apps\.apple\.com\//.test(launchUrl)) {
       return res.status(409).json({
-        error: 'APP_STORE_URL is not set, so the launch email would point at the web signup form instead of the App Store. Set it on the service and try again.',
+        error: 'The launch email\'s button would not open the App Store listing (APP_STORE_URL overrides it with something else). Fix the link and try again.',
       });
     }
 

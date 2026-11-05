@@ -1198,8 +1198,17 @@ async function sendWaitlistConfirmation({ to }) {
 // consent. APP_STORE_URL points the button at the store once the app is live;
 // until that env var exists the button goes to signup on the web app, which
 // is real today.
+// Flock's App Store listing, live since 2026-11-04: the same id the website's
+// App Store buttons use (frontend/src/website/TapPage.js and LandingPage.js).
+// APP_STORE_URL on the service can still override it, and the announce route
+// refuses to send unless the link it resolves to is an App Store listing.
+const APP_STORE_LISTING_URL = 'https://apps.apple.com/app/id6781442127';
+function waitlistLaunchUrl() {
+  return process.env.APP_STORE_URL || APP_STORE_LISTING_URL;
+}
+
 async function sendWaitlistLaunchEmail({ to }) {
-  const getUrl = process.env.APP_STORE_URL || `${baseWebUrl()}/signup`;
+  const getUrl = waitlistLaunchUrl();
   const optOut = unsubscribeUrl(typeof to === 'string' ? to.trim() : '');
   const optOutHtml = optOut
     ? `<a href="${escapeHtml(optOut)}" style="color: #a0aec0;">Stop these emails</a>.`
@@ -1258,6 +1267,7 @@ module.exports = {
   sendPasswordResetOAuthEmail,
   sendWaitlistConfirmation,
   sendWaitlistLaunchEmail,
+  waitlistLaunchUrl,
   verificationLink,
   passwordResetLink,
   baseWebUrl,

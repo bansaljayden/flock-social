@@ -150,18 +150,29 @@ function reset() {
 test.before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-test('a real send is refused while APP_STORE_URL is unset, and nothing goes out', async () => {
-  // Without the variable the button resolves to `${web}/signup`, a web signup
-  // form, in a mail titled for an iOS launch. The dry run still reports.
+test('a real send is refused when the button would not open the App Store, and nothing goes out', async () => {
+  // An override pointing anywhere else (a web signup form, say) is the wrong
+  // mail for an iOS launch. The dry run still reports.
   const saved = process.env.APP_STORE_URL;
-  delete process.env.APP_STORE_URL;
+  process.env.APP_STORE_URL = 'https://www.flockcorp.com/signup';
   try {
     statsRow = { total: 4, converted: 0, announced: 0, pending: 4 };
     const dry = await call('POST', '/api/admin/waitlist/announce', { dry_run: true }, signUserToken(ADMIN));
     assert.strictEqual(dry.status, 200);
     const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
     assert.strictEqual(res.status, 409);
-    assert.match(res.body.error, /APP_STORE_URL/);
+    assert.match(res.body.error, /App Store listing/);
+  } finally {
+    process.env.APP_STORE_URL = saved;
+  }
+});
+
+test('with no override the launch email opens Flock\'s real App Store listing', () => {
+  const saved = process.env.APP_STORE_URL;
+  delete process.env.APP_STORE_URL;
+  try {
+    const { waitlistLaunchUrl } = require('../services/emailService');
+    assert.strictEqual(waitlistLaunchUrl(), 'https://apps.apple.com/app/id6781442127');
   } finally {
     process.env.APP_STORE_URL = saved;
   }
@@ -389,7 +400,7 @@ test('the launch email is marketing-category, honest about place in line, and em
   const fn = EMAIL_SRC.slice(start, end);
   assert.match(fn, /category: 'marketing'/, 'the do-not-mail list and unsubscribe apply');
   assert.match(fn, /List-Unsubscribe/);
-  assert.match(fn, /APP_STORE_URL/, 'points at the store once that env var exists');
+  assert.match(fn, /waitlistLaunchUrl\(\)/, 'points at the App Store listing');
   // No promise the product does not keep: nothing gives a waitlisted address
   // priority, so the email says thanks and nothing about a place in line
   // (2026-10-30; routes/auth.js only links the row for the admin counts).
