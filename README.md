@@ -6,9 +6,8 @@ Flock is a social planning app for going out with friends: start a flock,
 invite your people, vote on where to go, match budgets privately, split the
 bill, and get home safe. Free for users; the business is on the venue side.
 
-- **Web:** https://www.flockcorp.com (live since 2026-08-12; the old
-  `flock-app-w65m.vercel.app` still resolves)
-- **iOS:** Capacitor build, App Store submission in progress (App ID 6781442127)
+- **Web:** https://www.flockcorp.com (live since 2026-08-12)
+- **iOS:** on the App Store since 2026-11-04: https://apps.apple.com/app/id6781442127
 - **1st place, PA DECA States**
 
 ## Why it exists

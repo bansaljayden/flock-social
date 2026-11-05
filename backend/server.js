@@ -484,7 +484,9 @@ app.use(compression({
 const allowedOrigins = [
   process.env.FRONTEND_URL || 'http://localhost:3000',
   'http://localhost:5173', // Vite dev server
-  'https://flock-app-w65m.vercel.app',
+  // The site's old Vercel copy (flock-app-w65m.vercel.app) is retired: the
+  // site has run on Cloudflare Pages since 2026-10-21, so that origin is no
+  // longer allowed to call the API.
   // The real domain. Added ahead of the DNS cutover so the app at
   // flockcorp.com/app works the moment the domain resolves — without this the
   // new origin is blocked and every API call fails.

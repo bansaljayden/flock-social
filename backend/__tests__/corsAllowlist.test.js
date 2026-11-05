@@ -85,8 +85,15 @@ test('no pattern is ever matched against the caller-supplied Origin', () => {
   }
 });
 
-test('the real production host is allowed', () => {
-  assert.ok(isAllowedOrigin('https://flock-app-w65m.vercel.app'));
+test('the real production hosts are allowed', () => {
+  assert.ok(isAllowedOrigin('https://www.flockcorp.com'));
+  assert.ok(isAllowedOrigin('https://flockcorp.com'));
+});
+
+test('the retired Vercel copy of the site is REJECTED', () => {
+  // The site moved to Cloudflare Pages on 2026-10-21; the old Vercel
+  // deployment is retired and must not be able to sign anyone in.
+  assert.strictEqual(isAllowedOrigin('https://flock-app-w65m.vercel.app'), false);
 });
 
 test('R2-1: the attacker-registrable preview-shaped host is REJECTED', () => {

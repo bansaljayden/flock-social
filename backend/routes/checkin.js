@@ -307,9 +307,10 @@ async function markFlockAttendance(userId, placeId) {
 const TAP_DEDUPE_MS = 30 * 60 * 1000;
 const tapCache = new Map(); // "u:<id>|place|nfc|any" or "ip:<addr>|place|..." -> last tap ms
 
-// flockcorp.com has no DNS pointed at the app yet, so tapping an NFC tag would
-// land on a dead domain. Overridable once DNS is live.
-const anonRedirect = () => process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app';
+// Where a tap without a signed-in session lands: the site named by
+// PUBLIC_WEB_URL, else the production site itself (never the retired Vercel
+// copy).
+const anonRedirect = () => process.env.PUBLIC_WEB_URL || 'https://www.flockcorp.com';
 
 // ---------------------------------------------------------------------------
 // Round 15 (location privacy): this event used to carry `user_id`.
