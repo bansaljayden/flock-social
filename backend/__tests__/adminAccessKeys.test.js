@@ -494,6 +494,32 @@ test('a key stops the moment its account is no longer an admin, or is banned', a
   }, keys.KEY_WORDS.ended);
 });
 
+test('a revoke that lands between the lookup and the use wins: the route never runs', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mint(owner);
+  const realQuery = pool.query.bind(pool);
+  let raced = false;
+  pool.query = async (sql, params) => {
+    const out = await realQuery(sql, params);
+    if (!raced && /FROM admin_access_keys k\s+JOIN users u/.test(String(sql))) {
+      raced = true;
+      await realQuery("UPDATE admin_access_keys SET revoked_at = NOW(), revoked_via = 'session' WHERE id = $1", [k.id]);
+    }
+    return out;
+  };
+  try {
+    const res = await call('POST', '/api/admin/expenses', {
+      bearer: k.key, body: { vendor: 'Raced Bill', kind: 'other', cadence: 'monthly', amount: '1.00' },
+    });
+    assert.strictEqual(res.status, 401, res.text);
+  } finally {
+    pool.query = realQuery;
+  }
+  assert.ok(raced);
+  assert.strictEqual(Number((await pool.query("SELECT COUNT(*) AS n FROM business_expenses WHERE vendor = 'Raced Bill'")).rows[0].n), 0);
+  assert.strictEqual((await usesOf(k.id)).length, 0);
+});
+
 test('a dead key replayed all hour writes at most the hourly ceiling of refusals', async () => {
   const owner = await insertUser({ role: 'admin' });
   const k = await mint(owner);

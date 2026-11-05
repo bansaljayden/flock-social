@@ -253,9 +253,11 @@ const KEY_LOOKUP_SQL = `SELECT k.id, k.name, k.key_hash, k.scopes, k.session_ver
 
 // One statement for the key's last use and the log row, so a use is never on
 // one and missing from the other.
+// The key must still be live at this statement too, so a revoke that lands
+// between the lookup and here wins: nothing is written, and the use is refused.
 const USE_INSERT_SQL = `WITH used AS (
        UPDATE admin_access_keys SET last_used_at = NOW(), last_used_ip = $2::text
-        WHERE id = $1::int
+        WHERE id = $1::int AND revoked_at IS NULL AND expires_at > NOW()
         RETURNING id
      )
      INSERT INTO admin_key_uses (key_id, method, route, ip)
@@ -370,8 +372,8 @@ async function authenticateAdminKey(req, res, next, token) {
     console.error(`[admin-key] key ${row.id}: the use could not be logged, so it was refused: ${err.message}`);
     return res.status(503).json({ error: KEY_WORDS.unlogged });
   }
-  // The key row went between the lookup and the write (its account was
-  // deleted, which takes its keys with it).
+  // The key was revoked, ran out or went with its account between the lookup
+  // and the write.
   if (!useId) return res.status(401).json({ error: KEY_WORDS.invalid });
   recordStatusOnFinish(res, useId);
 
