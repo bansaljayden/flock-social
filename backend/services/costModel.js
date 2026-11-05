@@ -440,13 +440,13 @@ const FIXED_MONTHLY = [
   },
   {
     id: 'vercel',
-    label: 'Vercel (web hosting)',
+    label: 'Vercel (the old web host)',
     usd: 0,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-10-03',
+    checked: '2026-11-05',
     source: 'https://vercel.com/docs/plans/hobby',
-    note: 'Hobby, which is free: the Vercel billing API has no charges at all for the team (costs_not_found, read 2026-09-29). Hobby is restricted to non-commercial, personal use by Vercel\'s fair use guidelines, and the site sells Flock Pro, so the plan that fits is Pro: a $20 monthly platform fee that includes one deploying seat and $20 of usage credit. Moving to it is a purchase, and this line changes to 20 the day it happens.',
+    note: 'Nothing Flock serves runs on Vercel any more, and Vercel bills nothing: its billing API has no charges for the team (costs_not_found, read 2026-11-05). flockcorp.com moved to Cloudflare Pages on 2026-10-21. On 2026-11-05 flockcorp.com and www.flockcorp.com resolved to Cloudflare and answered with Server: cloudflare and no Vercel headers, Vercel deploys were off (frontend/vercel.json), and no Flock link or setting named a vercel.app address (PUBLIC_WEB_URL is www.flockcorp.com). So Hobby\'s non-commercial terms no longer cover anything Flock sells, and the Vercel Pro upgrade this line used to wait on is not needed. Left on Vercel: its last deployment still answers at flock-app-w65m.vercel.app, a copy of the site from before the move that nothing links to, and the API still accepts that address as an origin (backend/server.js). Deleting the Vercel project ends it.',
   },
 ];
 
@@ -844,7 +844,7 @@ const DEPENDENCIES = [
     // services/maptilerUsage.js. The map key itself is not something this
     // process can see; configuredNote says so.
     configuredEnv: ['MAPTILER_SERVICE_TOKEN'],
-    configuredNote: 'The map key, REACT_APP_MAPTILER_KEY, is a build-time variable set on Vercel and Codemagic, so the backend cannot see whether it is set. MAPTILER_SERVICE_TOKEN is only the usage meter\'s.',
+    configuredNote: 'The map key, REACT_APP_MAPTILER_KEY, is a build-time variable, set where the website is built for Cloudflare Pages and on Codemagic, so the backend cannot see whether it is set. MAPTILER_SERVICE_TOKEN is only the usage meter\'s.',
     observedLineId: null,
     watchlistId: 'maptiler-satellite',
     usageNote: 'With MAPTILER_SERVICE_TOKEN set, the money hub reads this billing period\'s sessions and requests from MapTiler\'s service API, held for 30 minutes. Nothing in this repo counts map loads itself.',
@@ -915,13 +915,13 @@ const DEPENDENCIES = [
   {
     id: 'vercel',
     label: 'Vercel',
-    what: 'Hosts flockcorp.com and the web build of the app.',
-    where: 'the marketing site and the web app',
+    what: 'Hosted flockcorp.com and the web build of the app until 2026-10-21, when the site moved to Cloudflare Pages. Nothing Flock serves runs on it now.',
+    where: 'the old Vercel project, with deploys off (frontend/vercel.json)',
     group: 'fixed',
     fixedId: 'vercel',
     configuredEnv: null,
     observedLineId: null,
-    usageNote: 'Bandwidth, build minutes and deployment storage are not read from here. Vercel\'s own email of 2026-10-07 put deployment storage at 75% of Hobby\'s 10 GB.',
+    usageNote: 'Vercel bills nothing (its billing API, 2026-11-05). Its last deployment still answers at flock-app-w65m.vercel.app, a copy of the site from before the move that nothing links to.',
   },
   {
     id: 'apple-developer',
@@ -1009,7 +1009,7 @@ const DEPENDENCIES = [
     // TWO HALVES, ONE OF WHICH THIS PROCESS CANNOT SEE.
     //
     // The product analytics half runs in the browser off REACT_APP_POSTHOG_KEY,
-    // a Vercel build variable. It is live and it is the only half sending
+    // a build-time variable. It is live and it is the only half sending
     // anything. The Birdie token-trace half runs here off POSTHOG_API_KEY, and
     // that is the name below, so `configured` on this row answers a question
     // about Birdie observability and says nothing at all about whether the app
@@ -1033,7 +1033,7 @@ const DEPENDENCIES = [
     group: 'free',
     pricing: { type: 'free', rateGroup: 'posthog' },
     configuredEnv: ['POSTHOG_API_KEY'],
-    configuredNote: 'POSTHOG_API_KEY is the Birdie trace leg only. The app events ride REACT_APP_POSTHOG_KEY, which is set at build time on Vercel and is not visible from this process, so this line can never report on them.',
+    configuredNote: 'POSTHOG_API_KEY is the Birdie trace leg only. The app events ride REACT_APP_POSTHOG_KEY, which is set at build time (the website\'s Cloudflare Pages build and Codemagic) and is not visible from this process, so this line can never report on them.',
     observedLineId: null,
     // This sentence carries the whole correction, because the panel only
     // prints configuredNote when configuredEnv is null (App.js depConfigured).
@@ -1041,7 +1041,7 @@ const DEPENDENCIES = [
     // POSTHOG_API_KEY is unset on the server', which is true of the trace leg
     // and false of the app, and the note that explains the difference is where
     // it will actually be read.
-    usageNote: 'Event volume is counted by PostHog and by nothing in this repo. The configured line below reads POSTHOG_API_KEY, which is the Birdie trace leg only: the app events ride REACT_APP_POSTHOG_KEY, a Vercel build variable this process cannot see. No $ai_generation event has ever reached the project, so no token trace is in that volume.',
+    usageNote: 'Event volume is counted by PostHog and by nothing in this repo. The configured line below reads POSTHOG_API_KEY, which is the Birdie trace leg only: the app events ride REACT_APP_POSTHOG_KEY, a build-time variable this process cannot see. No $ai_generation event has ever reached the project, so no token trace is in that volume.',
     costsNothingBecause: 'Free below 1,000,000 events a month, and Flock has roughly no users.',
     unknownAction: 'The event count is on the PostHog billing page if you want to see how much of that allowance is gone. Setting POSTHOG_API_KEY on the Railway service is what starts the Birdie token traces; routes/ai.js already sends metrics only, with no conversation content.',
   },
@@ -2205,18 +2205,14 @@ function buildVenueUnitEconomics(args = {}) {
 // is above $0 or that an active bill above $0 stands in for, or an active
 // bill whose vendor matches. Exposures fixed in code leave this list with the
 // change that fixes them.
+//
+// Left the list:
+//   dicebear  2026-10-05, avatars drawn on our own server (WATCHLIST dicebear).
+//   vercel    2026-11-05, Hobby with a commercial site on it. The site moved to
+//             Cloudflare Pages on 2026-10-21, and on 2026-11-05 nothing Flock
+//             serves ran on Vercel (the FIXED_MONTHLY vercel note has the
+//             evidence), so Vercel Pro is not needed.
 const LICENCE_EXPOSURES = [
-  {
-    id: 'vercel',
-    vendor: 'Vercel',
-    plan: 'Hobby (free)',
-    why: 'Hobby is for non-commercial, personal use under Vercel\'s fair use guidelines, and flockcorp.com is a commercial site. Vercel also emailed on 2026-10-07 that deployment storage was at 75% of Hobby\'s 10 GB, warning of disruption at 100%. Builds stopped shipping source maps that day (about 13 MB per deployment instead of 30), but storage already used stays until old deployments are deleted.',
-    fix: 'Vercel Pro',
-    fixUsdPerMonth: 20,
-    resolvedBy: { codeLine: 'vercel', expenseVendor: 'vercel' },
-    source: 'https://vercel.com/docs/limits/fair-use-guidelines',
-    checked: '2026-10-07',
-  },
   {
     id: 'maptiler',
     vendor: 'MapTiler',

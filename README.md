@@ -364,7 +364,7 @@ stops being true.
 
 ## Stack
 
-React 19 (CRA) on Vercel · Node + Express on Railway · PostgreSQL ·
+React 19 (CRA) on Cloudflare Pages · Node + Express on Railway · PostgreSQL ·
 Socket.io · JWT auth (email, Google, Sign in with Apple) · Capacitor 8 for iOS ·
 MapLibre GL for every map, on MapTiler tiles, with a keyless CARTO fallback in
 development builds only (no Google Maps SDK, no Maps key) ·

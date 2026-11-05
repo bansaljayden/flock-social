@@ -4017,12 +4017,6 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat, maptiler = nul
       link: { href: 'https://besttime.app/settings', text: 'BestTime settings' },
     },
     {
-      id: 'vercel_plan',
-      label: 'A Vercel plan that allows a business',
-      words: 'Vercel\'s free Hobby plan is for non-commercial, personal use only, and the website sells Flock Pro. The plan that fits is Pro, $20 a month per developer seat, under Settings, then Billing. The Vercel line under Costs says which plan the cost figures assume. Vercel also wrote on 2026-10-07 that deployment storage was at 75% of the free plan\'s 10 GB and warned of disruption at 100%; Pro is its own answer, and removing old deployments in the dashboard frees space too.',
-      link: { href: 'https://vercel.com/dashboard', text: 'Vercel' },
-    },
-    {
       id: 'app_privacy_crash_data',
       label: 'App Privacy: crash data',
       words: 'The App Privacy answers in App Store Connect do not list crash data, and the app reports crashes. The reports carry no account and no IP address (client_crash_reports), so the answer is Crash Data: collected, not linked to the person, not used for tracking, for App Functionality. App Privacy has no API, so this is done by hand: the app in App Store Connect, then App Privacy, then Edit.',
@@ -4037,7 +4031,7 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat, maptiler = nul
     {
       id: 'maptiler_keys_locked',
       label: 'MapTiler keys, one per platform',
-      words: "One MapTiler key ships in the public website and in every iPhone build, and on Flex a copied key bills the account up to the spending limit, then turns every map off for the month. Make a web key limited to the origins flockcorp.com and *.flockcorp.com and set it as REACT_APP_MAPTILER_KEY on Vercel. Make an iPhone key limited to the User-Agent FlockiOS, test it on a TestFlight build that carries that user agent, then set it on Codemagic. Never limit the old key to flockcorp.com: the iPhone builds already out use it. Deleting it once those builds are gone is a separate decision. The server cannot see MapTiler's key settings.",
+      words: "One MapTiler key ships in the public website and in every iPhone build, and on Flex a copied key bills the account up to the spending limit, then turns every map off for the month. Make a web key limited to the origins flockcorp.com and *.flockcorp.com and set it as REACT_APP_MAPTILER_KEY where the website is built for Cloudflare Pages (frontend/.env on the machine that publishes it). Make an iPhone key limited to the User-Agent FlockiOS, test it on a TestFlight build that carries that user agent, then set it on Codemagic. Never limit the old key to flockcorp.com: the iPhone builds already out use it. Deleting it once those builds are gone is a separate decision. The server cannot see MapTiler's key settings.",
       link: { href: 'https://cloud.maptiler.com/account/keys/', text: 'MapTiler keys' },
     },
   ].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));

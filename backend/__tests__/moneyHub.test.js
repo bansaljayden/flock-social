@@ -2452,7 +2452,7 @@ const OWNER_STEP_IDS = [
   'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook',
   'expense_list', 'maptiler_service_token', 'error_reporting', 'sales_tax',
   'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
-  'vercel_plan', 'app_privacy_crash_data', 'eu_trader_status', 'maptiler_keys_locked',
+  'app_privacy_crash_data', 'eu_trader_status', 'maptiler_keys_locked',
 ];
 const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
 const roundTrips = () => log.filter((q) => q.sql === 'SELECT 1').length;
@@ -2517,7 +2517,7 @@ test('with nothing set, every step the server checks reads to do, and the databa
   assert.strictEqual(mtCalls.length, 0, 'no token, so MapTiler was not asked');
   // Seven required steps to do and two optional ones (error reporting, sales
   // tax), counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 7, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 9 });
+  assert.deepStrictEqual(oa.counts, { todo: 7, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2560,7 +2560,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 8, unknown: 0, checkYourself: 9 });
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 8, unknown: 0, checkYourself: 8 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2789,7 +2789,6 @@ test('the steps the server cannot see carry no state, and each links to the page
     ['subscription_review_screenshot', 'https://appstoreconnect.apple.com/apps'],
     ['apple_organization_account', 'https://developer.apple.com/contact/'],
     ['besttime_admissions', 'https://besttime.app/settings'],
-    ['vercel_plan', 'https://vercel.com/dashboard'],
     ['app_privacy_crash_data', 'https://appstoreconnect.apple.com/apps'],
     ['eu_trader_status', 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/'],
     ['maptiler_keys_locked', 'https://cloud.maptiler.com/account/keys/'],
@@ -2800,13 +2799,16 @@ test('the steps the server cannot see carry no state, and each links to the page
     assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
     assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
   }
-  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 9);
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 8);
   // The key step says which key goes where, and the one thing never to do.
   const keys = yours.find((s) => s.id === 'maptiler_keys_locked').words;
   assert.match(keys, /origins flockcorp\.com and \*\.flockcorp\.com/);
   assert.match(keys, /User-Agent FlockiOS/);
   assert.match(keys, /Never limit the old key to flockcorp\.com/);
-  assert.match(yours.find((s) => s.id === 'vercel_plan').words, /deployment storage was at 75% of the free plan's 10 GB/);
+  // The website is built for Cloudflare Pages, and nothing Flock serves runs
+  // on Vercel (2026-11-05), so no step sends him to Vercel.
+  assert.match(keys, /where the website is built for Cloudflare Pages/);
+  assert.ok(!yours.some((s) => /vercel/i.test(`${s.id} ${s.words} ${s.link.href}`)), 'a step still sends him to Vercel');
   assert.match(yours.find((s) => s.id === 'app_privacy_crash_data').words, /not linked to the person, not used for tracking, for App Functionality/);
   assert.match(yours[0].words, /Apple sells no in-app purchase until the Account Holder signs it/);
   // The Small Business Program step quotes the cost model's two rates, and the
@@ -3349,11 +3351,14 @@ test('the App Store break-even uses the App Store price, with the 15% case besid
 test('plans outside their terms are listed with what licensing them adds, and a recorded fix clears them', () => {
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   const ids = pic.licence.items.map((i) => i.id);
-  for (const id of ['vercel', 'maptiler', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
+  for (const id of ['maptiler', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
   // Fixed in code (avatars drawn on our own server), so it left the list.
   assert.ok(!ids.includes('dicebear'));
-  assert.strictEqual(pic.licence.toComplyPerMonthCents, 5000, 'Vercel Pro $20 and MapTiler Flex $30');
-  assert.strictEqual(pic.licence.licensedPerMonthCents, pic.totals.perMonthCents + 5000);
+  // Nothing Flock serves runs on Vercel since the move to Cloudflare Pages
+  // (2026-11-05), so Hobby's terms are no exposure and Vercel Pro no fix.
+  assert.ok(!ids.includes('vercel'));
+  assert.strictEqual(pic.licence.toComplyPerMonthCents, 3000, 'MapTiler Flex $30');
+  assert.strictEqual(pic.licence.licensedPerMonthCents, pic.totals.perMonthCents + 3000);
   for (const i of pic.licence.items) assert.match(i.checked, /^\d{4}-\d{2}-\d{2}$/);
   const fixed = moneyHub.buildCostPicture({
     expenses: [
@@ -3646,11 +3651,11 @@ test('only a dollar, recurring, paid bill clears a licence exposure', () => {
   assert.ok(ids([expense({ id: 1, vendor: 'MapTiler', amountCents: 3000, currency: 'EUR' })]).includes('maptiler'));
   // Nor does a one-time charge.
   assert.ok(ids([expense({ id: 2, vendor: 'MapTiler', amountCents: 3000, cadence: 'one_time', lastChargedOn: MONTH.todayYmd })]).includes('maptiler'));
-  // A Vercel Pro bill recorded without "counts instead of" clears Vercel, so
-  // its $20 is not added again on top of the burn it is already in.
-  const pic = moneyHub.buildCostPicture({ expenses: [expense({ id: 3, vendor: 'Vercel', product: 'Pro', amountCents: 2000 })], month: MONTH });
-  assert.ok(!pic.licence.items.some((i) => i.id === 'vercel'));
-  assert.strictEqual(pic.licence.toComplyPerMonthCents, 3000);
+  // A paying MapTiler bill clears MapTiler by its vendor's name, so its $30
+  // is not added again on top of the burn it is already in.
+  const pic = moneyHub.buildCostPicture({ expenses: [expense({ id: 3, vendor: 'MapTiler', product: 'Cloud Flex', amountCents: 3180 })], month: MONTH });
+  assert.ok(!pic.licence.items.some((i) => i.id === 'maptiler'));
+  assert.strictEqual(pic.licence.toComplyPerMonthCents, 0);
 });
 
 test('a $0 stopped row does not take a code line out of this month', () => {
@@ -3701,19 +3706,27 @@ test('a $0 or one-time active replacement does not swallow a stopped bill paid t
 });
 
 test('a code line a non-paying row stands in for does not clear its licence exposure', () => {
-  // Vercel's line is $0 today, so the case is the day it is $20 and a $0 row
-  // still names it: that line is out of the burn, so the exposure stays.
+  // No exposure on the list clears through a code line since Vercel's left it
+  // (2026-11-05), so the rule is checked on one added for this test: the case
+  // is a code line at $20 and a $0 row that still names it. That line is out
+  // of the burn, so the exposure stays.
   const cm = require('../services/costModel');
   const line = cm.FIXED_MONTHLY.find((e) => e.id === 'vercel');
   const was = line.usd;
   line.usd = 20;
+  const exposure = {
+    id: 'code-line-fix', vendor: 'Vercel', plan: 'Hobby (free)', why: 'Set up for this test.', fix: 'Vercel Pro',
+    fixUsdPerMonth: 20, resolvedBy: { codeLine: 'vercel' }, source: 'https://vercel.com/pricing', checked: '2026-11-05',
+  };
+  cm.LICENCE_EXPOSURES.push(exposure);
   try {
     const pic = moneyHub.buildCostPicture({ expenses: [expense({ id: 1, vendor: 'Vercel', amountCents: 0, replacesLine: 'vercel' })], month: MONTH });
-    assert.ok(pic.licence.items.some((i) => i.id === 'vercel'), 'a $0 stand-in cleared Vercel');
+    assert.ok(pic.licence.items.some((i) => i.id === 'code-line-fix'), 'a $0 stand-in cleared it');
     const counted = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
-    assert.ok(!counted.licence.items.some((i) => i.id === 'vercel'), 'a $20 code line that counts is the fix');
+    assert.ok(!counted.licence.items.some((i) => i.id === 'code-line-fix'), 'a $20 code line that counts is the fix');
   } finally {
     line.usd = was;
+    cm.LICENCE_EXPOSURES.splice(cm.LICENCE_EXPOSURES.indexOf(exposure), 1);
   }
 });
 
