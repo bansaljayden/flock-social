@@ -8,8 +8,15 @@
 // - build/_redirects and build/_routes.json, copied from cloudflare/;
 // - build/.well-known/apple-app-site-association, the body
 //   api/apple-app-site-association.js returns for APPLE_TEAM_ID, as a file;
-// - no top-level 404.html (with one, Pages stops answering unknown paths with
-//   index.html, which is the SPA fallback vercel.json's last rewrite did);
+// - build/404.html, a copy of index.html. Pages answers a path that is
+//   neither a file nor a _redirects rule with the nearest 404.html and a 404,
+//   so a scanner probe (/wp-login.php, /.env) or a mistyped link is a 404
+//   that still boots the app, which shows its own not-found page. With no
+//   top-level 404.html, Pages answered all of them with index.html and a 200:
+//   page views to the analytics, soft 404s to a search engine;
+// - a copy of index.html at every exact route the app answers (APP_ROUTES),
+//   so each of those paths is a file and keeps its 200;
+// - no _redirects rewrite over a file (checkRedirects);
 // - no source maps on a Pages build (they would publish the app's source).
 //   scripts/build.js already turns them off when CF_PAGES is set, so this is
 //   the backstop for an explicit GENERATE_SOURCEMAP=true.
@@ -17,7 +24,8 @@
 // - build/landing.html, how-it-works.html, about.html, research.html,
 //   flux.html and ai.html: the
 //   marketing routes as real HTML, snapshotted from the build itself (see
-//   prerender below). index.html stays the empty shell every app route needs.
+//   prerender below), or the shell where a snapshot fails. index.html stays
+//   the empty shell every app route needs.
 //
 // The three Pages files are kept out of public/ on purpose: CRA copies
 // public/ into every build, and Vercel would serve them as plain files.
@@ -200,17 +208,20 @@ function joinHeaderBlocks(base, extra) {
 // tiles, no analytics) and the consent already answered, and the rendered
 // document is written next to index.html: build/landing.html for "/" (the
 // middleware answers "/" with it; index.html must stay the shell, because
-// Pages answers every unknown path, /app and /i/<token> included, with
-// index.html), and <route>.html for the rest, which Pages serves at the
-// slashless path. Only this Pages build does it: the iOS build runs
-// scripts/build.js alone and never sees this step.
+// every app route is answered with it: the APP_ROUTES copies, the 200 rules
+// in _redirects, /i/<token> in the middleware, and 404.html), and
+// <route>.html for the rest, which Pages serves at the slashless path. Only
+// this Pages build does it: the iOS build runs scripts/build.js alone and
+// never sees this step.
 //
 // The page then boots on top of its own snapshot: src/index.js sees
 // data-prerendered on #root, waits for the page's chunk, and renders once,
 // replacing the HTML with the same DOM, so the Loading screen never covers it.
 //
 // A failure here is never fatal. Without a snapshot the route is served as
-// before, client-rendered from index.html.
+// before, client-rendered from index.html: finishOutput writes the shell
+// under the snapshot's name, since the route is a file and nothing else
+// answers it.
 //
 // Every page here but "/" writes its own link card (src/website/shareCard.js)
 // from the effect that sets its title, so the snapshot is also what gives
@@ -384,11 +395,200 @@ async function prerender(out) {
   return snapshots.map((s) => s.file);
 }
 
-// Everything after react-scripts: the Pages files go into `out`, then the
-// output is refused if Pages would serve it differently from Vercel.
+// THE APP'S EXACT ROUTES, AS FILES. Pages answers a path with no file and no
+// _redirects rule with build/404.html and a 404, so every exact path
+// src/index.js routes, beyond the prerendered ones, gets a copy of
+// index.html named for it. Pages serves <route>.html at the slashless path,
+// under that path's own _headers, and answers /<route>/ and /<route>.html
+// with a 308 to it, as it already did for the prerendered pages.
+//
+// Files rather than 200 rules in _redirects: Pages does not apply
+// _redirects to "requests served by Pages Functions"
+// (developers.cloudflare.com/pages/configuration/redirects/), with no
+// exception for one the Function hands on with next(), and /support,
+// /privacy and /terms run the middleware for the AI crawler rule. A file is
+// found either way. The routes that carry an id (/app/<screen>, /checkin/<place>,
+// /f/<id>, /flock/<id>, /dm/<id>) are 200 rules in cloudflare/_redirects, and
+// /i/<token> is answered by functions/_middleware.js. The route table these
+// hold to is src/index.js; cloudflarePagesFunctions.test.js reads it and
+// fails on any route that would not answer 200.
+const APP_ROUTES = [
+  // The help and legal pages, then the web-only pages (PAGES in src/index.js).
+  '/support', '/privacy', '/terms', '/guidelines', '/delete-account',
+  '/pro', '/tap',
+  // The app's own entry, signup, and the two standalone pages the reset and
+  // verification emails link to (APP_PATHS and their branches).
+  '/app', '/signup', '/reset-password', '/verify-email',
+  // The invite page with no token ("that link isn't complete"), which the
+  // middleware also answers /i/<token> with, and the moderation console.
+  '/i', '/admin/moderation',
+  // Sign in with Apple's registered return URL for the website. Apple's
+  // popup posts its answer back to the page and never loads this URL
+  // (src/components/auth/AppleSignInButton.js), and src/index.js routes
+  // nothing here, but the URL on the Services ID stays answerable.
+  '/auth/apple/callback',
+];
+
+// HOW PAGES ANSWERS A PATH. A model of the static asset server that serves
+// build/, reduced to what decides the status and the file: workers-sdk's
+// pages-shared/asset-server/handler.ts (generateHandler) and the _redirects
+// parser, as wrangler 4.151.3 carries them for `wrangler pages dev`. The
+// build checks its rewrites with it (checkRedirects) and the tests hold the
+// output to it.
+// 1. _redirects comes first, before any file. An exact rule (no * and no
+//    :placeholder, above every rule that has one) for the path itself wins;
+//    otherwise the first other rule that matches, in file order. A 200 is a
+//    rewrite: the URL stays, and the file is looked up at the rule's target.
+//    Any other status is a redirect.
+// 2. Only GET and HEAD get past that.
+// 3. The file, with Pages' handling of .html and trailing slashes: /x serves
+//    x.html; /x/ serves x/index.html, or redirects to /x when x.html is the
+//    file; /x.html and /x/index redirect to the clean URL.
+// 4. No file: the nearest 404.html up the path's folders, with a 404 (and
+//    Pages then replaces any Cache-Control _headers gave it with no-store);
+//    with no 404.html anywhere up the path, index.html with a 200, the
+//    single-page-app fallback.
+// Left out: the preservation cache (a file a deployment of the last week
+// served at the path answers in place of the 404), rules for a named host,
+// conditional requests, content negotiation and headers.
+const REDIRECT_STATUSES = new Set([200, 301, 302, 303, 307, 308]);
+
+// pages-shared generateRuleRegExp: * is the splat, :name one path segment.
+function ruleRegExp(rule) {
+  const source = rule.split('*').map((part) => part.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')).join('(?<splat>.*)')
+    .replace(/:([A-Za-z]\w*)/g, '(?<$1>[^/]+)');
+  return new RegExp('^' + source + '$');
+}
+
+// The rules as Pages keeps them: exact ones by path, the rest in order. A
+// rule wrangler drops (a bad status, a repeated path, a folder sent to an
+// index file, which loops) is dropped here too.
+function parseRedirects(text) {
+  const staticRules = new Map();
+  const rules = [];
+  const seen = new Set();
+  for (const raw of String(text).split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const tokens = line.replace(/\s+#.*$/, '').split(/\s+/);
+    if (tokens.length < 2 || tokens.length > 3) continue;
+    const [from, to, code = '302'] = tokens;
+    const status = Number(code);
+    const relative = !/^https:\/\//.test(to);
+    const loops = relative && /\/index(\.html)?$/.test(to) && (from.endsWith('/*') || from.endsWith('/'));
+    if (!from.startsWith('/') || !REDIRECT_STATUSES.has(status) || loops || seen.has(from)) continue;
+    seen.add(from);
+    const exact = !from.includes('*') && !/:[A-Za-z]\w*/.test(from);
+    if (exact && !rules.length) staticRules.set(from, { from, to, status });
+    else rules.push({ from, to, status, test: ruleRegExp(from) });
+  }
+  return { staticRules, rules };
+}
+
+function matchRedirect({ staticRules, rules }, pathname) {
+  if (staticRules.has(pathname)) return { ...staticRules.get(pathname), groups: {} };
+  for (const rule of rules) {
+    const match = rule.test.exec(pathname);
+    if (match) return { ...rule, groups: match.groups || {} };
+  }
+  return null;
+}
+
+// `target` is a path with its query; `files` the set of served paths
+// ("/index.html", "/static/js/main.1a2b.js"); `redirects` the _redirects text
+// or parseRedirects' answer. Returns { status, file } for a file served and
+// { status, location } for a redirect.
+function pagesAnswer(target, { files, redirects, method = 'GET' }) {
+  const url = new URL(target, 'https://pages.invalid');
+  const parsed = typeof redirects === 'string' ? parseRedirects(redirects) : redirects;
+  let pathname = url.pathname;
+  const rule = matchRedirect(parsed, pathname);
+  if (rule) {
+    let to = rule.to;
+    for (const [name, value] of Object.entries(rule.groups)) to = to.split(':' + name).join(value);
+    const destination = new URL(to, url);
+    if (rule.status !== 200) return { status: rule.status, location: destination.pathname + (destination.search || url.search) };
+    pathname = destination.pathname;
+  }
+  if (!/^(GET|HEAD)$/i.test(method)) return { status: 405 };
+  try { pathname = decodeURIComponent(pathname); } catch (err) { /* looked up as sent, as Pages does */ }
+  const has = (p) => files.has(p);
+  const moved = (p) => ({ status: 308, location: p + url.search });
+  if (pathname.endsWith('/')) {
+    if (has(pathname + 'index.html')) return { status: 200, file: pathname + 'index.html' };
+    if (pathname.endsWith('/index/')) return moved(pathname.slice(0, -'index/'.length));
+    if (has(pathname.slice(0, -1) + '.html')) return moved(pathname.slice(0, -1));
+    return notFound(pathname, files);
+  }
+  if (has(pathname)) {
+    if (!pathname.endsWith('.html')) return { status: 200, file: pathname };
+    const clean = pathname.slice(0, -'.html'.length);
+    if (clean.endsWith('/index')) return moved(clean.slice(0, -'index'.length));
+    if (has(clean) || clean === '/') return { status: 200, file: pathname };
+    return moved(clean);
+  }
+  if (pathname.endsWith('/index')) return moved(pathname.slice(0, -'index'.length));
+  if (has(pathname + '.html')) return { status: 200, file: pathname + '.html' };
+  if (has(pathname + '/index.html')) return moved(pathname + '/');
+  return notFound(pathname, files);
+}
+
+function notFound(pathname, files) {
+  for (let dir = pathname; dir;) {
+    dir = dir.slice(0, dir.lastIndexOf('/'));
+    if (files.has(dir + '/404.html')) return { status: 404, file: dir + '/404.html' };
+  }
+  return files.has('/index.html') ? { status: 200, file: '/index.html' } : { status: 404 };
+}
+
+// A 200 rule is a rewrite that Pages runs before it looks for a file, so one
+// that matched a file's URL would hide the file: "/* / 200" would answer
+// main.js with the HTML shell, and "/about / 200" would put the shell over
+// the prerendered page. `files` are the served paths the output holds.
+function checkRedirects(text, files) {
+  const parsed = parseRedirects(text);
+  for (const file of files) {
+    const urls = [file];
+    if (file.endsWith('/index.html')) urls.push(file.slice(0, -'index.html'.length));
+    else if (file.endsWith('.html')) urls.push(file.slice(0, -'.html'.length));
+    for (const url of urls) {
+      const rule = matchRedirect(parsed, url);
+      if (rule && rule.status === 200) {
+        throw new Error('_redirects rewrites ' + url + ' ("' + rule.from + ' ' + rule.to + ' 200"), and the output serves ' + file + ' there');
+      }
+    }
+  }
+}
+
+// The Pages files themselves are read at deploy time, never served.
+const PAGES_CONFIG = new Set(['/_headers', '/_redirects', '/_routes.json', '/_worker.js']);
+
+function servedFiles(out) {
+  return filesUnder(out)
+    .map((file) => '/' + path.relative(out, file).split(path.sep).join('/'))
+    .filter((file) => !PAGES_CONFIG.has(file));
+}
+
+// Everything after react-scripts: the pages, the 404 page and the Pages files
+// go into `out`, then the output is refused if Pages would serve it wrong.
 // `prerendered` is the routes prerender() wrote, for routePreloads.
 function finishOutput(out, { prerendered = [] } = {}) {
-  if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(path.join(out, 'index.html') + ' is missing');
+  const index = path.join(out, 'index.html');
+  if (!fs.existsSync(index)) throw new Error(index + ' is missing');
+
+  // The shell under every name it answers: a prerendered route whose
+  // snapshot failed (a file, never a rewrite, so nothing else answers it),
+  // each of APP_ROUTES, and 404.html (see the top of this file). An
+  // existing snapshot is kept; the rest are written fresh each run.
+  const shell = (file) => {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.copyFileSync(index, file);
+  };
+  for (const { file } of PRERENDER) {
+    if (!fs.existsSync(path.join(out, file))) shell(path.join(out, file));
+  }
+  for (const route of APP_ROUTES) shell(path.join(out, route.slice(1) + '.html'));
+  shell(path.join(out, '404.html'));
 
   const headers = joinHeaderBlocks(headersFile(), routePreloads(out, prerendered));
   checkHeaders(headers);
@@ -401,10 +601,9 @@ function finishOutput(out, { prerendered = [] } = {}) {
   fs.mkdirSync(path.join(out, '.well-known'), { recursive: true });
   fs.writeFileSync(path.join(out, '.well-known', 'apple-app-site-association'), appSiteAssociation());
 
-  if (fs.existsSync(path.join(out, '404.html'))) {
-    throw new Error('404.html is in the output; Pages would stop serving index.html for unknown paths');
-  }
-  const maps = filesUnder(out).filter((file) => file.endsWith('.map'));
+  const files = servedFiles(out);
+  checkRedirects(fs.readFileSync(path.join(CONFIG, '_redirects'), 'utf8'), files);
+  const maps = files.filter((file) => file.endsWith('.map'));
   if (process.env.CF_PAGES && maps.length) {
     throw new Error(maps.length + ' source maps in the output; leave GENERATE_SOURCEMAP unset (or false) on a Pages build');
   }
@@ -413,6 +612,7 @@ function finishOutput(out, { prerendered = [] } = {}) {
 module.exports = {
   outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads, joinHeaderBlocks,
   servableSnapshot, paintFirst, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
+  APP_ROUTES, parseRedirects, pagesAnswer, checkRedirects, servedFiles,
 };
 
 if (require.main === module) {

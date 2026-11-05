@@ -10,10 +10,16 @@
  * - the _headers file the build writes stays inside Pages' limits and carries
  *   vercel.json's Content-Security-Policy byte for byte;
  * - _routes.json sends Functions exactly the paths the middleware handles;
- * - nothing in public/ switches off Pages' SPA fallback or leaks the Pages files;
+ * - the build writes the 404 page and a file at every exact app route, all
+ *   the app shell byte for byte, and nothing in public/ claims those names or
+ *   leaks the Pages files;
  * - the app-site-association file in the build is the handler's own body;
- * - the build refuses an output Pages would serve differently from Vercel.
- * The Functions themselves are pinned in cloudflarePagesFunctions.test.js.
+ * - the build refuses an output Pages would serve wrong, a rewrite over a
+ *   file included;
+ * - the model of Pages the route tests stand on (build.pagesAnswer) does
+ *   what Pages' asset server does.
+ * The Functions themselves, and the status of every route, are pinned in
+ * cloudflarePagesFunctions.test.js.
  */
 const fs = require('fs');
 const os = require('os');
@@ -125,14 +131,27 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(byPath.has('/.well-known/apple-app-site-association')).toBe(true);
   });
 
-  test('_redirects holds the unconditional vercel.json redirects, as 308s, and no catch-all', () => {
-    const lines = read('cloudflare/_redirects').split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('#'));
+  test('_redirects holds the unconditional vercel.json redirects as 308s, then the app\'s id routes as rewrites, and no catch-all', () => {
+    const text = read('cloudflare/_redirects');
+    const lines = text.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('#'));
     const unconditional = vercel.redirects.filter((r) => !r.has && !r.missing);
-    expect(lines).toEqual(unconditional.map((r) => [r.source, r.destination, r.permanent ? '308' : '307'].join(' ')));
-    expect(lines).toEqual([
+    const moves = lines.filter((l) => !l.endsWith(' 200'));
+    expect(moves).toEqual(unconditional.map((r) => [r.source, r.destination, r.permanent ? '308' : '307'].join(' ')));
+    expect(moves).toEqual([
       '/research/flock-research-paper.pdf /papers/flock-research-paper.pdf 308',
       '/papers/flock-research-paper-full.pdf /papers/flock-research-paper.pdf 308',
     ]);
+    // The rewrites come last, so the two redirects stay exact rules (matched
+    // by path before any splat), and each answers the shell: "/" is
+    // index.html. Which paths they cover is held to src/index.js in
+    // cloudflarePagesFunctions.test.js.
+    expect(lines.slice(moves.length)).toEqual([
+      '/app/* / 200', '/checkin/* / 200', '/f/* / 200', '/flock/* / 200', '/dm/* / 200',
+    ]);
+    expect([...build.parseRedirects(text).staticRules.keys()]).toEqual([
+      '/research/flock-research-paper.pdf', '/papers/flock-research-paper-full.pdf',
+    ]);
+    expect(lines.filter((l) => /^\/\*\s/.test(l))).toEqual([]);
   });
 
   test('_routes.json sends Functions exactly the paths the middleware and functions/api handle', () => {
@@ -140,7 +159,7 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(routes.exclude).toEqual([]);
     expect(new Set(routes.include)).toEqual(new Set([
       '/', '/landing', '/about', '/support', '/privacy', '/terms',
-      '/i/*', '/relay/public/*', '/api/*', '/bg-city.mp4',
+      '/i/*', '/relay/public/*', '/api/*', '/bg-city.mp4', '/404', '/404.html',
     ]));
     // Every function file is under a routed path, and every api/ handler a
     // function wraps has one at its own /api/<name> URL, as on Vercel.
@@ -150,10 +169,21 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(functions).toEqual(handlers);
   });
 
-  test('public/ holds no 404.html and none of the Pages files', () => {
-    for (const name of ['404.html', '_headers', '_redirects', '_routes.json', '_worker.js']) {
+  test('public/ holds none of the pages the build writes, and none of the Pages files', () => {
+    // The build writes these as the shell (or a snapshot); one in public/
+    // would be overwritten on every build without a word.
+    const written = ['404.html', ...build.PRERENDER.map((p) => p.file), ...build.APP_ROUTES.map((r) => r.slice(1) + '.html')];
+    for (const name of [...written, '_headers', '_redirects', '_routes.json', '_worker.js']) {
       expect([name, fs.existsSync(path.join(ROOT, 'public', name))]).toEqual([name, false]);
     }
+  });
+
+  test('/i and /i/* carry the same headers, since /i/<token> is answered with the /i file', () => {
+    // functions/_middleware.js inviteShell: a token has no file of its own.
+    const byPath = new Map(headerBlocks(read('cloudflare/_headers')).map((b) => [b.path, b.headers]));
+    expect(byPath.get('/i')).toEqual(byPath.get('/i/*'));
+    expect(byPath.get('/i')['Cache-Control']).toBe('private, no-store');
+    expect(build.APP_ROUTES).toContain('/i');
   });
 
   test('package.json runs the build as build:cloudflare and leaves build as it was', () => {
@@ -409,9 +439,49 @@ describe('finishing an output directory', () => {
     expect(link('/how-it-works')).toBe(`${own('/how-it-works')}, ${font}`);
   });
 
-  test('refuses an output with a top-level 404.html, which turns off the SPA fallback', () => {
+  test('writes the 404 page and every exact app route as the shell, byte for byte, and keeps a snapshot', () => {
+    // 404.html is what Pages answers a path with that is neither a file nor a
+    // _redirects rule, with a 404: the shell, so a browser still boots the
+    // app and its own not-found page. A stale one (a hand-made page, a
+    // previous run's) is replaced.
     fs.writeFileSync(path.join(out, '404.html'), 'not found');
-    expect(() => withEnv({ APPLE_TEAM_ID: fakeTeamId() }, () => build.finishOutput(out))).toThrow(/404\.html/);
+    const snapshot = '<!doctype html><div id="root" data-prerendered=""><main><h1>About Flock</h1></main></div>';
+    fs.writeFileSync(path.join(out, 'about.html'), snapshot);
+    withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
+    const shell = fs.readFileSync(path.join(out, 'index.html'));
+    const isShell = (file) => fs.readFileSync(path.join(out, file)).equals(shell);
+    expect(isShell('404.html')).toBe(true);
+    for (const route of build.APP_ROUTES) expect([route, isShell(route.slice(1) + '.html')]).toEqual([route, true]);
+    // A prerendered route is a file and never a rewrite, so one whose
+    // snapshot failed gets the shell under the snapshot's name; a snapshot
+    // that exists is kept, and no route file is written over one.
+    expect(build.APP_ROUTES.filter((route) => build.PRERENDER.some((p) => p.route === route))).toEqual([]);
+    for (const { file } of build.PRERENDER) {
+      expect([file, isShell(file)]).toEqual([file, file !== 'about.html']);
+    }
+    expect(fs.readFileSync(path.join(out, 'about.html'), 'utf8')).toBe(snapshot);
+    // A second run over the same output (a --skip-build rerun) is the same output.
+    withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
+    expect(isShell('404.html')).toBe(true);
+    expect(fs.readFileSync(path.join(out, 'about.html'), 'utf8')).toBe(snapshot);
+    // The served paths leave out the files Pages reads and never serves.
+    const served = build.servedFiles(out);
+    expect(served).toEqual(expect.arrayContaining(['/index.html', '/404.html', '/i.html', '/admin/moderation.html', '/.well-known/apple-app-site-association']));
+    expect(served.filter((file) => /^\/_(headers|redirects|routes\.json)$/.test(file))).toEqual([]);
+  });
+
+  test('refuses a rewrite in _redirects that would hide a file: a catch-all, or one over a page', () => {
+    // A 200 rule runs before Pages looks for a file.
+    const files = ['/index.html', '/404.html', '/about.html', '/app.html', '/static/js/main.1a2b.js', '/docs/index.html'];
+    expect(() => build.checkRedirects('/* / 200\n', files)).toThrow(/rewrites \/index\.html/);
+    expect(() => build.checkRedirects('/static/* / 200\n', files)).toThrow(/serves \/static\/js\/main\.1a2b\.js/);
+    expect(() => build.checkRedirects('/about / 200\n', files)).toThrow(/rewrites \/about /);
+    expect(() => build.checkRedirects('/docs/ / 200\n', files)).toThrow(/rewrites \/docs\/ /);
+    expect(() => build.checkRedirects('/app/* / 200\n/f/* / 200\n', files)).not.toThrow();
+    // A redirect over a file is a decision, not an accident: only rewrites are refused.
+    expect(() => build.checkRedirects('/about.html /about 308\n', files)).not.toThrow();
+    // And the real file passes over the real output's names.
+    expect(() => build.checkRedirects(read('cloudflare/_redirects'), files)).not.toThrow();
   });
 
   test('refuses source maps on a Pages build, and only there', () => {
@@ -431,5 +501,58 @@ describe('finishing an output directory', () => {
     expect(build.outputDir({})).toBe(path.join(ROOT, 'build'));
     expect(build.outputDir({ BUILD_PATH: 'elsewhere' })).toBe(path.join(ROOT, 'elsewhere'));
     expect(build.outputDir({ BUILD_PATH: out })).toBe(out);
+  });
+});
+
+// build.pagesAnswer is a transcription of Pages' static asset server
+// (pages-shared/asset-server/handler.ts, as wrangler 4.151.3 carries it). The
+// status tests in cloudflarePagesFunctions.test.js stand on it, so each case
+// here is one that handler decides, written as Pages answers it.
+describe('the model of how Pages answers a path', () => {
+  const files = new Set(['/index.html', '/404.html', '/about.html', '/app.html', '/docs/index.html', '/docs/404.html', '/static/js/main.1a2b.js']);
+  const answer = (target, redirects = '', method = 'GET') => build.pagesAnswer(target, { files, redirects, method });
+
+  test('a file, with Pages\' handling of .html and trailing slashes', () => {
+    expect(answer('/')).toEqual({ status: 200, file: '/index.html' });
+    expect(answer('/static/js/main.1a2b.js')).toEqual({ status: 200, file: '/static/js/main.1a2b.js' });
+    expect(answer('/about')).toEqual({ status: 200, file: '/about.html' });
+    expect(answer('/about/')).toEqual({ status: 308, location: '/about' });
+    expect(answer('/about.html?x=1')).toEqual({ status: 308, location: '/about?x=1' });
+    expect(answer('/index.html')).toEqual({ status: 308, location: '/' });
+    expect(answer('/docs')).toEqual({ status: 308, location: '/docs/' });
+    expect(answer('/docs/')).toEqual({ status: 200, file: '/docs/index.html' });
+    expect(answer('/docs/index')).toEqual({ status: 308, location: '/docs/' });
+  });
+
+  test('no file: the nearest 404.html with a 404, or with none at all, index.html and a 200', () => {
+    expect(answer('/wp-login.php')).toEqual({ status: 404, file: '/404.html' });
+    expect(answer('/.env')).toEqual({ status: 404, file: '/404.html' });
+    expect(answer('/About')).toEqual({ status: 404, file: '/404.html' });
+    expect(answer('/docs/missing/page')).toEqual({ status: 404, file: '/docs/404.html' });
+    // The single-page-app fallback this site had until the build wrote 404.html.
+    expect(build.pagesAnswer('/wp-login.php', { files: new Set(['/index.html']), redirects: '' })).toEqual({ status: 200, file: '/index.html' });
+    expect(answer('/about', '', 'POST')).toEqual({ status: 405 });
+  });
+
+  test('_redirects first: a 200 keeps the URL and serves its target, and an exact rule above the splats wins', () => {
+    const rules = '/old /about 308\n/app/* / 200\n/app/exact /about 200\n';
+    expect(answer('/old?x=1', rules)).toEqual({ status: 308, location: '/about?x=1' });
+    expect(answer('/app/venue/42', rules)).toEqual({ status: 200, file: '/index.html' });
+    expect(answer('/app/', rules)).toEqual({ status: 200, file: '/index.html' });
+    expect(answer('/app', rules)).toEqual({ status: 200, file: '/app.html' });
+    // Below a splat an exact rule is matched in file order, so the splat answers first.
+    expect(answer('/app/exact', rules)).toEqual({ status: 200, file: '/index.html' });
+    expect(answer('/app/exact', '/app/exact /about 200\n/app/* / 200\n')).toEqual({ status: 200, file: '/about.html' });
+    // A rewrite runs before the file lookup, which is why checkRedirects exists.
+    expect(answer('/about', '/about / 200\n')).toEqual({ status: 200, file: '/index.html' });
+    // A rewrite to /index.html is a 308 to "/", and wrangler drops a folder's
+    // splat sent there (it loops), and a repeated path.
+    expect(answer('/x', '/x /index.html 200\n')).toEqual({ status: 308, location: '/' });
+    expect(answer('/app/x', '/app/* /index.html 200\n')).toEqual({ status: 404, file: '/404.html' });
+    expect(answer('/old', '/old /about 308\n/old / 301\n')).toEqual({ status: 308, location: '/about' });
+    // Placeholders and the splat carry into the target.
+    expect(answer('/blog/2026/hello', '/blog/:year/* /news/:year/:splat 301\n')).toEqual({ status: 301, location: '/news/2026/hello' });
+    // Matching is case-sensitive, as Pages' is.
+    expect(answer('/APP/x', rules)).toEqual({ status: 404, file: '/404.html' });
   });
 });

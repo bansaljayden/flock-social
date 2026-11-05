@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Paths that run functions/_middleware.js. Everything else (JS, CSS, images, every other SPA route, the app-site-association file) is served straight from build/ by Pages: free, unmetered, with _headers applied. /about also matches /about/, and /i/* also matches /i.",
+  "description": "Paths that run functions/_middleware.js. Everything else (JS, CSS, images, the app's other routes, the 404 page Pages answers unknown paths with, the app-site-association file) is served straight from build/ by Pages: free, unmetered, with _headers applied. /404 and /404.html are here because Pages would serve build/404.html at them with a 200. /about also matches /about/, and /i/* also matches /i.",
   "include": [
     "/",
     "/landing",
@@ -11,7 +11,9 @@
     "/i/*",
     "/relay/public/*",
     "/api/*",
-    "/bg-city.mp4"
+    "/bg-city.mp4",
+    "/404",
+    "/404.html"
   ],
   "exclude": []
 }

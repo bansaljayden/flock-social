@@ -860,9 +860,12 @@ const PAGE_ERROR_CSS = `
 //
 // Every unknown path used to boot the whole App bundle, so a typo in a legal
 // URL downloaded roughly a megabyte of JavaScript and then showed a login
-// screen. This is a real page instead. It cannot send a 404 status (the host
-// rewrites everything to index.html for the SPA), so it says noindex loudly
-// enough that a crawler will not keep it.
+// screen. This is a real page instead, and the host sends it with a 404:
+// Pages answers a path that is neither a file nor one of the routes below
+// with build/404.html, a copy of index.html (scripts/build-cloudflare.js).
+// It still says noindex, for the few paths that reach it with a 200 (a /f/
+// or /dm/ link with no number, which the host's rules cannot tell from a
+// real one, and Sign in with Apple's return URL) and for any other host.
 // ---------------------------------------------------------------------------
 function NotFound() {
   React.useEffect(() => {

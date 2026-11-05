@@ -8,8 +8,11 @@
 //
 // Rule order follows vercel.json: the crawler redirect on "/" first (Vercel
 // ran redirects before the filesystem), then the rewrites in their listed
-// order. vercel.json's last rewrite, "/(.*)" to /index.html, is Pages' own
-// behaviour when the build has no top-level 404.html.
+// order. vercel.json's last rewrite, "/(.*)" to /index.html, is gone on
+// purpose: a path that is neither a file nor a _redirects rule gets
+// build/404.html, the app shell, with a 404 (scripts/build-cloudflare.js).
+// Pages does not apply _redirects to "requests served by Pages Functions",
+// so every path here that the app answers is a file or is answered here.
 import SECURITY from '../cloudflare/security-headers.json';
 import USER_AGENTS from '../cloudflare/user-agents.json';
 import { marketingPage, invitePreview, demoRelay } from './_lib/handlers.js';
@@ -19,7 +22,7 @@ const PREVIEW_BOT_UA = new RegExp('(?:' + USER_AGENTS.previewBots + ')');
 const AI_CRAWLER_UA = new RegExp('(?:' + USER_AGENTS.aiCrawlers + ')');
 
 // vercel.json "/i/:token": exactly one path segment, so /i, /i/ and /i/a/b
-// fall through to the SPA and its "that link isn't complete" state.
+// get the app and its "that link isn't complete" state, never a preview.
 const INVITE = /^\/i\/([^/]+)$/;
 
 // vercel.json "/relay/public/:path*": zero or more segments.
@@ -64,9 +67,34 @@ function finish(response, url) {
   return res;
 }
 
+// The guest invite page, for every path under /i/ (src/index.js routes
+// p.startsWith('/i/')). Only /i itself is a file: build/i.html, the app
+// shell, served under /i's own block in _headers, which is the /i/* block
+// line for line (private, no-store, noindex, no-referrer). A token is a path
+// no file has, and a _redirects rewrite is not applied to a request a
+// Function serves, so without this every invite link would get
+// build/404.html and a 404.
+function inviteShell(context, request) {
+  return context.env.ASSETS.fetch(new Request(new URL('/i', request.url), request));
+}
+
+// build/404.html at its own two URLs. Pages answers /404 with that file and
+// a 200 (and /404.html with a 308 to /404), which would make the not-found
+// page the one unknown path that says 200. Fetched fresh, without the
+// visitor's conditional headers, so it always comes back with its body.
+async function notFoundPage(context, url) {
+  const page = await context.env.ASSETS.fetch(new Request(new URL('/404', url)));
+  const res = new Response(page.body, { status: 404, statusText: 'Not Found', headers: page.headers });
+  res.headers.set('Cache-Control', 'no-store');
+  res.headers.delete('ETag');
+  return finish(res, url);
+}
+
 export async function onRequest(context) {
   // If anything below throws, Pages serves the static answer for this path:
-  // the SPA shell, which is what these routes served before the bot rules.
+  // the file there, which for "/", /i and the marketing paths is the page
+  // they served before the bot rules, or for a path with no file, an invite
+  // token included, the 404 page: the app shell, under a 404.
   context.passThroughOnException();
 
   const { request } = context;
@@ -82,23 +110,27 @@ export async function onRequest(context) {
   // "/" for everyone else: the home page as real HTML. The Pages build writes
   // it to build/landing.html (scripts/build-cloudflare.js prerender), because
   // index.html has to stay the empty shell every app route is answered with,
-  // so "/" is answered with the /landing asset under "/"'s own headers. If the
-  // file is missing, Pages answers /landing with the shell, which is what "/"
-  // served before; and if this throws, passThroughOnException serves the
-  // shell too.
+  // so "/" is answered with the /landing asset under "/"'s own headers. The
+  // build writes the shell there when the snapshot fails, so the file is
+  // always present; if it is not, Pages answers /landing with its 404 page,
+  // and "/" takes index.html instead, which is what it served before. If this
+  // throws, passThroughOnException serves the shell too.
   if (path === '/') {
-    const home = await context.env.ASSETS.fetch(new Request(new URL('/landing', url), request));
+    let home = await context.env.ASSETS.fetch(new Request(new URL('/landing', url), request));
+    if (home.status === 404) home = await context.env.ASSETS.fetch(new Request(new URL('/', url), request));
     const res = new Response(home.body, home);
     for (const [name, value] of Object.entries(ROOT_HEADERS)) res.headers.set(name, value);
     return res;
   }
 
+  if (path === '/404' || path === '/404.html') return notFoundPage(context, url);
+
   // vercel.json:288-303, in that order: ?open wins over the bot check.
   const invite = INVITE.exec(path);
-  if (invite) {
-    if (url.searchParams.has('open') || !PREVIEW_BOT_UA.test(ua)) return context.next();
+  if (invite && !url.searchParams.has('open') && PREVIEW_BOT_UA.test(ua)) {
     return finish(await invitePreview(context, invite[1], url.searchParams), url);
   }
+  if (path.startsWith('/i/')) return inviteShell(context, request);
 
   // vercel.json:304-325
   if (Object.prototype.hasOwnProperty.call(MARKETING, path)) {
@@ -114,9 +146,10 @@ export async function onRequest(context) {
   // The background video: byte ranges for Safari (see _lib/range.js).
   if (path === '/bg-city.mp4') return withByteRanges(request, await context.next());
 
-  // /api/* reaches its file in functions/api/ (or the SPA, for a name with
-  // no file, as on Vercel); every other listed path reaches the static asset
-  // server, which applies _headers.
+  // /api/* reaches its file in functions/api/ (or the 404 page, for a name
+  // with no file); every other listed path reaches the static asset server,
+  // which applies _headers, and finds its file there: /i, /landing and the
+  // four marketing paths are all files in build/.
   const res = await context.next();
   return path.startsWith('/api/') ? finish(res, url) : res;
 }

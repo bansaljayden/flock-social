@@ -8,6 +8,11 @@
  * the Functions around the unchanged api/ handlers. What is pinned here:
  * - who gets what on "/", the five marketing paths and /i/<token>: AI
  *   crawlers, preview bots, people, ?open, exactly one path segment;
+ * - the status of every path: each route src/index.js declares answers 200
+ *   (read from its route table, through the middleware and a model of Pages'
+ *   asset server), each file the build serves answers as itself, and anything
+ *   else, a scanner's probe or a mistyped link, is a 404 that carries the app
+ *   shell and is never kept;
  * - every Function answer carries vercel.json's security headers, and an
  *   s-maxage answer reaches the browser the way Vercel sent it;
  * - the demo relay signs CF-Connecting-IP and nothing a caller can write;
@@ -22,6 +27,7 @@
  * The configuration files and the build script are in cloudflarePages.test.js.
  */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
@@ -314,23 +320,76 @@ describe('who gets what', () => {
     expect(global.caches.default.store.size).toBe(1);
   });
 
-  test('?open, people, AI crawlers and anything but one path segment get the app', async () => {
+  test('?open, people, AI crawlers and anything but one path segment get the app, from the /i file', async () => {
+    // Only /i is a file (build/i.html, the shell, under /i's headers, which
+    // are /i/*'s). No other invite path has one, and Pages does not apply a
+    // _redirects rewrite to a request a Function serves, so the middleware
+    // asks the asset server for /i itself: without that, every invite link
+    // would be a 404.
     const cases = [
       ['/i/' + GOOD_TOKEN + '?open=1', UA.twitterbot],
       ['/i/' + GOOD_TOKEN + '?open', UA.imessage],
       ['/i/' + GOOD_TOKEN, UA.person],
       ['/i/' + GOOD_TOKEN, UA.safari],
       ['/i/' + GOOD_TOKEN, UA.gptbot],
-      ['/i', UA.twitterbot],
       ['/i/', UA.twitterbot],
       ['/i/' + GOOD_TOKEN + '/extra', UA.twitterbot],
       ['/i/' + GOOD_TOKEN + '/', UA.twitterbot],
     ];
     for (const [route, ua] of cases) {
-      const { context, res } = await run(SITE + route, { headers: { 'User-Agent': ua } });
-      expect([route, ua, res === context.staticAnswer]).toEqual([route, ua, true]);
+      const shell = new Response(SHELL, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      const assets = jest.fn(async () => shell);
+      const { context, res } = await run(SITE + route, {
+        headers: { 'User-Agent': ua, 'If-None-Match': '"abc"' },
+        env: { ASSETS: { fetch: assets } },
+      });
+      expect([route, ua, res === shell]).toEqual([route, ua, true]);
+      expect(context.next).not.toHaveBeenCalled();
+      const asked = assets.mock.calls[0][0];
+      expect([route, new URL(asked.url).pathname]).toEqual([route, '/i']);
+      // The visitor's own conditional headers go along, so a 304 still works.
+      expect(asked.headers.get('If-None-Match')).toBe('"abc"');
     }
+    // Bare /i is the file itself.
+    const { context, res } = await run(SITE + '/i', { headers: { 'User-Agent': UA.twitterbot } });
+    expect(res === context.staticAnswer).toBe(true);
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('"/" takes index.html if /landing has no file, never the 404 page', async () => {
+    // The build always writes build/landing.html (the snapshot, or the shell
+    // when prerendering fails); this is the backstop for one without it.
+    const assets = jest.fn(async (req) => (new URL(req.url).pathname === '/landing'
+      ? new Response(SHELL, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } })
+      : new Response(SHELL, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })));
+    const { res } = await run(SITE + '/', { headers: { 'User-Agent': UA.person }, env: { ASSETS: { fetch: assets } } });
+    expect(assets.mock.calls.map(([req]) => new URL(req.url).pathname)).toEqual(['/landing', '/']);
+    expect([res.status, await res.text()]).toEqual([200, SHELL]);
+    expect(res.headers.get('Link')).toBe(ROOT_LINK);
+    expect(res.headers.get('Cache-Control')).toBe(BROWSER_CACHE);
+  });
+
+  test('/404 and /404.html are the 404 page with a 404 and no-store, as every other unknown path is', async () => {
+    // Pages would serve build/404.html at /404 with a 200 (and 308 /404.html
+    // there), the one unknown path that would say it exists.
+    for (const route of ['/404', '/404.html', '/404?x=1']) {
+      const page = new Response(SHELL, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ETag: '"shell"', 'Cache-Control': BROWSER_CACHE },
+      });
+      const assets = jest.fn(async () => page);
+      const { context, res } = await run(SITE + route, {
+        headers: { 'User-Agent': UA.person, 'If-None-Match': '"shell"' },
+        env: { ASSETS: { fetch: assets } },
+      });
+      expect([route, res.status, await res.text()]).toEqual([route, 404, SHELL]);
+      expect([route, res.headers.get('Cache-Control'), res.headers.get('ETag')]).toEqual([route, 'no-store', null]);
+      expect(res.headers.get('Content-Type')).toBe('text/html; charset=utf-8');
+      expectSecurityHeaders(res);
+      // Asked fresh: a 304 would have no page to send.
+      const asked = assets.mock.calls[0][0];
+      expect([new URL(asked.url).pathname, asked.headers.get('If-None-Match')]).toEqual(['/404', null]);
+      expect(context.next).not.toHaveBeenCalled();
+    }
   });
 
   test('a revoked link, a failed backend or an ambiguous token gives the generic tags, never kept', async () => {
@@ -365,10 +424,13 @@ describe('who gets what', () => {
     expect(res.headers.get('Cache-Control')).toBe(BROWSER_CACHE);
     expectSecurityHeaders(res);
 
-    // A name with no function falls through to the app shell, as on Vercel.
-    const { context, res: shell } = await run(SITE + '/api/nonexistent');
+    // A name with no function falls through to the asset server, which has no
+    // file there either: its 404 page, kept a 404 and given the security headers.
+    const notFound = () => new Response(SHELL, { status: 404, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+    const { context, res: shell } = await run(SITE + '/api/nonexistent', { next: notFound });
     expect(context.next).toHaveBeenCalledTimes(1);
-    expect(await shell.text()).toBe(SHELL);
+    expect([shell.status, await shell.text()]).toEqual([404, SHELL]);
+    expect(shell.headers.get('Cache-Control')).toBe('no-store');
     expectSecurityHeaders(shell);
 
     // A Function's own header wins over the site-wide one: no-referrer stays.
@@ -404,6 +466,254 @@ describe('who gets what', () => {
     const { res } = await run(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': UA.twitterbot } });
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type') || '').toMatch(/text\/html/);
+  });
+});
+
+// THE STATUS OF EVERY PATH. Pages, for an output this tree builds: a path
+// _routes.json sends to Functions goes through the real middleware, and
+// everything else, and whatever the middleware hands on, is answered by the
+// model of the asset server (build.pagesAnswer, held to Pages in
+// cloudflarePages.test.js). A request that ran the middleware is answered
+// without _redirects, as Pages does ("Redirects defined in the _redirects
+// file are not applied to requests served by Pages Functions",
+// developers.cloudflare.com/pages/configuration/redirects/), so no route can
+// pass here on a rewrite Pages would skip.
+describe('every route the app answers is a 200, and any other path a 404', () => {
+  const ROUTES = JSON.parse(read('cloudflare/_routes.json'));
+  const REWRITES = build.parseRedirects(read('cloudflare/_redirects'));
+  const NO_REWRITES = build.parseRedirects('');
+  const HOME = '<!DOCTYPE html><div id="root" data-prerendered=""><main><h1>home</h1></main></div>';
+
+  // The samples for each APP_PATHS pattern in src/index.js, keyed by its
+  // source. A pattern with no entry fails the test: a route that carries an
+  // id needs a rewrite in cloudflare/_redirects (or a file), and saying
+  // which paths it answers is how the test checks that one does.
+  const PATTERN_SAMPLES = {
+    '^\\/app(\\/|$)': ['/app', '/app/', '/app/anything', '/app/venue/42/edit'],
+    '^\\/signup$': ['/signup'],
+    '^\\/checkin\\/.+': ['/checkin/ChIJabc-123_x', '/checkin/ChIJabc-123_x/'],
+    '^\\/(?:f|flock)\\/\\d+$': ['/f/12', '/flock/12', '/f/12/'],
+    '^\\/dm\\/\\d+$': ['/dm/9', '/dm/9/'],
+    '^\\/reset-password$': ['/reset-password'],
+  };
+
+  // src/index.js's own normalisation, which it matches routes on: lowercase,
+  // one slash at a time, no trailing slash.
+  const routerPath = (raw) => {
+    const lowered = String(raw || '/').toLowerCase().replace(/\/{2,}/g, '/');
+    const trimmed = lowered.length > 1 ? lowered.replace(/\/+$/, '') : lowered;
+    return trimmed || '/';
+  };
+
+  // THE ROUTES src/index.js DECLARES, read from its route table: each test in
+  // PAGES, every APP_PATHS pattern, and each path the router compares
+  // against (the marketing root, the two standalone pages). Strict on
+  // purpose: a route written in a shape this cannot read fails here, so no
+  // route reaches the site without its status checked.
+  function declaredRoutes() {
+    const src = read('src/index.js').replace(/\r\n/g, '\n');
+    const block = (opening) => {
+      const start = src.indexOf(opening);
+      if (start === -1) throw new Error('src/index.js no longer has "' + opening + '"; teach this test where its routes went');
+      return src.slice(start + opening.length, src.indexOf('\n];', start));
+    };
+    const exact = new Set();
+    const prefixes = new Set();
+    const pages = block('const PAGES = [');
+    const tests = [...pages.matchAll(/^\s*test: \(p\) => (.+),$/gm)].map((m) => m[1]);
+    expect(tests).toHaveLength([...pages.matchAll(/^\s*id: '/gm)].length);
+    for (const test of tests) {
+      for (const term of test.replace(/ && !isNativeShell$/, '').split(' || ')) {
+        const is = /^p === '(\/[^']*)'$/.exec(term);
+        const starts = /^p\.startsWith\('(\/[^']*)'\)$/.exec(term);
+        if (is) exact.add(is[1]);
+        else if (starts) prefixes.add(starts[1]);
+        else throw new Error('src/index.js has a page test this check cannot read: ' + test);
+      }
+    }
+    for (const m of src.matchAll(/\bpath === '(\/[^']*)'/g)) exact.add(m[1]);
+    const patterns = [];
+    for (const line of block('const APP_PATHS = [').split('\n')) {
+      const code = line.trim();
+      if (!code || code.startsWith('//')) continue;
+      const literal = /^\/(.+?)\/,\s*(?:\/\/.*)?$/.exec(code);
+      if (!literal) throw new Error('src/index.js APP_PATHS has a line this check cannot read: ' + code);
+      patterns.push(new RegExp(literal[1]));
+    }
+    return { exact: [...exact], prefixes: [...prefixes], patterns };
+  }
+
+  // Each declared route at every spelling the router accepts for it.
+  function routeSamples({ exact, prefixes, patterns }) {
+    const samples = new Set();
+    for (const route of exact) {
+      samples.add(route);
+      // The router forgives a trailing slash, and Pages answers one with a
+      // 308 to the route. Not on "/", nor on a file name like /index.html,
+      // which no folder stands behind.
+      if (route !== '/' && !/\.[a-z]+$/.test(route)) samples.add(route + '/');
+    }
+    for (const prefix of prefixes) {
+      samples.add(prefix + GOOD_TOKEN);
+      samples.add(prefix + 'a/b');
+    }
+    expect(Object.keys(PATTERN_SAMPLES).sort()).toEqual(patterns.map((p) => p.source).sort());
+    for (const pattern of patterns) {
+      for (const sample of PATTERN_SAMPLES[pattern.source]) {
+        expect([sample, pattern.test(routerPath(sample))]).toEqual([sample, true]);
+        samples.add(sample);
+      }
+    }
+    return [...samples];
+  }
+
+  // A built output, finished by the build itself: every file in public/
+  // (empty: only the names matter here), a bundle, the home page's snapshot,
+  // and what finishOutput adds (the 404 page, the route files, the
+  // app-site-association file). The other prerendered routes are left to
+  // finishOutput, which writes the shell for a snapshot that failed.
+  let out;
+  let files;
+  beforeAll(() => {
+    out = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-cf-status-'));
+    for (const file of build.servedFiles(path.join(ROOT, 'public'))) {
+      fs.mkdirSync(path.dirname(path.join(out, file)), { recursive: true });
+      fs.writeFileSync(path.join(out, file), '');
+    }
+    fs.writeFileSync(path.join(out, 'index.html'), SHELL);
+    fs.writeFileSync(path.join(out, 'landing.html'), HOME);
+    fs.mkdirSync(path.join(out, 'static', 'js'), { recursive: true });
+    fs.writeFileSync(path.join(out, 'static', 'js', 'main.1a2b3c4d.js'), '');
+    process.env.APPLE_TEAM_ID = fakeTeamId();
+    try { build.finishOutput(out); } finally { delete process.env.APPLE_TEAM_ID; }
+    files = new Set(build.servedFiles(out));
+  });
+
+  afterAll(() => {
+    fs.rmSync(out, { recursive: true, force: true });
+  });
+
+  // Pages' asset server over that output. Every 404 it sends carries
+  // no-store, whatever _headers says (handler.ts, after the headers rules).
+  function assets(request, rewrites) {
+    const u = new URL(request.url);
+    const answer = build.pagesAnswer(u.pathname + u.search, { files, redirects: rewrites, method: request.method });
+    if (answer.location) return new Response(null, { status: answer.status, headers: { Location: answer.location } });
+    const headers = new Headers({ 'X-Served-File': answer.file || '' });
+    if (answer.file) headers.set('Content-Type', answer.file.endsWith('.html') ? 'text/html; charset=utf-8' : 'application/octet-stream');
+    if (answer.status === 404) headers.set('Cache-Control', 'no-store');
+    const body = answer.file && request.method !== 'HEAD' ? fs.readFileSync(path.join(out, answer.file)) : null;
+    return new Response(body, { status: answer.status, headers });
+  }
+
+  // _routes.json matching, as wrangler's pages-dev-util.ts has it: /x also
+  // matches /x/, and /x/* also matches /x.
+  function routeRule(rule) {
+    let r;
+    if (rule === '/' || rule === '/*') r = rule;
+    else if (rule.endsWith('/*')) r = rule.slice(0, -2) + '(/*)?';
+    else if (rule.endsWith('/')) r = rule.slice(0, -1) + '(/)?';
+    else if (rule.endsWith('*')) r = rule;
+    else r = rule + '(/)?';
+    return new RegExp('^' + r.replace(/\./g, '\\.').replace(/\*/g, '.*') + '$');
+  }
+
+  async function visit(target, { ua = UA.person, method = 'GET' } = {}) {
+    const url = SITE + target;
+    const pathname = new URL(url).pathname;
+    const viaFunctions = !ROUTES.exclude.some((rule) => routeRule(rule).test(pathname))
+      && ROUTES.include.some((rule) => routeRule(rule).test(pathname));
+    if (!viaFunctions) return assets(new Request(url, { method }), REWRITES);
+    const context = pagesContext(url, {
+      method,
+      headers: { 'User-Agent': ua },
+      env: { ASSETS: { fetch: jest.fn(async (req) => assets(req, NO_REWRITES)) } },
+      next: (c) => assets(c.request, NO_REWRITES),
+    });
+    const res = await middleware(context);
+    await context.settled();
+    return res;
+  }
+
+  // Follows redirects as a browser would, three at most.
+  async function land(target, options) {
+    let res = await visit(target, options);
+    const hops = [];
+    while (res.status >= 300 && res.status < 400 && hops.length < 3) {
+      hops.push(res.headers.get('Location'));
+      res = await visit(hops[hops.length - 1], options);
+    }
+    return { res, hops };
+  }
+
+  test('every route src/index.js declares answers 200 with a page, at every spelling its router accepts', async () => {
+    const samples = routeSamples(declaredRoutes());
+    for (const sample of samples) {
+      const { res, hops } = await land(sample);
+      expect([sample, res.status, res.headers.get('Content-Type')]).toEqual([sample, 200, 'text/html; charset=utf-8']);
+      expect([sample, [SHELL, HOME].includes(await res.text())]).toEqual([sample, true]);
+      // At most Pages' own move from /route/ to /route.
+      expect([sample, hops.length <= 1]).toEqual([sample, true]);
+    }
+    // What the table reads today, so a reader can see the check has teeth.
+    expect(samples).toEqual(expect.arrayContaining([
+      '/', '/landing', '/index.html', '/about', '/research', '/how-it-works', '/flux', '/ai', '/support', '/privacy',
+      '/terms', '/guidelines', '/delete-account', '/pro', '/tap', '/admin/moderation', '/reset-password', '/verify-email',
+      '/i', '/i/' + GOOD_TOKEN, '/signup', '/app', '/app/anything', '/checkin/ChIJabc-123_x', '/f/12', '/flock/12', '/dm/9',
+    ]));
+  });
+
+  test('every file the build serves answers as itself', async () => {
+    expect(files.size).toBeGreaterThan(100);
+    for (const file of files) {
+      const { res, hops } = await land(file);
+      if (file === '/404.html') {
+        expect(res.status).toBe(404);
+        continue;
+      }
+      expect([file, res.status]).toEqual([file, 200]);
+      if (file === '/index.html') {
+        // Pages moves /index.html to "/", which the middleware answers with the home page.
+        expect([hops, res.headers.get('X-Served-File')]).toEqual([['/'], '/landing.html']);
+      } else if (file.endsWith('.html')) {
+        // A page at its clean URL: /about.html is /about.
+        expect([file, hops, res.headers.get('X-Served-File')]).toEqual([file, [file.slice(0, -'.html'.length)], file]);
+      } else {
+        expect([file, hops, res.headers.get('X-Served-File')]).toEqual([file, [], file]);
+      }
+    }
+    // The ones the site cannot do without, named.
+    for (const file of ['/papers/flock-research-paper.pdf', '/.well-known/apple-app-site-association', '/llms.txt', '/robots.txt',
+      '/sitemap.xml', '/manifest.json', '/favicon.ico', '/firebase-messaging-sw.js', '/bg-city.mp4', '/static/js/main.1a2b3c4d.js']) {
+      expect([file, files.has(file)]).toEqual([file, true]);
+    }
+    // The paper's old addresses still move to it.
+    expect((await land('/research/flock-research-paper.pdf')).hops).toEqual(['/papers/flock-research-paper.pdf']);
+    expect((await land('/papers/flock-research-paper-full.pdf')).res.status).toBe(200);
+  });
+
+  test('anything else is a 404 that carries the app shell, so its not-found page still shows, and is never kept', async () => {
+    const probes = [
+      '/wp-login.php', '/.env', '/xmlrpc.php', '/.git/config', '/random-junk', '/wp-admin/', '/wp-includes/wlwmanifest.xml',
+      '/phpinfo.php', '/config.json', '/.aws/credentials', '/server-status', '/index.php', '/login', '/admin', '/admin/',
+      '/.well-known/security.txt', '/api/nonexistent', '/static/js/main.00000000.js', '/screenshots/never-published.avif',
+      '/404', '/404.html', '/f', '/dm', '/checkin', '/flock', '/app.php', '/i.php',
+    ];
+    for (const probe of probes) {
+      const { res, hops } = await land(probe);
+      expect([probe, res.status, hops]).toEqual([probe, 404, []]);
+      expect([probe, await res.text()]).toEqual([probe, SHELL]);
+      expect([probe, res.headers.get('Cache-Control')]).toEqual([probe, 'no-store']);
+    }
+    // A spelling the router forgives but Pages cannot match (its files and
+    // rules are case-sensitive) is a 404 as well. The person still gets the
+    // page: the body is the shell, and the router lowercases.
+    for (const variant of ['/PRIVACY', '/About', '/App/anything']) {
+      const { res } = await land(variant);
+      expect([variant, res.status, await res.text()]).toEqual([variant, 404, SHELL]);
+    }
+    // Anything but GET and HEAD is refused before a page is looked for.
+    expect((await visit('/xmlrpc.php', { method: 'POST' })).status).toBe(405);
   });
 });
 
