@@ -14,22 +14,24 @@
 --
 -- WHAT A ROW IS. One bill on one received email. Most receipts are one bill;
 -- an App Store receipt can carry several, numbered by line_no. A row holds
--- what the hub needs and nothing else: the sender's address and the subject,
--- the vendor, product, amount, dates and the receipt's own number, and never
--- the body. Mail that is not a receipt, or not forwarded by the owner, stores
--- nothing at all.
+-- what the hub needs and nothing else: the sender's address, the vendor,
+-- product, amount, dates and the receipt's own number, and never the body.
+-- The subject is kept only on a row a person has to check (to_check), so the
+-- email can be found in Gmail, and is cleared when it is checked. Mail that
+-- is not a receipt, or not forwarded by the owner, stores nothing at all.
 --
 -- status says what the bill did:
 --   applied    updated a reconciled line or a bill on the expense list
 --   added      added a one-time bill from a vendor already on the list
 --   already    the hub already held this charge
 --   older      the hub holds a newer figure, so nothing moved
---   new        a bill nothing on the list matches, waiting for the owner and
---              counted in no total until he adds it
+--   new        a bill waiting for the owner and counted in no total until he
+--              adds it: one nothing on the list matches, a shop's order, or
+--              an App Store purchase
 --   confirmed  a new bill the owner added to the list
 --   dismissed  a new bill the owner said is not the company's
---   to_check   a receipt that could not be read, or could be more than one
---              bill: listed for the owner with its sender and subject
+--   to_check   a receipt that could not be read or recorded, or could be more
+--              than one bill: listed for the owner with its sender and subject
 --   checked    a to_check row the owner has looked at
 --
 -- expense_id points at the bill it changed or added. ON DELETE SET NULL: a

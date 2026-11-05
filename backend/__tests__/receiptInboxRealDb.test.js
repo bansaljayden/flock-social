@@ -20,12 +20,16 @@
 //   - a Railway or Google Cloud receipt sets that line the way the dashboard's
 //     form does, with the figure it replaces kept beside it, and never over a
 //     newer figure; a second Google payment in a month waits for a person;
+//   - each sender changes only what its list entry binds it to: no email's
+//     words can set the Railway figure unless Railway's own account sent it;
 //   - a receipt for a bill on the list moves that bill's last charge and
-//     amount; a one-time charge from a vendor on the list is its own bill;
-//   - the App Store's other purchases are never stored;
+//     amount; a one-time charge from a vendor on the list is its own bill,
+//     except a shop's order and an App Store purchase, which wait;
+//   - the App Store's other purchases, a family's included, are never stored;
 //   - a vendor the list has never seen waits, counted nowhere, until the
 //     owner adds it or says it is not the company's;
-//   - a receipt that cannot be read is kept by its sender and subject alone.
+//   - a receipt that cannot be read, or cannot be recorded, is kept by its
+//     sender and subject alone, and the subject goes once it is checked.
 //
 // The Resend API is a stand-in that serves fixtures (__tests__/fixtures/
 // receipts, real receipts with every personal detail replaced), with the
@@ -67,13 +71,18 @@ process.env.RESEND_WEBHOOK_SECRET = `whsec_${SVIX_KEY.toString('base64')}`;
 process.env.RESEND_API_KEY = 're_test_receipts_key';
 // The fixtures' owner, written with dots the way Gmail lets an address be.
 process.env.RECEIPTS_FORWARDED_BY = 'owneraccount@gmail.com';
-// The fixtures' Stripe senders stand in for the real ones the code lists.
-process.env.RECEIPT_SENDERS = [
-  'invoice+statements+acct_1FIXTURERAILWAY0@stripe.com',
-  'invoice+statements+acct_1FIXTURECODEMAG0@stripe.com',
-  'invoice+statements@mail.example-labs.test',
-].join(', ');
+delete process.env.RECEIPT_SENDERS;
 delete process.env.RECEIPTS_INBOX_ADDRESS;
+
+// The fixtures' Stripe senders stand in for the real ones the code lists, and
+// are bound the same way: Railway's account sets the Railway line and nothing
+// else, Codemagic's touches Codemagic's bills, the development tool's own
+// billing address is matched by its merchant name.
+const FIXTURE_SENDERS = [
+  { address: 'invoice+statements+acct_1fixturerailway0@stripe.com', format: 'stripe', line: 'railway', label: 'Railway, through Stripe (fixture)' },
+  { address: 'invoice+statements+acct_1fixturecodemag0@stripe.com', format: 'stripe', vendors: ['Codemagic', 'Nevercode'], label: 'Codemagic, through Stripe (fixture)' },
+  { address: 'invoice+statements@mail.example-labs.test', format: 'stripe', label: 'a development tool, through Stripe (fixture)' },
+];
 
 const INBOX = 'receipts@fixture1105.resend.app';
 const OWNER = 'owner.account@gmail.com';
@@ -132,6 +141,7 @@ test.before(async () => {
   moneyHub = require('../services/moneyHub');
   costModel = require('../services/costModel');
   receiptInbox = require('../services/receiptInbox');
+  receiptInbox.__testing.addSenders(FIXTURE_SENDERS);
   const app = express();
   // The webhook gets the raw-body parser server.js gives it, so the signature
   // is checked against the bytes that were signed.
@@ -322,6 +332,7 @@ test('a Railway receipt sets the Railway figure the way the dashboard form does,
   assert.equal(r.previous_on, '2026-10-01');
   assert.equal(r.sender, 'invoice+statements+acct_1fixturerailway0@stripe.com');
   assert.equal(r.reference, '1000-2001');
+  assert.equal(r.subject, null, 'a receipt that was read keeps no subject');
   assert.equal(resendCalls.length, 1);
   assert.equal(resendCalls[0].auth, 'Bearer re_test_receipts_key', 'the server key reads the received email');
   // The merged block the hub reads shows the receipt, and compares it with
@@ -386,6 +397,42 @@ test('Google Cloud: the month\'s bill sets the line, a second payment that month
   assert.deepEqual(rows.map((r) => r.status), ['applied', 'to_check']);
   assert.match(rows[1].reason, /second Google Cloud payment in November 2026/);
   assert.equal(rows[1].amount_cents, 2000);
+  // Any other Google payment is somebody's own: nothing is kept of it.
+  const personal = readFixture('google-cloud-bill.txt').replace(/Google Cloud( Platform)?/g, 'Google One').replace(/CLOUD TEST01/g, 'ONE TEST09');
+  okay(await deliver(forwarded('google-cloud-bill', { text: personal })));
+  assert.equal((await receipts()).length, 2);
+  assert.ok(receiptInbox.ignoredSinceStart().byReason.some((x) => x.reason === 'not_flock'));
+});
+
+test('only Railway\'s own account sets the Railway figure, and only with a month\'s bill', async () => {
+  await setReconciled('railway', 30.0, '2026-10-01');
+  // A shop's email carrying Stripe's words for Railway in its address lines
+  // is read as that shop's order, which is all that sender can send.
+  const shopHtml = readFixture('shop-order.html').replace('</body>', '<p>Receipt from Railway</p><p>Paid on November 19, 2026</p><p>Amount paid</p><p>$999.00</p></body>');
+  okay(await deliver(forwarded('shop-order', { html: shopHtml })));
+  // A Stripe receipt that says Railway from an address added in
+  // RECEIPT_SENDERS can be a bill on the list at most, never the line.
+  process.env.RECEIPT_SENDERS = 'invoice+statements+acct_1unlistedrailway@stripe.com';
+  try {
+    okay(await deliver(forwarded('stripe-railway', {
+      from: 'invoice+statements+acct_1unlistedrailway@stripe.com',
+      headers: { from: '"Railway Corporation" <invoice+statements+acct_1unlistedrailway@stripe.com>' },
+    })));
+  } finally {
+    delete process.env.RECEIPT_SENDERS;
+  }
+  assert.equal((await reconciled('railway')).usd, '30.00', 'the Railway figure moved');
+  assert.deepEqual((await receipts()).map((r) => [r.status, r.vendor, r.reconciled_line, r.amount_cents]), [
+    ['new', 'PCB Artists', null, 8299],
+    ['new', 'Railway Corporation', null, 4299],
+  ]);
+  // Railway's own account with a charge that covers no month: a person looks.
+  const noPeriod = readFixture('stripe-railway.html').replace(/[A-Z][a-z]{2} \d{1,2}\u2013[A-Z][a-z]{2} \d{1,2}, \d{4}/g, '').replace(/1000-2001/g, '1000-2007');
+  okay(await deliver(forwarded('stripe-railway', { html: noPeriod })));
+  const last = (await receipts()).pop();
+  assert.equal(last.status, 'to_check');
+  assert.match(last.reason, /Railway charge with no billing period, so not the month's bill/);
+  assert.equal((await reconciled('railway')).usd, '30.00');
 });
 
 // ---------------------------------------------------------------------------
@@ -417,10 +464,11 @@ test('a receipt for a bill on the list moves its last charge and amount, and not
 
 test('a one-time charge from a vendor on the list is its own one-time bill, and one receipt number is one charge', async () => {
   await bill({ vendor: 'Example Labs', product: 'Max (20x)', category: 'ai_tools', cadence: 'monthly', amountCents: 21200, lastChargedOn: '2026-10-13' });
+  await bill({ vendor: 'Example Labs', product: 'Prepaid extra usage', category: 'ai_tools', cadence: 'one_time', amountCents: 9540, lastChargedOn: '2026-09-06' });
   okay(await deliver(forwarded('stripe-one-time')));
   let rows = await expenses();
-  assert.equal(rows.length, 2);
-  const added = rows[1];
+  assert.equal(rows.length, 3);
+  const added = rows[2];
   assert.equal(added.vendor, 'Example Labs', 'filed under the vendor as the list names it');
   assert.equal(added.product, 'Prepaid extra usage, Individual plan, Oct 9, 2026');
   assert.equal(added.cadence, 'one_time');
@@ -435,20 +483,50 @@ test('a one-time charge from a vendor on the list is its own one-time bill, and 
   // A second top-up the same day is a second charge.
   okay(await deliver(forwarded('stripe-one-time', { html: readFixture('stripe-one-time.html').replace(/1000-5001/g, '1000-5002') })));
   rows = await expenses();
-  assert.equal(rows.length, 3);
-  assert.equal(rows[2].product, 'Prepaid extra usage, Individual plan, Oct 9, 2026 (2)');
+  assert.equal(rows.length, 4);
+  assert.equal(rows[3].product, 'Prepaid extra usage, Individual plan, Oct 9, 2026 (2)');
   // The first receipt sent again as a new email has its receipt number, and
   // adds nothing.
   okay(await deliver(forwarded('stripe-one-time')));
-  assert.equal((await expenses()).length, 3);
+  assert.equal((await expenses()).length, 4);
   assert.equal((await receipts()).length, 2);
+  // A name too long for the list is cut before its date, so the date and the
+  // number still tell two charges apart.
+  const long = `Prepaid extra usage for the team ${'and more '.repeat(14)}`;
+  for (const ref of ['1000-5003', '1000-5004']) {
+    okay(await deliver(forwarded('stripe-one-time', { html: readFixture('stripe-one-time.html').replace(/1000-5001/g, ref).replace('Prepaid extra usage, Individual plan', long) })));
+  }
+  const [a, b] = (await expenses()).slice(4);
+  assert.ok(a.product.length <= 120 && b.product.length <= 120, `${a.product.length}, ${b.product.length}`);
+  assert.match(a.product, /, Oct 9, 2026$/);
+  assert.match(b.product, /, Oct 9, 2026 \(2\)$/);
+});
+
+test('a charge with no period from a vendor whose only bills recur is for a person, not added beside them', async () => {
+  // Stripe prints a subscription's period, so a receipt without one is a
+  // one-time charge, unless the period was printed in words this could not
+  // read. Where the vendor has only a monthly bill, adding a one-time copy
+  // would count that bill twice.
+  const monthly = await bill({ vendor: 'Example Labs', product: 'Max (20x)', category: 'ai_tools', cadence: 'monthly', amountCents: 21200, lastChargedOn: '2026-10-13' });
+  okay(await deliver(forwarded('stripe-one-time')));
+  const [r] = await receipts();
+  assert.equal(r.status, 'to_check');
+  assert.match(r.reason, /names no billing period, so it may be Example Labs, Max \(20x\), or a separate charge/);
+  assert.equal(r.subject, 'Your receipt from Example Labs, PBC #1000-5001', 'kept so it can be found in Gmail');
+  const list = await expenses();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].last_charged_on, monthly.lastChargedOn);
+  // The period in a day-first locale is read, so the monthly bill is matched.
+  const dayFirst = readFixture('stripe-subscription.html').replace('Oct 13\u2013Nov 13, 2026', '13 Oct \u2013 13 Nov 2026');
+  okay(await deliver(forwarded('stripe-subscription', { html: dayFirst })));
+  assert.equal((await receipts())[1].status, 'already', 'the bill already holds the Oct 13 charge of $212.00');
 });
 
 test('a usage vendor billed one invoice at a time keeps getting one-time bills', async () => {
   await bill({ vendor: 'Codemagic', product: 'iOS builds, August usage', category: 'developer', cadence: 'one_time', amountCents: 5000, lastChargedOn: '2026-09-02' });
   okay(await deliver(forwarded('stripe-usage')));
   const rows = await expenses();
-  assert.equal(rows.length, 2, 'matched by the merchant\'s own site, codemagic.io, though the receipt is from Nevercode Ltd');
+  assert.equal(rows.length, 2, 'filed under Codemagic, which the sender\'s list entry names, though the receipt is from Nevercode Ltd');
   assert.equal(rows[1].vendor, 'Codemagic');
   assert.equal(rows[1].cadence, 'one_time');
   assert.equal(rows[1].product, 'macOS M2 minutes personal use (per minute), Sep 2 to Oct 1, 2026');
@@ -456,20 +534,30 @@ test('a usage vendor billed one invoice at a time keeps getting one-time bills',
   assert.equal(rows[1].category, 'developer');
 });
 
-test('the App Store: a bill on the list is updated, a one-time purchase from a vendor on it is added, and nothing else is kept', async () => {
+test('the App Store: a bill on the list is updated, a purchase in a listed maker\'s app waits, and nothing else is kept', async () => {
   const chat = await bill({ vendor: 'Example Chat Co (via App Store)', product: 'Example Chat Plus', category: 'ai_tools', cadence: 'monthly', amountCents: 2119, lastChargedOn: '2026-09-17', renewsOn: '2026-10-17' });
   await bill({ vendor: 'Example Labs', product: 'Max (20x)', category: 'ai_tools', cadence: 'monthly', amountCents: 21200, lastChargedOn: '2026-10-13' });
   okay(await deliver(forwarded('apple-table')));
   let rows = await receipts();
-  assert.deepEqual(rows.map((r) => [r.line_no, r.status, r.vendor, r.amount_cents]), [
-    [0, 'applied', 'Example Chat', 2119],
-    [1, 'added', 'Example Assistant by Example Labs', 4770],
+  assert.deepEqual(rows.map((r) => [r.line_no, r.status, r.vendor, r.product, r.amount_cents]), [
+    [0, 'applied', 'Example Chat', 'Example Chat Plus', 2119],
+    [1, 'new', 'Example Labs', 'Usage Credits (50)', 4770],
   ]);
-  const list = await expenses();
+  assert.match(rows[1].reason, /A purchase in Example Assistant by Example Labs, made by Example Labs, which is on the list\. The App Store sends every purchase on the account/);
+  let list = await expenses();
   assert.equal(list.find((x) => x.id === chat.id).last_charged_on, '2026-10-19');
+  assert.equal(list.length, 2, 'the purchase is in no total until the owner adds it');
+  const hub = await receiptInbox.readForHub(pool, new Date('2026-11-20T17:00:00Z'));
+  assert.deepEqual(hub.pending.map((x) => [x.vendor, x.knownVendor, x.suggestedKind]), [['Example Labs', true, 'tooling']]);
+  // Added, it is filed with the maker's other bills, under the date it was
+  // bought.
+  const yes = await admin('POST', `/email-receipts/${rows[1].id}/confirm`, { kind: 'tooling' });
+  assert.equal(yes.status, 200, JSON.stringify(yes.json));
+  list = await expenses();
   const credits = list.find((x) => x.cadence === 'one_time');
   assert.equal(credits.vendor, 'Example Labs');
   assert.equal(credits.product, 'Usage Credits (50), Oct 19, 2026');
+  assert.equal(credits.category, 'ai_tools');
   assert.equal(credits.amount_cents, 4770, '$45.00 and its share of the tax');
   // A receipt for somebody's own app on the same Apple account stores
   // nothing at all.
@@ -485,6 +573,26 @@ test('the App Store: a bill on the list is updated, a one-time purchase from a v
   assert.ok(!rows.some((r) => /Photos/.test(`${r.vendor} ${r.product}`)));
 });
 
+test('an App Store item matches a bill only by a name that says which product it is', async () => {
+  // "Max (20x)" is one word to match on. Another app's "Max Basic With Ads",
+  // bought by somebody on the same account, carries that word too.
+  const max = await bill({ vendor: 'Example Labs', product: 'Max (20x)', category: 'ai_tools', cadence: 'monthly', amountCents: 21200, lastChargedOn: '2026-10-13' });
+  const html = readFixture('apple-lockup.html').replace(/Example Answers Pro/g, 'Max Basic With Ads').replace(/Example Answers/g, 'Example Video').replace(/MTESTORDR02/g, 'MTESTORDR09');
+  okay(await deliver(forwarded('apple-lockup', { html })));
+  assert.deepEqual(await receipts(), [], 'neither item is a bill on the list');
+  const [row] = await expenses();
+  assert.equal(row.last_charged_on, max.lastChargedOn);
+  assert.equal(row.amount_cents, 21200);
+  // A one-word product is matched when the item is named exactly that.
+  const { appStoreItemIs } = receiptInbox.__testing;
+  const item = (product, title = 'Example App') => ({ product, title });
+  assert.equal(appStoreItemIs({ product: 'Max (20x)' }, item('Max (20x)')), true);
+  assert.equal(appStoreItemIs({ product: 'Max (20x)' }, item('Max Basic With Ads')), false);
+  assert.equal(appStoreItemIs({ product: 'SuperThing' }, item('SuperThing (Monthly)')), true);
+  assert.equal(appStoreItemIs({ product: 'Example Chat Plus' }, item('Example Chat Plus Business')), true, 'three words named are enough');
+  assert.equal(appStoreItemIs({ product: 'Example Chat Plus' }, item('Example Chat Pro')), false);
+});
+
 // ---------------------------------------------------------------------------
 // New bills, and the owner's answers
 // ---------------------------------------------------------------------------
@@ -496,10 +604,11 @@ test('a vendor the list has never seen waits, counted nowhere, until the owner a
   assert.equal(r.vendor, 'PCB Artists');
   assert.equal(r.amount_cents, 8299);
   assert.deepEqual(await expenses(), [], 'nothing is on the list, so nothing is in any total');
+  assert.equal(r.subject, null);
   const hub = await receiptInbox.readForHub(pool, new Date('2026-11-20T17:00:00Z'));
   assert.equal(hub.status, 'ok');
-  assert.deepEqual(hub.pending.map((x) => [x.id, x.vendor, x.product, x.amountCents, x.paidOn, x.cadence]), [
-    [r.id, 'PCB Artists', 'I2C Decibel Sound Level Meter Module - PRO', 8299, '2026-10-08', 'one_time'],
+  assert.deepEqual(hub.pending.map((x) => [x.id, x.vendor, x.product, x.amountCents, x.paidOn, x.cadence, x.knownVendor]), [
+    [r.id, 'PCB Artists', 'I2C Decibel Sound Level Meter Module - PRO', 8299, '2026-10-08', 'one_time', false],
   ]);
   assert.equal(hub.pending[0].sender, undefined, 'a readable receipt is shown by what it paid, not by its sender');
   assert.equal(hub.pending[0].subject, undefined);
@@ -510,7 +619,7 @@ test('a vendor the list has never seen waits, counted nowhere, until the owner a
   const [row] = await expenses();
   assert.equal(row.id, yes.json.expenseId);
   assert.equal(row.vendor, 'PCB Artists');
-  assert.equal(row.product, 'I2C Decibel Sound Level Meter Module - PRO');
+  assert.equal(row.product, 'I2C Decibel Sound Level Meter Module - PRO, Oct 8, 2026', 'a one-time bill is named by when it was paid');
   assert.equal(row.cadence, 'one_time');
   assert.equal(row.kind, 'other');
   assert.equal(row.amount_cents, 8299);
@@ -524,6 +633,52 @@ test('a vendor the list has never seen waits, counted nowhere, until the owner a
   assert.equal((await admin('POST', '/email-receipts/999999/confirm', {})).status, 404);
 });
 
+test('a shop\'s order waits even from a shop on the list, and two orders of one part stay two bills', async () => {
+  // Anybody can order from a shop with the owner's email address, and the
+  // shop's genuine order email then reaches his inbox.
+  const earlier = await bill({ vendor: 'Pololu', product: 'Sensor carrier, Sep 1, 2026', category: 'hardware', kind: 'other', cadence: 'one_time', amountCents: 1500, lastChargedOn: '2026-09-01' });
+  okay(await deliver(forwarded('pololu-order')));
+  okay(await deliver(forwarded('pololu-order', { text: readFixture('pololu-order.txt').replace(/1TEST0001/g, '1TEST0002').replace('25 September 2026', '27 September 2026') })));
+  const rows = await receipts();
+  assert.deepEqual(rows.map((r) => [r.status, r.vendor, r.amount_cents, r.paid_on]), [
+    ['new', 'Pololu', 3805, '2026-09-25'],
+    ['new', 'Pololu', 3805, '2026-09-27'],
+  ]);
+  assert.match(rows[0].reason, /^Pololu is on the list\. A shop takes an order in anybody's name/);
+  assert.equal((await expenses()).length, 1, 'nothing counted before the owner says so');
+  const hub = await receiptInbox.readForHub(pool, new Date('2026-11-20T17:00:00Z'));
+  assert.deepEqual(hub.pending.map((x) => [x.knownVendor, x.suggestedKind]), [[true, 'other'], [true, 'other']]);
+  for (const r of rows) {
+    const yes = await admin('POST', `/email-receipts/${r.id}/confirm`, { kind: 'other' });
+    assert.equal(yes.status, 200, JSON.stringify(yes.json));
+  }
+  const list = await expenses();
+  assert.equal(list.length, 3);
+  assert.equal(list[0].id, earlier.id);
+  assert.deepEqual(list.slice(1).map((x) => [x.vendor, x.category, x.cadence, x.amount_cents, x.last_charged_on]), [
+    ['Pololu', 'hardware', 'one_time', 3805, '2026-09-25'],
+    ['Pololu', 'hardware', 'one_time', 3805, '2026-09-27'],
+  ]);
+  assert.match(list[1].product, /, Sep 25, 2026$/);
+  assert.match(list[2].product, /, Sep 27, 2026$/);
+});
+
+test('confirming a stale receipt never winds a bill back', async () => {
+  // The bill waits; meanwhile the owner types it in by hand with a newer
+  // charge. Adding the old receipt then links it and changes nothing.
+  okay(await deliver(forwarded('stripe-subscription')));
+  const [r] = await receipts();
+  assert.equal(r.status, 'new');
+  const typed = await bill({ vendor: r.vendor, product: r.product, category: 'ai_tools', cadence: 'monthly', amountCents: 22000, lastChargedOn: '2026-11-13' });
+  const yes = await admin('POST', `/email-receipts/${r.id}/confirm`, { kind: 'tooling' });
+  assert.equal(yes.status, 200, JSON.stringify(yes.json));
+  assert.equal(yes.json.expenseId, typed.id);
+  const [row] = await expenses();
+  assert.equal(row.amount_cents, 22000);
+  assert.equal(row.last_charged_on, '2026-11-13');
+  assert.equal((await receipts())[0].status, 'confirmed');
+});
+
 test('"Not a Flock bill" sets a new bill aside, and the next receipt for it stores nothing', async () => {
   okay(await deliver(forwarded('pololu-order')));
   const [r] = await receipts();
@@ -535,6 +690,23 @@ test('"Not a Flock bill" sets a new bill aside, and the next receipt for it stor
   assert.equal((await receipts()).length, 1, 'the second order of the same part was stored');
   assert.ok(receiptInbox.ignoredSinceStart().byReason.some((x) => x.reason === 'dismissed_before'));
   assert.equal((await admin('POST', `/email-receipts/${r.id}/dismiss`)).status, 409);
+});
+
+test('a bill set aside, then put on the list by hand, is matched again', async () => {
+  okay(await deliver(forwarded('stripe-subscription')));
+  const [r] = await receipts();
+  assert.equal(r.status, 'new');
+  assert.equal((await admin('POST', `/email-receipts/${r.id}/dismiss`)).json.status, 'dismissed');
+  // The owner changes his mind and adds the bill himself. The next month's
+  // receipt is that bill's, and "Not a Flock bill" no longer applies.
+  const typed = await bill({ vendor: 'Example Labs', product: 'Max plan - 20x', category: 'ai_tools', cadence: 'monthly', amountCents: 21200, lastChargedOn: '2026-10-13' });
+  const html = readFixture('stripe-subscription.html').replace(/1000-4001/g, '1000-4002').replace('October 13, 2026', 'November 13, 2026')
+    .replace('Oct 13\u2013Nov 13, 2026', 'Nov 13\u2013Dec 13, 2026');
+  okay(await deliver(forwarded('stripe-subscription', { html })));
+  const rows = await receipts();
+  assert.deepEqual(rows.map((x) => x.status), ['dismissed', 'applied']);
+  assert.equal(rows[1].expense_id, typed.id);
+  assert.equal((await expenses())[0].last_charged_on, '2026-11-13');
 });
 
 test('a receipt that cannot be read is kept by its sender and subject alone, and Done clears it', async () => {
@@ -553,6 +725,43 @@ test('a receipt that cannot be read is kept by its sender and subject alone, and
   const done = await admin('POST', `/email-receipts/${r.id}/dismiss`);
   assert.equal(done.json.status, 'checked');
   assert.deepEqual((await receiptInbox.readForHub(pool)).toCheck, []);
+  assert.equal((await receipts())[0].subject, null, 'the subject was kept only to find the email by');
+});
+
+test('a receipt the database will not take is kept for a person, not asked for again forever', async () => {
+  // $20,000,000.00 is past the ten million dollar ceiling migration 134 holds
+  // every amount to. The same email would fail the same way on every
+  // delivery, so it is answered, and a person gets it.
+  const html = readFixture('stripe-one-time.html').replace(/\$95\.40/g, '$20,000,000.00');
+  const res = await deliver(forwarded('stripe-one-time', { html }));
+  okay(res);
+  const [r] = await receipts();
+  assert.equal(r.status, 'to_check');
+  assert.equal(r.amount_cents, null);
+  assert.match(r.reason, /database would not record it \(23514\)/);
+  assert.equal(r.subject, 'Your receipt from Example Labs, PBC #1000-5001');
+  assert.deepEqual(await expenses(), []);
+  // And the same email again is the duplicate it is.
+  okay(await deliver(forwarded('stripe-one-time', { html, messageId: r.message_id })));
+  assert.equal((await receipts()).length, 1);
+});
+
+test('every receipt waiting for the owner is on the card, however many came after it', async () => {
+  // Seventy new bills and one to check, all older than twenty read receipts.
+  const ins = (status, minutesAgo, n) => pool.query(
+    `INSERT INTO email_receipts (message_id, line_no, resend_email_id, sender, subject, vendor, product, amount_cents, currency, paid_on, status, received_at)
+     VALUES ($1, 0, $2, 'sales@shop.example', $3, 'A Shop', $4, 1000, 'USD', '2026-10-01', $5, NOW() - ($6 || ' minutes')::interval)`,
+    [`<seed-${status}-${n}@mail.example>`, `seed-${status}-${n}`, status === 'to_check' ? 'An order to check' : null, `Part ${n}`, status, String(minutesAgo)]
+  );
+  for (let n = 0; n < 70; n += 1) await ins('new', 1000 + n, n);
+  await ins('to_check', 5000, 0);
+  for (let n = 0; n < 20; n += 1) await ins('already', n, n);
+  const hub = await receiptInbox.readForHub(pool, new Date());
+  assert.equal(hub.pending.length, 70);
+  assert.equal(hub.toCheck.length, 1);
+  assert.equal(hub.recent.length, 12, 'the newest twelve of the rest');
+  assert.equal(hub.thisMonth >= 20, true);
+  assert.ok(hub.lastReceivedAt);
 });
 
 test('the table keeps no part of an email\'s body', async () => {
@@ -605,19 +814,45 @@ test('mail that is not the owner\'s forwarded receipt stores nothing, changes no
     ['sender_not_listed', {}, { from: 'receipts+acct_1PERSONALSTORE00@stripe.com', headers: { from: '"A Shop" <receipts+acct_1PERSONALSTORE00@stripe.com>' } }],
     ['sender_not_verified', {}, { authentication: { spf: 'pass', dkim: 'fail', dmarc: 'fail' } }],
     ['sender_not_verified', {}, { authentication: { spf: 'pass', dkim: 'gray', dmarc: 'gray' } }],
+    // DKIM passed, and DMARC did not: the signature was not the From domain's
+    // own, and the vendor's domain publishes a policy that says so.
+    ['sender_not_verified', {}, { authentication: { spf: 'pass', dkim: 'pass', dmarc: 'gray' } }],
+    ['sender_not_verified', {}, { authentication: { spf: 'pass', dkim: 'pass', dmarc: 'unknown' } }],
     ['not_addressed_to_owner', {}, { to: ['stranger@example.com'], headers: { to: 'stranger@example.com' } }],
     ['not_to_inbox', {}, { receivedFor: [other], headers: { 'delivered-to': other, 'x-forwarded-to': other, 'x-forwarded-for': `${OWNER} ${other}` } }],
   ];
   for (const [reason, , over] of cases) {
+    const before = resendCalls.length;
     okay(await deliver(forwarded('stripe-railway', over)), reason);
+    if (reason === 'sender_not_listed') assert.equal(resendCalls.length, before, 'a sender off the list is dropped before Resend is asked');
   }
   assert.deepEqual(await receipts(), []);
   assert.equal((await reconciled('railway')).usd, '30.00');
   const counted = Object.fromEntries(receiptInbox.ignoredSinceStart().byReason.map((x) => [x.reason, x.count]));
   assert.deepEqual(counted, {
     not_forwarded: 1, forwarded_by_someone_else: 1, forwarded_elsewhere: 1, not_from_gmail: 3,
-    sender_not_listed: 1, sender_not_verified: 2, not_addressed_to_owner: 1, not_to_inbox: 1,
+    sender_not_listed: 1, sender_not_verified: 4, not_addressed_to_owner: 1, not_to_inbox: 1,
   });
+});
+
+test('a shop whose domain publishes no DMARC policy is taken on its own DKIM signature alone', async () => {
+  // pcbartists.com publishes p=none, so Resend's DMARC result is "gray" even
+  // for its own signed mail. Its list entry says so; nobody else's does.
+  okay(await deliver(forwarded('shop-order', { authentication: { spf: 'pass', dkim: 'pass', dmarc: 'gray' } })));
+  assert.deepEqual((await receipts()).map((r) => r.status), ['new']);
+  okay(await deliver(forwarded('shop-order', { authentication: { spf: 'pass', dkim: 'gray', dmarc: 'gray' } })));
+  okay(await deliver(forwarded('pololu-order', { authentication: { spf: 'pass', dkim: 'pass', dmarc: 'gray' } })));
+  assert.equal((await receipts()).length, 1);
+  assert.equal(receiptInbox.ignoredSinceStart().byReason.find((x) => x.reason === 'sender_not_verified').count, 2);
+});
+
+test('an event without an email id Resend could have issued is dropped before Resend is asked', async () => {
+  for (const emailId of ['', 'x'.repeat(81), '../emails/other', 'id with spaces']) {
+    const body = JSON.stringify({ type: 'email.received', created_at: '2026-11-20T16:00:01.000Z', data: { email_id: emailId, from: 'payments-noreply@google.com', to: [INBOX] } });
+    okay(await postEvent(body, signedHeaders(body)), JSON.stringify(emailId));
+  }
+  assert.equal(resendCalls.length, 0);
+  assert.equal(receiptInbox.ignoredSinceStart().byReason.find((x) => x.reason === 'no_email_id').count, 4);
 });
 
 test('notices from a listed sender are not receipts and store nothing', async () => {
@@ -644,6 +879,28 @@ test('the code lists the real senders and the owner without publishing who they 
   assert.equal(senderAllowed('mailer@fastspring.com', 'Another Merchant'), false, 'FastSpring sends for every merchant');
   assert.equal(senderAllowed('failed-payments+acct_1HNrvlCJoPsRzQsd@stripe.com', 'Railway Corporation'), false, 'a failed payment is not a receipt address');
   assert.ok(SENDERS.every((s) => (s.address && !s.sha256) || (/^[0-9a-f]{64}$/.test(s.sha256) && !s.address)));
+  // Each sender reads in its one layout, and only Railway's own account and
+  // Google's payments are bound to a reconciled line.
+  const { FORMATS } = require('../services/receiptParsers');
+  assert.ok(SENDERS.every((s) => FORMATS.includes(s.format)), 'every sender names a layout');
+  assert.deepEqual(SENDERS.filter((s) => s.line).map((s) => [s.address, s.line]), [
+    ['invoice+statements+acct_1hnrvlcjopsrzqsd@stripe.com', 'railway'],
+    ['payments-noreply@google.com', 'google-cloud'],
+  ]);
+  assert.deepEqual(SENDERS.filter((s) => s.waits).map((s) => s.address), ['sales@pololu.com', 'hello@pcbartists.com']);
+  assert.deepEqual(SENDERS.filter((s) => s.dmarc).map((s) => [s.address, s.dmarc]), [['hello@pcbartists.com', 'none']]);
+  // RECEIPT_SENDERS takes exact addresses: a whole domain would let in every
+  // merchant a payment processor sends for.
+  process.env.RECEIPT_SENDERS = '@stripe.com, billing@vendor.example';
+  try {
+    assert.equal(senderAllowed('receipts+acct_1anymerchant@stripe.com', 'Any Merchant'), false);
+    const extra = receiptInbox.__testing.senderEntry('Billing@Vendor.example', 'Vendor');
+    assert.equal(extra.format, null);
+    assert.equal(extra.line, undefined, 'an added sender never sets a reconciled line');
+    assert.equal(extra.waits, 'unlisted');
+  } finally {
+    delete process.env.RECEIPT_SENDERS;
+  }
   // The owner check takes Gmail's own rules: dots and a +tag change nothing.
   assert.equal(isOwner('Owner.Account+receipts@googlemail.com'), true);
   assert.equal(isOwner('owner.accounts@gmail.com'), false);
