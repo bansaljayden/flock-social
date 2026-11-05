@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'November 3, 2026';
+const EFFECTIVE_DATE = 'November 5, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -275,7 +275,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Bill splits:</strong> if your group splits a bill, we store the total, the tip, who paid, each person's share, and whether a share has been marked settled. The people in that flock see it. No money moves through Flock: paying someone back happens in Venmo, Cash App, or Zelle.</li>
                 <li><strong>Payment handles (optional):</strong> if you add them for bill-splitting, we store your Venmo username, Cash App cashtag, or Zelle identifier so flockmates can pay you back. These are usernames and handles only. Flock never collects or processes card, bank-account, or payment-card numbers.</li>
                 <li><strong>Venue owner details (optional):</strong> if you claim a venue, we store the business profile you fill in, the operating facts you tell us, and the promotions, events, occupancy readings and replies you post. That has its own section below, <a href="#venues">Venue owners and business data</a>.</li>
-                <li><strong>Waitlist email:</strong> if you enter your email on flockcorp.com to hear when Flock launches, we store that address and send you one confirmation. It is not linked to any Flock account, we do not sell it, every message carries an unsubscribe link, and we will delete it if you ask us at {mail}.</li>
+                <li><strong>Waitlist email:</strong> if you entered your email on flockcorp.com before Flock launched, we stored that address, sent you one confirmation, and send one email to say Flock is on the App Store, which is what the waitlist was for. It is not linked to any Flock account, we do not sell it, every message carries an unsubscribe link, and we will delete it if you ask us at {mail}.</li>
                 {/*
                   APPLE REVOCATION IS LIVE (promise restored 2026-08-18).
                   APPLE_TEAM_ID, APPLE_KEY_ID and APPLE_PRIVATE_KEY (plus
@@ -670,7 +670,7 @@ export default function PrivacyPolicy() {
 
               <h3>They receive something about you</h3>
               <ul>
-                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert (with your location when it has one), the waitlist confirmation, the Monday venue email. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
+                <li><strong>Resend</strong> sends our email. It receives your email address and the contents of the message: the verification link, a password reset, an SOS alert (with your location when it has one), the waitlist confirmation and launch email, the Monday venue email. It also tells us when an address bounces or someone marks a message as spam, which is how our do-not-mail list gets written.</li>
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> deliver push notifications. They receive the device token and the notification.</li>
                 <li><strong>Google Cloud Vision</strong> screens every image you upload against our content rules before anyone can see it. The image is sent for that check and for nothing else. If the check cannot run, the upload is refused rather than let through.</li>
                 <li><strong>Google Gemini</strong> powers Birdie and Roost. <a href="#ai">Birdie and Roost</a> says exactly what each of them sends.</li>
@@ -846,7 +846,7 @@ export default function PrivacyPolicy() {
               </p>
               <p>
                 Everything else is optional and every message carries an unsubscribe link that
-                works without signing in. The waitlist confirmation and the Monday venue email
+                works without signing in. The waitlist emails and the Monday venue email
                 both do, and the two links work differently because the lists are different.
                 Unsubscribing from the waitlist writes your address to a do-not-mail list.
                 Turning off the Monday email switches off a setting on your venue account
@@ -966,7 +966,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>
                 <li><strong>Photos and contacts:</strong> both are asked for at the moment you use them, and both can be withdrawn in your device settings. Phone numbers you matched were never stored. Turning off "Let friends find me by my phone number" erases the code we matched you against.</li>
                 <li><strong>Usage analytics:</strong> in the app, switch it off under You &rarr; Share usage analytics. The choice is saved to your account and applies on every device you sign in on. On our website, nothing is counted unless you say yes when asked.</li>
-                <li><strong>Email:</strong> we don't send marketing email. Optional email, which today means the waitlist confirmation and the Monday venue email, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
+                <li><strong>Email:</strong> we don't send marketing email beyond the one launch email the waitlist was for. Optional email, which today means the waitlist emails and the Monday venue email, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
                 <li><strong>Blocking and reporting:</strong> you can block anyone and report any message, profile, review or guest from inside the app. Our <a href="/guidelines">Community Guidelines</a> say where every one of those controls is.</li>
                 <li><strong>Complaints:</strong> if you think we have handled your information badly, tell us first at {mail}. If you are in the EEA or the UK you can also complain to your national data protection authority.</li>
               </ul>
