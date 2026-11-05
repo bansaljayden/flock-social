@@ -72,8 +72,10 @@ import {
 } from '../lib/finance';
 import { saveAdminReconciled } from '../services/api';
 import {
+  confirmAdminEmailReceipt,
   createAdminExpense,
   deleteAdminExpense,
+  dismissAdminEmailReceipt,
   exportAdminExpenses,
   getAdminMoneyHub,
   importAdminExpenses,
@@ -240,6 +242,7 @@ const HUB_CARD = {
   revenue: { id: 'hub-revenue', link: 'Go to Revenue' },
   costs: { id: 'hub-costs', link: 'Go to Costs' },
   expenses: { id: 'hub-expenses', link: 'Go to the expense list' },
+  fromEmail: { id: 'hub-from-email', link: 'Go to From your email' },
   prices: { id: 'hub-prices', link: 'Go to Prices' },
   priceSheet: { id: 'hub-price-sheet', link: 'Go to the price sheet' },
   crowd: { id: 'hub-crowd', link: 'Go to Crowd data' },
@@ -2022,6 +2025,184 @@ function HubExpenses({ h, colors, onChanged }) {
   );
 }
 
+// FROM YOUR EMAIL (2026-11-05): what the receipts the owner's Gmail forwards
+// did to the hub (backend/services/receiptInbox.js). Each one read is a row:
+// the vendor, the amount, the day it was paid and what it updated. A bill
+// from a vendor the list has never seen waits at the top, counted in no
+// total, with the one choice only the owner can make about it. A receipt the
+// server could not read is listed by its sender and subject, which is all
+// that was kept of it, and it is also in Needs you.
+const HUB_RECEIPT_NOTHING = 'No receipts yet. Each receipt your Gmail forwards shows here once it is read.';
+
+function hubReceiptAmount(r) {
+  if (!Number.isFinite(r.amountCents)) return null;
+  if (!r.currency || r.currency === 'USD') return hubMoney(r.amountCents);
+  return `${(r.amountCents / 100).toFixed(2)} ${r.currency}`;
+}
+
+// What a receipt did, in the words a person would use for it.
+function hubReceiptWords(r) {
+  const was = Number.isFinite(r.previousCents) && r.previousCents !== r.amountCents ? `, was ${hubMoney(r.previousCents)}` : '';
+  switch (r.status) {
+    case 'applied':
+      if (r.reconciledLine) return `${r.lineLabel || r.reconciledLine} now ${hubReceiptAmount(r)}${was}`;
+      return `Updated ${r.expenseLabel || 'a bill on the list'}${was}`;
+    case 'added':
+      return `Added to the list${r.expenseLabel ? ` as ${r.expenseLabel}` : ''}`;
+    case 'confirmed':
+      return `You added it${r.expenseLabel ? ` as ${r.expenseLabel}` : ''}`;
+    case 'already':
+      return 'Already on the hub';
+    case 'older':
+      return 'Older than the figure on the hub';
+    case 'dismissed':
+      return 'Not a Flock bill';
+    case 'checked':
+      return 'Checked';
+    default:
+      return null;
+  }
+}
+
+function HubReceiptAnswer({ r, colors, onDone }) {
+  const uid = React.useId();
+  const [kind, setKind] = React.useState('tooling');
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const label = r.product ? `${r.vendor || 'A vendor'}, ${r.product}` : (r.vendor || 'A new bill');
+  const act = async (call) => {
+    setBusy(true);
+    setErr('');
+    try {
+      await call();
+      onDone();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not save');
+      setBusy(false);
+    }
+  };
+  const cadence = HUB_CADENCE_LABEL[r.cadence || 'monthly'] || r.cadence;
+  return (
+    <div className="hub-row" data-hub-fig="" data-hub-receipt={r.id} style={{ padding: '10px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, minWidth: 0, overflowWrap: 'anywhere' }}>
+          {label}
+          <span style={hubTag('warn')}>New</span>
+        </span>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+          {hubReceiptAmount(r)} {cadence}
+        </span>
+      </div>
+      <p style={hubStyle.note}>
+        {`Paid ${hubDay(r.paidOn) || 'on a day the receipt did not say'}. Nothing on the expense list matches it, so it is in no total until you add it.`}
+        {r.reason ? ` ${r.reason}` : ''}
+      </p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+        <label htmlFor={`${uid}-kind`} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Kind</label>
+        <select id={`${uid}-kind`} value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy} style={{ ...hubStyle.input, width: 'auto' }}>
+          {Object.keys(HUB_KIND_LABEL).map((k) => <option key={k} value={k}>{HUB_KIND_LABEL[k]}</option>)}
+        </select>
+        <button className="hit44" type="button" aria-label={busy ? undefined : `Add ${label} to the list`} disabled={busy} onClick={() => act(() => confirmAdminEmailReceipt(r.id, { kind }))}
+          style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+          {busy ? 'Saving' : 'Add to the list'}
+        </button>
+        <button className="hit44" type="button" aria-label={busy ? undefined : `Not a Flock bill: ${label}`} disabled={busy} onClick={() => act(() => dismissAdminEmailReceipt(r.id))} style={hubStyle.textButton}>
+          Not a Flock bill
+        </button>
+      </div>
+      {err && <p style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{err}</p>}
+    </div>
+  );
+}
+
+function HubReceiptToCheck({ r, colors, onDone }) {
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const from = r.sender || r.vendor || 'An allowed sender';
+  const done = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await dismissAdminEmailReceipt(r.id);
+      onDone();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not save');
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="hub-row" data-hub-fig="" data-hub-receipt={r.id} style={{ padding: '10px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, minWidth: 0, overflowWrap: 'anywhere' }}>
+          {r.subject || 'A receipt with no subject'}
+          <span style={hubTag('warn')}>To check</span>
+        </span>
+        {Number.isFinite(r.amountCents) && (
+          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{hubReceiptAmount(r)}</span>
+        )}
+      </div>
+      <p style={hubStyle.note}>
+        {`From ${from}${r.receivedAt ? `, ${hubDay(r.receivedAt.slice(0, 10))}` : ''}. ${r.reason || 'It could not be read.'} Record it yourself if it is a Flock bill, then mark it done.`}
+      </p>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+        <button className="hit44" type="button" aria-label={busy ? undefined : `Done: ${r.subject || from}`} disabled={busy} onClick={done} style={hubStyle.textButton}>
+          {busy ? 'Saving' : 'Done'}
+        </button>
+      </div>
+      {err && <p style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{err}</p>}
+    </div>
+  );
+}
+
+function HubFromEmail({ h, colors, onChanged }) {
+  const e = h.emailReceipts;
+  if (!e) return null;
+  const navy = colors.navy;
+  const pending = Array.isArray(e.pending) ? e.pending : [];
+  const toCheck = Array.isArray(e.toCheck) ? e.toCheck : [];
+  const recent = Array.isArray(e.recent) ? e.recent : [];
+  const inbox = e.inbox || {};
+  const address = inbox.address || `the ${inbox.localPart || 'receipts'}@ address Resend receives for Flock`;
+  const dropped = e.ignored && Number.isFinite(e.ignored.total) ? e.ignored : null;
+  let chip = null;
+  if (pending.length > 0) chip = <HubChip tone="warn">{hubPlural(pending.length, 'new bill', 'new bills')}</HubChip>;
+  else if (Number.isFinite(e.thisMonth) && e.thisMonth > 0) chip = <HubChip tone="muted">{`${hubCount(e.thisMonth)} this month`}</HubChip>;
+  return (
+    <HubCard
+      id={HUB_CARD.fromEmail.id}
+      title="From your email"
+      sub="Receipts your Gmail forwards, and the bill each one updated."
+      chips={chip}
+    >
+      {e.status === 'error' && <HubNotice status="error" reason={e.reason} />}
+      {pending.map((r) => <HubReceiptAnswer key={`new-${r.id}`} r={r} colors={colors} onDone={onChanged} />)}
+      {toCheck.map((r) => <HubReceiptToCheck key={`check-${r.id}`} r={r} colors={colors} onDone={onChanged} />)}
+      {recent.map((r) => (
+        <HubRow
+          key={`receipt-${r.id}`}
+          navy={navy}
+          label={r.product && r.product !== r.vendor ? `${r.vendor}, ${r.product}` : (r.vendor || 'A receipt')}
+          value={hubReceiptAmount(r)}
+          tone={r.status === 'dismissed' ? 'muted' : undefined}
+          sub={[hubDay(r.paidOn), hubReceiptWords(r)].filter(Boolean).join(' · ')}
+          note={r.reason || null}
+        />
+      ))}
+      {e.status === 'ok' && pending.length === 0 && toCheck.length === 0 && recent.length === 0 && (
+        <p style={hubStyle.note}>{HUB_RECEIPT_NOTHING}</p>
+      )}
+      <HubWhy label="How this works">
+        {`A Gmail filter forwards the receipts of the companies Flock pays to ${address}. Only those reach the server; the rest of the inbox is never read.`}
+        {'Each receipt updates the bill it pays: the Railway or Google Cloud figure, or the matching bill on the expense list. A one-time charge from a vendor already on the list is added as its own bill. A bill from a vendor the list has never seen waits here until you add it.'}
+        {'The App Store and Google send everyone\'s purchases from one address, so their items are read only when they match a bill on the list. Nothing is kept of the rest, and no receipt\'s body is ever stored.'}
+        {dropped && dropped.total > 0
+          ? `Dropped since the server last started, with nothing stored: ${hubPlural(dropped.total, 'email', 'emails')} (${dropped.byReason.map((x) => `${x.words}: ${hubCount(x.count)}`).join('; ')}).`
+          : null}
+      </HubWhy>
+    </HubCard>
+  );
+}
+
 const HUB_VERDICT = {
   match: { text: 'Matches', tone: 'good' },
   mismatch: { text: 'Disagrees', tone: 'bad' },
@@ -2784,6 +2965,9 @@ const HUB_NEED_ICON = {
   'maptiler-cap': 'map',
   'maptiler-near': 'map',
   licence: 'fileText',
+  receipts: 'mail',
+  'receipts-check': 'mail',
+  'receipts-new': 'mail',
 };
 const hubNeedIcon = (key) => HUB_NEED_ICON[key]
   || (/^(past-due|unpaid)-/.test(key) ? 'clock' : /^resend/.test(key) ? 'mail' : 'alertCircle');
@@ -2982,6 +3166,36 @@ function hubAttention(h) {
   }
   if (h.expenses && h.expenses.status === 'error') {
     add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
+  }
+  // Receipts from email (backend/services/receiptInbox.js). One the server
+  // could not read is named by its sender and subject, all that was kept of
+  // it; a bill from a vendor the list has never seen counts nowhere until it
+  // is added. A payload from before the receipts has neither.
+  const er = h.emailReceipts;
+  if (er && er.status === 'error') {
+    add({ key: 'receipts', tone: 'warn', label: 'Receipts from email', value: 'Not read', note: `${er.reason || 'The receipts from email could not be read.'} New bills and receipts to check were not looked at.`, card: HUB_CARD.fromEmail });
+  }
+  const toCheck = er && Array.isArray(er.toCheck) ? er.toCheck : [];
+  if (toCheck.length > 0) {
+    add({
+      key: 'receipts-check',
+      tone: 'warn',
+      label: toCheck.length === 1 ? 'Receipt to check' : 'Receipts to check',
+      value: hubCount(toCheck.length),
+      note: `${toCheck.map((r) => `${r.subject || 'No subject'}, from ${r.sender || r.vendor || 'an allowed sender'}`).join('; ')}. The hub could not record ${toCheck.length === 1 ? 'it' : 'them'} on its own: open ${toCheck.length === 1 ? 'it' : 'each'} in Gmail and record the bill if it is Flock's.`,
+      card: HUB_CARD.fromEmail,
+    });
+  }
+  const fresh = er && Array.isArray(er.pending) ? er.pending : [];
+  if (fresh.length > 0) {
+    add({
+      key: 'receipts-new',
+      tone: 'warn',
+      label: fresh.length === 1 ? 'New bill from email' : 'New bills from email',
+      value: hubCount(fresh.length),
+      note: `${fresh.map((r) => `${r.vendor || 'A vendor'} ${hubReceiptAmount(r) || ''}${r.paidOn ? ` on ${hubDay(r.paidOn)}` : ''}`.trim()).join('; ')}. Not counted anywhere until you add ${fresh.length === 1 ? 'it' : 'each'} to the expense list, or say it is not a Flock bill.`,
+      card: HUB_CARD.fromEmail,
+    });
   }
   const jumps = Array.isArray(costs.jumps) ? costs.jumps : [];
   if (jumps.length > 0) {
@@ -3254,6 +3468,12 @@ function MoneyHub({ colors, onExpensesChanged }) {
           payload was fetched once per session, so after adding a bill here
           Costs still showed the old total while its own comment says the two
           tabs cannot disagree (money hub audit 2026-10-03). Both reload. */}
+      {/* Receipts from email feed the expense list, so they sit right above
+          it. A bill added here reloads the Costs tab's payload too, the same
+          as an edit on the list. */}
+      {data.emailReceipts && (
+        <div style={full}><HubFromEmail h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} /></div>
+      )}
       <div style={full}><HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} /></div>
       <div className="hub-pair">
         <div className="hub-stack-col">

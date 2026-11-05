@@ -101,19 +101,19 @@ const RECONCILED_FROM = {
 
 // What each kind of dropped email is, for the log line and the dashboard.
 const IGNORED_WORDS = {
-  no_email_id: 'had no email id',
-  gone: 'was no longer at Resend',
-  not_to_inbox: 'was not sent to the receipts address',
-  not_forwarded: 'was not forwarded by a Gmail filter',
-  forwarded_by_someone_else: 'was forwarded by another Gmail account',
-  forwarded_elsewhere: 'was forwarded to another address',
-  not_from_gmail: 'did not come from Gmail',
-  sender_not_listed: 'came from a sender not on the list',
-  sender_not_verified: "failed its sender's own signature check",
-  not_addressed_to_owner: 'was never addressed to the owner',
-  not_a_receipt: 'was a notice, not a receipt',
-  not_flock: 'was a purchase that matches nothing on the list',
-  dismissed_before: 'was a bill already marked as not Flock\'s',
+  no_email_id: 'no email id in the event',
+  gone: 'no longer at Resend',
+  not_to_inbox: 'not sent to the receipts address',
+  not_forwarded: 'not forwarded by a Gmail filter',
+  forwarded_by_someone_else: 'forwarded by another Gmail account',
+  forwarded_elsewhere: 'forwarded to another address',
+  not_from_gmail: 'not handed over by Gmail',
+  sender_not_listed: 'from a sender not on the list',
+  sender_not_verified: "failed its sender's signature check",
+  not_addressed_to_owner: 'never addressed to the owner',
+  not_a_receipt: 'a notice, not a receipt',
+  not_flock: 'a purchase that matches nothing on the list',
+  dismissed_before: "a bill already marked as not Flock's",
 };
 
 // ---------------------------------------------------------------------------
@@ -127,7 +127,7 @@ function countIgnored(reason, fromDomain) {
   ignored.total += 1;
   ignored.byReason[reason] = (ignored.byReason[reason] || 0) + 1;
   const tally = Object.entries(ignored.byReason).map(([k, n]) => `${k} ${n}`).join(', ');
-  console.warn(`[receipts] a received email ${IGNORED_WORDS[reason] || reason}${fromDomain ? ` (from ${fromDomain})` : ''}, so it was dropped and nothing was stored. Dropped since ${ignored.since}: ${ignored.total} (${tally}).`);
+  console.warn(`[receipts] dropped a received email, ${IGNORED_WORDS[reason] || reason}${fromDomain ? ` (from ${fromDomain})` : ''}, and stored nothing. Dropped since ${ignored.since}: ${ignored.total} (${tally}).`);
 }
 
 function ignoredSinceStart() {

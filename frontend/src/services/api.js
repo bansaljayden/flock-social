@@ -2852,6 +2852,25 @@ export async function importAdminExpenses(expenses) {
   });
 }
 
+// A receipt the owner's Gmail forwarded from a vendor the expense list has
+// never seen waits on the hub, counted nowhere (backend/services/
+// receiptInbox.js). Confirming adds it to the list as the kind chosen;
+// dismissing says it is not the company's bill, or that a receipt the server
+// could not read has been checked by hand.
+export async function confirmAdminEmailReceipt(id, { kind } = {}) {
+  return request(`/api/admin/email-receipts/${encodeURIComponent(id)}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ kind }),
+  });
+}
+
+export async function dismissAdminEmailReceipt(id) {
+  return request(`/api/admin/email-receipts/${encodeURIComponent(id)}/dismiss`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {
