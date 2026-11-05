@@ -264,7 +264,13 @@ function emailSection(text, title) {
   return rest.split('\n').map((l) => l.replace(/^ {2}/, ''));
 }
 const MONEY_TITLE = "THIS WEEK'S MONEY MOVE";
-const SOURCE_CHIP = (asOf) => `(Flock's forecast for places like yours, ${advisorFacts.shortDate(asOf.slice(0, 10))})`;
+// A line that says it is Flock's forecast for places like yours keeps only its
+// date in its note; a section of nothing else says source and date once,
+// under its heading (templates/venueDigestEmail.js sectionNote).
+const AS_OF = (asOf) => `(as of ${advisorFacts.shortDate(asOf.slice(0, 10))})`;
+const SECTION_NOTE = (asOf) => `Flock's forecast for places like yours, as of ${advisorFacts.shortDate(asOf.slice(0, 10))}.`;
+// No line says whose forecast it is twice.
+const saidOncePerLine = (text) => text.split('\n').every((l) => (l.match(/forecast for places like yours/g) || []).length <= 1);
 const NO_YOUR_RANKING = /\byour (?:quietest|busiest|slowest)\b/i;
 
 // ── 1. The money move, in the chip's own words ─────────────────────────────
@@ -301,7 +307,7 @@ test('a no-history bar\'s Monday email carries the chip\'s money move, line for 
   const text = renderDigestText(renderInput(cards));
   const lines = emailSection(text, MONEY_TITLE);
   assert.deepStrictEqual(lines, [
-    `${chip.lines[0]} ${SOURCE_CHIP(intel.generatedAt)}`,
+    `${chip.lines[0]} ${AS_OF(intel.generatedAt)}`,
     `${chip.lines[1]} (Roost playbook)`,
     `${chip.lines[2]} (from your intake, owner-set ${advisorFacts.shortDate('2026-10-01')})`,
   ]);
@@ -313,7 +319,8 @@ test('a no-history bar\'s Monday email carries the chip\'s money move, line for 
   assert.ok(!text.includes('—'), 'an em dash in the email');
   const html = renderDigestHtml(renderInput(cards)).replace(/&#39;/g, "'");
   assert.ok(html.includes("This week's money move"), html);
-  assert.ok(html.includes(`${chip.lines[0]} ${SOURCE_CHIP(intel.generatedAt)}`), html);
+  assert.ok(html.includes(`${chip.lines[0]} ${AS_OF(intel.generatedAt)}</li>`), html);
+  assert.ok(saidOncePerLine(text), text);
   // The Week ahead section comes off the same read (the next test).
   assert.strictEqual(cards.find((c) => c.id === 'week_ahead').status, 'ok');
   assert.strictEqual(modelCalls, 0);
@@ -322,8 +329,9 @@ test('a no-history bar\'s Monday email carries the chip\'s money move, line for 
 // ── 1b. The Week ahead section, as Roost's own Week ahead card shows it ────
 
 const WEEK_TITLE = 'WEEK AHEAD';
-// A fact's line in the email: its sentence, its note, then its source in words.
-const emailLine = (f) => `${[f.label, f.note].filter(Boolean).join(' ')} ${SOURCE_CHIP(f.asOf)}`;
+// A fact's line in a section of nothing but the card: its sentence and its
+// note, with the source and date said once under the heading.
+const emailLine = (f) => [f.label, f.note].filter(Boolean).join(' ');
 const jsonOf = (v) => JSON.parse(JSON.stringify(v));
 
 async function roostWeekCard(userId) {
@@ -359,12 +367,15 @@ test('a no-history bar\'s Week ahead section shows the days Roost\'s own Week ah
 
   const text = renderDigestText(renderInput(cards));
   const lines = emailSection(text, WEEK_TITLE);
-  assert.deepStrictEqual(lines, app.facts.map(emailLine));
+  assert.ok(app.facts.every((f) => f.asOf === app.facts[0].asOf), 'one card, one timestamp');
+  assert.deepStrictEqual(lines, [SECTION_NOTE(app.facts[0].asOf), ...app.facts.map(emailLine)]);
+  assert.ok(saidOncePerLine(text), text);
   assert.ok(text.indexOf(MONEY_TITLE) < text.indexOf(WEEK_TITLE), 'the week ahead sits below the money move, with the heads-up');
   assert.ok(!NO_YOUR_RANKING.test(lines.join('\n')), lines.join('\n'));
   assert.ok(!/category[_ ]pattern|typical_peak_/.test(text), text);
   const html = renderDigestHtml(renderInput(cards)).replace(/&#39;/g, "'");
   assert.ok(html.includes('>Week ahead</h2>'), html);
+  assert.ok(html.includes(`>Week ahead</h2>\n<p style="font-size: 13px; color: #a0aec0; margin: 0 0 8px;">${SECTION_NOTE(app.facts[0].asOf)}</p>\n<ul`), html);
   for (const f of app.facts) assert.ok(html.includes(`<li style="margin: 0 0 8px 0;">${emailLine(f)}</li>`), emailLine(f));
   assert.strictEqual(modelCalls, 0);
 });
@@ -394,7 +405,7 @@ test('a no-history cafe\'s email names its morning, from the card read by day, a
   const chip = await chipLines(userId);
   assert.deepStrictEqual(money.facts.map((f) => f.label), chip.lines);
   const lines = emailSection(renderDigestText(renderInput(cards)), MONEY_TITLE);
-  assert.strictEqual(lines[0], `${chip.lines[0]} ${SOURCE_CHIP(intel.generatedAt)}`);
+  assert.strictEqual(lines[0], `${chip.lines[0]} ${AS_OF(intel.generatedAt)}`);
   assert.ok(!NO_YOUR_RANKING.test(lines.join('\n')), lines.join('\n'));
   assert.strictEqual(modelCalls, 0);
 });
@@ -428,7 +439,7 @@ test('whatever shape the card\'s week takes, the email says what the chip and Ro
       assert.ok(money, placeId);
       assert.deepStrictEqual(money.facts.map((f) => f.label), chip.lines, placeId);
       assert.deepStrictEqual(jsonOf(cards.find((c) => c.id === 'week_ahead').facts), app.facts, placeId);
-      assert.deepStrictEqual(emailSection(renderDigestText(renderInput(cards)), WEEK_TITLE), app.facts.map(emailLine), placeId);
+      assert.deepStrictEqual(emailSection(renderDigestText(renderInput(cards)), WEEK_TITLE), [SECTION_NOTE(app.facts[0].asOf), ...app.facts.map(emailLine)], placeId);
       // The bakery's shut day is on neither, the way the card leaves it out.
       if (!card) assert.ok(app.facts.length === 5 && !app.facts.some((f) => f.value.weekday === LONG[SHORT[shut]]), JSON.stringify(app.facts));
       assert.strictEqual(placesCalls, before, `${placeId}: the email paid a second lookup within the hour`);
@@ -488,15 +499,18 @@ test('the Monday sweep mails each no-history venue its money move for one Places
     for (const [i, hour] of [[0, '9 PM'], [1, '8 AM']]) {
       const lines = emailSection(sentEmails[i].text, MONEY_TITLE);
       assert.ok(lines, sentEmails[i].text);
-      assert.match(lines[0], new RegExp(`^Fill \\w+\\. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around ${hour} at \\d+ on our 0 to 100 index, against \\d+ on \\w+\\. \\(Flock's forecast for places like yours, \\w+ \\d+\\)$`), lines[0]);
+      assert.match(lines[0], new RegExp(`^Fill \\w+\\. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around ${hour} at \\d+ on our 0 to 100 index, against \\d+ on \\w+\\. \\(as of \\w+ \\d+\\)$`), lines[0]);
       assert.ok(sentEmails[i].html.includes('This week&#39;s money move'), sentEmails[i].html);
-      // The Week ahead section, off the same read: six days, each framed.
-      const week = emailSection(sentEmails[i].text, WEEK_TITLE);
-      assert.ok(week && week.length === 6, sentEmails[i].text);
+      // The Week ahead section, off the same read: its one note, then six
+      // days, each framed once.
+      const [note, ...week] = emailSection(sentEmails[i].text, WEEK_TITLE) || [];
+      assert.match(note || '', /^Flock's forecast for places like yours, as of \w+ \d+\.$/, sentEmails[i].text);
+      assert.strictEqual(week.length, 6, sentEmails[i].text);
       for (const line of week) {
-        assert.match(line, new RegExp(`^\\w+ projects busiest around ${hour}, at \\d+ on our 0 to 100 index, in Flock's forecast for places like yours\\. \\(Flock's forecast for places like yours, \\w+ \\d+\\)$`), line);
+        assert.match(line, new RegExp(`^\\w+ projects busiest around ${hour}, at \\d+ on our 0 to 100 index, in Flock's forecast for places like yours\\.$`), line);
       }
       assert.ok(sentEmails[i].html.includes('>Week ahead</h2>'), sentEmails[i].html);
+      assert.ok(saidOncePerLine(sentEmails[i].text), sentEmails[i].text);
     }
 
     // An hour later the same Monday: both are already mailed, and neither
@@ -591,6 +605,107 @@ test('a venue with its own crowd history never reads the card, and its money mov
     advisorFacts.buildWeekAhead = realWeek;
     advisorFacts.buildWeekProjection = realProjection;
   }
+});
+
+// ── 4b. A venue with its own history: its email byte for byte as before ───
+//
+// The said-once rule for Flock's forecast for places like yours (2026-11-05)
+// touches only lines that are that forecast. HISTORY_TEXT and HISTORY_HTML are
+// what the template rendered for this stack before the rule, captured from it
+// unchanged; a venue with its own history must get them to the byte.
+
+// A venue with its own crowd history: one of every kind of line its Monday
+// email prints (the verdict, the money move, its own week with a small-hours
+// note, the street, the listing with its kitchen gate, the readings with a
+// served note), in the shapes the fact engine builds them.
+const HISTORY_CARDS = [
+  { id: 'last_night_verdict', title: 'Yesterday, against your own numbers', status: 'ok', facts: [
+    { id: 'last_day_verdict_2026-11-08', value: { verdict: 'below' }, source: 'owner_report', asOf: '2026-11-09T14:00:00Z', label: 'Sunday ran below your usual Sundays: your highest reading was 41, against a typical 63.' },
+  ] },
+  { id: 'money_move', title: 'This week\'s money move', status: 'ok', facts: [
+    { id: 'money_move_day', label: 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.', source: 'model_holdout', asOf: '2026-11-09T14:00:00Z' },
+    { id: 'money_move_play', label: 'Give your slowest day one recurring reason to visit, such as a weekly dish or a game, and run it every week without skipping.', source: 'roost_playbook', asOf: null },
+    { id: 'money_move_money', label: 'At your $28 a head, every 10 extra covers on Tuesday is $280 a week, about $14,560 a year.', source: 'intake', asOf: 'owner-set 2026-10-01' },
+  ] },
+  { id: 'week_ahead', title: 'Week ahead', status: 'ok', facts: [
+    { id: 'peak_2026-11-10', value: { date: '2026-11-10', weekday: 'Tuesday', peakHour: 18, peakScore: 38 }, source: 'model_holdout', asOf: '2026-11-09T14:00:00Z', label: 'Tuesday projects busiest around 6 PM, at 38 on our 0 to 100 index. This is an estimate, not a promise of foot traffic.' },
+    { id: 'peak_2026-11-14', value: { date: '2026-11-14', weekday: 'Saturday', peakHour: 1, peakScore: 88, afterMidnight: true }, source: 'model_holdout', asOf: '2026-11-09T14:00:00Z', label: 'Saturday night projects busiest around 1 AM, at 88 on our 0 to 100 index. This is an estimate, not a promise of foot traffic.', note: 'This peak is in the small hours, early on Sunday. It belongs to Saturday night.' },
+  ] },
+  { id: 'around_you', title: 'Around you this week', status: 'ok', facts: [
+    { id: 'event_2026-11-13', value: { name: 'Franklin Music Hall' }, source: 'events', asOf: '2026-11-09T14:00:00Z', label: 'A listed concert at Franklin Music Hall on Friday, about 800m from you.' },
+    { id: 'weather_2026-11-14', value: { temp: 52 }, source: 'weather', asOf: '2026-11-09T14:00:00Z', label: 'The weekend outlook is clear, highs near 52F.' },
+  ] },
+  { id: 'listing_read_back', title: 'Your listing, read back', status: 'ok', facts: [
+    { id: 'intake_kitchen_last_order', value: '21:30', source: 'intake', asOf: 'owner-set 2026-10-01', label: 'You told us the kitchen takes last orders at 9:30 PM.' },
+    { id: 'kitchen_vs_peak', value: { kitchenLastOrder: '21:30', peakHour: 21, peakAtOrAfterLastOrder: true }, source: 'arithmetic', asOf: '2026-11-09T14:00:00Z', label: 'Saturday\'s projected peak lands around 9 PM, at or after your last orders at 9:30 PM.' },
+  ] },
+  { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', status: 'ok', facts: [
+    { id: 'owner_reading_2026-11-07', value: { date: '2026-11-07', peakReading: 74, readings: 5 }, source: 'owner_report', asOf: '2026-11-07', label: 'Your highest reading on Nov 7 was 74, from 5 readings.' },
+    { id: 'served_2026-11-07', value: { date: '2026-11-07', serves: 12, medianScore: 61 }, source: 'served_prediction', asOf: '2026-11-07', note: 'What Flock served to people who looked at your venue, not a measurement of your room.', label: 'On Nov 7 Flock served 12 crowd estimates for your venue, median 61 on the 0 to 100 index.' },
+  ] },
+];
+const HISTORY_INPUT = { businessName: 'The Copper Still', cards: HISTORY_CARDS, tier: 'pro', optOutUrl: 'https://api.example.com/api/venue-digest/opt-out?token=t', weekLabel: 'Nov 2 to Nov 8' };
+
+const HISTORY_TEXT = [
+  "Your week at The Copper Still (Nov 2 to Nov 8)",
+  "",
+  "YESTERDAY, AGAINST YOUR OWN NUMBERS",
+  "  Sunday ran below your usual Sundays: your highest reading was 41, against a typical 63. (your reading, Nov 9)",
+  "",
+  "THIS WEEK'S MONEY MOVE",
+  "  Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday. (forecast, Nov 9)",
+  "  Give your slowest day one recurring reason to visit, such as a weekly dish or a game, and run it every week without skipping. (Roost playbook)",
+  "  At your $28 a head, every 10 extra covers on Tuesday is $280 a week, about $14,560 a year. (from your intake, owner-set Oct 1)",
+  "",
+  "WHAT YOU SAID VS WHAT WE ESTIMATED",
+  "  Your highest reading on Nov 7 was 74, from 5 readings. (your reading, Nov 7)",
+  "  On Nov 7 Flock served 12 crowd estimates for your venue, median 61 on the 0 to 100 index. What Flock served to people who looked at your venue, not a measurement of your room. (served estimates, Nov 7)",
+  "",
+  "WORTH A LOOK: YOUR LISTING, READ BACK",
+  "  You told us the kitchen takes last orders at 9:30 PM. (from your intake, owner-set Oct 1)",
+  "  Saturday's projected peak lands around 9 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)",
+  "",
+  "WEEK AHEAD",
+  "  Tuesday projects busiest around 6 PM, at 38 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. (forecast, Nov 9)",
+  "  Saturday night projects busiest around 1 AM, at 88 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. This peak is in the small hours, early on Sunday. It belongs to Saturday night. (forecast, Nov 9)",
+  "",
+  "AROUND YOU THIS WEEK",
+  "  A listed concert at Franklin Music Hall on Friday, about 800m from you. (Ticketmaster, Nov 9)",
+  "  The weekend outlook is clear, highs near 52F. (weather service, Nov 9)",
+  "",
+  "You are getting this because the Monday email is turned on for The Copper Still in your Flock venue dashboard.",
+  "Stop these emails: https://api.example.com/api/venue-digest/opt-out?token=t",
+].join('\n');
+const HISTORY_HTML = [
+  "<div style=\"max-width: 560px; margin: 0 auto; padding: 32px 24px; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;\">",
+  "<h1 style=\"font-size: 20px; color: #1a2b4a; margin: 0 0 4px;\">Your week at The Copper Still</h1>",
+  "<p style=\"font-size: 13px; color: #a0aec0; margin: 0 0 8px;\">Nov 2 to Nov 8</p>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Yesterday, against your own numbers</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">Sunday ran below your usual Sundays: your highest reading was 41, against a typical 63. (your reading, Nov 9)</li></ul>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">This week&#39;s money move</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday. (forecast, Nov 9)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">Give your slowest day one recurring reason to visit, such as a weekly dish or a game, and run it every week without skipping. (Roost playbook)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">At your $28 a head, every 10 extra covers on Tuesday is $280 a week, about $14,560 a year. (from your intake, owner-set Oct 1)</li></ul>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">What you said vs what we estimated</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">Your highest reading on Nov 7 was 74, from 5 readings. (your reading, Nov 7)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">On Nov 7 Flock served 12 crowd estimates for your venue, median 61 on the 0 to 100 index. What Flock served to people who looked at your venue, not a measurement of your room. (served estimates, Nov 7)</li></ul>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Worth a look: Your listing, read back</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">You told us the kitchen takes last orders at 9:30 PM. (from your intake, owner-set Oct 1)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">Saturday&#39;s projected peak lands around 9 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)</li></ul>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Week ahead</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">Tuesday projects busiest around 6 PM, at 38 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. (forecast, Nov 9)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">Saturday night projects busiest around 1 AM, at 88 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. This peak is in the small hours, early on Sunday. It belongs to Saturday night. (forecast, Nov 9)</li></ul>",
+  "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Around you this week</h2>",
+  "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">A listed concert at Franklin Music Hall on Friday, about 800m from you. (Ticketmaster, Nov 9)</li>",
+  "<li style=\"margin: 0 0 8px 0;\">The weekend outlook is clear, highs near 52F. (weather service, Nov 9)</li></ul>",
+  "<p style=\"font-size: 13px; color: #a0aec0; margin-top: 32px; line-height: 1.6;\">You are getting this because the Monday email is turned on for The Copper Still in your Flock venue dashboard. <a href=\"https://api.example.com/api/venue-digest/opt-out?token=t\" style=\"color: #a0aec0;\">Stop these emails</a>.</p>",
+  "</div>",
+].join('\n');
+
+test('a venue with its own history gets its email byte for byte as before: every line keeps its own source note', () => {
+  assert.strictEqual(renderDigestText(HISTORY_INPUT), HISTORY_TEXT);
+  assert.strictEqual(renderDigestHtml(HISTORY_INPUT), HISTORY_HTML);
+  assert.ok(!/as of /.test(HISTORY_TEXT), 'a history venue line lost its source');
 });
 
 // ── 5. The one function both read ──────────────────────────────────────────

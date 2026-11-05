@@ -22,6 +22,7 @@
 // carries its source and date.
 // ---------------------------------------------------------------------------
 const { escapeHtml, baseWebUrl } = require('../services/emailService');
+const { KIND_FORECAST, isKindForecast, saysWhose } = require('../services/kindForecast');
 
 // Which card goes where in the audit. RECAP looks backward (the owner's own
 // readings against what Flock published, the intake read-back), HEADS_UP looks
@@ -179,18 +180,49 @@ function sourceWord(source) {
   return SOURCE_WORDS[source] || source;
 }
 
-function factLineText(fact) {
+function factSentence(fact) {
   if (!fact || fact.status === 'refused') return null;
   const worded = [fact.label, fact.note]
     .filter((s) => typeof s === 'string' && s.trim())
     .map((s) => s.trim())
     .join(' ');
-  const sentence = worded
+  return worded
     || (typeof fact.text === 'string' && fact.text.trim() ? fact.text.trim() : '')
-    || (fact.value == null || typeof fact.value === 'object' ? '' : String(fact.value));
+    || (fact.value == null || typeof fact.value === 'object' ? '' : String(fact.value))
+    || null;
+}
+
+// SAID ONCE (2026-11-05). A line that is Flock's forecast for places like
+// this venue (services/kindForecast.js), and already says so in its own
+// words, does not say it again in its source note: the note keeps the date
+// alone, "(as of Nov 9)". `chip: false` is a section whose every line is that
+// forecast, whose source and date are said once under its heading instead
+// (sectionNote below). Every other line keeps its note exactly as it was.
+function factLineText(fact, { chip = true } = {}) {
+  const sentence = factSentence(fact);
   if (!sentence) return null;
+  if (!chip) return sentence;
+  if (isKindForecast(fact) && saysWhose(sentence)) {
+    const when = factAsOf(fact.asOf);
+    return when ? `${sentence} (as of ${when})` : sentence;
+  }
   const chips = [sourceWord(fact.source), factAsOf(fact.asOf)].filter(Boolean).join(', ');
   return chips ? `${sentence} (${chips})` : sentence;
+}
+
+// The one note under a section's heading when every line in it is Flock's
+// forecast for places like this venue: "Flock's forecast for places like
+// yours, as of Nov 9.", with the latest date its lines speak for. Null for
+// every other section, which keeps its notes line by line.
+function sectionNote(card) {
+  const shown = (card.facts || []).filter((f) => factSentence(f));
+  if (!shown.length || !shown.every(isKindForecast)) return null;
+  const latest = shown
+    .map((f) => (typeof f.asOf === 'string' && /^\d{4}-\d{2}-\d{2}/.test(f.asOf) ? f.asOf : null))
+    .filter(Boolean)
+    .sort()
+    .pop();
+  return latest ? `${KIND_FORECAST}, as of ${factAsOf(latest)}.` : `${KIND_FORECAST}.`;
 }
 
 function sectionsFor(cards, tier) {
@@ -217,7 +249,8 @@ const MAX_LINES_PER_CARD = 6;
 const MORE_LINE = `More in ${ADVISOR_FEATURE_NAME}, in your venue dashboard.`;
 
 function cardLines(card) {
-  const lines = card.facts.map(factLineText).filter(Boolean);
+  const chip = !sectionNote(card);
+  const lines = card.facts.map((f) => factLineText(f, { chip })).filter(Boolean);
   if (lines.length > MAX_LINES_PER_CARD) {
     return lines.slice(0, MAX_LINES_PER_CARD).concat(MORE_LINE);
   }
@@ -228,7 +261,8 @@ function renderCardText(card) {
   const lines = cardLines(card);
   if (!lines.length) return null;
   const title = String(card.title || card.id || '').trim().toUpperCase();
-  return [title, ...lines.map((l) => `  ${l}`)].join('\n');
+  const note = sectionNote(card);
+  return [title, ...(note ? [`  ${note}`] : []), ...lines.map((l) => `  ${l}`)].join('\n');
 }
 
 function renderDigestText({ businessName, cards, tier, optOutUrl, weekLabel }) {
@@ -283,8 +317,11 @@ function renderCardHtml(card, opts) {
       ? `<li style="margin: 0 0 8px 0;">More in ${escapeHtml(ADVISOR_FEATURE_NAME)}, in <a href="${escapeHtml(baseWebUrl())}/app?venue=true" style="color: #0d2847;">your venue dashboard</a>.</li>`
       : `<li style="margin: 0 0 8px 0;">${escapeHtml(l)}</li>`))
     .join('\n');
+  // The section's one source note, under its heading, when it has one.
+  const note = sectionNote(card);
   return [
     `<h2 style="font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;">${title}</h2>`,
+    ...(note ? [`<p style="font-size: 13px; color: #a0aec0; margin: 0 0 8px;">${escapeHtml(note)}</p>`] : []),
     `<ul style="font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;">${items}</ul>`,
   ].join('\n');
 }
