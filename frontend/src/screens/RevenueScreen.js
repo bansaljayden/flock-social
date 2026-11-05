@@ -75,10 +75,29 @@ import {
   createAdminExpense,
   deleteAdminExpense,
   exportAdminExpenses,
+  getAdminKeys,
   getAdminMoneyHub,
   importAdminExpenses,
+  revokeAdminKey,
   updateAdminExpense,
 } from '../services/api';
+import {
+  HUB_CARD,
+  hubAgo,
+  hubAnd,
+  hubAttention,
+  hubCapMoney,
+  hubCount,
+  hubDay,
+  hubGaps,
+  hubGapSentence,
+  hubMoney,
+  hubMonthTiles,
+  hubNeeds,
+  hubPlural,
+  hubSummaryWords,
+  hubTime,
+} from '../lib/moneyHubSummary';
 
 // Saves the expense list as a CSV file. The server sends the text inside its
 // usual signed-in JSON answer, and the file is made here, so no file link
@@ -232,22 +251,6 @@ const HUB_TONE_BG = {
   muted: 'var(--bg-tertiary)',
 };
 
-// The cards the attention list at the top can send the owner to, by the id
-// each one carries. `link` is the words on the jump, named after the card's
-// own heading so it reads as where it lands.
-const HUB_CARD = {
-  steps: { id: 'hub-steps', link: 'Go to the steps' },
-  revenue: { id: 'hub-revenue', link: 'Go to Revenue' },
-  costs: { id: 'hub-costs', link: 'Go to Costs' },
-  expenses: { id: 'hub-expenses', link: 'Go to the expense list' },
-  prices: { id: 'hub-prices', link: 'Go to Prices' },
-  priceSheet: { id: 'hub-price-sheet', link: 'Go to the price sheet' },
-  crowd: { id: 'hub-crowd', link: 'Go to Crowd data' },
-  model: { id: 'hub-model', link: 'Go to Model' },
-  health: { id: 'hub-health', link: 'Go to Health' },
-  people: { id: 'hub-people', link: 'Go to People' },
-};
-
 // A short status word beside a label: Optional, Unverified, Stated. Sentence
 // case at the meta size, on its tone's own wash.
 function hubTag(tone) {
@@ -265,33 +268,9 @@ function hubTag(tone) {
   };
 }
 
-// Cents to dollars, or null when there is no number to print. The minus sign
-// is the typographic one, so a loss lines up with a gain in a column.
-function hubMoney(cents, { sign = false } = {}) {
-  if (!Number.isFinite(cents)) return null;
-  const text = (Math.abs(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (cents < 0) return `−$${text}`;
-  return `${sign && cents > 0 ? '+' : ''}$${text}`;
-}
-
-const hubCount = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US') : null);
-const hubPlural = (n, one, many) => `${hubCount(n)} ${n === 1 ? one : many}`;
 // A whole-percent share from the server. One that rounds to 0 reads as under
 // 1%, never as a 0% that looks free.
 const hubShare = (pct) => (Number.isFinite(pct) ? (pct < 1 ? 'Under 1%' : `${pct}%`) : 'An unknown share');
-const hubTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null);
-// A stretch of minutes in the unit a person would say it in.
-const hubAgo = (min) => (min < 60 ? hubPlural(min, 'minute', 'minutes') : min < 48 * 60 ? hubPlural(Math.round(min / 60), 'hour', 'hours') : hubPlural(Math.round(min / 1440), 'day', 'days'));
-
-// A YYYY-MM-DD date read as that calendar day wherever the browser is.
-function hubDay(ymd) {
-  if (typeof ymd !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
-  const [y, m, d] = ymd.split('-').map(Number);
-  const date = new Date(y, m - 1, d);
-  const opts = { month: 'short', day: 'numeric' };
-  if (y !== new Date().getFullYear()) opts.year = 'numeric';
-  return date.toLocaleDateString('en-US', opts);
-}
 
 // ===========================================================================
 // THE LOOK: the parts every card here is built from.
@@ -593,139 +572,33 @@ function hubPlanRows(summary, prefix, navy) {
   return rows;
 }
 
-// WHY A FIGURE IS EMPTY, in the codes backend/services/moneyHub.js buildNet
-// sends. A figure missing a source arrives null rather than smaller, and the
-// screen says which source it is waiting for.
-const HUB_GAP_SOURCE = {
-  stripe: 'Stripe',
-  stripe_partial: 'a full Stripe read',
-  stripe_unpriced: 'a price for every Stripe subscription',
-  stripe_tax: "this month's Stripe invoices, for the sales tax in the charges",
-  stripe_tax_refunded: 'which refunded charges carried sales tax',
-  app_store: 'RevenueCat',
-  app_store_partial: 'every Pro account in RevenueCat',
-  app_store_unpriced: 'a price for every App Store subscription',
-  expenses: 'the expense list',
-};
-const HUB_GAP_WORDS = {
-  stripe: 'Stripe was not read',
-  stripe_partial: 'Stripe had more entries this month than the hub reads, and a missing page could move a total either way',
-  stripe_unpriced: 'some live Stripe subscriptions carry a price or a discount this read could not work out in dollars',
-  stripe_tax: "automatic tax is on and this month's invoices could not be read, so the sales tax inside the charges is unknown",
-  stripe_tax_refunded: "some of this month's charges carried sales tax and some charges were refunded, and a refund takes its tax back out too, so the tax to subtract is not known",
-  app_store: 'the App Store is not in it, because RevenueCat was not read',
-  app_store_partial: 'the App Store is not in it, because RevenueCat answered for only some Pro accounts',
-  app_store_unpriced: 'the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat',
-  expenses: 'the expense list could not be read',
-};
-// The gaps that are the App Store's alone. This month's revenue and the net
-// carry Stripe without it and say so; they never wait on one of these.
-const HUB_APP_STORE_GAPS = ['app_store', 'app_store_partial', 'app_store_unpriced'];
-const hubGaps = (list) => (Array.isArray(list) ? list : []);
-const hubNeeds = (gaps) => `Needs ${[...new Set(gaps.map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ')}`;
-function hubGapSentence(gaps) {
-  if (gaps.length === 0) return '';
-  const text = gaps.map((g) => HUB_GAP_WORDS[g] || g).join('; ');
-  return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
-}
-
-// The sentences behind the month's figures and the break-evens, worked out
-// once from the payload for the tiles and the card under them. Every one says
-// a server figure in words; nothing here adds or divides a figure.
-function hubSummaryWords(h) {
-  const n = h.net || {};
-  const be = n.breakEven || {};
-  const stripe = (h.revenue && h.revenue.stripe) || {};
-  const revenueMissing = hubGaps(n.revenueMissing);
-  const costsMissing = hubGaps(n.costsMissing);
-  const netMissing = hubGaps(n.netMissing);
-  const netBurnMissing = hubGaps(n.netBurnMissing);
-  const burnMissing = hubGaps(be.burnMissing);
-  const revenueWithheld = revenueMissing.includes('stripe_partial');
-  const appGap = revenueMissing.find((g) => HUB_APP_STORE_GAPS.includes(g));
-  const taxGap = revenueMissing.includes('stripe_tax') || revenueMissing.includes('stripe_tax_refunded');
-  let revenueNote;
-  // The short line on the tile, under the figure: which sources it holds, or
-  // why there is no figure.
-  let revenueSub;
-  if (n.revenueThisMonthCents === null || n.revenueThisMonthCents === undefined) {
-    revenueNote = revenueWithheld
-      ? 'Stripe had more balance entries this month than the hub reads. A missing page could move the total either way, so it is withheld rather than shown short.'
-      : taxGap
-        ? `${hubGapSentence(revenueMissing.filter((g) => g === 'stripe_tax' || g === 'stripe_tax_refunded'))} So there is no revenue figure after tax to show.`
-        : stripe.status === 'not_connected' ? 'Stripe is not connected, so there is no revenue figure to show.' : 'Stripe could not be read, so there is no revenue figure to show.';
-    revenueSub = revenueWithheld ? 'Stripe was read in part'
-      : taxGap ? 'The sales tax in it is not known'
-        : stripe.status === 'not_connected' ? 'Stripe is not connected' : 'Stripe did not answer';
-  } else if (appGap) {
-    revenueNote = `Stripe, after refunds, disputes and fees. ${hubGapSentence([appGap])}`;
-    revenueSub = 'Stripe only, after fees';
-  } else {
-    // The App Store part is read from the accounts that are Pro now, which is
-    // not every App Store sale this month (backend/services/moneyHub.js,
-    // WHERE THE APP STORE FIGURES COME FROM), so it is never shown as that.
-    // Apple's cut is an assumption: the standard rate, because the hub cannot
-    // see the Small Business Program or how long each subscriber has stayed.
-    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%, an estimate: Apple takes ${n.appleSmallBusinessPct || 15}% under the Small Business Program and from a subscriber's second year.${n.appStoreFrom === 'current_pro_accounts' ? ' The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it.' : ''}`;
-    revenueSub = 'Stripe and the App Store, after fees';
-  }
-  // A figure that is null is waiting for a source; the App Store alone never
-  // empties the net, which carries Stripe and says so.
-  const netNeeds = hubNeeds(netMissing.filter((g) => !HUB_APP_STORE_GAPS.includes(g)));
-  const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
-  // The Roost tile said "Not reachable venues" when break-even could not be
-  // reached, and "1 venues" at one.
-  const venuesNeeded = (b) => (b && Number.isFinite(b.needed) ? hubPlural(b.needed, 'venue', 'venues') : 'Not reachable');
-  // The App Store price is Apple's, read through RevenueCat, and can differ
-  // from the web price, so it is named on its own.
-  const appPriceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month in the App Store, ${b.source === 'app_store'
-    ? 'the price RevenueCat reports'
-    : b.source === 'app_store_charge'
-      ? 'the newest App Store charge'
-      : 'the price the code states, because no App Store price was read'}` : 'no App Store price');
-  const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe'
-    ? 'the price Stripe charges'
-    : b.statedBecause === 'no_monthly_price'
-      ? 'the price the code states, because Stripe has no monthly dollar price for it'
-      : stripe.status !== 'ok'
-        ? 'the price the code states, because Stripe was not read'
-        : "the price the code states, because Stripe's prices were not read"}` : 'no price');
-  const payingWords = (count, missing) => (Number.isFinite(count)
-    ? hubCount(count)
-    : `not known, waiting on ${[...new Set(hubGaps(missing).map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ') || 'a read'}`);
-  // Where the burn goes once the bills set to end have ended (moneyHub.js,
-  // THE END OF A BILL), worked out on the server from the same lines.
-  const after = h.costs && h.costs.afterEnding;
-  const moves = Number.isFinite(n.burnCents) && after && Number.isFinite(after.burnCents) && after.changeCents;
-  const endingWords = moves
-    ? ` It ${after.changeCents < 0 ? 'falls' : 'rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label
-      ? `on ${hubDay(after.by)}, when ${after.label} ends`
-      : `by ${hubDay(after.by)}, once the ${after.bills === 1 ? 'bill set to end has' : `${hubCount(after.bills)} bills set to end have`} ended`}.`
-    : '';
-  // The same move, short enough for the tile.
-  const endingSub = moves
-    ? `${after.changeCents < 0 ? 'Falls' : 'Rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label ? 'on' : 'by'} ${hubDay(after.by)}`
-    : null;
-  const cachedAge = stripe.cached && Number.isFinite(stripe.cachedAgeSeconds) ? stripe.cachedAgeSeconds : null;
-  return {
-    n, be, revenueMissing, costsMissing, netMissing, netBurnMissing, burnMissing, revenueWithheld,
-    revenueNote, revenueSub, netNeeds, needed, venuesNeeded, appPriceWords, priceWords, payingWords,
-    endingWords, endingSub, cachedAge,
-  };
-}
-
 // THE MONTH: the four figures the owner opens the console for, as tiles, on
 // the page itself under the month's name, the way the Nest puts its greeting.
 // Two across on a phone, so all four are on the first screen with the tab bar
 // above them, and four across on the wide console.
 function HubMonth({ h, colors, loading, onRefresh }) {
   const w = hubSummaryWords(h);
-  const { n, costsMissing, netMissing } = w;
+  const { costsMissing, netMissing } = w;
   const m = h.month || {};
   const navy = colors.navy;
-  const net = n.netThisMonthCents;
   const at = hubTime(h.generatedAt);
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
+  // Each tile's figure, the short line under it and its tone come from
+  // lib/moneyHubSummary.js, which the admin tool prints as well. The sentences
+  // behind each tile's tap are the screen's own.
+  const why = {
+    in: [
+      w.revenueNote,
+      `Stripe and RevenueCat answers are held for ${holdMinutes} minutes${w.cachedAge !== null ? `, and this one is ${hubPlural(w.cachedAge, 'second', 'seconds')} old` : ''}.`,
+    ],
+    costs: costsMissing.length > 0
+      ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
+      : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.',
+    net: `Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`,
+    burn: costsMissing.length > 0
+      ? 'Not totalled, because the expense list could not be read.'
+      : `The burn: every recurring cost at its monthly rate. One-time charges are left out.${w.endingWords}`,
+  };
   return (
     <section className="hub-month" data-hub-card="" aria-labelledby="hub-month-title">
       <div className="hub-month-head">
@@ -738,42 +611,9 @@ function HubMonth({ h, colors, loading, onRefresh }) {
         </button>
       </div>
       <div className="hub-tiles">
-        <HubTile
-          navy={navy}
-          label="Money in"
-          value={hubMoney(n.revenueThisMonthCents) || (w.revenueWithheld ? 'Withheld' : 'Not read')}
-          sub={w.revenueSub}
-          why={[
-            w.revenueNote,
-            `Stripe and RevenueCat answers are held for ${holdMinutes} minutes${w.cachedAge !== null ? `, and this one is ${hubPlural(w.cachedAge, 'second', 'seconds')} old` : ''}.`,
-          ]}
-        />
-        <HubTile
-          navy={navy}
-          label="Costs"
-          value={hubMoney(n.costsThisMonthCents) || 'Not read'}
-          sub={costsMissing.length > 0 ? 'The expense list was not read' : "This month's share of every bill"}
-          why={costsMissing.length > 0
-            ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
-            : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.'}
-        />
-        <HubTile
-          navy={navy}
-          label="Profit or loss"
-          value={Number.isFinite(net) ? hubMoney(net, { sign: true }) : w.netNeeds}
-          tone={Number.isFinite(net) ? (net < 0 ? 'bad' : 'good') : 'muted'}
-          sub="Money in minus costs"
-          why={`Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
-        />
-        <HubTile
-          navy={navy}
-          label="Monthly bills"
-          value={hubMoney(n.burnCents) || 'Not read'}
-          sub={costsMissing.length > 0 ? 'The expense list was not read' : (w.endingSub || 'Every repeating bill, a month')}
-          why={costsMissing.length > 0
-            ? 'Not totalled, because the expense list could not be read.'
-            : `The burn: every recurring cost at its monthly rate. One-time charges are left out.${w.endingWords}`}
-        />
+        {hubMonthTiles(h).map((t) => (
+          <HubTile key={t.key} navy={navy} label={t.label} value={t.value} tone={t.tone} sub={t.sub} why={why[t.key]} />
+        ))}
       </div>
     </section>
   );
@@ -965,13 +805,6 @@ function hubResendLine(u) {
     return Number.isFinite(w.limit) ? `${when} ${hubCount(w.used)} of ${hubCount(w.limit)}` : `${when} ${hubCount(w.used)}, no cap`;
   };
   return `Email ${part(u.daily, 'today')} · ${part(u.monthly, 'this month')}.`;
-}
-
-// The spending limit in whole dollars when it is whole ($20, not $20.00), as
-// it is set on MapTiler's account page.
-function hubCapMoney(cap) {
-  if (!cap || !Number.isFinite(cap.cents)) return 'account';
-  return cap.cents % 100 === 0 ? `$${(cap.cents / 100).toLocaleString('en-US')}` : hubMoney(cap.cents);
 }
 
 function HubOwnerStep({ step, navy }) {
@@ -2190,6 +2023,153 @@ function HubHealth({ h, colors }) {
   );
 }
 
+// ACCESS KEYS: the keys a tool on the owner's computer uses to call these
+// admin routes (backend/middleware/adminKeys.js, tools/flock-admin/admin.mjs).
+// Read from GET /api/admin/keys on its own, so it does not wait on the hub's
+// vendor reads, and it holds metadata only: the server keeps a fingerprint of
+// each key, so no key can be shown here. Revoke is the one control, because it
+// is a safety control. Minting is not on the page: a key is minted from the
+// browser console or the admin tool.
+const HUB_KEY_STATE = {
+  active: { text: 'Active', tone: 'good' },
+  expired: { text: 'Expired', tone: 'muted' },
+  revoked: { text: 'Revoked', tone: 'muted' },
+  ended: { text: 'Ended', tone: 'warn' },
+};
+const HUB_KEY_REFUSED = {
+  route: 'refused, not a route a key may use',
+  expired: 'refused, expired',
+  revoked: 'refused, revoked',
+  ended: 'refused, ended',
+};
+// Under this many days left, the card says when the soonest key runs out.
+const HUB_KEY_EXPIRY_WARN_DAYS = 14;
+
+// "Nov 5", or "Nov 5, 2027" in another year, from an ISO time, in the
+// browser's own zone.
+function hubIsoDay(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const opts = { month: 'short', day: 'numeric' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+const hubIsoWhen = (iso) => (iso ? `${hubIsoDay(iso)} at ${hubTime(iso)}` : null);
+function hubSince(iso) {
+  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (!Number.isFinite(min)) return null;
+  return min < 1 ? 'just now' : `${hubAgo(min)} ago`;
+}
+
+function HubKeyRow({ k, navy, onRevoked }) {
+  const [confirm, setConfirm] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const state = HUB_KEY_STATE[k.state] || { text: 'Not read', tone: 'muted' };
+  const live = k.state === 'active';
+  const uses = Array.isArray(k.recentUses) ? k.recentUses : [];
+  const revoke = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await revokeAdminKey(k.id);
+      setConfirm(false);
+      onRevoked();
+    } catch (e) {
+      setErr((e && e.message) || 'The key could not be revoked. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const facts = [
+    `Made ${hubIsoDay(k.createdAt)}`,
+    k.state === 'revoked' && k.revokedAt ? `revoked ${hubIsoDay(k.revokedAt)}${k.revokedVia === 'key' ? ' by the key itself' : ''}` : null,
+    k.state === 'expired' ? `expired ${hubIsoDay(k.expiresAt)}` : `expires ${hubIsoDay(k.expiresAt)}`,
+    k.lastUsedAt ? `last used ${hubSince(k.lastUsedAt)}${k.lastUsedIp ? ` from ${k.lastUsedIp}` : ''}` : 'never used',
+  ].filter(Boolean).join(', ');
+  return (
+    <div className="hub-row" data-hub-fig="" data-hub-key={k.id} style={{ padding: '10px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: live ? navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
+          {k.name}
+        </span>
+        <HubChip tone={state.tone}>{state.text}</HubChip>
+      </div>
+      <p style={hubStyle.note}>{`${facts}.`}</p>
+      {k.state === 'ended' && (
+        <p style={hubStyle.note}>The account signed out everywhere, changed its password, or stopped being an admin after this key was made, so it no longer works.</p>
+      )}
+      {uses.length > 0 && (
+        <HubWhy label="Recent uses">
+          {uses.map((u, i) => (
+            <p key={`use-${k.id}-${i}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {`${u.method} ${u.route}, ${u.refused ? HUB_KEY_REFUSED[u.refused] || 'refused' : (u.status ? `answered ${u.status}` : 'no answer')}, ${hubIsoWhen(u.at)}`}
+            </p>
+          ))}
+        </HubWhy>
+      )}
+      {live && (
+        <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
+          {!confirm ? (
+            <button className="hit44" type="button" aria-label={`Revoke ${k.name}`} onClick={() => setConfirm(true)} style={hubStyle.textButton}>Revoke</button>
+          ) : (
+            <button className="hit44" type="button" aria-label={busy ? undefined : `Revoke ${k.name} for good`} disabled={busy} onClick={revoke} style={{ ...hubStyle.textButton, color: 'var(--accent-red-text)', cursor: busy ? 'default' : 'pointer' }}>
+              {busy ? 'Revoking' : 'Revoke for good'}
+            </button>
+          )}
+        </div>
+      )}
+      {confirm && <p style={hubStyle.note}>Anything using this key stops on its next request. A revoked key cannot be turned back on.</p>}
+      {err && <p style={{ ...hubStyle.note, color: 'var(--accent-red-text)' }}>{err}</p>}
+    </div>
+  );
+}
+
+function HubAccessKeys({ colors }) {
+  const [read, setRead] = React.useState({ status: 'loading', keys: [], reason: '' });
+  const load = React.useCallback(async () => {
+    try {
+      const r = await getAdminKeys();
+      setRead({ status: 'ok', keys: Array.isArray(r && r.keys) ? r.keys : [], reason: '' });
+    } catch (e) {
+      setRead({ status: 'error', keys: [], reason: (e && e.message) || 'The keys could not be read.' });
+    }
+  }, []);
+  React.useEffect(() => { load(); }, [load]);
+  const live = read.keys.filter((k) => k.state === 'active');
+  const soonest = live
+    .map((k) => Math.floor((new Date(k.expiresAt).getTime() - Date.now()) / 86400000))
+    .filter((d) => Number.isFinite(d))
+    .sort((a, b) => a - b)[0];
+  let chip = null;
+  if (read.status === 'ok') {
+    chip = Number.isFinite(soonest) && soonest <= HUB_KEY_EXPIRY_WARN_DAYS
+      ? <HubChip tone="warn">{soonest < 1 ? 'Expires today' : `Expires in ${hubPlural(soonest, 'day', 'days')}`}</HubChip>
+      : <HubChip tone="muted">{live.length > 0 ? `${hubCount(live.length)} active` : 'None active'}</HubChip>;
+  }
+  return (
+    <HubCard
+      id="hub-keys"
+      title="Access keys"
+      sub="Keys a tool on your computer uses to call these admin routes as you."
+      chips={chip}
+    >
+      {read.status === 'loading' && <p style={hubStyle.note}>Reading the keys.</p>}
+      {read.status === 'error' && <HubNotice status="error" reason={read.reason} />}
+      {read.status === 'ok' && read.keys.length === 0 && (
+        <p style={hubStyle.note}>No keys yet. A key is minted from the browser console or the admin tool, never from this page.</p>
+      )}
+      {read.keys.map((k) => <HubKeyRow key={`key-${k.id}`} k={k} navy={colors.navy} onRevoked={load} />)}
+      <HubWhy label="What a key can do">
+        {'A key is minted once, from a browser where you are signed in or with the admin tool, and shown only then. The server keeps a fingerprint of it, so it cannot be shown here or anywhere again.'}
+        {'It can read this console and keep the books: the money hub, the costs, the expense list, the waitlist launch email, the research numbers, and the moderation and verification queues to read. It cannot mint or list keys, make a moderation decision, open reported content, verify a venue or change its tier, change a password, an email or a session, delete an account, or act as you anywhere else in the app.'}
+        {'Every use is logged with its route, its answer and the address it came from. A key stops at its expiry, when it is revoked, and when you sign out everywhere or change your password. The steps are in tools/flock-admin/README.md.'}
+      </HubWhy>
+    </HubCard>
+  );
+}
+
 // CROWD DATA: what BestTime's key endpoint says, beside the plan the code
 // records. The endpoint reports the key's health and two undocumented counters,
 // and no plan, admission count or cycle date (backend/services/besttimeAccount.js).
@@ -2744,23 +2724,6 @@ function HubPeople({ h, colors }) {
   );
 }
 
-// NEEDS YOU: every live problem the payload already carries, in one list
-// straight under the month's tiles. Each of these sits inside a long card
-// further down: a stopped collector in Health, which is the last card; an open
-// dispute near the end of Revenue; a price disagreement in Prices; the steps
-// still to do behind a summary line. Nothing here is read a second time. Each
-// row is built from a field another card draws, and jumps to that card.
-//
-// A source that was asked and did not answer is a row too, because "nothing
-// needs you" is a claim about what was checked, and a Stripe that did not
-// answer checked no dispute. A source that is not connected is not a row: with
-// no Stripe key nothing is sold through Stripe, so there is no dispute to
-// miss, and connecting one is a step the steps card already counts.
-//
-// Renewals and bills set to end are never a problem: a bill due Tuesday is
-// something to know, not something that went wrong. They are on Coming up.
-const HUB_SEVERITY = { bad: 0, warn: 1 };
-
 // The picture beside each problem, by what it is about rather than how bad
 // it is: the chip beside it carries the tone, in words.
 const HUB_NEED_ICON = {
@@ -2799,294 +2762,6 @@ function hubDaysUntil(fromYmd, toYmd) {
   const a = utc(fromYmd);
   const b = utc(toYmd);
   return a === null || b === null ? null : Math.round((b - a) / 86400000);
-}
-
-// A list of words as a person says it: "a", "a and b", "a, b and c".
-function hubAnd(words) {
-  if (words.length <= 1) return words.join('');
-  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-}
-
-function hubAttention(h) {
-  const problems = [];
-  const add = (row) => problems.push(row);
-  const n = (v) => (Number.isFinite(v) ? v : 0);
-  const revenue = h.revenue || {};
-  const s = revenue.stripe || {};
-  const rc = revenue.revenuecat || {};
-  const flags = revenue.flags || {};
-
-  // The collector, from the Health card's own read.
-  const c = h.health && h.health.collector;
-  if (c && c.status === 'error') {
-    add({ key: 'collector', tone: 'warn', label: 'Crowd collector', value: 'Not read', note: c.reason || "The collector's rows could not be read.", card: HUB_CARD.health });
-  } else if (c && c.status === 'ok' && (c.state === 'late' || c.state === 'stopped')) {
-    const since = Number.isFinite(c.minutesSinceLatest)
-      ? `No live crowd row for ${hubAgo(c.minutesSinceLatest)}.`
-      : 'No live crowd row has landed yet.';
-    add({
-      key: 'collector',
-      tone: c.state === 'stopped' ? 'bad' : 'warn',
-      label: 'Crowd collector',
-      value: c.state === 'stopped' ? 'Stopped' : 'Late',
-      note: `${since} It runs every hour.`,
-      card: HUB_CARD.health,
-    });
-  }
-
-  // BestTime's key endpoint. Not connected is the API server without the key,
-  // which changes nothing but the Crowd data card.
-  const b = h.crowdData && h.crowdData.besttime;
-  if (b && b.status === 'error') {
-    add({ key: 'besttime', tone: 'warn', label: 'BestTime', value: 'Not read', note: b.reason || 'BestTime did not answer.', card: HUB_CARD.crowd });
-  } else if (b && b.status === 'ok' && b.key && b.key.healthy === false) {
-    const k = b.key;
-    add({
-      key: 'besttime',
-      tone: 'bad',
-      label: 'BestTime',
-      value: 'Key not working',
-      note: `BestTime says status ${k.status === null || k.status === undefined ? 'none' : k.status}, valid ${String(k.valid)}, active ${String(k.active)}.`,
-      card: HUB_CARD.crowd,
-    });
-  }
-
-  const p = h.pricing || {};
-  if (n(p.mismatches) > 0) {
-    add({ key: 'prices', tone: 'bad', label: 'Price disagreements', value: hubCount(p.mismatches), note: "A store's price, the RevenueCat offering and what the code states do not all agree.", card: HUB_CARD.prices });
-  }
-
-  // Stripe. A key that did not answer, or answered for only some lists, left
-  // disputes and failed renewals unchecked, and the list says so.
-  if (s.status === 'error') {
-    add({ key: 'stripe', tone: 'warn', label: 'Stripe', value: 'Not read', note: `${s.reason || 'Stripe did not answer.'} Disputes, failed renewals and prices were not checked.`, card: HUB_CARD.revenue });
-  }
-  if (s.status === 'ok') {
-    const subs = s.subscriptions && s.subscriptions.status === 'ok' ? s.subscriptions : null;
-    const disputes = s.disputes && s.disputes.status === 'ok' ? s.disputes : null;
-    const unread = [];
-    if (!subs) unread.push('subscriptions');
-    if (!disputes) unread.push('disputes');
-    if (!s.prices || s.prices.status !== 'ok') unread.push('prices');
-    if (unread.length > 0) {
-      add({ key: 'stripe-part', tone: 'warn', label: 'Stripe', value: 'Read in part', note: `Stripe answered, but its ${hubAnd(unread)} could not be read, so ${unread.length === 1 ? 'that was' : 'those were'} not checked.`, card: HUB_CARD.revenue });
-    }
-    const open = disputes ? n(disputes.open) + n(disputes.openOtherCurrency) : 0;
-    if (open > 0) {
-      add({
-        key: 'disputes',
-        tone: 'bad',
-        label: 'Disputes to answer',
-        value: hubCount(open),
-        note: `${hubMoney(n(disputes.openAmountCents))} at stake in dollars${n(disputes.openOtherCurrency) > 0 ? `, and ${hubPlural(disputes.openOtherCurrency, 'more', 'more')} in another currency` : ''}. Each has a deadline in the Stripe dashboard.`,
-        card: HUB_CARD.revenue,
-      });
-    }
-    for (const [key, name] of [['pro', 'Flock Pro'], ['roost', 'Roost']]) {
-      const sum = subs && subs[key];
-      if (!sum) continue;
-      if (n(sum.pastDue) > 0) {
-        add({ key: `past-due-${key}`, tone: 'warn', label: `Past due, ${name}`, value: hubCount(sum.pastDue), note: 'A renewal failed and Stripe is retrying it.', card: HUB_CARD.revenue });
-      }
-      if (n(sum.unpaid) > 0) {
-        add({ key: `unpaid-${key}`, tone: 'bad', label: `Unpaid, ${name}`, value: hubCount(sum.unpaid), note: 'Stripe stopped retrying a failed renewal, so these are not counted as active.', card: HUB_CARD.revenue });
-      }
-    }
-    // A test key while something is on sale: a buyer would pay in test money.
-    const selling = [
-      flags.paywallEnabled && 'the paywall',
-      flags.proWebCheckoutEnabled && 'web checkout',
-      flags.venueBillingEnabled && 'venue billing',
-    ].filter(Boolean);
-    if (s.mode === 'test' && selling.length > 0) {
-      const list = hubAnd(selling);
-      add({
-        key: 'stripe-test',
-        tone: 'bad',
-        label: 'Stripe test key',
-        value: 'Selling',
-        note: `${list.charAt(0).toUpperCase()}${list.slice(1)} ${selling.length === 1 ? 'is' : 'are'} on while the Stripe key is a test key, so anything bought through Stripe is paid in test money.`,
-        card: HUB_CARD.revenue,
-      });
-    }
-  }
-
-  // RevenueCat, and the Pro accounts it finds nothing live for.
-  const rcSubs = rc.subscribers;
-  if (rc.status === 'error' || (rc.status === 'ok' && rcSubs && rcSubs.status !== 'ok')) {
-    const why = rc.status === 'error' ? rc.reason : rcSubs.reason;
-    add({ key: 'revenuecat', tone: 'warn', label: 'RevenueCat', value: 'Not read', note: `${why || 'RevenueCat did not answer.'} Pro accounts with nothing live were not checked.`, card: HUB_CARD.revenue });
-  } else if (rc.status === 'ok' && rcSubs && n(rcSubs.premiumWithNothingLive) > 0) {
-    add({ key: 'pro-nothing-live', tone: 'warn', label: 'Pro accounts with nothing live', value: hubCount(rcSubs.premiumWithNothingLive), note: 'Pro in the database while RevenueCat shows no live subscription for them.', card: HUB_CARD.revenue });
-  }
-
-  // The model loads on the first forecast after a deploy, so a quiet morning
-  // after one reads as not loaded until somebody asks for a forecast.
-  const v = h.model && h.model.version;
-  if (v && v.loaded === false) {
-    add({
-      key: 'model',
-      tone: 'warn',
-      label: 'Crowd model',
-      value: 'Not loaded',
-      note: v.status === 'ok'
-        ? 'No model is loaded in this server process. It loads on the first forecast after a deploy; if it stays like this, every forecast is coming from the rule engine.'
-        : (v.reason || 'The model version could not be read.'),
-      card: HUB_CARD.model,
-    });
-  }
-
-  const oa = h.ownerActions;
-  const todo = oa && Array.isArray(oa.items) ? oa.items.filter((x) => x.checkedBy === 'server' && x.state === 'todo' && !x.optional) : [];
-  if (todo.length > 0) {
-    add({ key: 'steps', tone: 'warn', label: 'Steps only you can take', value: `${hubCount(todo.length)} to do`, note: `${todo.map((x) => x.label).join('; ')}.`, card: HUB_CARD.steps });
-  }
-
-  const costs = h.costs || {};
-  const doubles = Array.isArray(costs.possibleDoubles) ? costs.possibleDoubles : [];
-  if (doubles.length > 0) {
-    add({ key: 'doubles', tone: 'warn', label: 'Bills possibly counted twice', value: hubCount(doubles.length), note: `${doubles.map((d) => `${d.expenseLabel} on the list and ${d.codeLabel} in the code`).join('; ')}.`, card: HUB_CARD.costs });
-  }
-  // A bill charged after the day it was set to end is listed here
-  // (moneyHub.js, THE END OF A BILL), and the hub counts it as running. A
-  // bill paid ahead renewed if it was charged on or after that day, so the
-  // date on its row is wrong. A usage bill's last bill comes after it, so the
-  // server lists one only for a charge after the day that bill was expected
-  // by, and each kind is said on its own: the paid-ahead rule stated alone
-  // would make the last bill of an ended usage row read as a renewal (second
-  // review 2026-10-06). The hub holds only the day a usage charge was paid,
-  // so its words stop at what the dates show and send the owner to the
-  // invoice: an August invoice paid on Oct 2 on a bill set to end Sep 1 is
-  // later than its last bill was expected, with no use after the end date
-  // (review 2026-10-06). Each kind carries its own next step. A payload from
-  // before the cadence was sent lists only bills paid ahead.
-  const pastEnd = Array.isArray(costs.chargedPastEnd) ? costs.chargedPastEnd : [];
-  if (pastEnd.length > 0) {
-    const ahead = pastEnd.filter((x) => x.cadence !== 'usage');
-    const byUse = pastEnd.filter((x) => x.cadence === 'usage');
-    const listed = (rows) => rows.map((x) => {
-      const lastBill = x.cadence === 'usage' && x.lastBillBy ? `, its last bill expected by ${hubDay(x.lastBillBy)},` : '';
-      return `${x.label}, set to end ${hubDay(x.endsOn)}${lastBill} and charged ${hubDay(x.lastChargedOn)}`;
-    }).join('; ');
-    add({
-      key: 'past-end',
-      tone: 'warn',
-      label: 'Charged after the end date',
-      value: hubCount(pastEnd.length),
-      note: [
-        ahead.length > 0 ? `${listed(ahead)}. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running. Clear the end date, or set the new one.` : null,
-        byUse.length > 0 ? `${listed(byUse)}. For a usage bill, a charge later than its last bill was expected counts as running. Check it against the invoice. If the invoice covers use after the end date, clear the end date or set the new one. If it was the last bill, mark its row stopped.` : null,
-      ].filter(Boolean).join(' '),
-      card: HUB_CARD.expenses,
-    });
-  }
-  if (h.expenses && h.expenses.status === 'error') {
-    add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
-  }
-  const jumps = Array.isArray(costs.jumps) ? costs.jumps : [];
-  if (jumps.length > 0) {
-    add({
-      key: 'jumps',
-      tone: 'warn',
-      label: 'Bills up on the last one',
-      value: hubCount(jumps.length),
-      note: `${jumps.map((j) => `${j.label}: ${hubMoney(j.fromCents)}${j.fromPeriod ? ` for ${j.fromPeriod}` : ''}, now ${hubMoney(j.toCents)}${j.toAsOf ? ` as of ${j.toAsOf}` : ''} (up ${j.pct}%)`).join('; ')}.`,
-      card: HUB_CARD.costs,
-    });
-  }
-  const ps = h.priceSheet;
-  if (ps && ps.stale > 0) {
-    add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Due for a check against a receipt or a pricing page: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });
-  }
-  // MapTiler (moneyHub.js, THE MAPTILER READING, JUDGED). A meter that was
-  // asked and did not answer is a row, like Stripe; one with no token is not,
-  // because the steps card already counts the token. Reaching the spending
-  // limit outranks being near an allowance, and only one of the two is shown.
-  const mtu = costs.maptilerUsage;
-  if (mtu && mtu.status === 'failed') {
-    add({ key: 'maptiler', tone: 'warn', label: 'MapTiler usage', value: 'Not read', note: `${mtu.reason || 'MapTiler did not answer.'} The Flex allowances and the spending limit were not checked.`, card: HUB_CARD.costs });
-  } else if (mtu && mtu.status === 'read') {
-    const until = (mtu.period && hubDay(mtu.period.renewsOn)) || 'the next billing period';
-    const capMoney = hubCapMoney(mtu.cap);
-    const near = Array.isArray(mtu.near) ? mtu.near : [];
-    if (mtu.reachesCap) {
-      add({
-        key: 'maptiler-cap',
-        tone: 'bad',
-        label: mtu.capReached ? 'MapTiler at the spending limit' : 'MapTiler would reach the spending limit',
-        value: mtu.capReached ? hubMoney(mtu.overSoFarCents) : `${hubMoney(mtu.overProjectedCents)} on pace`,
-        note: `${mtu.capReached
-          ? `${hubMoney(mtu.overSoFarCents)} over the Flex allowance so far`
-          : `On pace for ${hubMoney(mtu.overProjectedCents)} over the Flex allowance this billing period`}, against a ${capMoney} spending limit. At the limit every Flock map stops until ${until}. The limit is in MapTiler's account settings.`,
-        card: HUB_CARD.costs,
-      });
-    } else if (near.length > 0) {
-      const top = Math.max(...near.map((x) => x.pct));
-      add({
-        key: 'maptiler-near',
-        tone: 'warn',
-        // 80% and up warns; a pace or a reading past 100% says so in the label.
-        label: top >= 100 ? 'MapTiler past its allowance' : 'MapTiler near its allowance',
-        value: `${top}%`,
-        note: `${near.map((x) => `${x.label.charAt(0).toUpperCase()}${x.label.slice(1)} ${hubCount(x.used)} of ${hubCount(x.included)}${Number.isFinite(x.projected) ? `, on pace for ${hubCount(x.projected)}` : ''}`).join('; ')}. Past the allowance, extra use bills automatically up to the ${capMoney} spending limit, where every Flock map stops until ${until}.`,
-        card: HUB_CARD.costs,
-      });
-    }
-  }
-  // Resend (moneyHub.js, THE RESEND READING, JUDGED). A meter that was asked
-  // and did not answer is a row, like MapTiler's; one with no key is not. Each
-  // cap is its own row: near it at 80%, at it from 100%, when Resend sends
-  // nothing more until the window resets. The server words the reset in New
-  // York time.
-  const rsu = costs.resendUsage;
-  if (rsu && rsu.status === 'failed') {
-    add({ key: 'resend', tone: 'warn', label: 'Email usage', value: 'Not read', note: `${rsu.reason || 'Resend did not answer.'} The daily and monthly email caps were not checked.`, card: HUB_CARD.costs });
-  } else if (rsu && rsu.status === 'read') {
-    for (const a of Array.isArray(rsu.alerts) ? rsu.alerts : []) {
-      const daily = a.window === 'daily';
-      const span = daily ? 'today' : 'this month';
-      const cap = daily ? 'daily' : 'monthly';
-      const until = a.resetsWords || hubTime(a.resetsAt) || 'the reset';
-      const what = 'signup verifications and password resets included';
-      if (a.level === 'at') {
-        add({
-          key: `resend-${a.window}-at`,
-          tone: 'bad',
-          label: `Email at its ${cap} limit`,
-          value: `${hubCount(a.used)} of ${hubCount(a.limit)}`,
-          note: `Resend has counted ${hubCount(a.used)} emails ${span}, and the plan allows ${hubCount(a.limit)}. No more mail goes out, ${what}, until ${until}.`,
-          card: HUB_CARD.costs,
-        });
-      } else if (a.level === 'near') {
-        add({
-          key: `resend-${a.window}-near`,
-          tone: 'warn',
-          label: `Email near its ${cap} limit`,
-          value: `${a.pct}%`,
-          note: `${hubCount(a.used)} of ${hubCount(a.limit)} emails ${span}. At ${hubCount(a.limit)} Resend sends nothing more, ${what}, until ${until}.`,
-          card: HUB_CARD.costs,
-        });
-      }
-    }
-  }
-
-  const lic = costs.licence;
-  if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
-    add({
-      key: 'licence',
-      tone: 'warn',
-      label: 'Plans outside their terms',
-      value: hubCount(lic.items.length),
-      note: `${lic.items.map((i) => `${i.vendor} ${i.plan}`).join('; ')}. ${costs.status === 'ok'
-        ? `Licensed for commercial use, the burn is ${hubMoney(lic.licensedPerMonthCents)} a month (${hubMoney(lic.toComplyPerMonthCents)} more).`
-        : `Licensing them adds ${hubMoney(lic.toComplyPerMonthCents)} a month.`}`,
-      card: HUB_CARD.costs,
-    });
-  }
-
-  // Worst first; the order each was added in breaks a tie.
-  problems.sort((x, y) => (HUB_SEVERITY[x.tone] ?? 2) - (HUB_SEVERITY[y.tone] ?? 2));
-  return { problems };
 }
 
 // Moves the Overview to a card without touching the address bar, where a hash
@@ -3185,6 +2860,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
 
   if (!data) {
     return (
+      <>
       <div role="status">
         <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }}>
           <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>
@@ -3209,6 +2885,11 @@ function MoneyHub({ colors, onExpensesChanged }) {
           </div>
         )}
       </div>
+      {/* Revoking a key never waits on the hub: a hub that did not load still
+          lists the keys, each with its Revoke. Outside the status region, so
+          it is not read out as part of the failure. */}
+      {error && !loading && <div style={{ marginTop: '12px' }}><HubAccessKeys colors={colors} /></div>}
+      </>
     );
   }
 
@@ -3225,8 +2906,9 @@ function MoneyHub({ colors, onExpensesChanged }) {
   // most of a screen blank; CSS columns balanced the tall Revenue card into
   // the first column and left the second half empty. Each stack runs on its
   // own, paired so the two come out close in height: Health, short, rides
-  // under the steps, since both say what is working. The expense list, crowd
-  // data and the model read across a row, so they take the full width.
+  // under the steps, since both say what is working, and the access keys,
+  // also short, under Health. The expense list, crowd data and the model read
+  // across a row, so they take the full width.
   const full = { margin: '0 0 12px', minWidth: 0 };
   return (
     <div>
@@ -3244,6 +2926,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
           <HubPeople h={data} colors={colors} />
           <HubOwnerActions h={data} colors={colors} />
           <HubHealth h={data} colors={colors} />
+          <HubAccessKeys colors={colors} />
         </div>
         <div className="hub-stack-col">
           <HubRevenue h={data} colors={colors} />

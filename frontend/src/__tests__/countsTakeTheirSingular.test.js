@@ -16,9 +16,12 @@ test('the consumer screens', () => {
 
 test('the money hub', () => {
   const hub = read('screens/RevenueScreen.js');
+  // The hub's words about the payload (hubSummaryWords among them) live in
+  // lib/moneyHubSummary.js, which the screen and the admin tool share.
+  const words = read('lib/moneyHubSummary.js');
   expect(hub).toContain("venuesNeeded(be.roost)");
   expect(hub).not.toContain('${needed(be.roost)} venues');
-  expect(hub).toContain("after.bills === 1 ? 'bill set to end has'");
+  expect(words).toContain("after.bills === 1 ? 'bill set to end has'");
   expect(hub).toContain("hubPlural(c.durationInMonths, 'month', 'months')");
   expect(hub).not.toMatch(/\$\{cachedAge\} seconds/);
   expect(hub).toContain("hubPlural(numVenues - breakEvenVenues, 'venue', 'venues')");

@@ -2852,6 +2852,20 @@ export async function importAdminExpenses(expenses) {
   });
 }
 
+// Admin access keys (backend/middleware/adminKeys.js): the keys a tool on the
+// owner's computer uses for the admin routes. The list is metadata and recent
+// uses, never a key, and both calls need this signed-in session; the server
+// refuses them to a key. There is no mint call here on purpose: a key is
+// minted from the browser console or tools/flock-admin/admin.mjs, never from
+// a dashboard button.
+export async function getAdminKeys() {
+  return request('/api/admin/keys');
+}
+
+export async function revokeAdminKey(id) {
+  return request(`/api/admin/keys/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {
