@@ -577,8 +577,11 @@ const RECENT_DEVIATION_SWITCHED_SQL = `SELECT offset_pct, n_readings, updated_at
 // Whether either switch is on, which is when the row is read with its
 // readings and a number's offset is the strict one. The same test
 // predictBusyness makes, so the cache and the arithmetic never disagree.
+// CROWD_SERVE_MODE counts as on for any mode but 'model': curve_offset, and
+// model_when_fresh, which needs the readings to choose its side and serves
+// either side's switched arithmetic.
 function switchedArithmeticOn() {
-  return serveMode() === 'curve_offset' || nowcastEnabled();
+  return serveMode() !== 'model' || nowcastEnabled();
 }
 
 // The cached row: `data` is the offset exactly as getRecentDeviation has
@@ -3901,9 +3904,10 @@ function applyScoreQuantileMap(score) {
 //
 // CROWD_SERVE_MODE=curve_offset. The venue's own weekly curve at the hour (the
 // value blendBaselineRows serves) plus CURVE_OFFSET_WEIGHT times its trailing
-// live offset, with no model delta and no quantile map. Any other value,
-// unset included, is 'model', today's arithmetic, and a value this file does
-// not know is logged once and served as 'model' rather than guessed at.
+// live offset, with no model delta and no quantile map. Unset is 'model',
+// today's arithmetic; model_when_fresh (below) picks one of the two per
+// number; and a value this file does not know is logged once and served as
+// 'model' rather than guessed at.
 //
 // CROWD_NOWCAST_ENABLED=true. On top of either mode: the venue's most recent
 // live reading from an EARLIER venue-local hour than the one being scored is
@@ -3926,14 +3930,34 @@ function applyScoreQuantileMap(score) {
 // mostly does not make: on the 3,165 readings with a reading one hour earlier,
 // within 10 points 85.9% as a level against 67.3% re-anchored to the curve,
 // within one band 92.0% against 91.5%.
+//
+// CROWD_SERVE_MODE=model_when_fresh (added 2026-11-05, before the November
+// export). Each number is made by one of the two modes above, chosen per
+// venue-hour by one test: does the venue have the reading rule (b)'s nowcast
+// would carry (isFreshReading: pickNowcastReading's choice at a lag the
+// curve_offset table weighs above zero, which since 2026-10-14 means one hour
+// old)? With it, the model path answers, computed exactly as
+// CROWD_SERVE_MODE=model computes it with a switch on: the strict offset, and
+// the nowcast only when CROWD_NOWCAST_ENABLED says so (production runs the
+// nowcast on, so this is the model path production serves). Without it, the
+// curve_offset path answers, exactly as CROWD_SERVE_MODE=curve_offset computes
+// it: curve + CURVE_OFFSET_WEIGHT times the strict offset, which is also what
+// rule (b) serves there, because its nowcast weighs nothing older than an
+// hour. The reason is measured, not assumed: on the November rehearsal's held
+// out readings the retrain matched rule (b) where an hour-old reading existed
+// and lost within 10 by about ten points where none did (RETRAIN.md, the
+// 2026-11-05 decision). The response says which side answered (serveMode,
+// freshMix), and the version and source labels follow the arithmetic that
+// ran, so a curve_offset number carries '+curve_offset' as it does today.
 // ---------------------------------------------------------------------------
-const SERVE_MODES = Object.freeze(['model', 'curve_offset']);
+const SERVE_MODES = Object.freeze(['model', 'curve_offset', 'model_when_fresh']);
 let unknownServeModeLogged = false;
 
 function serveMode() {
   const raw = String(process.env.CROWD_SERVE_MODE || '').trim().toLowerCase();
   if (raw === '' || raw === 'model') return 'model';
   if (raw === 'curve_offset') return 'curve_offset';
+  if (raw === 'model_when_fresh') return 'model_when_fresh';
   if (!unknownServeModeLogged) {
     unknownServeModeLogged = true;
     console.warn(`[MLPredictor] CROWD_SERVE_MODE=${JSON.stringify(process.env.CROWD_SERVE_MODE)} is not one of ${SERVE_MODES.join(', ')}; serving 'model'.`);
@@ -4085,6 +4109,17 @@ function pickNowcastReading(readings, targetSlot) {
     return bucket === null ? null : { ...r, lagHours, bucket };
   }
   return null;
+}
+
+// WHETHER A READING IS FRESH, for CROWD_SERVE_MODE=model_when_fresh: whether
+// rule (b)'s nowcast would carry it. `pick` is pickNowcastReading's answer (the
+// newest reading from an earlier venue-local hour, within
+// NOWCAST_MAX_LAG_HOURS), and it is fresh when the curve_offset table gives its
+// lag a weight above zero: one hour old under the table set on 2026-10-14. The
+// mode has no definition of its own, so a change to that table moves it too,
+// and the replay (bandEval.js) asks this same function about the same pick.
+function isFreshReading(pick) {
+  return Boolean(pick) && NOWCAST_WEIGHTS.curve_offset[pick.bucket] > 0;
 }
 
 // Which weight table a number's base arithmetic takes, or null when none fits
@@ -4831,7 +4866,23 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // needs a positive baseline to be a curve at all, which every delta
     // artifact already guarantees at this line; under an artifact that serves
     // without one, the model answers as it always has.
-    const curveOffsetMode = serveMode() === 'curve_offset' && baseline > 0;
+    //
+    // model_when_fresh chooses per number, so only that mode reads the venue's
+    // row here, before any model runs: a fresh reading (isFreshReading) sends
+    // the number down the model path, anything else down the curve_offset
+    // path. The row it read is the one the offset and the nowcast use below
+    // (mixEntry, read once), so the reading that chose the side is the reading
+    // the rest of the arithmetic sees. Every other mode reads nothing new here.
+    const mode = serveMode();
+    let mixEntry;
+    let mixPick = null;
+    if (mode === 'model_when_fresh') {
+      const mixPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
+      mixEntry = mixPlaceId ? await recentDeviationEntry(mixPlaceId) : null;
+      mixPick = mixEntry ? pickNowcastReading(mixEntry.readings, venueSlotOf(ts)) : null;
+    }
+    const curveOffsetMode = (mode === 'curve_offset' || (mode === 'model_when_fresh' && !isFreshReading(mixPick)))
+      && baseline > 0;
 
     const ort = require('onnxruntime-node');
     let score;
@@ -4938,8 +4989,10 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     const devPlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
     const offsetWeight = curveOffsetMode ? CURVE_OFFSET_WEIGHT : DEVIATION_WEIGHT;
     const switchedArithmetic = switchedArithmeticOn();
-    // One read serves the offset and the nowcast's readings, from one cache.
-    const devEntry = devPlaceId ? await recentDeviationEntry(devPlaceId) : null;
+    // One read serves the offset and the nowcast's readings, from one cache;
+    // under model_when_fresh it is the read that chose the side, above.
+    const devEntry = mixEntry !== undefined ? mixEntry
+      : (devPlaceId ? await recentDeviationEntry(devPlaceId) : null);
     // An artifact that took the offset as an input (artifactLearnsOffset) is
     // not handed it a second time here, in model mode.
     const offsetLearned = !curveOffsetMode && artifactLearnsOffset();
@@ -5129,6 +5182,16 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       // so its absence cannot mean "no live readings". True when an offset of
       // live readings or a nowcast reading moved the number, false otherwise.
       response.usedLiveReadings = Boolean(deviationApplied || nowcastApplied);
+      // Under model_when_fresh, which side answered and the age in hours of
+      // the newest earlier reading it was decided on (null when there is none
+      // within NOWCAST_MAX_LAG_HOURS). serveMode above names the same side;
+      // this says why. Internal like the rest of this block.
+      if (mode === 'model_when_fresh') {
+        response.freshMix = {
+          answered: curveOffsetMode ? 'curve_offset' : 'model',
+          readingLagHours: mixPick ? mixPick.lagHours : null,
+        };
+      }
     }
 
     // Add event alert when large event nearby
@@ -5870,6 +5933,7 @@ module.exports = {
     slotDayNumber,
     nowcastBucket,
     pickNowcastReading,
+    isFreshReading,
     parseRecentReadings,
     nowcastBaseKey,
     curveOffsetScore,

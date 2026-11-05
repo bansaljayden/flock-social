@@ -62,6 +62,10 @@
 //        --holdout=scripts/ml/train/holdout_data.csv --model=scripts/ml/models
 //   ... --gate    after export_model.py: writes ship_gate.band_gate into the
 //                 candidate's model_metadata.json and sets overall_pass
+//   ... --candidate-serve=<config>   the configuration the candidate is
+//                 scored and gated in (default 'model'; the November run
+//                 uses model_when_fresh+nowcast, RETRAIN.md 2026-11-05); the
+//                 verdict records it as band_gate.candidate_serving
 // ---------------------------------------------------------------------------
 
 const fs = require('fs');
@@ -727,9 +731,10 @@ function sportsScheduleReaders(art, inc) {
 // One artifact over prepared rows: the served score and its parts, under one
 // serving configuration. Every option defaults to what the process
 // environment says, exactly as predictBusyness reads it: `qmap`
-// (CROWD_QMAP_ENABLED), `serveMode` (CROWD_SERVE_MODE, 'model' or
-// 'curve_offset') and `nowcast` (CROWD_NOWCAST_ENABLED). The switches' own
-// arithmetic, the confidence rule and the version qualifier are mlPredictor's
+// (CROWD_QMAP_ENABLED), `serveMode` (CROWD_SERVE_MODE: 'model',
+// 'curve_offset' or 'model_when_fresh') and `nowcast` (CROWD_NOWCAST_ENABLED).
+// The switches' own arithmetic, the confidence rule, the version qualifier and
+// model_when_fresh's choice of side (isFreshReading) are mlPredictor's
 // functions, called here, not restated.
 async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   const { I } = art;
@@ -758,14 +763,18 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   // strictly before the scored hour (mlPredictor.trailingOffsetBefore); with
   // both off, the stored median. The replay's stored median is already
   // strictly past, which production's is not after the hour's own sweep: that
-  // difference is today's switched-off behaviour and is left as it is.
-  const switchedArithmetic = mode === 'curve_offset' || nowcastOn;
+  // difference is today's switched-off behaviour and is left as it is. Any
+  // serve mode but 'model' is a switch (mlPredictor.switchedArithmeticOn).
+  const switchedArithmetic = mode !== 'model' || nowcastOn;
   mlIdx.forEach((i, k) => {
     const r = prepared[i];
     const rawDelta = raw[k];
     // curve_offset serves every venue-hour the model path reaches, and never
-    // runs the model, so a model output cannot divert it.
-    const curveOffset = mode === 'curve_offset' && r.smoothed > 0;
+    // runs the model, so a model output cannot divert it. model_when_fresh
+    // serves it wherever the reading the serving code picked (nowcastPick) is
+    // not fresh, and the model path wherever it is.
+    const curveOffset = (mode === 'curve_offset' || (mode === 'model_when_fresh' && !I.isFreshReading(r.nowcastPick)))
+      && r.smoothed > 0;
     // An artifact that takes the offset as an input is not handed it again
     // after the model (predictBusyness, artifactLearnsOffset).
     const offset = !curveOffset && I.artifactLearnsOffset(art.meta) ? null
@@ -1155,12 +1164,16 @@ function labelsFromCuts(cuts) {
 // ---------------------------------------------------------------------------
 
 // CROWD_SERVE_MODE x CROWD_NOWCAST_ENABLED. 'model' without the nowcast is the
-// app as it serves with both switches off.
+// app as it serves with both switches off. The two model_when_fresh rows
+// (2026-11-05) are the model where the venue has a fresh reading and
+// curve_offset elsewhere, with the nowcast off and on.
 const SERVE_CONFIGS = Object.freeze([
   { name: 'model', serveMode: 'model', nowcast: false },
   { name: 'curve_offset', serveMode: 'curve_offset', nowcast: false },
   { name: 'model+nowcast', serveMode: 'model', nowcast: true },
   { name: 'curve_offset+nowcast', serveMode: 'curve_offset', nowcast: true },
+  { name: 'model_when_fresh', serveMode: 'model_when_fresh', nowcast: false },
+  { name: 'model_when_fresh+nowcast', serveMode: 'model_when_fresh', nowcast: true },
 ]);
 const configKey = (name) => `served[${name}]`;
 
@@ -1232,12 +1245,18 @@ function fitServeWeights(rows, modelBase, idx) {
 }
 
 // The number each configuration serves at a given set of weights, by the
-// restated arithmetic above.
+// restated arithmetic above. model_when_fresh takes the model where the
+// curve_offset table at these weights would carry the row's reading
+// (mlPredictor.isFreshReading at the shipped weights) and curve_offset
+// elsewhere.
 function servedAt(rows, modelBase, weights, cfg, qmapOn) {
   return rows.map((r, i) => {
-    const curveOffset = cfg.serveMode === 'curve_offset';
-    // With the nowcast on the model's number carries the switched offset.
-    const mb = cfg.nowcast ? modelBase.switched : modelBase;
+    const mix = cfg.serveMode === 'model_when_fresh';
+    const fresh = mix && Boolean(r.nowcastPick) && weights.nowcast.curve_offset[r.nowcastPick.bucket] > 0;
+    const curveOffset = cfg.serveMode === 'curve_offset' || (mix && !fresh);
+    // With a switch on the model's number carries the switched offset:
+    // the nowcast, or model_when_fresh, which is a switch itself.
+    const mb = cfg.nowcast || mix ? modelBase.switched : modelBase;
     const base = curveOffset ? curveOffsetAt(r, weights.curveOffsetWeight) : mb[qmapOn ? 'model_qmap' : 'model'][i];
     if (!cfg.nowcast || !r.nowcastPick) return base;
     const table = weights.nowcast[curveOffset ? 'curve_offset' : (qmapOn ? 'model_qmap' : 'model')];
@@ -1251,8 +1270,9 @@ function servedAt(rows, modelBase, weights, cfg, qmapOn) {
 function checkFitArithmetic(rows, modelBase, shipped, scoredByConfig, qmapOn, modelVersion, fittedOn) {
   const problems = [];
   for (const cfg of SERVE_CONFIGS) {
-    // The model tables stand aside for an artifact they were not fitted on.
-    const weights = cfg.serveMode === 'model' && cfg.nowcast && modelVersion !== fittedOn
+    // The model tables stand aside for an artifact they were not fitted on,
+    // wherever the model's number takes the nowcast.
+    const weights = cfg.serveMode !== 'curve_offset' && cfg.nowcast && modelVersion !== fittedOn
       ? { ...shipped, nowcast: { ...shipped.nowcast, model: {}, model_qmap: {} } }
       : shipped;
     const restated = servedAt(rows, modelBase, weights, cfg, qmapOn);
@@ -1277,20 +1297,40 @@ function parseArgs(argv) {
     else if (k === 'gate') args.gate = true;
     else if (k === 'slices') args.slices = true;
     else if (k === 'fit') args.fit = true;
-    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from', 'sports', 'incumbent-serve'].includes(k)) args[k] = v;
+    else if (['train', 'holdout', 'model', 'incumbent', 'from', 'to', 'out', 'rows-out', 'category', 'qmap', 'score-from', 'sports', 'incumbent-serve', 'candidate-serve'].includes(k)) args[k] = v;
     else throw new Error(`unrecognised argument --${k}`);
   }
   return args;
 }
 
-// --incumbent-serve=model | curve_offset | model+nowcast | curve_offset+nowcast,
-// else the switches as this process's environment sets them.
+// --incumbent-serve=<a SERVE_CONFIGS name>, else the switches as this
+// process's environment sets them.
 function parseIncumbentServe(value, I) {
   if (value === undefined) return { serveMode: I.serveMode(), nowcast: I.nowcastEnabled() };
   const cfg = SERVE_CONFIGS.find((c) => c.name === value);
   if (!cfg) throw new Error(`--incumbent-serve=${value} is not one of ${SERVE_CONFIGS.map((c) => c.name).join(', ')}`);
   return { serveMode: cfg.serveMode, nowcast: cfg.nowcast };
 }
+
+// --candidate-serve: the configuration the candidate is scored and gated in.
+// Unset, the model's own arithmetic ('model' without the nowcast), whatever
+// this process's environment says, as every gate before 2026-11-05 scored it.
+// Only a configuration in which the model answers: curve_offset never runs
+// the model, so a candidate gated in it would pass or fail on the curve and
+// carry that verdict into its own metadata.
+const CANDIDATE_SERVE_CONFIGS = Object.freeze(SERVE_CONFIGS.filter((c) => c.serveMode !== 'curve_offset'));
+function parseCandidateServe(value) {
+  if (value === undefined) return { serveMode: 'model', nowcast: false };
+  const cfg = CANDIDATE_SERVE_CONFIGS.find((c) => c.name === value);
+  if (!cfg) {
+    throw new Error(`--candidate-serve=${value} is not one of ${CANDIDATE_SERVE_CONFIGS.map((c) => c.name).join(', ')}`
+      + ' (curve_offset never runs the model it would be gating)');
+  }
+  return { serveMode: cfg.serveMode, nowcast: cfg.nowcast };
+}
+
+// A configuration's SERVE_CONFIGS name, for the report.
+const configName = (serveMode, nowcast) => `${serveMode}${nowcast ? '+nowcast' : ''}`;
 
 // Within 10 first: the product's primary accuracy metric since 2026-08-28.
 // Within one band second: the admin card's. Neither is read without the other.
@@ -1301,7 +1341,7 @@ function fmt(m) {
 }
 
 // --slices: every slice of a section as within-10 / within-one-band / band
-// exact / MAE, one column per predictor (the four serving configurations by
+// exact / MAE, one column per predictor (the serving configurations by
 // default; every predictor is in the JSON report).
 function printSlices(section, names = ['city', 'hour_group', 'actual_band', 'category', 'prior_live_readings'], preds = null) {
   const cols = preds || Object.keys(section.model_served_rows.overall);
@@ -1381,16 +1421,21 @@ async function main(argv = process.argv.slice(2)) {
   }
   const helpers = { I: art.I, crowdEngine, sports };
   const incumbentServe = parseIncumbentServe(args['incumbent-serve'], art.I);
+  const candidateServe = parseCandidateServe(args['candidate-serve']);
   const qmap = args.qmap === undefined ? undefined : args.qmap !== 'false';
   const sections = {};
   const perRow = [];
 
   async function evaluate(label, rows, window) {
     const prepared = prepareRows(rows, corpus, helpers, { category: args.category });
-    // The model's own arithmetic, whatever the switches in this process's
-    // environment say: this is what a retrain changes, what the band gate
-    // judges, and what the app serves with both switches off.
-    const mine = await scoreArtifact(art, prepared, { qmap, serveMode: 'model', nowcast: false });
+    // The candidate as gated, under --candidate-serve. Unset, that is the
+    // model's own arithmetic, whatever the switches in this process's
+    // environment say: what a retrain changes, what the band gate judged
+    // before 2026-11-05, and what the app serves with both switches off. Set
+    // to model_when_fresh(+nowcast), the model where the venue has a fresh
+    // reading and curve_offset elsewhere, the configuration decided on
+    // 2026-11-05 for the November retrain (RETRAIN.md).
+    const mine = await scoreArtifact(art, prepared, { qmap, ...candidateServe });
     // The incumbent AS PRODUCTION SERVES IT: under --incumbent-serve when
     // given, else under the two switches exactly as this process's environment
     // sets them (run the gate with the main service's CROWD_SERVE_MODE and
@@ -1398,11 +1443,14 @@ async function main(argv = process.argv.slice(2)) {
     // production serves curve_offset + nowcast, and a candidate that beats the
     // model alone but not that arithmetic would make the card worse.
     const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, ...incumbentServe }) : null;
-    // The four serving configurations the two switches make, through the same
-    // serve path, under the same quantile-map setting.
+    // Every serving configuration the switches make, through the same serve
+    // path, under the same quantile-map setting. The one the candidate is
+    // gated in is `mine`, already scored.
     const configs = {};
     for (const cfg of SERVE_CONFIGS) {
-      configs[cfg.name] = await scoreArtifact(art, prepared, { qmap, serveMode: cfg.serveMode, nowcast: cfg.nowcast });
+      configs[cfg.name] = cfg.serveMode === mine.serveMode && cfg.nowcast === mine.nowcast
+        ? mine
+        : await scoreArtifact(art, prepared, { qmap, serveMode: cfg.serveMode, nowcast: cfg.nowcast });
     }
     const served = prepared.map((r, i) => r.smoothed > 0 && mine.rows[i].ml);
     const mlRows = prepared.filter((_, i) => served[i]);
@@ -1446,6 +1494,9 @@ async function main(argv = process.argv.slice(2)) {
     }
     sections[label] = {
       window,
+      // How `model_served:<version>`, `app_as_shown` and the rows file's
+      // `served` column were made (--candidate-serve).
+      candidate_serving: { serve_mode: mine.serveMode, nowcast: mine.nowcast, config: configName(mine.serveMode, mine.nowcast) },
       all_live_rows: report(prepared, allRows, cuts, labels, { slices: ['city'] }),
       model_served_rows: report(mlRows, predictors, cuts, labels),
       hedge_reference: mlActual.length ? bestConstantBand(mlActual, cuts, labels) : null,
@@ -1494,6 +1545,7 @@ async function main(argv = process.argv.slice(2)) {
     console.log(`\n[BandEval] ${label}: window ${s.window.from} .. ${s.window.to}, ${s.model_served_rows.rows} model-served rows over ${s.model_served_rows.dates} dates `
       + `(${s.rows_without_served_baseline} more answered by the rule engine for want of a baseline, `
       + `${s.rows_skipped_clock_disagreement} skipped: date and weekday disagree); quantile map ${s.qmap_applied ? 'ON' : 'off'}`);
+    console.log(`  the candidate is scored as served[${s.candidate_serving.config}] (--candidate-serve); model_served and app_as_shown below are that`);
     console.log('  the serving configurations (CROWD_SERVE_MODE x CROWD_NOWCAST_ENABLED):');
     for (const cfg of SERVE_CONFIGS) console.log(`  ${configKey(cfg.name).padEnd(36)} ${fmt(s.model_served_rows.overall[configKey(cfg.name)])}`);
     console.log('  the parts and the references:');
@@ -1534,7 +1586,11 @@ async function main(argv = process.argv.slice(2)) {
     gateResult.incumbent_data_through_basis = incumbentDataThrough(inc.meta).basis;
     gateResult.quantile_map = { candidate: mine.qmapApplied, incumbent: theirs.qmapApplied };
     gateResult.incumbent_serving = { serve_mode: theirs.serveMode, nowcast: theirs.nowcast };
-    console.log(`\n[BandEval] BAND GATE on ${gateResult.population_cities.join(', ')}: ${gateResult.pass ? 'PASS' : 'FAIL'}`);
+    // The configuration the verdict is about, so the ship serves the one that
+    // passed: CROWD_SERVE_MODE and CROWD_NOWCAST_ENABLED as gated.
+    gateResult.candidate_serving = { serve_mode: mine.serveMode, nowcast: mine.nowcast };
+    console.log(`\n[BandEval] BAND GATE on ${gateResult.population_cities.join(', ')}: ${gateResult.pass ? 'PASS' : 'FAIL'}`
+      + ` (candidate served as ${configName(mine.serveMode, mine.nowcast)}, incumbent as ${configName(theirs.serveMode, theirs.nowcast)})`);
     for (const [k, c] of Object.entries(gateResult.criteria)) {
       const detail = c.delta !== undefined ? ` delta ${c.delta}pp CI95 ${JSON.stringify(c.ci95)}` : '';
       console.log(`  ${c.pass ? 'PASS' : 'FAIL'}  ${k}${detail}  (${c.need})`);
@@ -1734,6 +1790,10 @@ async function main(argv = process.argv.slice(2)) {
       ['served_nowcast_reading', (x) => (x.r.nowcastPick ? x.r.nowcastPick.value : null)],
       ['served_nowcast_lag_hours', (x) => (x.r.nowcastPick ? x.r.nowcastPick.lagHours : null)],
       ...SERVE_CONFIGS.map((cfg) => [`served_${cfg.name.replace('+', '_')}`, (x) => x.configs[cfg.name].served]),
+      // Last, so every column before it keeps its place: 1 where
+      // model_when_fresh sends the row to the model (mlPredictor isFreshReading
+      // on the same pick), 0 where it sends it to curve_offset.
+      ['fresh_reading', (x) => (art.I.isFreshReading(x.r.nowcastPick) ? 1 : 0)],
     ]);
     console.log(`[BandEval] rows -> ${args['rows-out']}`);
   }
@@ -1773,6 +1833,8 @@ module.exports = {
   readSportsCsv,
   sportsScheduleReaders,
   parseIncumbentServe,
+  parseCandidateServe,
+  CANDIDATE_SERVE_CONFIGS,
   isolateFromDatabases,
   pinUtcClock,
   wallClock,

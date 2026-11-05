@@ -485,6 +485,24 @@ test('the replay publishes what predictBusyness publishes, row for row, under ev
           assert.equal(production[i].nowcast.lagHours, r.nowcast.lagHours);
         }
       }
+      // model_when_fresh: both sides must answer here, each row on the side
+      // the nowcast's own pick and isFreshReading choose, in production and
+      // in the replay alike.
+      if (cfg.serveMode === 'model_when_fresh') {
+        const sides = { model: 0, curve_offset: 0 };
+        for (const [i, r] of replay.rows.entries()) {
+          if (!r.ml) continue;
+          const side = r.curveOffset ? 'curve_offset' : 'model';
+          sides[side]++;
+          assert.equal(side === 'model', art.I.isFreshReading(prepared[i].nowcastPick), `${label}: row ${i}`);
+          assert.equal(production[i].serveMode, side, `${label}: row ${i} answered by the other side in production`);
+          assert.deepEqual(production[i].freshMix, {
+            answered: side,
+            readingLagHours: prepared[i].nowcastPick ? prepared[i].nowcastPick.lagHours : null,
+          });
+        }
+        assert.ok(sides.model >= 20 && sides.curve_offset >= 20, `${label}: both sides must answer (${JSON.stringify(sides)})`);
+      }
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -530,4 +548,116 @@ test('the schedule loads when EITHER artifact reads the sports features, the inc
   assert.ok(incIdx !== -1 && readersIdx > incIdx);
   assert.match(mainSrc, /if \(sportsReaders\.length\) \{/);
   assert.ok(!/if \(art\.I\.artifactReadsSportsFeatures\(art\.meta\)\) \{/.test(mainSrc), 'the candidate-only check is gone');
+});
+
+// ── --candidate-serve (2026-11-05) ─────────────────────────────────────────
+
+test('--candidate-serve names a configuration in which the model answers, and the model alone by default', () => {
+  assert.deepEqual(B.parseCandidateServe(undefined), { serveMode: 'model', nowcast: false });
+  assert.deepEqual(B.parseCandidateServe('model'), { serveMode: 'model', nowcast: false });
+  assert.deepEqual(B.parseCandidateServe('model+nowcast'), { serveMode: 'model', nowcast: true });
+  assert.deepEqual(B.parseCandidateServe('model_when_fresh'), { serveMode: 'model_when_fresh', nowcast: false });
+  assert.deepEqual(B.parseCandidateServe('model_when_fresh+nowcast'), { serveMode: 'model_when_fresh', nowcast: true });
+  // curve_offset never runs the model it would be gating.
+  for (const bad of ['curve_offset', 'curve_offset+nowcast', 'model_fresh', 'mix', '']) {
+    assert.throws(() => B.parseCandidateServe(bad), /not one of/, JSON.stringify(bad));
+  }
+  assert.deepEqual(B.CANDIDATE_SERVE_CONFIGS.map((c) => c.name), ['model', 'model+nowcast', 'model_when_fresh', 'model_when_fresh+nowcast']);
+  // Every configuration the serving code knows is one the replay scores.
+  const { _internals: I } = require('../services/mlPredictor');
+  assert.deepEqual([...new Set(B.SERVE_CONFIGS.map((c) => c.serveMode))].sort(), [...I.SERVE_MODES].sort());
+});
+
+test('the gate scores the candidate as --candidate-serve says, records it, and the rows file carries the mix and its parts', async () => {
+  const fx = FX.buildFixture();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-bandeval-candserve-'));
+  const csv = path.join(dir, 'fixture.csv');
+  FX.writeFixtureCsv(csv, fx);
+  // A copy of the checked-in artifact as the candidate, with what --gate needs
+  // from quick_eval (a point verdict) and prepare_features (the window). The
+  // tracked files are never written.
+  const cand = path.join(dir, 'candidate');
+  fs.mkdirSync(cand);
+  fs.copyFileSync(path.join(MODELS_DIR, 'crowd_model.onnx'), path.join(cand, 'crowd_model.onnx'));
+  const meta = JSON.parse(fs.readFileSync(path.join(MODELS_DIR, 'model_metadata.json'), 'utf8'));
+  meta.time_holdout = { ...(meta.time_holdout || {}), from_date: FX.DATES[0] };
+  meta.ship_gate = { ...(meta.ship_gate || {}), point_gate_pass: true, band_gate_required: true, overall_pass: false, verdict: 'pending_band_gate' };
+  fs.writeFileSync(path.join(cand, 'model_metadata.json'), JSON.stringify(meta));
+  const out = path.join(dir, 'report.json');
+  const rowsOut = path.join(dir, 'band_rows.csv');
+  const quiet = console.log;
+  console.log = () => {};
+  try {
+    await B.main([`--train=${csv}`, '--holdout=-', `--model=${cand}`, `--incumbent=${MODELS_DIR}`, '--gate',
+      '--incumbent-serve=curve_offset+nowcast', '--candidate-serve=model_when_fresh+nowcast', `--out=${out}`, `--rows-out=${rowsOut}`]);
+  } finally {
+    console.log = quiet;
+  }
+  try {
+    const report = JSON.parse(fs.readFileSync(out, 'utf8'));
+    const g = report.band_gate;
+    assert.deepEqual(g.candidate_serving, { serve_mode: 'model_when_fresh', nowcast: true });
+    assert.deepEqual(g.incumbent_serving, { serve_mode: 'curve_offset', nowcast: true });
+    assert.equal(report.sections.live_time_holdout.candidate_serving.config, 'model_when_fresh+nowcast');
+    // The verdict in the candidate's own metadata says the same.
+    const written = JSON.parse(fs.readFileSync(path.join(cand, 'model_metadata.json'), 'utf8')).ship_gate.band_gate;
+    assert.deepEqual(written.candidate_serving, g.candidate_serving);
+
+    // The gate's candidate is the replay of that configuration, on the gate's rows.
+    B.pinUtcClock();
+    const corpus = await B.readCorpus([csv]);
+    const art = await B.loadArtifact(cand);
+    const prepared = B.prepareRows(corpus.live, corpus, { I: art.I, crowdEngine });
+    const mix = await B.scoreArtifact(art, prepared, { serveMode: 'model_when_fresh', nowcast: true });
+    const keep = prepared.map((r, i) => r.smoothed > 0 && mix.rows[i].ml && B.BAND_GATE_CITIES.includes(r.city));
+    const { cuts } = B.bandLadder(crowdEngine.getLabel);
+    const want = B.summarize(prepared.filter((_, i) => keep[i]).map((r) => r.y), mix.rows.filter((_, i) => keep[i]).map((x) => x.served), cuts);
+    assert.equal(g.candidate.n, want.n);
+    assert.ok(g.candidate.n >= 60);
+    for (const k of ['within_one_band', 'band_exact', 'within_10', 'mae', 'bias']) assert.equal(g.candidate[k], want[k], k);
+
+    // The rows file: `served` is the candidate as gated, and the mix is its
+    // two parts joined on fresh_reading, the column the serving rule writes.
+    const [head, ...lines] = fs.readFileSync(rowsOut, 'utf8').trim().split('\n');
+    const H = head.split(',');
+    for (const c of ['served_model_when_fresh', 'served_model_when_fresh_nowcast', 'fresh_reading']) {
+      assert.ok(H.includes(c), `--rows-out does not write ${c}`);
+    }
+    assert.equal(H[H.length - 1], 'fresh_reading', 'the new column comes last, so no earlier column moves');
+    const ix = Object.fromEntries(H.map((k, i) => [k, i]));
+    const num = (s) => (s === '' ? null : Number(s));
+    let fresh = 0;
+    let stale = 0;
+    for (const l of lines) {
+      const f = l.split(',');
+      assert.equal(f.length, H.length);
+      if (f[ix.section] !== 'live_time_holdout' || f[ix.ml] !== '1' || !(num(f[ix.smoothed]) > 0)) continue;
+      const isFresh = f[ix.fresh_reading] === '1';
+      if (isFresh) fresh++; else stale++;
+      assert.equal(isFresh, num(f[ix.served_nowcast_lag_hours]) === 1, 'fresh means an hour-old reading under today\'s table');
+      const mixed = num(f[ix.served_model_when_fresh_nowcast]);
+      assert.equal(num(f[ix.served]), mixed);
+      assert.equal(mixed, num(f[isFresh ? ix.served_model_nowcast : ix.served_curve_offset_nowcast]));
+      // With the nowcast off the curve side is curve_offset's number too.
+      if (!isFresh) assert.equal(num(f[ix.served_model_when_fresh]), num(f[ix.served_curve_offset]));
+    }
+    assert.ok(fresh >= 20 && stale >= 20, `fresh ${fresh}, not fresh ${stale}`);
+
+    // Unset, the candidate is the model alone, as every gate before it scored it.
+    const plainOut = path.join(dir, 'plain.json');
+    const plainRows = path.join(dir, 'plain_rows.csv');
+    console.log = () => {};
+    try {
+      await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, `--out=${plainOut}`, `--rows-out=${plainRows}`]);
+    } finally {
+      console.log = quiet;
+    }
+    const plain = JSON.parse(fs.readFileSync(plainOut, 'utf8'));
+    assert.deepEqual(plain.sections.live_time_holdout.candidate_serving, { serve_mode: 'model', nowcast: false, config: 'model' });
+    const [ph, ...pl] = fs.readFileSync(plainRows, 'utf8').trim().split('\n');
+    const pix = Object.fromEntries(ph.split(',').map((k, i) => [k, i]));
+    assert.ok(pl.every((l) => { const f = l.split(','); return f[pix.ml] !== '1' || f[pix.served] === f[pix.served_model]; }));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

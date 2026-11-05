@@ -119,7 +119,7 @@ async function serveFixture(env) {
         moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
         out.push(await predictor.predictBusyness({ ...r.venue, place_id: alias }, r.weather, r.ts));
       }
-      return { out, sql, unknown: stub.unknown, version: art.meta.model_version };
+      return { out, sql, unknown: stub.unknown, version: art.meta.model_version, prepared, fx };
     });
   } finally {
     [console.log, console.warn, console.error] = quiet;
@@ -898,4 +898,202 @@ test('an artifact that lists no live or sports feature serves byte for byte as b
     assert.equal(sha(JSON.stringify(stripped)), PRE_FAMILY[name][1], `${name}: statements`);
     assert.ok(sql.every((s) => !/ml_sports_events/.test(s)), `${name}: the schedule is never read`);
   }
+});
+
+// ── CROWD_SERVE_MODE=model_when_fresh (2026-11-05) ─────────────────────────
+//
+// The model where the venue has the reading rule (b)'s nowcast would carry,
+// the curve_offset path everywhere else. What is pinned here: the value is
+// read as its own mode and nothing else changes for 'model', unset or an
+// unknown value; "fresh" is the nowcast's own rule, not a second one; and
+// through predictBusyness every number is, response for response, the number
+// the 'model' or the 'curve_offset' setting serves, chosen by that rule. The
+// comparisons are between settings on the same artifact, so they hold for
+// whichever artifact is checked in. __tests__/mlBandEval.test.js proves the
+// replay serves the same numbers.
+
+// The fixture's own answer to "how old is this venue's newest reading from an
+// earlier hour", restated from the readings themselves rather than through the
+// serving code: the reading the builder stored (positive curve at its slot)
+// with the latest slot strictly before the scored one, in hours, or null.
+function naiveLagHours(fx, venueId, date, hour) {
+  const t = FX.dayNumber(date) * 24 + hour;
+  const earlier = FX.builderHistory(fx, venueId).filter((x) => x.t < t).sort((a, b) => b.t - a.t);
+  return earlier.length ? t - earlier[0].t : null;
+}
+
+// A response without the mix's own account of itself, and without the wall
+// clock (baselineData.asOf), so two settings' answers can be compared whole.
+const comparable = (r) => JSON.parse(JSON.stringify(r, (k, v) => (k === 'asOf' || k === 'freshMix' ? undefined : v)));
+
+test('CROWD_SERVE_MODE=model_when_fresh is its own mode; unset, model and unknown values still serve model', () => {
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.ok(I.SERVE_MODES.includes('model_when_fresh'));
+    for (const [v, want] of [['model_when_fresh', 'model_when_fresh'], [' Model_When_Fresh ', 'model_when_fresh'],
+      ['model-when-fresh', 'model'], ['model_fresh', 'model'], ['fresh', 'model'], [undefined, 'model'], ['model', 'model']]) {
+      withEnv(v === undefined ? {} : { CROWD_SERVE_MODE: v }, () => assert.equal(I.serveMode(), want, JSON.stringify(v)));
+    }
+    // A switch: it reads the readings, and its numbers take the strict offset.
+    withEnv({ CROWD_SERVE_MODE: 'model_when_fresh' }, () => assert.equal(I.switchedArithmeticOn(), true));
+    // Production today (model, nowcast on) and both off are what they were.
+    withEnv({ CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }, () => assert.equal(I.switchedArithmeticOn(), true));
+    withEnv({ CROWD_SERVE_MODE: 'model' }, () => assert.equal(I.switchedArithmeticOn(), false));
+    withEnv({}, () => assert.equal(I.switchedArithmeticOn(), false));
+    withEnv({ CROWD_SERVE_MODE: 'model-when-fresh' }, () => assert.equal(I.switchedArithmeticOn(), false, 'an unknown value is model'));
+    // The served-accuracy headline describes curve_offset + nowcast numbers only.
+    withEnv({ CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' }, () => assert.equal(I.servedAccuracyHeadline(), null));
+  } finally { console.warn = warn; }
+});
+
+test('a fresh reading is exactly one rule (b)\'s nowcast would carry: the nowcast\'s pick, at a lag its curve_offset table weighs', () => {
+  // The rule itself, bucket by bucket, against the nowcast's own arithmetic.
+  for (const bucket of [1, 2, 3, 4]) {
+    const pick = { value: 77, lagHours: bucket, bucket, date: '2026-09-06', hour: 10, observedAt: null };
+    assert.equal(I.isFreshReading(pick), I.NOWCAST_WEIGHTS.curve_offset[bucket] > 0, `bucket ${bucket}`);
+    assert.equal(I.isFreshReading(pick), I.applyNowcast(40, pick, 'curve_offset') !== null,
+      `bucket ${bucket}: fresh must mean exactly "rule (b)'s nowcast uses it"`);
+  }
+  assert.equal(I.isFreshReading(null), false);
+  assert.equal(I.isFreshReading(undefined), false);
+  // Under today's table that is one hour old, and nothing else.
+  const fresh = [1, 2, 3, 4].filter((b) => I.isFreshReading({ bucket: b }));
+  assert.deepEqual(fresh, [1]);
+  // Through the nowcast's own picker: the target hour's own reading is never
+  // fresh, an hour-old one is, a two-hour-old one is not, and an older reading
+  // never stands in for a missing newer one.
+  const stored = I.parseRecentReadings([reading(90, '2026-09-06', 19), reading(40, '2026-09-06', 17)]);
+  assert.equal(I.isFreshReading(I.pickNowcastReading(stored, slot('2026-09-06', 19))), false, '17:00 is two hours before 19:00');
+  assert.equal(I.isFreshReading(I.pickNowcastReading(stored, slot('2026-09-06', 18))), true, '17:00 is one hour before 18:00');
+  assert.equal(I.isFreshReading(I.pickNowcastReading(stored, slot('2026-09-06', 20))), true, '19:00 is one hour before 20:00');
+  const onlyOwnHour = I.parseRecentReadings([reading(90, '2026-09-06', 19)]);
+  assert.equal(I.pickNowcastReading(onlyOwnHour, slot('2026-09-06', 19)), null);
+  assert.equal(I.isFreshReading(I.pickNowcastReading(onlyOwnHour, slot('2026-09-06', 19))), false);
+  // No second definition: the serving path chooses its side with the nowcast's
+  // picker and this predicate, and the predicate reads the nowcast's table.
+  const src = fs.readFileSync(PREDICTOR, 'utf8').replace(/\r\n/g, '\n');
+  assert.match(I.isFreshReading.toString(), /NOWCAST_WEIGHTS\.curve_offset\[pick\.bucket\] > 0/);
+  assert.match(src, /mixPick = mixEntry \? pickNowcastReading\(mixEntry\.readings, venueSlotOf\(ts\)\) : null;/);
+  assert.match(src, /mode === 'model_when_fresh' && !isFreshReading\(mixPick\)/);
+  const bandEvalSrc = fs.readFileSync(path.join(ML_DIR, 'train', 'bandEval.js'), 'utf8');
+  assert.match(bandEvalSrc, /mode === 'model_when_fresh' && !I\.isFreshReading\(r\.nowcastPick\)/);
+});
+
+test('unset, model and an unknown value serve the same responses and send the same statements, the nowcast on or off', async () => {
+  const warn = console.warn;
+  for (const nowcast of [{}, { CROWD_NOWCAST_ENABLED: 'true' }]) {
+    const unset = await serveFixture({ ...nowcast });
+    const model = await serveFixture({ ...nowcast, CROWD_SERVE_MODE: 'model' });
+    console.warn = () => {};
+    let unknown;
+    try { unknown = await serveFixture({ ...nowcast, CROWD_SERVE_MODE: 'model-when-fresh' }); } finally { console.warn = warn; }
+    for (const other of [model, unknown]) {
+      assert.deepEqual(other.out.map(comparable), unset.out.map(comparable), JSON.stringify(nowcast));
+      assert.deepEqual(other.sql, unset.sql, `${JSON.stringify(nowcast)}: the statements changed`);
+    }
+    assert.ok(unset.out.every((r) => !('freshMix' in r)), 'only the mix says which side answered');
+  }
+});
+
+test('model_when_fresh: each number is the model setting\'s where the reading is fresh and the curve_offset setting\'s elsewhere, response for response', async () => {
+  // With the nowcast on, as production runs it.
+  const now = { CROWD_NOWCAST_ENABLED: 'true' };
+  const mix = await serveFixture({ ...now, CROWD_SERVE_MODE: 'model_when_fresh' });
+  const model = await serveFixture({ ...now, CROWD_SERVE_MODE: 'model' });
+  const co = await serveFixture({ ...now, CROWD_SERVE_MODE: 'curve_offset' });
+  assert.deepEqual(mix.unknown, []);
+  const { fx } = mix;
+  let fresh = 0;
+  let stale = 0;
+  mix.out.forEach((r, i) => {
+    const row = fx.live[i];
+    assert.equal(mix.prepared[i].venueId, String(row.v.id));
+    if (r.predictionMethod !== 'ml') {
+      // A rule-engine exit answers before any serve mode is read.
+      assert.deepEqual(comparable(r), comparable(model.out[i]), `row ${i}: a rule-engine exit changed`);
+      assert.ok(!('freshMix' in r));
+      return;
+    }
+    const lag = naiveLagHours(fx, row.v.id, row.date, row.hour);
+    const isFresh = lag === 1;
+    if (isFresh) fresh++; else stale++;
+    const want = isFresh ? model.out[i] : co.out[i];
+    assert.deepEqual(comparable(r), comparable(want), `row ${i} (${row.v.id} ${row.date} ${row.hour}h, lag ${lag}): not the ${isFresh ? 'model' : 'curve_offset'} setting's answer`);
+    // The labels name the side that answered.
+    assert.deepEqual(r.freshMix, { answered: isFresh ? 'model' : 'curve_offset', readingLagHours: lag !== null && lag <= I.NOWCAST_MAX_LAG_HOURS ? lag : null });
+    assert.equal(r.serveMode, isFresh ? 'model' : 'curve_offset');
+    if (isFresh) {
+      assert.ok(r.dataSourcesUsed.includes('ml_model'));
+      assert.ok(!/\+curve_offset/.test(r.modelVersion));
+    } else {
+      assert.ok(!r.dataSourcesUsed.includes('ml_model') && !r.dataSourcesUsed.includes('weather'));
+      assert.match(r.modelVersion, /\+curve_offset$/, 'a curve number carries the curve qualifier and never a nowcast one');
+      assert.equal(r.nowcast, null, 'on the curve side the nowcast never has a reading it would carry');
+      assert.match(crowdEngine.describeServedArithmetic(r), /^venue_pattern(_live)?$/);
+    }
+  });
+  assert.ok(fresh >= 20 && stale >= 20, `the fixture must exercise both sides (fresh ${fresh}, not fresh ${stale})`);
+  // One read of the venue's row per number, as the other switched settings make.
+  const devOf = (run) => run.sql.filter((s) => /ml_venue_recent_deviation/.test(s));
+  assert.equal(devOf(mix).length, devOf(model).length);
+  assert.ok(devOf(mix).every((s) => /recent_readings/.test(s) && /offset_readings/.test(s)));
+
+  // With the nowcast off the curve side is still the curve_offset setting's
+  // answer; the model side is the model path with the strict offset, which
+  // mlBandEval.test.js checks against the replay.
+  const mixOff = await serveFixture({ CROWD_SERVE_MODE: 'model_when_fresh' });
+  const coOff = await serveFixture({ CROWD_SERVE_MODE: 'curve_offset' });
+  mixOff.out.forEach((r, i) => {
+    if (r.predictionMethod !== 'ml') return;
+    const row = fx.live[i];
+    if (naiveLagHours(fx, row.v.id, row.date, row.hour) === 1) {
+      assert.equal(r.serveMode, 'model');
+      assert.equal(r.nowcast, null);
+      assert.ok(r.dataSourcesUsed.includes('ml_model'));
+    } else {
+      assert.deepEqual(comparable(r), comparable(coOff.out[i]), `row ${i}: the curve side is not curve_offset's answer`);
+    }
+  });
+});
+
+test('model_when_fresh through predictBusyness: an hour-old reading gets the model, a two-hour-old one or the hour\'s own gets the curve', async () => {
+  const mixEnv = { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' };
+  const modelEnv = { CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' };
+  const coEnv = { CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' };
+  // 19:00 scored after its own sweep; the newest earlier reading is 17:00.
+  const twoHours = await serveFlatCurveCase(mixEnv);
+  assert.deepEqual(twoHours.freshMix, { answered: 'curve_offset', readingLagHours: 2 });
+  assert.equal(twoHours.score, 20, 'the flat curve, with no offset from one earlier reading');
+  assert.deepEqual(comparable(twoHours), comparable(await serveFlatCurveCase(coEnv)));
+  // An 18:00 reading is an hour old: the model setting's answer, whatever the artifact makes of it.
+  const hourOld = [['2026-09-06', 18, 55], ['2026-09-06', 19, 100]];
+  const oneHour = await serveFlatCurveCase(mixEnv, { live: hourOld });
+  assert.deepEqual(oneHour.freshMix, { answered: 'model', readingLagHours: 1 });
+  assert.deepEqual(comparable(oneHour), comparable(await serveFlatCurveCase(modelEnv, { live: hourOld })));
+  // Read only in the hour being scored: no earlier reading, so the curve.
+  const ownHour = await serveFlatCurveCase(mixEnv, { live: [['2026-09-06', 19, 100]] });
+  assert.deepEqual(ownHour.freshMix, { answered: 'curve_offset', readingLagHours: null });
+  assert.equal(ownHour.score, 20, 'nothing of the 19:00 reading reaches the number');
+});
+
+test('model_when_fresh across a forecast strip: each hour takes its own side, with its own source', async () => {
+  // Stored as of 19:00: 0 at 17:00 and 100 at 19:00. 17:00 has no earlier
+  // reading, 18:00 and 20:00 have one an hour old, 19:00 and 21:00 two hours.
+  const mixEnv = { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' };
+  const mix = await serveFlatCurveCase(mixEnv, { hourly: [17, 5] });
+  const model = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }, { hourly: [17, 5] });
+  const co = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' }, { hourly: [17, 5] });
+  const freshHours = [false, true, false, true, false];
+  assert.deepEqual(mix.map((h) => h.hour), model.map((h) => h.hour));
+  mix.forEach((h, k) => {
+    const want = freshHours[k] ? model[k] : co[k];
+    assert.deepEqual(h, want, `${h.hour}: not the ${freshHours[k] ? 'model' : 'curve_offset'} setting's hour`);
+  });
+  for (const k of [0, 2, 4]) assert.match(mix[k].numberSource, /^venue_pattern(_live)?$/, `${mix[k].hour}`);
+  assert.ok(mix.every((h) => typeof h.liveReadings === 'boolean'), 'a switched strip says yes or no on every hour');
+  await withEnv(mixEnv, async () => {
+    assert.equal(freshPredictor().predictionCoverage().serveMode, 'model_when_fresh');
+    delete require.cache[PREDICTOR];
+  });
 });
