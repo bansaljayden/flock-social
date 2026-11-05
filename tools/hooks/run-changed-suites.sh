@@ -74,7 +74,10 @@ if touched "frontend/"; then
   ( cd frontend && CI=true npm run build >/dev/null ) || FAILED="$FAILED frontend-build"
 fi
 
-if touched "backend/"; then
+# tools/flock-admin/admin.mjs is tested by the backend suite
+# (__tests__/flockAdminCli.test.js), and it prints the money hub through
+# frontend/src/lib/moneyHubSummary.js, so a change to either runs it too.
+if touched "backend/" || touched "tools/flock-admin/" || touched "frontend/src/lib/moneyHubSummary.js"; then
   # Runs alone on purpose: the suite starts embedded PostgreSQL instances and
   # contends with itself when anything else is using the machine's cores, which
   # shows up as a file-level failure with no failing test inside it.

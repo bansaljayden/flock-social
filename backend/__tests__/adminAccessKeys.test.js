@@ -744,6 +744,70 @@ test('a session revokes any key, a second revoke says so, and an unknown id is 4
   assert.strictEqual((await call('DELETE', '/api/admin/keys/99999999999', { bearer: s })).status, 404);
 });
 
+// ---------------------------------------------------------------------------
+// 7. THE ADMIN TOOL AGAINST THE REAL ROUTES
+// ---------------------------------------------------------------------------
+
+test('tools/flock-admin/admin.mjs does its work through the real routes with a real key', async () => {
+  const { pathToFileURL } = require('node:url');
+  const cli = await import(pathToFileURL(path.join(BACKEND, '..', 'tools', 'flock-admin', 'admin.mjs')).href);
+  const owner = await insertUser({ role: 'admin', name: 'Tool Owner' });
+  const k = await mint(owner, { name: 'CLI test' });
+  const keyFile = path.join(dataDir, '..', `flock-admin-key-${process.pid}`);
+  cli.writeKeyFile(keyFile, k.key, { replace: true });
+  const tool = async (args) => {
+    let out = '';
+    const code = await cli.main(args, {
+      env: { FLOCK_API_URL: base, FLOCK_ADMIN_KEY_FILE: keyFile },
+      stdout: (s) => { out += s; },
+      stderr: (s) => { out += s; },
+      stdin: null,
+    });
+    assert.ok(!out.includes(k.key.slice(10)), 'the tool printed the key');
+    return { code, out };
+  };
+  try {
+    const status = await tool(['status']);
+    assert.strictEqual(status.code, 0, status.out);
+    assert.match(status.out, /Admin key "CLI test" \(key \d+\), acting as Tool Owner/);
+
+    const product = `cli ${k.id}`;
+    const add = await tool(['expenses', 'add', '--vendor', 'Example Host', '--product', product, '--amount', '9.99',
+      '--kind', 'tooling', '--cadence', 'monthly', '--renews', '2026-12-01', '--yes']);
+    assert.strictEqual(add.code, 0, add.out);
+    const { rows: [bill] } = await pool.query('SELECT id, active, amount_cents, updated_by FROM business_expenses WHERE product = $1', [product]);
+    assert.deepStrictEqual([bill.active, bill.amount_cents, bill.updated_by], [true, 999, owner.id]);
+
+    const list = await tool(['expenses', 'list']);
+    assert.match(list.out, new RegExp(`${bill.id}\\s+Example Host, ${product}\\s+\\$9\\.99 a month\\s+running`));
+
+    // The row the list read goes back whole, so the real validators accept it.
+    const stop = await tool(['expenses', 'stop', String(bill.id), '--yes']);
+    assert.strictEqual(stop.code, 0, stop.out);
+    assert.strictEqual((await pool.query('SELECT active FROM business_expenses WHERE id = $1', [bill.id])).rows[0].active, false);
+
+    const dry = await tool(['waitlist', 'announce', '--dry-run']);
+    assert.strictEqual(dry.code, 0, dry.out);
+    assert.match(dry.out, /waiting for the launch email/);
+
+    const money = await tool(['money']);
+    assert.strictEqual(money.code, 0, money.out);
+    assert.match(money.out, /Money in/);
+    assert.match(money.out, /Monthly bills/);
+
+    const refusedGet = await tool(['get', '/api/admin/keys']);
+    assert.strictEqual(refusedGet.code, 1, 'a key listed keys through the tool');
+    assert.match(refusedGet.out, /Refused \(403\)/);
+
+    const uses = await settled(k.id);
+    assert.ok(uses.length >= 8);
+    assert.ok(uses.every((u) => u.route.startsWith('/api/admin/')));
+    await pool.query('DELETE FROM business_expenses WHERE id = $1', [bill.id]);
+  } finally {
+    fs.rmSync(keyFile, { force: true });
+  }
+});
+
 test('no key ever reached a log line', () => {
   const leaks = printed.filter((line) => /flk_admin_[A-Za-z0-9_-]{20,}/.test(line));
   assert.deepStrictEqual(leaks, []);
