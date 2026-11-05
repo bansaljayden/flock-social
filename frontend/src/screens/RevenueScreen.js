@@ -2029,19 +2029,25 @@ function HubHealth({ h, colors }) {
 // vendor reads, and it holds metadata only: the server keeps a fingerprint of
 // each key, so no key can be shown here. Revoke is the one control, because it
 // is a safety control. Minting is not on the page: a key is minted from the
-// browser console or the admin tool.
+// browser console or the admin tool. A key minted from a session older than
+// fifteen minutes is Pending until its owner taps Approve in the email it sent,
+// and a pending key whose link ran out reads as Expired, since it can never work.
 const HUB_KEY_STATE = {
   active: { text: 'Active', tone: 'good' },
+  pending: { text: 'Pending', tone: 'warn' },
   expired: { text: 'Expired', tone: 'muted' },
   revoked: { text: 'Revoked', tone: 'muted' },
   ended: { text: 'Ended', tone: 'warn' },
 };
 const HUB_KEY_REFUSED = {
   route: 'refused, not a route a key may use',
+  pending: 'refused, waiting for approval',
+  unapproved: 'refused, never approved',
   expired: 'refused, expired',
   revoked: 'refused, revoked',
   ended: 'refused, ended',
 };
+const HUB_KEY_REVOKED_HOW = { key: ' by the key itself', email: " from the email's link" };
 // Under this many days left, the card says when the soonest key runs out.
 const HUB_KEY_EXPIRY_WARN_DAYS = 14;
 
@@ -2068,6 +2074,9 @@ function HubKeyRow({ k, navy, onRevoked }) {
   const [err, setErr] = React.useState('');
   const state = HUB_KEY_STATE[k.state] || { text: 'Not read', tone: 'muted' };
   const live = k.state === 'active';
+  // A pending key can be revoked too: that is the answer to one nobody asked for.
+  const revocable = live || k.state === 'pending';
+  const neverApproved = !k.approvedAt;
   const uses = Array.isArray(k.recentUses) ? k.recentUses : [];
   const revoke = async () => {
     setBusy(true);
@@ -2083,9 +2092,12 @@ function HubKeyRow({ k, navy, onRevoked }) {
     }
   };
   const facts = [
-    `Made ${hubIsoDay(k.createdAt)}`,
-    k.state === 'revoked' && k.revokedAt ? `revoked ${hubIsoDay(k.revokedAt)}${k.revokedVia === 'key' ? ' by the key itself' : ''}` : null,
-    k.state === 'expired' ? `expired ${hubIsoDay(k.expiresAt)}` : `expires ${hubIsoDay(k.expiresAt)}`,
+    `Made ${hubIsoDay(k.createdAt)}${k.createdIp ? ` from ${k.createdIp}` : ''}`,
+    k.state === 'pending' && k.approvalExpiresAt ? `waiting for approval from the email until ${hubTime(k.approvalExpiresAt)}` : null,
+    k.state === 'revoked' && k.revokedAt ? `revoked ${hubIsoDay(k.revokedAt)}${HUB_KEY_REVOKED_HOW[k.revokedVia] || ''}` : null,
+    k.state === 'expired' && neverApproved ? 'never approved' : null,
+    k.state === 'expired' && !neverApproved ? `expired ${hubIsoDay(k.expiresAt)}` : null,
+    k.state !== 'expired' ? `expires ${hubIsoDay(k.expiresAt)}` : null,
     k.lastUsedAt ? `last used ${hubSince(k.lastUsedAt)}${k.lastUsedIp ? ` from ${k.lastUsedIp}` : ''}` : 'never used',
   ].filter(Boolean).join(', ');
   return (
@@ -2100,6 +2112,9 @@ function HubKeyRow({ k, navy, onRevoked }) {
       {k.state === 'ended' && (
         <p style={hubStyle.note}>The account signed out everywhere, changed its password, or stopped being an admin after this key was made, so it no longer works.</p>
       )}
+      {k.state === 'pending' && (
+        <p style={hubStyle.note}>It does nothing until Approve is tapped in the email sent to this account. If nobody here asked for it, revoke it.</p>
+      )}
       {uses.length > 0 && (
         <HubWhy label="Recent uses">
           {uses.map((u, i) => (
@@ -2109,7 +2124,7 @@ function HubKeyRow({ k, navy, onRevoked }) {
           ))}
         </HubWhy>
       )}
-      {live && (
+      {revocable && (
         <div style={{ display: 'flex', gap: '8px', marginTop: '8px', alignItems: 'center' }}>
           {!confirm ? (
             <button className="hit44" type="button" aria-label={`Revoke ${k.name}`} onClick={() => setConfirm(true)} style={hubStyle.textButton}>Revoke</button>
@@ -2138,15 +2153,17 @@ function HubAccessKeys({ colors }) {
   }, []);
   React.useEffect(() => { load(); }, [load]);
   const live = read.keys.filter((k) => k.state === 'active');
+  const pending = read.keys.filter((k) => k.state === 'pending');
   const soonest = live
     .map((k) => Math.floor((new Date(k.expiresAt).getTime() - Date.now()) / 86400000))
     .filter((d) => Number.isFinite(d))
     .sort((a, b) => a - b)[0];
   let chip = null;
   if (read.status === 'ok') {
-    chip = Number.isFinite(soonest) && soonest <= HUB_KEY_EXPIRY_WARN_DAYS
-      ? <HubChip tone="warn">{soonest < 1 ? 'Expires today' : `Expires in ${hubPlural(soonest, 'day', 'days')}`}</HubChip>
-      : <HubChip tone="muted">{live.length > 0 ? `${hubCount(live.length)} active` : 'None active'}</HubChip>;
+    if (pending.length > 0) chip = <HubChip tone="warn">{`${hubCount(pending.length)} waiting for approval`}</HubChip>;
+    else if (Number.isFinite(soonest) && soonest <= HUB_KEY_EXPIRY_WARN_DAYS) {
+      chip = <HubChip tone="warn">{soonest < 1 ? 'Expires today' : `Expires in ${hubPlural(soonest, 'day', 'days')}`}</HubChip>;
+    } else chip = <HubChip tone="muted">{live.length > 0 ? `${hubCount(live.length)} active` : 'None active'}</HubChip>;
   }
   return (
     <HubCard
@@ -2163,6 +2180,7 @@ function HubAccessKeys({ colors }) {
       {read.keys.map((k) => <HubKeyRow key={`key-${k.id}`} k={k} navy={colors.navy} onRevoked={load} />)}
       <HubWhy label="What a key can do">
         {'A key is minted once, from a browser where you are signed in or with the admin tool, and shown only then. The server keeps a fingerprint of it, so it cannot be shown here or anywhere again.'}
+        {'A key minted within fifteen minutes of signing in works at once. One minted from an older session is Pending until you tap Approve in the email it sends, which works from your phone with no sign-in; its link lasts fifteen minutes. Every key made, approved or revoked is emailed to you.'}
         {'It can read this console and keep the books: the money hub, the costs, the expense list, the waitlist launch email, the research numbers, and the moderation and verification queues to read. It cannot mint or list keys, make a moderation decision, open reported content, verify a venue or change its tier, change a password, an email or a session, delete an account, or act as you anywhere else in the app.'}
         {'Every use is logged with its route, its answer and the address it came from. A key stops at its expiry, when it is revoked, and when you sign out everywhere or change your password. The steps are in tools/flock-admin/README.md.'}
       </HubWhy>

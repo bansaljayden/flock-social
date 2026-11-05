@@ -74,7 +74,7 @@ test.beforeEach(() => {
 
 // Runs the tool in this process. `key: true` writes the key file first;
 // `key: false` leaves the key file as it is.
-async function run(args, { key = true, stdin = null, env = {} } = {}) {
+async function run(args, { key = true, stdin = null, env = {}, pollMs } = {}) {
   if (key) cli.writeKeyFile(keyFile, KEY, { replace: true });
   let out = '';
   let err = '';
@@ -83,6 +83,7 @@ async function run(args, { key = true, stdin = null, env = {} } = {}) {
     stdout: (s) => { out += s; },
     stderr: (s) => { err += s; },
     stdin,
+    pollMs,
   });
   const all = out + err;
   assert.ok(!all.includes(KEY) && !all.includes(KEY.slice(10, 40)), `the key was printed:\n${all}`);
@@ -396,6 +397,59 @@ test('mint sends the piped session token, saves the key it gets back, and prints
   const junk = await run(['mint', '--name', 'x', '--yes'], { key: false, stdin: Readable.from(['hello']) });
   assert.strictEqual(junk.code, cli.EXIT.usage);
   assert.deepStrictEqual(requests, []);
+});
+
+test('a pending mint saves the key, says to tap Approve in the email, and --wait waits until whoami answers 200', async () => {
+  const pendingAnswer = (req) => ({
+    status: 202,
+    json: {
+      key: KEY, id: 12, name: req.body.name, scopes: ['admin'], createdAt: '2026-11-05T15:00:00.000Z',
+      expiresAt: '2027-02-03T15:00:00.000Z', state: 'pending', pending: true, shownOnce: true,
+      approval: { sentTo: 'o*****@example.com', expiresAt: new Date(Date.now() + 15 * 60000).toISOString() },
+    },
+  });
+  routes['POST /api/admin/keys'] = pendingAnswer;
+  const r = await run(['mint', '--name', 'Phone', '--yes'], { key: false, stdin: Readable.from([SESSION]) });
+  assert.strictEqual(r.code, cli.EXIT.ok, r.err);
+  assert.match(r.out, /Minted admin key "Phone" \(key 12\), pending: tap Approve in the email sent to o\*{5}@example\.com\. It does nothing until then\./);
+  assert.strictEqual(fs.readFileSync(keyFile, 'utf8'), `${KEY}\n`, 'a pending key is saved at mint time');
+  assert.deepStrictEqual(sent(), ['POST /api/admin/keys'], 'without --wait it does not wait');
+
+  // --wait: two answers of "awaiting approval", then approved.
+  fs.rmSync(keyFile, { force: true });
+  requests = [];
+  let asked = 0;
+  routes['GET /api/admin/whoami'] = () => {
+    asked += 1;
+    return asked < 3
+      ? { status: 403, json: { error: 'This admin key is awaiting approval. Tap Approve in the email.', adminKeyPending: true } }
+      : { json: WHOAMI };
+  };
+  const waited = await run(['mint', '--name', 'Phone', '--yes', '--wait'], { key: false, stdin: Readable.from([SESSION]), pollMs: 5 });
+  assert.strictEqual(waited.code, cli.EXIT.ok, waited.err);
+  assert.strictEqual(asked, 3);
+  assert.deepStrictEqual(sent(), ['POST /api/admin/keys', 'GET /api/admin/whoami', 'GET /api/admin/whoami', 'GET /api/admin/whoami']);
+  assert.match(waited.out, /Waiting for the approval, for up to 15 minutes\.\nApproved\. The key works now, until Feb 3, 2027\./);
+  assert.strictEqual(fs.readFileSync(keyFile, 'utf8'), `${KEY}\n`);
+
+  // Revoked from the email instead: whoami answers 401, and the wait ends.
+  fs.rmSync(keyFile, { force: true });
+  routes['GET /api/admin/whoami'] = { status: 401, json: { error: 'This admin key was revoked.' } };
+  const denied = await run(['mint', '--name', 'Phone', '--yes', '--wait'], { key: false, stdin: Readable.from([SESSION]), pollMs: 5 });
+  assert.strictEqual(denied.code, cli.EXIT.api);
+  assert.match(denied.err, /The key will not work: This admin key was revoked\./);
+
+  // An approval that never comes ends the wait once the link has expired.
+  fs.rmSync(keyFile, { force: true });
+  routes['POST /api/admin/keys'] = (req) => {
+    const a = pendingAnswer(req);
+    a.json.approval.expiresAt = new Date(Date.now() - 31000).toISOString();
+    return a;
+  };
+  routes['GET /api/admin/whoami'] = { status: 403, json: { error: 'awaiting approval', adminKeyPending: true } };
+  const lapsed = await run(['mint', '--name', 'Phone', '--yes', '--wait'], { key: false, stdin: Readable.from([SESSION]), pollMs: 5 });
+  assert.strictEqual(lapsed.code, cli.EXIT.api);
+  assert.match(lapsed.err, /No approval came before the link expired/);
 });
 
 test('key save moves a downloaded key into place, or saves one piped in', async () => {

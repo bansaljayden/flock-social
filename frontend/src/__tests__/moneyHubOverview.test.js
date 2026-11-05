@@ -2704,6 +2704,35 @@ describe('access keys: each key in a line, and Revoke as the one control', () =>
     expect(await within(keysCard()).findByText('Expires in 3 days')).toBeInTheDocument();
   });
 
+  test('a key waiting for its email approval reads Pending, says so, and can still be revoked; one whose link ran out reads Expired', async () => {
+    const now = Date.now();
+    const waiting = {
+      ...keyList(now)[0], id: 7, name: 'From the phone', state: 'pending', approvedAt: null, approvedVia: null,
+      approvalExpiresAt: iso(now + 10 * 60000), createdIp: '198.51.100.4', lastUsedAt: null, lastUsedIp: null, recentUses: [
+        { at: iso(now - 60000), method: 'GET', route: '/api/admin/whoami', status: 403, refused: 'pending' },
+      ],
+    };
+    const lapsed = { ...waiting, id: 8, name: 'Never approved', state: 'expired', approvalExpiresAt: iso(now - 60000), recentUses: [] };
+    api.getAdminKeys.mockResolvedValue({ keys: [waiting, lapsed], limit: 50 });
+    api.revokeAdminKey.mockResolvedValue({ revoked: true, alreadyRevoked: false });
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('From the phone');
+    expect(within(keysCard()).getByText('1 waiting for approval')).toBeInTheDocument();
+    const row = keyRow('From the phone');
+    expect(within(row).getByText('Pending')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Made [A-Z][a-z]{2} \d{1,2}(, \d{4})? from 198\.51\.100\.4, waiting for approval from the email until .+, expires /);
+    expect(row.textContent).toMatch(/It does nothing until Approve is tapped in the email sent to this account\./);
+    expect(row.querySelector('details').textContent).toMatch(/GET \/api\/admin\/whoami, refused, waiting for approval, /);
+    // The one control still applies: a key nobody asked for is revoked here.
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke From the phone' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke From the phone for good' }));
+    await waitFor(() => expect(api.revokeAdminKey).toHaveBeenCalledWith(7));
+    const gone = keyRow('Never approved');
+    expect(within(gone).getByText('Expired')).toBeInTheDocument();
+    expect(gone.textContent).toMatch(/never approved/);
+    expect(buttonsIn(gone)).toHaveLength(0);
+  });
+
   test('a key its account outgrew says why it stopped, and has nothing to revoke', async () => {
     const ended = [{ ...keyList()[0], state: 'ended' }];
     api.getAdminKeys.mockResolvedValue({ keys: ended, limit: 50 });

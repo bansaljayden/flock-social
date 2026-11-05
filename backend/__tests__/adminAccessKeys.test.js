@@ -81,6 +81,13 @@ for (const level of ['log', 'warn', 'error', 'info']) {
   };
 }
 
+// Every email the code asked to send, in order, and what the stand-in sender
+// answers. services/emailService.js is replaced on its module object, which is
+// what routes/admin.js, routes/keyApproval.js and services/adminKeyMail.js
+// call through, so nothing here reaches Resend.
+let mails = [];
+let mailAnswer = () => ({ sent: true, id: 'test-mail' });
+
 const fakeIo = {
   to: () => fakeIo,
   in: () => fakeIo,
@@ -144,6 +151,27 @@ async function mint(user, body = { name: 'Test tools' }) {
   return res.body;
 }
 
+// A mint from a session that signed in two hours ago: a pending key, and the
+// approval email it sent. The token is read out of the email's Approve link,
+// the only place it exists.
+async function mintPending(user, body = { name: 'Phone approved' }) {
+  const before = mails.length;
+  const res = await call('POST', '/api/admin/keys', { bearer: session(user, 2 * 3600), body });
+  assert.strictEqual(res.status, 202, res.text);
+  const mail = mails.slice(before).find((m) => m.subject === 'Approve a Flock admin access key');
+  assert.ok(mail, 'a pending mint sent no approval email');
+  const token = /token=([A-Za-z0-9_-]{43})&do=approve/.exec(mail.text)[1];
+  return { ...res.body, token, mail };
+}
+
+// The two links in an approval email, as a phone opens them: no session.
+async function link(method, token, action) {
+  const res = await fetch(`${base}/api/key-approval?token=${encodeURIComponent(token)}&do=${action}`, { method });
+  return { status: res.status, text: await res.text(), headers: res.headers };
+}
+
+const keyRow = async (id) => (await pool.query('SELECT * FROM admin_access_keys WHERE id = $1', [id])).rows[0];
+
 const usesOf = async (keyId) => (await pool.query(
   'SELECT method, route, status, refused, ip, used_at FROM admin_key_uses WHERE key_id = $1 ORDER BY id', [keyId]
 )).rows;
@@ -171,6 +199,8 @@ test.before(async () => {
   await migrate(pool);
   auth = require('../middleware/auth');
   keys = require('../middleware/adminKeys');
+  const emailService = require('../services/emailService');
+  emailService.sendEmail = async (msg) => { mails.push(msg); return mailAnswer(msg); };
 
   mounts = serverMounts();
   const app = express();
@@ -200,6 +230,12 @@ test.after(async () => {
 // 1. THE MIGRATION
 // ---------------------------------------------------------------------------
 
+test('135 is the one file with its number, and ASCII only for the replay suite', () => {
+  const dir = path.join(BACKEND, 'migrations');
+  assert.deepStrictEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.sql') && f.startsWith('135_')), ['135_admin_access_keys.sql']);
+  assert.ok(/^[\x00-\x7F]*$/.test(fs.readFileSync(MIGRATION, 'utf8')), 'the migration is ASCII only (the replay suite runs WIN1252)');
+});
+
 test('135 builds both tables with the columns the code reads', async () => {
   const cols = async (t) => (await pool.query(
     `SELECT column_name, data_type, is_nullable FROM information_schema.columns
@@ -211,9 +247,16 @@ test('135 builds both tables with the columns the code reads', async () => {
     'key_hash text not null',
     'scopes ARRAY not null',
     'created_by integer not null',
+    'created_ip text null',
     'session_version integer not null',
     'created_at timestamp with time zone not null',
     'expires_at timestamp with time zone not null',
+    'approved_at timestamp with time zone null',
+    'approved_via text null',
+    'approved_ip text null',
+    'approval_hash text null',
+    'approval_expires_at timestamp with time zone null',
+    'approval_used_at timestamp with time zone null',
     'last_used_at timestamp with time zone null',
     'last_used_ip text null',
     'revoked_at timestamp with time zone null',
@@ -248,6 +291,15 @@ test('135 refuses a row the code would never write', async () => {
     // A revoke that does not say how, and a name too long.
     [`INSERT INTO admin_access_keys (name, key_hash, created_by, revoked_at) VALUES ('x', $1, $2, NOW())`, [hash, owner.id]],
     [`INSERT INTO admin_access_keys (name, key_hash, created_by) VALUES ($3, $1, $2)`, [hash, owner.id, 'x'.repeat(61)]],
+    // An approval that does not say how, a way nobody approves by, an approval
+    // token that is not a hash, a token with no deadline, and an emailed
+    // approval with no token behind it.
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, approved_at) VALUES ('x', $1, $2, NOW())`, [hash, owner.id]],
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, approved_at, approved_via) VALUES ('x', $1, $2, NOW(), 'phone')`, [hash, owner.id]],
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, approval_hash, approval_expires_at) VALUES ('x', $1, $2, 'token', NOW())`, [hash, owner.id]],
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, approval_hash) VALUES ('x', $1, $2, $3)`, [hash, owner.id, 'b'.repeat(64)]],
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, approved_at, approved_via) VALUES ('x', $1, $2, NOW(), 'email')`, [hash, owner.id]],
+    [`INSERT INTO admin_access_keys (name, key_hash, created_by, revoked_at, revoked_via) VALUES ('x', $1, $2, NOW(), 'phone')`, [hash, owner.id]],
   ];
   for (const [sql, params] of bad) {
     await assert.rejects(pool.query(sql, params), /violates check constraint/, sql);
@@ -265,6 +317,15 @@ test('135 refuses a row the code would never write', async () => {
     pool.query(`INSERT INTO admin_access_keys (name, key_hash, created_by) VALUES ('dup', $1, $2)`, [hash, owner.id]),
     /duplicate key value/
   );
+  // The same approval token cannot stand behind two keys.
+  await pool.query(
+    `INSERT INTO admin_access_keys (name, key_hash, created_by, approval_hash, approval_expires_at)
+     VALUES ('p1', $1, $2, $3, NOW() + INTERVAL '15 minutes')`, ['c'.repeat(64), owner.id, 'd'.repeat(64)]
+  );
+  await assert.rejects(pool.query(
+    `INSERT INTO admin_access_keys (name, key_hash, created_by, approval_hash, approval_expires_at)
+     VALUES ('p2', $1, $2, $3, NOW() + INTERVAL '15 minutes')`, ['e'.repeat(64), owner.id, 'd'.repeat(64)]
+  ), /duplicate key value/);
   for (const refused of ['nope', 'not_admin']) {
     await assert.rejects(pool.query(
       `INSERT INTO admin_key_uses (key_id, method, route, refused)
@@ -331,15 +392,90 @@ test('days may be set from 1 to 180, and nothing else is accepted', async () => 
   }
 });
 
-test('a session that signed in more than the window ago cannot mint, renewed or not', async () => {
+test('the fresh path is unchanged: a key minted within the window works at once and asks for no approval', async () => {
   const owner = await insertUser({ role: 'admin' });
-  const res = await call('POST', '/api/admin/keys', {
-    bearer: session(owner, keys.ADMIN_KEY_MINT_FRESH_SECONDS + 60), body: { name: 'late' },
-  });
-  assert.strictEqual(res.status, 403);
+  mails = [];
+  const k = await mint(owner, { name: 'Fresh' });
+  assert.strictEqual(k.pending, false);
+  assert.strictEqual(k.state, 'active');
+  assert.strictEqual(k.approvedVia, 'session');
+  assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 200);
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.approval_hash, null, 'a fresh key carries no approval token');
+  assert.ok(row.approved_at instanceof Date);
+  assert.deepStrictEqual(mails.map((m) => m.subject), ['A Flock admin access key was made'], 'a fresh mint asks for no approval, and says it was made');
+  // The edge of the window is still fresh.
+  const edge = await call('POST', '/api/admin/keys', { bearer: session(owner, keys.ADMIN_KEY_MINT_FRESH_SECONDS - 5), body: { name: 'Edge' } });
+  assert.strictEqual(edge.status, 201, edge.text);
+});
+
+test('a session older than the window mints a pending key, shown once and marked pending, and emails the approval link', async () => {
+  const owner = await insertUser({ role: 'admin', name: 'Owner Admin' });
+  mails = [];
+  const res = await call('POST', '/api/admin/keys', { bearer: session(owner, 3 * 86400), body: { name: 'From the phone', days: 30 } });
+  assert.strictEqual(res.status, 202, res.text);
+  assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+  const k = res.body;
+  assert.match(k.key, /^flk_admin_[A-Za-z0-9_-]{43}$/);
+  assert.strictEqual(k.pending, true);
+  assert.strictEqual(k.state, 'pending');
+  assert.strictEqual(k.shownOnce, true);
+  assert.strictEqual(k.approvedAt, null);
+  assert.match(k.approval.sentTo, /^k\*{5}@example\.com$/, 'the answer says which mailbox to look in, masked');
+  const window = Date.parse(k.approval.expiresAt) - Date.parse(k.createdAt);
+  assert.strictEqual(window, keys.ADMIN_KEY_APPROVAL_MINUTES * 60000);
+  assert.strictEqual(Date.parse(k.expiresAt) - Date.parse(k.createdAt), 30 * 86400 * 1000);
+  // One email, to the account's own address, and the token in it is stored
+  // only as its hash.
+  assert.strictEqual(mails.length, 1);
+  assert.strictEqual(mails[0].to, owner.email);
+  const token = /token=([A-Za-z0-9_-]{43})&do=approve/.exec(mails[0].text)[1];
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.approval_hash, keys.hashAdminKey(token));
+  assert.ok(!JSON.stringify(row).includes(token), 'the approval token was stored');
+  assert.strictEqual(row.key_hash, keys.hashAdminKey(k.key));
+  assert.strictEqual(row.created_ip, '127.0.0.1');
+});
+
+test('a pending mint on an account no email can reach is refused, and makes nothing', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  await pool.query("UPDATE users SET email = $2 WHERE id = $1", [owner.id, `gone${owner.id}@account.invalid`]);
+  const fresh = await freshRow(owner.id);
+  mails = [];
+  const res = await call('POST', '/api/admin/keys', { bearer: session(fresh, 3600), body: { name: 'nowhere to send' } });
+  assert.strictEqual(res.status, 403, res.text);
   assert.strictEqual(res.body.signInAgain, true);
-  assert.match(res.body.error, /Sign in again first/);
+  assert.deepStrictEqual(mails, []);
   assert.strictEqual(Number((await pool.query('SELECT COUNT(*) AS n FROM admin_access_keys WHERE created_by = $1', [owner.id])).rows[0].n), 0);
+});
+
+test('an approval email that does not go out undoes the mint: no key is handed out dead', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  mailAnswer = () => ({ sent: false, error: 'provider down' });
+  try {
+    const res = await call('POST', '/api/admin/keys', { bearer: session(owner, 3600), body: { name: 'unsent' } });
+    assert.strictEqual(res.status, 503, res.text);
+    assert.ok(!res.text.includes('flk_admin_'), 'a key was handed out for a mint that was undone');
+  } finally {
+    mailAnswer = () => ({ sent: true, id: 'test-mail' });
+  }
+  assert.strictEqual(Number((await pool.query('SELECT COUNT(*) AS n FROM admin_access_keys WHERE created_by = $1', [owner.id])).rows[0].n), 0);
+});
+
+test('at most a few keys wait for approval at once, which bounds the approval emails an old session can send', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  for (let i = 0; i < keys.ADMIN_KEY_PENDING_MAX; i += 1) await mintPending(owner, { name: `waiting ${i}` });
+  mails = [];
+  const over = await call('POST', '/api/admin/keys', { bearer: session(owner, 3600), body: { name: 'one more' } });
+  assert.strictEqual(over.status, 409, over.text);
+  assert.deepStrictEqual(mails, [], 'a refused mint sent an email');
+  // A fresh session is not held back by them.
+  assert.strictEqual((await call('POST', '/api/admin/keys', { bearer: session(owner), body: { name: 'fresh' } })).status, 201);
+  // Once a waiting key's link runs out it no longer counts.
+  await pool.query(
+    "UPDATE admin_access_keys SET approval_expires_at = NOW() - INTERVAL '1 second' WHERE created_by = $1 AND approved_at IS NULL", [owner.id]
+  );
+  await mintPending(owner, { name: 'after they lapsed' });
 });
 
 test('a key cannot mint a key, and a signed-in account that is not an admin cannot either', async () => {
@@ -720,6 +856,282 @@ test('an odd spelling of an admin path is judged as Express routes it, or refuse
     assert.ok(isKeyRefusal(res), `${p}: ${res.status} ${res.text}`);
   }
   assert.ok(isKeyRefusal(await call('GET', '/api/admin/nothing-here', { bearer: k.key })), 'an unknown admin path let a key through');
+});
+
+// ---------------------------------------------------------------------------
+// 5b. PENDING KEYS AND THE APPROVAL LINK
+// ---------------------------------------------------------------------------
+
+const isPendingRefusal = (res) => res.status === 403 && res.body && res.body.adminKeyPending === true
+  && /awaiting approval/.test(res.body.error);
+
+test('a pending key authenticates nothing: every authenticated route and every admin route answers 403 awaiting approval', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner);
+  let refused = 0;
+  for (const m of mounts) {
+    for (const r of routesOf(m.router)) {
+      if (!r.guarded || typeof r.path !== 'string') continue;
+      const url = m.prefix + concrete(r.path);
+      const res = await call(r.method, url, { bearer: k.key, body: r.method === 'GET' ? undefined : {} });
+      assert.ok(isPendingRefusal(res), `${r.method} ${url} answered a pending key ${res.status} ${res.text}`);
+      refused += 1;
+    }
+  }
+  assert.ok(refused >= 200, `only ${refused} routes were tried`);
+  // Not a single use reached a route: the key was never marked used.
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.last_used_at, null);
+  assert.strictEqual(row.approved_at, null);
+  const uses = await settled(k.id);
+  assert.ok(uses.length > 0 && uses.every((u) => u.refused === 'pending' && u.status === 403));
+});
+
+test('opening a link draws a page and changes nothing: a mail scanner that fetches both links approves and revokes nothing', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Scanned' });
+  for (const action of ['approve', 'deny', 'approve', 'deny']) {
+    const page = await link('GET', k.token, action);
+    assert.strictEqual(page.status, 200, page.text);
+    assert.match(page.text, /<form method="post"/);
+    assert.match(page.text, /Scanned/);
+    assert.match(page.text, action === 'approve' ? /Approve the key/ : /Revoke the key/);
+    assert.strictEqual(page.headers.get('cache-control'), 'no-store');
+    assert.match(page.headers.get('content-security-policy'), /default-src 'none'/);
+    assert.match(page.headers.get('content-security-policy'), /form-action 'self'/);
+    assert.ok(!page.text.includes(owner.email), 'the page echoed the address');
+  }
+  const row = await keyRow(k.id);
+  assert.deepStrictEqual([row.approved_at, row.revoked_at, row.approval_used_at], [null, null, null]);
+  assert.ok(isPendingRefusal(await call('GET', '/api/admin/whoami', { bearer: k.key })));
+});
+
+test('the Approve button approves once: the key works, and the same link never works again', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Approved' });
+  mails = [];
+  const done = await link('POST', k.token, 'approve');
+  assert.strictEqual(done.status, 200, done.text);
+  assert.match(done.text, /The key is approved/);
+  const who = await call('GET', '/api/admin/whoami', { bearer: k.key });
+  assert.strictEqual(who.status, 200, who.text);
+  assert.strictEqual(who.body.key.id, k.id);
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.approved_via, 'email');
+  assert.strictEqual(row.approved_ip, '127.0.0.1');
+  assert.ok(row.approval_used_at instanceof Date);
+  assert.deepStrictEqual(mails.map((m) => m.subject), ['Flock admin access key approved']);
+  // Used: a second tap, and either link opened again, refuse and change nothing.
+  for (const [method, action] of [['POST', 'approve'], ['POST', 'deny'], ['GET', 'approve'], ['GET', 'deny']]) {
+    const again = await link(method, k.token, action);
+    assert.ok(again.status === 409 || again.status === 410, `${method} ${action}: ${again.status}`);
+    assert.match(again.text, /already approved/);
+  }
+  assert.strictEqual((await keyRow(k.id)).revoked_at, null, 'the deny link revoked a key after the link was spent');
+  assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 200);
+});
+
+test('"This wasn\'t me" revokes the pending key for good, and says so by email', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Not mine' });
+  mails = [];
+  const done = await link('POST', k.token, 'deny');
+  assert.strictEqual(done.status, 200, done.text);
+  assert.match(done.text, /The key is revoked/);
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.revoked_via, 'email');
+  assert.strictEqual(row.approved_at, null);
+  const who = await call('GET', '/api/admin/whoami', { bearer: k.key });
+  assert.strictEqual(who.status, 401);
+  assert.strictEqual(who.body.error, keys.KEY_WORDS.revoked);
+  assert.deepStrictEqual(mails.map((m) => m.subject), ['Flock admin access key revoked']);
+  assert.match(mails[0].text, /revoked from the "This wasn't me" link in its email/);
+  // And the Approve link cannot bring it back.
+  const late = await link('POST', k.token, 'approve');
+  assert.strictEqual(late.status, 409);
+  assert.strictEqual((await keyRow(k.id)).approved_at, null);
+});
+
+test('an expired approval link is refused, and its key can never work', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Too late' });
+  await pool.query("UPDATE admin_access_keys SET approval_expires_at = NOW() - INTERVAL '1 second' WHERE id = $1", [k.id]);
+  const page = await link('GET', k.token, 'approve');
+  assert.strictEqual(page.status, 410);
+  assert.match(page.text, /This link has expired/);
+  assert.ok(!/<form/.test(page.text), 'an expired link drew a button');
+  const post = await link('POST', k.token, 'approve');
+  assert.strictEqual(post.status, 409);
+  assert.strictEqual((await keyRow(k.id)).approved_at, null);
+  const who = await call('GET', '/api/admin/whoami', { bearer: k.key });
+  assert.strictEqual(who.status, 401);
+  assert.strictEqual(who.body.error, keys.KEY_WORDS.unapproved);
+  // The list says so too.
+  const list = await call('GET', '/api/admin/keys', { bearer: session(owner) });
+  assert.strictEqual(list.body.keys.find((x) => x.id === k.id).state, 'expired');
+});
+
+test('a key revoked while it waited cannot be approved', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Revoked first' });
+  const revoke = await call('DELETE', `/api/admin/keys/${k.id}`, { bearer: session(owner) });
+  assert.strictEqual(revoke.status, 200, revoke.text);
+  const page = await link('GET', k.token, 'approve');
+  assert.strictEqual(page.status, 410);
+  assert.match(page.text, /This key is revoked/);
+  const post = await link('POST', k.token, 'approve');
+  assert.strictEqual(post.status, 409);
+  assert.match(post.text, /This key is revoked/);
+  const row = await keyRow(k.id);
+  assert.strictEqual(row.approved_at, null);
+  assert.strictEqual(row.revoked_via, 'session');
+  assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 401);
+});
+
+test('a key whose account signed out everywhere while it waited cannot be approved', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner, { name: 'Outlived' });
+  await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [owner.id]);
+  const page = await link('GET', k.token, 'approve');
+  assert.strictEqual(page.status, 410);
+  assert.match(page.text, /can no longer be approved/);
+  assert.strictEqual((await link('POST', k.token, 'approve')).status, 409);
+  assert.strictEqual((await keyRow(k.id)).approved_at, null);
+});
+
+test('a link that is not one Flock sent is refused without touching any key', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mintPending(owner);
+  const flipped = k.token.slice(0, -1) + (k.token.endsWith('A') ? 'B' : 'A');
+  for (const [token, action] of [[flipped, 'approve'], ['short', 'approve'], [k.token, 'approve-all'], [k.token, ''], [`${k.token}A`, 'deny']]) {
+    for (const method of ['GET', 'POST']) {
+      const res = await link(method, token, action);
+      assert.ok(res.status === 400 || res.status === 404, `${method} ${action}: ${res.status}`);
+      assert.match(res.text, /This link does not work/);
+    }
+  }
+  const row = await keyRow(k.id);
+  assert.deepStrictEqual([row.approved_at, row.revoked_at], [null, null]);
+});
+
+test('the page\'s button gets past server.js\'s own cors: the self-posting exemption covers the approval page', async () => {
+  // server.js's allowlist and cors mount, lifted from the source as
+  // emailSuppressionAndUnsubscribe.test.js does for the unsubscribe page, in
+  // front of the real approval router.
+  const src = fs.readFileSync(path.join(BACKEND, 'server.js'), 'utf8');
+  const start = src.indexOf('const allowedOrigins = [');
+  const mountAt = src.indexOf('app.use(cors(', start);
+  const tail = /\)\);\r?\n/.exec(src.slice(mountAt));
+  assert.ok(start > 0 && mountAt > start && tail, 'the cors block in server.js has moved; retarget this lift');
+  const app = express();
+  // eslint-disable-next-line no-new-func
+  new Function('app', 'cors', 'process', 'console', src.slice(start, mountAt + tail.index + 3))(
+    app, require('cors'), { env: {} }, { log() {}, warn() {}, error() {} }
+  );
+  app.use('/api/key-approval', require('../routes/keyApproval'));
+  app.use((err, _req, res, _next) => res.status(err && err.type === 'cors.origin.refused' ? 403 : 500).json({ error: 'Not allowed by CORS' }));
+  const lifted = await new Promise((resolve) => { const s = http.createServer(app).listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const owner = await insertUser({ role: 'admin' });
+    const k = await mintPending(owner, { name: 'Through cors' });
+    const port = lifted.address().port;
+    const post = (origin) => new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, method: 'POST', path: `/api/key-approval?token=${k.token}&do=approve`,
+        headers: { Origin: origin, Host: 'api.flockcorp.com', 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': 0 },
+      }, (res) => { let t = ''; res.on('data', (c) => { t += c; }); res.on('end', () => resolve({ status: res.statusCode, text: t })); });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.strictEqual((await post('https://evil.example')).status, 403, 'a foreign site posted the approval');
+    assert.strictEqual((await keyRow(k.id)).approved_at, null);
+    const ok = await post('null');
+    assert.strictEqual(ok.status, 200, ok.text);
+    assert.ok((await keyRow(k.id)).approved_at instanceof Date);
+  } finally {
+    await new Promise((r) => lifted.close(r));
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 5c. THE EMAILS, WORD FOR WORD WHERE IT MATTERS
+// ---------------------------------------------------------------------------
+
+test('the approval email names the key, its expiry, where and when it was asked for, and carries both links', async () => {
+  const owner = await insertUser({ role: 'admin', name: 'Owner Admin' });
+  const k = await mintPending(owner, { name: 'Laptop tools', days: 60 });
+  const m = k.mail;
+  const mailKit = require('../services/adminKeyMail');
+  assert.strictEqual(m.to, owner.email);
+  assert.strictEqual(m.subject, 'Approve a Flock admin access key');
+  const approve = `https://api.flockcorp.com/api/key-approval?token=${k.token}&do=approve`;
+  const deny = `https://api.flockcorp.com/api/key-approval?token=${k.token}&do=deny`;
+  assert.strictEqual(m.text, [
+    'Approve a Flock admin access key',
+    '',
+    'Hi Owner Admin, an admin access key was asked for on your Flock account.',
+    '',
+    'Name: Laptop tools',
+    `Asked for: ${mailKit.when(k.createdAt)} from 127.0.0.1`,
+    `Works until: ${mailKit.day(k.expiresAt)}, if approved`,
+    '',
+    'Approve it here. The link works once and expires in 15 minutes:',
+    approve,
+    '',
+    'If you did not ask for this, revoke it here:',
+    deny,
+    '',
+    'The key does nothing until it is approved. If it was not you, someone is signed in as you: revoke the key, then change your password, which signs out every session.',
+    '',
+    'The Flock Team',
+  ].join('\n'));
+  assert.ok(m.html.includes(`href="${approve.replace(/&/g, '&amp;')}"`), 'the Approve button is not the approve link');
+  assert.ok(m.html.includes(`href="${deny.replace(/&/g, '&amp;')}"`), 'the "This wasn\'t me" button is not the deny link');
+  assert.match(m.html, />Approve the key</);
+  assert.match(m.html, />This wasn&#39;t me</);
+  assert.ok(!m.text.includes('flk_admin_') && !m.html.includes('flk_admin_'), 'the email carried the key');
+  assert.match(mailKit.when(k.createdAt), /^[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M E[SD]T$/);
+});
+
+test('every key event is emailed: a fresh mint, an approval, and each way of revoking', async () => {
+  const owner = await insertUser({ role: 'admin', name: 'Owner Admin' });
+  const mailKit = require('../services/adminKeyMail');
+  mails = [];
+  const fresh = await mint(owner, { name: 'Fresh one' });
+  assert.strictEqual(mails.length, 1);
+  assert.strictEqual(mails[0].subject, 'A Flock admin access key was made');
+  assert.strictEqual(mails[0].text, [
+    'A Flock admin access key was made',
+    '',
+    'Hi Owner Admin, an admin access key was made on your Flock account from a session that had just signed in, so it works now.',
+    '',
+    'Name: Fresh one',
+    `Made: ${mailKit.when(fresh.createdAt)} from 127.0.0.1`,
+    `Works until: ${mailKit.day(fresh.expiresAt)}`,
+    '',
+    'If this was you, there is nothing to do. If it was not you, someone is signed in as you: revoke the key, then change your password, which signs out every session. Keys are revoked on the Admin dashboard under Access keys.',
+    '',
+    'The Flock Team',
+  ].join('\n'));
+
+  const pend = await mintPending(owner, { name: 'Phone one' });
+  mails = [];
+  await link('POST', pend.token, 'approve');
+  assert.strictEqual(mails.length, 1);
+  assert.strictEqual(mails[0].subject, 'Flock admin access key approved');
+  assert.match(mails[0].text, /^A Flock admin access key was approved\n\nHi Owner Admin, the admin access key "Phone one" was approved from the link in its email, so it works now\.\n\nApproved: .+ from 127\.0\.0\.1\nWorks until: .+\n\nIf you did not approve it, revoke it on the Admin dashboard under Access keys, then change your password, which signs out every session\.\n\nThe Flock Team$/);
+
+  mails = [];
+  await call('DELETE', `/api/admin/keys/${fresh.id}`, { bearer: session(owner) });
+  await call('DELETE', `/api/admin/keys/${pend.id}`, { bearer: pend.key });
+  assert.deepStrictEqual(mails.map((m) => m.subject), ['Flock admin access key revoked', 'Flock admin access key revoked']);
+  assert.match(mails[0].text, /the admin access key "Fresh one" was revoked from the Admin dashboard\. It no longer works\./);
+  assert.match(mails[1].text, /the admin access key "Phone one" was revoked by the key itself\. It no longer works\./);
+  assert.ok(mails.every((m) => m.to === owner.email));
+  // A second revoke is no event, and sends nothing.
+  mails = [];
+  await call('DELETE', `/api/admin/keys/${fresh.id}`, { bearer: session(owner) });
+  assert.deepStrictEqual(mails, []);
 });
 
 // ---------------------------------------------------------------------------

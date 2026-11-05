@@ -14,36 +14,45 @@ node tools/flock-admin/admin.mjs status
 
 ## Minting a key
 
-A key lasts 90 days unless you ask for fewer (or more, up to 180). Minting takes
-a sign-in from the last 15 minutes, so a session that has been open for days
-cannot mint one. Each way below starts the same:
+A key lasts 90 days unless you ask for fewer (or more, up to 180). It is minted
+from a browser where the admin account is signed in, at
+https://www.flockcorp.com/app, in that tab's developer console (F12, then
+Console). The session can be any age:
 
-1. Open https://www.flockcorp.com/app and sign in with the admin account. If it
-   was already signed in, sign out and back in.
-2. Open the browser's developer console on that tab (F12, then Console).
+- **Signed in within the last 15 minutes:** the key works at once.
+- **Signed in earlier:** the key is **pending**. It does nothing, and every
+  route answers it 403 "awaiting approval", until you tap **Approve** in the
+  email sent to the account's address, "Approve a Flock admin access key". The
+  link works once, for 15 minutes, on your phone with no sign-in. Opening it
+  shows a page; only the page's button approves, so a mail scanner that opens
+  links approves nothing. **This wasn't me** in the same email revokes the key.
+
+Either way you get an email when a key is made, approved or revoked.
 
 ### Way 1: with this tool (the key is never shown)
 
-3. In the console, copy the session token to the clipboard. This prints nothing:
+1. In the console, copy the session token to the clipboard. This prints nothing:
 
    ```js
    copy(localStorage.getItem('flockToken'))
    ```
 
-4. In PowerShell, from the repository root:
+2. In PowerShell, from the repository root:
 
    ```powershell
-   Get-Clipboard | node tools/flock-admin/admin.mjs mint --name "PC tools" --days 90 --yes
+   Get-Clipboard | node tools/flock-admin/admin.mjs mint --name "PC tools" --days 90 --yes --wait
    Set-Clipboard -Value ' '
    ```
 
    The tool sends the token to `POST /api/admin/keys`, writes the key it gets
-   back to the key file, and prints only the key's number, name and expiry. The
-   second line clears the clipboard.
+   back to the key file, and prints only the key's number, name and expiry. A
+   pending key prints `pending: tap Approve in the email`, and with `--wait` the
+   tool checks every 10 seconds, for up to 15 minutes, until the approval lands.
+   The second line clears the clipboard.
 
 ### Way 2: from the console alone
 
-3. Paste this into the console. It mints the key and saves it as a download
+1. Paste this into the console. It mints the key and saves it as a download
    named `flock-admin-key`; the key is not printed:
 
    ```js
@@ -59,19 +68,23 @@ cannot mint one. Each way below starts the same:
      a.href = URL.createObjectURL(new Blob([`${j.key}\n`], { type: 'application/octet-stream' }));
      a.download = 'flock-admin-key';
      a.click();
-     console.log(`Minted key ${j.id} "${j.name}", expires ${j.expiresAt}. Saved to Downloads as flock-admin-key.`);
+     console.log(`Minted key ${j.id} "${j.name}", ${j.pending ? `pending: tap Approve in the email sent to ${j.approval.sentTo}` : 'active'}, expires ${j.expiresAt}. Saved to Downloads as flock-admin-key.`);
    })();
    ```
 
-4. Move the download into place. This checks it is a key, writes the key file
+2. Move the download into place. This checks it is a key, writes the key file
    and deletes the download:
 
    ```powershell
    node tools/flock-admin/admin.mjs key save "$HOME\Downloads\flock-admin-key"
    ```
 
+3. If it was pending, tap Approve in the email. `node tools/flock-admin/admin.mjs status`
+   answers `awaiting approval` until then.
+
 The API shows a key once, in the answer that mints it. The server keeps only its
-SHA-256 hash, so a lost key cannot be recovered: revoke it and mint another.
+SHA-256 hash, and the approval link's token only as its hash, so a lost key
+cannot be recovered: revoke it and mint another.
 
 ## Where the key lives
 
@@ -127,9 +140,11 @@ Exit codes: 0 done, 1 the API refused or failed, 2 the command line was wrong,
   expires, when and from where it was last used, and its last few uses.
 - From this tool: `node tools/flock-admin/admin.mjs revoke --yes` revokes the key
   it holds and deletes the key file.
+- From the approval email: **This wasn't me** revokes a pending key.
 - A key also stops on its own at its expiry, and the moment its account signs
   out everywhere, changes or resets its password, stops being an admin or is
-  banned. Deleting the account deletes its keys.
+  banned. A pending key whose approval link ran out never works. Deleting the
+  account deletes its keys.
 
 ## What a key can reach
 
@@ -151,7 +166,8 @@ else (`ADMIN_KEY_ROUTES` in `backend/middleware/adminKeys.js`):
 
 ## What a key cannot do
 
-- Mint a key or list keys. Minting takes a person signed in.
+- Mint a key or list keys. Minting takes a signed-in session, and a key from a
+  session older than 15 minutes works only once Approve is tapped in its email.
 - Make a moderation decision (`PUT /api/admin/reports/:id`): bans and unbans end
   or restore an account's sessions, and they stay with a person.
 - Open reported content or photos (`/api/admin/reports/:id/content`, `/image`).
@@ -171,5 +187,10 @@ Every use of a key is written to the `admin_key_uses` table (migration 135): the
 method, the path (never the query string), the answer's status, the time and
 the address it came from. A use that reaches a route is written before the
 route runs, so a use that cannot be logged does not happen. A refused use
-(expired, revoked, ended, or a route a key may not reach) is written with the
-reason. The dashboard's Access keys list shows the last few uses of each key.
+(expired, revoked, ended, pending, never approved, or a route a key may not
+reach) is written with the reason, up to 200 a key each hour. The dashboard's
+Access keys list shows the last few uses of each key.
+
+The account's address is emailed for every key made (with an Approve link when
+the key is pending), every approval and every revoke, with the key's name, the
+time and the address it came from.

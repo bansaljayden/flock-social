@@ -60,7 +60,11 @@ export function scrub(text) {
 // The command line
 // ---------------------------------------------------------------------------
 
-const BOOLEAN_FLAGS = new Set(['yes', 'dry-run', 'json', 'all', 'help', 'replace', 'verified', 'credit', 'stopped']);
+const BOOLEAN_FLAGS = new Set(['yes', 'dry-run', 'json', 'all', 'help', 'replace', 'verified', 'credit', 'stopped', 'wait']);
+// How often mint --wait asks whether the key was approved, and how long past
+// the approval link's own deadline it keeps asking.
+const APPROVAL_POLL_MS = 10000;
+const APPROVAL_GRACE_MS = 30000;
 const VALUE_FLAGS = new Set([
   'api', 'name', 'days', 'vendor', 'product', 'category', 'kind', 'cadence', 'amount', 'amount-cents', 'currency',
   'last-charged', 'renews', 'ends', 'note', 'replaces-line',
@@ -295,8 +299,10 @@ Writing (each needs --yes; without it, nothing is sent):
   revoke --yes                 revoke this key, then delete the key file
 
 The key:
-  mint --name N [--days 90] --yes
-                               mint a key with a session token piped in, and save it
+  mint --name N [--days 90] --yes [--wait]
+                               mint a key with a session token piped in, and save it.
+                               From a session older than 15 minutes the key is pending
+                               until Approve is tapped in the email; --wait waits for that
   key save [<file>]            save a key piped in, or moved from a downloaded file
 
 Options:
@@ -544,10 +550,53 @@ async function cmdMint(ctx) {
   if (!JWT_SHAPE.test(token)) throw new UsageError('What was piped in is not a session token, so nothing was sent.');
   const minted = await call(ctx, 'POST', '/api/admin/keys', { bearer: token, body: { name: ctx.flags.name, ...(days ? { days } : {}) } });
   if (!minted || !KEY_SHAPE.test(String(minted.key || ''))) throw new ApiError('The API answered without a key.', 0, null);
+  // Saved whether it works yet or not: the API shows a key once.
   writeKeyFile(file, minted.key, { replace: !!ctx.flags.replace });
+  if (minted.pending) {
+    const to = minted.approval && minted.approval.sentTo ? ` sent to ${minted.approval.sentTo}` : '';
+    const until = minted.approval && minted.approval.expiresAt
+      ? ` The link expires at ${new Date(minted.approval.expiresAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`
+      : '';
+    ctx.print(`Minted admin key "${minted.name}" (key ${minted.id}), pending: tap Approve in the email${to}. It does nothing until then.${until}`);
+    ctx.print(`Saved to ${file}. The key was not shown, and the API will not show it again.`);
+    if (!ctx.flags.wait) return EXIT.ok;
+    return waitForApproval(ctx, minted);
+  }
   ctx.print(`Minted admin key "${minted.name}" (key ${minted.id}). It expires ${day(minted.expiresAt)}.`);
   ctx.print(`Saved to ${file}. The key was not shown, and the API will not show it again.`);
   return EXIT.ok;
+}
+
+// Asks whoami with the new key until it answers: 403 "awaiting approval" means
+// keep waiting, 200 means approved, anything else means it never will be.
+async function waitForApproval(ctx, minted) {
+  ctx.key = minted.key;
+  const linkDeadline = minted.approval && Date.parse(minted.approval.expiresAt);
+  const deadline = Number.isFinite(linkDeadline)
+    ? linkDeadline + APPROVAL_GRACE_MS
+    : Date.now() + 15 * 60 * 1000 + APPROVAL_GRACE_MS;
+  const pollMs = ctx.pollMs || APPROVAL_POLL_MS;
+  ctx.print('Waiting for the approval, for up to 15 minutes.');
+  for (;;) {
+    try {
+      await call(ctx, 'GET', '/api/admin/whoami');
+      ctx.print(`Approved. The key works now, until ${day(minted.expiresAt)}.`);
+      return EXIT.ok;
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      const waiting = err.status === 403 && err.body && err.body.adminKeyPending === true;
+      // A dropped connection says nothing about the key; ask again.
+      if (!waiting && err.status !== 0) {
+        ctx.warn(`The key will not work: ${err.message}`);
+        return EXIT.api;
+      }
+    }
+    if (Date.now() + pollMs > deadline) {
+      ctx.warn('No approval came before the link expired, so the key will never work. Mint a new one to try again.');
+      return EXIT.api;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 async function cmdKeySave(ctx, from) {
@@ -607,6 +656,7 @@ export async function main(argv, io = {}) {
       stdin: io.stdin === undefined ? process.stdin : io.stdin,
       hubWordsFile: io.hubWordsFile,
       timeoutMs: io.timeoutMs,
+      pollMs: io.pollMs,
       print,
       warn,
       printJson: (v) => { print(JSON.stringify(v, null, 2)); return EXIT.ok; },

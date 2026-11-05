@@ -621,7 +621,7 @@ const corsOptions = {
 //
 // Neither value belongs on the allowlist itself. `null` is also what a
 // sandboxed iframe on any site sends, and the rest of the API must keep
-// refusing it. So the exemption is narrow: a POST to one of these two page
+// refusing it. So the exemption is narrow: a POST to one of these page
 // prefixes, from `null` or from this host, passes through cors with NO CORS
 // headers at all. The page is same-origin HTML and needs none, and a
 // cross-origin script still cannot read the answer. That admits nothing new:
@@ -633,7 +633,11 @@ const corsOptions = {
 // it holds on the Railway hostname and on a laptop as well as in production.
 // Host is caller-controlled, but a caller that can set it is not a browser, and
 // a non-browser can leave Origin off entirely.
-const SELF_POSTING_PAGES = ['/api/unsubscribe', '/api/venue-digest'];
+//
+// The admin key approval page (routes/keyApproval.js) is the third, on the same
+// terms: its button posts back to the page it is on, and the one-use token in
+// the query string is the whole authorisation.
+const SELF_POSTING_PAGES = ['/api/unsubscribe', '/api/venue-digest', '/api/key-approval'];
 
 function isOwnPageFormPost(req) {
   if (req.method !== 'POST') return false;
@@ -1008,6 +1012,9 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     form body, which the urlencoded parser below buffers under the same
 //     64KB ceiling and the router never looks at.
 //   * routes/avatars.js — GET /api/avatars/:style/svg only; no body is read.
+//   * routes/keyApproval.js — the admin key approval link: a GET that draws
+//     a page and a POST from its button, both reading the token and the action
+//     from the query string; the POST's empty form body is never read.
 //   * routes/ogCard.js — GET /api/og/invite only; no body is read.
 //   * routes/clientCrash.js — POST /api/client-crash, the crash screen's
 //     report: a label, an error name, a message the client clamps to 200
@@ -1723,6 +1730,12 @@ app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest'
 //     bytes, which is why it gets emailWebhookParser above rather than the
 //     default one.
 app.use('/api/unsubscribe', digestOptOutLimiter, require('./routes/unsubscribe'));
+// The Approve and "This wasn't me" links in the admin key approval email
+// (routes/keyApproval.js). No JWT, like the unsubscribe link above: the owner
+// taps it in a phone's mail app, and the one-use token in the query string is
+// the whole authorisation. Same limiter, for the same reason: a ceiling on an
+// open endpoint, not a gate on a token nobody can guess.
+app.use('/api/key-approval', digestOptOutLimiter, require('./routes/keyApproval'));
 app.use('/api/email-events', require('./routes/emailWebhook'));
 // The crash screen's report button. No JWT for the same reason as the two
 // above it: a crash can come before sign-in, and a report carries no account,

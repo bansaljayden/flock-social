@@ -189,10 +189,11 @@ test('how long ago the session signed in is read from auth_time, and an unknown 
   assert.ok(keys.ADMIN_KEY_MINT_FRESH_SECONDS <= 30 * 60, 'the window to mint after a sign-in grew past half an hour');
 });
 
-test('a key row reads as active, expired, revoked or ended, and its metadata never carries the hash', () => {
+test('a key row reads as active, pending, expired, revoked or ended, and its metadata never carries a hash', () => {
   const base = {
-    id: 3, name: 'PC', scopes: ['admin'], key_hash: 'f'.repeat(64),
+    id: 3, name: 'PC', scopes: ['admin'], key_hash: 'f'.repeat(64), approval_hash: 'e'.repeat(64),
     created_at: new Date('2026-11-01T00:00:00Z'), expires_at: new Date('2027-01-30T00:00:00Z'),
+    approved_at: new Date('2026-11-01T00:05:00Z'), approved_via: 'email',
     session_version: 2, token_version: 2, role: 'admin', is_banned: false,
   };
   const now = Date.parse('2026-11-05T00:00:00Z');
@@ -202,11 +203,52 @@ test('a key row reads as active, expired, revoked or ended, and its metadata nev
   assert.strictEqual(keys.keyState({ ...base, token_version: 3 }, now), 'ended');
   assert.strictEqual(keys.keyState({ ...base, role: 'user' }, now), 'ended');
   assert.strictEqual(keys.keyState({ ...base, is_banned: true }, now), 'ended');
+  // Never approved: pending while its link lives, and dead once it does not.
+  const waiting = { ...base, approved_at: null, approved_via: null, approval_expires_at: new Date(now + 10 * 60000) };
+  assert.strictEqual(keys.keyState(waiting, now), 'pending');
+  assert.strictEqual(keys.keyState({ ...waiting, approval_expires_at: new Date(now - 1000) }, now), 'expired');
+  assert.strictEqual(keys.keyState({ ...waiting, revoked_at: new Date() }, now), 'revoked');
+  assert.strictEqual(keys.keyMetadata(waiting, now).approvalExpiresAt, new Date(now + 10 * 60000).toISOString());
+  assert.strictEqual(keys.keyMetadata(base, now).approvalExpiresAt, null, 'an approved key has no approval deadline to show');
   const meta = keys.keyMetadata(base, now);
-  assert.ok(!('key_hash' in meta) && !JSON.stringify(meta).includes('f'.repeat(64)));
+  assert.ok(!('key_hash' in meta) && !('approval_hash' in meta));
+  assert.ok(!JSON.stringify(meta).includes('f'.repeat(64)) && !JSON.stringify(meta).includes('e'.repeat(64)));
   assert.deepStrictEqual(Object.keys(meta).sort(), [
-    'createdAt', 'expiresAt', 'id', 'lastUsedAt', 'lastUsedIp', 'name', 'revokedAt', 'revokedVia', 'scopes', 'state',
+    'approvalExpiresAt', 'approvedAt', 'approvedVia', 'createdAt', 'createdIp', 'expiresAt', 'id', 'lastUsedAt',
+    'lastUsedIp', 'name', 'revokedAt', 'revokedVia', 'scopes', 'state',
   ]);
+});
+
+test('a key that has not been approved is refused as pending while its link lives, and as never approved after', () => {
+  const { deadReason } = keys.__testing;
+  const row = { revoked_at: null, expired: false, session_version: 0, token_version: 0, role: 'admin', is_banned: false, approved_at: null };
+  assert.strictEqual(deadReason({ ...row, approval_open: true }), 'pending');
+  assert.strictEqual(deadReason({ ...row, approval_open: false }), 'unapproved');
+  assert.strictEqual(deadReason({ ...row, approval_open: null }), 'unapproved');
+  assert.strictEqual(deadReason({ ...row, approved_at: new Date() }), null);
+  // What ends a key ends a pending one first: approval cannot revive it.
+  assert.strictEqual(deadReason({ ...row, approval_open: true, token_version: 1 }), 'ended');
+  assert.strictEqual(deadReason({ ...row, approval_open: true, revoked_at: new Date() }), 'revoked');
+  assert.match(keys.KEY_WORDS.pending, /awaiting approval/);
+});
+
+test('an approval token is 32 random bytes in base64url, and nothing else is one', () => {
+  for (let i = 0; i < 20; i += 1) {
+    assert.ok(keys.isApprovalTokenShape(crypto.randomBytes(32).toString('base64url')));
+  }
+  for (const bad of ['', 'abc', KEY, 'A'.repeat(42), 'A'.repeat(44), `${'A'.repeat(42)}=`, null, 7]) {
+    assert.strictEqual(keys.isApprovalTokenShape(bad), false, String(bad));
+  }
+});
+
+test('a session is fresh for minting within the window after its sign-in, and an unknown sign-in is not', () => {
+  const now = 1_800_000_000_000;
+  const at = Math.floor(now / 1000);
+  assert.strictEqual(keys.isFreshSession({ tokenIssuedAt: at - 60 }, now), true);
+  assert.strictEqual(keys.isFreshSession({ tokenIssuedAt: at - keys.ADMIN_KEY_MINT_FRESH_SECONDS }, now), true);
+  assert.strictEqual(keys.isFreshSession({ tokenIssuedAt: at - keys.ADMIN_KEY_MINT_FRESH_SECONDS - 1 }, now), false);
+  assert.strictEqual(keys.isFreshSession({ tokenIssuedAt: at + 5 }, now), true, 'a sign-in a moment ahead is clock skew');
+  assert.strictEqual(keys.isFreshSession({ tokenIssuedAt: null }, now), false);
 });
 
 // ---------------------------------------------------------------------------

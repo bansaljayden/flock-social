@@ -36,6 +36,24 @@
 //     It cannot open a socket either, because the handshake verifies a JWT and
 //     a key is not one.
 //
+// HOW A KEY IS MINTED, two ways, both from a signed-in admin session and never
+// from a key (POST /api/admin/keys in routes/admin.js):
+//
+//   * From a session that signed in within ADMIN_KEY_MINT_FRESH_SECONDS. The
+//     key works at once, and the owner is emailed that it was made.
+//   * From an older session. The key is PENDING: it authenticates nothing, and
+//     every route answers it 403 "awaiting approval". The owner's address gets
+//     an email with an Approve link and a "This wasn't me" link
+//     (services/adminKeyMail.js), carrying a one-use token that is stored as
+//     its hash and dies after ADMIN_KEY_APPROVAL_MINUTES. Each link opens a
+//     page and only the page's button acts (routes/keyApproval.js), so a mail
+//     scanner that fetches every link approves and revokes nothing. Approving
+//     takes no Flock session: holding the link is the proof of the mailbox,
+//     which is the step up a fresh sign-in would otherwise be. A pending key
+//     whose link ran out can never work.
+//
+// Every mint, approval and revoke is emailed to the owner.
+//
 // WHAT A KEY CAN REACH is ADMIN_KEY_ROUTES, and nothing else. It is an explicit
 // list, not a prefix: a route added to routes/admin.js tomorrow is refused to a
 // key until somebody adds it here, and __tests__/adminAccessKeys.test.js fails
@@ -52,12 +70,13 @@
 // its status is written when the answer goes out. A refused use is written
 // with the reason, up to ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR a key each hour so
 // a replayed dead key cannot fill the table. A key nobody minted is logged to
-// the console only, by
-// address: there is no key to attach it to, and a database row per guess
-// would hand anyone a way to fill the table.
+// the console only, by address: there is no key to attach it to, and a
+// database row per guess would hand anyone a way to fill the table.
 //
 // WHAT ENDS A KEY. Its expiry (90 days by default, 180 at most); a revoke, from
-// the dashboard or by the key itself; and anything that ends the owner's
+// the dashboard, by the key itself, or from the "This wasn't me" link; an
+// approval link that runs out before a pending key is approved; and anything
+// that ends the owner's
 // sessions: the key carries users.token_version from the moment it was minted,
 // so a password change, a reset, sign out everywhere or an account claim ends
 // every key minted before it. A key also stops the moment its owner is no
@@ -84,11 +103,19 @@ const ADMIN_KEY_NAME_MAX = 60;
 // Live keys one admin may hold at once. A tool per machine is a handful; ten
 // is room for that with a ceiling on a runaway script that mints in a loop.
 const ADMIN_KEY_ACTIVE_MAX = 10;
-// A key outlives the session that mints it by months, so minting asks for a
-// sign-in this recent. A session renewed for weeks carries the time it
-// actually signed in (auth_time), so an old session, or a token lifted from
-// one, cannot mint a key without the owner signing in again.
+// A key outlives the session that mints it by months, so a key works at once
+// only when it is minted within this long of a sign-in. A session renewed for
+// weeks carries the time it actually signed in (auth_time), so an old session,
+// or a token lifted from one, mints a PENDING key instead, which works only
+// once the owner approves it from the email.
 const ADMIN_KEY_MINT_FRESH_SECONDS = 15 * 60;
+// How long an approval link lives, and how many pending keys one account may
+// have waiting at once, which bounds the approval emails an old session can
+// make the server send.
+const ADMIN_KEY_APPROVAL_MINUTES = 15;
+const ADMIN_KEY_PENDING_MAX = 3;
+// An approval token is 32 random bytes in base64url, like the key.
+const APPROVAL_TOKEN_SHAPE = /^[A-Za-z0-9_-]{43}$/;
 const ADMIN_KEY_LIST_LIMIT = 50;
 const ADMIN_KEY_RECENT_USES = 5;
 // Refused uses written down per key per hour. A key that leaked and was then
@@ -149,6 +176,8 @@ const KEY_WORDS = Object.freeze({
   revoked: 'This admin key was revoked.',
   expired: 'This admin key has expired. Mint a new one from a signed-in browser.',
   ended: 'This admin key has ended: its account signed out everywhere, changed its password, or is no longer an admin.',
+  pending: "This admin key is awaiting approval. Tap Approve in the email sent to the account's address.",
+  unapproved: 'This admin key was never approved, and its approval link has expired. Mint a new one.',
   route: 'An admin key cannot reach this route.',
   notSelf: 'An admin key can revoke only itself.',
   offAdmin: 'An admin key works on admin routes only. It cannot act as its owner anywhere else in the app.',
@@ -242,10 +271,11 @@ function keyRouteDecision(method, path, key) {
 // Looking a key up, and writing its uses down
 // ---------------------------------------------------------------------------
 
-// `expired` is read off the database clock, the one expires_at was written
-// with, so the server's own clock cannot stretch a key.
+// `expired` and `approval_open` are read off the database clock, the one the
+// deadlines were written with, so the server's own clock cannot stretch a key.
 const KEY_LOOKUP_SQL = `SELECT k.id, k.name, k.key_hash, k.scopes, k.session_version, k.created_at, k.expires_at,
-          k.revoked_at, (k.expires_at <= NOW()) AS expired,
+          k.revoked_at, k.approved_at, (k.expires_at <= NOW()) AS expired,
+          (k.approval_expires_at > NOW()) AS approval_open,
           u.id AS user_id, u.email, u.name AS user_name, u.role, u.email_verified, u.is_banned, u.token_version
      FROM admin_access_keys k
      JOIN users u ON u.id = k.created_by
@@ -253,11 +283,12 @@ const KEY_LOOKUP_SQL = `SELECT k.id, k.name, k.key_hash, k.scopes, k.session_ver
 
 // One statement for the key's last use and the log row, so a use is never on
 // one and missing from the other.
-// The key must still be live at this statement too, so a revoke that lands
-// between the lookup and here wins: nothing is written, and the use is refused.
+// The key must still be live and approved at this statement too, so a revoke
+// that lands between the lookup and here wins: nothing is written, and the use
+// is refused.
 const USE_INSERT_SQL = `WITH used AS (
        UPDATE admin_access_keys SET last_used_at = NOW(), last_used_ip = $2::text
-        WHERE id = $1::int AND revoked_at IS NULL AND expires_at > NOW()
+        WHERE id = $1::int AND revoked_at IS NULL AND approved_at IS NOT NULL AND expires_at > NOW()
         RETURNING id
      )
      INSERT INTO admin_key_uses (key_id, method, route, ip)
@@ -298,16 +329,29 @@ async function lookupKey(token) {
   return row;
 }
 
-// Why a key that exists can no longer act, or null. token_version is compared
-// with middleware/auth.js's own rule, required lazily because that file
-// requires this one.
+// Why a key that exists cannot act, or null. token_version is compared with
+// middleware/auth.js's own rule, required lazily because that file requires
+// this one. An ended key stays ended whatever else is true of it, so a key that
+// was pending when its account signed out everywhere reads as ended, and the
+// approval page refuses it the same way.
 function deadReason(row) {
   const { tokenVersionOf } = require('./auth');
   if (row.revoked_at) return 'revoked';
   if (row.expired === true) return 'expired';
   if (tokenVersionOf(row.session_version) !== tokenVersionOf(row.token_version)) return 'ended';
   if (row.role !== 'admin' || row.is_banned === true) return 'ended';
+  if (!row.approved_at) return row.approval_open === true ? 'pending' : 'unapproved';
   return null;
+}
+
+// A pending key is refused as forbidden (the key is real and waiting); every
+// other dead key as unauthenticated.
+const DEAD_STATUS = (reason) => (reason === 'pending' ? 403 : 401);
+
+function refuseDead(res, reason) {
+  const body = { error: KEY_WORDS[reason] };
+  if (reason === 'pending') body.adminKeyPending = true;
+  return res.status(DEAD_STATUS(reason)).json(body);
 }
 
 async function recordRefusal(keyId, ctx, status, reason) {
@@ -355,8 +399,8 @@ async function authenticateAdminKey(req, res, next, token) {
 
   const dead = deadReason(row);
   if (dead) {
-    await recordRefusal(row.id, ctx, 401, dead);
-    return res.status(401).json({ error: KEY_WORDS[dead] });
+    await recordRefusal(row.id, ctx, DEAD_STATUS(dead), dead);
+    return refuseDead(res, dead);
   }
 
   const decision = keyRouteDecision(req.method, keyRequestPath(req), { id: row.id, scopes: row.scopes });
@@ -415,8 +459,8 @@ async function refuseAdminKeyOffAdmin(req, res, token) {
   if (!row) return refuseUnknown(req, res);
   const dead = deadReason(row);
   if (dead) {
-    await recordRefusal(row.id, ctx, 401, dead);
-    return res.status(401).json({ error: KEY_WORDS[dead] });
+    await recordRefusal(row.id, ctx, DEAD_STATUS(dead), dead);
+    return refuseDead(res, dead);
   }
   await recordRefusal(row.id, ctx, 403, 'route');
   return res.status(403).json({ error: KEY_WORDS.offAdmin, adminKeyRefused: true });
@@ -433,7 +477,9 @@ function handleAdminKeyBearer(req, res, next, token) {
 // Minting, listing and revoking, for routes/admin.js
 // ---------------------------------------------------------------------------
 
-// What a key is, as the routes show it. Never the key and never its hash.
+// What a key is, as the routes show it. Never the key and never its hash. A
+// key never approved reads as pending while its approval link lives and as
+// expired after, because then it can never work.
 function keyState(row, now = Date.now()) {
   const { tokenVersionOf } = require('./auth');
   if (row.revoked_at) return 'revoked';
@@ -441,6 +487,10 @@ function keyState(row, now = Date.now()) {
   if (row.token_version !== undefined
     && tokenVersionOf(row.session_version) !== tokenVersionOf(row.token_version)) return 'ended';
   if (row.role !== undefined && (row.role !== 'admin' || row.is_banned === true)) return 'ended';
+  if (!row.approved_at) {
+    const open = row.approval_expires_at && new Date(row.approval_expires_at).getTime() > now;
+    return open ? 'pending' : 'expired';
+  }
   return 'active';
 }
 
@@ -452,7 +502,11 @@ function keyMetadata(row, now = Date.now()) {
     name: row.name,
     scopes: Array.isArray(row.scopes) ? [...row.scopes] : [],
     createdAt: iso(row.created_at),
+    createdIp: row.created_ip || null,
     expiresAt: iso(row.expires_at),
+    approvedAt: iso(row.approved_at),
+    approvedVia: row.approved_via || null,
+    approvalExpiresAt: row.approved_at ? null : iso(row.approval_expires_at),
     lastUsedAt: iso(row.last_used_at),
     lastUsedIp: row.last_used_ip || null,
     revokedAt: iso(row.revoked_at),
@@ -490,33 +544,73 @@ function sessionAgeSeconds(req, nowMs = Date.now()) {
   return Math.floor(nowMs / 1000) - at;
 }
 
-const MINT_LOCK_SQL = 'SELECT id FROM users WHERE id = $1 FOR UPDATE';
-const ACTIVE_COUNT_SQL = `SELECT COUNT(*)::int AS n FROM admin_access_keys
-    WHERE created_by = $1 AND revoked_at IS NULL AND expires_at > NOW()`;
-const MINT_INSERT_SQL = `INSERT INTO admin_access_keys (name, key_hash, scopes, created_by, session_version, expires_at)
-     VALUES ($1, $2, $3::text[], $4, $5, NOW() + make_interval(days => $6::int))
-     RETURNING id, name, scopes, created_at, expires_at, last_used_at, last_used_ip, revoked_at, revoked_via, session_version`;
+// True when a mint from this request works at once: a session, signed in
+// within ADMIN_KEY_MINT_FRESH_SECONDS. A clock skew that puts the sign-in a
+// moment in the future counts as fresh, as it does in routes/users.js.
+function isFreshSession(req, nowMs = Date.now()) {
+  const age = sessionAgeSeconds(req, nowMs);
+  return age !== null && age <= ADMIN_KEY_MINT_FRESH_SECONDS;
+}
 
-// Mints one key for `user`. The user row is locked for the length of the
-// transaction so two mints at once cannot both pass the ceiling. Returns
-// { key, row } or { tooMany: true }.
-async function mintAdminKey(user, { name, days }) {
+function generateApprovalToken() {
+  return crypto.randomBytes(ADMIN_KEY_RANDOM_BYTES).toString('base64url');
+}
+
+function isApprovalTokenShape(value) {
+  return typeof value === 'string' && APPROVAL_TOKEN_SHAPE.test(value);
+}
+
+const MINT_LOCK_SQL = 'SELECT id FROM users WHERE id = $1 FOR UPDATE';
+// Live: approved and not ended by its own dates, or still waiting inside its
+// approval window. A pending key whose window closed counts as neither.
+const MINT_COUNTS_SQL = `SELECT
+          COUNT(*) FILTER (WHERE approved_at IS NOT NULL OR approval_expires_at > NOW())::int AS live,
+          COUNT(*) FILTER (WHERE approved_at IS NULL AND approval_expires_at > NOW())::int AS pending
+     FROM admin_access_keys
+    WHERE created_by = $1 AND revoked_at IS NULL AND expires_at > NOW()`;
+const MINT_ACTIVE_SQL = `INSERT INTO admin_access_keys
+       (name, key_hash, scopes, created_by, created_ip, session_version, expires_at, approved_at, approved_via)
+     VALUES ($1, $2, $3::text[], $4, $5, $6, NOW() + make_interval(days => $7::int), NOW(), 'session')
+     RETURNING id, name, scopes, created_at, created_ip, expires_at, approved_at, approved_via, approval_expires_at,
+               last_used_at, last_used_ip, revoked_at, revoked_via, session_version`;
+const MINT_PENDING_SQL = `INSERT INTO admin_access_keys
+       (name, key_hash, scopes, created_by, created_ip, session_version, expires_at, approval_hash, approval_expires_at)
+     VALUES ($1, $2, $3::text[], $4, $5, $6, NOW() + make_interval(days => $7::int), $8, NOW() + make_interval(mins => $9::int))
+     RETURNING id, name, scopes, created_at, created_ip, expires_at, approved_at, approved_via, approval_expires_at,
+               last_used_at, last_used_ip, revoked_at, revoked_via, session_version`;
+
+// Mints one key for `user`: active when `fresh`, pending with an approval
+// token otherwise. The user row is locked for the length of the transaction so
+// two mints at once cannot both pass a ceiling. Returns { key, row,
+// approvalToken } (approvalToken null for an active key), { tooMany: true } or
+// { tooManyPending: true }.
+async function mintAdminKey(user, { name, days, fresh, ip }) {
   const { currentTokenVersion } = require('./auth');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(MINT_LOCK_SQL, [user.id]);
-    const { rows: [count] } = await client.query(ACTIVE_COUNT_SQL, [user.id]);
-    if (count && count.n >= ADMIN_KEY_ACTIVE_MAX) {
+    const { rows: [counts] } = await client.query(MINT_COUNTS_SQL, [user.id]);
+    if (counts && counts.live >= ADMIN_KEY_ACTIVE_MAX) {
       await client.query('ROLLBACK');
       return { tooMany: true };
     }
+    if (!fresh && counts && counts.pending >= ADMIN_KEY_PENDING_MAX) {
+      await client.query('ROLLBACK');
+      return { tooManyPending: true };
+    }
     const key = generateAdminKey();
-    const { rows: [row] } = await client.query(MINT_INSERT_SQL, [
-      name, hashAdminKey(key), [...DEFAULT_SCOPES], user.id, currentTokenVersion(user), days,
-    ]);
+    const approvalToken = fresh ? null : generateApprovalToken();
+    const base = [name, hashAdminKey(key), [...DEFAULT_SCOPES], user.id, ip ? String(ip).slice(0, 64) : null, currentTokenVersion(user), days];
+    const { rows: [row] } = fresh
+      ? await client.query(MINT_ACTIVE_SQL, base)
+      : await client.query(MINT_PENDING_SQL, [...base, hashAdminKey(approvalToken), ADMIN_KEY_APPROVAL_MINUTES]);
     await client.query('COMMIT');
-    return { key, row: { ...row, role: user.role, is_banned: user.is_banned, token_version: user.token_version } };
+    return {
+      key,
+      approvalToken,
+      row: { ...row, role: user.role, is_banned: user.is_banned, token_version: user.token_version },
+    };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -525,14 +619,26 @@ async function mintAdminKey(user, { name, days }) {
   }
 }
 
+// A pending key whose approval email could not be sent can never work, and it
+// was never handed out, so it goes. Only a key nobody approved or used.
+const DISCARD_PENDING_SQL = `DELETE FROM admin_access_keys
+    WHERE id = $1 AND approved_at IS NULL AND last_used_at IS NULL`;
+
+async function discardPendingKey(id) {
+  await pool.query(DISCARD_PENDING_SQL, [id]);
+}
+
 // Live keys first, then the newest. Bounded like every list the admin routes
 // return; the limits are bound rather than spelled into the text so the SQL
 // sweep (__tests__/sqlParameterTypes.test.js) prepares both statements.
-const LIST_SQL = `SELECT k.id, k.name, k.scopes, k.created_at, k.expires_at, k.last_used_at, k.last_used_ip,
-          k.revoked_at, k.revoked_via, k.session_version, u.role, u.is_banned, u.token_version
+const LIST_SQL = `SELECT k.id, k.name, k.scopes, k.created_at, k.created_ip, k.expires_at, k.approved_at, k.approved_via,
+          k.approval_expires_at, k.last_used_at, k.last_used_ip, k.revoked_at, k.revoked_via, k.session_version,
+          u.role, u.is_banned, u.token_version
      FROM admin_access_keys k
      JOIN users u ON u.id = k.created_by
-    ORDER BY (k.revoked_at IS NULL AND k.expires_at > NOW()) DESC, k.created_at DESC, k.id DESC
+    ORDER BY (k.revoked_at IS NULL AND k.expires_at > NOW()
+              AND (k.approved_at IS NOT NULL OR k.approval_expires_at > NOW())) DESC,
+             k.created_at DESC, k.id DESC
     LIMIT $1::int`;
 
 const RECENT_USES_SQL = `SELECT key_id, used_at, method, route, status, refused
@@ -547,40 +653,115 @@ const RECENT_USES_SQL = `SELECT key_id, used_at, method, route, status, refused
 async function listAdminKeys(now = Date.now()) {
   const { rows } = await pool.query(LIST_SQL, [ADMIN_KEY_LIST_LIMIT]);
   const ids = rows.map((r) => Number(r.id));
-  const uses = new Map();
+  const uses = {};
   if (ids.length > 0) {
     const { rows: recent } = await pool.query(RECENT_USES_SQL, [
       ids, ADMIN_KEY_RECENT_USES, ADMIN_KEY_LIST_LIMIT * ADMIN_KEY_RECENT_USES,
     ]);
     for (const u of recent) {
-      const list = uses.get(Number(u.key_id)) || [];
-      list.push({
+      const id = Number(u.key_id);
+      if (!uses[id]) uses[id] = [];
+      uses[id].push({
         at: iso(u.used_at),
         method: u.method,
         route: u.route,
         status: u.status === null || u.status === undefined ? null : Number(u.status),
         refused: u.refused || null,
       });
-      uses.set(Number(u.key_id), list);
     }
   }
-  return rows.map((r) => ({ ...keyMetadata(r, now), recentUses: uses.get(Number(r.id)) || [] }));
+  return rows.map((r) => ({ ...keyMetadata(r, now), recentUses: uses[Number(r.id)] || [] }));
 }
 
-const REVOKE_SQL = `UPDATE admin_access_keys SET revoked_at = NOW(), revoked_via = $2
-    WHERE id = $1 AND revoked_at IS NULL
-    RETURNING id, name, scopes, created_at, expires_at, last_used_at, last_used_ip, revoked_at, revoked_via`;
-const REVOKED_ALREADY_SQL = `SELECT id, name, scopes, created_at, expires_at, last_used_at, last_used_ip, revoked_at, revoked_via
+// Revokes, and answers with the key and its owner's address, which the revoke
+// email goes to.
+const REVOKE_SQL = `UPDATE admin_access_keys k SET revoked_at = NOW(), revoked_via = $2
+     FROM users u
+    WHERE k.id = $1 AND k.revoked_at IS NULL AND u.id = k.created_by
+    RETURNING k.id, k.name, k.scopes, k.created_at, k.created_ip, k.expires_at, k.approved_at, k.approved_via,
+              k.approval_expires_at, k.last_used_at, k.last_used_ip, k.revoked_at, k.revoked_via,
+              u.email AS owner_email, u.name AS owner_name`;
+const REVOKED_ALREADY_SQL = `SELECT id, name, scopes, created_at, created_ip, expires_at, approved_at, approved_via,
+          approval_expires_at, last_used_at, last_used_ip, revoked_at, revoked_via
      FROM admin_access_keys WHERE id = $1`;
 
 // Revokes key `id`. `via` is 'session' or 'key'. Returns null for a key that
-// does not exist, or { key, already }.
+// does not exist, or { key, already, owner }.
 async function revokeAdminKey(id, via) {
   const { rows: [row] } = await pool.query(REVOKE_SQL, [id, via]);
-  if (row) return { key: keyMetadata(row), already: false };
+  if (row) return { key: keyMetadata(row), already: false, owner: { email: row.owner_email, name: row.owner_name } };
   const { rows: [was] } = await pool.query(REVOKED_ALREADY_SQL, [id]);
   if (!was) return null;
-  return { key: keyMetadata(was), already: true };
+  return { key: keyMetadata(was), already: true, owner: null };
+}
+
+// ---------------------------------------------------------------------------
+// The approval link, for routes/keyApproval.js
+// ---------------------------------------------------------------------------
+
+const APPROVAL_LOOKUP_SQL = `SELECT k.id, k.name, k.approval_hash, k.created_at, k.created_ip, k.expires_at, k.approved_at,
+          k.revoked_at, k.revoked_via, k.approval_used_at, k.session_version,
+          (k.approval_expires_at > NOW()) AS approval_open, (k.expires_at <= NOW()) AS expired,
+          u.email AS owner_email, u.name AS owner_name, u.role, u.is_banned, u.token_version
+     FROM admin_access_keys k
+     JOIN users u ON u.id = k.created_by
+    WHERE k.approval_hash = $1`;
+
+// Both writes carry every condition in their own WHERE, so an approval racing a
+// revoke, a second tap, or the window closing cannot both land: the statement
+// that loses changes nothing.
+const APPROVE_SQL = `UPDATE admin_access_keys k
+      SET approved_at = NOW(), approved_via = 'email', approved_ip = $2::text, approval_used_at = NOW()
+     FROM users u
+    WHERE k.approval_hash = $1::text AND u.id = k.created_by
+      AND k.approved_at IS NULL AND k.revoked_at IS NULL AND k.approval_used_at IS NULL
+      AND k.approval_expires_at > NOW() AND k.expires_at > NOW()
+      AND u.role = 'admin' AND u.is_banned IS NOT TRUE AND u.token_version = k.session_version
+    RETURNING k.id, k.name, k.expires_at, k.approved_at, u.email AS owner_email, u.name AS owner_name`;
+const DENY_SQL = `UPDATE admin_access_keys k
+      SET revoked_at = NOW(), revoked_via = 'email', approval_used_at = NOW()
+     FROM users u
+    WHERE k.approval_hash = $1::text AND u.id = k.created_by
+      AND k.approved_at IS NULL AND k.revoked_at IS NULL AND k.approval_used_at IS NULL
+      AND k.approval_expires_at > NOW()
+    RETURNING k.id, k.name, k.revoked_at, u.email AS owner_email, u.name AS owner_name`;
+
+// The key an approval token was made for, or null. Looked up by the token's
+// hash, then compared in constant time like a key.
+async function findApproval(token) {
+  if (!isApprovalTokenShape(token)) return null;
+  const presented = hashAdminKey(token);
+  const { rows: [row] } = await pool.query(APPROVAL_LOOKUP_SQL, [presented]);
+  if (!row) return null;
+  const a = Buffer.from(String(row.approval_hash), 'hex');
+  const b = Buffer.from(presented, 'hex');
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return row;
+}
+
+// What a link can still do: 'open' while the key waits, or why not.
+function approvalState(row) {
+  const { tokenVersionOf } = require('./auth');
+  if (!row) return 'invalid';
+  if (row.revoked_at) return 'revoked';
+  if (row.approved_at) return 'approved';
+  if (row.approval_used_at) return 'used';
+  if (row.expired === true || row.approval_open !== true) return 'expired';
+  if (tokenVersionOf(row.session_version) !== tokenVersionOf(row.token_version)
+    || row.role !== 'admin' || row.is_banned === true) return 'ended';
+  return 'open';
+}
+
+// Approves (`action` 'approve') or revokes ('deny') the key behind `token`.
+// Returns { done: true, row } or { done: false, state } with the reason.
+async function settleApproval(token, action, ip) {
+  if (!isApprovalTokenShape(token)) return { done: false, state: 'invalid' };
+  const hash = hashAdminKey(token);
+  const sql = action === 'approve' ? APPROVE_SQL : DENY_SQL;
+  const params = action === 'approve' ? [hash, ip ? String(ip).slice(0, 64) : null] : [hash];
+  const { rows: [row] } = await pool.query(sql, params);
+  if (row) return { done: true, row };
+  return { done: false, state: approvalState(await findApproval(token)) };
 }
 
 module.exports = {
@@ -591,6 +772,8 @@ module.exports = {
   ADMIN_KEY_NAME_MAX,
   ADMIN_KEY_ACTIVE_MAX,
   ADMIN_KEY_MINT_FRESH_SECONDS,
+  ADMIN_KEY_APPROVAL_MINUTES,
+  ADMIN_KEY_PENDING_MAX,
   ADMIN_KEY_LIST_LIMIT,
   ADMIN_KEY_RECENT_USES,
   ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR,
@@ -601,6 +784,7 @@ module.exports = {
   generateAdminKey,
   hashAdminKey,
   isAdminKeyShape,
+  isApprovalTokenShape,
   adminKeyBearer,
   handleAdminKeyBearer,
   keyRouteDecision,
@@ -609,9 +793,14 @@ module.exports = {
   keyState,
   readMintBody,
   sessionAgeSeconds,
+  isFreshSession,
   mintAdminKey,
+  discardPendingKey,
   listAdminKeys,
   revokeAdminKey,
+  findApproval,
+  approvalState,
+  settleApproval,
 };
 
 module.exports.__testing = {

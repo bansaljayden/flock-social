@@ -510,6 +510,11 @@ test('every route file that takes a body was actually looked at', () => {
     // routes/tableInsights.js enrolled 2026-10-23: the owner's table reads
     // (last night at the tables, the free forecast), GETs only; no body is read.
     'tableInsights',
+    // routes/keyApproval.js enrolled 2026-11-05: the admin key approval link.
+    // GET draws the page and the button's POST acts, both reading the token and
+    // the action from the query string; the POST's empty form body is never
+    // read, so it takes the default ceiling.
+    'keyApproval',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {
