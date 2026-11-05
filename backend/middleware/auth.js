@@ -2,7 +2,7 @@ const { createSecretKey } = require('crypto');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { prepared } = require('../db/prepared');
-// Admin access keys (migration 134). Every variant below hands a key bearer to
+// Admin access keys (migration 135). Every variant below hands a key bearer to
 // this file before it verifies anything; see the top of middleware/adminKeys.js.
 const adminKeys = require('./adminKeys');
 

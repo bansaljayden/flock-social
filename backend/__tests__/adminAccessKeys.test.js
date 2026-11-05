@@ -3,7 +3,7 @@
 //
 // ADMIN ACCESS KEYS ON A REAL DATABASE, THROUGH EVERY REAL ROUTER.
 //
-// Migration 134 and middleware/adminKeys.js, end to end: a key minted from a
+// Migration 135 and middleware/adminKeys.js, end to end: a key minted from a
 // fresh session, used, logged, expired, revoked and ended, against an embedded
 // Postgres with the whole migration chain applied. The route rules are proved
 // against every router server.js mounts, in server.js's own order, read from
@@ -57,7 +57,7 @@ for (const k of [
 
 const BACKEND = path.join(__dirname, '..');
 const SERVER_SRC = fs.readFileSync(path.join(BACKEND, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
-const MIGRATION = path.join(BACKEND, 'migrations', '134_admin_access_keys.sql');
+const MIGRATION = path.join(BACKEND, 'migrations', '135_admin_access_keys.sql');
 
 let pg;
 let pool;
@@ -200,7 +200,7 @@ test.after(async () => {
 // 1. THE MIGRATION
 // ---------------------------------------------------------------------------
 
-test('134 builds both tables with the columns the code reads', async () => {
+test('135 builds both tables with the columns the code reads', async () => {
   const cols = async (t) => (await pool.query(
     `SELECT column_name, data_type, is_nullable FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = $1 ORDER BY ordinal_position`, [t]
@@ -231,7 +231,7 @@ test('134 builds both tables with the columns the code reads', async () => {
   ]);
 });
 
-test('134 refuses a row the code would never write', async () => {
+test('135 refuses a row the code would never write', async () => {
   const owner = await insertUser({ role: 'admin' });
   const hash = 'a'.repeat(64);
   const bad = [
@@ -285,7 +285,7 @@ test('an account deleted takes its keys and their log with it', async () => {
   assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 401);
 });
 
-test('134 replays over a populated database and moves nothing', async () => {
+test('135 replays over a populated database and moves nothing', async () => {
   const owner = await insertUser({ role: 'admin' });
   const k = await mint(owner);
   await call('GET', '/api/admin/whoami', { bearer: k.key });

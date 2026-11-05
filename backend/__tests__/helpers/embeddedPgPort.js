@@ -189,7 +189,7 @@ const SUITE_SLOTS = {
                                  // of a vote option's deal, through the real
                                  // routes. Far from the slots taken that day.
   adminAccessKeys: 59,           // new in 2026-11-05; admin access keys
-                                 // (migration 134): minting, the route list,
+                                 // (migration 135): minting, the route list,
                                  // expiry, revocation and the use log, through
                                  // every real router in server.js order. No
                                  // branch held 59 that day.

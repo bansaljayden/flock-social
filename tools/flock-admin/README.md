@@ -167,7 +167,7 @@ else (`ADMIN_KEY_ROUTES` in `backend/middleware/adminKeys.js`):
 
 ## What is logged
 
-Every use of a key is written to the `admin_key_uses` table (migration 134): the
+Every use of a key is written to the `admin_key_uses` table (migration 135): the
 method, the path (never the query string), the answer's status, the time and
 the address it came from. A use that reaches a route is written before the
 route runs, so a use that cannot be logged does not happen. A refused use

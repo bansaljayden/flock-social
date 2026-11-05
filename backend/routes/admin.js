@@ -96,7 +96,7 @@ function requireAdmin(req, res, next) {
 router.use(requireAdmin);
 
 // ---------------------------------------------------------------------------
-// ADMIN ACCESS KEYS (migration 134, middleware/adminKeys.js)
+// ADMIN ACCESS KEYS (migration 135, middleware/adminKeys.js)
 // ---------------------------------------------------------------------------
 // A key lets a tool on the owner's computer (tools/flock-admin/admin.mjs) call
 // the admin routes ADMIN_KEY_ROUTES lists, as the admin who minted it. The

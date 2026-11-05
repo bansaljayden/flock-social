@@ -14,7 +14,7 @@
 // there so secret scanners can name it (tools/publish/scan-secrets.py has a
 // rule for it) and so a request carrying one is told apart from a session
 // before any token is verified. The server keeps SHA-256 of the key and
-// nothing else (migration 134): a read of the database yields nothing that can
+// nothing else (migration 135): a read of the database yields nothing that can
 // be presented, and the key is shown once, in the answer that mints it.
 //
 // HOW A REQUEST WITH A KEY IS ANSWERED. middleware/auth.js hands every bearer
@@ -99,7 +99,7 @@ const ADMIN_KEY_RECENT_USES = 5;
 const ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR = 200;
 
 // The scopes a key can carry, with what each one covers. One for now; the
-// table's CHECK refuses any word not listed here (migration 134).
+// table's CHECK refuses any word not listed here (migration 135).
 const ADMIN_KEY_SCOPES = Object.freeze({
   admin: 'The admin routes in ADMIN_KEY_ROUTES, read and write.',
 });
