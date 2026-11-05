@@ -3373,7 +3373,9 @@ function readServing({ predictor = null } = {}) {
     const p = predictor || require('./mlPredictor');
     const c = p && typeof p.predictionCoverage === 'function' ? p.predictionCoverage() : null;
     return {
-      mode: c && (c.serveMode === 'curve_offset' || c.serveMode === 'model') ? c.serveMode : null,
+      // model_when_fresh is the November retrain's mix (2026-11-05): the
+      // model where the venue has an hour-old reading, curve_offset elsewhere.
+      mode: c && (c.serveMode === 'curve_offset' || c.serveMode === 'model' || c.serveMode === 'model_when_fresh') ? c.serveMode : null,
       nowcast: c && typeof c.nowcastEnabled === 'boolean' ? c.nowcastEnabled : null,
     };
   } catch (err) {

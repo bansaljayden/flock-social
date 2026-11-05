@@ -2271,6 +2271,10 @@ test('the model block says which arithmetic makes the numbers, from the predicto
   const model = { predictionCoverage: () => ({ modelLoaded: true, modelVersion: '2.6.0-starling', serveMode: 'model', nowcastEnabled: false }) };
   h = await moneyHub.buildMoneyHub({ db: pool, predictor: model });
   assert.deepStrictEqual(h.model.serving, { mode: 'model', nowcast: false });
+  // The November retrain's mix is a mode the hub names, not one it drops.
+  const mix = { predictionCoverage: () => ({ modelLoaded: true, modelVersion: '2.6.0-starling', serveMode: 'model_when_fresh', nowcastEnabled: true }) };
+  h = await moneyHub.buildMoneyHub({ db: pool, predictor: mix });
+  assert.deepStrictEqual(h.model.serving, { mode: 'model_when_fresh', nowcast: true });
   // A mode this file does not know, or a predictor that throws, claims nothing.
   assert.deepStrictEqual(moneyHub.__test.readServing({ predictor: { predictionCoverage: () => ({ serveMode: 'other', nowcastEnabled: 'yes' }) } }), { mode: null, nowcast: null });
   const { result } = await capturingLogs(async () => moneyHub.__test.readServing({ predictor: { predictionCoverage: () => { throw new Error('not ready'); } } }));
