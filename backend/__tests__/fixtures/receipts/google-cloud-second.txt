@@ -1,0 +1,36 @@
+Google Cloud Platform & APIs
+
+Payment received
+
+Your payment amount of $20.00 to Google was received on Nov 2, 2026.
+
+Payment for: Google Cloud
+
+Payment ID: CLOUD TEST02
+
+Payment method: Visa ••••4242
+
+View your payment
+
+Google Cloud Platform customer ID: 000000-AAAAAA-000000|Payments profile
+ID: 0000-0000-0000
+
+You're receiving this email to update you about important changes to your
+account.
+
+Payments processed by Google Payment Corp., a licensed money transmitter
+(NMLS ID: 911607). Licensed as a money transmitter by the NY State Dept. of
+Financial Services and to Transmit Money By Check, Draft or Money Order By
+The Department of Banking and Securities, Commonwealth of Pennsylvania.
+
+REFUND POLICY: You, the customer, may be entitled to receive a refund for
+the purchases reflected in this receipt in certain limited circumstances
+set forth in the Google Cloud Terms of Service and the Google Cloud
+Marketplace Terms of Service. Except as stated in those terms, your
+purchases reflected in this receipt are not refundable.
+
+Customer Service for all Customers: Write us at Google Payment Corp., 1600
+Amphitheatre Parkway, Mountain View, CA 94043 or call 1-888-986-7944 for
+assistance.
+
+Google

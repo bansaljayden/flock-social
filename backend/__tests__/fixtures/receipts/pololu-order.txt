@@ -1,0 +1,37 @@
+Thank you for ordering from Pololu! Your order is being processed,
+and we will send you another email when it ships.
+
+Information about your order is available at the end of this email.
+You can also view this information and see the status of your order
+online at:
+
+https://example.invalid/
+
+Note: You cannot change your order online. If you need to make
+changes, please call us immediately.
+
+Pololu Robotics & Electronics
+www.pololu.com
+
+----------------------------------------------------------
+ORDER INFORMATION:
+
+- Salesorder #: 1TEST0001
+- Order date: Friday, 25 September 2026
+- Payment terms: Visa ending in 4242
+- Complete order information available at: https://example.invalid/
+
+Shipping via UPS Ground to
+
+  Account Holder
+  1 EXAMPLE STREET
+  Example Town, PA 00000-0000
+  USA
+
+This order includes:
+  1 x #3419 VL53L8CX Time-of-Flight 8×8-Zone Distance Sensor Carrier with Voltage Regulators, 400cm Max = 24.95
+
+S & H: 10.95
+Tax: 2.15
+Order total: $38.05
+----------------------------------------------------------

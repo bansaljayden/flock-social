@@ -1,0 +1,140 @@
+{
+  "_about": "Receipts as they reach the inbox, built from real mail with every personal detail replaced: the payer's name, postal address, phone, card digits, account and order numbers, and every link but a merchant's own website. Each entry names its body files and the original message's From, To, Subject and Date. The tests add the headers Gmail puts on a forwarded message.",
+  "stripe-railway": {
+    "html": "stripe-railway.html",
+    "from": "invoice+statements+acct_1FIXTURERAILWAY0@stripe.com",
+    "fromName": "Railway Corporation",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Railway Corporation #1000-2001",
+    "date": "Fri, 16 Oct 2026 01:29:43 +0000"
+  },
+  "stripe-usage": {
+    "html": "stripe-usage.html",
+    "from": "invoice+statements+acct_1FIXTURECODEMAG0@stripe.com",
+    "fromName": "Nevercode Ltd",
+    "to": "Owner.Account@gmail.com",
+    "subject": "Your receipt from Nevercode Ltd #1000-3001",
+    "date": "Fri, 2 Oct 2026 00:40:28 +0000"
+  },
+  "stripe-subscription": {
+    "html": "stripe-subscription.html",
+    "from": "invoice+statements@mail.example-labs.test",
+    "fromName": "Example Labs, PBC",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Example Labs, PBC #1000-4001",
+    "date": "Wed, 14 Oct 2026 04:39:40 +0000"
+  },
+  "stripe-one-time": {
+    "html": "stripe-one-time.html",
+    "from": "invoice+statements@mail.example-labs.test",
+    "fromName": "Example Labs, PBC",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Example Labs, PBC #1000-5001",
+    "date": "Fri, 9 Oct 2026 12:21:16 +0000"
+  },
+  "apple-table": {
+    "html": "apple-table.html",
+    "from": "no_reply@email.apple.com",
+    "fromName": "Apple",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Apple.",
+    "date": "Tue, 20 Oct 2026 03:15:35 +0000"
+  },
+  "apple-lockup": {
+    "html": "apple-lockup.html",
+    "from": "no_reply@email.apple.com",
+    "fromName": "Apple",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Apple.",
+    "date": "Mon, 21 Sep 2026 05:11:33 +0000"
+  },
+  "apple-lockup-annual": {
+    "html": "apple-lockup-annual.html",
+    "from": "no_reply@email.apple.com",
+    "fromName": "Apple",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Apple.",
+    "date": "Mon, 15 Jun 2026 19:56:20 +0000"
+  },
+  "apple-lockup-personal": {
+    "html": "apple-lockup-personal.html",
+    "from": "no_reply@email.apple.com",
+    "fromName": "Apple",
+    "to": "owner.account@gmail.com",
+    "subject": "Your receipt from Apple.",
+    "date": "Wed, 4 Nov 2026 13:13:28 +0000"
+  },
+  "google-cloud-bill": {
+    "text": "google-cloud-bill.txt",
+    "from": "payments-noreply@google.com",
+    "fromName": "Google Payments",
+    "to": "owner.account@gmail.com",
+    "subject": "Google: We've received your payment for 0000-0000-0000",
+    "date": "Mon, 2 Nov 2026 06:45:21 +0000"
+  },
+  "google-cloud-second": {
+    "text": "google-cloud-second.txt",
+    "from": "payments-noreply@google.com",
+    "fromName": "Google Payments",
+    "to": "owner.account@gmail.com",
+    "subject": "Google: We've received your payment for 0000-0000-0000",
+    "date": "Tue, 3 Nov 2026 05:07:04 +0000"
+  },
+  "google-notice": {
+    "text": "google-notice.txt",
+    "from": "payments-noreply@google.com",
+    "fromName": "Google Payments",
+    "to": "owner.account@gmail.com",
+    "subject": "Google Payments: Payment method updated for ACCOUNT HOLDER",
+    "date": "Wed, 2 Sep 2026 00:03:13 +0000"
+  },
+  "fastspring-order": {
+    "html": "fastspring-order.html",
+    "text": "fastspring-order.txt",
+    "from": "mailer@fastspring.com",
+    "fromName": "MapTiler AG",
+    "to": "owner.account@gmail.com",
+    "subject": "Account Holder, here is your receipt for the order TEST000000-0000-00001",
+    "date": "Thu, 8 Oct 2026 03:10:45 +0000"
+  },
+  "fastspring-activated": {
+    "text": "fastspring-activated.txt",
+    "from": "mailer@fastspring.com",
+    "fromName": "MapTiler AG",
+    "to": "owner.account@gmail.com",
+    "subject": "Account Holder, your subscription to \"MapTiler Cloud: Flex subscription\" was successfully activated.",
+    "date": "Thu, 8 Oct 2026 03:10:45 +0000"
+  },
+  "cloudflare-invoice": {
+    "html": "cloudflare-invoice.html",
+    "from": "noreply@notify.cloudflare.com",
+    "fromName": "Cloudflare",
+    "to": "owner.account@gmail.com",
+    "subject": "Your Cloudflare invoice is available",
+    "date": "Sat, 28 Feb 2026 21:55:43 +0000"
+  },
+  "pololu-order": {
+    "text": "pololu-order.txt",
+    "from": "sales@pololu.com",
+    "fromName": "Pololu Sales",
+    "to": "Owner.Account@gmail.com",
+    "subject": "Your Pololu sales order 1TEST0001 is being processed",
+    "date": "Sat, 26 Sep 2026 00:26:33 +0000"
+  },
+  "pololu-shipped": {
+    "text": "pololu-shipped.txt",
+    "from": "sales@pololu.com",
+    "fromName": "Pololu Sales",
+    "to": "Owner.Account@gmail.com",
+    "subject": "Your Pololu sales order 1TEST0001 has shipped",
+    "date": "Mon, 28 Sep 2026 14:26:29 +0000"
+  },
+  "shop-order": {
+    "html": "shop-order.html",
+    "from": "hello@pcbartists.com",
+    "fromName": "PCB Artists Store",
+    "to": "owner.account@gmail.com",
+    "subject": "Your PCB Artists order has been received!",
+    "date": "Thu, 8 Oct 2026 01:29:09 +0000"
+  }
+}

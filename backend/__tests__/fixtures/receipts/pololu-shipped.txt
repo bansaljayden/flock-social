@@ -1,0 +1,11 @@
+Hello from Pololu Robotics and Electronics!
+
+Your Pololu sales order #1TEST0001 has shipped! Information about this
+shipment is available at the end of this email.
+
+----------------------------------------------------------
+SHIPMENT INFORMATION:
+
+- Salesorder #: 1TEST0001
+- Carrier: UPS
+----------------------------------------------------------

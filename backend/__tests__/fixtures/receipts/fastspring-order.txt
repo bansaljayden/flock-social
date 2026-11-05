@@ -1,0 +1,32 @@
+----------------------------------------------------------------
+
+FastSpring Checkout
+MapTiler Support: support@maptiler.com
+
+----------------------------------------------------------------
+
+Hello Account Holder,
+Thank you for your purchase. Below is your product delivery information.
+
+Your Order
+================================================================
+
+MapTiler Cloud: Flex subscription – $30.00 x 1
+Subscription will be renewed by vendor
+
+----------------------------------------------------------------
+
+Tax: $1.80
+Total: $31.80
+
+================================================================
+
+Charges will appear on your bill as FS *MapTiler
+Order Reference: TEST000000-0000-00001
+View Invoice: https://example.invalid/
+Manage Your Orders: https://example.invalid/
+----------------------------------------------------------------
+
+You have received this email after an order made through FastSpring (http://fastspring.com) an authorized reseller.
+
+----------------------------------------------------------------

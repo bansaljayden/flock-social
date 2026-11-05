@@ -1,0 +1,15 @@
+Google
+
+Payment method updated for ACCOUNT HOLDER
+
+A payment method, such as a credit card or bank account, was updated for:
+
+Payments profile name
+ACCOUNT HOLDER
+
+Payments profile ID
+0000-0000-0000
+
+If you didn't make this change, review your payment methods.
+
+Google
