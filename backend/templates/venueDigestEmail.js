@@ -180,9 +180,19 @@ function sourceWord(source) {
   return SOURCE_WORDS[source] || source;
 }
 
-function factSentence(fact) {
+// The forecast's own closing words on a day's label ("..., at 51 on our 0 to
+// 100 index, in Flock's forecast for places like yours."). Under a heading
+// that already says whose forecast the section is, a line ending on exactly
+// these words drops them; any other ending is left as written.
+const KIND_FORECAST_CLAUSE = `, in ${KIND_FORECAST}.`;
+
+function factSentence(fact, { underNote = false } = {}) {
   if (!fact || fact.status === 'refused') return null;
-  const worded = [fact.label, fact.note]
+  const own = typeof fact.label === 'string' ? fact.label.trim() : fact.label;
+  const label = underNote && typeof own === 'string' && own.endsWith(KIND_FORECAST_CLAUSE)
+    ? `${own.slice(0, -KIND_FORECAST_CLAUSE.length)}.`
+    : fact.label;
+  const worded = [label, fact.note]
     .filter((s) => typeof s === 'string' && s.trim())
     .map((s) => s.trim())
     .join(' ');
@@ -197,9 +207,10 @@ function factSentence(fact) {
 // words, does not say it again in its source note: the note keeps the date
 // alone, "(as of Nov 9)". `chip: false` is a section whose every line is that
 // forecast, whose source and date are said once under its heading instead
-// (sectionNote below). Every other line keeps its note exactly as it was.
+// (sectionNote below), so its lines drop the forecast's closing words too.
+// Every other line keeps its note exactly as it was.
 function factLineText(fact, { chip = true } = {}) {
-  const sentence = factSentence(fact);
+  const sentence = factSentence(fact, { underNote: !chip });
   if (!sentence) return null;
   if (!chip) return sentence;
   if (isKindForecast(fact) && saysWhose(sentence)) {

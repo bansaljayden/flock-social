@@ -329,9 +329,11 @@ test('a no-history bar\'s Monday email carries the chip\'s money move, line for 
 // ── 1b. The Week ahead section, as Roost's own Week ahead card shows it ────
 
 const WEEK_TITLE = 'WEEK AHEAD';
-// A fact's line in a section of nothing but the card: its sentence and its
-// note, with the source and date said once under the heading.
-const emailLine = (f) => [f.label, f.note].filter(Boolean).join(' ');
+// A fact's line in a section of nothing but the card: its sentence, without
+// the forecast's closing ", in Flock's forecast for places like yours", and
+// its note, with the source and date said once under the heading.
+const CLOSING = ", in Flock's forecast for places like yours.";
+const emailLine = (f) => [f.label.endsWith(CLOSING) ? `${f.label.slice(0, -CLOSING.length)}.` : f.label, f.note].filter(Boolean).join(' ');
 const jsonOf = (v) => JSON.parse(JSON.stringify(v));
 
 async function roostWeekCard(userId) {
@@ -369,6 +371,10 @@ test('a no-history bar\'s Week ahead section shows the days Roost\'s own Week ah
   const lines = emailSection(text, WEEK_TITLE);
   assert.ok(app.facts.every((f) => f.asOf === app.facts[0].asOf), 'one card, one timestamp');
   assert.deepStrictEqual(lines, [SECTION_NOTE(app.facts[0].asOf), ...app.facts.map(emailLine)]);
+  // Under the heading note each day reads as a plain sentence: "Tuesday
+  // projects busiest around 9 PM, at 51 on our 0 to 100 index."
+  for (const line of lines.slice(1)) assert.match(line, /^\w+ projects busiest around 9 PM, at \d+ on our 0 to 100 index\.$/, line);
+  assert.strictEqual((emailSection(text, WEEK_TITLE).join('\n').match(/forecast for places like yours/g) || []).length, 1, 'said once in the section');
   assert.ok(saidOncePerLine(text), text);
   assert.ok(text.indexOf(MONEY_TITLE) < text.indexOf(WEEK_TITLE), 'the week ahead sits below the money move, with the heads-up');
   assert.ok(!NO_YOUR_RANKING.test(lines.join('\n')), lines.join('\n'));
@@ -507,7 +513,7 @@ test('the Monday sweep mails each no-history venue its money move for one Places
       assert.match(note || '', /^Flock's forecast for places like yours, as of \w+ \d+\.$/, sentEmails[i].text);
       assert.strictEqual(week.length, 6, sentEmails[i].text);
       for (const line of week) {
-        assert.match(line, new RegExp(`^\\w+ projects busiest around ${hour}, at \\d+ on our 0 to 100 index, in Flock's forecast for places like yours\\.$`), line);
+        assert.match(line, new RegExp(`^\\w+ projects busiest around ${hour}, at \\d+ on our 0 to 100 index\\.$`), line);
       }
       assert.ok(sentEmails[i].html.includes('>Week ahead</h2>'), sentEmails[i].html);
       assert.ok(saidOncePerLine(sentEmails[i].text), sentEmails[i].text);
@@ -706,6 +712,37 @@ test('a venue with its own history gets its email byte for byte as before: every
   assert.strictEqual(renderDigestText(HISTORY_INPUT), HISTORY_TEXT);
   assert.strictEqual(renderDigestHtml(HISTORY_INPUT), HISTORY_HTML);
   assert.ok(!/as of /.test(HISTORY_TEXT), 'a history venue line lost its source');
+});
+
+// ── 4c. Under the heading note, the forecast's closing words go ────────────
+
+test('under the heading note a line drops exactly the forecast\'s closing words: a small-hours line keeps its night, any other ending is left alone, and a mixed section keeps its labels whole', () => {
+  const intel = {
+    available: true,
+    scanFrom: 'kind',
+    generatedAt: '2026-11-09T14:20:00Z',
+    week: [['2026-11-10', 'Tue', 51, '9 PM'], ['2026-11-14', 'Sat', 74, '1 AM']].map(([date, weekday, peakScore, peakHour], i) => ({
+      date, weekday, peakScore, peakHour, method: 'rule_engine_no_baseline', ...(i === 1 ? { afterMidnight: true } : {}),
+    })),
+  };
+  const days = advisorFacts.projectionFacts(intel, { hourOf: venueDashboardRouter.hourOfLabel });
+  const otherEnding = { id: 'typical_peak_2026-11-12', value: {}, source: 'category_pattern', asOf: intel.generatedAt, label: 'Thursday, in Flock\'s forecast for places like yours, projects a late start.' };
+  const card = { id: 'week_ahead', title: 'Week ahead', status: 'ok', facts: [...days, otherEnding] };
+  assert.deepStrictEqual(emailSection(renderDigestText(renderInput([card])), WEEK_TITLE), [
+    'Flock\'s forecast for places like yours, as of Nov 9.',
+    'Tuesday projects busiest around 9 PM, at 51 on our 0 to 100 index.',
+    'Saturday night projects busiest around 1 AM, at 74 on our 0 to 100 index. This peak is in the small hours, early on Sunday. It belongs to Saturday night.',
+    otherEnding.label,
+  ]);
+  // The card's own labels, which the app shows, are untouched.
+  assert.ok(days.every((f) => f.label.endsWith(CLOSING)), JSON.stringify(days));
+  // A section with a line from any other source has no heading note, so its
+  // forecast lines keep their labels whole, each with its date.
+  const mixed = { ...card, facts: [days[0], { id: 'event_2026-11-13', source: 'events', asOf: intel.generatedAt, label: 'A listed concert nearby on Friday.' }] };
+  assert.deepStrictEqual(emailSection(renderDigestText(renderInput([mixed])), WEEK_TITLE), [
+    `${days[0].label} (as of Nov 9)`,
+    'A listed concert nearby on Friday. (Ticketmaster, Nov 9)',
+  ]);
 });
 
 // ── 5. The one function both read ──────────────────────────────────────────
