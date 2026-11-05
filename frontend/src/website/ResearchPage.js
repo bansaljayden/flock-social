@@ -51,6 +51,10 @@ const PAPER_PAGES = 30;
 // "if it beats today's numbers": production has served v2.6.0 in model mode
 // since 2026-11-01, and the gate compares against rule (b), the rule served
 // from 13 October (backend/scripts/ml/RETRAIN.md, 2026-11-02).
+// Since 2026-11-05 the retrain is gated, and would ship, as the mix (paper
+// Section 7.2; RETRAIN-NOVEMBER-RUNBOOK.md, "Decided 2026-11-05"). owl-5.2 was
+// chosen on validation frames the same day (owl5/owl52/owl52_choice.json);
+// owl-5.1 stays on Flux until the recording decides (PREREG-2026-11-05 part d).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -247,13 +251,23 @@ export default function ResearchPage() {
             <div>
               <h2>What's next</h2>
               <p>
-                Owl's retrains are done and in the paper. The crowd forecast's
+                Owl's November retrains are in the paper. The latest, owl-5.2,
+                was chosen on 5 November on frames set aside for choosing
+                settings. On frames with four or more people it was exact 39.4%
+                of the time, against 26.1% for owl-5.1; with three or fewer it
+                was exact no more often; and it lost no more than 0.8 points to
+                owl-4.9 on any of its six benchmark sets. The crowd forecast's
                 retrain runs in late November. It is scored on 14 days it never
                 saw, against thresholds set in September, and ships only if it
-                passes them. Owl's next test is a recording on Flux's own camera
-                of a real room with one to fifteen people, counted as it is
-                filmed, kept unseen, and scored once with owl-4.9, owl-5 and
-                owl-5.1 together.
+                passes them. A full rehearsal on 5 November found the new model
+                matched or beat the rule Flock served from 13 October to 1
+                November only where a venue had been read in the past hour, so
+                it is tested, and would ship, as a mix: the new model there,
+                that rule everywhere else. Owl's next test is a recording on
+                Flux's own camera of a real room with one to fifteen people,
+                counted as it is filmed, kept unseen, and scored once with
+                owl-4.9, owl-5, owl-5.1 and owl-5.2 together; owl-5.2 replaces
+                owl-5.1 on Flux only if it counts that room better.
                 After that, the plan is to put a Flux sensor in a venue Flock
                 already reads and compare its counts with the forecast hour by
                 hour.
