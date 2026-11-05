@@ -20684,7 +20684,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // every other screen, and because it only ever matters when an admin is
       // on this screen.
       const revenueScreenProps = {
+        DialogBehavior,
         adminTab,
+        authUser,
         avgSpend,
         colors,
         costsData,
