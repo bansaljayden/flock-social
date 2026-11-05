@@ -1210,7 +1210,7 @@ async function sendWaitlistLaunchEmail({ to }) {
   return sendEmail({
     to,
     category: 'marketing',
-    subject: "You're off the waitlist. Flock is out.",
+    subject: 'Flock is on the App Store',
     ...(optOut ? {
       headers: {
         'List-Unsubscribe': `<${optOut}>`,
@@ -1220,9 +1220,9 @@ async function sendWaitlistLaunchEmail({ to }) {
     text: [
       "You're off the waitlist.",
       '',
-      'Flock is out, and you can make your account now. Thanks for signing up early.',
+      'Flock is on the App Store now, free on iPhone. Start a flock, vote on where to go, and see how busy places are before you leave. Thanks for signing up early.',
       '',
-      `Get Flock: ${getUrl}`,
+      `Get Flock on the App Store: ${getUrl}`,
       '',
       'The Flock Team',
       '',
@@ -1237,10 +1237,10 @@ async function sendWaitlistLaunchEmail({ to }) {
         </div>
         <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're off the waitlist.</h1>
         <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
-          Flock is out, and you can make your account now. Thanks for signing up early.
+          Flock is on the App Store now, free on iPhone. Start a flock, vote on where to go, and see how busy places are before you leave. Thanks for signing up early.
         </p>
         <div style="text-align: center; margin-bottom: 32px;">
-          <a href="${escapeHtml(getUrl)}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 14px 28px; border-radius: 12px;">Get Flock</a>
+          <a href="${escapeHtml(getUrl)}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 14px 28px; border-radius: 12px;">Get Flock on the App Store</a>
         </div>
         <p style="font-size: 14px; color: #718096; line-height: 1.6;">The Flock Team</p>
         <p style="font-size: 12px; color: #a0aec0; line-height: 1.6; margin-top: 32px;">
