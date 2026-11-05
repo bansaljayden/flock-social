@@ -65,9 +65,11 @@ promotional text may change while the version is not editable.
 - Apple refuses an eleventh screenshot in a set. When the old ones leave too
   little room, the run is refused unless `--make-room` is given: then it first
   saves every old screenshot at full size to `--backup-dir` (default: a folder
-  beside `--dir`), deletes only as many as the cap forces out, uploads, and
-  deletes the rest after the new ones are COMPLETE. Running `screenshots
-  replace` on that backup folder puts the old set back.
+  beside `--dir`), deletes one old screenshot just before each upload that
+  would not otherwise fit, and deletes the rest after the new ones are
+  COMPLETE. A stop part way has cost no more old screenshots than new ones
+  have landed. Running `screenshots replace` on the backup folder puts the old
+  set back.
 - The version must be editable: Prepare for Submission, Developer Rejected,
   Rejected or Metadata Rejected.
 

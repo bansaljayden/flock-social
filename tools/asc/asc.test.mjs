@@ -596,6 +596,11 @@ test('a full set (ten) is refused without --make-room; with it the dry run saves
     assert.ok(lastBackup > 0 && firstDelete > lastBackup, 'every old screenshot is saved before the first delete');
     assert.ok(firstUpload > firstDelete);
     assert.equal(lines.filter((l) => /GET https:\/\/cdn\.test\//.test(l)).length, 20);
+    // No room at all: each upload is preceded by exactly one delete, never a batch.
+    const calls = lines.filter((l) => /^ +\d+\. /.test(l)).filter((l) => !/cdn\.test/.test(l));
+    const firstCall = calls.findIndex((l) => /DELETE /.test(l));
+    const pairs = calls.slice(firstCall, firstCall + 40);
+    pairs.forEach((l, i) => assert.match(l, i % 2 === 0 ? /DELETE \/v1\/appScreenshots\/old-/ : /POST \/v1\/appScreenshots \{/, `call ${i}`));
     assert.match(r.out, /screenshots-replaced|asc-test-.*-replaced-20261105-183000/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -780,7 +785,7 @@ test('a re-run after a stop keeps what finished and uploads only the rest', asyn
   }
 });
 
-test('replace --make-room --yes: saves all old first, frees only what the cap forces, deletes the rest after the new ones are COMPLETE', async () => {
+test('replace --make-room --yes: saves all old first, frees one only when an upload would not fit, deletes the rest after the new ones are COMPLETE', async () => {
   const dir = tempDirWith(newShots(3));
   const backup = fs.mkdtempSync(path.join(os.tmpdir(), 'asc-backup-'));
   try {
@@ -790,16 +795,41 @@ test('replace --make-room --yes: saves all old first, frees only what the cap fo
     const deletes = fake.calls.map((c, i) => [c, i]).filter(([c]) => isOldDelete(c));
     const lastSave = lastIndex(fake.calls, (c) => c.host === 'cdn.test');
     assert.ok(deletes[0][1] > lastSave, 'every old screenshot was saved before the first delete');
-    // Room for one under the cap of ten: two old ones go early, from the end of the order.
-    const firstUpload = fake.calls.findIndex((c) => c.method === 'POST' && c.path === '/v1/appScreenshots');
-    const early = deletes.filter(([, i]) => i < firstUpload).map(([c]) => c.path);
-    assert.deepEqual(early, ['/v1/appScreenshots/old-en-US-8', '/v1/appScreenshots/old-en-US-9']);
-    const late = deletes.filter(([, i]) => i > firstUpload);
+    // Room for one under the cap of ten: the first upload needs no delete;
+    // each of the next two is preceded by one, from the end of the order.
+    const reserves = fake.calls.map((c, i) => [c, i]).filter(([c]) => c.method === 'POST' && c.path === '/v1/appScreenshots').map(([, i]) => i);
+    assert.equal(reserves.length, 3);
+    assert.ok(deletes[0][1] > reserves[0], 'nothing old goes before an upload that fits');
+    const writesBetween = (a, b) => fake.calls.slice(a + 1, b).filter((c) => c.method === 'DELETE').map((c) => c.path);
+    assert.deepEqual(writesBetween(reserves[0], reserves[1]), ['/v1/appScreenshots/old-en-US-9']);
+    assert.deepEqual(writesBetween(reserves[1], reserves[2]), ['/v1/appScreenshots/old-en-US-8']);
+    const late = deletes.filter(([, i]) => i > reserves[2]);
     assert.equal(late.length, 7);
     assert.ok(late[0][1] > lastIndex(fake.calls, isNewComplete));
     assert.deepEqual(fs.readdirSync(path.join(backup, 'en-US')).sort().slice(0, 2), ['01-01-old-1.png', '02-02-old-2.png']);
     assert.equal(fs.readdirSync(path.join(backup, 'en-US')).length, 9);
     assert.ok(fake.calls.filter((c) => c.host === 'cdn.test').every((c) => !c.auth), 'no token sent to the image host');
+    assert.match(r.out, /keep 0, upload 3, delete 9 old \(all 9 saved first; 2 deleted one at a time just before an upload that would not fit, 7 after every new one is COMPLETE\)/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(backup, { recursive: true, force: true });
+  }
+});
+
+test('replace --make-room --yes stopping part way has lost no more old screenshots than new ones landed, and all are saved', async () => {
+  const dir = tempDirWith(newShots(3));
+  const backup = fs.mkdtempSync(path.join(os.tmpdir(), 'asc-backup-'));
+  try {
+    const fake = new FakeAsc({ oldShots: 10, failPartFor: '02-screen-2.png' });
+    const r = await run(['screenshots', 'replace', '--dir', dir, '--version', '1.0.1', '--make-room', '--backup-dir', backup, '--yes'], fake);
+    assert.equal(r.code, EXIT.API);
+    // One old went for 01, which landed; one for 02, whose upload failed.
+    assert.equal(fake.calls.filter(isOldDelete).length, 2);
+    const left = fake.sets.get('set-en-US').shots;
+    assert.equal(left.filter((s) => s.id.startsWith('old-')).length, 8);
+    assert.deepEqual(left.filter((s) => s.id.startsWith('new-')).map((s) => s.fileName), ['01-screen-1.png']);
+    assert.equal(fs.readdirSync(path.join(backup, 'en-US')).length, 10);
+    assert.match(r.out, /2 old screenshot\(s\) went to make room before the stop; every old one is saved in /);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(backup, { recursive: true, force: true });

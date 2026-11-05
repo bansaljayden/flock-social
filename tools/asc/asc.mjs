@@ -613,11 +613,12 @@ const short = (s, n = 70) => {
 /**
  * The replace plan. Phase order, across every set, is the safety rule:
  *   1. create a missing set;
- *   2. with --make-room only: save every old screenshot, then delete only as
- *      many old ones as Apple's cap of ten forces out before the new ones fit;
- *   3. upload each new file (reserve, send, commit, wait for COMPLETE);
- *   4. only then delete the old screenshots, put each set in filename order,
- *      and read it back.
+ *   2. with --make-room only: save every old screenshot first;
+ *   3. upload each new file (reserve, send, commit, wait for COMPLETE), and
+ *      with --make-room delete one old screenshot just before each upload
+ *      that Apple's cap of ten would otherwise refuse;
+ *   4. only then delete the other old screenshots, put each set in filename
+ *      order, and read it back.
  * A file already in the set (same name and MD5, uploaded or processing) is
  * kept, so a run that stopped part way resumes.
  */
@@ -654,17 +655,29 @@ export function planScreenshotReplace({ version, localizations, wantLocales = nu
     };
     if (mustFree > 0 && !makeRoom) {
       problems.push(`${loc.locale}: the ${displayType} set holds ${live.length} and Apple caps a set at ${MAX_SHOTS_PER_SET}, `
-        + `so the ${upload.length} new screenshot(s) fit only after ${mustFree} old one(s) go. --make-room saves every old `
-        + `screenshot to ${backupDir} first, deletes only those ${mustFree} before uploading, and deletes the rest only after `
-        + 'every new one is COMPLETE.');
+        + `so the ${upload.length} new screenshot(s) fit only if ${mustFree} old one(s) go first. --make-room saves every old `
+        + `screenshot to ${backupDir}, then deletes an old one only when the next upload would not fit (${mustFree} in all), `
+        + 'and the rest only after every new one is COMPLETE.');
     }
     if (makeRoom && mustFree > 0) {
       entry.backup = old;
-      entry.freeEarly = old.slice(old.length - mustFree);
       for (const s of old) {
         if (!s.templateUrl || !s.width || !s.height) problems.push(`${loc.locale}: ${s.fileName} has no image to save, so --make-room cannot back it up`);
       }
     }
+    // Under the cap, one old screenshot goes just before each upload that
+    // would not fit, taken from the end of the live order, so a stop part way
+    // has cost no more old ones than new ones have landed.
+    const spare = [...old];
+    let slots = room;
+    entry.uploadPlan = upload.map((file) => {
+      if (slots > 0 || !makeRoom) {
+        slots -= 1;
+        return { file, free: null };
+      }
+      return { file, free: spare.pop() };
+    });
+    entry.freeEarly = entry.uploadPlan.map((u) => u.free).filter(Boolean);
     entry.deleteLater = old.filter((s) => !entry.freeEarly.includes(s));
     sets.push(entry);
   }
@@ -678,9 +691,11 @@ export function planScreenshotReplace({ version, localizations, wantLocales = nu
       steps.push({ kind: 'backup', locale: s.locale, shot, to: path.join(backupDir, s.locale, `${pos2(s.live.indexOf(shot) >= 0 ? s.live.indexOf(shot) : i)}-${base}.png`) });
     });
   }
-  for (const s of active) for (const shot of s.freeEarly) steps.push({ kind: 'delete', locale: s.locale, shot, why: 'make-room' });
   for (const s of active) {
-    for (const file of s.upload) steps.push({ kind: 'upload', locale: s.locale, file });
+    for (const u of s.uploadPlan) {
+      if (u.free) steps.push({ kind: 'delete', locale: s.locale, shot: u.free, why: 'make-room' });
+      steps.push({ kind: 'upload', locale: s.locale, file: u.file });
+    }
     for (const shot of s.keep.values()) if (shot.state !== 'COMPLETE') steps.push({ kind: 'wait', locale: s.locale, shot });
   }
   for (const s of active) {
@@ -688,7 +703,7 @@ export function planScreenshotReplace({ version, localizations, wantLocales = nu
     steps.push({ kind: 'order', locale: s.locale, entries: files.map((f) => ({ name: f.name, id: s.keep.has(f.name) ? s.keep.get(f.name).id : null })) });
     steps.push({ kind: 'verify', locale: s.locale });
   }
-  return { problems, sets, steps };
+  return { problems, sets, steps, backupDir };
 }
 
 export function reserveBody(fileName, fileSize, setId) {
@@ -747,7 +762,7 @@ export function describeReplaceSteps(plan, { pollMs = POLL_MS, maxPolls = MAX_PO
         `(${s.locale}: save old ${s.shot.fileName} to ${s.to})`);
     } else if (s.kind === 'delete') {
       step(`DELETE /v1/appScreenshots/${s.shot.id}`,
-        `(${s.locale}: ${s.why === 'make-room' ? 'make room under the cap of ten' : 'old, now replaced'}: ${s.shot.fileName})`);
+        `(${s.locale}: ${s.why === 'make-room' ? 'old, saved above; makes room under the cap of ten for the next upload' : 'old, now replaced'}: ${s.shot.fileName})`);
     } else if (s.kind === 'upload') {
       const ref = `{new ${s.locale} ${s.file.name}}`;
       step(`POST /v1/appScreenshots ${json(reserveBody(s.file.name, s.file.bytes, setRef(s.locale)))}`,
@@ -1044,7 +1059,8 @@ async function runScreenshotsReplace(api, cfg, args, ctx, local) {
   for (const s of plan.sets) {
     ctx.say(`${s.locale}: ${s.setId ? `${local.displayType} set holds ${s.live.length}` : `no ${local.displayType} set`}; `
       + `keep ${s.keep.size}, upload ${s.upload.length}, delete ${s.old.length} old`
-      + `${s.freeEarly.length ? ` (${s.freeEarly.length} before uploading, to make room; all ${s.backup.length} saved first)` : ' (after every new one is COMPLETE)'}`
+      + `${s.freeEarly.length ? ` (all ${s.backup.length} saved first; ${s.freeEarly.length} deleted one at a time just before an upload that would not fit, `
+        + `${s.deleteLater.length} after every new one is COMPLETE)` : ' (after every new one is COMPLETE)'}`
       + `${s.unchanged ? ': already this set, in this order' : ''}`);
   }
   const lines = describeReplaceSteps(plan, { pollMs: ctx.pollMs, maxPolls: ctx.maxPolls });
@@ -1107,6 +1123,7 @@ async function executeReplace(api, ctx, plan, local) {
   const status = new Map();
   const oldToGo = plan.steps.filter((s) => s.kind === 'delete' && s.why === 'old').length;
   let oldGone = 0;
+  let roomGone = 0;
   for (const s of plan.sets) {
     for (const f of local.files) status.set(`${s.locale}/${f.name}`, s.keep.has(f.name) ? 'kept (already uploaded)' : 'not reached');
   }
@@ -1128,6 +1145,7 @@ async function executeReplace(api, ctx, plan, local) {
       } else if (step.kind === 'delete') {
         await api.del(`/v1/appScreenshots/${step.shot.id}`);
         if (step.why === 'old') oldGone += 1;
+        else roomGone += 1;
         ctx.say(`${step.locale}: - deleted ${step.why === 'make-room' ? 'old (to make room)' : 'old'} ${step.shot.fileName}`);
       } else if (step.kind === 'upload') {
         const key = `${step.locale}/${step.file.name}`;
@@ -1159,6 +1177,7 @@ async function executeReplace(api, ctx, plan, local) {
     ctx.say(`Stopped: ${e.message}`);
     if (oldToGo && !oldGone) ctx.say(`All ${oldToGo} old screenshot(s) due to go after the new ones are still in place.`);
     else if (oldToGo) ctx.say(`${oldGone} of the ${oldToGo} old screenshot(s) had been deleted when it stopped; run again to finish.`);
+    if (roomGone) ctx.say(`${roomGone} old screenshot(s) went to make room before the stop; every old one is saved in ${plan.backupDir}.`);
     throw e;
   }
   report();
