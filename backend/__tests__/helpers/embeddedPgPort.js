@@ -188,6 +188,11 @@ const SUITE_SLOTS = {
                                  // batch side by side, and each member's view
                                  // of a vote option's deal, through the real
                                  // routes. Far from the slots taken that day.
+  adminAccessKeys: 59,           // new in 2026-11-05; admin access keys
+                                 // (migration 135): minting, the route list,
+                                 // expiry, revocation and the use log, through
+                                 // every real router in server.js order. No
+                                 // branch held 59 that day.
   sensorTableHistoryStatement: 92, // new in 2026-10-23; the table history
                                  // (migration 131): the seatings statement,
                                  // the medians, the waits, the switches and

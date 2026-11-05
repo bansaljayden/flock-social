@@ -59,6 +59,8 @@ jest.mock('../services/api', () => ({
   deleteAdminExpense: jest.fn(),
   importAdminExpenses: jest.fn(),
   exportAdminExpenses: jest.fn(),
+  getAdminKeys: jest.fn(),
+  revokeAdminKey: jest.fn(),
 }));
 
 const api = require('../services/api');
@@ -406,6 +408,8 @@ const CONNECTED = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // The access keys card reads on its own; no keys unless a test says so.
+  api.getAdminKeys.mockResolvedValue({ keys: [], limit: 50 });
 });
 
 async function renderHub(payload, over) {
@@ -2533,6 +2537,7 @@ describe('the Overview reads top to bottom: the month, what needs you, the bills
       'People',
       'Only you can do these',
       'Health',
+      'Access keys',
       'Revenue',
       'Expense list',
       'Prices',
@@ -2607,5 +2612,169 @@ describe('do subscribers cover the bills', () => {
     expect(await within(card).findByText('Yes')).toBeInTheDocument();
     expect(within(figIn(card, 'Still to cover each month')).getByText('−$91.56')).toBeInTheDocument();
     expect(figIn(card, 'Still to cover each month').textContent).toMatch(/Subscribers already pay for the monthly costs/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ACCESS KEYS (backend/middleware/adminKeys.js). The keys a tool on the
+// owner's computer uses for the admin routes: what each one is, and Revoke as
+// the card's one control. Minting is never on the page.
+// ---------------------------------------------------------------------------
+describe('access keys: each key in a line, and Revoke as the one control', () => {
+  const DAY = 86400000;
+  const iso = (ms) => new Date(ms).toISOString();
+  const keyList = (now = Date.now()) => [
+    {
+      id: 4, name: 'PC tools', scopes: ['admin'], createdAt: iso(now - 2 * DAY), expiresAt: iso(now + 88 * DAY),
+      lastUsedAt: iso(now - 2 * 3600000), lastUsedIp: '203.0.113.9', revokedAt: null, revokedVia: null, state: 'active',
+      recentUses: [
+        { at: iso(now - 2 * 3600000), method: 'GET', route: '/api/admin/money', status: 200, refused: null },
+        { at: iso(now - 3 * 3600000), method: 'GET', route: '/api/users/me', status: 403, refused: 'route' },
+      ],
+    },
+    {
+      id: 2, name: 'Old laptop', scopes: ['admin'], createdAt: iso(now - 40 * DAY), expiresAt: iso(now + 50 * DAY),
+      lastUsedAt: null, lastUsedIp: null, revokedAt: iso(now - DAY), revokedVia: 'session', state: 'revoked', recentUses: [],
+    },
+  ];
+  const keysCard = () => cardOf('Access keys');
+  const keyRow = (name) => within(keysCard()).getByText(name).closest('[data-hub-fig]');
+  // Real buttons only: a disclosure's summary is not a control this card adds.
+  const buttonsIn = (el) => Array.from(el.querySelectorAll('button'));
+
+  test('each key shows its name, when it was made, when it expires and when it was last used', async () => {
+    api.getAdminKeys.mockResolvedValue({ keys: keyList(), limit: 50 });
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('PC tools');
+    const pc = keyRow('PC tools');
+    expect(within(pc).getByText('Active')).toBeInTheDocument();
+    expect(pc.textContent).toMatch(/Made [A-Z][a-z]{2} \d{1,2}(, \d{4})?, expires [A-Z][a-z]{2} \d{1,2}(, \d{4})?, last used 2 hours ago from 203\.0\.113\.9\./);
+    // The uses sit behind a tap that starts closed, in plain words.
+    const uses = within(pc).getByText('Recent uses').closest('details');
+    expect(uses.open).toBe(false);
+    expect(uses.textContent).toMatch(/GET \/api\/admin\/money, answered 200, /);
+    expect(uses.textContent).toMatch(/GET \/api\/users\/me, refused, not a route a key may use, /);
+    const old = keyRow('Old laptop');
+    expect(within(old).getByText('Revoked')).toBeInTheDocument();
+    expect(old.textContent).toMatch(/revoked [A-Z][a-z]{2} \d{1,2}/);
+    expect(old.textContent).toMatch(/never used\./);
+    expect(within(keysCard()).getByText('1 active')).toBeInTheDocument();
+    // Nothing on the card is a key: the list carries none.
+    expect(keysCard().textContent).not.toMatch(/flk_admin_/);
+  });
+
+  test('Revoke is the only button, it asks once more, and then the list is read again', async () => {
+    api.getAdminKeys.mockResolvedValue({ keys: keyList(), limit: 50 });
+    api.revokeAdminKey.mockResolvedValue({ revoked: true, alreadyRevoked: false });
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('PC tools');
+    const buttons = buttonsIn(keysCard());
+    expect(buttons.map((b) => b.textContent)).toEqual(['Revoke']);
+    expect(buttons[0]).toHaveAttribute('aria-label', 'Revoke PC tools');
+    fireEvent.click(buttons[0]);
+    expect(api.revokeAdminKey).not.toHaveBeenCalled();
+    expect(within(keysCard()).getByText(/Anything using this key stops on its next request\./)).toBeInTheDocument();
+    expect(buttonsIn(keysCard()).map((b) => b.textContent)).toEqual(['Revoke for good']);
+
+    const reads = api.getAdminKeys.mock.calls.length;
+    const after = keyList().map((k) => (k.id === 4 ? { ...k, state: 'revoked', revokedAt: iso(Date.now()), revokedVia: 'session' } : k));
+    api.getAdminKeys.mockResolvedValue({ keys: after, limit: 50 });
+    fireEvent.click(within(keysCard()).getByRole('button', { name: 'Revoke PC tools for good' }));
+    await waitFor(() => expect(api.revokeAdminKey).toHaveBeenCalledWith(4));
+    await waitFor(() => expect(api.getAdminKeys.mock.calls.length).toBe(reads + 1));
+    await waitFor(() => expect(buttonsIn(keysCard())).toHaveLength(0));
+    expect(within(keysCard()).getByText('None active')).toBeInTheDocument();
+  });
+
+  test('a refused revoke says why and keeps the key on the list', async () => {
+    api.getAdminKeys.mockResolvedValue({ keys: keyList(), limit: 50 });
+    api.revokeAdminKey.mockRejectedValue(new Error('Revoking a key takes a signed-in session, or the key itself.'));
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('PC tools');
+    fireEvent.click(within(keysCard()).getByRole('button', { name: 'Revoke PC tools' }));
+    fireEvent.click(within(keysCard()).getByRole('button', { name: 'Revoke PC tools for good' }));
+    expect(await within(keysCard()).findByText('Revoking a key takes a signed-in session, or the key itself.')).toBeInTheDocument();
+    expect(within(keyRow('PC tools')).getByText('Active')).toBeInTheDocument();
+  });
+
+  test('the soonest live key to run out is named on the card when it is two weeks away or less', async () => {
+    const soon = keyList().map((k) => (k.id === 4 ? { ...k, expiresAt: iso(Date.now() + 3 * DAY + 3600000) } : k));
+    api.getAdminKeys.mockResolvedValue({ keys: soon, limit: 50 });
+    await renderHub(NOT_CONNECTED);
+    expect(await within(keysCard()).findByText('Expires in 3 days')).toBeInTheDocument();
+  });
+
+  test('a key waiting for its email approval reads Pending, says so, and can still be revoked; one whose link ran out reads Expired', async () => {
+    const now = Date.now();
+    const waiting = {
+      ...keyList(now)[0], id: 7, name: 'From the phone', state: 'pending', approvedAt: null, approvedVia: null,
+      approvalExpiresAt: iso(now + 10 * 60000), createdIp: '198.51.100.4', lastUsedAt: null, lastUsedIp: null, recentUses: [
+        { at: iso(now - 60000), method: 'GET', route: '/api/admin/whoami', status: 403, refused: 'pending' },
+      ],
+    };
+    const lapsed = { ...waiting, id: 8, name: 'Never approved', state: 'expired', approvalExpiresAt: iso(now - 60000), recentUses: [] };
+    api.getAdminKeys.mockResolvedValue({ keys: [waiting, lapsed], limit: 50 });
+    api.revokeAdminKey.mockResolvedValue({ revoked: true, alreadyRevoked: false });
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('From the phone');
+    expect(within(keysCard()).getByText('1 waiting for approval')).toBeInTheDocument();
+    const row = keyRow('From the phone');
+    expect(within(row).getByText('Pending')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Made [A-Z][a-z]{2} \d{1,2}(, \d{4})? from 198\.51\.100\.4, waiting for approval from the email until .+, expires /);
+    expect(row.textContent).toMatch(/It does nothing until Approve is tapped in the email sent to this account\./);
+    expect(row.querySelector('details').textContent).toMatch(/GET \/api\/admin\/whoami, refused, waiting for approval, /);
+    // The one control still applies: a key nobody asked for is revoked here.
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke From the phone' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke From the phone for good' }));
+    await waitFor(() => expect(api.revokeAdminKey).toHaveBeenCalledWith(7));
+    const gone = keyRow('Never approved');
+    expect(within(gone).getByText('Expired')).toBeInTheDocument();
+    expect(gone.textContent).toMatch(/never approved/);
+    expect(buttonsIn(gone)).toHaveLength(0);
+  });
+
+  test('a key its account outgrew says why it stopped, and has nothing to revoke', async () => {
+    const ended = [{ ...keyList()[0], state: 'ended' }];
+    api.getAdminKeys.mockResolvedValue({ keys: ended, limit: 50 });
+    await renderHub(NOT_CONNECTED);
+    await within(keysCard()).findByText('PC tools');
+    expect(within(keyRow('PC tools')).getByText('Ended')).toBeInTheDocument();
+    expect(keyRow('PC tools').textContent).toMatch(/signed out everywhere, changed its password, or stopped being an admin/);
+    expect(buttonsIn(keysCard())).toHaveLength(0);
+  });
+
+  test('no keys reads as one line, and a list that cannot be read says why', async () => {
+    await renderHub(NOT_CONNECTED);
+    expect(await within(keysCard()).findByText(/No keys yet\. A key is minted from the browser console or the admin tool, never from this page\./)).toBeInTheDocument();
+    expect(within(keysCard()).getByText('None active')).toBeInTheDocument();
+  });
+
+  test('a key list that cannot be read says why and draws no key', async () => {
+    api.getAdminKeys.mockRejectedValue(new Error('Listing keys takes a signed-in session. A key cannot list keys.'));
+    await renderHub(NOT_CONNECTED);
+    expect(await within(keysCard()).findByText(/Listing keys takes a signed-in session/)).toBeInTheDocument();
+    expect(buttonsIn(keysCard())).toHaveLength(0);
+  });
+
+  test('the keys and their Revoke are there even when the hub does not load', async () => {
+    api.getAdminMoneyHub.mockRejectedValue(new Error('Something went wrong on our end. Try again.'));
+    api.getAdminKeys.mockResolvedValue({ keys: keyList(), limit: 50 });
+    render(React.createElement(RevenueScreen, screenProps()));
+    expect(await screen.findByText('The money hub did not load')).toBeInTheDocument();
+    expect(await within(keysCard()).findByText('PC tools')).toBeInTheDocument();
+    expect(within(keysCard()).getByRole('button', { name: 'Revoke PC tools' })).toBeInTheDocument();
+    // Outside the status region, so the failure is read out on its own.
+    expect(keysCard().closest('[role="status"]')).toBeNull();
+  });
+
+  test('nothing on the page or in the client mints a key', () => {
+    const screenSrc = fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
+    const apiSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+    expect(screenSrc).not.toMatch(/mintAdminKey|createAdminKey|Mint a key|New key/);
+    // The client's only calls on /api/admin/keys are the list and the revoke.
+    const calls = apiSrc.match(/request\(`?'?\/api\/admin\/keys[^)]*\)/g) || [];
+    expect(calls).toHaveLength(2);
+    expect(calls.join(' ')).not.toMatch(/POST/);
+    expect(apiSrc).toMatch(/export async function revokeAdminKey\(id\) \{\s*return request\(`\/api\/admin\/keys\/\$\{encodeURIComponent\(id\)\}`, \{ method: 'DELETE' \}\);/);
   });
 });

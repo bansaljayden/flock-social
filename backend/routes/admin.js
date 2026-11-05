@@ -96,6 +96,153 @@ function requireAdmin(req, res, next) {
 router.use(requireAdmin);
 
 // ---------------------------------------------------------------------------
+// ADMIN ACCESS KEYS (migration 135, middleware/adminKeys.js)
+// ---------------------------------------------------------------------------
+// A key lets a tool on the owner's computer (tools/flock-admin/admin.mjs) call
+// the admin routes ADMIN_KEY_ROUTES lists, as the admin who minted it. The
+// authenticate above already decided which credential this request came in on
+// (req.authVia) and, for a key, which route it may reach. These four routes
+// add the last rules, each in its own handler as well, so none of them rests
+// on the route list alone:
+//
+//   GET    /whoami     who is asking, and for a key, when it expires
+//   POST   /keys       mints a key: a signed-in session only, never a key. The
+//                      key is in this answer and in no other. From a session
+//                      that signed in within ADMIN_KEY_MINT_FRESH_SECONDS it
+//                      works at once (201); from an older one it is pending
+//                      (202) until the owner taps Approve in the email this
+//                      sends (routes/keyApproval.js).
+//   GET    /keys       the keys, metadata and recent uses only: a session only
+//   DELETE /keys/:id   revokes one: a session, or a key revoking itself
+//
+// Every mint, approval and revoke is emailed to the owner's address
+// (services/adminKeyMail.js). Only the approval email is required: without it
+// a pending key could never work, so a mint whose approval email does not go
+// out is undone and refused.
+const adminKeys = require('../middleware/adminKeys');
+const adminKeyMail = require('../services/adminKeyMail');
+
+router.get('/whoami', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const viaKey = req.authVia === 'admin_key' && !!req.adminKey;
+  const key = viaKey
+    ? {
+      id: req.adminKey.id,
+      name: req.adminKey.name,
+      scopes: req.adminKey.scopes,
+      createdAt: new Date(req.adminKey.createdAt).toISOString(),
+      expiresAt: new Date(req.adminKey.expiresAt).toISOString(),
+      daysLeft: Math.max(0, Math.floor((new Date(req.adminKey.expiresAt).getTime() - Date.now()) / 86400000)),
+    }
+    : null;
+  res.json({
+    authVia: viaKey ? 'admin_key' : 'session',
+    user: { id: req.user.id, name: req.user.name, role: req.user.role },
+    key,
+  });
+});
+
+router.post('/keys', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (req.authVia !== 'session') {
+      return res.status(403).json({ error: 'An admin key is minted from a signed-in browser. A key cannot mint another.' });
+    }
+    const parsed = adminKeys.readMintBody(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const fresh = adminKeys.isFreshSession(req);
+    const freshMinutes = Math.round(adminKeys.ADMIN_KEY_MINT_FRESH_SECONDS / 60);
+    if (!fresh && !emailService.isMailableAddress(req.user.email)) {
+      return res.status(403).json({
+        error: `Sign in again first. This session signed in more than ${freshMinutes} minutes ago, so its key would wait for approval by email, and this account has no address an email can reach.`,
+        signInAgain: true,
+      });
+    }
+    const out = await adminKeys.mintAdminKey(req.user, { ...parsed, fresh, ip: req.ip });
+    if (out.tooMany) {
+      return res.status(409).json({ error: `This account already holds ${adminKeys.ADMIN_KEY_ACTIVE_MAX} live keys. Revoke one on the dashboard first.` });
+    }
+    if (out.tooManyPending) {
+      return res.status(409).json({ error: `${adminKeys.ADMIN_KEY_PENDING_MAX} keys are already waiting for approval. Approve or revoke them from their emails first, or wait for their links to run out.` });
+    }
+    const meta = adminKeys.keyMetadata(out.row);
+    const mail = { to: req.user.email, name: req.user.name, keyName: meta.name, expiresAt: meta.expiresAt, ip: req.ip, at: meta.createdAt };
+    if (!fresh) {
+      // The approval email is the only way this key ever works, so a key whose
+      // email did not go out is undone rather than handed out dead.
+      const sent = await adminKeyMail.notify(
+        adminKeyMail.sendKeyApproval,
+        { ...mail, token: out.approvalToken, minutes: adminKeys.ADMIN_KEY_APPROVAL_MINUTES },
+        'approve a key'
+      );
+      if (!sent || !sent.sent) {
+        await adminKeys.discardPendingKey(meta.id);
+        return res.status(503).json({
+          error: `The approval email could not be sent, so no key was made. Try again in a few minutes, or mint within ${freshMinutes} minutes of signing in, which needs no email.`,
+        });
+      }
+      // A line in the server log for every key made, never the key itself.
+      console.log(`[admin-key] key ${meta.id} ("${meta.name}") minted by user ${req.user.id} from ${req.ip}, pending approval by email until ${meta.approvalExpiresAt}`);
+      return res.status(202).json({
+        key: out.key,
+        ...meta,
+        pending: true,
+        approval: { sentTo: emailService.maskAddress(req.user.email), expiresAt: meta.approvalExpiresAt },
+        shownOnce: true,
+      });
+    }
+    console.log(`[admin-key] key ${meta.id} ("${meta.name}") minted by user ${req.user.id} from ${req.ip}, expires ${meta.expiresAt}`);
+    await adminKeyMail.notify(adminKeyMail.sendKeyMinted, mail, 'key made');
+    return res.status(201).json({ key: out.key, ...meta, pending: false, shownOnce: true });
+  } catch (err) {
+    console.error('[admin] minting an admin key failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/keys', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (req.authVia !== 'session') {
+      return res.status(403).json({ error: 'Listing keys takes a signed-in session. A key cannot list keys.' });
+    }
+    const keys = await adminKeys.listAdminKeys();
+    return res.json({ keys, limit: adminKeys.ADMIN_KEY_LIST_LIMIT });
+  } catch (err) {
+    console.error('[admin] listing admin keys failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/keys/:id', async (req, res) => {
+  try {
+    const id = serialId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Key not found' });
+    let via;
+    if (req.authVia === 'admin_key') {
+      if (!req.adminKey || req.adminKey.id !== id) return res.status(403).json({ error: adminKeys.KEY_WORDS.notSelf });
+      via = 'key';
+    } else if (req.authVia === 'session') {
+      via = 'session';
+    } else {
+      return res.status(403).json({ error: 'Revoking a key takes a signed-in session, or the key itself.' });
+    }
+    const out = await adminKeys.revokeAdminKey(id, via);
+    if (!out) return res.status(404).json({ error: 'Key not found' });
+    if (!out.already) {
+      console.log(`[admin-key] key ${id} revoked by ${via === 'key' ? 'itself' : `user ${req.user.id}`} from ${req.ip}`);
+      await adminKeyMail.notify(adminKeyMail.sendKeyRevoked, {
+        to: out.owner.email, name: out.owner.name, keyName: out.key.name, ip: req.ip, at: out.key.revokedAt, via,
+      }, 'key revoked');
+    }
+    return res.json({ revoked: true, alreadyRevoked: out.already, key: out.key });
+  } catch (err) {
+    console.error('[admin] revoking an admin key failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WAITLIST LAUNCH ANNOUNCE
 // ---------------------------------------------------------------------------
 // POST /api/admin/waitlist/announce  { dry_run?: true }

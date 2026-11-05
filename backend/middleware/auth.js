@@ -2,6 +2,9 @@ const { createSecretKey } = require('crypto');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { prepared } = require('../db/prepared');
+// Admin access keys (migration 135). Every variant below hands a key bearer to
+// this file before it verifies anything; see the top of middleware/adminKeys.js.
+const adminKeys = require('./adminKeys');
 
 // The ACCESS token's life. It stays short on purpose: it is the bearer
 // credential every request and socket carries, so it is the one a theft
@@ -383,8 +386,19 @@ function requireVerified(req, res, next) {
 // refresh credential to retire its family, the push token to delete its row),
 // so an old token picked up somewhere signs nobody out of anything.
 // Pinned to that one mount by __tests__/sessionRenewal.test.js.
+//
+// AN ADMIN ACCESS KEY never gets past the first lines below, whichever variant
+// this is. A bearer that starts with `flk_admin_` goes to
+// middleware/adminKeys.js, which authenticates it on the admin router, skips
+// a router that is only passing the request along to /api/admin, and refuses it
+// with 403 everywhere else. So no variant here can ever take a key for a
+// session, and a key never acts as its owner outside the admin routes.
+// req.authVia says which credential a request came in on: 'session' here,
+// 'admin_key' there.
 function makeAuthenticate({ allowBanned = false, allowExpired = false } = {}) {
   return async function authenticateRequest(req, res, next) {
+    const adminKey = adminKeys.adminKeyBearer(req);
+    if (adminKey) return adminKeys.handleAdminKeyBearer(req, res, next, adminKey);
     try {
       const header = req.headers.authorization;
       if (!header || !header.startsWith('Bearer ')) {
@@ -439,6 +453,7 @@ function makeAuthenticate({ allowBanned = false, allowExpired = false } = {}) {
       }
 
       req.user = result.rows[0];
+      req.authVia = 'session';
       // When this session signed in, in seconds: the token's auth_time, or its
       // iat when it predates that claim (signedInAt above). One reader:
       // routes/notifications.js, which lets a device token move to another

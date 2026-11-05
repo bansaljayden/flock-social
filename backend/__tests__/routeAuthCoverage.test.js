@@ -58,6 +58,7 @@ const EXPECTED_PUBLIC = {
   sensors: 'Pi ingest checks x-api-key in the handler; the read APIs use JWT',
   proOffer: 'homepage pricing card: whether Flock Pro is on sale and at what price, the same answer for every caller, no account data',
   clientCrash: 'the crash screen report button works before sign-in and ties no report to an account; own limiter, a 4KB body and daily caps',
+  keyApproval: 'the admin key approval link is tapped in a phone mail app with no session; the one-use, hashed, 15-minute token is the authorisation, and GET only draws the page',
 };
 
 const AUTH_MW = /\b(authenticate|authenticateAllowBanned|authenticateAllowExpired|requireVerified)\b/;

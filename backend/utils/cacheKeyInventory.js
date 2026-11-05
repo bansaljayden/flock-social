@@ -1688,10 +1688,10 @@ const LIMITERS = [
     keyKind: 'ip',
     key: 'req.ip (express-rate-limit default)',
     message: 'Too many requests, please try again later',
-    mounts: ['/api/venue-digest', '/api/unsubscribe'],
+    mounts: ['/api/venue-digest', '/api/unsubscribe', '/api/key-approval'],
     protects: 'an open unauthenticated endpoint being used as free load',
     verdict: 'SAFE',
-    why: 'The two unsubscribe surfaces are the venue and waitlist doors with NO login, so the address is all there is to key on. Both authorise on an HMAC that is not guessable, so this is not a brute-force gate — and one instance across both mounts, so they share the bucket. NOTE the interaction with RFC 8058 one-click POST: Gmail and Apple Mail send those from THEIR egress addresses, not the reader\'s, so a large send could in principle put many unrelated unsubscribes into one bucket. At this list size it cannot; if the list ever grows, this is the row to revisit and the evidence that settles it is the source addresses in the Railway access log for a Monday send.',
+    why: 'The two unsubscribe surfaces are the venue and waitlist doors with NO login, so the address is all there is to key on. Both authorise on an HMAC that is not guessable, so this is not a brute-force gate — and one instance across both mounts, so they share the bucket. The admin key approval link (routes/keyApproval.js) joined them on 2026-11-05: also no login, also authorised by an unguessable token (32 random bytes, one use, 15 minutes), and also in the same bucket. NOTE the interaction with RFC 8058 one-click POST: Gmail and Apple Mail send those from THEIR egress addresses, not the reader\'s, so a large send could in principle put many unrelated unsubscribes into one bucket. At this list size it cannot; if the list ever grows, this is the row to revisit and the evidence that settles it is the source addresses in the Railway access log for a Monday send.',
   },
   {
     name: 'clientCrashLimiter',
