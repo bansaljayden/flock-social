@@ -96,6 +96,111 @@ function requireAdmin(req, res, next) {
 router.use(requireAdmin);
 
 // ---------------------------------------------------------------------------
+// ADMIN ACCESS KEYS (migration 134, middleware/adminKeys.js)
+// ---------------------------------------------------------------------------
+// A key lets a tool on the owner's computer (tools/flock-admin/admin.mjs) call
+// the admin routes ADMIN_KEY_ROUTES lists, as the admin who minted it. The
+// authenticate above already decided which credential this request came in on
+// (req.authVia) and, for a key, which route it may reach. These four routes
+// add the last rules, each in its own handler as well, so none of them rests
+// on the route list alone:
+//
+//   GET    /whoami     who is asking, and for a key, when it expires
+//   POST   /keys       mints a key: a signed-in session only, signed in within
+//                      the last ADMIN_KEY_MINT_FRESH_SECONDS, never a key. The
+//                      key is in this answer and in no other.
+//   GET    /keys       the keys, metadata and recent uses only: a session only
+//   DELETE /keys/:id   revokes one: a session, or a key revoking itself
+const adminKeys = require('../middleware/adminKeys');
+
+router.get('/whoami', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const viaKey = req.authVia === 'admin_key' && !!req.adminKey;
+  const key = viaKey
+    ? {
+      id: req.adminKey.id,
+      name: req.adminKey.name,
+      scopes: req.adminKey.scopes,
+      createdAt: new Date(req.adminKey.createdAt).toISOString(),
+      expiresAt: new Date(req.adminKey.expiresAt).toISOString(),
+      daysLeft: Math.max(0, Math.floor((new Date(req.adminKey.expiresAt).getTime() - Date.now()) / 86400000)),
+    }
+    : null;
+  res.json({
+    authVia: viaKey ? 'admin_key' : 'session',
+    user: { id: req.user.id, name: req.user.name, role: req.user.role },
+    key,
+  });
+});
+
+router.post('/keys', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (req.authVia !== 'session') {
+      return res.status(403).json({ error: 'An admin key is minted from a signed-in browser. A key cannot mint another.' });
+    }
+    const age = adminKeys.sessionAgeSeconds(req);
+    if (age === null || age > adminKeys.ADMIN_KEY_MINT_FRESH_SECONDS) {
+      const minutes = Math.round(adminKeys.ADMIN_KEY_MINT_FRESH_SECONDS / 60);
+      return res.status(403).json({
+        error: `Sign in again first. A key can be minted only in the ${minutes} minutes after a sign-in, and this session signed in before that. Sign out, sign back in, and run it again.`,
+        signInAgain: true,
+      });
+    }
+    const parsed = adminKeys.readMintBody(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const out = await adminKeys.mintAdminKey(req.user, parsed);
+    if (out.tooMany) {
+      return res.status(409).json({ error: `This account already holds ${adminKeys.ADMIN_KEY_ACTIVE_MAX} live keys. Revoke one on the dashboard first.` });
+    }
+    const meta = adminKeys.keyMetadata(out.row);
+    // A line in the server log for every key made, never the key itself.
+    console.log(`[admin-key] key ${meta.id} ("${meta.name}") minted by user ${req.user.id} from ${req.ip}, expires ${meta.expiresAt}`);
+    return res.status(201).json({ key: out.key, ...meta, shownOnce: true });
+  } catch (err) {
+    console.error('[admin] minting an admin key failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/keys', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (req.authVia !== 'session') {
+      return res.status(403).json({ error: 'Listing keys takes a signed-in session. A key cannot list keys.' });
+    }
+    const keys = await adminKeys.listAdminKeys();
+    return res.json({ keys, limit: adminKeys.ADMIN_KEY_LIST_LIMIT });
+  } catch (err) {
+    console.error('[admin] listing admin keys failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.delete('/keys/:id', async (req, res) => {
+  try {
+    const id = serialId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Key not found' });
+    let via;
+    if (req.authVia === 'admin_key') {
+      if (!req.adminKey || req.adminKey.id !== id) return res.status(403).json({ error: adminKeys.KEY_WORDS.notSelf });
+      via = 'key';
+    } else if (req.authVia === 'session') {
+      via = 'session';
+    } else {
+      return res.status(403).json({ error: 'Revoking a key takes a signed-in session, or the key itself.' });
+    }
+    const out = await adminKeys.revokeAdminKey(id, via);
+    if (!out) return res.status(404).json({ error: 'Key not found' });
+    if (!out.already) console.log(`[admin-key] key ${id} revoked by ${via === 'key' ? 'itself' : `user ${req.user.id}`} from ${req.ip}`);
+    return res.json({ revoked: true, alreadyRevoked: out.already, key: out.key });
+  } catch (err) {
+    console.error('[admin] revoking an admin key failed:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WAITLIST LAUNCH ANNOUNCE
 // ---------------------------------------------------------------------------
 // POST /api/admin/waitlist/announce  { dry_run?: true }

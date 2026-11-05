@@ -104,6 +104,40 @@ test('a JWT is stripped wherever it appears', () => {
   assert.match(s, /\[jwt\]/);
 });
 
+test('an admin access key is stripped wherever it appears, even cut short', () => {
+  // Built at run time, low entropy, so no key-shaped literal sits in this file.
+  const key = `flk_admin_${'c'.repeat(43)}`;
+  for (const line of [
+    `Authorization: Bearer ${key}`,
+    `key ${key} refused`,
+    `truncated ${key.slice(0, 30)}`,
+  ]) {
+    const s = scrubText(line);
+    assert.ok(!s.includes('cccccccccccccccc'), line);
+    assert.match(s, /\[admin key\]/);
+  }
+});
+
+test('the bearer header never leaves in an event, a session token or an admin key', () => {
+  const ev = scrubEvent({
+    request: {
+      url: 'https://api.flockcorp.com/api/admin/money',
+      headers: {
+        host: 'api.flockcorp.com',
+        Authorization: `Bearer flk_admin_${'d'.repeat(43)}`,
+        'proxy-authorization': 'Basic ZZZZ',
+        'X-Api-Key': 'devicekeydevicekey',
+        cookie: 'session=cookiecookie',
+      },
+    },
+  });
+  const blob = JSON.stringify(ev);
+  for (const bad of ['dddddddddddd', 'ZZZZ', 'devicekeydevicekey', 'cookiecookie']) {
+    assert.ok(!blob.includes(bad), `${bad} survived the scrubber`);
+  }
+  assert.strictEqual(ev.request.headers.host, 'api.flockcorp.com', 'the rest of the headers stay');
+});
+
 // -- 3. The whole event -----------------------------------------------------
 
 test('one pass over an event covers the URL, the breadcrumbs and the exception', () => {

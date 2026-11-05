@@ -87,10 +87,14 @@ function scrubUrl(raw) {
 const EMAIL_SHAPE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 // A JWT, wherever it turns up: three dot-separated base64url runs.
 const JWT_SHAPE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+// An admin access key (middleware/adminKeys.js): the prefix and its random
+// part. Matched from 16 characters on, so a key cut short in a log line still
+// goes.
+const ADMIN_KEY_SHAPE = /flk_admin_[A-Za-z0-9_-]{16,}/g;
 
 function scrubText(s) {
   if (typeof s !== 'string') return s;
-  return s.replace(JWT_SHAPE, '[jwt]').replace(EMAIL_SHAPE, '[email]');
+  return s.replace(ADMIN_KEY_SHAPE, '[admin key]').replace(JWT_SHAPE, '[jwt]').replace(EMAIL_SHAPE, '[email]');
 }
 
 // One pass over an event: the request URL, every breadcrumb message, the
@@ -106,6 +110,14 @@ function scrubEvent(event) {
       delete event.request.query_string;
       delete event.request.cookies;
       delete event.request.data;
+      // The bearer every signed-in request carries, a session token or an
+      // admin access key. The SDK's own header filter is a list of name
+      // fragments that can change under a minor version; this does not.
+      if (event.request.headers && typeof event.request.headers === 'object') {
+        for (const name of Object.keys(event.request.headers)) {
+          if (/^(authorization|proxy-authorization|cookie|x-api-key)$/i.test(name)) delete event.request.headers[name];
+        }
+      }
     }
     if (Array.isArray(event.breadcrumbs)) {
       for (const b of event.breadcrumbs) {
