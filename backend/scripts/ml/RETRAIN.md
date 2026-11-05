@@ -137,6 +137,61 @@ table, the ship switch and rollback. What a readiness audit of every step on
   offset would sit at their no-reading values. Only the cancellation moves:
   the export still waits for the end of the current cycle.
 
+**2026-11-05: the retrain is gated and served as a mix, decided before the
+November export.**
+
+- **What.** Where the venue has the live reading rule (b)'s nowcast would
+  carry (the reading from one venue-local hour earlier, under the 2026-10-14
+  table), the retrain answers; everywhere else rule (b)'s curve + 0.85 x the
+  trailing offset answers, which is what rule (b) itself serves there. In code
+  it is `CROWD_SERVE_MODE=model_when_fresh` (`services/mlPredictor.js`). Which
+  side answers is decided by `isFreshReading`, the nowcast's own pick and
+  table, not by a second definition of an hour-old reading.
+  `CROWD_NOWCAST_ENABLED=true` stays as the main service has it. The band gate
+  scores the candidate the same way, `--candidate-serve=model_when_fresh+nowcast`
+  (step 7 below), and records the configuration as `band_gate.candidate_serving`;
+  the ship sets that configuration, and the final refit's forward check scores
+  the refit the same way. With `CROWD_SERVE_MODE` unset, `model` or a value the
+  file does not know, every number is served exactly as before.
+- **Why: the rehearsal of 2026-11-05.** The November run was rehearsed through
+  the verdict on an export taken that morning: artifact `2.8.0-rehearsal`, trained on
+  live readings through 2026-10-15, gated on 2026-10-23..11-05 in the six gate
+  cities (410,606 readings, 14 dates) against rule (b). Served alone, the
+  retrain failed one criterion, within 10 against rule (b): -1.69 points
+  (95% interval -3.21 to -0.18). Split by the reading, on the 82.6% of
+  readings that had an hour-old reading the retrain matched rule (b) within 10
+  (88.5% against 88.2%) and beat it on MAE (5.36 against 6.26). On the other
+  17.4% it trailed by 11 points (65.7% against 76.8%; MAE 9.15 against 7.28),
+  biased 7.95 points high where rule (b) was 1.85. Served as the mix on the
+  same readings it passed all eight criteria: within one level +0.40 (0.35 to
+  0.44), within 10 +0.25 (-0.82 to +1.32), against the weekly curve +6.39
+  (4.93 to 8.20) with band MAE 0.240 against the curve's 0.509, against the
+  rule engine +13.76 (13.06 to 14.53), every city +0.3 to +0.5 within one
+  level, MAE 5.69 against 6.43. Exact level 76.5% against 72.0%, bias +1.98.
+- **What that evidence is.** The mix was chosen on the rehearsal window,
+  2026-10-23..11-05, not on the November test window. In the real run those
+  dates are training data, so the November gate scores the mix on later
+  readings that no choice here was made on. On the rehearsal the within-10
+  interval ended 0.18 points above the -1.0 bar.
+- **Outside the six cities (report only, as the verdict has been since
+  2026-10-30).** In the 25 other cities (291,189 readings) the split ran the
+  other way: without an hour-old reading the retrain beat curve + offset within
+  10, 71.3% against 65.6%, and only 52.5% of those cities' readings had an
+  hour-old reading (82.6% in the six). There the mix was level with rule (b)
+  within 10 (78.1% against 78.0%) and below the retrain alone (80.8%).
+- **The ship.** `CROWD_SERVE_MODE=model_when_fresh` on the main service, with
+  `CROWD_NOWCAST_ENABLED` left true; the rollback stays
+  `CROWD_SERVE_MODE=curve_offset`, rule (b). The order of the variable and the
+  artifact does not matter: with v2.6.0-starling loaded and the nowcast on, the
+  mix serves rule (b)'s numbers and confidence figures, because v2.6.0's
+  model-table nowcast carries an hour-old reading at full weight as rule (b)
+  does (every row of the band fixture, quantile map on and off). Two surfaces
+  do not name the mix yet: the admin Overview's "Made by" row knows only
+  `model` and `curve_offset` (`services/moneyHub.js` readServing and the
+  revenue screen), and a model number from an artifact that reads the live
+  features says `usedLiveReadings: false` although its inputs include the
+  hour-old reading.
+
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
 Lehigh's 7,276 live readings of 09-01..09-08 and Miami's 730 of 09-05..09-08,
@@ -542,21 +597,25 @@ CROWD_QMAP_ENABLED=false python quick_eval.py
 MODEL_VERSION=2.8.0-starling python export_model.py
 
 # 7. Band gate: writes ship_gate.band_gate, sets overall_pass = point AND band.
-#    The incumbent is scored as production serves it: curve_offset + nowcast
-#    since 2026-09-26. Beating the model alone is not the bar.
-node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --out=band_gate_report.json
+#    The incumbent is rule (b), the registered comparator: curve_offset +
+#    nowcast under the 2026-10-14 weights, which production served until
+#    2026-11-01. Beating the model alone is not the bar. The candidate is
+#    scored as it will be served (2026-11-05): the model where the venue has
+#    an hour-old reading, curve + 0.85 x offset elsewhere.
+node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model_when_fresh+nowcast --out=band_gate_report.json
 
 # 8. Verify the artifact the way production reads it, then read the verdict.
+#    The per-test timeout turns a hang into a red instead of a stall.
 cd ../../..
-node --test
+node --test --test-timeout=120000
 node -e "const g=require('./scripts/ml/models/model_metadata.json').ship_gate;
          console.log(g.overall_pass, g.point_gate_pass, g.band_gate_status,
                      JSON.stringify(g.band_gate && g.band_gate.candidate))"
 ```
 
 `run_training.sh` runs the same scripts in the same order, without this run's
-switches, the schedule export or `--incumbent-serve`; use the block above for
-the November run. Run step 7 with
+switches, the schedule export, `--incumbent-serve` or `--candidate-serve`; use
+the block above for the November run. Run step 7 with
 `CROWD_QMAP_ENABLED` set exactly as the main service has it, because the band
 gate compares the candidate against the incumbent AS SERVED, and the map
 changes what the incumbent serves.

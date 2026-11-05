@@ -617,10 +617,14 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
   fs.writeFileSync(path.join(cand, 'model_metadata.json'), JSON.stringify(meta));
   const out = path.join(dir, 'report.json');
   const rowsOut = path.join(dir, 'band_rows.csv');
+  // A schedule with no games, for an artifact that reads the sports features
+  // (a clean checkout has no train/sports_events.csv); ignored by one that does not.
+  const sportsCsv = path.join(dir, 'sports_events.csv');
+  fs.writeFileSync(sportsCsv, 'is_home,event_local_date,event_local_time,venue_lat,venue_lon\n');
   const quiet = console.log;
   console.log = () => {};
   try {
-    await B.main([`--train=${csv}`, '--holdout=-', `--model=${cand}`, `--incumbent=${MODELS_DIR}`, '--gate',
+    await B.main([`--train=${csv}`, '--holdout=-', `--model=${cand}`, `--incumbent=${MODELS_DIR}`, '--gate', `--sports=${sportsCsv}`,
       '--incumbent-serve=curve_offset+nowcast', '--candidate-serve=model_when_fresh+nowcast', `--out=${out}`, `--rows-out=${rowsOut}`]);
   } finally {
     console.log = quiet;
@@ -680,7 +684,7 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
     const plainRows = path.join(dir, 'plain_rows.csv');
     console.log = () => {};
     try {
-      await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, `--out=${plainOut}`, `--rows-out=${plainRows}`]);
+      await B.main([`--train=${csv}`, '--holdout=-', `--model=${MODELS_DIR}`, `--sports=${sportsCsv}`, `--out=${plainOut}`, `--rows-out=${plainRows}`]);
     } finally {
       console.log = quiet;
     }

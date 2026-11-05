@@ -3938,17 +3938,18 @@ function applyScoreQuantileMap(score) {
 // curve_offset table weighs above zero, which since 2026-10-14 means one hour
 // old)? With it, the model path answers, computed exactly as
 // CROWD_SERVE_MODE=model computes it with a switch on: the strict offset, and
-// the nowcast only when CROWD_NOWCAST_ENABLED says so (production runs the
-// nowcast on, so this is the model path production serves). Without it, the
-// curve_offset path answers, exactly as CROWD_SERVE_MODE=curve_offset computes
-// it: curve + CURVE_OFFSET_WEIGHT times the strict offset, which is also what
-// rule (b) serves there, because its nowcast weighs nothing older than an
-// hour. The reason is measured, not assumed: on the November rehearsal's held
-// out readings the retrain matched rule (b) where an hour-old reading existed
-// and lost within 10 by about ten points where none did (RETRAIN.md, the
-// 2026-11-05 decision). The response says which side answered (serveMode,
-// freshMix), and the version and source labels follow the arithmetic that
-// ran, so a curve_offset number carries '+curve_offset' as it does today.
+// the nowcast only when CROWD_NOWCAST_ENABLED says so, so with the nowcast on
+// it is the 'model' setting's number. Without it, the curve_offset path
+// answers, exactly as CROWD_SERVE_MODE=curve_offset computes it: curve +
+// CURVE_OFFSET_WEIGHT times the strict offset, which is also what rule (b)
+// serves there, because its nowcast weighs nothing older than an hour. The
+// reason is measured (RETRAIN.md, the 2026-11-05 decision): on the November
+// rehearsal's held-out readings in the six gate cities, the retrain matched
+// rule (b) within 10 where an hour-old reading existed (88.5% against 88.2%)
+// and trailed it by 11 points where none did (65.7% against 76.8%). The
+// response says which side answered (serveMode, freshMix), and the version
+// and source labels follow the arithmetic that ran, so a curve_offset number
+// carries '+curve_offset' as it does today.
 // ---------------------------------------------------------------------------
 const SERVE_MODES = Object.freeze(['model', 'curve_offset', 'model_when_fresh']);
 let unknownServeModeLogged = false;

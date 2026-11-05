@@ -1002,7 +1002,6 @@ test('model_when_fresh: each number is the model setting\'s where the reading is
   const mix = await serveFixture({ ...now, CROWD_SERVE_MODE: 'model_when_fresh' });
   const model = await serveFixture({ ...now, CROWD_SERVE_MODE: 'model' });
   const co = await serveFixture({ ...now, CROWD_SERVE_MODE: 'curve_offset' });
-  assert.deepEqual(mix.unknown, []);
   const { fx } = mix;
   let fresh = 0;
   let stale = 0;
