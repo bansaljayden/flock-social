@@ -647,13 +647,13 @@ const RECONCILED = {
     {
       id: 'google-cloud',
       label: 'Google Cloud (Places, Vision, Gemini on one bill)',
-      usdPerMonth: 18.63,
-      asOf: '2026-10-01',
+      usdPerMonth: 8.18,
+      asOf: '2026-11-01',
       // The bill before this one, from its receipt, so the money hub can say
       // when a bill jumps (moneyHub.js billJumps). Updated with each receipt.
-      previous: { usdPerMonth: 31.19, period: 'August 2026', paidOn: '2026-09-01' },
+      previous: { usdPerMonth: 18.63, period: 'September 2026', paidOn: '2026-10-01' },
       readFrom: 'the latest paid invoice on the Google Cloud billing page',
-      note: 'September 2026 was paid on 2026-10-01: $18.63 (Google\'s payment receipt, which states the amount and not the line items). August was $31.19, paid on 2026-09-01, the first full billing cycle anyone read off an invoice, and the budget alert of 2026-09-29 (half of a $33 budget) already pointed at a smaller September. Both are paid monthly totals; the $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20 and was never a monthly figure. The photo budget is the ceiling on the size of this line: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. Both months sit inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling, not a leak.',
+      note: 'October 2026 was paid on 2026-11-01: $8.18 (Google\'s payment receipt, which states the amount and not the line items). September was $18.63, paid on 2026-10-01, and August $31.19, paid on 2026-09-01, the first full billing cycle anyone read off an invoice. All three are paid monthly totals; the $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20 and was never a monthly figure. A second Google payment, $20.00 on 2026-11-02, is not in this figure: it is Gemini prepay credit, added after the earlier credit ran out by 2026-10-28 (the Cloud billing page showed a $20.00 prepay balance with auto-reload off on 2026-11-03), money paid ahead that Birdie and Roost draw down rather than a month\'s bill. The photo budget is the ceiling on the size of this line: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. All three months sit inside that envelope. To lower it, lower the budget: this is a configured ceiling, not a leak.',
     },
     {
       // Moved here from FIXED_MONTHLY, where it read $20.00. Same id, so an

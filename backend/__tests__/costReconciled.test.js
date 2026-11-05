@@ -73,7 +73,10 @@ test('a saved row wins over the code constant for its line and dates only that l
 });
 
 test('a fresh Railway entry cannot make an old Google figure look current', async () => {
-  rows = [{ line_id: 'railway', usd_per_month: '35.10', as_of: '2026-10-16', note: null, updated_at: 'x' }];
+  // Recorded a month after the Google figure was read, whenever that was, so
+  // a new Google receipt in the code needs no edit here.
+  const fresh = new Date(Date.parse(`${codeLine('google-cloud').asOf}T00:00:00Z`) + 30 * 86400000).toISOString().slice(0, 10);
+  rows = [{ line_id: 'railway', usd_per_month: '35.10', as_of: fresh, note: null, updated_at: 'x' }];
   const r = await costModel.readReconciled(pool);
   const railway = r.lines.find((x) => x.id === 'railway');
   const google = r.lines.find((x) => x.id === 'google-cloud');
@@ -81,7 +84,7 @@ test('a fresh Railway entry cannot make an old Google figure look current', asyn
   assert.equal(railway.usdPerMonth, 35.1);
   assert.equal(google.source, 'code');
   assert.equal(google.asOf, codeLine('google-cloud').asOf);
-  assert.equal(r.asOf, '2026-10-16');
+  assert.equal(r.asOf, fresh);
   assert.equal(r.oldestAsOf, codeLine('google-cloud').asOf, 'the oldest date is still the Google one');
 });
 
