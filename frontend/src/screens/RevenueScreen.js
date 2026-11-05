@@ -2769,9 +2769,11 @@ function WaitlistLaunchBody({ colors, DialogBehavior }) {
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 18px', lineHeight: 1.5 }}>
               Everyone still on the waitlist gets &ldquo;{WAITLIST_SUBJECT}&rdquo;, once each. An email that has gone out cannot be taken back.
             </p>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <button className="hit44" type="button" onClick={() => setAsking(false)} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-              <button className="hit44" type="button" disabled={running} onClick={send} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}>Send to {hubPeople(pending)}</button>
+            {/* Side by side on a phone; on a 320px screen the two wrap onto
+                rows of their own rather than the send label onto two lines. */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+              <button className="hit44" type="button" onClick={() => setAsking(false)} style={{ flex: '1 1 90px', padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+              <button className="hit44" type="button" disabled={running} onClick={send} style={{ flex: '2 1 180px', padding: '13px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}>Send to {hubPeople(pending)}</button>
             </div>
           </div>
         </div>
