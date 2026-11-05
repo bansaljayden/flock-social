@@ -157,6 +157,9 @@
 /* ---------- closing band ---------- */
 
 .hw-try-lead { margin: 16px 0 26px; }
+/* Apple's badge (AppStoreBadge.js) at 52px: 13px of clear space, and the lead's
+   26px above and the button row's 26px below both clear it. */
+.hw-try-store { margin: 0; }
 .hw-textlink {
   display: inline-flex;
   align-items: center;

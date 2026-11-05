@@ -1,13 +1,15 @@
 /**
  * Two failure paths where the words shown were not written for a person.
  *
- *   1. THE HOMEPAGE WAITLIST FORM. It printed whatever its Error carried. A
- *      dropped connection read as the browser's own "Load failed" (Safari) or
- *      "Failed to fetch" (Chrome); a 500 read as the backend's literal
- *      "Server error"; and a repeat signup was welcomed as if it were new,
- *      because the page ignored the server's answer on a 201. While the app is
- *      in review the App Store badge points at this form, so it is how every
- *      iPhone visitor gets in line.
+ *   1. THE HOMEPAGE WAITLIST FORM, RETIRED. It printed whatever its Error
+ *      carried until this file pinned it: the browser's own "Load failed",
+ *      the backend's literal "Server error", and a repeat signup welcomed as
+ *      new. It collected emails "to hear the moment the iPhone app is out",
+ *      and on 2026-11-04 Apple released the app, so on 2026-11-05 the form
+ *      left the page and #get became Apple's badge and the web sign-up. What
+ *      is pinned now is that it stays gone, and that the backend route it
+ *      posted to stays, because the addresses it holds and their unsubscribe
+ *      links still depend on it.
  *
  *   2. REMOVING A TRUSTED CONTACT that is already gone. The server answers 404
  *      "Contact not found" when it was removed on another device, and the app
@@ -21,7 +23,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
+const { render } = require('@testing-library/react');
 
 // Same stubs as marketingSiteAccessibility.test.js: LiveDemo pulls maplibre-gl
 // and BirdieBird runs a rAF loop, and neither is under test.
@@ -38,126 +40,33 @@ jest.mock('../components/ui/BirdieBird', () => ({
 
 const LandingPageModule = require('../website/LandingPage');
 const LandingPage = LandingPageModule.default;
-const { waitlistReply } = LandingPageModule;
-
-const JOINED = 'You’re on the list. You’ll get an email when it opens up.';
-const ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
-const FAILED = 'Could not sign you up. Try again in a moment.';
-const OFFLINE = 'Couldn’t reach Flock. Check your connection and try again.';
-
-function response(status, body) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: body === undefined
-      ? () => Promise.reject(new SyntaxError('Unexpected token < in JSON at position 0'))
-      : () => Promise.resolve(body),
-  };
-}
-
-// Submits the real form with fetch answering `answer`, and returns what the
-// two live regions and the field hold once the request settles.
-async function submitWith(answer) {
-  global.fetch = jest.fn(answer);
-  const { container, unmount } = render(React.createElement(LandingPage));
-  const input = screen.getByLabelText(/email address/i);
-  fireEvent.change(input, { target: { value: 'someone@example.com' } });
-  const submit = Array.from(container.querySelectorAll('button'))
-    .find((b) => /join the waitlist/i.test(b.textContent));
-  fireEvent.click(submit);
-  await waitFor(() => expect(submit.getAttribute('aria-disabled')).not.toBe('true'));
-  await waitFor(() => {
-    const said = container.querySelector('[role="status"]').textContent
-      + container.querySelector('[role="alert"]').textContent;
-    expect(said).not.toBe('');
-  });
-  const out = {
-    status: container.querySelector('[role="status"]').textContent,
-    alert: container.querySelector('[role="alert"]').textContent,
-    field: input.value,
-    invalid: input.getAttribute('aria-invalid'),
-  };
-  unmount();
-  return out;
-}
 
 afterEach(() => {
   delete global.fetch;
 });
 
-describe('the waitlist form, rendered, for every way the request ends', () => {
-  test('a dropped connection says so in words, not in the browser\'s', async () => {
-    for (const browserSays of ['Load failed', 'Failed to fetch', 'NetworkError when attempting to fetch resource.']) {
-      // eslint-disable-next-line no-await-in-loop
-      const out = await submitWith(() => Promise.reject(new TypeError(browserSays)));
-      expect(out.alert).toBe(OFFLINE);
-      expect(out.status).toBe('');
-      expect(out.invalid).toBe('true');
-      // The address stays, so trying again is one tap.
-      expect(out.field).toBe('someone@example.com');
-    }
+describe('the retired waitlist form stays retired', () => {
+  test('the home page has no form, no email field and asks nothing of the waitlist', () => {
+    global.fetch = jest.fn(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) }));
+    const { container, unmount } = render(React.createElement(LandingPage));
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelector('input[type="email"]')).toBeNull();
+    expect(container.textContent).not.toMatch(/waitlist|get an email when it opens up|the moment the iPhone app is out/i);
+    // The page asks the API one thing on load, the Pro offer, and never the waitlist.
+    for (const [url] of global.fetch.mock.calls) expect(String(url)).not.toMatch(/waitlist/);
+    unmount();
   });
 
-  test('a 500 carrying the route\'s "Server error" placeholder gets a sentence instead', async () => {
-    const out = await submitWith(() => Promise.resolve(response(500, { error: 'Server error' })));
-    expect(out.alert).toBe(FAILED);
-    expect(out.alert).not.toMatch(/Server error/);
+  test('its client code went with it', () => {
+    expect(LandingPageModule.waitlistReply).toBeUndefined();
+    const src = fs.readFileSync(path.join(__dirname, '..', 'website', 'LandingPage.js'), 'utf8');
+    expect(src).not.toMatch(/api\/waitlist/);
   });
 
-  test('a gateway error page that is not JSON gets the same sentence', async () => {
-    const out = await submitWith(() => Promise.resolve(response(502)));
-    expect(out.alert).toBe(FAILED);
-    expect(out.alert).not.toMatch(/Unexpected token/);
-  });
-
-  test('the sentences the route wrote for a visitor are kept', async () => {
-    const tooMany = 'Too many signups from this connection. Try again later.';
-    let out = await submitWith(() => Promise.resolve(response(429, { error: tooMany })));
-    expect(out.alert).toBe(tooMany);
-    out = await submitWith(() => Promise.resolve(response(400, { error: 'Valid email is required' })));
-    expect(out.alert).toBe('Valid email is required');
-  });
-
-  test('a repeat signup is told it was already on the list', async () => {
-    const out = await submitWith(() => Promise.resolve(response(201, {
-      success: true, alreadyOnList: true, message: "You're already on the list.",
-    })));
-    expect(out.status).toBe(ALREADY);
-    expect(out.alert).toBe('');
-    expect(out.field).toBe('');
-    expect(out.invalid).toBeNull();
-  });
-
-  test('a new signup still gets the page\'s own confirmation', async () => {
-    const out = await submitWith(() => Promise.resolve(response(201, {
-      success: true, alreadyOnList: false, message: "You're on the list.",
-    })));
-    expect(out.status).toBe(JOINED);
-    expect(out.field).toBe('');
-  });
-});
-
-describe('waitlistReply, the mapping on its own', () => {
-  test('success, with and without the flag', () => {
-    expect(waitlistReply(201, { alreadyOnList: true })).toEqual({ msg: ALREADY, bad: false });
-    expect(waitlistReply(201, { alreadyOnList: false })).toEqual({ msg: JOINED, bad: false });
-    // An older backend that sends no flag is treated as a new signup.
-    expect(waitlistReply(201, {})).toEqual({ msg: JOINED, bad: false });
-  });
-
-  test('only 400 and 429 pass the server\'s words through, and never the placeholder', () => {
-    expect(waitlistReply(400, { error: 'Server error' })).toEqual({ msg: FAILED, bad: true });
-    expect(waitlistReply(429, {})).toEqual({ msg: FAILED, bad: true });
-    for (const status of [401, 403, 404, 500, 502, 503, 504]) {
-      expect(waitlistReply(status, { error: 'Internal thing' })).toEqual({ msg: FAILED, bad: true });
-    }
-  });
-
-  test('the copy has no em dash and names no browser error', () => {
-    for (const line of [JOINED, ALREADY, FAILED, OFFLINE]) {
-      expect(line).not.toMatch(/—/);
-      expect(line).not.toMatch(/Load failed|Failed to fetch|Server error/);
-    }
+  test('the backend route stays, for the addresses it holds and their unsubscribe links', () => {
+    const route = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'waitlist.js'), 'utf8');
+    expect(route).toMatch(/router\.post\('\/'/);
+    expect(route).toMatch(/INSERT INTO waitlist \(email\)/);
   });
 });
 

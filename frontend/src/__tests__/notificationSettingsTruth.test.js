@@ -34,9 +34,10 @@ test('the night-mode switch announces what it does, and an unsupported browser i
   expect(profile).toMatch(/<Toggle label="Smart Night Mode" on=\{themeMode === 'auto'\}/);
   expect(profile).not.toMatch(/Match device appearance/);
   expect(profile).toMatch(/\) : notifStatus === 'denied' \|\| notifStatus === 'unsupported' \? \(/);
-  // Not "install it from the App Store": the app is not on the App Store, the
-  // submission was rejected, and this sentence was telling a web user to go
-  // and fetch something that is not there. Same false availability claim the
-  // Terms heading and llms.txt carried.
-  expect(profile).toMatch(/This browser cannot show notifications\. The iPhone app can, once it is out\./);
+  // Until 2026-11-04 this said "The iPhone app can, once it is out.", because
+  // telling a web user to install something that was not on the App Store was
+  // a false availability claim. Apple released 1.0 that day, so it says the
+  // app is there, in Apple's naming ("Flock for iPhone").
+  expect(profile).toMatch(/This browser cannot show notifications\. Flock for iPhone can, and it is on the App Store\./);
+  expect(profile).not.toMatch(/once it is out/);
 });

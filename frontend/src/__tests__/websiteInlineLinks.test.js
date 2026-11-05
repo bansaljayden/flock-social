@@ -19,6 +19,8 @@ test.each([
   ['FluxPage.css', '.fx-figure .lp-fig-cap a'],
   ['HowItWorks.css', '.hw-ai-more a'],
   ['HowItWorks.css', '.hw-venues a'],
+  // The home page's "No iPhone?" line under the App Store badge (2026-11-05).
+  ['LandingPage.css', '.lp-get-web a'],
 ])('%s: %s carries an underline', (file, selector) => {
   const css = read(file);
   const at = css.indexOf(`${selector} {`);

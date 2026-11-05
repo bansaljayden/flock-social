@@ -103,6 +103,14 @@ export default function SiteFooter({
                 credit: BestTime's terms ask for none; the line that was here
                 was only their optional link-for-credits offer. */}
             <span>Venue photos in the app screenshots: Google Maps and its contributors.</span>
+            {/* Apple's credit lines, which its marketing guidelines ask for
+                once, where a site gives its legal notices, whenever the App
+                Store badge is used (AppStoreBadge.js). The pages also name
+                iPhone, so it is credited with them. */}
+            <span className="lp-footer-tm">
+              Apple, the Apple logo and iPhone are trademarks of Apple Inc., registered in the U.S. and other
+              countries. App Store is a service mark of Apple Inc., registered in the U.S. and other countries.
+            </span>
           </div>
         </div>
       </footer>

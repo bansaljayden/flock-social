@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo } from 'react';
+import { isNativeShell } from '../lib/nativeShell';
+import AppStoreBadge from './AppStoreBadge';
 import './TapPage.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -27,26 +29,27 @@ import './TapPage.css';
    The whole route is now a small JS chunk, a small CSS chunk and the logo.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── SWITCH 1 OF 2: THE APP STORE BUTTON ────────────────────────────────────
-   Flip to true on the day Apple approves the listing, and not one day before.
-   The id below is real (it is the same one LandingPage.js holds) but the
-   listing 404s until approval, so with this false the button is not rendered
-   at all rather than rendered pointing somewhere broken. A judge who taps
-   "App Store" and lands on Apple's error page has learned something false
-   about how finished this is.
+/* ── SWITCH 1 OF 2: THE APP STORE BADGE ─────────────────────────────────────
+   ON since 2026-11-04, the day Apple released Flock 1.0 for iPhone. It is
+   Apple's own "Download on the App Store" badge (AppStoreBadge.js, which holds
+   the artwork, the listing URL and Apple's rules), not a button with a drawn
+   Apple logo: Apple allows no standalone Apple logo. Turn this off only if
+   the listing is ever pulled, because a judge who taps the badge and lands on
+   Apple's error page has learned something false about how finished this is.
 
-   The layout underneath it is built for FOUR buttons, not three. The
-   secondary row is a fixed 48px against the primary's 54px and the column was
-   measured with this flag forced true at 390 / 768 / 1440 and at 667px tall,
-   so flipping it adds a button to a composition that already has room for it
-   rather than pushing the /about link under the fold. Re-measure at 390px if
-   you ever add a fifth.
+   The column was built and measured for four controls at 390 / 768 / 1440 and
+   at 667px tall, so the badge closes a composition that already had room for
+   it. It is 44px tall (40px, Apple's minimum, on the shortest screens), which
+   with the clear space Apple asks for around it (a quarter of its height,
+   held in TapPage.css) fits inside the 48px reserved for the old button.
+   Re-measured 2026-11-05: nothing scrolls at 360x640, 375x667 or 390x844.
+   Re-measure at 390px if you ever add a fifth.
 
-   LandingPage.js carries its own APP_STORE_LIVE for the hero badge. Flip both
-   in the same change, along with the App Store `sameAs` note in
-   public/index.html's JSON-LD block, which says the same thing. */
-const APP_STORE_LIVE = false;
-const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
+   Inside the iPhone app itself there is nothing to download, so the badge is
+   not drawn there. The App Store listing is also the app entity's `sameAs` and
+   `installUrl` in public/index.html's JSON-LD block, and the home page carries
+   the same badge. */
+const APP_STORE_LIVE = true;
 
 /* ── SWITCH 2 OF 2: THE GITHUB BUTTON ───────────────────────────────────────
    Verify that the repository is accessible without authentication
@@ -130,15 +133,9 @@ function withApi(fn) {
   });
 }
 
-/* Apple's own mark, the same path LandingPage.js draws in its badge. Inline
-   because one <svg> is cheaper than a request, and because this page must not
-   depend on an icon module it would otherwise pull in whole. */
-const AppleMark = () => (
-  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
-  </svg>
-);
-
+/* Marks are inline because one <svg> is cheaper than a request, and because
+   this page must not depend on an icon module it would otherwise pull in
+   whole. There is no Apple mark here: the App Store is Apple's own badge. */
 const GitHubMark = () => (
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <path d="M12 2C6.48 2 2 6.58 2 12.23c0 4.51 2.87 8.34 6.84 9.69.5.09.68-.22.68-.5l-.01-1.72c-2.78.62-3.37-1.37-3.37-1.37-.45-1.19-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 2.5-.34c.85 0 1.71.12 2.5.34 1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.35 4.8-4.58 5.05.36.32.68.94.68 1.9l-.01 2.82c0 .28.18.6.69.5A10.05 10.05 0 0 0 22 12.23C22 6.58 17.52 2 12 2z" />
@@ -146,7 +143,7 @@ const GitHubMark = () => (
 );
 
 /* Stroked, not filled, because a filled globe at 20px is a dark blob next to
-   two marks that read as shapes. Same 24-unit box as the other two. */
+   a mark that reads as a shape. Same 24-unit box as the GitHub mark. */
 const SiteMark = () => (
   <svg className="tap-stroke" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <circle cx="12" cy="12" r="9" />
@@ -204,8 +201,8 @@ export default function TapPage() {
 
         <p className="tap-lead">
           Everyone votes on the place, and nobody has to say their budget out
-          loud. When the night is over, Flock splits the bill. It is free and
-          runs in this browser, so there is nothing to download.
+          loud. When the night is over, Flock splits the bill. It is free, in
+          this browser and on the App Store.
         </p>
 
         <div className="tap-actions">
@@ -248,17 +245,8 @@ export default function TapPage() {
             </a>
           )}
 
-          {APP_STORE_LIVE && (
-            <a
-              className="tap-btn tap-btn-ghost"
-              href={APP_STORE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => record('app_store')}
-            >
-              <AppleMark />
-              Download on the App Store
-            </a>
+          {APP_STORE_LIVE && !isNativeShell() && (
+            <AppStoreBadge className="tap-appstore" onClick={() => record('app_store')} />
           )}
         </div>
 

@@ -9,7 +9,7 @@
  *    anywhere, and its Birdie copy read "Ask Birdie the way you'd ask a friend
  *    who knows the city." An assistant marketed as a friend, on a page that
  *    never says it is software, is the deceptive-advertising shape the FTC
- *    describes, and Flock is in App Store review with a 13+ audience.
+ *    describes, and Flock is on the App Store with a 13+ audience.
  *
  *    The disclosure is one sentence pair sitting directly under that line, so
  *    the warm framing and the fact arrive together. This suite pins it as
@@ -82,7 +82,7 @@ const DISCLOSURE =
 // ───────────────────────────────────────────────────────────────────────────
 const EXCLUDE_HOME = [
   '.lp-skip', 'header.lp-nav', '#lp-menu', '.lp-chat', '.lp-split',
-  '.lp-sos-mail', '.lp-appstore', 'form.lp-form', '.lp-form-status',
+  '.lp-sos-mail',
   'figure', 'footer.lp-footer',
 ];
 

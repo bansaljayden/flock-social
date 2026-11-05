@@ -118,10 +118,11 @@ describe('the page only sells things that exist', () => {
     // Until 2026-10-20 no user could see a venue event at all, and this test
     // kept events off the page. GET /public-events/:placeId now fills the
     // venue card's "Happening here" for anyone signed in to the web app, and
-    // only for a venue holding a VERIFIED claim. The iPhone build in review
-    // (49) does not draw it yet, but the page sells the web app, which is
-    // live, and says plainly that the iPhone app is still in review. So events
-    // may be named, and every sentence that names them carries the condition.
+    // only for a venue holding a VERIFIED claim. Build 49, the iPhone app's
+    // 1.0 (on the App Store since 2026-11-04), was cut before the route and
+    // does not draw it; the builds after it do. Owners run the venue side on
+    // the web, where it is live. So events may be named, and every sentence
+    // that names them carries the condition.
     const route = fs.readFileSync(path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8');
     expect(route).toMatch(/router\.get\('\/public-events\/:placeId'[\s\S]{0,1200}AND vp\.verified = true/);
     const venueCard = visible.slice(visible.indexOf('id="venues"'), visible.indexOf('lp-cta'));
@@ -525,18 +526,9 @@ describe('the layout floors that only fail on a phone', () => {
     expect(block[1]).toMatch(/min-width: 0/);
   });
 
-  test('the waitlist message slot holds a line open before there is a message', () => {
-    // Both live regions collapse to zero while empty, which is what keeps the
-    // pair one line tall once one fills. At rest that made the slot zero, so
-    // the first failed submit inserted a line and pushed the CTA band — the
-    // field you had just pressed enter in — down under your hands.
-    expect(visible).toMatch(/<div className="lp-form-status">/);
-    const slot = /\.lp-form-status \{([\s\S]*?)\}/.exec(CSS);
-    expect(slot).not.toBeNull();
-    expect(slot[1]).toMatch(/min-height: 1lh/);
-    // …and a px floor first, for an engine without lh units.
-    expect(slot[1]).toMatch(/min-height: \d+px/);
-  });
+  // 'the waitlist message slot holds a line open before there is a message'
+  // lived here until 2026-11-05: the waitlist form and its live regions left
+  // the page the day after Flock went on the App Store (appStoreLive.test.js).
 
   test('no form control is under the 16px iOS zoom floor', () => {
     // Anything under 16px on a focused input makes iOS Safari zoom the whole

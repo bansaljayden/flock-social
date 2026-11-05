@@ -657,9 +657,11 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(privacy).toMatch(/Your calendar entries/);
     expect(privacy).toMatch(/Availability status/);
 
-    // The waitlist form on the marketing site stores an email address.
-    const landing = read('frontend', 'src', 'website', 'LandingPage.js');
-    expect(landing).toMatch(/api\/waitlist/);
+    // The waitlist stores email addresses. Its form left the home page on
+    // 2026-11-05, the day after Flock went on the App Store, but the route and
+    // the addresses it holds stay, so the policy keeps describing them.
+    const waitlist = read('backend', 'routes', 'waitlist.js');
+    expect(waitlist).toMatch(/INSERT INTO waitlist \(email\)/);
     expect(privacy).toMatch(/Waitlist email/);
   });
 

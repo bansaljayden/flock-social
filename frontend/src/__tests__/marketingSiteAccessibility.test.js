@@ -178,7 +178,8 @@ describe('contrast, computed from the shipped tokens', () => {
     expectRatio(lp['--ink-3'], lp['--paper-2'], 4.5, '.lp-msg-dead on the chat bubble fill');
     expectRatio(lp['--ink-3'], '#ffffff', 4.5, '--ink-3 on the white plates');
     expectRatio(lp['--cream-2'], lp['--navy'], 4.5, 'lead / list copy on navy');
-    expectRatio(lp['--cream-2'], ctaLightest, 4.5, '.lp-form-msg on the CTA gradient');
+    expectRatio(lp['--cream-2'], ctaLightest, 4.5, '.lp-get-web on the CTA band');
+    expectRatio(lp['--cream-2'], heroLightest, 4.5, '.lp-hero-store-date over the hero');
     expectRatio(lp['--cream-3'], lp['--navy'], 4.5, '--cream-3 fine print on navy');
     expectRatio(lp['--cream-3'], lp['--navy-deep'], 4.5, 'footer links');
     expectRatio(lp['--cream-3'], heroLightest, 4.5, '.lp-plate-cap on the hero gradient');
@@ -189,34 +190,19 @@ describe('contrast, computed from the shipped tokens', () => {
     expectRatio(lp['--ink-3'], lp['--plate'], 4.5, 'the SOS email fine print');
   });
 
-  test('the waitlist placeholder is body text and clears 4.5:1 (was 4.30)', () => {
-    // The field fill is cream at 7% over the CTA gradient's lightest stop.
-    const fieldOverCta = flatten('rgba(244, 239, 227, 0.07)', '#142238')
-      .map(Math.round);
-    const fieldHex = `rgb(${fieldOverCta.join(', ')})`;
-
-    // The rule the markup actually uses, read out of the stylesheet, so
-    // swapping it back to --cream-3 fails here rather than passing silently.
-    const rule = /\.lp-form input::placeholder\s*\{\s*color:\s*var\((--[a-z0-9-]+)\)/i
-      .exec(lpCss);
-    expect(rule).not.toBeNull();
-    const placeholder = lp[rule[1]];
-    expectRatio(placeholder, fieldHex, 4.5, `.lp-form input::placeholder (${rule[1]})`);
-
-    // ...and it must still read as a placeholder rather than as an entered
-    // value, i.e. it may not simply be set to the input's own text colour.
-    expect(placeholder).not.toBe(lp['--cream']);
-  });
+  // The waitlist field's placeholder test lived here until 2026-11-05, when
+  // the form left the page (Flock went on the App Store the day before).
 
   test('text fields clear the 3:1 non-text boundary (WCAG 1.4.11)', () => {
     // An input carries no label text of its own, so its border is the whole
     // "there is a control here" signal. Buttons are exempt: their own labels
-    // identify them.
-    const fieldOverCta = flatten('rgba(244, 239, 227, 0.07)', '#142238').map(Math.round);
-    expectRatio(lp['--field-edge'], `rgb(${fieldOverCta.join(', ')})`, 3,
-      '.lp-form input border vs its own fill');
-    expectRatio(lp['--field-edge'], '#142238', 3,
-      '.lp-form input border vs the CTA gradient behind it');
+    // identify them. On the home page the one text field left is the live
+    // demo's search on its navy band (the waitlist field went 2026-11-05).
+    const fieldOverNavy = flatten('rgba(244, 239, 227, 0.07)', lp['--navy']).map(Math.round);
+    expectRatio(lp['--field-edge'], `rgb(${fieldOverNavy.join(', ')})`, 3,
+      '.lp-sec-navy .lpd-input border vs its own fill');
+    expectRatio(lp['--field-edge'], lp['--navy'], 3,
+      '.lp-sec-navy .lpd-input border vs the navy band behind it');
 
     expectRatio(giLight['--gi-field-edge'], giLight['--gi-field'], 3,
       '.gi-input border vs its fill (light)');
@@ -229,7 +215,8 @@ describe('contrast, computed from the shipped tokens', () => {
 
     // And the border must actually be wired to the token.
     expect(giCss).toMatch(/\.gi-input\s*\{[^}]*border:\s*1px solid var\(--gi-field-edge\)/);
-    expect(lpCss).toMatch(/\.lp-form input\s*\{[^}]*border:\s*1px solid var\(--field-edge\)/);
+    expect(lpCss).toMatch(/\.lp-sec-navy \.lpd-input \{[^}]*background: var\(--field-fill\);[^}]*border-color: var\(--field-edge\);/);
+    expect(lpCss).toMatch(/--field-fill: rgba\(244, 239, 227, 0\.07\);/);
   });
 
   test('GuestInvite clears 4.5:1 in BOTH themes', () => {
@@ -418,14 +405,22 @@ describe('LandingPage structure and keyboard operation', () => {
       }
     }
     // This was written for the homemade App Store badge, which left the page
-    // on 2026-10-21 (no badge until Apple approves the app, and then only
-    // Apple's own artwork). Today the one aria-labelled control is the menu
-    // button, which is icon-only and exempt, so the loop above has nothing to
-    // compare until a labelled control with visible text comes back; the
-    // official badge will be one, and its guard belongs here again.
+    // on 2026-10-21. The one aria-labelled control today is the menu button,
+    // which is icon-only and exempt.
     expect(controls.length).toBeGreaterThan(0);
     for (const el of controls) {
       if (!norm(el.textContent)) expect(el.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    }
+    // Apple's badge came back on 2026-11-04 as an image link. Its words are in
+    // the artwork, so its name is the image's alt, with no aria-label to
+    // drift from it, and the alt is the badge's words exactly: a speech user
+    // says "Download on the App Store" because that is what they see.
+    const badges = container.querySelectorAll('a.lp-appstore');
+    expect(badges).toHaveLength(2);
+    for (const a of badges) {
+      expect(a.hasAttribute('aria-label')).toBe(false);
+      expect(norm(a.textContent)).toBe('');
+      expect(a.querySelector('img').getAttribute('alt')).toBe('Download on the App Store');
     }
   });
 
@@ -529,73 +524,19 @@ describe('LandingPage structure and keyboard operation', () => {
     expect(footer.hasAttribute('inert')).toBe(false);
   });
 
-  test('the waitlist field has a real label and is not identified by its placeholder', () => {
-    render(React.createElement(LandingPage));
-    const input = screen.getByLabelText(/email address/i);
-    expect(input.tagName).toBe('INPUT');
-    expect(input.id).toBeTruthy();
-    // The <label> is a real element pointing at it, not an aria-label string.
-    const label = document.querySelector(`label[for="${input.id}"]`);
-    expect(label).not.toBeNull();
-    expect(input.getAttribute('aria-label')).toBeNull();
-  });
-
-  test('an empty waitlist submit is announced assertively, marks the field, and focuses it', () => {
+  // The waitlist field, its two live regions and its submit button were tested
+  // here until 2026-11-05, when the form left the page: Flock went on the App
+  // Store the day before. #get is Apple's badge and one line now, in the order
+  // a keyboard meets them.
+  test('the get-the-app band leads with Apple\'s badge, then the web sign-up, and holds no form', () => {
     const { container } = render(React.createElement(LandingPage));
-    const input = screen.getByLabelText(/email address/i);
-    const submit = Array.from(container.querySelectorAll('button'))
-      .find((b) => /join the waitlist/i.test(b.textContent));
-
-    expect(input.getAttribute('aria-invalid')).toBeNull();
-
-    fireEvent.click(submit);
-
-    const alert = container.querySelector('[role="alert"]');
-    expect(alert).not.toBeNull();
-    expect(alert.textContent).toMatch(/enter your email/i);
-    expect(input.getAttribute('aria-invalid')).toBe('true');
-    // The description points at the region carrying the complaint.
-    expect(input.getAttribute('aria-describedby')).toBe(alert.id);
-    expect(document.activeElement).toBe(input);
-    // The polite region must NOT also be carrying the failure, or it is read
-    // twice and success and failure look identical.
-    const status = container.querySelector('[role="status"]');
-    expect(status.textContent).toBe('');
-
-    // Typing clears the invalid state rather than leaving a red field forever.
-    fireEvent.change(input, { target: { value: 'a@b.co' } });
-    expect(input.getAttribute('aria-invalid')).toBeNull();
-  });
-
-  test('both live regions are mounted before they have anything to say', () => {
-    const { container } = render(React.createElement(LandingPage));
-    // A live region added to the DOM at the same moment its text appears is
-    // missed by VoiceOver and NVDA often enough to be a bug.
-    expect(container.querySelector('[role="status"].lp-form-msg')).not.toBeNull();
-    expect(container.querySelector('[role="alert"].lp-form-msg')).not.toBeNull();
-  });
-
-  test('the submit button uses aria-disabled, so pressing it does not drop focus to <body>', async () => {
-    let resolveFetch;
-    global.fetch = jest.fn(() => new Promise((res) => { resolveFetch = res; }));
-
-    const { container } = render(React.createElement(LandingPage));
-    const input = screen.getByLabelText(/email address/i);
-    fireEvent.change(input, { target: { value: 'someone@example.com' } });
-    const submit = Array.from(container.querySelectorAll('button'))
-      .find((b) => /join the waitlist/i.test(b.textContent));
-
-    submit.focus();
-    fireEvent.click(submit);
-
-    await waitFor(() => expect(submit.getAttribute('aria-disabled')).toBe('true'));
-    // `disabled` would have blanked this.
-    expect(submit.disabled).toBe(false);
-    expect(document.activeElement).toBe(submit);
-
-    await act(async () => {
-      resolveFetch({ ok: true, json: () => Promise.resolve({}) });
-    });
+    const band = container.querySelector('#get');
+    expect(band).not.toBeNull();
+    const links = Array.from(band.querySelectorAll('a[href]'));
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://apps.apple.com/app/id6781442127', '/signup']);
+    expect(links[0].classList.contains('lp-appstore')).toBe(true);
+    expect(links[1].textContent).toBe('Create your account');
+    expect(band.querySelector('form, input, button, [role="alert"], [role="status"]')).toBeNull();
   });
 });
 
@@ -666,6 +607,33 @@ describe('LandingPage motion', () => {
     test('the App Store badge is never animated, per Apple\'s badge guidelines', () => {
       expect(css).not.toMatch(/\.lp-appstore:hover \{ transform: translateY/);
       expect(css).not.toMatch(/\.lp-appstore \{[^}]*transition:[^;]*transform/);
+      // Apple's own badge since 2026-11-04 (AppStoreBadge.js): no rule that
+      // names it, on the home page's sheet or /tap's, moves it or draws on it.
+      // Comments are stripped first, because the notes above those rules say
+      // in words what the rules may not do.
+      for (const sheet of [css, readCss('TapPage.css')]) {
+        const bare = sheet.replace(/\/\*[\s\S]*?\*\//g, '');
+        const rules = bare.match(/[^{}]*\.(lp|tap)-appstore[^{}]*\{[^}]*\}/g) || [];
+        expect(rules.length).toBeGreaterThan(0);
+        for (const rule of rules) {
+          expect(rule).not.toMatch(/transition|transform|animation|translate|rotate|scale|filter|box-shadow|opacity/);
+        }
+      }
+      // And no entrance reaches it: the hero's arrival moves .lp-hero-copy's
+      // children, and every badge on the page sits outside .lp-hero-copy.
+      expect(css).toMatch(/\.lp-hero-copy > :not\(h1\) \{\s*animation: lp-rise/);
+      // eslint-disable-next-line global-require
+      const Landing = require('../website/LandingPage').default;
+      const before = global.fetch;
+      global.fetch = jest.fn(() => Promise.resolve({ ok: false, json: () => Promise.resolve({}) }));
+      try {
+        const { container } = render(React.createElement(Landing));
+        const badges = container.querySelectorAll('a.lp-appstore');
+        expect(badges).toHaveLength(2);
+        for (const a of badges) expect(a.closest('.lp-hero-copy')).toBeNull();
+      } finally {
+        global.fetch = before;
+      }
     });
 
     test('the live dot stops after two pulses instead of blinking forever (WCAG 2.2.2)', () => {

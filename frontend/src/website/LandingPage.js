@@ -7,6 +7,7 @@ import { REEL } from './reelShots';
 import { ANNOTATIONS } from './landingAnnotations';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS, MENU_LINKS } from './SiteNav';
+import AppStoreBadge from './AppStoreBadge';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
    LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
@@ -58,13 +59,13 @@ const Mark = ({ size = 32, lazy = false }) => (
   />
 );
 
-/* No App Store badge until Apple approves the app. The homemade "Coming soon
-   to the App Store" badge used a standalone Apple logo and a modifier Apple
-   does not provide (its marketing guidelines allow only "Download on the" and
-   "Pre-order on the", and only Apple's own artwork, for an app that is
-   available). Until approval the page says it in words. On approval, add
-   Apple's official badge file, unmodified, linking to
-   https://apps.apple.com/app/id6781442127. */
+/* FLOCK IS ON THE APP STORE. Apple released 1.0 for iPhone on 2026-11-04, and
+   the page carries Apple's own badge twice, never on the same screen: in the
+   hero beside the dated line, and as the first thing in #get. AppStoreBadge.js
+   holds the artwork, the link and Apple's rules. The homemade "Coming soon to
+   the App Store" badge that came before it (a standalone Apple logo and a
+   modifier Apple does not provide) left the page on 2026-10-21 and stays gone. */
+const APP_STORE_RELEASED = '2026-11-04';
 
 /* No scroll-reveal animation on this page, deliberately. Sections sliding in
    as you scroll is the most recognizable AI-built-site tell (DESIGN-STANDARD.md
@@ -187,32 +188,17 @@ function ProOfferCard({ offer }) {
   );
 }
 
-// What the waitlist form says when the request comes back. 400 and 429 carry
-// sentences the route wrote for the visitor, so those are shown; anything else
-// that failed gets one plain line; a repeat signup says so instead of
-// welcoming them again. A dropped connection never shows the browser's own
-// "Failed to fetch".
 // The hero's background film (public/bg-city.mp4, 388 KB): a city at night.
 export const HERO_VIDEO = '/bg-city.mp4';
 // Its first frame as a still (public/hero-city-still.webp, 27 KB): the video's
 // poster, so the city is in the hero from the first paint.
 export const HERO_STILL = '/hero-city-still.webp';
 
-const WAITLIST_JOINED = 'You’re on the list. You’ll get an email when it opens up.';
-const WAITLIST_ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
-const WAITLIST_FAILED = 'Could not sign you up. Try again in a moment.';
-const WAITLIST_OFFLINE = 'Couldn’t reach Flock. Check your connection and try again.';
-
-export function waitlistReply(status, data) {
-  if (status >= 200 && status < 300) {
-    return { msg: data && data.alreadyOnList ? WAITLIST_ALREADY : WAITLIST_JOINED, bad: false };
-  }
-  const said = data && typeof data.error === 'string' ? data.error.trim() : '';
-  if ((status === 400 || status === 429) && said && said !== 'Server error') {
-    return { msg: said, bad: true };
-  }
-  return { msg: WAITLIST_FAILED, bad: true };
-}
+// No waitlist form since 2026-11-05. It collected emails "to hear the moment
+// the iPhone app is out", and the app is out, so #get offers the App Store and
+// the web sign-up instead. backend/routes/waitlist.js stays: the addresses it
+// holds, their unsubscribe links, and any copy of the old page still open in a
+// browser all depend on it.
 
 /* One Friday plan, the way it actually runs in the app. It replaced a
    numbered 01-04 grid and three feature spreads that each restated the
@@ -229,11 +215,6 @@ export function waitlistReply(status, data) {
 
 export default function LandingPage() {
   const proOffer = useProOffer();
-  const [email, setEmail] = useState('');
-  const [msg, setMsg] = useState('');
-  const [msgBad, setMsgBad] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const emailRef = useRef(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
@@ -345,46 +326,6 @@ export default function LandingPage() {
     if (d) d.setAttribute('content', 'Flock is how a group decides where to go out. Your friends vote on the place, and everyone’s budget stays private.');
   }, []);
 
-  const join = async (e) => {
-    e.preventDefault();
-    if (busy) return;
-    const value = email.trim();
-    if (!value) {
-      setMsg('Enter your email first.');
-      setMsgBad(true);
-      if (emailRef.current) emailRef.current.focus();
-      return;
-    }
-    setBusy(true);
-    setMsg('');
-    setMsgBad(false);
-    try {
-      let res;
-      try {
-        res = await fetch(`${API}/api/waitlist`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: value }),
-        });
-      } catch {
-        // fetch rejects only when no response arrived at all.
-        setMsg(WAITLIST_OFFLINE);
-        setMsgBad(true);
-        return;
-      }
-      const data = await res.json().catch(() => ({}));
-      const reply = waitlistReply(res.status, data);
-      setMsg(reply.msg);
-      setMsgBad(reply.bad);
-      if (!reply.bad) setEmail('');
-    } catch {
-      setMsg(WAITLIST_FAILED);
-      setMsgBad(true);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   /* While the panel is open the rest of the document is inert, so a screen
      reader's virtual cursor cannot walk into the page behind it. Not
      aria-modal: the close control is the menu button in the header, outside
@@ -455,9 +396,10 @@ export default function LandingPage() {
       {/* ---------------- hero ----------------
           The tagline, then what Flock is for in plain words, and two actions:
           start a plan, or read the code on GitHub (a new tab, so the page
-          stays open). The status line under the buttons (browser today, iPhone
-          app in review, the DECA award) came out on 2026-10-21; the app's
-          status is still on #get and the award on /about. Flat navy: the soft glow at the top of a
+          stays open). Under them, since 2026-11-04, Apple's badge and the day
+          Flock went on the App Store. The old status line there (browser
+          today, iPhone app in review, the DECA award) came out on 2026-10-21,
+          and the award is on /about. Flat navy: the soft glow at the top of a
           dark hero is the stock generated-site hero, and nothing in a printed
           field guide glows. The phone is a plate in the margin with a caption,
           the field guide's own device and the honest way to say the screen is
@@ -498,6 +440,21 @@ export default function LandingPage() {
             </div>
           </div>
 
+          {/* Flock on the App Store, and the day it happened. A sibling of
+              .lp-hero-copy, not a child, on purpose: everything in there
+              rises on arrival, and Apple's badge never moves. The period is
+              for a screen reader and the crawler copy; on screen the line
+              break does its job. */}
+          <div className="lp-hero-store">
+            <AppStoreBadge className="lp-appstore" />
+            <p className="lp-hero-store-note">
+              <strong>Now on the App Store</strong>
+              <span className="lp-sr">. </span>
+              <span className="lp-hero-store-date">
+                Released <time dateTime={APP_STORE_RELEASED}>November 4, 2026</time>
+              </span>
+            </p>
+          </div>
         </div>
         {/* The screens, full width under the words (his ask, 2026-10-21):
             a strip that drifts, stops under the pointer and lifts the screen
@@ -974,51 +931,25 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ---------------- cta ---------------- */}
+      {/* ---------------- get the app ----------------
+          The waitlist's band until 2026-11-05, the day after Flock went on the
+          App Store. Apple's badge comes first; the line under it is for anyone
+          without an iPhone, and /signup takes them on the web today. #get
+          stays the id, for old links. */}
       <section className="lp-cta lp-on-navy" id="get" aria-labelledby="lp-h-get">
         <div className="lp-wrap lp-cta-in">
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              Use Flock in your browser today, or leave your email to hear the
-              moment the iPhone app is out.
+              Flock is on the App Store, free for iPhone.
             </p>
-            <div className="lp-cta-row">
-              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
+            <div className="lp-get-store">
+              <AppStoreBadge className="lp-appstore lp-appstore-lg" />
             </div>
-            <form className="lp-form" onSubmit={join}>
-              <label className="lp-sr" htmlFor="lp-waitlist-email">Email address</label>
-              <input
-                id="lp-waitlist-email"
-                ref={emailRef}
-                type="email"
-                inputMode="email"
-                autoComplete="email"
-                placeholder="you@email.com"
-                value={email}
-                onChange={(e) => { setEmail(e.target.value); if (msgBad) setMsgBad(false); }}
-                aria-invalid={msgBad ? 'true' : undefined}
-                aria-describedby="lp-form-problem"
-              />
-              {/* aria-disabled, not disabled: `disabled` on the button you just
-                  pressed hands focus to <body>. `join` returns early while busy. */}
-              <button
-                type="submit"
-                className="lp-btn lp-btn-cream lp-btn-lg"
-                aria-disabled={busy || undefined}
-              >
-                {busy ? 'Adding you…' : 'Join the waitlist'}
-              </button>
-            </form>
-            {/* Both live regions stay mounted with empty text, and the wrapper
-                holds one line open, so the first message neither goes
-                unannounced nor pushes the band down under the reader's hands. */}
-            <div className="lp-form-status">
-              <p className="lp-form-msg" role="status">{msgBad ? '' : msg}</p>
-              <p className="lp-form-msg lp-form-msg-bad" id="lp-form-problem" role="alert">
-                {msgBad ? msg : ''}
-              </p>
-            </div>
+            <p className="lp-get-web">
+              No iPhone? Flock runs in your browser too.{' '}
+              <a href="/signup">Create your account</a>.
+            </p>
           </div>
         </div>
       </section>

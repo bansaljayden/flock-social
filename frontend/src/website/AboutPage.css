@@ -66,6 +66,27 @@
   color: var(--steel);
   padding-top: 2px;
 }
+/* November 4, 2026, the day Flock went on the App Store: the entry the others
+   led to, so it is set in the display face at the size of a holds heading.
+   Type carries it alone, no rule, box or tint, like the rest of the page. On
+   a phone the date sits over it; beside it, the date centres on the line,
+   which is one line at every width that puts it beside. */
+.ab-milestones li.is-milestone { margin-top: 10px; }
+.ab-milestones li.is-milestone .ab-what {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(22px, 1rem + 1.2vw, 30px);
+  line-height: 1.15;
+  color: var(--ink);
+}
+@media (min-width: 640px) {
+  .ab-milestones li.is-milestone .ab-when { align-self: center; padding-top: 0; }
+}
+
+/* Apple's badge under the line that says Flock is on the App Store. It is
+   48px, so Apple's clear space is 12px; 22px either side keeps the copy well
+   out of it. */
+.ab-store { margin: 22px 0; }
 
 /* Contact, on the closing band. */
 .ab-contact-lead { margin: 16px 0 22px; }

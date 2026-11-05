@@ -100,10 +100,10 @@
      this page are identified by their own labels, so their hairlines are
      decoration; an input has no text of its own, so its border is the only
      thing saying a control is there, which is WCAG 1.4.11 at 3:1. Measured:
-     3.50:1 against the fill inside the CTA-band field, 3.99:1 against the fill
-     in the demo's field, 4.72:1 against bare --navy. --rule-cream, which both
-     used to carry, measures 1.56:1. Separate token so tuning the decorative
-     hairline can never silently drop a field under 3:1 again. */
+     3.99:1 against the fill in the demo's field, 4.72:1 against bare --navy.
+     --rule-cream, which it used to carry, measures 1.56:1. Separate token so
+     tuning the decorative hairline can never silently drop a field under 3:1
+     again. (The waitlist field in the CTA band, 3.50:1, left on 2026-11-05.) */
   --field-edge: #77849a;
   --rule: rgba(22, 40, 61, 0.12);
   --rule-cream: rgba(244, 239, 227, 0.16);
@@ -130,7 +130,6 @@
      Every one of these is a value the file already used, just named. */
   --cream-hi: #fffaf0;   /* the cream button, hovered */
   --ink-hover: #22394f;  /* the navy button, hovered */
-  --bad: #f0a3a3;        /* form failure text on the CTA gradient. 7.96 to 1 */
   --alarm: #e88f8f;      /* the SOS email's one link */
   --alarm-ink: #b42318;  /* the same link on the paper-white document: 6.4 to 1 */
   --hero-lift: #1b2a44;  /* lightest stop of the hero radial */
@@ -733,8 +732,8 @@ html:has(.lp) body { overflow-x: clip; }
 /* Anchor jumps from the menu land below the sticky bar, not under it. */
 .lp-sec { padding: clamp(56px, 8vw, 96px) 0; scroll-margin-top: 76px; }
 /* The two anchor targets that are NOT .lp-sec, and both are linked from the
-   page's own chrome: #get is where the App Store badge sends you before the
-   app is approved, and #try is the menu's "Try it live". Without this they
+   page's own chrome: #get is the get-the-app band (old links still land on
+   it), and #try is the menu's "Try it live". Without this they
    scrolled to a point 64px under an opaque sticky navbar, so the line you
    jumped for was the one thing you could not see. */
 .lp-cta, #try { scroll-margin-top: 76px; }
@@ -814,6 +813,22 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
 /* On a phone the two buttons stack; full width keeps them one size. */
 @media (max-width: 480px) { .lp-hero-cta .lp-btn { flex: 1 1 100%; } }
+
+/* Under the buttons since 2026-11-04: Apple's badge, then the day Flock went
+   on the App Store. It is outside .lp-hero-copy, so the arrival below never
+   reaches it. The badge is 48px, so Apple's clear space is 12px: the 16px gap
+   keeps the words out of it, and 28px above stays clear of it even while the
+   buttons are still 14px low in their arrival. */
+.lp-hero-store {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 16px;
+  margin-top: 28px;
+}
+.lp-hero-store-note { margin: 0; line-height: 1.35; }
+.lp-hero-store-note strong { display: block; font-size: 16px; font-weight: 600; color: var(--cream); }
+.lp-hero-store-date { display: block; margin-top: 3px; font-size: 14px; color: var(--cream-2); }
 
 /* ---- The reel (HeroReel.js; 2026-10-21, his ask) ----
    One strip drawn twice and moved left by exactly one strip, so the loop has
@@ -1306,60 +1321,31 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-plan .lp-list { margin: 20px 0 26px; }
 .lp-plan .lp-btn { margin-top: auto; align-self: flex-start; }
 
-/* ============ waitlist ============ */
+/* ============ Apple's App Store badge (AppStoreBadge.js) ============ */
 
-.lp-form { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; max-width: 460px; }
-.lp-form input {
-  flex: 1 1 220px;
-  height: 52px;
-  padding: 0 16px;
-  border-radius: 12px;
-  /* --field-edge, not --rule-cream. A text field has no label text of its own,
-     so its border is the entire "there is a control here" signal and falls
-     under WCAG 1.4.11 at 3:1. --rule-cream (cream at 0.16) measures 1.56:1
-     against the CTA gradient and 1.59:1 against the fill inside it — a box you
-     had to already know was there. See the token for the numbers. */
-  border: 1px solid var(--field-edge);
-  background: var(--field-fill);
-  color: var(--cream);
-  font-family: inherit;
-  font-size: 16px; /* 16px — no zoom-on-focus in the iOS shell */
-}
-/* Was --cream-3: 4.30:1 over this field on the lightest stop of the CTA
-   gradient (#142238), i.e. a failing body-size string, and placeholder text is
-   body text for contrast purposes. --cream-2 measures 7.51:1 there and is
-   still 1.54:1 away from --cream, which the entered value is set in, so the
-   two never read as the same thing. */
-.lp-form input::placeholder { color: var(--cream-2); }
-/* The slot the two live regions share, and it is always one line tall whether
-   or not either of them has anything to say. Before this, both regions
-   collapsed to zero at rest, so the first failed submit inserted a line of text
-   and shoved the CTA band — the buttons, the field you had just pressed enter
-   in — down by its height, at the exact moment you were looking at it. That is
-   a layout shift caused by an error message, which is the least forgivable
-   place to have one. Reserving the line costs 20px of navy nobody will notice.
+/* Apple's artwork at a set height and its own width, and nothing else: no
+   transition, transform or animation (Apple: never modify, angle or animate
+   the badge), and no shadow, filter or border drawn on it. The focus ring is
+   the page's own, outside the artwork, and the radius only shapes that ring.
+   Clear space, a quarter of the badge's height on every side, is held by the
+   gaps around each badge where it is placed. max-width: none, because the
+   page-wide `.lp img { max-width: 100% }` inside a shrink-wrapped link can
+   squeeze an image to nothing. */
+.lp-appstore { display: inline-block; vertical-align: top; line-height: 0; border-radius: 10px; }
+.lp-appstore img { display: block; height: 48px; width: auto; max-width: none; }
+.lp-appstore-lg { border-radius: 11px; }
+.lp-appstore-lg img { height: 52px; }
 
-   1lh, with a px floor for engines that do not have it: 1lh resolves against
-   this element's own line-height, so the reservation tracks the text that will
-   land in it rather than a number that has to be re-tuned when the size moves.
-   The children still collapse individually (below) — exactly one of the pair is
-   ever non-empty, and collapsing the other is what keeps the pair one line tall
-   instead of two. */
-.lp-form-status {
-  margin-top: 12px;
-  min-height: 20px;
-  min-height: 1lh;
-}
-.lp-form-msg { font-size: 14px; color: var(--cream-2); }
-/* 7.96:1 on the lightest stop of the CTA gradient. Bold as well as coloured:
-   the failure must not be carried by hue alone. */
-.lp-form-msg-bad { color: var(--bad); font-weight: 600; }
-/* Exactly one of the pair is ever non-empty. Collapsing the other keeps the
-   pair one line tall while leaving BOTH live regions mounted, which is the
-   whole point of rendering them empty rather than conditionally. The reserved
-   line lives on .lp-form-status above, so collapsing these no longer collapses
-   the slot. */
-.lp-form-msg:empty { margin: 0; height: 0; overflow: hidden; }
+/* ============ get the app (#get) ============ */
+
+/* The waitlist's band until 2026-11-05 (its form and its two live regions are
+   gone with it). Apple's badge first, at 52px, so 13px of clear space: 26px
+   above it and 22px under it. Then one line for anyone without an iPhone. */
+.lp-get-store { margin-top: 26px; }
+/* nowrap on the link, so "Create your account" is never split across lines. */
+.lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: 16px; line-height: 1.6; color: var(--cream-2); }
+.lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.lp-get-web a:hover { color: var(--cream-hi); }
 
 /* ============ footer ============ */
 
@@ -1378,6 +1364,9 @@ html:has(.lp) body { overflow-x: clip; }
   display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between;
   font-size: 13px;
 }
+/* Apple's trademark credit (SiteFooter.js): its own line under the other two,
+   so the row's space-between never strands it in the middle. */
+.lp-footer-tm { flex-basis: 100%; }
 
 /* On touch devices every footer link becomes its own ≥44px row: the padding
    replaces the grid gap, so the rhythm loosens rather than doubles. Same for
@@ -1512,11 +1501,8 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-cta-in { max-width: 720px; }
 .lp-cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
-/* .lp-cta-divider deleted: unused. */
-/* aria-disabled as well as :disabled — the markup uses the former so the
-   button you just pressed does not drop focus to <body> mid-submit. */
-.lp-form button:disabled,
-.lp-form button[aria-disabled='true'] { opacity: 0.65; cursor: progress; }
+/* .lp-cta-divider deleted: unused. .lp-form's submit states went with the
+   waitlist form, 2026-11-05. */
 
 /* ============ motion ============ */
 
@@ -1739,8 +1725,9 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-sec-navy .lpd-input {
   background: var(--field-fill);
-  /* Same 1.4.11 reasoning as the waitlist field: --rule-cream was 1.59:1
-     against this fill. --field-edge is 3.99:1. */
+  /* A text field's border is its only "a control is here" signal (WCAG
+     1.4.11, 3:1): --rule-cream was 1.59:1 against this fill. --field-edge is
+     3.99:1. */
   border-color: var(--field-edge);
   color: var(--cream);
 }
@@ -2024,8 +2011,6 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
 .lp-on-navy .lp-friday-more { color: var(--cream-2); }
 .lp-on-navy .lp-friday-more a { color: var(--steel-lift); }
-
-/* The hero note's one link, to the waitlist at the foot of the page. */
 
 /* Venues: one paragraph and one way in, on navy (2026-10-21), beside the
    owner's dashboard with two of its parts named, the notes to its right.

@@ -260,17 +260,23 @@ describe('GuestInvite: the form-bearing state', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-describe('LandingPage: the waitlist form announces failure', () => {
-  test('the alert region is mounted empty and the field is described by it', () => {
+// The waitlist form, its labelled field and its alert region lived here until
+// 2026-11-05. Flock went on the App Store the day before, and #get offers the
+// App Store and the web sign-up instead, so what is pinned now is that the two
+// badges are links a screen reader can name, and that no form is left.
+describe('LandingPage: the App Store badges are named links, and no form is left', () => {
+  test('each badge is named by the words it shows and goes to the listing', () => {
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
-    const input = container.querySelector('#lp-waitlist-email');
-    expect(input).not.toBeNull();
-    expect(container.querySelector('label[for="lp-waitlist-email"]')).not.toBeNull();
-    const problem = container.querySelector('#lp-form-problem');
-    expect(problem).not.toBeNull();
-    expect(problem.getAttribute('role')).toBe('alert');
-    expect(input.getAttribute('aria-describedby')).toBe('lp-form-problem');
+    const badges = container.querySelectorAll('a.lp-appstore');
+    expect(badges).toHaveLength(2);
+    for (const a of badges) {
+      expect(a.getAttribute('href')).toBe('https://apps.apple.com/app/id6781442127');
+      expect(a.getAttribute('aria-label')).toBeNull();
+      expect(a.querySelector('img').getAttribute('alt')).toBe('Download on the App Store');
+    }
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelector('#lp-waitlist-email')).toBeNull();
     unmount();
   });
 });

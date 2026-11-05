@@ -3,6 +3,7 @@ import './LandingPage.css';
 import './AboutPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import AppStoreBadge from './AppStoreBadge';
 import { shareThisPage } from './shareCard';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
@@ -22,7 +23,8 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   1st place at PA DECA States                                           the landing page, since August
 //   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
 // No school is named anywhere on the page (a Diamond Challenge rule).
-//   iPhone app in App Store review; no venue charged; Flock Pro not on public sale
+//   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
+//   no venue charged; Flock Pro not on public sale
 // The photos, the bios, the full story and the milestone details are
 // placeholders until the founders write them.
 // The names are in the title and description because the page is what a
@@ -44,12 +46,16 @@ const HOLDS = [
   { what: 'Only what ships.', how: 'If the site describes a feature, the app does it today.' },
 ];
 
+// The last entry is the day itself: Apple released Flock 1.0 for iPhone on
+// November 4, 2026. It is dated to the day, in a <time>, and set as the
+// milestone the others led to (.is-milestone in AboutPage.css).
 const MILESTONES = [
   { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
   { when: 'Award', what: '1st place at PA DECA States.' },
   { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
   { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
-  { when: 'October 2026', what: 'iPhone app submitted to the App Store, now in review.' },
+  { when: 'October 2026', what: 'iPhone app submitted to the App Store.' },
+  { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true },
 ];
 
 export default function AboutPage() {
@@ -166,9 +172,11 @@ export default function AboutPage() {
             <h2 id="ab-h-milestones">Milestones so far</h2>
             <ol className="ab-milestones">
               {MILESTONES.map((m) => (
-                <li key={m.what}>
-                  <span className="ab-when">{m.when}</span>{' '}
-                  <span>{m.what}</span>
+                <li key={m.what} className={m.milestone ? 'is-milestone' : undefined}>
+                  {m.date
+                    ? <time className="ab-when" dateTime={m.date}>{m.when}</time>
+                    : <span className="ab-when">{m.when}</span>}{' '}
+                  <span className="ab-what">{m.what}</span>
                 </li>
               ))}
             </ol>
@@ -189,8 +197,14 @@ export default function AboutPage() {
             />
             <h2 id="ab-h-now">Where things stand</h2>
             <p>
-              The web app is live at flockcorp.com, and the iPhone app is in App
-              Store review. Venues can make a free account;
+              Flock is on the App Store for iPhone, and the web app is live at
+              flockcorp.com.
+            </p>
+            <div className="ab-store">
+              <AppStoreBadge className="lp-appstore" />
+            </div>
+            <p>
+              Venues can make a free account;
               Roost, the paid plan for venues, isn’t charging anyone yet. There’s
               a paid plan for people too, Flock Pro, with more Birdie, more crowd
               forecasts and crowd alerts, and it is not on sale to the public today.

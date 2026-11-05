@@ -142,6 +142,7 @@ const PAGE_BLOCKS = {
   home: [
     ["h1", "Nurturing friendship, one flock at a time."],
     ["p", "Flock is an app that helps a group of friends finalize plans by integrating artificial intelligence & industry-leading features while providing venues with insights into consumer demand."],
+    ["p", "Now on the App Store. Released November 4, 2026"],
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search any place below. Flock starts from how busy it usually gets at this hour and adjusts with live readings when it has them. Packed? It suggests a quieter spot nearby."],
     ["p", "Three reports from people at a venue move its score for that night and hour."],
@@ -197,7 +198,8 @@ const PAGE_BLOCKS = {
     ["li", "Reply to reviews from people who went, once verified"],
     ["p", "Already have a venue account? Sign in"],
     ["h2", "Give the next plan a fighting chance."],
-    ["p", "Use Flock in your browser today, or leave your email to hear the moment the iPhone app is out."],
+    ["p", "Flock is on the App Store, free for iPhone."],
+    ["p", "No iPhone? Flock runs in your browser too. Create your account."],
   ],
   about: [
     ["h1", "About Flock"],
@@ -230,10 +232,12 @@ const PAGE_BLOCKS = {
     ["li", "Award 1st place at PA DECA States."],
     ["li", "October 2026 Research paper on forecasting crowds and counting people, published on this site."],
     ["li", "October 2026 Two-minute pitch video entered in a high school entrepreneurship and AI video competition."],
-    ["li", "October 2026 iPhone app submitted to the App Store, now in review."],
+    ["li", "October 2026 iPhone app submitted to the App Store."],
+    ["li", "November 4, 2026 Flock is on the App Store."],
     ["p", "Photos and the story behind each one are coming soon."],
     ["h2", "Where things stand"],
-    ["p", "The web app is live at flockcorp.com, and the iPhone app is in App Store review. Venues can make a free account; Roost, the paid plan for venues, isn’t charging anyone yet. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, and it is not on sale to the public today."],
+    ["p", "Flock is on the App Store for iPhone, and the web app is live at flockcorp.com."],
+    ["p", "Venues can make a free account; Roost, the paid plan for venues, isn’t charging anyone yet. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, and it is not on sale to the public today."],
     ["p", "Flux has only been tested on research footage so far. A retrained crowd model gets scored in late November on days it never saw, and it ships only if it passes thresholds set in September."],
     ["h2", "Get in touch"],
     ["p", "Email social@flockcorp.com about anything, venues included. The pitch and anything new go up on our YouTube channel."],
@@ -769,9 +773,10 @@ const NAV_LINKS = [
 // bot would otherwise have received on these routes. Kept identical so the
 // site describes one Organization and one WebApplication no matter which
 // surface a crawler read. aiCrawlerSurface.test.js pins the two copies to
-// each other. The editing rules (no fabricated ratings, no App Store sameAs
-// until the listing resolves, generic operatingSystem, price 0 only while
-// PAYWALL_ENABLED is unset) are documented in index.html and bind here too.
+// each other. The editing rules (no fabricated ratings, the App Store listing
+// as the app's sameAs and installUrl and never the Organization's, price 0
+// only while PAYWALL_ENABLED is unset) are documented in index.html and bind
+// here too.
 const SITE_GRAPH = [
   {
     '@type': 'Organization',
@@ -834,8 +839,12 @@ const SITE_GRAPH = [
     '@id': 'https://www.flockcorp.com/#app',
     name: 'Flock',
     url: 'https://www.flockcorp.com/',
+    sameAs: [
+      'https://apps.apple.com/app/id6781442127',
+    ],
+    installUrl: 'https://apps.apple.com/app/id6781442127',
     applicationCategory: 'LifestyleApplication',
-    operatingSystem: 'Any (runs in a web browser)',
+    operatingSystem: 'iOS 15 or later, or any web browser',
     browserRequirements: 'Requires JavaScript.',
     description: 'Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.',
     publisher: { '@id': 'https://www.flockcorp.com/#organization' },

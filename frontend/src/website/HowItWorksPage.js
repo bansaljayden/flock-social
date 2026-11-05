@@ -5,6 +5,7 @@ import './HowItWorks.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import PhoneDevice from './PhoneDevice';
+import AppStoreBadge from './AppStoreBadge';
 import { shareThisPage } from './shareCard';
 
 // /how-it-works: one plan from the first invite to the bill, then the venue
@@ -364,8 +365,12 @@ export default function HowItWorksPage() {
             <div>
               <h2 id="hw-h-try">Try it on your next plan.</h2>
               <p className="lp-lead hw-try-lead">
-                Flock runs in your browser today. The iPhone app is with Apple for review.
+                Flock is on the App Store for iPhone, and it runs in your browser too.
               </p>
+              {/* Apple's badge first, then the two ways in on the web. */}
+              <div className="hw-try-store">
+                <AppStoreBadge className="lp-appstore lp-appstore-lg" />
+              </div>
               <div className="lp-cta-row">
                 <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
                 <a className="hw-textlink" href="/app">Sign in</a>
