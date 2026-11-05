@@ -147,6 +147,8 @@ const ADMIN_KEY_ROUTES = Object.freeze([
   { method: 'POST', path: '/api/admin/expenses/import', scope: 'admin', why: 'The whole list pasted at once.' },
   { method: 'PUT', path: '/api/admin/expenses/:id', scope: 'admin', why: 'A bill edited, or marked stopped.' },
   { method: 'DELETE', path: '/api/admin/expenses/:id', scope: 'admin', why: 'A bill entered by mistake, removed.' },
+  { method: 'POST', path: '/api/admin/email-receipts/:id/confirm', scope: 'admin', why: "A bill from a forwarded receipt, added to the expense list: what POST /expenses already allows, from the receipt's own figures." },
+  { method: 'POST', path: '/api/admin/email-receipts/:id/dismiss', scope: 'admin', why: 'A forwarded receipt set aside as not a Flock bill, or a receipt to check marked checked. It changes no total.' },
   { method: 'POST', path: '/api/admin/waitlist/announce', scope: 'admin', why: 'The waitlist launch email, and its dry run.' },
   { method: 'GET', path: '/api/admin/analytics', scope: 'admin', why: 'The Research tab.' },
   { method: 'GET', path: '/api/admin/reports', scope: 'admin', why: 'The moderation queue, read only.' },

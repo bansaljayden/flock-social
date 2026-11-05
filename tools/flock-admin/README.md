@@ -105,6 +105,7 @@ Reading:
 node tools/flock-admin/admin.mjs status            # who the key acts as, and when it expires
 node tools/flock-admin/admin.mjs money             # the month's four figures and what needs you
 node tools/flock-admin/admin.mjs expenses list     # every bill on the expense list
+node tools/flock-admin/admin.mjs receipts list     # receipts from email waiting for an answer
 node tools/flock-admin/admin.mjs get /api/admin/costs
 ```
 
@@ -118,6 +119,8 @@ sends nothing that changes anything, and exits 3:
 ```
 node tools/flock-admin/admin.mjs expenses stop 12 --yes
 node tools/flock-admin/admin.mjs expenses add --vendor "Example Host" --product "Pro plan" --amount 20 --kind infrastructure --cadence monthly --renews 2026-12-16 --yes
+node tools/flock-admin/admin.mjs receipts confirm 23 --yes       # add a waiting bill to the list, as its vendor's kind
+node tools/flock-admin/admin.mjs receipts dismiss 24 --yes       # not a Flock bill, or a receipt to check now checked
 node tools/flock-admin/admin.mjs waitlist announce --dry-run     # how many are waiting
 node tools/flock-admin/admin.mjs waitlist announce --yes         # one batch of up to 100
 node tools/flock-admin/admin.mjs waitlist announce --yes --all   # batch after batch until nobody is left
@@ -125,7 +128,8 @@ node tools/flock-admin/admin.mjs waitlist announce --yes --all   # batch after b
 
 `expenses add` takes `--product`, `--category`, `--currency`, `--last-charged`,
 `--renews`, `--ends` (dates as YYYY-MM-DD), `--note`, `--replaces-line`, and the
-flags `--verified`, `--credit` and `--stopped`. `--json` prints the API's answer
+flags `--verified`, `--credit` and `--stopped`. `receipts confirm` takes `--kind` when
+the vendor's kind on the list is not the right one. `--json` prints the API's answer
 as JSON for any command. `--api http://127.0.0.1:5000` points the tool at a
 local server; it sends the key only to https, or to plain http on this machine,
 and never follows a redirect.
@@ -159,6 +163,7 @@ else (`ADMIN_KEY_ROUTES` in `backend/middleware/adminKeys.js`):
 | `GET /api/admin/expenses`, `GET /api/admin/expenses/export` | the expense list, and its CSV |
 | `POST /api/admin/expenses`, `POST /api/admin/expenses/import` | a bill added, or the whole list pasted |
 | `PUT /api/admin/expenses/:id`, `DELETE /api/admin/expenses/:id` | a bill edited or stopped, or removed when entered by mistake |
+| `POST /api/admin/email-receipts/:id/confirm`, `POST /api/admin/email-receipts/:id/dismiss` | a bill from a forwarded receipt added to the list, or set aside |
 | `POST /api/admin/waitlist/announce` | the waitlist launch email, and its dry run |
 | `GET /api/admin/analytics` | the Research tab |
 | `GET /api/admin/reports`, `GET /api/admin/moderation-actions`, `GET /api/admin/venues/unverified` | the moderation queue, its audit log and the verification queue, to read |

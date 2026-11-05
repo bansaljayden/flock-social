@@ -286,6 +286,7 @@ Reading:
   status                       who the key acts as, and when it expires
   money                        the money hub: the month's four figures and what needs you
   expenses list                every bill on the expense list
+  receipts list                receipts from email waiting for an answer
   get <path>                   any /api/admin path, as JSON, such as /api/admin/costs
 
 Writing (each needs --yes; without it, nothing is sent):
@@ -294,6 +295,10 @@ Writing (each needs --yes; without it, nothing is sent):
       [--product P] [--category C] [--currency USD] [--last-charged YYYY-MM-DD]
       [--renews YYYY-MM-DD] [--ends YYYY-MM-DD] [--note N] [--replaces-line ID]
       [--verified] [--credit] [--stopped]
+  receipts confirm <id> [--kind K] --yes
+                               add a waiting bill to the expense list, as its vendor's kind
+  receipts dismiss <id> --yes  set a waiting bill aside as not Flock's, or mark a
+                               receipt to check as checked
   waitlist announce --dry-run  how many are waiting for the launch email
   waitlist announce --yes      send it to the next batch of up to 100 (--all: keep going)
   revoke --yes                 revoke this key, then delete the key file
@@ -461,6 +466,83 @@ async function cmdExpensesAdd(ctx) {
   if (ctx.flags.json) return ctx.printJson(saved);
   const x = saved && saved.expense;
   ctx.print(x ? `Added bill ${x.id}: ${expenseLine(x).slice(1, 3).join(', ')}.` : 'Added.');
+  return EXIT.ok;
+}
+
+// RECEIPTS FROM EMAIL (backend/services/receiptInbox.js): the receipts the
+// owner's Gmail forwards that wait for an answer. They arrive in the money
+// hub's payload, and confirm and dismiss are the dashboard's buttons.
+function receiptId(idText, sub) {
+  if (!/^\d+$/.test(String(idText || ''))) throw new UsageError(`receipts ${sub} needs the receipt's id, a whole number from receipts list.`);
+  return Number(idText);
+}
+
+const receiptName = (r) => (r.product ? `${r.vendor || 'A vendor'}, ${r.product}` : (r.vendor || 'A vendor'));
+const receiptAmount = (r) => dollars(r.amountCents, r.currency || 'USD');
+
+async function readReceipts(ctx) {
+  const h = await call(ctx, 'GET', '/api/admin/money');
+  const er = h && h.emailReceipts;
+  if (!er) throw new ApiError('This server sends no receipts from email.', null, null);
+  if (er.status === 'error') throw new ApiError(er.reason || 'The receipts from email could not be read.', null, null);
+  return {
+    pending: Array.isArray(er.pending) ? er.pending : [],
+    toCheck: Array.isArray(er.toCheck) ? er.toCheck : [],
+  };
+}
+
+async function cmdReceiptsList(ctx) {
+  const { pending, toCheck } = await readReceipts(ctx);
+  if (ctx.flags.json) return ctx.printJson({ pending, toCheck });
+  if (pending.length === 0 && toCheck.length === 0) {
+    ctx.print('No receipts from email are waiting.');
+    return EXIT.ok;
+  }
+  if (pending.length > 0) {
+    ctx.print('New bills, in no total until each is added:');
+    ctx.print(table([['id', 'bill', 'amount', 'paid', 'kind'], ...pending.map((r) => [
+      String(r.id), receiptName(r), receiptAmount(r), r.paidOn ? day(r.paidOn) : '', r.suggestedKind || '',
+    ])]));
+  }
+  if (toCheck.length > 0) {
+    if (pending.length > 0) ctx.print('');
+    ctx.print('Receipts the server could not record, to check in Gmail:');
+    ctx.print(table([['id', 'subject', 'from'], ...toCheck.map((r) => [String(r.id), r.subject || 'No subject', r.sender || r.vendor || ''])]));
+  }
+  return EXIT.ok;
+}
+
+async function cmdReceiptsConfirm(ctx, idText) {
+  const id = receiptId(idText, 'confirm');
+  const { pending, toCheck } = await readReceipts(ctx);
+  const r = pending.find((x) => Number(x.id) === id);
+  if (!r) {
+    if (toCheck.some((x) => Number(x.id) === id)) {
+      throw new UsageError(`Receipt ${id} could not be read, so it holds no bill to add. Record it with expenses add, then run receipts dismiss ${id} --yes to mark it checked.`);
+    }
+    throw new ApiError(`No receipt ${id} is waiting for an answer.`, 404, null);
+  }
+  // The dashboard's default: the kind of the vendor's bills already on the list.
+  const kind = ctx.flags.kind || r.suggestedKind || 'tooling';
+  needYes(ctx.flags, `Would add ${receiptName(r)}, ${receiptAmount(r)}${r.paidOn ? ` paid ${day(r.paidOn)}` : ''}, to the expense list as ${kind}.`);
+  const out = await call(ctx, 'POST', `/api/admin/email-receipts/${id}/confirm`, { body: { kind } });
+  if (ctx.flags.json) return ctx.printJson(out);
+  ctx.print(`Added ${receiptName(r)} to the expense list as ${kind}${out && out.expenseId ? `, bill ${out.expenseId}` : ''}.`);
+  return EXIT.ok;
+}
+
+async function cmdReceiptsDismiss(ctx, idText) {
+  const id = receiptId(idText, 'dismiss');
+  const { pending, toCheck } = await readReceipts(ctx);
+  const bill = pending.find((x) => Number(x.id) === id);
+  const check = toCheck.find((x) => Number(x.id) === id);
+  if (!bill && !check) throw new ApiError(`No receipt ${id} is waiting for an answer.`, 404, null);
+  needYes(ctx.flags, bill
+    ? `Would set aside ${receiptName(bill)}, ${receiptAmount(bill)}, as not a Flock bill. Later receipts for the same product from the same sender are set aside too.`
+    : `Would mark receipt ${id} ("${check.subject || 'No subject'}", from ${check.sender || 'an allowed sender'}) as checked.`);
+  const out = await call(ctx, 'POST', `/api/admin/email-receipts/${id}/dismiss`, { body: {} });
+  if (ctx.flags.json) return ctx.printJson(out);
+  ctx.print(bill ? `${receiptName(bill)} is set aside as not a Flock bill.` : `Receipt ${id} is marked as checked.`);
   return EXIT.ok;
 }
 
@@ -678,6 +760,12 @@ export async function main(argv, io = {}) {
         if (sub === 'add') return cmdExpensesAdd(ctx);
         throw new UsageError('expenses takes list, stop <id> or add.');
       },
+      receipts: () => {
+        if (sub === 'list') return cmdReceiptsList(ctx);
+        if (sub === 'confirm') return cmdReceiptsConfirm(ctx, arg);
+        if (sub === 'dismiss') return cmdReceiptsDismiss(ctx, arg);
+        throw new UsageError('receipts takes list, confirm <id> or dismiss <id>.');
+      },
       waitlist: () => {
         if (sub === 'announce') return cmdWaitlistAnnounce(ctx);
         throw new UsageError('waitlist takes announce.');
@@ -688,6 +776,7 @@ export async function main(argv, io = {}) {
     // key is read or anything is sent.
     if (command === 'get') adminPath(sub);
     if (command === 'expenses' && sub === 'add') confirmAdd(flags);
+    if (command === 'receipts' && (sub === 'confirm' || sub === 'dismiss')) receiptId(arg, sub);
     if (command === 'waitlist' && sub === 'announce' && !flags['dry-run']) confirmAnnounce(flags);
     const { key, source, file } = readKey(env);
     ctx.key = key;

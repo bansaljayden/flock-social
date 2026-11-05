@@ -325,6 +325,96 @@ test('expenses add sends the bill only with --yes, and refuses an incomplete one
   assert.match(done.out, /Added bill 9/);
 });
 
+// The receipts the money hub's payload carries (services/receiptInbox.js
+// readForHub): a new bill under a vendor already on the list, a new bill from
+// a shop, and one the server could not read.
+const RECEIPTS = {
+  status: 'ok',
+  pending: [
+    { id: 23, vendor: 'Example Host', product: 'Pro plan', amountCents: 2400, currency: 'USD', paidOn: '2026-11-03', status: 'new', knownVendor: true, suggestedKind: 'infrastructure' },
+    { id: 24, vendor: 'Parts Shop', product: null, amountCents: 3805, currency: 'EUR', paidOn: null, status: 'new', knownVendor: false, suggestedKind: null },
+  ],
+  toCheck: [{ id: 25, vendor: null, product: null, amountCents: null, status: 'to_check', sender: 'billing@example.com', subject: 'Your invoice' }],
+};
+
+test('receipts list prints the new bills and the receipts to check, from the money hub', async () => {
+  routes['GET /api/admin/money'] = { json: { emailReceipts: RECEIPTS } };
+  const r = await run(['receipts', 'list']);
+  assert.strictEqual(r.code, cli.EXIT.ok, r.err);
+  assert.match(r.out, /New bills, in no total until each is added:/);
+  assert.match(r.out, /23\s+Example Host, Pro plan\s+\$24\.00\s+\S+ \d+, 2026\s+infrastructure/);
+  assert.match(r.out, /24\s+Parts Shop\s+38\.05 EUR/);
+  assert.match(r.out, /Receipts the server could not record, to check in Gmail:\n.*\n25\s+Your invoice\s+billing@example\.com/);
+  assert.deepStrictEqual(sent(), ['GET /api/admin/money']);
+
+  routes['GET /api/admin/money'] = { json: { emailReceipts: { status: 'ok', pending: [], toCheck: [] } } };
+  assert.match((await run(['receipts', 'list'])).out, /No receipts from email are waiting\./);
+  routes['GET /api/admin/money'] = { json: { emailReceipts: { status: 'error', reason: 'The receipts from email could not be read.', pending: [], toCheck: [] } } };
+  const failed = await run(['receipts', 'list']);
+  assert.strictEqual(failed.code, cli.EXIT.api);
+  assert.match(failed.err, /The receipts from email could not be read\./);
+});
+
+test('receipts confirm adds a waiting bill as its vendor\'s kind, or --kind, and only with --yes', async () => {
+  routes['GET /api/admin/money'] = { json: { emailReceipts: RECEIPTS } };
+  const dry = await run(['receipts', 'confirm', '23']);
+  assert.strictEqual(dry.code, cli.EXIT.confirm);
+  assert.match(dry.err, /Would add Example Host, Pro plan, \$24\.00 paid \S+ \d+, 2026, to the expense list as infrastructure\. Nothing was sent\./);
+  assert.deepStrictEqual(sent(), ['GET /api/admin/money']);
+
+  requests = [];
+  routes['POST /api/admin/email-receipts/23/confirm'] = () => ({ json: { success: true, expenseId: 41 } });
+  const done = await run(['receipts', 'confirm', '23', '--yes']);
+  assert.strictEqual(done.code, cli.EXIT.ok, done.err);
+  assert.match(done.out, /Added Example Host, Pro plan to the expense list as infrastructure, bill 41\./);
+  assert.deepStrictEqual(sent(), ['GET /api/admin/money', 'POST /api/admin/email-receipts/23/confirm']);
+  assert.deepStrictEqual(requests[1].body, { kind: 'infrastructure' });
+
+  requests = [];
+  routes['POST /api/admin/email-receipts/24/confirm'] = () => ({ json: { success: true, expenseId: 42 } });
+  assert.strictEqual((await run(['receipts', 'confirm', '24', '--kind', 'other', '--yes'])).code, cli.EXIT.ok);
+  assert.deepStrictEqual(requests[1].body, { kind: 'other' }, '--kind wins over the default');
+  requests = [];
+  assert.strictEqual((await run(['receipts', 'confirm', '24', '--yes'])).code, cli.EXIT.ok);
+  assert.deepStrictEqual(requests[1].body, { kind: 'tooling' }, 'with no vendor kind to go on, the dashboard\'s default');
+});
+
+test('receipts confirm refuses a receipt with no bill in it, an id that is not waiting, and a bad id, writing nothing', async () => {
+  routes['GET /api/admin/money'] = { json: { emailReceipts: RECEIPTS } };
+  const unread = await run(['receipts', 'confirm', '25', '--yes']);
+  assert.strictEqual(unread.code, cli.EXIT.usage);
+  assert.match(unread.err, /Receipt 25 could not be read, so it holds no bill to add\. Record it with expenses add, then run receipts dismiss 25 --yes to mark it checked\./);
+  assert.strictEqual((await run(['receipts', 'confirm', '99', '--yes'])).code, cli.EXIT.api);
+  assert.ok(requests.every((r) => r.method === 'GET'));
+  requests = [];
+  assert.strictEqual((await run(['receipts', 'confirm', 'abc', '--yes'], { key: false })).code, cli.EXIT.usage);
+  assert.strictEqual((await run(['receipts', 'dismiss', '', '--yes'], { key: false })).code, cli.EXIT.usage);
+  assert.strictEqual((await run(['receipts', 'file', '23'])).code, cli.EXIT.usage);
+  assert.deepStrictEqual(requests, [], 'a bad id is refused before the key is read or anything is sent');
+});
+
+test('receipts dismiss sets a bill aside or marks a receipt checked, and only with --yes', async () => {
+  routes['GET /api/admin/money'] = { json: { emailReceipts: RECEIPTS } };
+  const dryBill = await run(['receipts', 'dismiss', '24']);
+  assert.strictEqual(dryBill.code, cli.EXIT.confirm);
+  assert.match(dryBill.err, /Would set aside Parts Shop, 38\.05 EUR, as not a Flock bill\. Later receipts for the same product from the same sender are set aside too\. Nothing was sent\./);
+  const dryCheck = await run(['receipts', 'dismiss', '25']);
+  assert.match(dryCheck.err, /Would mark receipt 25 \("Your invoice", from billing@example\.com\) as checked\. Nothing was sent\./);
+  assert.ok(requests.every((r) => r.method === 'GET'));
+
+  requests = [];
+  routes['POST /api/admin/email-receipts/24/dismiss'] = () => ({ json: { success: true, status: 'dismissed' } });
+  routes['POST /api/admin/email-receipts/25/dismiss'] = () => ({ json: { success: true, status: 'checked' } });
+  const bill = await run(['receipts', 'dismiss', '24', '--yes']);
+  assert.strictEqual(bill.code, cli.EXIT.ok, bill.err);
+  assert.match(bill.out, /Parts Shop is set aside as not a Flock bill\./);
+  const check = await run(['receipts', 'dismiss', '25', '--yes']);
+  assert.match(check.out, /Receipt 25 is marked as checked\./);
+  assert.deepStrictEqual(sent(), ['GET /api/admin/money', 'POST /api/admin/email-receipts/24/dismiss', 'GET /api/admin/money', 'POST /api/admin/email-receipts/25/dismiss']);
+  assert.deepStrictEqual(requests[1].body, {});
+  assert.strictEqual((await run(['receipts', 'dismiss', '99', '--yes'])).code, cli.EXIT.api);
+});
+
 test('the waitlist dry run asks the server and sends no email; a send needs --yes', async () => {
   routes['POST /api/admin/waitlist/announce'] = (req) => (req.body && req.body.dry_run === true
     ? { json: { dry_run: true, total: 120, converted: 20, announced: 90, pending: 10 } }
