@@ -521,7 +521,11 @@ describe('every route the app answers is a 200, and any other path a 404', () =>
     const prefixes = new Set();
     const pages = block('const PAGES = [');
     const tests = [...pages.matchAll(/^\s*test: \(p\) => (.+),$/gm)].map((m) => m[1]);
-    expect(tests).toHaveLength([...pages.matchAll(/^\s*id: '/gm)].length);
+    const ids = [...pages.matchAll(/^\s*id: '([^']+)',$/gm)].map((m) => m[1]);
+    if (tests.length !== ids.length) {
+      throw new Error('src/index.js PAGES has ' + ids.length + ' pages (' + ids.join(', ') + ') and ' + tests.length
+        + ' tests of the form "test: (p) => ...," on one line; this check reads only that form');
+    }
     for (const test of tests) {
       for (const term of test.replace(/ && !isNativeShell$/, '').split(' || ')) {
         const is = /^p === '(\/[^']*)'$/.exec(term);
