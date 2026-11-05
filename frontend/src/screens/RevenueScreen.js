@@ -2028,10 +2028,12 @@ function HubExpenses({ h, colors, onChanged }) {
 // FROM YOUR EMAIL (2026-11-05): what the receipts the owner's Gmail forwards
 // did to the hub (backend/services/receiptInbox.js). Each one read is a row:
 // the vendor, the amount, the day it was paid and what it updated. A bill
-// from a vendor the list has never seen waits at the top, counted in no
-// total, with the one choice only the owner can make about it. A receipt the
-// server could not read is listed by its sender and subject, which is all
-// that was kept of it, and it is also in Needs you.
+// from a vendor the list has never seen, a shop order and an App Store
+// purchase wait at the top, counted in no total, with the one choice only the
+// owner can make about them; one under a vendor already on the list starts
+// as that vendor's kind. A receipt the server could not read or record is
+// listed by its sender and subject, so it can be found in Gmail, and it is
+// also in Needs you.
 const HUB_RECEIPT_NOTHING = 'No receipts yet. Each receipt your Gmail forwards shows here once it is read.';
 
 function hubReceiptAmount(r) {
@@ -2074,9 +2076,19 @@ function hubReceiptWords(r) {
   }
 }
 
+// The calendar day an instant falls on where the browser is: a receipt that
+// arrived on an evening in New York arrived that day, not the next.
+function hubInstantDay(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const d = new Date(t);
+  return hubDay(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+}
+
 function HubReceiptAnswer({ r, colors, onDone }) {
   const uid = React.useId();
-  const [kind, setKind] = React.useState('tooling');
+  // A bill under a vendor already on the list starts as that vendor's kind.
+  const [kind, setKind] = React.useState(HUB_KIND_LABEL[r.suggestedKind] ? r.suggestedKind : 'tooling');
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
   const label = hubReceiptLabel(r, 'A new bill');
@@ -2104,7 +2116,7 @@ function HubReceiptAnswer({ r, colors, onDone }) {
         </span>
       </div>
       <p style={hubStyle.note}>
-        {`Paid ${hubDay(r.paidOn) || 'on a day the receipt did not say'}. Nothing on the expense list matches it, so it is in no total until you add it.`}
+        {`Paid ${hubDay(r.paidOn) || 'on a day the receipt did not say'}. ${r.knownVendor ? 'It is in no total until you add it.' : 'Nothing on the expense list matches it, so it is in no total until you add it.'}`}
         {r.reason ? ` ${r.reason}` : ''}
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
@@ -2152,7 +2164,7 @@ function HubReceiptToCheck({ r, colors, onDone }) {
         )}
       </div>
       <p style={hubStyle.note}>
-        {`From ${from}${r.receivedAt ? `, ${hubDay(r.receivedAt.slice(0, 10))}` : ''}. ${r.reason || 'It could not be read.'} Record it yourself if it is a Flock bill, then mark it done.`}
+        {`From ${from}${hubInstantDay(r.receivedAt) ? `, ${hubInstantDay(r.receivedAt)}` : ''}. ${r.reason || 'It could not be read.'} Record it yourself if it is a Flock bill, then mark it done.`}
       </p>
       <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
         <button className="hit44" type="button" aria-label={busy ? undefined : `Done: ${r.subject || from}`} disabled={busy} onClick={done} style={hubStyle.textButton}>
@@ -2203,8 +2215,8 @@ function HubFromEmail({ h, colors, onChanged }) {
       )}
       <HubWhy label="How this works">
         {`A Gmail filter forwards the receipts of the companies Flock pays to ${address}. Only those reach the server; the rest of the inbox is never read.`}
-        {'Each receipt updates the bill it pays: the Railway or Google Cloud figure, or the matching bill on the expense list. A one-time charge from a vendor already on the list is added as its own bill. A bill from a vendor the list has never seen waits here until you add it.'}
-        {'The App Store and Google send everyone\'s purchases from one address, so their items are read only when they match a bill on the list. Nothing is kept of the rest, and no receipt\'s body is ever stored.'}
+        {'Each receipt updates the bill it pays: the Railway or Google Cloud figure, or the matching bill on the expense list. A one-time charge from a vendor already on the list is added as its own bill. A shop order or an App Store purchase waits here instead, since a shop takes orders in anybody\'s name and the App Store sends every purchase on the account. A bill from a vendor the list has never seen waits here until you add it.'}
+        {'Google payments are read only for Google Cloud. An App Store item is read only when it matches a bill on the list, or is a purchase in an app whose maker is on it. Nothing is kept of the rest, and no receipt\'s body is ever stored.'}
         {dropped && dropped.total > 0
           ? `Dropped since the server last started, with nothing stored: ${hubPlural(dropped.total, 'email', 'emails')} (${dropped.byReason.map((x) => `${x.words}: ${hubCount(x.count)}`).join('; ')}).`
           : null}

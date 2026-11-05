@@ -10,9 +10,11 @@
 //     row with its vendor, amount, day and what it updated;
 //   * a bill from a vendor the list has never seen waits with the one choice
 //     only the owner can make, and the choice goes through the API client and
-//     then re-reads the hub;
+//     then re-reads the hub; one under a vendor already on the list starts as
+//     that vendor's kind and says why it waits;
 //   * a receipt the server could not read is in Needs you by its sender and
-//     subject, and Done clears it;
+//     subject, on the day it came where the dashboard is open, and Done
+//     clears it;
 //   * before the first receipt the card says so in one line, and a payload
 //     from before the card draws no card at all.
 //
@@ -191,14 +193,30 @@ test('"Not a Flock bill" goes to the server and re-reads the hub', async () => {
   expect(api.confirmAdminEmailReceipt).not.toHaveBeenCalled();
 });
 
+test('a bill under a vendor already on the list waits with that vendor\'s kind first, and says why it waits', async () => {
+  const pending = { id: 23, vendor: 'Pololu', product: 'Sensor carrier', amountCents: 3805, currency: 'USD', paidOn: '2026-11-03', cadence: 'one_time', status: 'new', knownVendor: true, suggestedKind: 'other', reason: 'Pololu is on the list. A shop takes an order in anybody\'s name, so an order waits for you before it is counted.', receivedAt: '2026-11-04T00:00:00.000Z' };
+  await renderHub({ ...HUB, emailReceipts: { ...RECEIPTS, pending: [pending], recent: [] } });
+  const row = cardOf('From your email').querySelector('[data-hub-receipt="23"]');
+  expect(row.textContent).toMatch(/Paid Nov 3(, 2026)?\. It is in no total until you add it\. Pololu is on the list\. A shop takes an order in anybody's name, so an order waits for you before it is counted\./);
+  expect(row.textContent).not.toMatch(/Nothing on the expense list matches it/);
+  expect(within(row).getByLabelText('Kind')).toHaveValue('other');
+  api.confirmAdminEmailReceipt.mockResolvedValue({ success: true, expenseId: 12 });
+  fireEvent.click(within(row).getByRole('button', { name: 'Add Pololu, Sensor carrier to the list' }));
+  await waitFor(() => expect(api.confirmAdminEmailReceipt).toHaveBeenCalledWith(23, { kind: 'other' }));
+});
+
 test('a receipt the server could not read is in Needs you by its sender and subject, and Done clears it', async () => {
-  const check = { id: 31, vendor: 'Example Labs, PBC', product: null, amountCents: null, currency: null, paidOn: null, status: 'to_check', reason: 'The amount paid could not be found.', sender: 'invoice+statements@mail.example-labs.test', subject: 'Your receipt from Example Labs, PBC #1000-4001', receivedAt: '2026-11-14T04:40:00.000Z' };
+  // 01:40 UTC on the 14th is the evening of the 13th in New York: the day
+  // shown is the one where the dashboard is open.
+  const receivedAt = '2026-11-14T01:40:00.000Z';
+  const check = { id: 31, vendor: 'Example Labs, PBC', product: null, amountCents: null, currency: null, paidOn: null, status: 'to_check', reason: 'The amount paid could not be found.', sender: 'invoice+statements@mail.example-labs.test', subject: 'Your receipt from Example Labs, PBC #1000-4001', receivedAt };
   await renderHub({ ...HUB, emailReceipts: { ...RECEIPTS, toCheck: [check], recent: [] } });
   const need = needRow('Receipt to check');
   expect(need.textContent).toMatch(/Your receipt from Example Labs, PBC #1000-4001, from invoice\+statements@mail\.example-labs\.test\. The hub could not record it on its own: open it in Gmail and record the bill if it is Flock's\./);
   const row = cardOf('From your email').querySelector('[data-hub-receipt="31"]');
   expect(within(row).getByText('To check')).toBeInTheDocument();
-  expect(row.textContent).toMatch(/From invoice\+statements@mail\.example-labs\.test, Nov 14(, 2026)?\. The amount paid could not be found\./);
+  const localDay = new Date(receivedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  expect(row.textContent).toMatch(new RegExp(`From invoice\\+statements@mail\\.example-labs\\.test, ${localDay}(, 2026)?\\. The amount paid could not be found\\.`));
   api.dismissAdminEmailReceipt.mockResolvedValue({ success: true, status: 'checked' });
   fireEvent.click(within(row).getByRole('button', { name: 'Done: Your receipt from Example Labs, PBC #1000-4001' }));
   await waitFor(() => expect(api.dismissAdminEmailReceipt).toHaveBeenCalledWith(31));
