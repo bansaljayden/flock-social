@@ -12,6 +12,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { deflateSync } from 'node:zlib';
 import {
   ACCEPTED_SIZES,
   EXIT,
@@ -39,15 +40,22 @@ function chunk(type, data = Buffer.alloc(0)) {
   return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
 }
 
-function fakePng(width, height, { colourType = 2, tRNS = false, label = '' } = {}) {
+function fakePng(width, height, { colourType = 2, tRNS = false, label = '', iccDesc = null } = {}) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
   ihdr[8] = 8;
   ihdr[9] = colourType;
+  // An iCCP chunk as sharp writes one: name "icc", NUL, method 0, a deflated
+  // profile whose description is UTF-16 (an 'mluc' tag).
+  const iccp = iccDesc === null ? [] : [chunk('iCCP', Buffer.concat([
+    Buffer.from('icc\0\0', 'latin1'),
+    deflateSync(Buffer.concat([Buffer.from('....mntrRGB XYZ mluc', 'latin1'), Buffer.from(iccDesc, 'utf16le').swap16()])),
+  ]))];
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     chunk('IHDR', ihdr),
+    ...iccp,
     ...(tRNS ? [chunk('tRNS', Buffer.from([0, 0, 0, 0, 0, 0]))] : []),
     chunk('tEXt', Buffer.from(`Comment\0${label}`, 'latin1')),
     chunk('IDAT', Buffer.from([0])),
@@ -436,6 +444,8 @@ test('inspectImage reads PNG and JPEG headers, alpha included', () => {
   assert.equal(rgb.height, 2796);
   assert.equal(rgb.alpha, false);
   assert.match(rgb.colourSpace, /untagged/);
+  assert.equal(inspectImage(fakePng(1290, 2796, { iccDesc: 'sRGB' })).colourSpace, 'sRGB (ICC profile)');
+  assert.equal(inspectImage(fakePng(1290, 2796, { iccDesc: 'Display P3' })).colourSpace, 'ICC profile "icc"');
   assert.equal(inspectImage(fakePng(10, 10, { colourType: 6 })).alpha, true);
   assert.equal(inspectImage(fakePng(10, 10, { colourType: 4 })).alpha, true);
   assert.equal(inspectImage(fakePng(10, 10, { tRNS: true })).alpha, true);

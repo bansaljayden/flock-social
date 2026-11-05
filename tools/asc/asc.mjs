@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { inflateSync } from 'node:zlib';
 import { APPLE_LIMITS, mintAscJwt } from '../asc-upload/lib.mjs';
 
 export const API_BASE = 'https://api.appstoreconnect.apple.com';
@@ -402,15 +403,24 @@ export function inspectImage(buf) {
       const type = buf.toString('latin1', off + 4, off + 8);
       chunks.add(type);
       if (type === 'iCCP') {
-        const data = buf.subarray(off + 8, off + 8 + Math.min(len, 80));
+        // Profile name, a NUL, the compression method (0 = zlib), the profile.
+        const data = buf.subarray(off + 8, off + 8 + len);
         const nul = data.indexOf(0);
-        icc = data.subarray(0, nul === -1 ? data.length : nul).toString('latin1');
+        icc = { name: data.subarray(0, nul === -1 ? Math.min(data.length, 79) : nul).toString('latin1'), srgb: false };
+        if (nul !== -1 && data[nul + 1] === 0) {
+          try {
+            const profile = inflateSync(data.subarray(nul + 2));
+            icc.srgb = profile.includes(Buffer.from('sRGB', 'latin1')) || profile.includes(Buffer.from('\0s\0R\0G\0B', 'latin1'));
+          } catch { /* an unreadable profile is reported by name only */ }
+        }
       }
       if (type === 'IDAT' || type === 'IEND') break;
       off += 12 + len;
     }
     const alpha = colourType === 4 || colourType === 6 || chunks.has('tRNS');
-    const colourSpace = chunks.has('sRGB') ? 'sRGB' : icc !== null ? `ICC profile "${icc}"` : 'untagged (read as sRGB)';
+    const colourSpace = chunks.has('sRGB') ? 'sRGB'
+      : icc ? (icc.srgb ? 'sRGB (ICC profile)' : `ICC profile "${icc.name}"`)
+        : 'untagged (read as sRGB)';
     return {
       format: 'png', width, height, alpha, colourSpace,
       detail: `PNG ${PNG_COLOUR[colourType] || `colour type ${colourType}`} ${bitDepth}-bit`,
