@@ -3100,6 +3100,46 @@ test('a row linked to the wrong code line is still flagged beside the line it do
   assert.ok(pic.possibleDoubles.some((d) => d.codeLineId === 'besttime-subscription' && d.expenseId === 1), JSON.stringify(pic.possibleDoubles));
 });
 
+test('a Railway plan that runs the BestTime cron service is Railway\'s bill, never the BestTime.app subscription', () => {
+  // The row on the live list, word for word (2026-11-05). Its product names
+  // the BESTTIME collector service, which runs on Railway and is billed by
+  // Railway; the BestTime.app subscription is another vendor's bill. Read as
+  // vendor and product together, the hub listed this pair as possibly
+  // counted twice.
+  const railwayPlan = {
+    vendor: 'Railway', product: 'Pro plan (API, Postgres, BestTime cron)', category: 'hosting', kind: 'infrastructure',
+    cadence: 'monthly', amountCents: 2452, lastChargedOn: '2026-09-15', renewsOn: '2026-10-15', verified: true,
+  };
+  const linked = moneyHub.buildCostPicture({ expenses: [expense({ id: 1, ...railwayPlan, replacesLine: 'railway' })], month: MONTH });
+  const besttime = linked.lines.find((l) => l.id === 'besttime-subscription');
+  assert.strictEqual(besttime.label, 'BestTime.app Pro, Package 100');
+  assert.strictEqual(besttime.counted, true, 'the BestTime line is counted, so the check had the pair to look at');
+  assert.ok(linked.lines.some((l) => l.expenseId === 1 && l.counted), 'and so is the Railway row');
+  assert.deepStrictEqual(linked.possibleDoubles, [], JSON.stringify(linked.possibleDoubles));
+
+  // Not linked to the Railway line, it is still flagged, and only beside it.
+  const unlinked = moneyHub.buildCostPicture({ expenses: [expense({ id: 2, ...railwayPlan })], month: MONTH });
+  assert.deepStrictEqual(unlinked.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]), [['railway', 2]]);
+});
+
+test('a real double still flags: the vendor\'s own bill beside its code line, and a product that names a line when the vendor names none', () => {
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'BestTime', product: 'Pro Package 100 (foot-traffic data)', kind: 'infrastructure', amountCents: 11900 }),
+      expense({ id: 2, vendor: 'Apple', product: 'Apple Developer Program', kind: 'infrastructure', cadence: 'yearly', amountCents: 9900, lastChargedOn: '2026-06-15', renewsOn: '2027-06-15' }),
+    ],
+    month: MONTH,
+  });
+  assert.deepStrictEqual(
+    pic.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]).sort(),
+    [['apple-developer', 2], ['besttime-subscription', 1]],
+    JSON.stringify(pic.possibleDoubles),
+  );
+  const besttime = pic.possibleDoubles.find((d) => d.expenseId === 1);
+  assert.strictEqual(besttime.codeLabel, 'BestTime.app Pro, Package 100');
+  assert.strictEqual(besttime.expenseLabel, 'BestTime, Pro Package 100 (foot-traffic data)');
+});
+
 test('a yearly price behind the monthly variable is not used as a monthly price for break-even', async () => {
   seedStripe();
   const pm = stripeState.prices.find((p) => p.id === 'price_pro_m');

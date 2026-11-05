@@ -165,6 +165,23 @@ const CODE_LINE_LOOKALIKE = {
   'google-cloud': /google cloud|\bgcp\b|cloud billing/i,
 };
 
+// The code lines an expense row may be the same bill as (2026-11-05). A row
+// whose vendor alone names a code line is that vendor's bill, whatever its
+// product says the bill pays for: Railway's "Pro plan (API, Postgres, BestTime
+// cron)" runs Flock's own BESTTIME collector service, which is Railway
+// compute, and reading vendor and product together flagged it beside the
+// BestTime.app subscription line. So the product is read only when the vendor
+// names no code line at all, as "Apple" does not and "Apple, Apple Developer
+// Program" does.
+function lookalikeLinesOf(row) {
+  const ids = Object.keys(CODE_LINE_LOOKALIKE);
+  const vendor = String(row.vendor || '');
+  const byVendor = ids.filter((id) => CODE_LINE_LOOKALIKE[id].test(vendor));
+  if (byVendor.length > 0) return byVendor;
+  const name = `${vendor} ${row.product || ''}`;
+  return ids.filter((id) => CODE_LINE_LOOKALIKE[id].test(name));
+}
+
 // ---------------------------------------------------------------------------
 // Dates. Everything below works in YYYY-MM-DD strings in the business's own
 // zone, so a bill dated the 1st is the 1st in Pennsylvania and not in UTC.
@@ -1566,7 +1583,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   upcoming.sort((a, b) => (a.on < b.on ? -1 : a.on > b.on ? 1 : a.label.localeCompare(b.label)));
 
   // Probably the same bill twice: a code line still counted, and an active
-  // expense row whose name looks like it and whose cadence fits.
+  // expense row from that line's vendor (lookalikeLinesOf) whose cadence fits.
   const possibleDoubles = [];
   const countedExpenseIds = new Set(lines.filter((l) => l.origin === 'expense' && l.counted).map((l) => l.expenseId));
   const fits = (codeCadence, rowCadence) => codeCadence === rowCadence
@@ -1581,8 +1598,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       // code line (a BestTime bill tied to the corpus line) left the real
       // BestTime line counted beside it with no warning.
       if (x.replacesLine === c.id || x.isCredit) continue;
-      const name = `${x.vendor} ${x.product || ''}`;
-      if (CODE_LINE_LOOKALIKE[c.id].test(name) && fits(c.cadence, x.cadence)) {
+      if (lookalikeLinesOf(x).includes(c.id) && fits(c.cadence, x.cadence)) {
         possibleDoubles.push({ codeLineId: c.id, codeLabel: c.label, expenseId: x.id, expenseLabel: x.product ? `${x.vendor}, ${x.product}` : x.vendor });
       }
     }
