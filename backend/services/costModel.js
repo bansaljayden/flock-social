@@ -559,6 +559,24 @@ async function readReconciled(pool) {
   };
 }
 
+// RECORDING A RECONCILED FIGURE: the one statement both writers use, the
+// dashboard's form (routes/admin.js POST /costs/reconciled) and a forwarded
+// receipt (services/receiptInbox.js). The figure a save replaces is kept
+// beside it (migration 115), so the hub compares a new bill with the one
+// before it: on the first save the code's figure, after that the row's own.
+// Parameters: line id, dollars, as-of date, note, who saved it (null for a
+// receipt), and the code's figure and date for a first save.
+const RECONCILED_SAVE_SQL = `INSERT INTO cost_reconciled (line_id, usd_per_month, as_of, note, updated_at, updated_by, previous_usd_per_month, previous_as_of)
+       VALUES ($1, $2, $3, $4, NOW(), $5, $6::numeric, $7::date)
+       ON CONFLICT (line_id) DO UPDATE
+         SET previous_usd_per_month = cost_reconciled.usd_per_month,
+             previous_as_of = cost_reconciled.as_of,
+             usd_per_month = EXCLUDED.usd_per_month,
+             as_of = EXCLUDED.as_of,
+             note = EXCLUDED.note,
+             updated_at = NOW(),
+             updated_by = EXCLUDED.updated_by`;
+
 // ---------------------------------------------------------------------------
 // WATCHLIST — costs that are not on the bill today and could be tomorrow.
 // ---------------------------------------------------------------------------
@@ -2234,6 +2252,7 @@ module.exports = {
   MAPTILER_SPEND_CAP_USD,
   MAPTILER_SPEND_CAP_CHECKED,
   readReconciled,
+  RECONCILED_SAVE_SQL,
   RATES,
   GOOGLE_QUOTAS,
   DEPENDENCIES,

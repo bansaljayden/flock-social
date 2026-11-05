@@ -2765,19 +2765,11 @@ router.post('/costs/reconciled', async (req, res) => {
     const cleanNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null;
     // The figure this save replaces is kept beside it (migration 115), so the
     // hub compares a new bill with the one before it: on the first save, the
-    // code's figure; after that, the row's own.
+    // code's figure; after that, the row's own. A forwarded receipt saves
+    // through the same statement (services/receiptInbox.js).
     const codeLine = costModel.RECONCILED.lines.find((l) => l.id === id);
     await pool.query(
-      `INSERT INTO cost_reconciled (line_id, usd_per_month, as_of, note, updated_at, updated_by, previous_usd_per_month, previous_as_of)
-       VALUES ($1, $2, $3, $4, NOW(), $5, $6::numeric, $7::date)
-       ON CONFLICT (line_id) DO UPDATE
-         SET previous_usd_per_month = cost_reconciled.usd_per_month,
-             previous_as_of = cost_reconciled.as_of,
-             usd_per_month = EXCLUDED.usd_per_month,
-             as_of = EXCLUDED.as_of,
-             note = EXCLUDED.note,
-             updated_at = NOW(),
-             updated_by = EXCLUDED.updated_by`,
+      costModel.RECONCILED_SAVE_SQL,
       [id, Math.round(usd * 100) / 100, asOf, cleanNote, req.user.id,
         codeLine ? codeLine.usdPerMonth : null, codeLine ? codeLine.asOf : null]
     );
@@ -3448,6 +3440,54 @@ router.post(
     }
   }
 );
+
+// ---------------------------------------------------------------------------
+// RECEIPTS FROM EMAIL (migration 134, services/receiptInbox.js)
+// ---------------------------------------------------------------------------
+// A forwarded receipt from a vendor the list has never seen waits on the
+// dashboard, counted nowhere, until the owner answers. "Add to the list"
+// writes it as a bill of the kind he picked; "Not a Flock bill" sets it aside,
+// and so do later receipts for the same product from the same sender. A
+// receipt the hub could not read is cleared with the same call once he has
+// looked at it.
+const receiptInbox = require('../services/receiptInbox');
+
+router.post(
+  '/email-receipts/:id/confirm',
+  [
+    body('kind')
+      .optional({ values: 'null' })
+      .custom((v) => isText(v) && moneyHub.EXPENSE_KINDS.includes(v))
+      .withMessage(`kind must be one of ${moneyHub.EXPENSE_KINDS.join(', ')}`),
+  ],
+  async (req, res) => {
+    try {
+      const id = serialId(req.params.id);
+      if (!id) return res.status(404).json({ error: 'Receipt not found' });
+      if (expenseValidationFailure(req, res)) return;
+      const out = await receiptInbox.confirmReceipt(id, { kind: req.body && req.body.kind ? req.body.kind : 'tooling', userId: req.user.id }, pool);
+      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      res.json({ success: true, expenseId: out.expenseId });
+    } catch (err) {
+      if (isDuplicateBill(err)) return res.status(409).json({ error: DUPLICATE_BILL });
+      console.error('Confirm emailed receipt error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+router.post('/email-receipts/:id/dismiss', async (req, res) => {
+  try {
+    const id = serialId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Receipt not found' });
+    const out = await receiptInbox.dismissReceipt(id, pool);
+    if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+    res.json({ success: true, status: out.now });
+  } catch (err) {
+    console.error('Dismiss emailed receipt error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 module.exports = router;
 // Exposed for __tests__/adminEvidence.test.js, which diffs CONTENT_TEXT_SQL and

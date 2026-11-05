@@ -222,7 +222,12 @@ test('a valid entry upserts the row for that line, stamped by the admin, and ret
 test('a saved figure carries the figure it replaced, never the code receipt', () => {
   const cm = require('../services/costModel');
   const SQL = /UPDATE[\s\S]*SET previous_usd_per_month = cost_reconciled\.usd_per_month,\s+previous_as_of = cost_reconciled\.as_of,/;
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
-  assert.match(src, SQL, 'the save no longer keeps the figure it replaces');
+  assert.match(cm.RECONCILED_SAVE_SQL, SQL, 'the save no longer keeps the figure it replaces');
+  // One statement for both writers: the dashboard's form and a forwarded
+  // receipt (services/receiptInbox.js) record a figure the same way.
+  const read = (p) => require('fs').readFileSync(require('path').join(__dirname, '..', ...p), 'utf8');
+  assert.match(read(['routes', 'admin.js']), /costModel\.RECONCILED_SAVE_SQL/, 'the form writes some other statement');
+  assert.match(read(['services', 'receiptInbox.js']), /costModel\.RECONCILED_SAVE_SQL/, 'a receipt writes some other statement');
+  assert.doesNotMatch(read(['routes', 'admin.js']), /INSERT INTO cost_reconciled/, 'a second copy of the statement is back in the route');
   assert.ok(cm.RECONCILED.lines.find((l) => l.id === 'railway').previous, 'the code line carries its last receipt');
 });

@@ -40,14 +40,14 @@ const MAX_BODY_CHARS = 1500000;
 
 const NAMED_ENTITIES = {
   amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ensp: ' ', emsp: ' ', thinsp: ' ',
-  ndash: '–', mdash: '—', minus: '−', bull: '•', middot: '·', hellip: '…',
-  copy: '©', reg: '®', trade: '™', rsquo: '’', lsquo: '‘', rdquo: '”',
-  ldquo: '“', euro: '€', pound: '£', yen: '¥', times: '×', rsaquo: '›',
-  lsaquo: '‹', raquo: '»', laquo: '«', shy: '', zwnj: '', zwj: '', lrm: '', rlm: '',
+  ndash: '\u2013', mdash: '\u2014', minus: '\u2212', bull: '\u2022', middot: '\u00b7', hellip: '\u2026',
+  copy: '\u00a9', reg: '\u00ae', trade: '\u2122', rsquo: '\u2019', lsquo: '\u2018', rdquo: '\u201d',
+  ldquo: '\u201c', euro: '\u20ac', pound: '\u00a3', yen: '\u00a5', times: '\u00d7', rsaquo: '\u203a',
+  lsaquo: '\u2039', raquo: '\u00bb', laquo: '\u00ab', shy: '', zwnj: '', zwj: '', lrm: '', rlm: '',
 };
 
 // Padding a mail puts in its preview line, and marks that are never text.
-const INVISIBLE = /[­͏؜ᅟᅠ឴឵᠎​-‏‪-‮⁠-⁤⁦-⁯ㅤ﻿ﾠ]/g;
+const INVISIBLE = /[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u3164\ufeff\uffa0]/g;
 
 function decodeEntities(s) {
   return String(s).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/gi, (whole, e) => {
@@ -65,7 +65,7 @@ function decodeEntities(s) {
 // invisible padding taken out. Empty lines go.
 function textLines(text) {
   return String(text || '').slice(0, MAX_BODY_CHARS).replace(INVISIBLE, '').split(/\r?\n/)
-    .map((l) => l.replace(/[\s  -   　]+/g, ' ').trim())
+    .map((l) => l.replace(/[\s\u00a0\u2000-\u200a\u202f\u205f\u3000]+/g, ' ').trim())
     .filter(Boolean);
 }
 
@@ -87,11 +87,11 @@ function htmlToLines(html) {
 
 const CURRENCY_SYMBOLS = [
   ['US$', 'USD'], ['CA$', 'CAD'], ['C$', 'CAD'], ['AU$', 'AUD'], ['A$', 'AUD'], ['NZ$', 'NZD'],
-  ['HK$', 'HKD'], ['S$', 'SGD'], ['$', 'USD'], ['€', 'EUR'], ['£', 'GBP'],
+  ['HK$', 'HKD'], ['S$', 'SGD'], ['$', 'USD'], ['\u20ac', 'EUR'], ['\u00a3', 'GBP'],
 ];
 const SYMBOL = CURRENCY_SYMBOLS.map(([s]) => s.replace(/\$/g, '\\$')).join('|');
 const AMOUNT = '(\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.(\\d{1,2}))?';
-const MINUS = '[-−–]';
+const MINUS = '[-\u2212\u2013]';
 // "$42.99", "-$20.00", "$82.99 USD", "USD 42.99": the whole line is the amount.
 const MONEY_LINE = new RegExp(`^(${MINUS})?\\s*(?:([A-Z]{3})\\s+)?(${SYMBOL})?\\s?${AMOUNT}(?:\\s*([A-Z]{3}))?$`);
 // The same anywhere in a line: a symbol is required, so a quantity or a
@@ -167,9 +167,9 @@ function dateIn(text) {
   return good.length ? good[0].v : null;
 }
 
-// "Sep 15–Oct 15, 2026", "Dec 15, 2026 – Jan 15, 2027": the period
+// "Sep 15\u2013Oct 15, 2026", "Dec 15, 2026 \u2013 Jan 15, 2027": the period
 // a charge covers, as Stripe prints it above the items it covers.
-const RANGE = /^([A-Za-z]{3,9})\.?\s(\d{1,2})(?:,\s(\d{4}))?\s*[–—-]\s*([A-Za-z]{3,9})\.?\s(\d{1,2}),\s(\d{4})$/;
+const RANGE = /^([A-Za-z]{3,9})\.?\s(\d{1,2})(?:,\s(\d{4}))?\s*[\u2013\u2014-]\s*([A-Za-z]{3,9})\.?\s(\d{1,2}),\s(\d{4})$/;
 
 function rangeOf(line) {
   const m = RANGE.exec(String(line || '').trim());
@@ -571,7 +571,7 @@ function parseGooglePayment(mail) {
 }
 
 // ---------------------------------------------------------------------------
-// FASTSPRING: "Your Order", each item as "<name> – $30.00 x 1", then
+// FASTSPRING: "Your Order", each item as "<name> \u2013 $30.00 x 1", then
 // "Tax:" and "Total:". The receipt carries no date, so the email's own date is
 // the day it was paid.
 // ---------------------------------------------------------------------------
@@ -583,7 +583,7 @@ function parseFastSpring(mail) {
   if (!total) return /order|receipt/i.test(mail.subject || '') ? unreadable('the FastSpring total could not be found') : notReceipt('a FastSpring notice, not a receipt');
   const items = [];
   for (const l of lines) {
-    const m = new RegExp(`^(.+?)\\s+[–—-]\\s+(${SYMBOL})\\s?${AMOUNT}\\s*x\\s*(\\d+)$`).exec(l);
+    const m = new RegExp(`^(.+?)\\s+[\u2013\u2014-]\\s+(${SYMBOL})\\s?${AMOUNT}\\s*x\\s*(\\d+)$`).exec(l);
     if (m) items.push({ name: m[1].trim(), cents: toCents(m[3], m[4]) });
   }
   if (!items.length) {

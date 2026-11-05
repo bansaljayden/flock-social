@@ -261,7 +261,7 @@ test('money: symbols, codes and signs, and a unit price or a quantity is not an 
   assert.deepEqual(P.moneyLine('-$20.00'), { cents: 2000, currency: 'USD', negative: true });
   assert.deepEqual(P.moneyLine('$82.99 USD'), { cents: 8299, currency: 'USD', negative: false });
   assert.deepEqual(P.moneyLine('$1,234.50'), { cents: 123450, currency: 'USD', negative: false });
-  assert.deepEqual(P.moneyLine('€12.50'), { cents: 1250, currency: 'EUR', negative: false });
+  assert.deepEqual(P.moneyLine('\u20ac12.50'), { cents: 1250, currency: 'EUR', negative: false });
   assert.deepEqual(P.moneyLine('CA$5.00'), { cents: 500, currency: 'CAD', negative: false });
   assert.equal(P.moneyLine('$0.000015 each'), null);
   assert.equal(P.moneyLine('Qty 1,370'), null);
@@ -276,9 +276,9 @@ test('dates as receipts print them, and the period a charge covers', () => {
   assert.equal(P.dateIn('received on Nov 2, 2026.'), '2026-11-02');
   assert.equal(P.dateIn('2026-11-02'), '2026-11-02');
   assert.equal(P.dateIn('Smarch 40, 2026'), null);
-  assert.deepEqual(P.rangeOf('Sep 15–Oct 15, 2026'), { start: '2026-09-15', end: '2026-10-15' });
-  assert.deepEqual(P.rangeOf('Dec 15–Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' }, 'a period across New Year');
-  assert.deepEqual(P.rangeOf('Dec 15, 2026 – Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' });
+  assert.deepEqual(P.rangeOf('Sep 15\u2013Oct 15, 2026'), { start: '2026-09-15', end: '2026-10-15' });
+  assert.deepEqual(P.rangeOf('Dec 15\u2013Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' }, 'a period across New Year');
+  assert.deepEqual(P.rangeOf('Dec 15, 2026 \u2013 Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' });
   assert.equal(P.cadenceOfPeriod({ start: '2026-09-02', end: '2026-10-01' }), 'monthly');
   assert.equal(P.cadenceOfPeriod({ start: '2026-06-15', end: '2027-06-15' }), 'yearly');
   assert.deepEqual(P.monthBefore('2026-01-01'), { start: '2025-12-01', end: '2025-12-31' });
@@ -293,6 +293,6 @@ test('tax shares add up to the tax to the cent', () => {
 });
 
 test('HTML becomes the lines a reader sees: styles out, entities decoded, padding gone', () => {
-  const lines = P.htmlToLines('<style>p{color:red}</style><div>Total&nbsp;</div><td>$4.20</td><span>A&amp;B</span> ͏ ͏<br>Caf&#233; &mdash; ok<!-- hidden -->');
-  assert.deepEqual(lines, ['Total', '$4.20', 'A&B', 'Café — ok']);
+  const lines = P.htmlToLines('<style>p{color:red}</style><div>Total&nbsp;</div><td>$4.20</td><span>A&amp;B</span> \u034f \u034f<br>Caf&#233; &mdash; ok<!-- hidden -->');
+  assert.deepEqual(lines, ['Total', '$4.20', 'A&B', 'Caf\u00e9 \u2014 ok']);
 });

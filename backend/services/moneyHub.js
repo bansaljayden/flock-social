@@ -33,6 +33,8 @@
 //            Checked here where the server can see the answer, and marked
 //            for the operator to check where it cannot (ONLY YOU CAN DO
 //            THESE, below).
+//   receipts what the owner's Gmail forwarded and what each receipt changed
+//            here, read by services/receiptInbox.js.
 //
 // HONEST WHEN A SOURCE IS MISSING. Every block carries a status: 'ok',
 // 'not_connected' (the key is not set, so nothing was asked) or 'error' (it was
@@ -4084,7 +4086,7 @@ async function buildMoneyHub({
     { force, logMessage: false }
   );
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage, maptilerRead, resendRead] = await Promise.all([
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage, maptilerRead, resendRead, emailReceipts] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -4143,6 +4145,11 @@ async function buildMoneyHub({
       console.error('[money] resend usage read failed:', (err && err.name) || 'unknown error');
       return { status: 'failed', reason: 'The Resend meter failed before it could answer.' };
     }),
+    // The receipts the owner's Gmail forwarded and what each one changed
+    // (services/receiptInbox.js). Read every time, like the expense list, and
+    // it never throws: a failed read is a block with a reason. Required here,
+    // not at the top, because that file builds its rows with this one.
+    require('./receiptInbox').readForHub(db, now),
   ]);
   const maptiler = judgeMaptilerUsage(maptilerRead);
   const resend = judgeResendUsage(resendRead, now);
@@ -4266,6 +4273,11 @@ async function buildMoneyHub({
       cadences: EXPENSE_CADENCES,
       codeLines: codeLineOptions(),
     },
+    // What came in from email: the new bills waiting for an answer, the
+    // receipts to check (by sender and subject only), the latest ones read,
+    // and how many emails were dropped since this process started. Never a
+    // receipt's body, which is not kept.
+    emailReceipts,
     net,
     pricing,
     // Counts only, of people accounts. See PEOPLE above.

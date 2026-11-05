@@ -13,8 +13,14 @@
 //
 // WHAT IT DOES: turns `email.bounced` and `email.complained` into rows in
 // email_suppressions, which services/emailService.js consults before every
-// send. Nothing else. It does not write to users, it does not delete anything,
-// and it cannot be used to change any state a person can see in the app.
+// send. It does not write to users, it does not delete anything, and it cannot
+// be used to change any state a person can see in the app.
+//
+// AND ONE MORE EVENT (2026-11-05): `email.received`, a receipt the owner's
+// Gmail forwarded to the receipts address. services/receiptInbox.js reads it
+// back from Resend and records the bill on the admin money hub; everything it
+// checks before it believes an email is written at the top of that file. The
+// same signature guards it, so nobody can post a receipt here either.
 //
 // SOFT BOUNCES ARE NOT SUPPRESSED. A full mailbox or a greylisting server is a
 // temporary condition, and suppressing on one would permanently stop mail to a
@@ -40,6 +46,7 @@ const router = express.Router();
 const crypto = require('crypto');
 const { suppress } = require('../services/emailSuppression');
 const { maskAddress } = require('../services/emailService');
+const receiptInbox = require('../services/receiptInbox');
 
 // A Resend signing secret is `whsec_` followed by the standard base64 of 24
 // random bytes, and Svix issues none shorter. The HMAC key is those bytes, so
@@ -233,6 +240,15 @@ router.post('/', async (req, res) => {
     const type = typeof event.type === 'string' ? event.type : '';
     const data = event.data && typeof event.data === 'object' ? event.data : {};
 
+    // A received email is a receipt or nothing. Only a failure a second
+    // delivery could fix (Resend or the database not answering) asks for one;
+    // every other outcome, a receipt recorded or an email dropped, is final.
+    if (type === 'email.received') {
+      const out = await receiptInbox.handleReceived(data);
+      if (out.retry) return res.status(500).json({ error: 'Could not read the received email' });
+      return res.status(200).json({ ok: true });
+    }
+
     let reason = null;
     let detail = null;
     if (type === 'email.complained') {
@@ -297,7 +313,8 @@ if (process.env.NODE_ENV === 'production') {
       '🛡️ EMAIL: RESEND_WEBHOOK_SECRET is not set, so POST /api/email-events refuses every delivery event. '
       + 'No hard bounce and no spam complaint will ever be recorded, email_suppressions stays empty, and Flock keeps '
       + 'mailing addresses that no longer exist. Create the webhook in the Resend dashboard, point it at '
-      + '/api/email-events, subscribe it to email.bounced and email.complained, and copy its whsec_ secret here.'
+      + '/api/email-events, subscribe it to email.bounced and email.complained (and email.received for the receipts '
+      + 'the owner\'s Gmail forwards), and copy its whsec_ secret here.'
     );
   } else if (!key) {
     warnAboutUnusableSecret(problem);

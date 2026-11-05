@@ -194,6 +194,11 @@ const SUITE_SLOTS = {
                                  // the public summary against a real,
                                  // migrated schema. Beside 93 for the same
                                  // reason it took the top.
+  receiptInboxRealDb: 77,        // new in 2026-11-05; receipts forwarded from
+                                 // the owner's Gmail through the signed
+                                 // webhook, and what each one does to the
+                                 // reconciled lines and the expense list
+                                 // (migration 134).
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
