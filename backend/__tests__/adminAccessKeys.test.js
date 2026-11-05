@@ -494,6 +494,25 @@ test('a key stops the moment its account is no longer an admin, or is banned', a
   }, keys.KEY_WORDS.ended);
 });
 
+test('a dead key replayed all hour writes at most the hourly ceiling of refusals', async () => {
+  const owner = await insertUser({ role: 'admin' });
+  const k = await mint(owner);
+  assert.strictEqual((await call('DELETE', `/api/admin/keys/${k.id}`, { bearer: session(owner) })).status, 200);
+  // The hour's ceiling, less one, already logged.
+  await pool.query(
+    `INSERT INTO admin_key_uses (key_id, method, route, status, refused)
+     SELECT $1::int, 'GET', '/api/admin/whoami', 401, 'revoked' FROM generate_series(1, $2::int)`,
+    [k.id, keys.ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR - 1]
+  );
+  for (let i = 0; i < 3; i += 1) assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 401);
+  const n = Number((await pool.query('SELECT COUNT(*) AS n FROM admin_key_uses WHERE key_id = $1', [k.id])).rows[0].n);
+  assert.strictEqual(n, keys.ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR, 'the log kept growing past the ceiling');
+  // An hour on, refusals are written again.
+  await pool.query("UPDATE admin_key_uses SET used_at = used_at - INTERVAL '61 minutes' WHERE key_id = $1", [k.id]);
+  assert.strictEqual((await call('GET', '/api/admin/whoami', { bearer: k.key })).status, 401);
+  assert.strictEqual(Number((await pool.query('SELECT COUNT(*) AS n FROM admin_key_uses WHERE key_id = $1', [k.id])).rows[0].n), n + 1);
+});
+
 test('a key minted after sign out everywhere works: only keys from before it end', async () => {
   const owner = await insertUser({ role: 'admin' });
   const old = await mint(owner);

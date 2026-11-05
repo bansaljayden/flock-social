@@ -50,7 +50,9 @@
 // the caller's address. A use that reaches a route is written BEFORE the route
 // runs, so a use that could not be logged is a use that did not happen, and
 // its status is written when the answer goes out. A refused use is written
-// with the reason. A key nobody minted is logged to the console only, by
+// with the reason, up to ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR a key each hour so
+// a replayed dead key cannot fill the table. A key nobody minted is logged to
+// the console only, by
 // address: there is no key to attach it to, and a database row per guess
 // would hand anyone a way to fill the table.
 //
@@ -89,6 +91,12 @@ const ADMIN_KEY_ACTIVE_MAX = 10;
 const ADMIN_KEY_MINT_FRESH_SECONDS = 15 * 60;
 const ADMIN_KEY_LIST_LIMIT = 50;
 const ADMIN_KEY_RECENT_USES = 5;
+// Refused uses written down per key per hour. A key that leaked and was then
+// revoked can still be replayed, and every replay is a refusal; past this many
+// in an hour the rest are refused without a row, so the log says the key is
+// being tried without a stranger being able to fill the table. Uses that
+// reach a route are never capped here: the route's own rate limit bounds them.
+const ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR = 200;
 
 // The scopes a key can carry, with what each one covers. One for now; the
 // table's CHECK refuses any word not listed here (migration 134).
@@ -256,8 +264,12 @@ const USE_INSERT_SQL = `WITH used AS (
 
 const USE_STATUS_SQL = `UPDATE admin_key_uses SET status = $2 WHERE id = $1 AND status IS NULL`;
 
+// Written only while this key has fewer than $7 refusals in the last hour
+// (ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR), counted on the (key_id, used_at) index.
 const REFUSAL_INSERT_SQL = `INSERT INTO admin_key_uses (key_id, method, route, status, ip, refused)
-     VALUES ($1, $2, $3, $4, $5, $6)`;
+     SELECT $1::int, $2::text, $3::text, $4::smallint, $5::text, $6::text
+      WHERE (SELECT COUNT(*) FROM admin_key_uses
+              WHERE key_id = $1::int AND refused IS NOT NULL AND used_at > NOW() - INTERVAL '1 hour') < $7::int`;
 
 // What one use is written as. The path only, never the query string, which a
 // caller can fill with anything; all three bounded to their columns.
@@ -298,7 +310,7 @@ function deadReason(row) {
 
 async function recordRefusal(keyId, ctx, status, reason) {
   try {
-    await pool.query(REFUSAL_INSERT_SQL, [keyId, ctx.method, ctx.route, status, ctx.ip, reason]);
+    await pool.query(REFUSAL_INSERT_SQL, [keyId, ctx.method, ctx.route, status, ctx.ip, reason, ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR]);
   } catch (err) {
     console.error(`[admin-key] key ${keyId}: a refused use (${reason}) could not be logged: ${err.message}`);
   }
@@ -579,6 +591,7 @@ module.exports = {
   ADMIN_KEY_MINT_FRESH_SECONDS,
   ADMIN_KEY_LIST_LIMIT,
   ADMIN_KEY_RECENT_USES,
+  ADMIN_KEY_REFUSALS_LOGGED_PER_HOUR,
   ADMIN_KEY_SCOPES,
   ADMIN_KEY_ROUTES,
   ADMIN_KEY_REFUSED_ROUTES,
