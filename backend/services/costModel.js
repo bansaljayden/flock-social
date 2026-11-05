@@ -579,10 +579,10 @@ const WATCHLIST = [
   {
     id: 'carto-basemaps',
     label: 'CARTO basemap tiles',
-    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js, the light and dark styles, used whenever REACT_APP_MAPTILER_KEY is unset',
-    usd: null,
+    where: 'frontend/src/components/map/keylessBasemap.js, the light and dark styles a development build falls back to when REACT_APP_MAPTILER_KEY is unset (for MapLibreMapView.js and website/LiveDemo.js)',
+    usd: 0,
     severity: 'watch',
-    note: 'Unkeyed and attribution-only until 2026-09-29, when CARTO\'s basemap terms began requiring a CARTO-issued key for every use and allowing a visible watermark on unkeyed tiles; commercial free use is capped at 1,000,000 tile requests a month. It is the fallback path, so a missing MapTiler key silently moves the map onto it, now outside its terms.',
+    note: 'Unkeyed and attribution-only until 2026-09-29, when CARTO\'s basemap terms began requiring a CARTO-issued key for every use and allowing a visible watermark on unkeyed tiles; commercial free use is capped at 1,000,000 tile requests a month. Since 2026-11-05 a release never falls back to them: a release built without its MapTiler key draws no basemap and says the map could not load. Only development builds still request them (npm start, the test runner, and the e2e stack, which asks with REACT_APP_KEYLESS_BASEMAP=carto).',
   },
   {
     id: 'codemagic',
@@ -857,19 +857,18 @@ const DEPENDENCIES = [
   {
     id: 'carto',
     label: 'CARTO basemaps',
-    what: 'The light and dark map tiles, used whenever no MapTiler key is set.',
-    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js',
-    group: 'metered',
-    pricing: { type: 'unknown' },
+    what: 'The light and dark map tiles a development build draws when it has no MapTiler key. A release never requests them.',
+    where: 'frontend/src/components/map/keylessBasemap.js, for frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js',
+    group: 'free',
+    pricing: { type: 'free' },
     configuredEnv: null,
     configuredNote: 'Unkeyed: no account and no key.',
     observedLineId: null,
     watchlistId: 'carto-basemaps',
-    usageNote: 'Tiles are pulled straight from the browser and counted nowhere.',
-    unknownCost: true,
-    unknownAction: 'CARTO\'s basemap terms of 2026-09-29 require a CARTO-issued key for every use, allow a visible watermark on unkeyed tiles, and cap commercial free use at 1,000,000 tile requests a month (carto.com basemap terms). Production builds set the MapTiler key and never load these, so only keyless builds do (local, contributors, the e2e stack); a production build that lost its MapTiler key would be outside the terms.',
+    usageNote: 'Pulled straight from the browser by development builds only (npm start, the test runner, the e2e stack), and counted nowhere.',
+    costsNothingBecause: 'No release requests them. CARTO\'s basemap terms of 2026-09-29 require a CARTO-issued key for every use, so since 2026-11-05 a release built without its MapTiler key draws no basemap instead of falling back to CARTO (frontend/src/components/map/keylessBasemap.js), and the releases built with the key never reach the fallback.',
     source: 'https://carto.com/basemaps',
-    checked: '2026-09-30',
+    checked: '2026-11-05',
   },
 
   // -- Fixed. The bill arrives whether anybody opens the app or not. ---------
@@ -2212,6 +2211,10 @@ function buildVenueUnitEconomics(args = {}) {
 //             Cloudflare Pages on 2026-10-21, and on 2026-11-05 nothing Flock
 //             serves ran on Vercel (the FIXED_MONTHLY vercel note has the
 //             evidence), so Vercel Pro is not needed.
+//   carto     2026-11-05, CARTO basemap tiles without a CARTO key. A release
+//             no longer falls back to them without its MapTiler key; only
+//             development builds do (frontend/src/components/map/
+//             keylessBasemap.js, WATCHLIST carto-basemaps).
 const LICENCE_EXPOSURES = [
   {
     id: 'maptiler',
@@ -2223,17 +2226,6 @@ const LICENCE_EXPOSURES = [
     resolvedBy: { expenseVendor: 'maptiler' },
     source: 'https://www.maptiler.com/cloud/pricing/',
     checked: '2026-10-07',
-  },
-  {
-    id: 'carto',
-    vendor: 'CARTO',
-    plan: 'Basemap tiles without a key',
-    why: 'Since 2026-09-29 CARTO\'s basemaps need a CARTO key for every use. The map only reaches them when a build has no MapTiler key.',
-    fix: 'Keep REACT_APP_MAPTILER_KEY set in every build, or get a CARTO key',
-    fixUsdPerMonth: 0,
-    resolvedBy: null,
-    source: 'https://carto.com/basemaps',
-    checked: '2026-09-29',
   },
 ];
 

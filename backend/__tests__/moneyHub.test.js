@@ -3351,12 +3351,15 @@ test('the App Store break-even uses the App Store price, with the 15% case besid
 test('plans outside their terms are listed with what licensing them adds, and a recorded fix clears them', () => {
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   const ids = pic.licence.items.map((i) => i.id);
-  for (const id of ['maptiler', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
+  assert.ok(ids.includes('maptiler'), 'maptiler is missing');
   // Fixed in code (avatars drawn on our own server), so it left the list.
   assert.ok(!ids.includes('dicebear'));
   // Nothing Flock serves runs on Vercel since the move to Cloudflare Pages
   // (2026-11-05), so Hobby's terms are no exposure and Vercel Pro no fix.
   assert.ok(!ids.includes('vercel'));
+  // Fixed in code too (2026-11-05): a release never requests CARTO's keyless
+  // tiles (frontend/src/components/map/keylessBasemap.js).
+  assert.ok(!ids.includes('carto'));
   assert.strictEqual(pic.licence.toComplyPerMonthCents, 3000, 'MapTiler Flex $30');
   assert.strictEqual(pic.licence.licensedPerMonthCents, pic.totals.perMonthCents + 3000);
   for (const i of pic.licence.items) assert.match(i.checked, /^\d{4}-\d{2}-\d{2}$/);
@@ -3367,7 +3370,7 @@ test('plans outside their terms are listed with what licensing them adds, and a 
     ],
     month: MONTH,
   });
-  assert.deepStrictEqual(fixed.licence.items.map((i) => i.id).sort(), ['carto']);
+  assert.deepStrictEqual(fixed.licence.items.map((i) => i.id).sort(), []);
   assert.strictEqual(fixed.licence.toComplyPerMonthCents, 0);
   // A stopped or free row fixes nothing.
   const stopped = moneyHub.buildCostPicture({
@@ -3382,6 +3385,10 @@ test('plans outside their terms are listed with what licensing them adds, and a 
     month: MONTH,
   });
   assert.ok(!live.licence.items.some((i) => i.id === 'maptiler'));
+  // With that row, as on the live list since 2026-10-07, no plan is outside
+  // its terms, so the Overview has no "Plans outside their terms" row.
+  assert.deepStrictEqual(live.licence.items, []);
+  assert.strictEqual(live.licence.toComplyPerMonthCents, 0);
   assert.ok(!live.lines.some((l) => l.origin !== 'expense' && /maptiler/i.test(`${l.id} ${l.label}`)), 'a MapTiler code line would count the bill twice');
   assert.ok(live.lines.some((l) => l.origin === 'expense' && l.counted !== false && /MapTiler/.test(l.label)), 'the row itself counts');
   assert.deepStrictEqual(live.possibleDoubles, []);

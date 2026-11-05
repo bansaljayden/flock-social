@@ -1001,16 +1001,20 @@ test('a free row says which kind of zero it is, and an unknown row does not say 
       );
     }
   }
-  // The three the panel must never round down to free. MapTiler and CARTO are
-  // usage-based map tiles that nothing in this repo counts, and the BestTime
-  // plan may still be charging for a key that is dead.
+  // The ones the panel must never round down to free. MapTiler is usage-based
+  // map tiles that nothing in this repo counts until its meter's token is set.
   const unknown = new Set(DEPS.unknownCostIds);
   // BestTime came off this list on 2026-09-01: the plan and its price are known
   // ($119 Package 100), so reading it as unknown would understate a real bill.
   assert.ok(!unknown.has('besttime-subscription'), 'the BestTime plan has a known price now and must not read as unknown');
-  for (const id of ['maptiler', 'carto']) {
-    assert.ok(unknown.has(id), `${id} has no defensible figure and must read as unknown`);
-  }
+  assert.ok(unknown.has('maptiler'), 'maptiler has no defensible figure without its meter and must read as unknown');
+  // CARTO came off it on 2026-11-05: no release requests its keyless tiles
+  // (frontend/src/components/map/keylessBasemap.js), so it is a free row that
+  // says why, not an unknown one.
+  assert.ok(!unknown.has('carto'), 'CARTO reads as an unknown cost though no release requests it');
+  const carto = ALL_DEPS.find((d) => d.id === 'carto');
+  assert.strictEqual(carto.group, 'free');
+  assert.match(carto.costsNothingBecause, /No release requests them/);
 });
 
 test('a dependency with no meter is named as unmeasured rather than counted as zero', () => {

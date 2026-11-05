@@ -82,9 +82,12 @@ test('free tiers that exclude commercial use say so', () => {
   // own server (2026-10-05) and the line says so.
   assert.match(watch('dicebear').note, /Drawn by our own server/);
   assert.match(dep('dicebear').costsNothingBecause, /on our own server/);
-  // CARTO requires a key since its 2026-09-29 terms.
+  // CARTO requires a key since its 2026-09-29 terms, so since 2026-11-05 no
+  // release falls back to its keyless tiles, and the lines say so.
   assert.match(watch('carto-basemaps').note, /CARTO-issued key/);
-  assert.match(dep('carto').unknownAction, /CARTO-issued key/);
+  assert.match(watch('carto-basemaps').note, /a release never falls back to them/);
+  assert.match(dep('carto').costsNothingBecause, /CARTO-issued key/);
+  assert.match(dep('carto').costsNothingBecause, /No release requests them/);
 });
 
 test('GitHub Actions is not called free for being public', () => {
