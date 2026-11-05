@@ -90,6 +90,30 @@ test('a Stripe receipt with no period is a one-time charge', () => {
   assert.equal(r.bills[0].periodStart, null);
 });
 
+test('a Stripe receipt in a day-first locale still has its period, so a monthly bill is not read as one-time', () => {
+  const m = mail('stripe-subscription');
+  assert.ok(m.html.includes('Oct 13\u2013Nov 13, 2026'));
+  const r = P.parseReceipt({ ...m, html: m.html.replace('Oct 13\u2013Nov 13, 2026', '13 Oct \u2013 13 Nov 2026') });
+  assert.equal(r.bills[0].cadence, 'monthly');
+  assert.equal(r.bills[0].periodStart, '2026-10-13');
+  assert.equal(r.bills[0].periodEnd, '2026-11-13');
+});
+
+test('the inbox names the layout, so what a receipt says never picks its parser', () => {
+  // A shop's order email that carries Stripe's words ("Receipt from ...",
+  // "Paid on ...") in an address line is still read as the shop's order.
+  const m = mail('shop-order');
+  const html = m.html.replace('</body>', '<p>Receipt from Railway</p><p>Paid on November 19, 2026</p><p>Amount paid</p><p>$999.00</p></body>');
+  const asContent = P.parseReceipt({ ...m, html });
+  assert.equal(asContent.format, 'stripe', 'left to its words, the email passes for a Stripe receipt');
+  const asListed = P.parseReceipt({ ...m, html }, { format: 'order' });
+  assert.equal(asListed.format, 'order');
+  assert.equal(asListed.merchant, 'PCB Artists');
+  assert.equal(asListed.totalCents, 8299);
+  assert.equal(P.parseReceipt(m, { format: 'telegram' }).kind, 'unreadable');
+  assert.deepEqual([...P.FORMATS].sort(), ['apple', 'cloudflare', 'fastspring', 'google', 'order', 'stripe']);
+});
+
 test('a Stripe refund is marked a refund, and a failed or upcoming payment is no receipt', () => {
   const m = mail('stripe-one-time');
   const refund = P.parseReceipt({ ...m, subject: 'Your refund from Example Labs, PBC #1000-5001', html: m.html.replace('Receipt from Example Labs', 'Refund from Example Labs') });
@@ -171,7 +195,11 @@ test('a Google Cloud payment is the month before it, as a usage bill', () => {
   assert.equal(read('google-notice').kind, 'not_receipt', 'a payment-method notice is no payment');
   const odd = mail('google-cloud-bill');
   assert.equal(P.parseReceipt({ ...odd, text: odd.text.replace('Your payment amount of', 'You paid') }).kind, 'unreadable',
-    'a payment worded in a way this does not know is for a person to check, not dropped as a notice');
+    'a Cloud payment worded in a way this does not know is for a person to check, not dropped as a notice');
+  // Any other Google payment is somebody's own: in a layout this does not
+  // know, it is still nothing to keep.
+  const personal = odd.text.replace('Your payment amount of', 'You paid').replace(/Google Cloud( Platform)?/g, 'Google One');
+  assert.equal(P.parseReceipt({ ...odd, text: personal }).kind, 'not_receipt');
 });
 
 test('a FastSpring receipt: the total with tax, paid on the day the email left, in New York', () => {
@@ -212,6 +240,13 @@ test('shop orders: the order total and date, and a shipping notice is no second 
   assert.equal(shop.paidOn, '2026-10-08');
   assert.equal(shop.reference, '7000');
   assert.equal(shop.bills[0].product, 'I2C Decibel Sound Level Meter Module - PRO');
+  // "order notification" is no order number: the shop's next order would
+  // look like this one read again.
+  const noted = P.parseReceipt({ ...mail('pololu-order'), text: 'Your order notification\nOrder total: $12.00\nOrder date: Friday, 25 September 2026' });
+  assert.equal(noted.kind, 'receipt');
+  assert.equal(noted.reference, null);
+  const numbered = P.parseReceipt({ ...mail('pololu-order'), text: 'Order number: 4471\nOrder total: $12.00\nOrder date: Friday, 25 September 2026' });
+  assert.equal(numbered.reference, '4471');
 });
 
 // ---------------------------------------------------------------------------
@@ -282,6 +317,10 @@ test('dates as receipts print them, and the period a charge covers', () => {
   assert.deepEqual(P.rangeOf('Sep 15\u2013Oct 15, 2026'), { start: '2026-09-15', end: '2026-10-15' });
   assert.deepEqual(P.rangeOf('Dec 15\u2013Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' }, 'a period across New Year');
   assert.deepEqual(P.rangeOf('Dec 15, 2026 \u2013 Jan 15, 2027'), { start: '2026-12-15', end: '2027-01-15' });
+  assert.deepEqual(P.rangeOf('13 Oct \u2013 13 Nov 2026'), { start: '2026-10-13', end: '2026-11-13' }, 'day first');
+  assert.deepEqual(P.rangeOf('15 Dec 2026 - 15 Jan 2027'), { start: '2026-12-15', end: '2027-01-15' });
+  assert.deepEqual(P.rangeOf('15 Dec \u2013 15 Jan 2027'), { start: '2026-12-15', end: '2027-01-15' });
+  assert.equal(P.rangeOf('13 Nov 2026 \u2013 13 Oct 2026'), null, 'a period that ends before it starts');
   assert.equal(P.cadenceOfPeriod({ start: '2026-09-02', end: '2026-10-01' }), 'monthly');
   assert.equal(P.cadenceOfPeriod({ start: '2026-06-15', end: '2027-06-15' }), 'yearly');
   assert.deepEqual(P.monthBefore('2026-01-01'), { start: '2025-12-01', end: '2025-12-31' });
@@ -298,4 +337,33 @@ test('tax shares add up to the tax to the cent', () => {
 test('HTML becomes the lines a reader sees: styles out, entities decoded, padding gone', () => {
   const lines = P.htmlToLines('<style>p{color:red}</style><div>Total&nbsp;</div><td>$4.20</td><span>A&amp;B</span> \u034f \u034f<br>Caf&#233; &mdash; ok<!-- hidden -->');
   assert.deepEqual(lines, ['Total', '$4.20', 'A&B', 'Caf\u00e9 \u2014 ok']);
+  // A comment or a tag left open: a browser hides the rest of a comment and
+  // drops a tag cut off at the end, and a style with no end is left alone.
+  assert.deepEqual(P.htmlToLines('<p>Paid</p><!-- open <p>hidden</p>'), ['Paid']);
+  assert.deepEqual(P.htmlToLines('<p>Paid</p><div class="x'), ['Paid']);
+  assert.deepEqual(P.htmlToLines('<p>Paid</p><style>p{}'), ['Paid', 'p{}']);
+  assert.deepEqual(P.htmlToLines('<head><title>T</title></head><p>Body</p>'), ['Body']);
+});
+
+test('mail built to slow the patterns down is read in one pass', () => {
+  // Every pattern here reads the text front to back once. Open comments, open
+  // style tags and open link tags by the hundred thousand used to cost a
+  // scan to the end of the mail for each one.
+  const cases = [
+    '<!--'.repeat(300000),
+    `${'<style '.repeat(150000)}x`,
+    `<a href="https://shop.example">${'<a '.repeat(300000)}`,
+    `${'<div class="aapl-desktop-div'.repeat(40000)}`,
+    `${'<p'.repeat(400000)}`,
+    `${'<span class="title '.repeat(60000)}`,
+  ];
+  for (const html of cases) {
+    const t = Date.now();
+    P.htmlToLines(html);
+    P.siteOf(html);
+    P.parseReceipt({ fromAddress: 'no_reply@email.apple.com', subject: 'Your receipt from Apple.', html }, { format: 'apple' });
+    P.parseReceipt({ fromAddress: 'sales@shop.example', subject: 'Your order', html }, { format: 'order' });
+    const ms = Date.now() - t;
+    assert.ok(ms < 3000, `${html.slice(0, 20)}... took ${ms} ms`);
+  }
 });

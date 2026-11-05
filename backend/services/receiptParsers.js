@@ -69,15 +69,63 @@ function textLines(text) {
     .filter(Boolean);
 }
 
+// Every pass below reads the text once, front to back, whatever arrives: a
+// comment or a tag left open never makes a pattern scan to the end again for
+// each one after it.
+
+// Comments go. One left open hides the rest, as it does in a browser.
+function dropComments(s) {
+  let out = '';
+  let at = 0;
+  for (;;) {
+    const open = s.indexOf('<!--', at);
+    if (open === -1) return out + s.slice(at);
+    out += `${s.slice(at, open)} `;
+    const close = s.indexOf('-->', open + 4);
+    if (close === -1) return out;
+    at = close + 3;
+  }
+}
+
+// The blocks whose text is never part of the mail as read (the head, styles,
+// scripts), from the opening tag to its closing one. One with no closing tag
+// is left in, and once a closing tag is known to be missing it is not looked
+// for again.
+const NOT_TEXT = /<(head|style|script|title|noscript|template)\b/gi;
+
+function dropNotText(s) {
+  let out = '';
+  let at = 0;
+  let gt = -1;
+  const unclosed = new Set();
+  NOT_TEXT.lastIndex = 0;
+  let m;
+  while ((m = NOT_TEXT.exec(s))) {
+    const name = m[1].toLowerCase();
+    if (unclosed.has(name)) continue;
+    // The first ">" after an earlier opening tag is the first after this
+    // one too, while this one starts before it.
+    if (gt < m.index) gt = s.indexOf('>', m.index);
+    if (gt === -1) break;
+    const close = new RegExp(`</${name}\\s*>`, 'gi');
+    close.lastIndex = gt + 1;
+    const c = close.exec(s);
+    if (!c) { unclosed.add(name); continue; }
+    out += `${s.slice(at, m.index)} `;
+    at = c.index + c[0].length;
+    NOT_TEXT.lastIndex = at;
+  }
+  return out + s.slice(at);
+}
+
 // HTML as the lines a reader sees: every block (a cell, a row, a paragraph, a
-// line break) ends a line, inline tags (a span, a link, bold) do not.
+// line break) ends a line, inline tags (a span, a link, bold) do not. A tag
+// left open at the end is dropped with the rest, as a browser drops it.
 function htmlToLines(html) {
-  const s = String(html || '').slice(0, MAX_BODY_CHARS)
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(head|style|script|title|noscript|template)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
-    .replace(/<(br|hr)\b[^>]*>/gi, '\n')
-    .replace(/<\/?(p|div|tr|td|th|li|ul|ol|h[1-6]|table|tbody|thead|tfoot|section|article|header|footer|blockquote|center|dt|dd|dl|pre|address|caption)\b[^>]*>/gi, '\n')
-    .replace(/<[^>]*>/g, ' ');
+  const s = dropNotText(dropComments(String(html || '').slice(0, MAX_BODY_CHARS)))
+    .replace(/<(br|hr)\b[^>]*>?/gi, '\n')
+    .replace(/<\/?(p|div|tr|td|th|li|ul|ol|h[1-6]|table|tbody|thead|tfoot|section|article|header|footer|blockquote|center|dt|dd|dl|pre|address|caption)\b[^>]*>?/gi, '\n')
+    .replace(/<[^>]*>?/g, ' ');
   return textLines(decodeEntities(s));
 }
 
@@ -168,19 +216,25 @@ function dateIn(text) {
 }
 
 // "Sep 15\u2013Oct 15, 2026", "Dec 15, 2026 \u2013 Jan 15, 2027": the period
-// a charge covers, as Stripe prints it above the items it covers.
+// a charge covers, as Stripe prints it above the items it covers. A receipt
+// in a day-first locale prints "13 Oct \u2013 13 Nov 2026" instead.
 const RANGE = /^([A-Za-z]{3,9})\.?\s(\d{1,2})(?:,\s(\d{4}))?\s*[\u2013\u2014-]\s*([A-Za-z]{3,9})\.?\s(\d{1,2}),\s(\d{4})$/;
+const RANGE_DAY_FIRST = /^(\d{1,2})\s([A-Za-z]{3,9})\.?(?:,?\s(\d{4}))?\s*[\u2013\u2014-]\s*(\d{1,2})\s([A-Za-z]{3,9})\.?,?\s(\d{4})$/;
 
 function rangeOf(line) {
-  const m = RANGE.exec(String(line || '').trim());
-  if (!m) return null;
-  const m1 = monthOf(m[1]);
-  const m2 = monthOf(m[4]);
+  const s = String(line || '').trim();
+  let parts = null;
+  let m = RANGE.exec(s);
+  if (m) parts = { mon1: m[1], day1: m[2], year1: m[3], mon2: m[4], day2: m[5], year2: m[6] };
+  else if ((m = RANGE_DAY_FIRST.exec(s))) parts = { day1: m[1], mon1: m[2], year1: m[3], day2: m[4], mon2: m[5], year2: m[6] };
+  if (!parts) return null;
+  const m1 = monthOf(parts.mon1);
+  const m2 = monthOf(parts.mon2);
   if (!m1 || !m2) return null;
-  const y2 = Number(m[6]);
-  const y1 = m[3] ? Number(m[3]) : (m1 > m2 ? y2 - 1 : y2);
-  const start = ymd(y1, m1, m[2]);
-  const end = ymd(y2, m2, m[5]);
+  const y2 = Number(parts.year2);
+  const y1 = parts.year1 ? Number(parts.year1) : (m1 > m2 ? y2 - 1 : y2);
+  const start = ymd(y1, m1, parts.day1);
+  const end = ymd(y2, m2, parts.day2);
   return start && end && start <= end ? { start, end } : null;
 }
 
@@ -230,17 +284,45 @@ function monthBefore(ymdStr) {
 const PROCESSOR_HOST = /(^|\.)(stripe\.com|stripe-images\.s3\.amazonaws\.com|fastspring\.com|onfastspring\.com|apple\.com|mzstatic\.com|google\.com|gstatic\.com|googleusercontent\.com|paypal\.com|paypalobjects\.com|cloudflare\.com|example\.invalid)$/i;
 
 // The merchant's own website: a Stripe receipt links its logo to it, before
-// any of Stripe's own links.
+// any of Stripe's own links. Each link tag is read once, up to its ">".
 function siteOf(html) {
-  const re = /<a\b[^>]*\bhref\s*=\s*["'](https?:\/\/[^"'#?\s/]+)[^"']*["']/gi;
+  const s = String(html || '').slice(0, MAX_BODY_CHARS);
+  const open = /<a\b/gi;
   let m;
   let seen = 0;
-  while ((m = re.exec(String(html || '').slice(0, MAX_BODY_CHARS))) && seen < 40) {
+  while ((m = open.exec(s)) && seen < 40) {
+    const gt = s.indexOf('>', m.index);
+    if (gt === -1) break;
+    open.lastIndex = gt + 1;
+    const href = /\bhref\s*=\s*["'](https?:\/\/[^"'#?\s/]+)[^"']*["']/i.exec(s.slice(m.index, gt));
+    if (!href) continue;
     seen += 1;
-    const host = m[1].replace(/^https?:\/\//i, '').toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
+    const host = href[1].replace(/^https?:\/\//i, '').toLowerCase().replace(/^www\./, '').replace(/:\d+$/, '');
     if (!PROCESSOR_HOST.test(host)) return host;
   }
   return null;
+}
+
+// Every <name ...> tag whose class attribute matches `classTest`, as where
+// it starts and where its ">" is. Each tag is read once, up to its ">".
+function tagsWithClass(html, name, classTest) {
+  const open = new RegExp(`<${name}\\b`, 'gi');
+  const out = [];
+  let m;
+  while ((m = open.exec(html))) {
+    const gt = html.indexOf('>', m.index);
+    if (gt === -1) break;
+    open.lastIndex = gt + 1;
+    const cls = /\bclass\s*=\s*["']([^"']*)["']/i.exec(html.slice(m.index, gt));
+    if (cls && classTest.test(cls[1])) out.push({ start: m.index, end: gt + 1 });
+  }
+  return out;
+}
+
+// What lies after each tag, up to the next one (the pieces a split on those
+// tags gives, without the one before the first).
+function between(html, tags) {
+  return tags.map((t, i) => html.slice(t.end, i + 1 < tags.length ? tags[i + 1].start : html.length));
 }
 
 // The line after the one that is exactly `label` (or that starts with it and
@@ -455,16 +537,17 @@ function parseApple(mail) {
   let items = [];
   let lines;
   if (/aapl-desktop-div|aapl-mobile-div/i.test(html)) {
-    const desk = html.split(/<div\b[^>]*class\s*=\s*["'][^"']*aapl-mobile-div/i)[0];
+    const mobile = tagsWithClass(html, 'div', /aapl-mobile-div/i)[0];
+    const desk = mobile ? html.slice(0, mobile.start) : html;
     lines = htmlToLines(desk);
-    const parts = desk.split(/<span\b[^>]*class\s*=\s*["'][^"']*\btitle\b[^"']*["'][^>]*>/i).slice(1);
-    items = parts.map((p) => appleItem(htmlToLines(`<span>${p}`))).filter(Boolean);
+    items = between(desk, tagsWithClass(desk, 'span', /\btitle\b/i))
+      .map((p) => appleItem(htmlToLines(`<span>${p}`))).filter(Boolean);
   } else {
     lines = htmlToLines(html);
     // Each lockup is one table holding one item, so an item ends where its
     // table does.
-    const parts = html.split(/<table\b[^>]*class\s*=\s*["'][^"']*\blockup\b[^"']*["'][^>]*>/i).slice(1);
-    items = parts.map((p) => appleItem(htmlToLines(p.split(/<\/table>/i)[0]))).filter(Boolean);
+    items = between(html, tagsWithClass(html, 'table', /\blockup\b/i))
+      .map((p) => appleItem(htmlToLines(p.split(/<\/table>/i)[0]))).filter(Boolean);
   }
   if (!items.length) return unreadable('no item could be read on the App Store receipt');
   const dateText = lineAfter(lines, 'DATE');
@@ -567,12 +650,14 @@ function parseGooglePayment(mail) {
       bills: [{ title: clip(product, 80), product: clip(product, 120), amountCents: money.cents, cadence: 'one_time', periodStart: null, periodEnd: null, renewsOn: null, inApp: false }],
     });
   }
-  // Google's own words for a payment, in a layout this does not know: a
-  // person looks, rather than the payment being dropped as a notice.
-  if (/payment received|received your payment/i.test(`${flat} ${mail.subject || ''}`)) {
-    return unreadable('the Google payment could not be read');
+  // Google's own words for a Cloud payment, in a layout this does not know: a
+  // person looks, rather than the bill being dropped as a notice. Any other
+  // Google payment is somebody's own, and nothing is kept of it.
+  const said = `${flat} ${mail.subject || ''}`;
+  if (/payment received|received your payment/i.test(said) && /google cloud/i.test(said)) {
+    return unreadable('the Google Cloud payment could not be read');
   }
-  return notReceipt('a Google payments notice, not a payment');
+  return notReceipt('a Google payments notice, not a Google Cloud payment');
 }
 
 // ---------------------------------------------------------------------------
@@ -675,7 +760,9 @@ function parseShopOrder(mail) {
   const bracket = lines.map((l) => /\[Order #[\w-]+\]\s*\((.+?)\)/i.exec(l)).find(Boolean);
   const paidOn = (dated && dateIn(dated)) || (bracket && dateIn(bracket[1])) || mail.dateYmd || null;
   if (!paidOn) return unreadable('the order has no date');
-  const refMatch = lines.map((l) => /(?:Salesorder|Order)\s*(?:#|number|no\.?)\s*:?\s*#?([A-Za-z0-9-]{3,})/i.exec(l)).find(Boolean);
+  // "Order #7000", "Order number: 1A2B3C", "Salesorder no. 1TEST0001": a
+  // number has a digit in it, so "Your order notification" names none.
+  const refMatch = lines.map((l) => /\b(?:Salesorder|Order)\s*(?:#|number\b|no\b\.?)\s*:?\s*#?(?=[A-Za-z-]*\d)([A-Za-z0-9-]{3,40})\b/i.exec(l)).find(Boolean);
   let product = null;
   for (const l of lines) {
     const m = /^\d+\s*x\s*(?:#\d+\s+)?(.+?)\s*=\s*\$?[\d,]+\.\d{2}$/i.exec(l);
@@ -698,16 +785,30 @@ function parseShopOrder(mail) {
 }
 
 // ---------------------------------------------------------------------------
-// The dispatcher. The sender picks the layout where it is one company's own
-// mail; Stripe's layout is recognised by its words, because merchants send it
-// from their own domains too.
+// The dispatcher. The inbox names the layout each listed sender's mail is in
+// (`format`), so what a receipt says can never pick a parser for it. With no
+// format, the sender's domain picks it, and Stripe's layout is recognised by
+// its words, because merchants send it from their own domains too.
 // ---------------------------------------------------------------------------
 
-function parseReceipt(mail) {
+const PARSERS = {
+  stripe: parseStripe,
+  apple: parseApple,
+  google: parseGooglePayment,
+  fastspring: parseFastSpring,
+  cloudflare: parseCloudflare,
+  order: parseShopOrder,
+};
+
+function parseReceipt(mail, { format = null } = {}) {
   const m = mail || {};
   const from = String(m.fromAddress || '').toLowerCase();
   const domain = from.slice(from.lastIndexOf('@') + 1);
   try {
+    if (format) {
+      const parse = Object.prototype.hasOwnProperty.call(PARSERS, format) ? PARSERS[format] : null;
+      return parse ? parse(m) : unreadable(`no reader for the ${format} layout`);
+    }
     if (/(^|\.)apple\.com$/.test(domain)) return parseApple(m);
     if (from === 'payments-noreply@google.com') return parseGooglePayment(m);
     if (/(^|\.)fastspring\.com$/.test(domain)) return parseFastSpring(m);
@@ -722,6 +823,7 @@ function parseReceipt(mail) {
 
 module.exports = {
   parseReceipt,
+  FORMATS: Object.keys(PARSERS),
   htmlToLines,
   textLines,
   decodeEntities,
