@@ -551,7 +551,7 @@ workflows:
           # The project ships pinned at CURRENT_PROJECT_VERSION = 1, so every build after
           # the first 409s at Publishing. Fix: ask ASC for the highest build number it
           # has already seen and stamp the next integer above it — bulletproof regardless
-          # of Codemagic's internal counter. MARKETING_VERSION (1.0) is left untouched.
+          # of Codemagic's internal counter. MARKETING_VERSION (the project's own, 1.0.1 since 2026-11-05) is left untouched.
           # Auth comes from the FlockASC integration env vars already in scope.
           LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" --platform IOS 2>/dev/null || true)
           case "$LATEST" in
