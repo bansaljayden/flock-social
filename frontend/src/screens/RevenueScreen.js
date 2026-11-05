@@ -2404,11 +2404,24 @@ function hubFallbackNotServedWords(p) {
   return `${lead}.`;
 }
 
+// What makes the numbers, in a few words for the row, by the serve mode the
+// server reports (mlPredictor). model_when_fresh is the mix the November
+// retrain brought: the trained model where the venue was read live in the
+// hour before, the venue's own curve everywhere else. A mode this screen does
+// not know reads as not read rather than as a guess.
+function hubServeModeLabel(mode) {
+  if (mode === 'curve_offset') return "Venue's own curve";
+  if (mode === 'model') return 'Trained model';
+  if (mode === 'model_when_fresh') return 'Mix of model and curve';
+  return 'Not read';
+}
+
 // The serve mode in words, for the Overview and the Costs tab alike.
 function hubServeModeWords(mode, nowcast) {
   let words = null;
   if (mode === 'curve_offset') words = "Serve mode is curve_offset: each venue's own weekly curve plus its live offset, with no model run.";
   else if (mode === 'model') words = "Serve mode is model: the trained model makes each venue's number.";
+  else if (mode === 'model_when_fresh') words = "Serve mode is model_when_fresh, a mix: the trained model makes the number where the venue has a live reading from the hour before, and the venue's own weekly curve plus its live offset makes it everywhere else.";
   if (!words) return null;
   return nowcast === true
     ? `${words} The nowcast is on: a venue read live in an earlier hour has that reading blended into its number.`
@@ -2446,7 +2459,9 @@ function HubModel({ h, colors }) {
   else if (v.loaded) {
     versionNote = serving && serving.mode === 'curve_offset'
       ? "The version this server loaded, from its model_metadata.json. Serve mode curve_offset does not run it. A venue's own data answers only while it is loaded."
-      : 'The version this server loaded, from its model_metadata.json.';
+      : serving && serving.mode === 'model_when_fresh'
+        ? 'The version this server loaded, from its model_metadata.json. Serve mode model_when_fresh runs it where a venue has a live reading from the hour before.'
+        : 'The version this server loaded, from its model_metadata.json.';
   } else versionNote = 'No model is loaded in this server process yet, so this is the version of the artifact on disk, scripts/ml/models/model_metadata.json.';
   // What made the venue-hours scored below: the venue's curve, the trained
   // model, or some of each, as the server counted them.
@@ -2471,7 +2486,7 @@ function HubModel({ h, colors }) {
             <HubRow
               navy={navy}
               label="Made by"
-              value={serving.mode === 'curve_offset' ? "Venue's own curve" : serving.mode === 'model' ? 'Trained model' : 'Not read'}
+              value={hubServeModeLabel(serving.mode)}
               tone={servingWords ? undefined : 'muted'}
               note={servingWords || 'The server did not say which serve mode it runs.'}
             />
@@ -4598,7 +4613,9 @@ export default function RevenueScreen({
                             {p.modelLoaded
                               ? (p.serveMode === 'curve_offset'
                                 ? "The ONNX model is in memory. Serve mode curve_offset does not run it. A venue's own data answers only while it is loaded."
-                                : 'The ONNX model is in memory and available to serve.')
+                                : p.serveMode === 'model_when_fresh'
+                                  ? 'The ONNX model is in memory and answers where a venue has a live reading from the hour before.'
+                                  : 'The ONNX model is in memory and available to serve.')
                               : "Every forecast is coming from the rule engine. That is the designed fallback and the product still works, but no forecast is made from a venue's own data."}
                           </p></HubWhy>
                         </div>

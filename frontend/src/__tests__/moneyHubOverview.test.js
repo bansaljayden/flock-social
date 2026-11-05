@@ -917,6 +917,26 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(screen.getByText('This window mixes 2 served versions: 2.6.0-starling, 2.6.0-starling+curve_offset. A +curve_offset or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
   });
 
+  test('in the mixed mode both are named, with where each one answers', async () => {
+    // model_when_fresh, the November retrain's mix: the trained model where
+    // the venue was read live in the hour before, its own curve elsewhere.
+    await renderHub(withModel({
+      serving: { mode: 'model_when_fresh', nowcast: false },
+      accuracy: { ...MODEL.accuracy, fromCurve: 300, versions: ['2.6.0-starling', '2.6.0-starling+curve_offset'] },
+    }));
+    // The screen paints the last load first, so wait for this one.
+    expect(await screen.findByText('Mix of model and curve')).toBeInTheDocument();
+    const madeBy = hubRow('Made by');
+    expect(madeBy.textContent).toMatch(/Serve mode is model_when_fresh, a mix: the trained model makes the number where the venue has a live reading from the hour before, and the venue's own weekly curve plus its live offset makes it everywhere else\./);
+    expect(within(madeBy).queryByText('Not read')).toBeNull();
+    expect(madeBy.textContent).not.toMatch(/nowcast/);
+    expect(hubRow('Model version').textContent).toMatch(/Serve mode model_when_fresh runs it where a venue has a live reading from the hour before\./);
+    expect(hubRow('Model version').textContent).not.toMatch(/does not run it/);
+    // What the scored venue-hours came from is still the server's count.
+    expect(modelCard().textContent).toMatch(/Of the 412 venue-hours scored, 300 came from the venue's own curve and live readings, 112 from the trained model\./);
+    expect(modelCard().textContent).not.toMatch(MODEL_CLAIM);
+  });
+
   test('a window the model made alone says so, and a serve mode the server could not read is not guessed', async () => {
     await renderHub(withModel({
       serving: { mode: null, nowcast: null },
@@ -1200,6 +1220,15 @@ describe('the Costs tab: what answered the forecasts', () => {
     expect(card.textContent).toMatch(/The ONNX model is in memory and available to serve\./);
     expect(card.textContent).toMatch(/Serve mode is model: the trained model makes each venue's number\./);
     expect(card.textContent).not.toMatch(/nowcast/);
+  });
+
+  test('in the mixed mode the panel says the model answers where a reading is fresh, and the curve everywhere else', () => {
+    show({ ...COUNTER, serveMode: 'model_when_fresh', nowcastEnabled: false, curveOffsetAnswers: 900 });
+    const card = panel();
+    expect(card.textContent).toMatch(/Of the 1,310, 900 came from the venue's own curve and live readings, 410 from the trained model\./);
+    expect(card.textContent).toMatch(/Serve mode is model_when_fresh, a mix: the trained model makes the number where the venue has a live reading from the hour before, and the venue's own weekly curve plus its live offset makes it everywhere else\./);
+    expect(card.textContent).toMatch(/The ONNX model is in memory and answers where a venue has a live reading from the hour before\./);
+    expect(card.textContent).not.toMatch(/does not run it|nowcast/);
   });
 
   test('with the no-curve fallback on, its answers are named apart from the rule engine\'s, and the switch says so', () => {
