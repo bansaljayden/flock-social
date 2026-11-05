@@ -13,6 +13,12 @@
  *       node scripts/capture-screenshots.mjs --only=nest,birdie
  *       node scripts/capture-screenshots.mjs --set=web      (web|appstore|all)
  *       node scripts/capture-screenshots.mjs --only=made,stillin,guestlink --set=web --modes=light --out=../some/dir
+ *       node scripts/capture-screenshots.mjs --only=nest,chat --modes=dark --viewport=430x932 --scale=3 --out=../some/dir
+ *
+ * --viewport and --scale shoot every screen asked for at one size of your own
+ * instead of the sets (430x932 at 3 is 1290x2796, an App Store 6.9-inch
+ * size), as opaque PNGs named <screen>-<mode>-<width>x<height>.png, to --out
+ * only.
  *
  * --modes narrows the theme pass (default light,dark). --out sends every
  * capture to another directory and skips the manifest and the public/
@@ -121,6 +127,33 @@ const BUILD_STAMP = path.join(SCRATCH, 'build.stamp.json');
 
 const log = (msg) => console.log(`[shots] ${msg}`);
 const die = (msg) => { console.error(`[shots] FATAL: ${msg}`); process.exit(1); };
+
+/* ONE SIZE OF YOUR OWN (--viewport=430x932 --scale=3). Every screen asked for
+   is shot at it, the owner screens and the narrow-only ones included, in
+   place of the web and App Store sets, and written to --out only: frames made
+   for one job stay out of public/ and store-assets/. Portrait, 320 to 500 CSS
+   px wide, because above 500 the app draws its desktop phone frame instead of
+   the full-bleed app. screenshotRigSize.test.js lifts this function. */
+function customSize(viewportArg, scaleArg) {
+  if (viewportArg == null && scaleArg == null) return null;
+  if (viewportArg == null || scaleArg == null) throw new Error('--viewport and --scale go together, e.g. --viewport=430x932 --scale=3');
+  const m = /^(\d{3})x(\d{3,4})$/.exec(String(viewportArg));
+  if (!m) throw new Error(`--viewport takes WIDTHxHEIGHT in CSS pixels, e.g. 430x932, not "${viewportArg}"`);
+  const width = Number(m[1]);
+  const height = Number(m[2]);
+  if (width < 320 || width > 500) throw new Error(`--viewport width ${width} is outside 320 to 500 (above 500 the app draws its desktop phone frame)`);
+  if (height < width) throw new Error(`--viewport ${viewportArg} is landscape; the app is shot portrait`);
+  if (!/^[1-4]$/.test(String(scaleArg))) throw new Error(`--scale takes 1, 2, 3 or 4, not "${scaleArg}"`);
+  const dsf = Number(scaleArg);
+  return { id: `custom-${width}x${height}@${dsf}`, viewport: { width, height }, dsf, out: 'custom', custom: true };
+}
+let CUSTOM_SIZE = null;
+try {
+  CUSTOM_SIZE = customSize(opt('viewport'), opt('scale'));
+} catch (e) {
+  die(e.message);
+}
+if (CUSTOM_SIZE && !OUT_OVERRIDE) die('a --viewport run writes only to --out=<folder>');
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -942,8 +975,9 @@ const SCREENS = [
 ];
 
 // Which screens a size takes: the narrow size only those that asked for it,
-// the web size everything, the App Store sizes what is marked for the store.
-const wantsSize = (screen, size) => (size.narrow ? !!screen.narrow : (size.id === 'web' || screen.appstore));
+// the web size everything, the App Store sizes what is marked for the store,
+// a size of your own (--viewport) everything asked for.
+const wantsSize = (screen, size) => (size.custom ? true : size.narrow ? !!screen.narrow : (size.id === 'web' || screen.appstore));
 
 async function apiLogin(email, password) {
   const r = await fetch(`${API_ORIGIN}/api/auth/login`, {
@@ -1514,7 +1548,7 @@ async function setServerTheme(dbUrl, mode) {
 }
 
 async function captureAll(dbUrl, seeded) {
-  const sizes = SIZES.filter((s) => SET === 'all' || (SET === 'web' ? s.out === 'web' : s.out === 'appstore'));
+  const sizes = CUSTOM_SIZE ? [CUSTOM_SIZE] : SIZES.filter((s) => SET === 'all' || (SET === 'web' ? s.out === 'web' : s.out === 'appstore'));
   const screens = SCREENS.filter((s) => !ONLY || ONLY.includes(s.id));
   const sharp = requireFrontend('sharp');
   const browser = await launchChromium();
@@ -1617,7 +1651,7 @@ async function captureAll(dbUrl, seeded) {
            screen list cannot decide which tab a driver starts from. That is the
            same rule the consumer loop above follows and for the same reason. */
         const ownerScreens = screens.filter((s) => OWNER_SCREENS.has(s.id));
-        if (ownerScreens.length > 0 && size.id === 'web') {
+        if (ownerScreens.length > 0 && (size.id === 'web' || size.custom)) {
           const { context, page } = await newAppContext(browser, { size, mode, token: ownerToken, userMode: 'venue' });
           try {
             for (const screen of ownerScreens) {
@@ -1778,7 +1812,13 @@ async function snap(page, sharp, manifest, { screen, size, mode, label = '', ful
     throw new Error(`capture size mismatch: got ${meta.width}x${meta.height}, wanted ${px.w}x${fullPage ? 'document' : px.h}`);
   }
   if (fullPage) px.h = meta.height;
-  if (size.out === 'web') {
+  if (size.out === 'custom') {
+    // Opaque, as Apple takes them: flattened onto white, no alpha channel,
+    // tagged sRGB (the colour space Chromium paints in).
+    const file = `${screen.id}${label ? `-${label}` : ''}${fullPage ? '-full' : ''}-${mode}-${px.w}x${px.h}.png`;
+    await sharp(raw).flatten({ background: '#ffffff' }).removeAlpha().withIccProfile('srgb').png({ compressionLevel: 9 }).toFile(path.join(OUT_DIR, file));
+    manifest.push({ file, screen: screen.id, title: screen.title, mode, set: size.id, width: px.w, height: px.h, replaces: null });
+  } else if (size.out === 'web') {
     // The 390 name is unchanged, so the shipped set keeps its files; a frame
     // label, a full-page frame and the narrow width are spelled out where
     // they apply.
