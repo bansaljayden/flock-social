@@ -2852,32 +2852,6 @@ export async function importAdminExpenses(expenses) {
   });
 }
 
-// THE WAITLIST LAUNCH EMAIL (backend/routes/admin.js, WAITLIST LAUNCH
-// ANNOUNCE), for the admin dashboard's card. Both calls are POSTs to the one
-// route. The dry run mails nobody and answers with counts:
-// { dry_run: true, total, converted, announced, pending }.
-export async function getWaitlistLaunchCounts() {
-  return request('/api/admin/waitlist/announce', {
-    method: 'POST',
-    body: JSON.stringify({ dry_run: true }),
-  });
-}
-
-// One real batch: up to 100 emails, sent one after another on the server at up
-// to 8 seconds each, so it waits as long as any request here may. Answers
-// { dry_run: false, batch, sent, suppressed, failed, unknown, unknown_ids,
-// stopped_early, remaining }, and lib/waitlistLaunch.js calls it again until
-// nothing is left. Sent once, like every write: the server marks each person
-// before it mails them, so a batch this phone stopped waiting for finishes
-// there and nobody gets a second copy.
-export async function sendWaitlistLaunchBatch() {
-  return request('/api/admin/waitlist/announce', {
-    method: 'POST',
-    body: JSON.stringify({}),
-    timeout: MAX_REQUEST_MS,
-  });
-}
-
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {

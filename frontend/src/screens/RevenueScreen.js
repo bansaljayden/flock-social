@@ -73,13 +73,9 @@ import {
   deleteAdminExpense,
   exportAdminExpenses,
   getAdminMoneyHub,
-  getWaitlistLaunchCounts,
   importAdminExpenses,
-  sendWaitlistLaunchBatch,
   updateAdminExpense,
-  userMessage,
 } from '../services/api';
-import { readWaitlistLaunch, startWaitlistLaunch, subscribeWaitlistLaunch } from '../lib/waitlistLaunch';
 
 // Saves the expense list as a CSV file. The server sends the text inside its
 // usual signed-in JSON answer, and the file is made here, so no file link
@@ -2565,231 +2561,6 @@ function HubAttention({ h, colors }) {
   );
 }
 
-// ===========================================================================
-// THE WAITLIST LAUNCH EMAIL: the card above the money hub on the Overview.
-// ===========================================================================
-//
-// Tells everyone still on the waitlist that Flock is on the App Store, from
-// the phone, in one confirmed tap. On open the card asks POST
-// /api/admin/waitlist/announce for a dry run: how many will get the email and
-// how many already have. A confirmed send hands over to lib/waitlistLaunch.js,
-// which calls the route batch after batch until nobody is left or something
-// stops it, and the card shows the run as it goes and what it came to.
-//
-// The server marks each person before it mails them, so a double tap, a second
-// device or a reload in the middle cannot send anyone a second copy. The
-// button is still off while a run is going, and the run itself refuses to
-// start twice.
-//
-// It sits outside MoneyHub, above it, so it does not wait on the hub's vendor
-// reads: a Stripe outage that holds the hub on its error card leaves this one
-// working. Admin only, like the whole console; the server's requireAdmin is
-// the gate that counts.
-
-// The email as backend/services/emailService.js sendWaitlistLaunchEmail
-// writes it. The dry run answers with counts only, so the words are carried
-// here, and waitlistLaunchCard.test.js holds them to that file.
-const WAITLIST_SUBJECT = 'Flock is on the App Store';
-const WAITLIST_FIRST_LINE = "You're off the waitlist.";
-const WAITLIST_NOT_ADMIN = 'The server says this account is not an admin, so it refused. Sign out and back in with the admin account, then try again.';
-
-const hubPeople = (n) => hubPlural(n, 'person', 'people');
-
-// Why a finished run stopped, in the words the owner acts on
-// (lib/waitlistLaunch.js names each stop).
-function waitlistStopWords(run) {
-  switch (run.stop) {
-    case 'done':
-      return 'Nobody is left waiting.';
-    case 'provider':
-      return `The mail service stopped answering, so the server stopped sending.${run.remaining > 0 ? ' Send again once Resend is working.' : ''}`;
-    case 'refused':
-      return 'The mail service turned down every email in the last batch. If the daily sending limit is used up, send again after it resets.';
-    case 'cap':
-      return `Stopped after ${hubPlural(run.calls, 'batch', 'batches')}, the most one send runs. Send again to carry on.`;
-    case 'link':
-      return "The server won't send it, because the email's button would not open Flock's App Store listing. APP_STORE_URL on Railway points somewhere else. Fix or remove it, then send again.";
-    case 'forbidden':
-      return WAITLIST_NOT_ADMIN;
-    case 'lost':
-      return 'Lost touch with the server during a batch, so there is no word on how that batch went. The server finishes it on its own, and nobody gets the email twice. Check again in a minute.';
-    case 'server':
-      return 'The server hit an error during a batch. Nobody gets the email twice. Check again to see who is left, then send again.';
-    default:
-      return `${run.errorText || 'Something went wrong.'} Check again to see who is left.`;
-  }
-}
-
-function WaitlistRunResult({ run, navy }) {
-  const ids = run.unknownIds;
-  // Still waiting is the server's own count in the last answer, so it is shown
-  // only for a stop that came with one. After an error the counts above,
-  // read again as the run ends, say who is left.
-  const leftKnown = run.remaining > 0 && (run.stop === 'provider' || run.stop === 'refused' || run.stop === 'cap');
-  return (
-    <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid var(--border-default)' }}>
-      <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', color: run.stop === 'done' ? 'var(--accent-green-text)' : navy, margin: '0 0 4px' }}>
-        {run.stop === 'done' ? 'Done' : 'Stopped'}
-      </p>
-      <HubRow navy={navy} label="Sent" value={hubPeople(run.sent)} />
-      {run.suppressed > 0 && (
-        <HubRow navy={navy} label="Skipped" value={hubPeople(run.suppressed)} note="On the do-not-mail list (unsubscribed, bounced or reported as spam) or not a working address. They are not tried again." />
-      )}
-      {run.failedLast > 0 && (
-        <HubRow navy={navy} label="Turned down" value={hubPeople(run.failedLast)} note="The mail service said no. They are still waiting, and the next send tries them again." />
-      )}
-      {run.unknown > 0 && (
-        <HubRow
-          navy={navy}
-          label="No answer"
-          tone="warn"
-          value={hubPeople(run.unknown)}
-          note={`The mail service did not answer, so these may or may not have arrived. They are not sent again. Look them up in Resend's log by waitlist ${ids.length === 1 ? 'id' : 'ids'}: ${ids.join(', ')}.`}
-        />
-      )}
-      {leftKnown && <HubRow navy={navy} label="Still waiting" value={hubPeople(run.remaining)} />}
-      <p style={hubStyle.foot}>{waitlistStopWords(run)}</p>
-    </div>
-  );
-}
-
-function WaitlistLaunchBody({ colors, DialogBehavior }) {
-  const navy = colors.navy;
-  const run = React.useSyncExternalStore(subscribeWaitlistLaunch, readWaitlistLaunch, readWaitlistLaunch);
-  const running = run.phase === 'running';
-  const [counts, setCounts] = React.useState(null);
-  const [countsError, setCountsError] = React.useState('');
-  const [loading, setLoading] = React.useState(true);
-  const [asking, setAsking] = React.useState(false);
-  // The newest read wins: a Check again tapped while the first read is out
-  // must not be overwritten by the older answer landing second.
-  const readSeq = React.useRef(0);
-  const readCounts = React.useCallback(async () => {
-    readSeq.current += 1;
-    const mine = readSeq.current;
-    setLoading(true);
-    setCountsError('');
-    try {
-      const d = await getWaitlistLaunchCounts();
-      if (mine !== readSeq.current) return;
-      if (!d || !Number.isInteger(d.pending) || !Number.isInteger(d.announced)) {
-        setCounts(null);
-        setCountsError('The server answered without the counts.');
-        return;
-      }
-      setCounts(d);
-    } catch (e) {
-      if (mine !== readSeq.current) return;
-      setCounts(null);
-      setCountsError(e && e.status === 403 ? WAITLIST_NOT_ADMIN : userMessage(e, 'The waitlist could not be read.'));
-    } finally {
-      if (mine === readSeq.current) setLoading(false);
-    }
-  }, []);
-  React.useEffect(() => { readCounts(); }, [readCounts]);
-  // A run that ends while the card is open reads the counts again, so the
-  // numbers and the button show who is left. A run that had already ended
-  // when the card opened is not news: the read on open covers it.
-  const seenFinish = React.useRef(run.phase === 'finished' ? run.id : null);
-  React.useEffect(() => {
-    if (run.phase !== 'finished' || run.id === seenFinish.current) return;
-    seenFinish.current = run.id;
-    readCounts();
-  }, [run.phase, run.id, readCounts]);
-
-  const pending = counts ? counts.pending : 0;
-  const ask = () => { if (!running && pending > 0) setAsking(true); };
-  const send = () => {
-    setAsking(false);
-    startWaitlistLaunch({ send: sendWaitlistLaunchBatch, expected: pending });
-  };
-  const button = { padding: '10px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' };
-  const preview = { fontSize: 'var(--t-label)', color: 'var(--text-primary)', overflowWrap: 'anywhere' };
-  let progress = null;
-  if (running) {
-    progress = run.calls === 0
-      ? 'Sending the first batch. It can take a minute.'
-      : `Sent to ${hubPeople(run.sent)} so far.${Number.isInteger(run.remaining) ? ` ${hubCount(run.remaining)} still waiting.` : ''}`;
-  }
-  return (
-    <div id="hub-waitlist" style={{ ...hubStyle.card, marginBottom: '12px' }}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Waitlist launch email</h3>
-      <p style={hubStyle.sub}>Tells the waitlist Flock is on the App Store. Each person gets it once.</p>
-      <div style={{ padding: '8px 10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', margin: '0 0 6px' }}>
-        <p style={{ ...hubStyle.note, margin: 0 }}>Subject</p>
-        <p style={{ ...preview, fontWeight: '600', margin: '0 0 6px' }}>{WAITLIST_SUBJECT}</p>
-        <p style={{ ...hubStyle.note, margin: 0 }}>First line</p>
-        <p style={{ ...preview, fontWeight: '400', margin: 0 }}>{WAITLIST_FIRST_LINE}</p>
-      </div>
-      {!running && counts && (
-        <>
-          <HubRow navy={navy} label="Will get it" value={hubPeople(counts.pending)} />
-          <HubRow navy={navy} label="Already sent or skipped" value={hubPeople(counts.announced)} />
-          {counts.converted > 0 && (
-            <p style={hubStyle.note}>Anyone who has made a Flock account is left out: {hubCount(counts.converted)} so far.</p>
-          )}
-        </>
-      )}
-      {!running && !counts && (loading
-        ? <p style={hubStyle.note}>Reading the waitlist.</p>
-        : <HubNotice status="error" reason={countsError} />)}
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
-        {running && (
-          <button className="hit44" type="button" disabled style={{ ...button, cursor: 'default', opacity: 0.75 }}>
-            <span aria-hidden="true" style={{ display: 'inline-block', width: '12px', height: '12px', marginRight: '6px', verticalAlign: '-2px', boxSizing: 'border-box', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            Sending
-          </button>
-        )}
-        {!running && counts && counts.pending > 0 && (
-          <button className="hit44" type="button" disabled={loading} onClick={ask} style={{ ...button, cursor: loading ? 'default' : 'pointer' }}>
-            Send to {hubPeople(counts.pending)}
-          </button>
-        )}
-        {!running && counts && counts.pending === 0 && (
-          <p style={{ ...hubStyle.note, margin: 0, color: 'var(--accent-green-text)' }}>Nobody is waiting for it.</p>
-        )}
-        {!running && (
-          <button className="hit44" type="button" disabled={loading} onClick={readCounts} style={hubStyle.textButton}>
-            {loading && counts ? 'Checking' : 'Check again'}
-          </button>
-        )}
-      </div>
-      {!running && counts && counts.pending > 0 && (
-        <p style={hubStyle.foot}>It goes out 100 at a time, so keep this screen open until it finishes. Closing it early is safe: nobody gets it twice.</p>
-      )}
-      <div role="status">
-        {progress && <p style={{ ...hubStyle.note, marginTop: '8px' }}>{progress}</p>}
-        {run.phase === 'finished' && <WaitlistRunResult run={run} navy={navy} />}
-      </div>
-      {asking && (
-        <div onClick={() => setAsking(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-          <DialogBehavior onClose={() => setAsking(false)} label="Send the waitlist launch email" />
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Send to {hubPeople(pending)}?</h3>
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 18px', lineHeight: 1.5 }}>
-              Everyone still on the waitlist gets &ldquo;{WAITLIST_SUBJECT}&rdquo;, once each. An email that has gone out cannot be taken back.
-            </p>
-            {/* Side by side on a phone; on a 320px screen the two wrap onto
-                rows of their own rather than the send label onto two lines. */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              <button className="hit44" type="button" onClick={() => setAsking(false)} style={{ flex: '1 1 90px', padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-              <button className="hit44" type="button" disabled={running} onClick={send} style={{ flex: '2 1 180px', padding: '13px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}>Send to {hubPeople(pending)}</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The card for an admin, and nothing at all for anyone else. The console is
-// already admin only (App.js), and this says it again before any hook or
-// request, so a card handed any other account asks the server nothing.
-function WaitlistLaunchCard({ authUser, colors, DialogBehavior }) {
-  if (!authUser || authUser.role !== 'admin') return null;
-  return <WaitlistLaunchBody colors={colors} DialogBehavior={DialogBehavior} />;
-}
-
 function MoneyHub({ colors, onExpensesChanged }) {
   const [data, setData] = React.useState(hubMemo.data);
   const [loading, setLoading] = React.useState(false);
@@ -2870,9 +2641,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
 }
 
 export default function RevenueScreen({
-  DialogBehavior,
   adminTab,
-  authUser,
   avgSpend,
   colors,
   costsData,
@@ -3083,16 +2852,8 @@ export default function RevenueScreen({
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
-          {/* OVERVIEW TAB: the waitlist launch email, then the money hub, both
-              defined above this component. The launch card comes first so it
-              is the first thing on the screen while the launch is on, and it
-              does not wait for the hub's vendor reads. */}
-          {activeTab === 'overview' && (
-            <>
-              <WaitlistLaunchCard authUser={authUser} colors={colors} DialogBehavior={DialogBehavior} />
-              <MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />
-            </>
-          )}
+          {/* OVERVIEW TAB: the money hub, defined above this component. */}
+          {activeTab === 'overview' && <MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />}
 
           {/* THE WHAT-IF SIMULATOR, at the top of the Projections tab. It was
               the Revenue tab until 2026-09-25, when real revenue got a tab of
