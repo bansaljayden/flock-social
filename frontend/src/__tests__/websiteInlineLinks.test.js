@@ -21,6 +21,9 @@ test.each([
   ['HowItWorks.css', '.hw-venues a'],
   // The home page's "No iPhone?" line under the App Store badge (2026-11-05).
   ['LandingPage.css', '.lp-get-web a'],
+  // /about's November 4, 2026 milestone, whose "on the App Store" links to
+  // the picture of the listing (2026-11-05).
+  ['AboutPage.css', '.ab-what a'],
 ])('%s: %s carries an underline', (file, selector) => {
   const css = read(file);
   const at = css.indexOf(`${selector} {`);

@@ -82,6 +82,12 @@
 @media (min-width: 640px) {
   .ab-milestones li.is-milestone .ab-when { align-self: center; padding-top: 0; }
 }
+/* "on the App Store" in that entry links to the picture of the listing on the
+   home page. Underlined, as every link in running text on the site is, since
+   colour alone would not mark it (WCAG 1.4.1); the line is set in the display
+   face, so the underline is sized in em to keep its weight at every size. */
+.ab-what a { color: inherit; text-decoration: underline; text-decoration-thickness: 0.06em; text-underline-offset: 0.14em; }
+.ab-what a:hover { color: var(--steel); }
 
 /* Apple's badge under the line that says Flock is on the App Store. It is
    48px, so Apple's clear space is 12px; 22px either side keeps the copy well

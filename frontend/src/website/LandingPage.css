@@ -2,7 +2,8 @@
  * theme: Flock house system (off-white paper · navy ink · one steel accent)
  * nav: N9 edge-aligned + corner block · footer: Ft3 index (kept — see the note
  *      on .lp-footer for why the two column headings survive an Ft3 flag)
- * exhibits: real app captures, a live crowd demo, the real SOS email
+ * exhibits: real app captures, a live crowd demo, the real SOS email,
+ *           Apple's listing for the app
  * pairing: Split Studio, but every panel carries a DIFFERENT proportion and a
  *          different internal rhythm. Three consecutive 1fr|1fr text|media rows
  *          with identical h2 → lead → ruled-list bodies is what this pass came
@@ -1346,6 +1347,38 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: 16px; line-height: 1.6; color: var(--cream-2); }
 .lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .lp-get-web a:hover { color: var(--cream-hi); }
+
+/* The listing itself (AppStoreListing.js, 2026-11-05): a picture of Apple's
+   page, linked to it. Under the words up to 1100px, no wider than the desktop
+   crop's own 613px; from 1100px beside them, where the band opens from its
+   720px column to the page's full measure (`.lp-cta-in.lp-get-in`, because
+   .lp-cta-in's 720px is written further down this file). A printed plate: a
+   hairline edge on the navy, no shadow, and nothing moves; with a mouse, a
+   hover lightens the edge. A figure brings the browser's 40px side margins
+   unless they are reset. */
+.lp-listing { margin: clamp(36px, 6vw, 44px) 0 0; max-width: 613px; }
+.lp-listing-link { display: block; border-radius: 15px; }
+.lp-listing picture { display: block; }
+.lp-listing img {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--edge-cream);
+  border-radius: 14px;
+  background: var(--navy-soft);
+}
+@media (hover: hover) and (pointer: fine) {
+  .lp-listing-link:hover img { border-color: var(--cream); }
+}
+@media (min-width: 1100px) {
+  .lp-cta-in.lp-get-in {
+    max-width: 1160px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 33rem);
+    column-gap: clamp(48px, 6vw, 88px);
+    align-items: center;
+  }
+  .lp-listing { margin: 0; }
+}
 
 /* ============ footer ============ */
 

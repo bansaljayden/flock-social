@@ -8,6 +8,7 @@ import { ANNOTATIONS } from './landingAnnotations';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS, MENU_LINKS } from './SiteNav';
 import AppStoreBadge from './AppStoreBadge';
+import AppStoreListing from './AppStoreListing';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
    LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
@@ -934,10 +935,12 @@ export default function LandingPage() {
       {/* ---------------- get the app ----------------
           The waitlist's band until 2026-11-05, the day after Flock went on the
           App Store. Apple's badge comes first; the line under it is for anyone
-          without an iPhone, and /signup takes them on the web today. #get
-          stays the id, for old links. */}
+          without an iPhone, and /signup takes them on the web today. Then the
+          listing itself, a picture of Apple's page linked to it
+          (AppStoreListing.js): beside the words from 1100px, under them on
+          anything narrower. #get stays the id, for old links. */}
       <section className="lp-cta lp-on-navy" id="get" aria-labelledby="lp-h-get">
-        <div className="lp-wrap lp-cta-in">
+        <div className="lp-wrap lp-cta-in lp-get-in">
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
@@ -951,6 +954,7 @@ export default function LandingPage() {
               <a href="/signup">Create your account</a>.
             </p>
           </div>
+          <AppStoreListing />
         </div>
       </section>
       </main>

@@ -526,16 +526,26 @@ describe('LandingPage structure and keyboard operation', () => {
 
   // The waitlist field, its two live regions and its submit button were tested
   // here until 2026-11-05, when the form left the page: Flock went on the App
-  // Store the day before. #get is Apple's badge and one line now, in the order
-  // a keyboard meets them.
-  test('the get-the-app band leads with Apple\'s badge, then the web sign-up, and holds no form', () => {
+  // Store the day before. #get is Apple's badge, one line and the picture of
+  // the listing now, in the order a keyboard meets them.
+  test('the get-the-app band leads with Apple\'s badge, then the web sign-up, then the listing, and holds no form', () => {
     const { container } = render(React.createElement(LandingPage));
     const band = container.querySelector('#get');
     expect(band).not.toBeNull();
     const links = Array.from(band.querySelectorAll('a[href]'));
-    expect(links.map((a) => a.getAttribute('href'))).toEqual(['https://apps.apple.com/app/id6781442127', '/signup']);
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      'https://apps.apple.com/app/id6781442127',
+      '/signup',
+      'https://apps.apple.com/app/id6781442127',
+    ]);
     expect(links[0].classList.contains('lp-appstore')).toBe(true);
     expect(links[1].textContent).toBe('Create your account');
+    // The picture of the listing (AppStoreListing.js) comes last, an image link
+    // named by its alt, and it is not a second badge.
+    expect(links[2].classList.contains('lp-listing-link')).toBe(true);
+    expect(links[2].classList.contains('lp-appstore')).toBe(false);
+    expect(links[2].hasAttribute('aria-label')).toBe(false);
+    expect(links[2].querySelector('img').getAttribute('alt')).toBe('Flock Social App on the App Store');
     expect(band.querySelector('form, input, button, [role="alert"], [role="status"]')).toBeNull();
   });
 });

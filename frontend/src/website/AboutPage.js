@@ -4,6 +4,7 @@ import './AboutPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import AppStoreBadge from './AppStoreBadge';
+import { LISTING_ID } from './AppStoreListing';
 import { shareThisPage } from './shareCard';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
@@ -48,15 +49,30 @@ const HOLDS = [
 
 // The last entry is the day itself: Apple released Flock 1.0 for iPhone on
 // November 4, 2026. It is dated to the day, in a <time>, and set as the
-// milestone the others led to (.is-milestone in AboutPage.css).
+// milestone the others led to (.is-milestone in AboutPage.css). Its words
+// "on the App Store" link to the picture of the listing on the home page
+// (AppStoreListing.js); Apple's badge is in "Where things stand" below.
 const MILESTONES = [
   { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
   { when: 'Award', what: '1st place at PA DECA States.' },
   { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
   { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
   { when: 'October 2026', what: 'iPhone app submitted to the App Store.' },
-  { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true },
+  { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
 ];
+
+// An entry's words with one phrase in them made a link.
+function withLink(what, { words, href }) {
+  const at = what.indexOf(words);
+  if (at < 0) return what;
+  return (
+    <>
+      {what.slice(0, at)}
+      <a href={href}>{words}</a>
+      {what.slice(at + words.length)}
+    </>
+  );
+}
 
 export default function AboutPage() {
   const menu = useSiteMenu();
@@ -176,7 +192,7 @@ export default function AboutPage() {
                   {m.date
                     ? <time className="ab-when" dateTime={m.date}>{m.when}</time>
                     : <span className="ab-when">{m.when}</span>}{' '}
-                  <span className="ab-what">{m.what}</span>
+                  <span className="ab-what">{m.link ? withLink(m.what, m.link) : m.what}</span>
                 </li>
               ))}
             </ol>

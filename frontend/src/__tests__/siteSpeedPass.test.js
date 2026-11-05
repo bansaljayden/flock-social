@@ -125,7 +125,9 @@ describe('the app routes open the Google sign-in connection early', () => {
 });
 
 describe('every width-described image candidate is the width it claims', () => {
-  const PAGES = ['src/website/LandingPage.js', 'src/website/HowItWorksPage.js', 'src/website/AboutPage.js'];
+  // AppStoreListing.js is the picture of the App Store listing in the home
+  // page's #get band (2026-11-05): two layouts, each at 1x and 2x.
+  const PAGES = ['src/website/LandingPage.js', 'src/website/HowItWorksPage.js', 'src/website/AboutPage.js', 'src/website/AppStoreListing.js'];
   const sets = PAGES.flatMap((rel) => [...read(rel).matchAll(/srcSet="([^"]* \d+w[^"]*)"(\s*sizes="[^"]+")?/g)]
     .map((m) => ({ rel, set: m[1], sizes: Boolean(m[2]) })));
 
