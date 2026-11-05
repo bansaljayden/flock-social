@@ -19,8 +19,12 @@
 #    EVERY ONE OF THESE FAILS GREEN. A missing value never stops the archive and
 #    never stops the TestFlight upload; it ships a build in which one feature
 #    quietly does not exist. That is the only reason this list is written out:
-#      REACT_APP_MAPTILER_KEY          the map still renders, on a generic light
-#                                      CARTO basemap instead of the intended style
+#      REACT_APP_MAPTILER_KEY          no basemap: the map says it could not
+#                                      load and the landing demo shows its
+#                                      list. A release never falls back to
+#                                      CARTO's keyless tiles, which need a CARTO
+#                                      key under CARTO's terms
+#                                      (frontend/src/components/map/keylessBasemap.js)
 #      REACT_APP_GOOGLE_CLIENT_ID      Google sign-in cannot verify against the
 #                                      backend, which enforces the same id
 #      REACT_APP_GOOGLE_IOS_CLIENT_ID  the native Google button HIDES ITSELF

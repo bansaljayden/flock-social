@@ -8,6 +8,7 @@ import Icons from '../components/ui/Icons';
 import { GoogleMapsMark, PhotoCredit } from '../components/ui/GoogleCredit';
 import { demoNoteLead } from '../lib/crowd';
 import { buildFlockStyle } from '../components/map/flockStyle';
+import { keylessBasemapStyle } from '../components/map/keylessBasemap';
 
 // A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
 // arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
@@ -62,11 +63,11 @@ const DEMO_BASE = process.env.NODE_ENV === 'production'
 // The demo stays on plain maplibre-gl, billed per tile request, and not on the
 // MapTiler SDK the app uses for session billing: a landing visitor loads a
 // handful of tiles and rarely pans, which costs less than a session would, and
-// it keeps the SDK out of the landing page's chunks. Keyless builds
-// (contributors, e2e) keep the openly licensed CARTO Positron style.
+// it keeps the SDK out of the landing page's chunks. Without a key, a
+// development build (contributors, e2e) uses CARTO's Positron style, and a
+// release has no map style at all and shows the list (keylessBasemap.js).
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-const MAP_STYLE = buildFlockStyle({ dark: false, key: MAPTILER_KEY })
-  || 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const MAP_STYLE = buildFlockStyle({ dark: false, key: MAPTILER_KEY }) || keylessBasemapStyle(false);
 
 // Philadelphia by default: dense venues, works before anyone shares location.
 const DEFAULT_CENTER = { lat: 39.9526, lng: -75.1652 };
@@ -669,6 +670,12 @@ export default function LiveDemo() {
   // 460px hole where a map was supposed to be.
   const initMap = useCallback(async () => {
     if (mapRef.current) return;
+    // No style this build may draw: the list at once, with no engine chunk
+    // and no tile requested.
+    if (!MAP_STYLE) {
+      setMapState('failed');
+      return;
+    }
     setMapState('booting');
     let ml;
     // Engine and stylesheet requested together, awaited before the map is

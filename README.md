@@ -366,8 +366,8 @@ stops being true.
 
 React 19 (CRA) on Vercel · Node + Express on Railway · PostgreSQL ·
 Socket.io · JWT auth (email, Google, Sign in with Apple) · Capacitor 8 for iOS ·
-MapLibre GL for every map, on MapTiler tiles with a keyless Carto fallback
-(no Google Maps SDK, no Maps key) ·
+MapLibre GL for every map, on MapTiler tiles, with a keyless CARTO fallback in
+development builds only (no Google Maps SDK, no Maps key) ·
 RevenueCat + Apple IAP (consumer, dormant behind a flag) · Google Places, Google
 Cloud Vision (image moderation), Gemini (Birdie), OpenWeatherMap, Ticketmaster,
 Resend, FCM + APNs · PostHog, Sentry (dormant, DSN unset).

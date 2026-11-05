@@ -82,6 +82,7 @@ import { crowdLabelFor } from '../../lib/crowd';
 import { TABLE_PARTY_DEFAULT } from '../../lib/tableSummaries';
 import { tableCompactText } from '../venue/TableAvailability';
 import { loadMapEngine } from './mapEngine';
+import { keylessBasemapStyle, KEYLESS_BASEMAP_ALLOWED } from './keylessBasemap';
 import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
 import { poiUnderTap, POI_TAP_MIN_ZOOM, TAPPABLE_POI_LAYER_IDS } from './poiTap';
@@ -114,12 +115,15 @@ const mapEase = (map, opts) => {
 // The basemap. With a MapTiler key it is Flock's own style on Planet v4:
 // "Flock Paper" by day and "Flock Night" in dark mode (components/map/
 // flockStyle). Shops, bars, cafes and other places fade in as the map zooms to
-// street level, and Flock's own venue pins sit above all of them. With no key
-// it falls back to CARTO's openly licensed Positron and Dark Matter.
+// street level, and Flock's own venue pins sit above all of them. With no key,
+// a development build falls back to CARTO's Positron and Dark Matter, and a
+// release builds no map at all (keylessBasemap.js says why).
 // =============================================================================
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-const CARTO_DARK = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-const CARTO_LIGHT = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+// A basemap this build may draw: Flock's own on the MapTiler key, or CARTO's
+// keyless one where that is allowed. Without either, the map is never built
+// and shows its could-not-load panel, and nothing is requested.
+const BASEMAP_AVAILABLE = !!MAPTILER_KEY || KEYLESS_BASEMAP_ALLOWED;
 // buildFlockStyle is pure, so each theme is built once. The cached copy is the
 // reference for the POI filters (hideBasemapTwins); setStyle gets a clone, so
 // nothing MapLibre does to its input can touch the reference.
@@ -137,7 +141,7 @@ const ROADMAP_STYLE = (dark) => {
   const isDark = dark === undefined ? isAppDark() : dark;
   const style = flockStyleFor(isDark);
   if (style) return JSON.parse(JSON.stringify(style));
-  return isDark ? CARTO_DARK : CARTO_LIGHT;
+  return keylessBasemapStyle(isDark);
 };
 // Satellite: MapTiler hybrid-v4 (imagery with roads and place labels), with a
 // dark twin, and ONLY that. Null without a key, which hides the toggle rather
@@ -146,9 +150,11 @@ const ROADMAP_STYLE = (dark) => {
 // WHY THERE IS NO KEYLESS FALLBACK. This used to fall back to raster tiles from
 // server.arcgisonline.com with no key and no Esri account. Esri's basemaps are
 // not free for commercial use, and the branch shipped unlicensed-request code in
-// a repository, so it was removed. The roadmap keeps its keyless CARTO fallback
-// because CARTO's styles are openly licensed for this; there is no comparable
-// free satellite source, so the honest keyless answer is "no satellite".
+// a repository, so it was removed. The roadmap kept a keyless CARTO fallback
+// while CARTO's styles were open to keyless use; since CARTO's 2026-09-29
+// terms that fallback is for development builds only (keylessBasemap.js).
+// There is no comparable free satellite source, so the honest keyless answer
+// is "no satellite".
 const SATELLITE_STYLE = (dark) => satelliteStyleUrl({ dark: dark === undefined ? isAppDark() : dark, key: MAPTILER_KEY });
 const SATELLITE_AVAILABLE = !!MAPTILER_KEY;
 
@@ -1010,6 +1016,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     let permStatus = null;
     let onPermChange = null;
     const init = async () => {
+      // No basemap this build may draw (a release without its MapTiler key):
+      // the could-not-load panel at once, before the engine chunk or a single
+      // tile is fetched.
+      if (!BASEMAP_AVAILABLE) {
+        console.warn('[Map] No MapTiler key in this build, and CARTO\'s keyless basemaps are for development builds only.');
+        if (!cancelled) setMapFailed(true);
+        return;
+      }
       // The stylesheet travels with the engine, not with App.js. Both requests
       // start together so the CSS costs no extra round trip, and the map is
       // only built once the styles have landed: maplibre draws its controls,

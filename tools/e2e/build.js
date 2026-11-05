@@ -66,6 +66,11 @@ try {
       REACT_APP_POSTHOG_KEY: '',
       REACT_APP_POSTHOG_HOST: '',
       REACT_APP_SENTRY_DSN: '',
+      // This is a production-mode build with no MapTiler key, and a release
+      // like that draws no basemap. The e2e stack is not a release, so it asks
+      // for CARTO's keyless one by name
+      // (frontend/src/components/map/keylessBasemap.js).
+      REACT_APP_KEYLESS_BASEMAP: 'carto',
     },
   });
   if (res.status !== 0) {

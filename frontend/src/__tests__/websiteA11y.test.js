@@ -318,12 +318,14 @@ describe('source scans across the whole of src/website/', () => {
     expect(src).toMatch(/if \(locating\) return;/);
   });
 
-  test('LiveDemo draws the Flock light style, with CARTO only when there is no key', () => {
+  test('LiveDemo draws the Flock light style, with CARTO only in a keyless development build', () => {
     // The landing demo is the product's own map. Pinned as source for the same
-    // reason as above: the component cannot mount under jest.
+    // reason as above: the component cannot mount under jest. Without a key a
+    // release gets no style at all (keylessBasemapRelease.test.js).
     const src = readSource('LiveDemo.js');
     expect(src).toMatch(/import \{ buildFlockStyle \} from '\.\.\/components\/map\/flockStyle';/);
-    expect(src).toMatch(/const MAP_STYLE = buildFlockStyle\(\{ dark: false, key: MAPTILER_KEY \}\)\s*\|\|\s*'https:\/\/basemaps\.cartocdn\.com\/gl\/positron-gl-style\/style\.json';/);
+    expect(src).toMatch(/import \{ keylessBasemapStyle \} from '\.\.\/components\/map\/keylessBasemap';/);
+    expect(src).toMatch(/const MAP_STYLE = buildFlockStyle\(\{ dark: false, key: MAPTILER_KEY \}\)\s*\|\|\s*keylessBasemapStyle\(false\);/);
     expect(src).toMatch(/style: MAP_STYLE,/);
     // The retired v2 style (Planet v3 data, no POIs) must not come back, and
     // the demo stays on plain maplibre-gl rather than the session-billed SDK.

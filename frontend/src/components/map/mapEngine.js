@@ -2,8 +2,9 @@
  * WHICH ENGINE THE APP'S MAP RUNS ON.
  *
  * With a MapTiler key the Discover map and the venue dashboard's Map tab run
- * on @maptiler/sdk. Without one (contributors, the e2e stack) they run on
- * plain maplibre-gl against the keyless CARTO styles, exactly as before.
+ * on @maptiler/sdk. Without one, a development build (contributors, the e2e
+ * stack) runs them on plain maplibre-gl against the keyless CARTO styles, and
+ * a release builds no map at all (keylessBasemap.js).
  *
  * WHY THE SDK AND NOT PLAIN MAPLIBRE. MapTiler bills a map built with plain
  * maplibre-gl per tile request, and says switching such an app to session

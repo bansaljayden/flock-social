@@ -428,7 +428,8 @@ export default function ExploreScreen({
       <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {/* MapLibre GL vector map. Tiles come from MapTiler on the key in
             REACT_APP_MAPTILER_KEY (a paid Flex plan, billed by use past its
-            allowance); a build with no key falls back to CARTO's basemaps. */}
+            allowance). With no key a development build falls back to CARTO's
+            basemaps and a release shows no map (keylessBasemap.js). */}
         <MapLibreMapView
           venues={allVenues}
           filterCategory={category}

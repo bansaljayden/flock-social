@@ -202,6 +202,8 @@ describe('CSP covers the hosts the code actually talks to', () => {
   const MAP_SOURCES = [
     ['src', 'App.js'],
     ['src', 'components', 'map', 'MapLibreMapView.js'],
+    // CARTO's keyless styles, which development builds fall back to.
+    ['src', 'components', 'map', 'keylessBasemap.js'],
     ['src', 'website', 'LiveDemo.js'],
     ['src', 'components', 'map', 'flockStyle'],
     ['src', 'lib', 'staticMapUrl.js'],
