@@ -109,6 +109,21 @@ test('every code line names, in its note, the amount the line shows', () => {
   }
 });
 
+test('every code line\'s last bill is a paid one, dated no later than the reading, and its note names it', () => {
+  // The hub compares the figure on show with `previous` ("Bills up on the
+  // last one"), so `previous` is the newest receipt before the reading. A
+  // note that names a different last bill would contradict the comparison.
+  for (const l of CODE.lines) {
+    if (!l.previous) continue;
+    assert.ok(l.previous.usdPerMonth > 0, `${l.id} has no amount on its last bill`);
+    assert.match(l.previous.paidOn, /^\d{4}-\d{2}-\d{2}$/, `${l.id} last bill has no paid date`);
+    assert.ok(l.previous.paidOn <= l.asOf, `${l.id} last bill is dated after the reading it comes before`);
+    assert.ok(typeof l.previous.period === 'string' && l.previous.period.length > 0, `${l.id} last bill names no period`);
+    const paid = `$${l.previous.usdPerMonth.toFixed(2)}`;
+    assert.ok(l.note.includes(paid), `${l.id} compares with a ${paid} bill its note never names`);
+  }
+});
+
 test('a row for an unknown line id is ignored rather than invented into the block', async () => {
   rows = [{ line_id: 'not-a-line', usd_per_month: '999', as_of: '2026-09-15', note: null }];
   const r = await costModel.readReconciled(pool);

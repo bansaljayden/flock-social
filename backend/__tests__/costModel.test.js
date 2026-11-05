@@ -444,7 +444,8 @@ test('Railway is a reconciled line at its own estimated bill, and no fixed line 
   assert.strictEqual(railway.label, 'Railway (backend and Postgres)');
   assert.match(railway.asOf, /^\d{4}-\d{2}-\d{2}$/);
   assert.match(railway.note, /estimated bill/);
-  assert.match(railway.note, /Sep 16 to Oct 16, 2026/);
+  // Names the billing period the estimate is for, whichever period that is.
+  assert.match(railway.note, /for the [A-Z][a-z]{2} \d{1,2} to [A-Z][a-z]{2} \d{1,2}, \d{4} billing period/);
   assert.match(railway.note, /\$20 Pro plan fee plus/);
   assert.match(railway.note, /\$20 of credit/);
   assert.match(railway.note, /`railway usage`/);

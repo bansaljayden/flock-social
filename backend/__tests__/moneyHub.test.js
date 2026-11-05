@@ -3794,22 +3794,28 @@ test('the price sheet lists every bill and rate card once, never checked and old
 
 // Bills that jumped on the last one (2026-10-03).
 test('a reconciled bill more than a quarter above the last one is flagged, a smaller one is not', () => {
-  const jumps = moneyHub.billJumps(null);
-  const railway = jumps.find((j) => j.id === 'railway');
-  // Read from the seed rather than pinned: the estimate is re-read through
-  // the period ($44.97 on 10-03, $45.47 on 10-05), and every reading is far
-  // above the $24.52 the last bill was.
-  const seed = require('../services/costModel').RECONCILED.lines.find((l) => l.id === 'railway');
-  assert.ok(railway, `Railway went from $24.52 to $${seed.usdPerMonth} and was not flagged`);
-  assert.strictEqual(railway.fromCents, 2452);
-  assert.strictEqual(railway.pct, Math.round(((seed.usdPerMonth - 24.52) / 24.52) * 100));
-  assert.ok(railway.pct > 25);
-  assert.ok(!jumps.some((j) => j.id === 'google-cloud'), 'a bill that went down is not a jump');
+  const railway = (usdPerMonth, previous) => ({ lines: [{ id: 'railway', label: 'Railway (backend and Postgres)', usdPerMonth, asOf: '2026-10-07', previous }] });
+  // The reading of 2026-10-07 against the receipt before it: $45.73
+  // estimated after a $24.52 bill.
+  const up = moneyHub.billJumps(railway(45.73, { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026', paidOn: '2026-09-15' }));
+  assert.strictEqual(up.length, 1);
+  assert.strictEqual(up[0].fromCents, 2452);
+  assert.strictEqual(up[0].fromPeriod, 'Aug 15 to Sep 15, 2026');
+  assert.strictEqual(up[0].toCents, 4573);
+  assert.strictEqual(up[0].pct, 87);
   // A dashboard figure is compared with the same previous bill.
-  const saved = { lines: [{ id: 'railway', label: 'Railway', usdPerMonth: 26, asOf: '2026-10-16', previous: { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026' } }] };
-  assert.deepStrictEqual(moneyHub.billJumps(saved), [], 'a 6% rise is not a jump');
+  assert.deepStrictEqual(moneyHub.billJumps(railway(26, { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026' })), [], 'a 6% rise is not a jump');
+  // The reading of 2026-11-05 against the $42.99 receipt of 2026-10-15.
+  assert.deepStrictEqual(moneyHub.billJumps(railway(33.40, { usdPerMonth: 42.99, period: 'Sep 15 to Oct 15, 2026', paidOn: '2026-10-15' })), [], 'a bill that went down is not a jump');
+
+  // The code's own lines go through the same rule, each against its own last
+  // bill. Worked out from the seed rather than pinned, so a new reading needs
+  // no edit here.
+  const seed = require('../services/costModel').RECONCILED.lines;
+  const expected = seed.filter((l) => l.previous && ((l.usdPerMonth - l.previous.usdPerMonth) / l.previous.usdPerMonth) * 100 > 25).map((l) => l.id);
+  assert.deepStrictEqual(moneyHub.billJumps(null).map((j) => j.id), expected);
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
-  assert.ok(pic.jumps.some((j) => j.id === 'railway'));
+  assert.deepStrictEqual(pic.jumps.map((j) => j.id), expected);
 });
 
 // Review of the new hub features (2026-10-03).

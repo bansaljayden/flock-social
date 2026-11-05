@@ -660,11 +660,13 @@ const RECONCILED = {
       // expense row whose replaces_line is 'railway' still stands in for it.
       id: 'railway',
       label: 'Railway (backend and Postgres)',
-      usdPerMonth: 45.73,
-      asOf: '2026-10-07',
-      previous: { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026', paidOn: '2026-09-15' },
+      usdPerMonth: 33.40,
+      asOf: '2026-11-05',
+      // The latest receipt, paid 2026-10-15. The one before it was $24.52 for
+      // Aug 15 to Sep 15 (receipt of 2026-09-15).
+      previous: { usdPerMonth: 42.99, period: 'Sep 15 to Oct 15, 2026', paidOn: '2026-10-15' },
       readFrom: 'the estimated bill `railway usage` prints for the current billing period',
-      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period: $45.73 as `railway usage` printed it on 2026-10-07, with $32.37 of usage billed so far. Earlier readings of the same period were $32.96 on 09-28, $36.05 on 09-29, $37.10 on 09-30, $44.66 on 10-02, $44.97 on 10-03 and $45.47 on 10-05; the estimate climbs as the period\'s usage comes in, and has settled since 10-02. Memory is the bill: $26.00 of the $32.37, against $0.55 of CPU, $4.05 of egress, $0.89 of volume and $0.89 of backups (`railway usage --json`, 2026-10-07). Over the 7 days to 10-03 Postgres averaged 3.24 GB of memory (peak 4.61), the API 0.39 GB and the BestTime collector 0.18 GB (Railway service metrics), so the database\'s memory is most of what this line costs. The previous period, Aug 15 to Sep 15, was billed $24.52 (Railway\'s receipt of 2026-09-15: $24.52 of usage plus the $20 Pro plan, less the $20 of usage the plan includes). Each bill is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
+      note: 'Railway\'s own estimated bill for the Oct 15 to Nov 15, 2026 billing period (Oct 16 to Nov 16 in UTC, as `railway usage` prints it): $33.40 as `railway usage` printed it on 2026-11-05, with $21.90 of usage billed so far, $15.74 of it memory, $2.83 egress, $1.77 backups, $1.01 volume and $0.54 CPU (`railway usage --json`). By service, Postgres is $18.94 of the $21.90 ($12.93 of that memory), the API $2.02 and the BestTime collector $0.66 (`railway usage projects`). The last bill, for Sep 15 to Oct 15, 2026, was $42.99, paid on 2026-10-15 (Railway\'s receipt of that day): $42.99 of usage, $32.66 of it memory, plus the $20 Pro plan, less the $20 of usage the plan includes. The one before, Aug 15 to Sep 15, was $24.52, $19.55 of it memory. Memory drove that rise: over the 7 days to 2026-10-03 Postgres averaged 3.24 GB of memory (peak 4.61), mostly page cache, until a 2 GB memory limit went on the database on 2026-10-08. It has stayed under the limit since (a 1.95 GB average over the 7 days to 2026-11-05, Railway service metrics), which is why this period\'s estimate is below the last bill. Each bill is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
     },
   ],
   note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so each line is only as current as the date beside it.',
