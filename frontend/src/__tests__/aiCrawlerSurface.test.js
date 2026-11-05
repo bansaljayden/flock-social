@@ -431,7 +431,7 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(tested.what).toMatch(/served until 2026-10-14/);
     expect(served.before.configuration).toMatch(/as served before the two switches/);
     const retrain = read(path.join(FRONTEND, '..', 'backend', 'scripts', 'ml', 'RETRAIN.md')).replace(/\s+/g, ' ');
-    expect(retrain).toMatch(/as production serves it: curve_offset \+ nowcast #? ?since 2026-09-26\./);
+    expect(retrain).toMatch(/Production served curve_offset \+ #? ?nowcast from 2026-09-26/);
     // Not held out of the forecast served now: the nowcast weights served
     // since 2026-10-14 were chosen on these same readings, so the sentence
     // names the forecast it is true of.

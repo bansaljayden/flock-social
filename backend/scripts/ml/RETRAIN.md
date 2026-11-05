@@ -598,7 +598,8 @@ MODEL_VERSION=2.8.0-starling python export_model.py
 
 # 7. Band gate: writes ship_gate.band_gate, sets overall_pass = point AND band.
 #    The incumbent is rule (b), the registered comparator: curve_offset +
-#    nowcast under the 2026-10-14 weights, which production served until
+#    nowcast under the 2026-10-14 weights. Production served curve_offset +
+#    nowcast from 2026-09-26 (these weights from 2026-10-14) until
 #    2026-11-01. Beating the model alone is not the bar. The candidate is
 #    scored as it will be served (2026-11-05): the model where the venue has
 #    an hour-old reading, curve + 0.85 x offset elsewhere.
