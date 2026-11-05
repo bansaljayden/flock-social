@@ -116,8 +116,9 @@ def git_file(commit, path, dest):
                                     capture_output=True, check=True).stdout)
 
 
-def freeze_text(models, settings=None, on_flux=ON_FLUX, scorer=None):
-    """A FREEZE.txt in section 11's shape, one block per model; `settings` overrides a model's."""
+def freeze_text(models, settings=None, on_flux=ON_FLUX, scorer=None, extra=()):
+    """A FREEZE.txt in section 11's shape, one block per model; `settings` overrides a model's, and
+    `extra` lines (another model's block) go after the three."""
     lines = ['Frozen at: test', f'On Flux:      {on_flux}',
              'Models:       three, graded together; one block each:']
     for name, (commit, shipped) in FROZEN.items():
@@ -129,6 +130,7 @@ def freeze_text(models, settings=None, on_flux=ON_FLUX, scorer=None):
                   f"  Crowd model:  people-fine.onnx  sha256 {sha(models[name] / 'people-fine.onnx')}",
                   f'  Decoder:      flock-sensor/main.py at the commit that shipped it {commit} (VERSION test)',
                   f'  Settings:     THERMAL_MODEL_THRESHOLD={th}, CROWD_AT={ca}, main.py\'s shipped defaults']
+    lines += list(extra)
     lines.append(f'Scorer:       flock-sensor/training/score_sealed.py at commit test, sha256 {scorer or sha(ss.__file__)}')
     return '\n'.join(lines) + '\n'
 
@@ -175,6 +177,31 @@ class ScoreSealedTest(unittest.TestCase):
             args += ['--models', f'{name}={d}']
         return ss.main(['--unsealed', str(self.unsealed), '--sums', str(self.sums), '--freeze', str(self.freeze),
                         *args, '--out', str(self.out), *extra])
+
+    def unshipped(self, chosen=(0.3, 3), frozen=None, winner=None):
+        """owl-5.2 beside the three: owl-5.1's files under its own name, decoded by owl-5.1's main.py at
+        the setting a choice file beside FREEZE.txt chose. `frozen` is the setting FREEZE.txt writes
+        (the chosen one if None); `winner` overrides the choice file's winner."""
+        d = self.tmp / 'models' / 'owl-5.2'
+        d.mkdir(parents=True, exist_ok=True)
+        for m in ('people.onnx', 'people-fine.onnx'):
+            shutil.copy(self.models['owl-5.1'] / m, d / m)
+        th, ca = chosen
+        if winner is None:
+            winner = {'run': 'test', 'model_sha256': sha(d / 'people.onnx'), 'helper': 'test',
+                      'fine_sha256': sha(d / 'people-fine.onnx'), 'threshold': th, 'threshold_text': str(th),
+                      'crowd_at': ca}
+        choice = self.tmp / 'owl52_choice.json'
+        choice.write_text(json.dumps({'winner': winner}), encoding='utf-8')
+        fth, fca = frozen or chosen
+        block = ['  Name:         owl-5.2',
+                 f"  Model:        people.onnx       sha256 {sha(d / 'people.onnx')}",
+                 f"  Crowd model:  people-fine.onnx  sha256 {sha(d / 'people-fine.onnx')}",
+                 f"  Decoder:      flock-sensor/main.py at commit {FROZEN['owl-5.1'][0]} (owl-5.1's shipping commit)",
+                 f'  Settings:     THERMAL_MODEL_THRESHOLD={fth}, CROWD_AT={fca}, from owl52_choice.json sha256 '
+                 f'{sha(choice)} (not shipped defaults)']
+        self.freeze.write_text(freeze_text(self.models, extra=block), encoding='utf-8')
+        return dict(self.models, **{'owl-5.2': d}), choice
 
     def owls(self):
         """Every frozen model, each decoded by the main.py that shipped it."""
@@ -286,6 +313,63 @@ class ScoreSealedTest(unittest.TestCase):
         self.batch()
         swapped = dict(self.models, **{'owl-5': self.models['owl-5.1'], 'owl-5.1': self.models['owl-5']})
         self.assertEqual(self.run_scorer(models=swapped), 2)
+        self.assertFalse(self.out.exists() and any(self.out.iterdir()))
+
+    def test_an_unshipped_model_is_scored_at_its_choice_files_setting(self):
+        self.batch()
+        models, _ = self.unshipped(chosen=(0.3, 3))
+        self.assertEqual(self.run_scorer(models=models), 0)
+        report = json.loads((self.out / 'report.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['on_flux'], ON_FLUX)
+        self.assertEqual(report['models']['owl-5.2']['settings'], {'THERMAL_MODEL_THRESHOLD': 0.3, 'CROWD_AT': 3})
+        self.assertIn('owl52_choice.json', report['models']['owl-5.2']['settings_from'])
+        self.assertIn('shipped defaults', report['models']['owl-5.1']['settings_from'])
+        self.assertEqual(report['bars'], report['models'][ON_FLUX]['bars'])
+        main = ss.decoder(FROZEN['owl-5.1'][0])[0]
+        fresh = main.PeopleModel(models['owl-5.2'] / 'people.onnx', 0.3)
+        fresh.fine = main.PeopleModel(models['owl-5.2'] / 'people-fine.onnx', 0.3)
+        fresh.CROWD_AT = 3
+        from frames import read_session
+        frames = {s: read_session(next((self.unsealed / s).glob('*.frames')))[1] for s in ('s1', 's2')}
+        with open(self.out / 'items.csv', encoding='utf-8') as f:
+            rows = list(csv.DictReader(f))
+        self.assertTrue(rows)
+        for r in rows:
+            c = frames[r['session']][int(r['frame'])][1]
+            self.assertEqual(int(r['owl:owl-5.2']), fresh.read_crowd(c)[2])
+
+    def test_a_changed_choice_file_stops_it(self):
+        self.batch()
+        models, choice = self.unshipped()
+        choice.write_text(choice.read_text(encoding='utf-8') + ' ', encoding='utf-8')
+        self.assertEqual(self.run_scorer(models=models), 2)
+        self.assertFalse(self.out.exists() and any(self.out.iterdir()))
+
+    def test_settings_unlike_the_choice_stop_it(self):
+        self.batch()
+        models, _ = self.unshipped(chosen=(0.3, 3), frozen=(0.3, 4))
+        self.assertEqual(self.run_scorer(models=models), 2)
+        self.assertFalse(self.out.exists() and any(self.out.iterdir()))
+
+    def test_model_files_unlike_the_choice_stop_it(self):
+        self.batch()
+        d = self.models['owl-4.9']
+        winner = {'run': 'test', 'model_sha256': sha(d / 'people.onnx'), 'helper': 'test',
+                  'fine_sha256': sha(self.models['owl-5.1'] / 'people-fine.onnx'), 'threshold': 0.3,
+                  'threshold_text': '0.3', 'crowd_at': 3}
+        models, _ = self.unshipped(winner=winner)
+        self.assertEqual(self.run_scorer(models=models), 2)
+        self.assertFalse(self.out.exists() and any(self.out.iterdir()))
+
+    def test_a_choice_with_no_winner_stops_it(self):
+        self.batch()
+        models, choice = self.unshipped()
+        choice.write_text(json.dumps({'winner': None}), encoding='utf-8')
+        text = self.freeze.read_text(encoding='utf-8')
+        old = next(line for line in text.splitlines() if 'owl52_choice.json sha256' in line)
+        self.freeze.write_text(text.replace(old, old.rsplit('sha256', 1)[0] + f'sha256 {sha(choice)} (not shipped defaults)'),
+                               encoding='utf-8')
+        self.assertEqual(self.run_scorer(models=models), 2)
         self.assertFalse(self.out.exists() and any(self.out.iterdir()))
 
     def test_second_run_refuses_without_a_reason(self):

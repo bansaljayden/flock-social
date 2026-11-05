@@ -79,7 +79,10 @@ MODEL_FILES = ('people.onnx', 'people-fine.onnx')
 def parse_freeze(path):
     """What FREEZE.txt pins (OWL-RECORDING-PROTOCOL.md section 11): this scorer's sha256, which model
     is on Flux, and one block per model, opened by its Name: line, with its two files' sha256, the
-    main.py commit that shipped it and that commit's settings."""
+    main.py commit that shipped it and that commit's settings. A model that has not shipped (owl-5.2)
+    names, on its Settings line, the choice file its settings come from and that file's sha256
+    ("from <path> sha256 <hex>"); a relative path is read beside FREEZE.txt, else from the working
+    folder."""
     text = Path(path).read_text(encoding='utf-8')
     m = re.search(r'score_sealed\.py\b[^\n]*?sha256\s+([0-9a-fA-F]{64})', text)
     if not m:
@@ -111,10 +114,47 @@ def parse_freeze(path):
         if not t_ or not c_:
             raise Refused(f'FREEZE.txt gives no THERMAL_MODEL_THRESHOLD and CROWD_AT for {name}')
         entry['settings'] = (float(t_.group(1)), int(c_.group(1)))
+        s_ = re.search(r'^\s*Settings:[^\n]*?\bfrom\s+(\S+)\s+sha256\s+([0-9a-fA-F]{64})', block, re.M)
+        if s_:
+            where = Path(s_.group(1))
+            if not where.is_absolute():
+                beside = Path(path).resolve().parent / where
+                where = beside if beside.is_file() else Path.cwd() / where
+            entry['choice'] = {'path': str(where), 'named': s_.group(1), 'sha256': s_.group(2).lower()}
         models[name] = entry
     if flux.group(1) not in models:
         raise Refused(f'FREEZE.txt says {flux.group(1)} is on Flux but has no block for it')
     return {'score_sealed.py': scorer, 'on_flux': flux.group(1), 'models': models}
+
+
+def check_choice(name, entry):
+    """A model that has not shipped is scored at the setting its choice file chose: the file's sha256,
+    its winner's threshold and CROWD_AT, and its winner's two model files must all equal the block's."""
+    choice = entry['choice']
+    p = Path(choice['path'])
+    if not p.is_file():
+        raise Refused(f'{name}: the choice file {choice["named"]} is missing')
+    got = sha256_file(p)
+    if got != choice['sha256']:
+        raise Refused(f'{name}: {choice["named"]} has sha256 {got[:12]}, FREEZE.txt says {choice["sha256"][:12]}')
+    try:
+        winner = json.loads(p.read_text(encoding='utf-8')).get('winner')
+    except (ValueError, AttributeError) as e:
+        raise Refused(f'{name}: {choice["named"]} is not a choice file: {e}')
+    if not winner:
+        raise Refused(f'{name}: {choice["named"]} chose no setting, so there is no {name} to grade')
+    try:
+        chosen = (float(winner['threshold']), int(winner['crowd_at']))
+        files = {'people.onnx': str(winner['model_sha256']).lower(), 'people-fine.onnx': str(winner['fine_sha256']).lower()}
+    except (KeyError, TypeError, ValueError) as e:
+        raise Refused(f'{name}: {choice["named"]} has no complete winner: {e}')
+    if chosen != entry['settings']:
+        raise Refused(f'{name}: {choice["named"]} chose THERMAL_MODEL_THRESHOLD and CROWD_AT {chosen}, '
+                      f'FREEZE.txt says {entry["settings"]}')
+    for f in MODEL_FILES:
+        if files[f] != entry[f]:
+            raise Refused(f'{name}: {choice["named"]} chose a {f} with sha256 {files[f][:12]}, '
+                          f'FREEZE.txt says {entry[f][:12]}')
 
 
 def verify(unsealed, sums, freeze_path, models, out, rerun_reason, scorer=Path(__file__)):
@@ -170,7 +210,10 @@ def verify(unsealed, sums, freeze_path, models, out, rerun_reason, scorer=Path(_
                 raise Refused(f'{name}\'s {f} has sha256 {got[:12]}, FREEZE.txt says {entry[f][:12]}')
             checked[str(p)] = got
         mod, info = decoder(entry['decoder'])
-        if shipped_settings(mod) != entry['settings']:
+        if 'choice' in entry:
+            check_choice(name, entry)
+            checked[entry['choice']['path']] = entry['choice']['sha256']
+        elif shipped_settings(mod) != entry['settings']:
             raise Refused(f'{name}: main.py at {info["commit"][:12]} ships THERMAL_MODEL_THRESHOLD and CROWD_AT '
                           f'{shipped_settings(mod)}, FREEZE.txt says {entry["settings"]}')
         checked[f'main.py@{info["commit"]}'] = info['sha256']
@@ -366,11 +409,11 @@ def shipped_settings(mod):
     return float(mod.DEFAULTS['THERMAL_MODEL_THRESHOLD']), int(mod.PeopleModel.CROWD_AT)
 
 
-def load_owl(models, mod=None):
+def load_owl(models, mod=None, settings=None):
     """One Owl model from its folder, decoded by `mod` (a main.py; the current one if None) at that
-    main.py's shipped settings."""
+    main.py's shipped settings, or at `settings` (threshold, CROWD_AT) for a model that has not shipped."""
     mod = mod or sensor()
-    threshold, crowd_at = shipped_settings(mod)
+    threshold, crowd_at = settings or shipped_settings(mod)
     m = mod.PeopleModel(Path(models) / 'people.onnx', threshold)
     m.fine = mod.PeopleModel(Path(models) / 'people-fine.onnx', threshold)
     m.CROWD_AT = crowd_at
@@ -692,7 +735,9 @@ def main(argv=None):
         frozen = checked['freeze']['models']
         flux = checked['freeze']['on_flux']
         mods = {name: decoder(entry['decoder'])[0] for name, entry in frozen.items()}
-        owls = {name: load_owl(dirs[name], mods[name]) for name in frozen}
+        settings = {name: entry['settings'] if 'choice' in entry else shipped_settings(mods[name])
+                    for name, entry in frozen.items()}
+        owls = {name: load_owl(dirs[name], mods[name], settings[name]) for name in frozen}
         steps = {'beeps': 0, 'late_counts_dropped': 0, 'no_count_from_A': 0,
                  'clock_uncertain_moving_dropped': 0, 'no_frame': 0, 'kept': 0}
         items, clocks = [], {}
@@ -710,7 +755,9 @@ def main(argv=None):
         info = checked['decoders'][name]
         models[name] = {'on_flux': name == flux, 'decoder_commit': info['commit'], 'decoder_sha256': info['sha256'],
                         'files': {f: entry[f] for f in MODEL_FILES},
-                        'settings': dict(zip(('THERMAL_MODEL_THRESHOLD', 'CROWD_AT'), shipped_settings(mods[name]))),
+                        'settings': dict(zip(('THERMAL_MODEL_THRESHOLD', 'CROWD_AT'), settings[name])),
+                        'settings_from': (f"{entry['choice']['named']} sha256 {entry['choice']['sha256']}"
+                                          if 'choice' in entry else f"main.py's shipped defaults at {info['commit']}"),
                         'summary': summary(sub), 'bars': bars(sub), 'sensitivity': sensitivity(sub, uncertain)}
     report = {'graded_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
               'scorer_sha256': checked['hashes']['score_sealed.py'], 'hashes_checked': checked['hashes'],

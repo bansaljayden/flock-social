@@ -110,7 +110,11 @@ python score_sealed.py --unsealed <dir> --sums <dir> --freeze FREEZE.txt \
 
 Each model is decoded by flock-sensor/main.py as it was at the commit that
 shipped it (read from git), at that main.py's shipped threshold and crowd
-hand-off, so its count is the count that sensor made. Before it reads a frame or
+hand-off, so its count is the count that sensor made. A model that has not
+shipped (owl-5.2) is decoded by the commit its block names at the setting its
+choice file chose: the block's Settings line names that file and its sha256,
+and the file's winner must have the block's threshold, CROWD_AT and model
+files. Before it reads a frame or
 a count it refuses if any file differs from its SHA256SUMS listing, if a model's
 files, its settings or the scorer itself differ from FREEZE.txt, if `--models`
 names other models than FREEZE.txt freezes, or if a report is already there (a
