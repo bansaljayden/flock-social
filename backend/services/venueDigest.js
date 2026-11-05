@@ -344,6 +344,34 @@ function buildMoneyMoveCard(advisorFacts, weekFacts, ctx) {
   }
 }
 
+// THE WEEK THE MONEY MOVE READS, FOR A VENUE WITH NO CROWD HISTORY OF ITS OWN
+// (2026-11-04). Its week ahead refuses on the corpus gate, so the email had
+// no money move, while Roost's chip answers that venue from its dashboard's
+// Week Ahead card (routes/advisor.js weekFor). Where the corpus gate is the
+// reason, the money move here reads the same card the same way:
+// advisorFacts.buildWeekProjection, which is the card's own function
+// (routes/venueDashboard.js venueIntelligence) and, within the hour, the
+// dashboard's own cache entry. A cold card costs one Places lookup, charged
+// to the owner's Places budget exactly as the dashboard's is, and it is read
+// once per venue per sweep: here, for the money move only. The week ahead
+// section and the listing lines keep the venue's own week, as they did.
+//
+// No card (the lookup failed, the Places budget said no, the week holds a
+// model number, or it was not read on hours the venue keeps) answers the
+// week the email already had, so the money move section stays out and the
+// email is what it was. A venue with its own history never asks for the card.
+async function moneyMoveWeek(advisorFacts, ctx, weekFacts, { userId }) {
+  if (typeof advisorFacts.corpusGate !== 'function' || typeof advisorFacts.buildWeekProjection !== 'function') return weekFacts;
+  try {
+    if (!advisorFacts.corpusGate(ctx.profile)) return weekFacts;
+    const projected = await advisorFacts.buildWeekProjection(ctx, { userId });
+    return Array.isArray(projected) && projected.length ? projected : weekFacts;
+  } catch (err) {
+    console.warn('[VenueDigest] the Week Ahead card could not be read for the money move:', err.message);
+    return weekFacts;
+  }
+}
+
 async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile || !ctx.profile.google_place_id || !ctx.profile.verified) return null;
@@ -371,9 +399,10 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   // to help the venue make more money, so the email says where this week's
   // money is: the quietest day, the move to fill it and what 10 covers there
   // are worth at the owner's own spend per head. The same sentences the
-  // chat's first chip answers with (services/advisorMoneyMove.js). A failure
-  // here drops the section and keeps the email.
-  const moneyCard = buildMoneyMoveCard(advisorFacts, weekFacts, ctx);
+  // chat's first chip answers with (services/advisorMoneyMove.js), from the
+  // same week the chip reads (moneyMoveWeek above). A failure here drops the
+  // section and keeps the email.
+  const moneyCard = buildMoneyMoveCard(advisorFacts, await moneyMoveWeek(advisorFacts, ctx, weekFacts, opts), ctx);
   if (moneyCard) cards.push(moneyCard);
   cards.push(finished(weekDef, weekFacts));
   cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
@@ -509,10 +538,13 @@ async function runVenueDigestSweep(now = new Date()) {
       // A card build is not cheap and it is not local. buildAroundYou probes
       // Ticketmaster once per day of the week through mlPredictor's shared
       // event cache and daily budget, buildWeekAhead runs a seven-day model
-      // forecast, and the verdict and readings cards each aggregate the venue's
-      // own history. Doing that five times per venue and throwing four of them
-      // away turns Monday breakfast into the heaviest hour of the product's
-      // week, on work that by construction cannot produce an email.
+      // forecast, the verdict and readings cards each aggregate the venue's
+      // own history, and for a venue with no crowd history the money move
+      // reads the dashboard's Week Ahead card, a paid Places lookup when its
+      // hourly entry is cold (moneyMoveWeek). Doing that five times per venue
+      // and throwing four of them away turns Monday breakfast into the
+      // heaviest hour of the product's week, on work that by construction
+      // cannot produce an email.
       //
       // One indexed read answers it, the same shape of pre-check
       // services/crowdAlerts.js does before its own claim. The claim below is
