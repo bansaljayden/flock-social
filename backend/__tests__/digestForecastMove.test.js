@@ -9,7 +9,9 @@
 // here:
 //   1. a no-history bar, cafe or bakery whose card reads gets the chip's own
 //      money move in the email, line for line in the template's words, with
-//      its source named in words (Flock's forecast for places like yours);
+//      its source named in words (Flock's forecast for places like yours),
+//      and (2026-11-05) a Week ahead section with the days Roost's own Week
+//      ahead card shows, off the same read;
 //   2. cost: the card is read once per venue per sweep, from the dashboard's
 //      own cache entry when it is warm, never with more than one Places
 //      lookup, and not at all for a venue already mailed that Monday;
@@ -312,10 +314,58 @@ test('a no-history bar\'s Monday email carries the chip\'s money move, line for 
   const html = renderDigestHtml(renderInput(cards)).replace(/&#39;/g, "'");
   assert.ok(html.includes("This week's money move"), html);
   assert.ok(html.includes(`${chip.lines[0]} ${SOURCE_CHIP(intel.generatedAt)}`), html);
-  // The week ahead itself stays as it was for this venue: a refusal, which
-  // the email leaves out.
-  assert.strictEqual(cards.find((c) => c.id === 'week_ahead').status, 'refused');
-  assert.ok(!text.includes('WEEK AHEAD'), text);
+  // The Week ahead section comes off the same read (the next test).
+  assert.strictEqual(cards.find((c) => c.id === 'week_ahead').status, 'ok');
+  assert.strictEqual(modelCalls, 0);
+});
+
+// ── 1b. The Week ahead section, as Roost's own Week ahead card shows it ────
+
+const WEEK_TITLE = 'WEEK AHEAD';
+// A fact's line in the email: its sentence, its note, then its source in words.
+const emailLine = (f) => `${[f.label, f.note].filter(Boolean).join(' ')} ${SOURCE_CHIP(f.asOf)}`;
+const jsonOf = (v) => JSON.parse(JSON.stringify(v));
+
+async function roostWeekCard(userId) {
+  const r = await call(userId, '/api/venue/advisor/cards');
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+  const card = (r.body.cards || []).find((c) => c.id === 'week_ahead');
+  assert.ok(card && card.status === 'ok', JSON.stringify(card));
+  return card;
+}
+
+test('a no-history bar\'s Week ahead section shows the days Roost\'s own Week ahead card shows, framed, off the money move\'s read', async () => {
+  const userId = 105;
+  setUp(userId, 'ChIJdigestWeekBar0000000');
+  const app = await roostWeekCard(userId);
+  // Every day on the card, with its number, said as Flock's forecast for
+  // places like this one, as of the card's own timestamp.
+  assert.strictEqual(app.facts.length, 6, JSON.stringify(app.facts));
+  for (const f of app.facts) {
+    assert.strictEqual(f.source, 'category_pattern');
+    assert.match(f.label, /^\w+ projects busiest around 9 PM, at \d+ on our 0 to 100 index, in Flock's forecast for places like yours\.$/);
+  }
+  const before = { places: placesCalls, reads: cardReads };
+
+  const cards = await emailCards(userId);
+  const week = cards.find((c) => c.id === 'week_ahead');
+  assert.strictEqual(week.status, 'ok');
+  assert.strictEqual(week.title, 'Week ahead');
+  assert.deepStrictEqual(jsonOf(week.facts), app.facts, 'the email\'s week is not the card Roost shows');
+  // One read for the money move and the week, from the cache entry the card
+  // just made: no second read and no lookup.
+  assert.deepStrictEqual({ places: placesCalls - before.places, reads: cardReads - before.reads }, { places: 0, reads: 1 });
+  assert.ok(moneyCard(cards), 'the money move rides the same read');
+
+  const text = renderDigestText(renderInput(cards));
+  const lines = emailSection(text, WEEK_TITLE);
+  assert.deepStrictEqual(lines, app.facts.map(emailLine));
+  assert.ok(text.indexOf(MONEY_TITLE) < text.indexOf(WEEK_TITLE), 'the week ahead sits below the money move, with the heads-up');
+  assert.ok(!NO_YOUR_RANKING.test(lines.join('\n')), lines.join('\n'));
+  assert.ok(!/category[_ ]pattern|typical_peak_/.test(text), text);
+  const html = renderDigestHtml(renderInput(cards)).replace(/&#39;/g, "'");
+  assert.ok(html.includes('>Week ahead</h2>'), html);
+  for (const f of app.facts) assert.ok(html.includes(`<li style="margin: 0 0 8px 0;">${emailLine(f)}</li>`), emailLine(f));
   assert.strictEqual(modelCalls, 0);
 });
 
@@ -354,7 +404,7 @@ const periodsOf = (byDay) => Object.entries(byDay).map(([day, [open, close]]) =>
   open: { day: Number(day), hour: open, minute: 0 }, close: { day: Number(day), hour: close, minute: 0 },
 }));
 
-test('whatever shape the card\'s week takes, the email says what the chip says', async () => {
+test('whatever shape the card\'s week takes, the email says what the chip and Roost\'s own Week ahead card say', async () => {
   // A bakery read on its listed hours with a day it is shut, and a level week
   // in which no day stands out and the money is in each check.
   const shut = new Date().getUTCDay() === 0 ? 1 : 0;
@@ -371,10 +421,16 @@ test('whatever shape the card\'s week takes, the email says what the chip says',
       if (card) Object.assign(CARD, card);
       setUp(userId, placeId, opts);
       const chip = await chipLines(userId);
+      const app = await roostWeekCard(userId);
       const before = placesCalls;
-      const money = moneyCard(await emailCards(userId));
+      const cards = await emailCards(userId);
+      const money = moneyCard(cards);
       assert.ok(money, placeId);
       assert.deepStrictEqual(money.facts.map((f) => f.label), chip.lines, placeId);
+      assert.deepStrictEqual(jsonOf(cards.find((c) => c.id === 'week_ahead').facts), app.facts, placeId);
+      assert.deepStrictEqual(emailSection(renderDigestText(renderInput(cards)), WEEK_TITLE), app.facts.map(emailLine), placeId);
+      // The bakery's shut day is on neither, the way the card leaves it out.
+      if (!card) assert.ok(app.facts.length === 5 && !app.facts.some((f) => f.value.weekday === LONG[SHORT[shut]]), JSON.stringify(app.facts));
       assert.strictEqual(placesCalls, before, `${placeId}: the email paid a second lookup within the hour`);
       assert.match(chip.lines[0], /^(?:Fill \w+\. )?In Flock's forecast for places like yours, /, placeId);
       if (card) assert.match(chip.lines[0], /no day stands out this week, so the money is in each check/, chip.lines[0]);
@@ -434,6 +490,13 @@ test('the Monday sweep mails each no-history venue its money move for one Places
       assert.ok(lines, sentEmails[i].text);
       assert.match(lines[0], new RegExp(`^Fill \\w+\\. In Flock's forecast for places like yours, it is the quietest day this week, with its peak around ${hour} at \\d+ on our 0 to 100 index, against \\d+ on \\w+\\. \\(Flock's forecast for places like yours, \\w+ \\d+\\)$`), lines[0]);
       assert.ok(sentEmails[i].html.includes('This week&#39;s money move'), sentEmails[i].html);
+      // The Week ahead section, off the same read: six days, each framed.
+      const week = emailSection(sentEmails[i].text, WEEK_TITLE);
+      assert.ok(week && week.length === 6, sentEmails[i].text);
+      for (const line of week) {
+        assert.match(line, new RegExp(`^\\w+ projects busiest around ${hour}, at \\d+ on our 0 to 100 index, in Flock's forecast for places like yours\\. \\(Flock's forecast for places like yours, \\w+ \\d+\\)$`), line);
+      }
+      assert.ok(sentEmails[i].html.includes('>Week ahead</h2>'), sentEmails[i].html);
     }
 
     // An hour later the same Monday: both are already mailed, and neither
@@ -497,7 +560,7 @@ test('a lookup that fails or is refused, or a card that does not read, leaves th
 
 // ── 4. A venue with its own crowd history ──────────────────────────────────
 
-test('a venue with its own crowd history never reads the card, and its money move is as it was', async () => {
+test('a venue with its own crowd history never reads the card, and its money move and week ahead are as they were', async () => {
   const userId = 401;
   setUp(userId, 'ChIJdigestCorpus00000000', { extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 } });
   const own = [
@@ -511,8 +574,11 @@ test('a venue with its own crowd history never reads the card, and its money mov
   advisorFacts.buildWeekProjection = async (...a) => { projectionReads += 1; return realProjection(...a); };
   const before = { places: placesCalls, reads: cardReads };
   try {
-    const money = moneyCard(await emailCards(userId));
+    const cards = await emailCards(userId);
+    const money = moneyCard(cards);
     assert.ok(money);
+    // Its week ahead is its own forecast, as it was.
+    assert.deepStrictEqual(cards.find((c) => c.id === 'week_ahead').facts, own);
     assert.strictEqual(money.facts[0].label, 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.');
     // The playbook's own words for the venue's own week.
     const move = roostPlaybook.moveFor('money_move', { facts: own }, roostPlaybook.venueOf({ profile: profiles.get(userId) }));

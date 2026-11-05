@@ -344,30 +344,32 @@ function buildMoneyMoveCard(advisorFacts, weekFacts, ctx) {
   }
 }
 
-// THE WEEK THE MONEY MOVE READS, FOR A VENUE WITH NO CROWD HISTORY OF ITS OWN
-// (2026-11-04). Its week ahead refuses on the corpus gate, so the email had
-// no money move, while Roost's chip answers that venue from its dashboard's
-// Week Ahead card (routes/advisor.js weekFor). Where the corpus gate is the
-// reason, the money move here reads the same card the same way:
-// advisorFacts.buildWeekProjection, which is the card's own function
-// (routes/venueDashboard.js venueIntelligence) and, within the hour, the
-// dashboard's own cache entry. A cold card costs one Places lookup, charged
-// to the owner's Places budget exactly as the dashboard's is, and it is read
-// once per venue per sweep: here, for the money move only. The week ahead
-// section and the listing lines keep the venue's own week, as they did.
+// THE WEEK THE EMAIL SHOWS, FOR A VENUE WITH NO CROWD HISTORY OF ITS OWN
+// (2026-11-04: the money move; 2026-11-05: the Week ahead section). Its week
+// ahead refuses on the corpus gate, so the email had no money move and no
+// week, while Roost answers that venue from its dashboard's Week Ahead card:
+// the money-move chip (routes/advisor.js weekFor) and Roost's own Week ahead
+// card (GET /api/venue/advisor/cards). Where the corpus gate is the reason,
+// the email reads the same card the same way: advisorFacts.buildWeekProjection,
+// which is the card's own function (routes/venueDashboard.js
+// venueIntelligence) and, within the hour, the dashboard's own cache entry. A
+// cold card costs one Places lookup, charged to the owner's Places budget
+// exactly as the dashboard's is, and it is read once per venue per sweep,
+// here, for both sections. The listing lines keep the venue's own week, as
+// Roost's listing card does.
 //
 // No card (the lookup failed, the Places budget said no, the week holds a
 // model number, or it was not read on hours the venue keeps) answers the
-// week the email already had, so the money move section stays out and the
-// email is what it was. A venue with its own history never asks for the card.
-async function moneyMoveWeek(advisorFacts, ctx, weekFacts, { userId }) {
+// week the email already had, so neither section shows and the email is what
+// it was. A venue with its own history never asks for the card.
+async function shownWeekFor(advisorFacts, ctx, weekFacts, { userId }) {
   if (typeof advisorFacts.corpusGate !== 'function' || typeof advisorFacts.buildWeekProjection !== 'function') return weekFacts;
   try {
     if (!advisorFacts.corpusGate(ctx.profile)) return weekFacts;
     const projected = await advisorFacts.buildWeekProjection(ctx, { userId });
     return Array.isArray(projected) && projected.length ? projected : weekFacts;
   } catch (err) {
-    console.warn('[VenueDigest] the Week Ahead card could not be read for the money move:', err.message);
+    console.warn('[VenueDigest] the Week Ahead card could not be read:', err.message);
     return weekFacts;
   }
 }
@@ -395,16 +397,20 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   // Then card 1, before card 3, because card 3's arithmetic reads its peak
   // facts, the same ordering the route uses.
   const weekFacts = await advisorFacts.buildWeekAhead(ctx, opts);
+  // The week the money move and the Week ahead section show: the venue's own,
+  // or for a venue with no crowd history the same days Roost's own Week ahead
+  // card shows, off one read of the dashboard's card (shownWeekFor above).
+  const shownWeek = await shownWeekFor(advisorFacts, ctx, weekFacts, opts);
   // THE MONEY MOVE, second only to the verdict (2026-10-28). Roost's job is
   // to help the venue make more money, so the email says where this week's
   // money is: the quietest day, the move to fill it and what 10 covers there
   // are worth at the owner's own spend per head. The same sentences the
   // chat's first chip answers with (services/advisorMoneyMove.js), from the
-  // same week the chip reads (moneyMoveWeek above). A failure here drops the
-  // section and keeps the email.
-  const moneyCard = buildMoneyMoveCard(advisorFacts, await moneyMoveWeek(advisorFacts, ctx, weekFacts, opts), ctx);
+  // same week the chip reads. A failure here drops the section and keeps the
+  // email.
+  const moneyCard = buildMoneyMoveCard(advisorFacts, shownWeek, ctx);
   if (moneyCard) cards.push(moneyCard);
-  cards.push(finished(weekDef, weekFacts));
+  cards.push(finished(weekDef, shownWeek));
   cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
   cards.push(finished(listingDef, await advisorFacts.buildListingReadBack(ctx, weekFacts, opts)));
   cards.push(finished(readingsDef, await advisorFacts.buildReadingsVsServed(ctx, opts)));
@@ -539,9 +545,9 @@ async function runVenueDigestSweep(now = new Date()) {
       // Ticketmaster once per day of the week through mlPredictor's shared
       // event cache and daily budget, buildWeekAhead runs a seven-day model
       // forecast, the verdict and readings cards each aggregate the venue's
-      // own history, and for a venue with no crowd history the money move
-      // reads the dashboard's Week Ahead card, a paid Places lookup when its
-      // hourly entry is cold (moneyMoveWeek). Doing that five times per venue
+      // own history, and for a venue with no crowd history the email reads
+      // the dashboard's Week Ahead card, a paid Places lookup when its
+      // hourly entry is cold (shownWeekFor). Doing that five times per venue
       // and throwing four of them away turns Monday breakfast into the
       // heaviest hour of the product's week, on work that by construction
       // cannot produce an email.
