@@ -567,6 +567,11 @@ function parseGooglePayment(mail) {
       bills: [{ title: clip(product, 80), product: clip(product, 120), amountCents: money.cents, cadence: 'one_time', periodStart: null, periodEnd: null, renewsOn: null, inApp: false }],
     });
   }
+  // Google's own words for a payment, in a layout this does not know: a
+  // person looks, rather than the payment being dropped as a notice.
+  if (/payment received|received your payment/i.test(`${flat} ${mail.subject || ''}`)) {
+    return unreadable('the Google payment could not be read');
+  }
   return notReceipt('a Google payments notice, not a payment');
 }
 

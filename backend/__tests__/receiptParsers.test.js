@@ -169,6 +169,9 @@ test('a Google Cloud payment is the month before it, as a usage bill', () => {
     periodStart: '2026-10-01', periodEnd: '2026-10-31', renewsOn: null, inApp: false,
   });
   assert.equal(read('google-notice').kind, 'not_receipt', 'a payment-method notice is no payment');
+  const odd = mail('google-cloud-bill');
+  assert.equal(P.parseReceipt({ ...odd, text: odd.text.replace('Your payment amount of', 'You paid') }).kind, 'unreadable',
+    'a payment worded in a way this does not know is for a person to check, not dropped as a notice');
 });
 
 test('a FastSpring receipt: the total with tax, paid on the day the email left, in New York', () => {

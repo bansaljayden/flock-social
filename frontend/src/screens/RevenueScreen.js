@@ -2040,6 +2040,16 @@ function hubReceiptAmount(r) {
   return `${(r.amountCents / 100).toFixed(2)} ${r.currency}`;
 }
 
+// The vendor and the product, once each: an App Store item's product already
+// carries the app's name ("Example Chat Plus" from "Example Chat").
+function hubReceiptLabel(r, fallback = 'A receipt') {
+  const vendor = r.vendor || '';
+  const product = r.product || '';
+  if (!product) return vendor || fallback;
+  if (!vendor || product.toLowerCase().includes(vendor.toLowerCase())) return product;
+  return `${vendor}, ${product}`;
+}
+
 // What a receipt did, in the words a person would use for it.
 function hubReceiptWords(r) {
   const was = Number.isFinite(r.previousCents) && r.previousCents !== r.amountCents ? `, was ${hubMoney(r.previousCents)}` : '';
@@ -2069,7 +2079,7 @@ function HubReceiptAnswer({ r, colors, onDone }) {
   const [kind, setKind] = React.useState('tooling');
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
-  const label = r.product ? `${r.vendor || 'A vendor'}, ${r.product}` : (r.vendor || 'A new bill');
+  const label = hubReceiptLabel(r, 'A new bill');
   const act = async (call) => {
     setBusy(true);
     setErr('');
@@ -2181,7 +2191,7 @@ function HubFromEmail({ h, colors, onChanged }) {
         <HubRow
           key={`receipt-${r.id}`}
           navy={navy}
-          label={r.product && r.product !== r.vendor ? `${r.vendor}, ${r.product}` : (r.vendor || 'A receipt')}
+          label={hubReceiptLabel(r)}
           value={hubReceiptAmount(r)}
           tone={r.status === 'dismissed' ? 'muted' : undefined}
           sub={[hubDay(r.paidOn), hubReceiptWords(r)].filter(Boolean).join(' · ')}
