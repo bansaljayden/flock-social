@@ -49,9 +49,12 @@
  * moving to module scope fixes the remount, and keeping the state in
  * `FlockAppInner` is now the same choice the other extracted screens made.
  *
- * The body below is the old block verbatim, including its original four-space
- * indentation, so it can be diffed against the deleted lines character for
- * character. Nothing was renamed, reformatted or improved on the way across.
+ * The body below started as the old block verbatim, including its original
+ * four-space indentation, so it could be diffed against the deleted lines
+ * character for character. Its look was rebuilt in November 2026 (THE LOOK,
+ * below): figures first, as tiles, bars and status chips, and every
+ * explanation one tap away under the figure it explains. The arithmetic and
+ * the words did not change.
  */
 import React from 'react';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -196,15 +199,19 @@ const HUB_STORE_LABEL = {
 const hubStyle = {
   // scrollMarginTop so a card the attention list jumps to lands with a gap
   // above it rather than flush against the tab bar.
-  card: { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0, scrollMarginTop: '12px' },
-  sub: { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.4 },
-  kicker: { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '14px 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' },
+  card: { backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', padding: '14px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0, scrollMarginTop: '12px' },
+  sub: { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.45 },
+  // A heading inside a card, in sentence case. It used to be the type scale's
+  // uppercase eyebrow, a role the scale keeps to twice a screen, and the hub
+  // drew it more than forty times.
+  kicker: { fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '16px 0 4px', lineHeight: 1.3 },
   big: { fontSize: 'var(--t-display)', fontWeight: '600', margin: '2px 0 0', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' },
-  note: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35, overflowWrap: 'anywhere' },
-  foot: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.4, overflowWrap: 'anywhere' },
+  note: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.45, overflowWrap: 'anywhere' },
+  foot: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.45, overflowWrap: 'anywhere' },
   input: { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0, width: '100%', boxSizing: 'border-box' },
   fieldLabel: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)', flex: '1 1 130px', minWidth: 0 },
-  textButton: { border: 'none', background: 'transparent', padding: '4px 0', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
+  // A quiet button with an outline, the Nest's ghost button.
+  textButton: { display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid var(--border-default)', background: 'transparent', borderRadius: '8px', padding: '6px 10px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
   // A command to paste. One tap selects all of it, and it wraps rather than
   // scrolling sideways on a narrow phone.
   command: { display: 'block', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 'var(--t-meta)', color: 'var(--text-primary)', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0 2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all' },
@@ -216,6 +223,13 @@ const HUB_TONE = {
   bad: 'var(--accent-red-text)',
   warn: 'var(--accent-amber-text)',
   muted: 'var(--text-tertiary)',
+};
+// The wash each tone's text is designed against (index.css), in both themes.
+const HUB_TONE_BG = {
+  good: 'var(--accent-green-bg)',
+  bad: 'var(--accent-red-bg)',
+  warn: 'var(--accent-amber-bg)',
+  muted: 'var(--bg-tertiary)',
 };
 
 // The cards the attention list at the top can send the owner to, by the id
@@ -234,18 +248,19 @@ const HUB_CARD = {
   people: { id: 'hub-people', link: 'Go to People' },
 };
 
+// A short status word beside a label: Optional, Unverified, Stated. Sentence
+// case at the meta size, on its tone's own wash.
 function hubTag(tone) {
-  const bg = tone === 'bad' ? 'var(--accent-red-bg)' : tone === 'good' ? 'var(--accent-green-bg)' : tone === 'warn' ? 'var(--accent-amber-bg)' : 'var(--bg-tertiary)';
   return {
-    fontSize: 'var(--t-micro)',
-    fontWeight: '700',
+    display: 'inline-block',
+    fontSize: 'var(--t-meta)',
+    fontWeight: '600',
     color: HUB_TONE[tone] || 'var(--text-secondary)',
-    backgroundColor: bg,
-    borderRadius: '6px',
-    padding: '1px 5px',
+    backgroundColor: HUB_TONE_BG[tone] || 'var(--bg-tertiary)',
+    borderRadius: '999px',
+    padding: '0 7px',
     marginLeft: '6px',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
+    lineHeight: 1.6,
     whiteSpace: 'nowrap',
   };
 }
@@ -278,20 +293,272 @@ function hubDay(ymd) {
   return date.toLocaleDateString('en-US', opts);
 }
 
-// children go under the note, inside the row, for what a row carries beyond a
-// sentence (a command to run, a link out).
-function HubRow({ label, value, note, tone, tag, navy, children }) {
+// ===========================================================================
+// THE LOOK: the parts every card here is built from.
+// ===========================================================================
+//
+// The hub used to be cards of sentences. Every figure carried where it came
+// from in a paragraph under it, which kept each number honest and made the
+// page slow to read: the month alone was taller than a phone screen. Now the
+// figures come first, as tiles, bars and status chips, and each explanation
+// sits one tap away under the figure it explains: the row itself opens, or a
+// "How this is counted" line does. Nothing was deleted. Every sentence is
+// still on the page, inside a native <details>, so the keyboard opens it, a
+// screen reader says whether it is open, and nothing has to remember which
+// ones are.
+//
+// The stylesheet holds only what an inline style cannot say: the disclosure's
+// own marker hidden, the chevron turning, the grids changing shape between a
+// phone and the wide console, and hover. Its class names start with hub- so
+// nothing else in the app can match them, and it ships in this lazily loaded
+// screen, so it costs the rest of the app nothing. Colours are the theme's
+// tokens, which index.css redefines for dark, so both themes are the same
+// stylesheet.
+const HUB_CSS = `
+.hub-root { --hub-c1: #2d5a87; --hub-c2: #a3bfdc; --hub-c3: #586376; --hub-c4: #d8d2c6; }
+[data-theme="dark"] .hub-root { --hub-c1: #6d9ac3; --hub-c2: #c8c3b2; --hub-c3: #7c8aa0; --hub-c4: #3f5068; }
+.hub-root details > summary { list-style: none; cursor: pointer; }
+.hub-root details > summary::-webkit-details-marker { display: none; }
+.hub-root details > summary::marker { content: ''; }
+.hub-chev { display: inline-flex; align-items: center; flex-shrink: 0; align-self: center; color: var(--text-tertiary); transition: transform 0.15s ease; }
+.hub-disclose[open] > summary .hub-chev { transform: rotate(90deg); }
+.hub-disclose > summary { border-radius: 8px; margin: 0 -6px; padding: 0 6px; }
+@media (hover: hover) { .hub-disclose > summary:hover { background-color: var(--bg-hover); } }
+
+.hub-card { background-color: var(--bg-card-solid); border: 1px solid var(--border-default); border-radius: 14px; padding: 14px; box-shadow: var(--card-shadow-sm); min-width: 0; scroll-margin-top: 12px; }
+.hub-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin: 0 0 6px; }
+.hub-card-title { font-size: var(--t-title); font-weight: 700; color: var(--text-primary); margin: 0; line-height: 1.25; }
+.hub-card-sub { font-size: var(--t-meta); color: var(--text-secondary); margin: 3px 0 0; line-height: 1.45; }
+.hub-chips { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex-shrink: 0; max-width: 60%; }
+.hub-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: var(--t-meta); font-weight: 600; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.hub-row { border-top: 1px solid var(--border-light); }
+.hub-row-head { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 0; box-sizing: border-box; }
+.hub-row-label { flex: 1 1 auto; min-width: 0; font-size: var(--t-meta); color: var(--text-secondary); overflow-wrap: anywhere; line-height: 1.4; }
+.hub-row-value { flex-shrink: 0; font-size: var(--t-meta); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hub-row-sub { font-size: var(--t-meta); color: var(--text-tertiary); margin: -4px 0 0; padding: 0 0 8px; line-height: 1.4; }
+.hub-row-more { padding: 0 0 10px; }
+.hub-note { font-size: var(--t-meta); color: var(--text-secondary); margin: 0 0 4px; line-height: 1.5; overflow-wrap: anywhere; }
+
+.hub-why { margin-top: 6px; }
+.hub-why > summary { display: block; }
+.hub-why-row { display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-meta); font-weight: 600; color: var(--text-secondary); min-height: 32px; }
+.hub-why-body p { font-size: var(--t-meta); color: var(--text-secondary); margin: 2px 0 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.hub-why-body p:last-child { margin-bottom: 2px; }
+
+.hub-month { margin: 0 0 12px; }
+.hub-month-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin: 2px 2px 10px; }
+.hub-month-title { font-family: var(--font-display); font-size: var(--t-display); font-weight: 600; letter-spacing: -0.005em; line-height: 1.1; color: var(--text-primary); margin: 0; }
+.hub-month-sub { font-size: var(--t-meta); color: var(--text-secondary); margin: 5px 0 0; line-height: 1.4; }
+.hub-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+.hub-tile { background-color: var(--bg-card-solid); border: 1px solid var(--border-default); border-radius: 14px; padding: 12px; box-shadow: var(--card-shadow-sm); min-width: 0; }
+.hub-tile-label { font-size: var(--t-label); font-weight: 600; color: var(--text-secondary); margin: 0; line-height: 1.3; }
+.hub-tile-value { font-size: var(--t-display); font-weight: 600; margin: 6px 0 0; line-height: 1.1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hub-tile-sub { font-size: var(--t-meta); color: var(--text-tertiary); margin: 5px 0 0; line-height: 1.4; }
+@media (min-width: 760px) { .hub-tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } .hub-tile { padding: 14px; } .hub-tiles.hub-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 359px) { .hub-tile { padding: 10px; } .hub-tile-value { font-size: var(--t-title); } }
+
+.hub-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; margin: 0 0 12px; }
+.hub-halves { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px 20px; }
+@media (min-width: 900px) { .hub-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .hub-halves { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+
+.hub-need { border-top: 1px solid var(--border-light); }
+.hub-need-head { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 0; box-sizing: border-box; }
+.hub-need-icon { display: inline-flex; flex-shrink: 0; }
+.hub-need-label { flex: 1 1 auto; min-width: 0; font-size: var(--t-label); font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; line-height: 1.35; }
+.hub-need-more { padding: 0 0 12px 26px; }
+
+.hub-track { position: relative; height: 8px; border-radius: 4px; background-color: var(--bg-tertiary); overflow: hidden; }
+.hub-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.hub-bar { padding: 9px 0 7px; border-top: 1px solid var(--border-light); }
+.hub-bar-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 6px; }
+.hub-bar-label { font-size: var(--t-meta); color: var(--text-secondary); min-width: 0; overflow-wrap: anywhere; line-height: 1.4; }
+.hub-bar-value { font-size: var(--t-meta); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hub-bar-note { font-size: var(--t-meta); color: var(--text-tertiary); margin: 5px 0 0; line-height: 1.4; }
+
+.hub-meter { position: relative; height: 10px; margin: 8px 0 6px; border-radius: 5px; background-color: var(--bg-tertiary); }
+.hub-meter-band { position: absolute; top: 0; bottom: 0; border-radius: 5px; }
+.hub-meter-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+.hub-meter-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; border-radius: 1px; background-color: var(--text-secondary); }
+
+.hub-stack { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background-color: var(--bg-tertiary); }
+.hub-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 0 0; font-size: var(--t-meta); color: var(--text-secondary); }
+.hub-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.hub-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+.hub-minis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 2px 0 10px; }
+.hub-mini { border-radius: 10px; background-color: var(--bg-hover); padding: 8px 10px; min-width: 0; }
+.hub-mini-label { font-size: var(--t-meta); color: var(--text-tertiary); margin: 0; line-height: 1.3; }
+.hub-mini-value { font-size: var(--t-label); font-weight: 700; color: var(--text-primary); margin: 2px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.hub-tl { margin: 4px 0 6px; }
+.hub-tl-track { position: relative; }
+.hub-tl-axis { position: absolute; left: 0; right: 0; height: 2px; border-radius: 1px; background-color: var(--border-default); }
+.hub-tl-tick { position: absolute; width: 2px; height: 8px; margin-left: -1px; border-radius: 1px; background-color: var(--border-default); }
+.hub-tl-dot { position: absolute; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; box-sizing: border-box; }
+.hub-tl-labels { position: relative; height: 1.5em; font-size: var(--t-meta); line-height: 1.5; color: var(--text-tertiary); margin-top: 4px; }
+.hub-tl-labels > span { position: absolute; top: 0; white-space: nowrap; }
+.hub-tl-mid { transform: translateX(-50%); }
+.hub-tl-end { right: 0; }
+
+.hub-sim { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; margin: 0 0 12px; }
+.hub-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (min-width: 900px) { .hub-sim { grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); } }
+@media (max-width: 359px) { .hub-fields { grid-template-columns: minmax(0, 1fr); } }
+.hub-stack-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.hub-stack-col:empty { display: none; }
+.hub-pair > :only-child, .hub-halves > :only-child { grid-column: 1 / -1; }
+@media (min-width: 900px) { .hub-pair:has(> .hub-stack-col:empty) { grid-template-columns: minmax(0, 1fr); } }
+.hub-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 2px 0 8px; }
+@media (min-width: 760px) { .hub-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.hub-stat { border-radius: 10px; background-color: var(--bg-hover); padding: 10px 12px; min-width: 0; }
+.hub-stat-label { font-size: var(--t-meta); font-weight: 600; color: var(--text-secondary); margin: 0; line-height: 1.3; }
+.hub-stat-value { font-size: var(--t-title); font-weight: 700; color: var(--text-primary); margin: 4px 0 0; line-height: 1.15; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.hub-stat-note { font-size: var(--t-meta); color: var(--text-tertiary); margin: 4px 0 0; line-height: 1.4; overflow-wrap: anywhere; }
+`;
+
+// A status word on its tone's wash, for a card's header or a row's value.
+function HubChip({ tone = 'muted', children, icon = null }) {
   return (
-    <div style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', minWidth: 0, overflowWrap: 'anywhere' }}>
-          {label}
-          {tag && <span style={hubTag(tag.tone)}>{tag.text}</span>}
-        </span>
-        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: HUB_TONE[tone] || navy, whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
-      </div>
-      {note && <p style={hubStyle.note}>{note}</p>}
+    <span className="hub-chip" style={{ color: HUB_TONE[tone] || 'var(--text-secondary)', backgroundColor: HUB_TONE_BG[tone] || 'var(--bg-tertiary)' }}>
+      {icon}{children}
+    </span>
+  );
+}
+
+// The chevron on everything that opens. Decorative: the disclosure itself
+// tells assistive tech whether it is open.
+const hubChevron = () => <span className="hub-chev">{Icons.chevronRight('currentColor', 14)}</span>;
+
+// A card: a heading, an optional line under it, and a chip or two on the
+// right that answer the card's question before anything inside it is read.
+// data-hub-card marks the card for the jumps and the tests alike.
+function HubCard({ id, title, sub, chips = null, children, style, className = '' }) {
+  return (
+    <section id={id} data-hub-card="" className={`hub-card ${className}`.trim()} style={style}>
+      {(title || chips) && (
+        <div className="hub-card-head">
+          <div style={{ minWidth: 0 }}>
+            {title && <h3 className="hub-card-title">{title}</h3>}
+            {sub && <p className="hub-card-sub">{sub}</p>}
+          </div>
+          {chips && <div className="hub-chips">{chips}</div>}
+        </div>
+      )}
       {children}
+    </section>
+  );
+}
+
+// "How this is counted": the sentences that explain a figure, behind one tap.
+// Each string is its own paragraph; anything else is drawn as it comes.
+function HubWhy({ children, label = 'How this is counted' }) {
+  const parts = (Array.isArray(children) ? children : [children]).filter((c) => c !== null && c !== undefined && c !== false && c !== '');
+  if (parts.length === 0) return null;
+  return (
+    <details className="hub-disclose hub-why">
+      <summary className="hit44"><span className="hub-why-row">{label}{hubChevron()}</span></summary>
+      <div className="hub-why-body">
+        {parts.map((p, i) => (typeof p === 'string' ? <p key={`why-${i}`}>{p}</p> : <React.Fragment key={`why-${i}`}>{p}</React.Fragment>))}
+      </div>
+    </details>
+  );
+}
+
+// One labelled figure in a card. The label and the value are always on the
+// line; the note that says where the figure came from, and anything that goes
+// with it (a command, a link out), is behind a tap on the row itself, so a
+// card of twelve figures reads as twelve lines. `sub` is a short line that
+// stays visible under the label, for what the figure means at a glance.
+// `chip` draws the value on its tone's wash, for a state rather than an amount.
+// data-hub-fig marks the row for the tests, the way data-hub-card marks a card.
+function HubRow({ label, value, note, tone, tag, navy, children, sub, chip = false }) {
+  const shown = value !== undefined && value !== null && value !== '';
+  const valueNode = !shown ? null : chip
+    ? <HubChip tone={tone}>{value}</HubChip>
+    : <span className="hub-row-value" style={{ color: HUB_TONE[tone] || navy }}>{value}</span>;
+  const more = !!note || React.Children.toArray(children).length > 0;
+  const head = (
+    <div className="hub-row-head">
+      <span className="hub-row-label">
+        {label}
+        {tag && <span style={hubTag(tag.tone)}>{tag.text}</span>}
+      </span>
+      {valueNode}
+      {more && hubChevron()}
+    </div>
+  );
+  const subLine = sub ? <div className="hub-row-sub">{sub}</div> : null;
+  if (!more) {
+    return <div className="hub-row" data-hub-fig="">{head}{subLine}</div>;
+  }
+  return (
+    <details className="hub-row hub-disclose" data-hub-fig="">
+      <summary className="hit44">{head}{subLine}</summary>
+      <div className="hub-row-more">
+        {note && <p className="hub-note">{note}</p>}
+        {children}
+      </div>
+    </details>
+  );
+}
+
+// A big figure on a tile of its own: what it is, the number, a short line on
+// what the number means, and how it is counted one tap below. `wash` tints the
+// tile with the accent background its tone's text is designed against.
+function HubTile({ label, value, tone, sub, why, navy, wash }) {
+  return (
+    <div className="hub-tile" data-hub-fig="" style={wash ? { backgroundColor: wash } : undefined}>
+      <p className="hub-tile-label">{label}</p>
+      <p className="hub-tile-value" style={{ color: HUB_TONE[tone] || navy }}>{value}</p>
+      {sub && <p className="hub-tile-sub">{sub}</p>}
+      {why && <HubWhy>{why}</HubWhy>}
+    </div>
+  );
+}
+
+// A row of figures as horizontal bars on one scale, the largest full width,
+// or on a scale given as `max` (100 for shares of a whole). The bars are drawn
+// from the server's own figures and never add anything up; each row's words
+// carry the number, so the bars are hidden from assistive tech and a screen
+// reader reads the list as text.
+function HubBarList({ rows, color, max: scale }) {
+  const max = Number.isFinite(scale) && scale > 0 ? scale : rows.reduce((m, r) => (Number.isFinite(r.value) && r.value > m ? r.value : m), 0);
+  return (
+    <div>
+      {rows.map((r) => (
+        <div key={r.key} className="hub-bar" data-hub-fig="">
+          <div className="hub-bar-head">
+            <span className="hub-bar-label">{r.label}</span>
+            <span className="hub-bar-value" style={{ color: r.valueColor || 'var(--text-primary)' }}>{r.valueText}</span>
+          </div>
+          <div className="hub-track" aria-hidden="true">
+            {Number.isFinite(r.value) && max > 0 && r.value > 0 && (
+              <div className="hub-fill" style={{ width: `${Math.max(2, Math.min(100, (r.value / max) * 100))}%`, backgroundColor: r.color || color }} />
+            )}
+          </div>
+          {r.note && <p className="hub-bar-note">{r.note}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A count against a target: how far along, with the target as a mark or, for
+// a target that is a range, a shaded band from its low end to its high end.
+// Decorative like the bars: the line beside it says the numbers.
+function HubMeter({ value, low, high, color }) {
+  const top = Math.max(Number.isFinite(high) ? high : 0, Number.isFinite(low) ? low : 0, Number.isFinite(value) ? value : 0);
+  if (!(top > 0)) return null;
+  const scale = top * 1.08;
+  const at = (n) => `${Math.min(100, Math.max(0, (n / scale) * 100))}%`;
+  const range = Number.isFinite(low) && Number.isFinite(high) && high > low;
+  return (
+    <div className="hub-meter" aria-hidden="true">
+      {range && <div className="hub-meter-band" style={{ left: at(low), width: `calc(${at(high)} - ${at(low)})`, backgroundColor: 'var(--border-default)' }} />}
+      {Number.isFinite(value) && value > 0 && <div className="hub-meter-fill" style={{ width: at(value), minWidth: '6px', backgroundColor: color }} />}
+      {Number.isFinite(low) && <span className="hub-meter-mark" style={{ left: at(low) }} />}
+      {range && <span className="hub-meter-mark" style={{ left: at(high) }} />}
     </div>
   );
 }
@@ -301,8 +568,8 @@ function HubRow({ label, value, note, tone, tag, navy, children }) {
 function HubNotice({ status, reason }) {
   const word = status === 'not_connected' ? 'Not connected' : status === 'refused' ? 'Key cannot read this' : 'Could not load';
   return (
-    <p style={{ ...hubStyle.note, margin: '4px 0 2px' }}>
-      <span style={{ ...hubTag('warn'), marginLeft: 0, marginRight: '6px' }}>{word}</span>
+    <p style={{ ...hubStyle.note, margin: '6px 0 4px', color: 'var(--text-secondary)' }}>
+      <span style={{ ...hubTag(status === 'not_connected' ? 'muted' : 'warn'), marginLeft: 0, marginRight: '6px' }}>{word}</span>
       {reason || 'No reason was given.'}
     </p>
   );
@@ -362,12 +629,13 @@ function hubGapSentence(gaps) {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}.`;
 }
 
-function HubSummary({ h, colors, loading, onRefresh }) {
+// The sentences behind the month's figures and the break-evens, worked out
+// once from the payload for the tiles and the card under them. Every one says
+// a server figure in words; nothing here adds or divides a figure.
+function hubSummaryWords(h) {
   const n = h.net || {};
-  const m = h.month || {};
   const be = n.breakEven || {};
   const stripe = (h.revenue && h.revenue.stripe) || {};
-  const navy = colors.navy;
   const revenueMissing = hubGaps(n.revenueMissing);
   const costsMissing = hubGaps(n.costsMissing);
   const netMissing = hubGaps(n.netMissing);
@@ -375,15 +643,23 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   const burnMissing = hubGaps(be.burnMissing);
   const revenueWithheld = revenueMissing.includes('stripe_partial');
   const appGap = revenueMissing.find((g) => HUB_APP_STORE_GAPS.includes(g));
+  const taxGap = revenueMissing.includes('stripe_tax') || revenueMissing.includes('stripe_tax_refunded');
   let revenueNote;
+  // The short line on the tile, under the figure: which sources it holds, or
+  // why there is no figure.
+  let revenueSub;
   if (n.revenueThisMonthCents === null || n.revenueThisMonthCents === undefined) {
     revenueNote = revenueWithheld
       ? 'Stripe had more balance entries this month than the hub reads. A missing page could move the total either way, so it is withheld rather than shown short.'
-      : revenueMissing.includes('stripe_tax') || revenueMissing.includes('stripe_tax_refunded')
+      : taxGap
         ? `${hubGapSentence(revenueMissing.filter((g) => g === 'stripe_tax' || g === 'stripe_tax_refunded'))} So there is no revenue figure after tax to show.`
         : stripe.status === 'not_connected' ? 'Stripe is not connected, so there is no revenue figure to show.' : 'Stripe could not be read, so there is no revenue figure to show.';
+    revenueSub = revenueWithheld ? 'Stripe was read in part'
+      : taxGap ? 'The sales tax in it is not known'
+        : stripe.status === 'not_connected' ? 'Stripe is not connected' : 'Stripe did not answer';
   } else if (appGap) {
     revenueNote = `Stripe, after refunds, disputes and fees. ${hubGapSentence([appGap])}`;
+    revenueSub = 'Stripe only, after fees';
   } else {
     // The App Store part is read from the accounts that are Pro now, which is
     // not every App Store sale this month (backend/services/moneyHub.js,
@@ -391,9 +667,8 @@ function HubSummary({ h, colors, loading, onRefresh }) {
     // Apple's cut is an assumption: the standard rate, because the hub cannot
     // see the Small Business Program or how long each subscriber has stayed.
     revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%, an estimate: Apple takes ${n.appleSmallBusinessPct || 15}% under the Small Business Program and from a subscriber's second year.${n.appStoreFrom === 'current_pro_accounts' ? ' The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it.' : ''}`;
+    revenueSub = 'Stripe and the App Store, after fees';
   }
-  const net = n.netThisMonthCents;
-  const netBurn = n.netBurnCents;
   // A figure that is null is waiting for a source; the App Store alone never
   // empties the net, which carries Stripe and says so.
   const netNeeds = hubNeeds(netMissing.filter((g) => !HUB_APP_STORE_GAPS.includes(g)));
@@ -421,93 +696,178 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   // Where the burn goes once the bills set to end have ended (moneyHub.js,
   // THE END OF A BILL), worked out on the server from the same lines.
   const after = h.costs && h.costs.afterEnding;
-  const endingWords = Number.isFinite(n.burnCents) && after && Number.isFinite(after.burnCents) && after.changeCents
+  const moves = Number.isFinite(n.burnCents) && after && Number.isFinite(after.burnCents) && after.changeCents;
+  const endingWords = moves
     ? ` It ${after.changeCents < 0 ? 'falls' : 'rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label
       ? `on ${hubDay(after.by)}, when ${after.label} ends`
       : `by ${hubDay(after.by)}, once the ${after.bills === 1 ? 'bill set to end has' : `${hubCount(after.bills)} bills set to end have`} ended`}.`
     : '';
+  // The same move, short enough for the tile.
+  const endingSub = moves
+    ? `${after.changeCents < 0 ? 'Falls' : 'Rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label ? 'on' : 'by'} ${hubDay(after.by)}`
+    : null;
   const cachedAge = stripe.cached && Number.isFinite(stripe.cachedAgeSeconds) ? stripe.cachedAgeSeconds : null;
+  return {
+    n, be, revenueMissing, costsMissing, netMissing, netBurnMissing, burnMissing, revenueWithheld,
+    revenueNote, revenueSub, netNeeds, needed, venuesNeeded, appPriceWords, priceWords, payingWords,
+    endingWords, endingSub, cachedAge,
+  };
+}
+
+// THE MONTH: the four figures the owner opens the console for, as tiles, on
+// the page itself under the month's name, the way the Nest puts its greeting.
+// Two across on a phone, so all four are on the first screen with the tab bar
+// above them, and four across on the wide console.
+function HubMonth({ h, colors, loading, onRefresh }) {
+  const w = hubSummaryWords(h);
+  const { n, costsMissing, netMissing } = w;
+  const m = h.month || {};
+  const navy = colors.navy;
+  const net = n.netThisMonthCents;
+  const at = hubTime(h.generatedAt);
+  const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
   return (
-    <div style={hubStyle.card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+    <section className="hub-month" data-hub-card="" aria-labelledby="hub-month-title">
+      <div className="hub-month-head">
         <div style={{ minWidth: 0 }}>
-          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>{m.label || 'This month'}</h3>
-          <p style={hubStyle.sub}>Day {m.dayOfMonth} of {m.daysInMonth}, New York time. Each figure says where it came from.</p>
+          <h2 id="hub-month-title" className="hub-month-title">{m.label || 'This month'}</h2>
+          <p className="hub-month-sub">Day {m.dayOfMonth} of {m.daysInMonth}, New York time.{at ? ` Read at ${at}.` : ''}</p>
         </div>
         <button className="hit44" type="button" disabled={loading} onClick={onRefresh} style={{ ...hubStyle.textButton, cursor: loading ? 'default' : 'pointer', flexShrink: 0 }}>
-          {loading ? 'Reading' : 'Refresh'}
+          {Icons.repeat('currentColor', 12)}{loading ? 'Reading' : 'Refresh'}
         </button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '10px' }}>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ ...hubStyle.kicker, margin: 0 }}>Revenue this month</p>
-          <p style={{ ...hubStyle.big, color: navy }}>{hubMoney(n.revenueThisMonthCents) || (revenueWithheld ? 'Withheld' : 'Not read')}</p>
-          <p style={hubStyle.note}>{revenueNote}</p>
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ ...hubStyle.kicker, margin: 0 }}>Costs this month</p>
-          <p style={{ ...hubStyle.big, color: navy }}>{hubMoney(n.costsThisMonthCents) || 'Not read'}</p>
-          <p style={hubStyle.note}>
-            {costsMissing.length > 0
-              ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
-              : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.'}
-          </p>
-        </div>
-      </div>
-      <div style={{ marginTop: '10px' }}>
-        <HubRow
+      <div className="hub-tiles">
+        <HubTile
           navy={navy}
-          label="Net this month"
-          value={Number.isFinite(net) ? hubMoney(net, { sign: true }) : netNeeds}
+          label="Money in"
+          value={hubMoney(n.revenueThisMonthCents) || (w.revenueWithheld ? 'Withheld' : 'Not read')}
+          sub={w.revenueSub}
+          why={[
+            w.revenueNote,
+            `Stripe and RevenueCat answers are held for ${holdMinutes} minutes${w.cachedAge !== null ? `, and this one is ${hubPlural(w.cachedAge, 'second', 'seconds')} old` : ''}.`,
+          ]}
+        />
+        <HubTile
+          navy={navy}
+          label="Costs"
+          value={hubMoney(n.costsThisMonthCents) || 'Not read'}
+          sub={costsMissing.length > 0 ? 'The expense list was not read' : "This month's share of every bill"}
+          why={costsMissing.length > 0
+            ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
+            : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.'}
+        />
+        <HubTile
+          navy={navy}
+          label="Profit or loss"
+          value={Number.isFinite(net) ? hubMoney(net, { sign: true }) : w.netNeeds}
           tone={Number.isFinite(net) ? (net < 0 ? 'bad' : 'good') : 'muted'}
-          note={`Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
+          sub="Money in minus costs"
+          why={`Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
         />
-        <HubRow
+        <HubTile
           navy={navy}
-          label="Burn a month"
+          label="Monthly bills"
           value={hubMoney(n.burnCents) || 'Not read'}
-          note={costsMissing.length > 0
+          sub={costsMissing.length > 0 ? 'The expense list was not read' : (w.endingSub || 'Every repeating bill, a month')}
+          why={costsMissing.length > 0
             ? 'Not totalled, because the expense list could not be read.'
-            : `Every recurring cost at its monthly rate. One-time charges are left out.${endingWords}`}
+            : `The burn: every recurring cost at its monthly rate. One-time charges are left out.${w.endingWords}`}
         />
-        <HubRow
-          navy={navy}
-          label="Burn after recurring revenue"
-          value={Number.isFinite(netBurn) ? hubMoney(netBurn) : hubNeeds(netBurnMissing)}
-          tone={Number.isFinite(netBurn) && netBurn <= 0 ? 'good' : undefined}
-          note={Number.isFinite(netBurn)
-            ? (netBurn <= 0
-              ? 'Subscribers already pay for the monthly costs, after Stripe fees and Apple’s cut.'
-              : 'The burn less what subscribers pay each month, after Stripe fees and Apple’s cut.')
-            : `The burn less what subscribers pay each month. ${hubGapSentence(netBurnMissing)}`}
-        />
-        <HubRow
-          navy={navy}
-          label="Break-even, Flock Pro"
-          value={burnMissing.length > 0 ? 'Not read' : `${needed(be.proWeb)} web, ${needed(be.proAppStore)} App Store`}
-          note={`Subscribers needed to cover the burn on their own, at ${priceWords(be.proWeb)} on the web and ${appPriceWords(be.proAppStore)}. After Stripe fees on the web, after Apple's ${n.appleCommissionPct}% in the App Store${be.proAppStore && be.proAppStore.smallBusiness && Number.isFinite(be.proAppStore.smallBusiness.needed) ? ` (${be.proAppStore.smallBusiness.needed} at the ${be.proAppStore.smallBusiness.commissionPct}% Apple takes under the Small Business Program)` : ''}.${burnMissing.length > 0 ? ` ${hubGapSentence(burnMissing)}` : ''} Paying now: ${payingWords(be.payingPro, be.payingProMissing)}.`}
-        />
-        <HubRow
-          navy={navy}
-          label="Break-even, Roost"
-          value={burnMissing.length > 0 ? 'Not read' : venuesNeeded(be.roost)}
-          note={`At ${priceWords(be.roost)}, after Stripe fees. Paying now: ${payingWords(be.payingRoost, be.payingRoostMissing)}.`}
-        />
-        {h.unitCosts && h.unitCosts.status === 'ok' && (
-          <HubRow
-            navy={navy}
-            label="Cost per active person"
-            value={Number.isFinite(h.unitCosts.perActivePersonCents) ? `${hubMoney(h.unitCosts.perActivePersonCents)}/mo` : 'Too few to say'}
-            note={Number.isFinite(h.unitCosts.perActivePersonCents)
-              ? `The monthly burn over the ${hubCount(h.unitCosts.activeLast7)} people active in the last 7 days.${Number.isFinite(h.unitCosts.perPlanCents) ? ` At last week's pace of ${hubCount(h.unitCosts.plansMadeLast7)} plans, each plan costs ${hubMoney(h.unitCosts.perPlanCents)}.` : ''}`
-              : `Shown from ${h.unitCosts.minPeople} active people a week; ${hubCount(h.unitCosts.activeLast7)} were active in the last 7 days.`}
-          />
-        )}
       </div>
-      <p style={hubStyle.foot}>
-        Read at {hubTime(h.generatedAt)}. Stripe and RevenueCat answers are held for {Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60)} minutes{cachedAge !== null ? `, and this one is ${hubPlural(cachedAge, 'second', 'seconds')} old` : ''}.
-      </p>
-    </div>
+    </section>
+  );
+}
+
+// DO SUBSCRIBERS COVER THE BILLS? The month's bills beside what subscribers
+// pay each month, on one scale, then how many subscribers or venues would
+// cover the bills on their own, against how many pay now. The chip answers the
+// title in a word before any of it is read.
+function HubCover({ h, colors }) {
+  const w = hubSummaryWords(h);
+  const { n, be, netBurnMissing, burnMissing } = w;
+  const navy = colors.navy;
+  const burn = n.burnCents;
+  const recurring = n.recurringNetCents;
+  const netBurn = n.netBurnCents;
+  const recurringMissing = hubGaps(n.recurringMissing);
+  let chip = <HubChip tone="muted">Not known yet</HubChip>;
+  if (Number.isFinite(netBurn)) chip = netBurn <= 0 ? <HubChip tone="good">Yes</HubChip> : <HubChip tone="warn">Not yet</HubChip>;
+  const pro = be.proWeb || null;
+  const proApp = be.proAppStore || null;
+  const roost = be.roost || null;
+  const payingPro = Number.isFinite(be.payingPro) ? be.payingPro : null;
+  const payingRoost = Number.isFinite(be.payingRoost) ? be.payingRoost : null;
+  const range = burnMissing.length === 0 && pro && Number.isFinite(pro.needed);
+  return (
+    <HubCard id="hub-cover" title="Do subscribers cover the bills?" chips={chip}>
+      <HubBarList
+        color={colors.steel}
+        rows={[
+          {
+            key: 'bills',
+            label: 'Monthly bills',
+            value: burn,
+            valueText: Number.isFinite(burn) ? `${hubMoney(burn)} a month` : 'Not read',
+            color: 'var(--text-tertiary)',
+          },
+          {
+            key: 'subscribers',
+            label: 'Subscribers pay',
+            value: recurring,
+            valueText: Number.isFinite(recurring) ? `${hubMoney(recurring)} a month` : hubNeeds(recurringMissing),
+            color: colors.steel,
+            note: "After Stripe's fees and Apple's cut.",
+          },
+        ]}
+      />
+      <HubRow
+        navy={navy}
+        label="Still to cover each month"
+        value={Number.isFinite(netBurn) ? hubMoney(netBurn) : hubNeeds(netBurnMissing)}
+        tone={Number.isFinite(netBurn) && netBurn <= 0 ? 'good' : undefined}
+        note={Number.isFinite(netBurn)
+          ? (netBurn <= 0
+            ? 'Subscribers already pay for the monthly costs, after Stripe fees and Apple’s cut.'
+            : 'The burn less what subscribers pay each month, after Stripe fees and Apple’s cut.')
+          : `The burn less what subscribers pay each month. ${hubGapSentence(netBurnMissing)}`}
+      />
+      <p style={hubStyle.kicker}>Subscribers needed to cover the bills</p>
+      <HubRow
+        navy={navy}
+        label="Flock Pro subscribers needed"
+        value={burnMissing.length > 0 ? 'Not read' : `${w.needed(pro)} web, ${w.needed(proApp)} App Store`}
+        sub={(
+          <>
+            {range && <HubMeter value={payingPro} low={pro.needed} high={proApp && Number.isFinite(proApp.needed) ? proApp.needed : null} color={colors.steel} />}
+            {payingPro !== null ? `${hubPlural(payingPro, 'subscriber pays', 'subscribers pay')} now.` : 'How many pay now is not known.'}
+          </>
+        )}
+        note={`Subscribers needed to cover the burn on their own, at ${w.priceWords(pro)} on the web and ${w.appPriceWords(proApp)}. After Stripe fees on the web, after Apple's ${n.appleCommissionPct}% in the App Store${proApp && proApp.smallBusiness && Number.isFinite(proApp.smallBusiness.needed) ? ` (${proApp.smallBusiness.needed} at the ${proApp.smallBusiness.commissionPct}% Apple takes under the Small Business Program)` : ''}.${burnMissing.length > 0 ? ` ${hubGapSentence(burnMissing)}` : ''} Paying now: ${w.payingWords(be.payingPro, be.payingProMissing)}.`}
+      />
+      <HubRow
+        navy={navy}
+        label="Roost venues needed"
+        value={burnMissing.length > 0 ? 'Not read' : w.venuesNeeded(be.roost)}
+        sub={(
+          <>
+            {burnMissing.length === 0 && roost && Number.isFinite(roost.needed) && <HubMeter value={payingRoost} low={roost.needed} color={colors.steel} />}
+            {payingRoost !== null ? `${hubPlural(payingRoost, 'venue pays', 'venues pay')} now.` : 'How many pay now is not known.'}
+          </>
+        )}
+        note={`At ${w.priceWords(roost)}, after Stripe fees. Paying now: ${w.payingWords(be.payingRoost, be.payingRoostMissing)}.`}
+      />
+      {h.unitCosts && h.unitCosts.status === 'ok' && (
+        <HubRow
+          navy={navy}
+          label="Cost per active person"
+          value={Number.isFinite(h.unitCosts.perActivePersonCents) ? `${hubMoney(h.unitCosts.perActivePersonCents)}/mo` : 'Too few to say'}
+          note={Number.isFinite(h.unitCosts.perActivePersonCents)
+            ? `The monthly burn over the ${hubCount(h.unitCosts.activeLast7)} people active in the last 7 days.${Number.isFinite(h.unitCosts.perPlanCents) ? ` At last week's pace of ${hubCount(h.unitCosts.plansMadeLast7)} plans, each plan costs ${hubMoney(h.unitCosts.perPlanCents)}.` : ''}`
+            : `Shown from ${h.unitCosts.minPeople} active people a week; ${hubCount(h.unitCosts.activeLast7)} were active in the last 7 days.`}
+        />
+      )}
+    </HubCard>
   );
 }
 
@@ -627,7 +987,7 @@ function HubOwnerStep({ step, navy }) {
   const at = rt ? hubTime(rt.asOf) : null;
   const href = step.link ? hubHttps(step.link.href) : null;
   return (
-    <HubRow navy={navy} label={step.label} tag={tag} value={state.text} tone={state.tone} note={step.words}>
+    <HubRow navy={navy} label={step.label} tag={tag} value={state.text} tone={state.tone} chip note={step.words}>
       {rt && (ms
         ? <p style={hubStyle.note}>One SELECT 1 round trip took {ms}{at ? `, timed at ${at}` : ''}.</p>
         : <p style={hubStyle.note}>{rt.reason || 'The round trip was not timed, so there is no time to show.'}</p>)}
@@ -649,13 +1009,17 @@ function HubOwnerActions({ h, colors }) {
   const checked = oa.items.filter((s) => s.checkedBy === 'server');
   const yours = oa.items.filter((s) => s.checkedBy !== 'server');
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
+  const todo = oa.counts && Number.isFinite(oa.counts.todo) ? oa.counts.todo : 0;
   return (
-    <div id={HUB_CARD.steps.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Only you can do these</h3>
-      <p style={hubStyle.sub}>Steps the code cannot take for itself. The server checks the ones it can see each time this page is read. The rest are marked Check yourself, with a link to where each one is done.</p>
+    <HubCard
+      id={HUB_CARD.steps.id}
+      title="Only you can do these"
+      sub="Steps the code cannot take for itself. Tap one for how it is done."
+      chips={todo > 0 ? <HubChip tone="warn">{`${hubCount(todo)} to do`}</HubChip> : null}
+    >
       {checked.length > 0 && (
         <>
-          <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>Checked by the server</p>
+          <p style={{ ...hubStyle.kicker, marginTop: '8px' }}>Checked by the server</p>
           <p style={{ ...hubStyle.note, margin: '0 0 4px' }}>{hubStepSummary(oa.counts)}</p>
           {checked.map((s) => <HubOwnerStep key={s.id} step={s} navy={navy} />)}
         </>
@@ -666,10 +1030,11 @@ function HubOwnerActions({ h, colors }) {
           {yours.map((s) => <HubOwnerStep key={s.id} step={s} navy={navy} />)}
         </>
       )}
-      <p style={hubStyle.foot}>
-        Checked at {hubTime(h.generatedAt)}. No check sends a variable&apos;s value, only whether it is set, and the database is named by its network, never by its host. The round trip is held for {holdMinutes} minutes, like the Stripe and RevenueCat answers.
-      </p>
-    </div>
+      <HubWhy label="How these are checked">
+        {'The server checks the ones it can see each time this page is read. The rest are marked Check yourself, with a link to where each one is done.'}
+        {`Checked at ${hubTime(h.generatedAt)}. No check sends a variable's value, only whether it is set, and the database is named by its network, never by its host. The round trip is held for ${holdMinutes} minutes, like the Stripe and RevenueCat answers.`}
+      </HubWhy>
+    </HubCard>
   );
 }
 
@@ -680,7 +1045,6 @@ function HubRevenue({ h, colors }) {
   const db = r.database || {};
   const flags = r.flags || {};
   const navy = colors.navy;
-  const onOff = (v) => (v ? 'on' : 'off');
   const subs = s.subscriptions || null;
   const bal = s.balance || null;
   const inv = s.invoices || null;
@@ -688,10 +1052,12 @@ function HubRevenue({ h, colors }) {
   const overview = rc.overview || null;
   const stripeReady = s.status === 'ok';
 
+  // What each subscription bills a month, named for what it is rather than as
+  // "recurring revenue": the note under it gives the year and the fees.
   const recurringRows = (summary, prefix) => (
     <HubRow
       navy={navy}
-      label={`${prefix} recurring revenue`}
+      label={`${prefix} subscriptions bring in`}
       value={`${hubMoney(summary.mrrCents)} a month`}
       note={`${hubMoney(summary.mrrCents * 12)} a year as annual recurring revenue. ${hubMoney(summary.mrrNetCents)} a month after Stripe fees.`}
     />
@@ -703,15 +1069,18 @@ function HubRevenue({ h, colors }) {
     return mt.value.toLocaleString('en-US');
   };
   const periodWords = (p) => (p === 'P0D' || !p ? 'now' : p === 'P28D' ? 'the last 28 days' : p);
+  // What is switched on, as chips: green for on, quiet for off.
+  const flag = (on, name) => <HubChip key={name} tone={on ? 'good' : 'muted'}>{`${name} ${on ? 'on' : 'off'}`}</HubChip>;
 
   return (
-    <div id={HUB_CARD.revenue.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Revenue</h3>
-      <p style={hubStyle.sub}>
-        flockcorp.com sells through Stripe; the iOS app sells through the App Store, which RevenueCat reads. Paywall {onOff(flags.paywallEnabled)}, web checkout {onOff(flags.proWebCheckoutEnabled)}, venue billing {onOff(flags.venueBillingEnabled)}.
-      </p>
+    <HubCard id={HUB_CARD.revenue.id} title="Revenue" sub="flockcorp.com sells through Stripe; the iOS app sells through the App Store, which RevenueCat reads.">
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', margin: '2px 0 4px' }}>
+        {flag(flags.paywallEnabled, 'Paywall')}
+        {flag(flags.proWebCheckoutEnabled, 'Web checkout')}
+        {flag(flags.venueBillingEnabled, 'Venue billing')}
+      </div>
       {stripeReady && s.mode === 'test' && (
-        <p style={hubStyle.note}><span style={{ ...hubTag('warn'), marginLeft: 0, marginRight: '6px' }}>Test mode</span>The Stripe key is a test key, so every Stripe figure below is test money.</p>
+        <p style={{ ...hubStyle.note, color: 'var(--text-secondary)' }}><span style={{ ...hubTag('warn'), marginLeft: 0, marginRight: '6px' }}>Test mode</span>The Stripe key is a test key, so every Stripe figure below is test money.</p>
       )}
 
       <p style={hubStyle.kicker}>Flock Pro on the web</p>
@@ -743,7 +1112,7 @@ function HubRevenue({ h, colors }) {
             {hubPlanRows(app, 'App Store', navy)}
             <HubRow
               navy={navy}
-              label="App Store recurring revenue"
+              label="App Store subscriptions bring in"
               value={`${hubMoney(app.mrrCents)} a month`}
               note={sentences(
                 "Before Apple's cut.",
@@ -764,15 +1133,19 @@ function HubRevenue({ h, colors }) {
             {Object.keys(stores).filter((k) => k !== 'app_store' && k !== 'stripe').map((k) => (
               <HubRow key={`store-${k}`} navy={navy} label={HUB_STORE_LABEL[k] || k} value={hubCount(stores[k].live)} note={k === 'promotional' ? 'Granted by hand in RevenueCat. Nobody pays for these.' : null} />
             ))}
-            {rcSubs.sandbox > 0 && <HubRow navy={navy} label="Sandbox" value={hubCount(rcSubs.sandbox)} note="Test purchases by allowed accounts. No money moves." />}
+            {rcSubs.sandbox > 0 && <HubRow navy={navy} label="Test purchases" value={hubCount(rcSubs.sandbox)} note="Sandbox purchases by allowed accounts. No money moves." />}
             {rcSubs.premiumWithNothingLive > 0 && (
               <HubRow navy={navy} tone="warn" label="Pro with nothing live" value={hubCount(rcSubs.premiumWithNothingLive)} note="Pro in the database, and RevenueCat shows no live subscription for them. The next webhook or sync should switch them off." />
             )}
-            <p style={hubStyle.foot}>
-              Read from each Pro account's own record in RevenueCat: {hubCount(rcSubs.checked)} of {hubCount(db.proAccountsCheckedWithRevenueCat)} checked{rcSubs.failed > 0 ? `, ${hubCount(rcSubs.failed)} could not be read` : ''}.
-              {Number.isFinite(db.proAccounts) && db.proAccounts > db.proAccountsCheckedWithRevenueCat ? ` Only the first ${hubCount(db.proAccountsCheckedWithRevenueCat)} of ${hubCount(db.proAccounts)} Pro accounts are checked.` : ''}
-              {rcSubs.complete === false ? ' These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it.' : ''}
-            </p>
+            {rcSubs.complete === false && (
+              <p style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it.</p>
+            )}
+            <HubWhy>
+              <p>
+                Read from each Pro account's own record in RevenueCat: {hubCount(rcSubs.checked)} of {hubCount(db.proAccountsCheckedWithRevenueCat)} checked{rcSubs.failed > 0 ? `, ${hubCount(rcSubs.failed)} could not be read` : ''}.
+                {Number.isFinite(db.proAccounts) && db.proAccounts > db.proAccountsCheckedWithRevenueCat ? ` Only the first ${hubCount(db.proAccountsCheckedWithRevenueCat)} of ${hubCount(db.proAccounts)} Pro accounts are checked.` : ''}
+              </p>
+            </HubWhy>
           </>
         );
       })()}
@@ -823,7 +1196,7 @@ function HubRevenue({ h, colors }) {
           {bal.otherCents !== 0 && (
             <HubRow navy={navy} label="Other balance moves" value={hubMoney(bal.otherCents)} note={`Stripe reported: ${(bal.otherCategories || []).map((c) => `${c.category} (${c.count})`).join(', ')}.`} />
           )}
-          <HubRow navy={navy} label="Net" value={hubMoney(bal.netCents)} tone={bal.netCents < 0 ? 'bad' : undefined} note="Payouts to the bank are movement, not revenue, and are left out." />
+          <HubRow navy={navy} label="Left after fees and refunds" value={hubMoney(bal.netCents)} tone={bal.netCents < 0 ? 'bad' : undefined} note="What the month's charges came to once refunds, disputes and Stripe's fees were taken off. Payouts to the bank are movement, not revenue, and are left out." />
           {bal.truncated && <p style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>Stripe had more balance entries this month than this read pages through, so these figures are incomplete, and with refunds and disputes in them they could be off in either direction. The revenue at the top is withheld for the same reason.</p>}
           {bal.nonUsd > 0 && <p style={hubStyle.foot}>{hubPlural(bal.nonUsd, 'entry was', 'entries were')} not in US dollars and {bal.nonUsd === 1 ? 'is' : 'are'} not added.</p>}
         </>
@@ -833,10 +1206,10 @@ function HubRevenue({ h, colors }) {
           <HubRow navy={navy} label="Paid invoices, Flock Pro" value={hubMoney(inv.byProduct.pro.paidCents)} note={`${hubPlural(inv.byProduct.pro.invoices, 'invoice', 'invoices')}${inv.byProduct.pro.zeroInvoices > 0 ? `, ${hubCount(inv.byProduct.pro.zeroInvoices)} of them at $0 through a code` : ''}.`} />
           <HubRow navy={navy} label="Paid invoices, Roost" value={hubMoney(inv.byProduct.roost.paidCents)} note={`${hubPlural(inv.byProduct.roost.invoices, 'invoice', 'invoices')}.`} />
           {inv.byProduct.other.invoices > 0 && <HubRow navy={navy} label="Paid invoices, other" value={hubMoney(inv.byProduct.other.paidCents)} note="Invoices that name neither product, such as one made by hand in Stripe." />}
-          <p style={hubStyle.foot}>
-            Paid this month, from invoices created {Number.isFinite(inv.lookbackDays) ? `up to ${hubCount(inv.lookbackDays)} days before the month began` : 'shortly before the month began'}: Stripe&apos;s list filters on the day an invoice was made, not the day it was paid, and a failed renewal is retried for at most two months. An older invoice marked paid by hand this month would be missed.
-            {inv.truncated ? ' There were more paid invoices than this read pages through, so these sums are a floor.' : ''}
-          </p>
+          {inv.truncated && <p style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>There were more paid invoices than this read pages through, so these sums are a floor.</p>}
+          <HubWhy>
+            {`Paid this month, from invoices created ${Number.isFinite(inv.lookbackDays) ? `up to ${hubCount(inv.lookbackDays)} days before the month began` : 'shortly before the month began'}: Stripe's list filters on the day an invoice was made, not the day it was paid, and a failed renewal is retried for at most two months. An older invoice marked paid by hand this month would be missed.`}
+          </HubWhy>
         </>
       )}
       {stripeReady && s.disputes && s.disputes.status === 'ok' && (s.disputes.open > 0 || s.disputes.openOtherCurrency > 0 || s.disputes.truncated) && (
@@ -872,15 +1245,22 @@ function HubRevenue({ h, colors }) {
           })
       )}
       {stripeReady && <p style={hubStyle.foot}>Stripe read at {hubTime(s.asOf)}{s.mode === 'live' ? ', live mode' : ''}.</p>}
-    </div>
+    </HubCard>
   );
+}
+
+// The colour each kind of bill takes on the split bar. Kinds are categories,
+// not states, so none of the status colours: the chart palette in HUB_CSS,
+// told apart by the legend's words as well as by colour.
+function hubKindColors() {
+  return { infrastructure: 'var(--hub-c1)', tooling: 'var(--hub-c2)', legal: 'var(--hub-c3)', other: 'var(--hub-c4)' };
 }
 
 function HubCosts({ h, colors }) {
   const c = h.costs || {};
   const navy = colors.navy;
   const grid = { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto auto', columnGap: '12px', alignItems: 'baseline' };
-  const head = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'right', paddingBottom: '4px' };
+  const head = { fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', textAlign: 'right', paddingBottom: '4px' };
   const cell = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', padding: '5px 0', borderTop: '1px solid var(--border-light)', minWidth: 0, overflowWrap: 'anywhere' };
   const num = { ...cell, textAlign: 'right', fontWeight: '600', color: navy, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' };
   const totals = c.totals || {};
@@ -901,17 +1281,38 @@ function HubCosts({ h, colors }) {
       <span style={{ ...num, borderTop: '1px solid var(--border-default)' }}>{hubMoney(totals.perMonthCents)}</span>
     </div>
   );
-  const upcoming = c.upcoming || [];
   const truncated = !!(h.expenses && h.expenses.truncated);
   const biggest = c.biggest && Array.isArray(c.biggest.lines) ? c.biggest : null;
-  const undated = c.undatedMonthly && Array.isArray(c.undatedMonthly.lines) ? c.undatedMonthly : null;
-  const ending = Array.isArray(c.ending) ? c.ending : [];
+  const kinds = (Array.isArray(c.byKind) ? c.byKind : []).filter((k) => Number.isFinite(k.perMonthCents));
+  const kindColor = hubKindColors();
+  // The split bar draws each kind's share of the month's bills. A credit can
+  // take a kind below zero, and a bar cannot be drawn below zero, so the
+  // widths are of the kinds above it; the legend prints every kind's figure.
+  const drawn = kinds.filter((k) => k.perMonthCents > 0);
+  const drawnTotal = drawn.reduce((sum, k) => sum + k.perMonthCents, 0);
+  const whole = c.status === 'ok' && !truncated && Number.isFinite(totals.perMonthCents);
+  const mtu = c.maptilerUsage;
+  const rsu = c.resendUsage;
+  // A meter against its allowance, for the MapTiler and Resend lines below.
+  // Drawn only from a reading, never from a meter that was not asked.
+  const allowanceBar = (key, label, used, included) => (Number.isFinite(used) && Number.isFinite(included) && included > 0 ? (
+    <div key={key} style={{ margin: '8px 0 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '5px' }}>
+        <span>{label}</span>
+        <span style={{ fontWeight: '600', color: navy, fontVariantNumeric: 'tabular-nums' }}>{`${hubCount(used)} of ${hubCount(included)}`}</span>
+      </div>
+      <div className="hub-track" aria-hidden="true">
+        <div className="hub-fill" style={{ width: `${Math.max(2, Math.min(100, (used / included) * 100))}%`, backgroundColor: used >= included ? 'var(--accent-red-text)' : used >= included * 0.8 ? 'var(--accent-amber-text)' : colors.steel }} />
+      </div>
+    </div>
+  ) : null);
   return (
-    <div id={HUB_CARD.costs.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Costs</h3>
-      <p style={hubStyle.sub}>
-        The infrastructure bills in backend/services/costModel.js, the reconciled Google Cloud and Railway bills, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
-      </p>
+    <HubCard
+      id={HUB_CARD.costs.id}
+      title="Costs"
+      sub="Where the money goes each month, every bill counted once."
+      chips={whole ? <HubChip tone="muted">{`${hubMoney(totals.perMonthCents)} a month`}</HubChip> : null}
+    >
       {c.status === 'error' && <HubNotice status="error" reason={c.reason} />}
       {/* A list cut short at the limit is missing bills, so its totals are a
           smaller number that looks whole: the tables are withheld, as the
@@ -921,85 +1322,56 @@ function HubCosts({ h, colors }) {
         <p style={hubStyle.note}>Totals withheld until the expense list fits: the bills past the first {h.expenses.limit || 500} are not in them.</p>
       ) : (
         <>
-          <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>By kind</p>
-          {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
-          <p style={hubStyle.kicker}>By category</p>
-          {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
           {/* Every bill in the burn, largest first (moneyHub.js, THE BIGGEST
               BILLS): the code's lines and the expense list in one ranking,
-              which neither table above gives. */}
+              as bars on one scale. */}
           {biggest && biggest.lines.length > 0 && (
             <>
-              <p style={hubStyle.kicker}>Biggest bills</p>
-              {biggest.lines.map((b) => (
-                <HubRow
-                  key={`big-${b.id}`}
-                  navy={navy}
-                  label={b.label}
-                  value={`${hubMoney(b.perMonthCents)} a month`}
-                  note={`${hubShare(b.pct)} of ${biggest.beforeCredits ? 'the bills before credits' : 'the burn'}.${b.cadence === 'yearly' ? ' A yearly bill, at a twelfth.' : b.cadence === 'quarterly' ? ' A quarterly bill, at a third.' : ''}`}
-                />
-              ))}
+              <p style={{ ...hubStyle.kicker, marginTop: '6px' }}>Biggest bills</p>
+              <HubBarList
+                color={colors.steel}
+                rows={biggest.lines.map((b) => ({
+                  key: `big-${b.id}`,
+                  label: b.label,
+                  value: b.perMonthCents,
+                  valueText: `${hubMoney(b.perMonthCents)} a month`,
+                  color: kindColor[b.kind] || colors.steel,
+                  note: `${hubShare(b.pct)} of ${biggest.beforeCredits ? 'the bills before credits' : 'the burn'}.${b.cadence === 'yearly' ? ' A yearly bill, at a twelfth.' : b.cadence === 'quarterly' ? ' A quarterly bill, at a third.' : ''}`,
+                }))}
+              />
               {biggest.restBills > 0 && (
                 <p style={hubStyle.foot}>{hubPlural(biggest.restBills, 'smaller bill', 'smaller bills')}, {hubMoney(biggest.restPerMonthCents)} a month in all.</p>
               )}
             </>
           )}
-        </>
-      )}
-
-      <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 90} days</p>
-      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && !truncated && (
-        <p style={hubStyle.note}>{c.upcomingTotals.map((t) => `Next ${t.days} days: ${hubMoney(t.cents)}`).join(' · ')}. Dollar bills on the expense list with a date.</p>
-      )}
-      {upcoming.length === 0 ? (
-        <p style={hubStyle.note}>None dated. A bill on the expense list shows here once it has a renewal or last-charge date; the code's lines carry no dates.</p>
-      ) : upcoming.map((u) => (
-        <HubRow
-          key={`renew-${u.expenseId}-${u.on}`}
-          navy={navy}
-          label={`${hubDay(u.on)}, ${u.label}`}
-          value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
-          note={u.estimated ? 'Worked out from the last charge date.' : null}
-        />
-      ))}
-
-      {/* The monthly bills the renewals cannot date (moneyHub.js, MONTHLY
-          BILLS THE RENEWAL TOTALS CANNOT DATE). The totals above count dated
-          bills only, and read as everything going out while the code's own
-          monthly bills were in none of them. Withheld with the totals when
-          the list is cut short. */}
-      {undated && undated.lines.length > 0 && !truncated && (
-        <>
-          <p style={hubStyle.kicker}>Monthly bills with no date</p>
-          <p style={hubStyle.note}>Charged every month on a day nothing here records, so they are in none of the renewals above: {hubMoney(undated.perMonthCents)} a month in all.</p>
-          {undated.lines.map((l) => (
-            <HubRow
-              key={`undated-${l.id}`}
-              navy={navy}
-              label={l.label}
-              value={`${hubMoney(l.perMonthCents)} a month`}
-              note={l.cadence === 'usage' ? 'Billed by use, at its latest figure.' : null}
-            />
-          ))}
-        </>
-      )}
-
-      {/* Bills whose renewal is turned off (moneyHub.js, THE END OF A BILL):
-          the day each stops, and what the burn does then, which a list cut
-          short leaves out with the totals. */}
-      {ending.length > 0 && (
-        <>
-          <p style={hubStyle.kicker}>Set to end</p>
-          {ending.map((e) => (
-            <HubRow
-              key={`end-${e.expenseId}`}
-              navy={navy}
-              label={`${hubDay(e.endsOn)}, ${e.label}`}
-              value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
-              note={hubEndingWords(e, truncated)}
-            />
-          ))}
+          {kinds.length > 0 && (
+            <>
+              <p style={hubStyle.kicker}>By kind</p>
+              {drawnTotal > 0 && (
+                <div className="hub-stack" aria-hidden="true">
+                  {drawn.map((k) => (
+                    <div key={`seg-${k.kind}`} style={{ width: `${(k.perMonthCents / drawnTotal) * 100}%`, backgroundColor: kindColor[k.kind] || colors.steel }} />
+                  ))}
+                </div>
+              )}
+              <div className="hub-legend">
+                {kinds.map((k) => (
+                  <span key={`key-${k.kind}`}>
+                    <span className="hub-swatch" style={{ backgroundColor: kindColor[k.kind] || colors.steel }} />
+                    {`${k.label || HUB_KIND_LABEL[k.kind] || k.kind} ${hubMoney(k.perMonthCents)}`}
+                  </span>
+                ))}
+              </div>
+              <HubWhy label="See the tables">
+                <>
+                  <p style={{ ...hubStyle.kicker, marginTop: '6px' }}>By kind</p>
+                  {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
+                  <p style={hubStyle.kicker}>By category</p>
+                  {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
+                </>
+              </HubWhy>
+            </>
+          )}
         </>
       )}
 
@@ -1012,6 +1384,7 @@ function HubCosts({ h, colors }) {
               navy={navy}
               label={j.label}
               tone="warn"
+              chip
               value={`up ${j.pct}%`}
               note={`${hubMoney(j.fromCents)}${j.fromPeriod ? ` for ${j.fromPeriod}` : ''}, now ${hubMoney(j.toCents)}${j.toAsOf ? ` as of ${j.toAsOf}` : ''}.`}
             />
@@ -1037,37 +1410,206 @@ function HubCosts({ h, colors }) {
         </>
       )}
 
-      {(c.replaced || []).length > 0 && (
-        <p style={hubStyle.foot}>Counted from the expense list instead of the code: {c.replaced.map((x) => x.label).join(', ')}.</p>
+      {(mtu || rsu) && <p style={hubStyle.kicker}>Usage against the plans</p>}
+      {mtu && (
+        <div style={{ padding: '2px 0 6px' }}>
+          {mtu.status === 'read' && allowanceBar('mt-sessions', 'MapTiler map sessions', mtu.sessions, mtu.included && mtu.included.sessions)}
+          {mtu.status === 'read' && allowanceBar('mt-requests', 'MapTiler requests', mtu.requests, mtu.included && mtu.included.requests)}
+          <p style={hubStyle.foot}>
+            MapTiler this billing period: {hubMaptilerLine(mtu)} The Flex fee is the MapTiler row on the expense list; this is the use on top of it.
+          </p>
+        </div>
       )}
+      {rsu && (
+        <div style={{ padding: '2px 0 6px' }}>
+          {rsu.status === 'read' && rsu.daily && allowanceBar('rs-daily', 'Email today', rsu.daily.used, rsu.daily.limit)}
+          {rsu.status === 'read' && rsu.monthly && allowanceBar('rs-monthly', 'Email this month', rsu.monthly.used, rsu.monthly.limit)}
+          <p style={hubStyle.foot}>
+            Resend, live: {hubResendLine(rsu)}
+          </p>
+        </div>
+      )}
+
       {(c.possibleDoubles || []).map((d) => (
         <p key={`dbl-${d.codeLineId}-${d.expenseId}`} style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>
           Possibly counted twice: {d.expenseLabel} on the expense list and {d.codeLabel} in the code. Edit the row and choose the code line under Counts instead of, and it is counted once.
         </p>
       ))}
-      {(c.nonUsd || []).length > 0 && (
-        <p style={hubStyle.foot}>Not added, because nothing here converts currencies: {c.nonUsd.map((x) => `${x.label} (${hubExpenseAmount(x)}${x.replacesLine ? ', and the code line it names still counts' : ''})`).join(', ')}.</p>
-      )}
-      {c.undatedCodeYearly > 0 && (
-        <p style={hubStyle.foot}>{hubPlural(c.undatedCodeYearly, 'yearly bill in the code has', 'yearly bills in the code have')} no charge date, so {c.undatedCodeYearly === 1 ? 'it counts' : 'they count'} at a twelfth every month. Add {c.undatedCodeYearly === 1 ? 'it' : 'them'} to the expense list with a renewal date to see the renewal coming.</p>
-      )}
-      {c.googleMeteredThisMonth && Number.isFinite(c.googleMeteredThisMonth.photosBought) && (
-        <p style={hubStyle.foot}>
-          Google photos bought this month: {hubCount(c.googleMeteredThisMonth.photosBought)}{Number.isFinite(c.googleMeteredThisMonth.photosUsd) ? `, ${hubMoney(Math.round(c.googleMeteredThisMonth.photosUsd * 100))}` : ''}, from places_photo_spend. That spend arrives on the Google Cloud invoice above and is not added twice.
-        </p>
-      )}
-      {c.maptilerUsage && (
-        <p style={hubStyle.foot}>
-          MapTiler this billing period: {hubMaptilerLine(c.maptilerUsage)} The Flex fee is the MapTiler row on the expense list; this is the use on top of it.
-        </p>
-      )}
-      {c.resendUsage && (
-        <p style={hubStyle.foot}>
-          Resend, live: {hubResendLine(c.resendUsage)}
-        </p>
-      )}
-      {c.reconciledReadError && <p style={hubStyle.foot}>{c.reconciledReadError}</p>}
+      {c.reconciledReadError && <p style={{ ...hubStyle.foot, color: 'var(--accent-amber-text)' }}>{c.reconciledReadError}</p>}
+      <HubWhy>
+        {'The infrastructure bills in backend/services/costModel.js, the reconciled Google Cloud and Railway bills, and the expense list, each bill counted once. The Costs tab has the meters behind them.'}
+        {(c.replaced || []).length > 0 && `Counted from the expense list instead of the code: ${c.replaced.map((x) => x.label).join(', ')}.`}
+        {(c.nonUsd || []).length > 0 && `Not added, because nothing here converts currencies: ${c.nonUsd.map((x) => `${x.label} (${hubExpenseAmount(x)}${x.replacesLine ? ', and the code line it names still counts' : ''})`).join(', ')}.`}
+        {c.undatedCodeYearly > 0 && `${hubPlural(c.undatedCodeYearly, 'yearly bill in the code has', 'yearly bills in the code have')} no charge date, so ${c.undatedCodeYearly === 1 ? 'it counts' : 'they count'} at a twelfth every month. Add ${c.undatedCodeYearly === 1 ? 'it' : 'them'} to the expense list with a renewal date to see the renewal coming.`}
+        {c.googleMeteredThisMonth && Number.isFinite(c.googleMeteredThisMonth.photosBought)
+          && `Google photos bought this month: ${hubCount(c.googleMeteredThisMonth.photosBought)}${Number.isFinite(c.googleMeteredThisMonth.photosUsd) ? `, ${hubMoney(Math.round(c.googleMeteredThisMonth.photosUsd * 100))}` : ''}, from places_photo_spend. That spend arrives on the Google Cloud invoice above and is not added twice.`}
+      </HubWhy>
+    </HubCard>
+  );
+}
+
+// How far off a day is, as a person says it.
+const hubWhen = (d) => (d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`);
+
+// COMING UP: what the dated bills on the expense list charge next, on a line a
+// month long, with the bills set to end beside them. A renewal is something to
+// know, not something that went wrong, so none of this is in Needs you. Dated
+// bills only: the code's own monthly lines carry no charge day, so they are
+// named under the line with what they come to, and never drawn on a day they
+// may not fall on (moneyHub.js, MONTHLY BILLS THE RENEWAL TOTALS CANNOT DATE).
+const HUB_TIMELINE_DAYS = 30;
+
+function HubTimeline({ items, todayYmd, colors }) {
+  // Bills within a day and a half of each other share a spot, so they stack.
+  const lanes = [];
+  const placed = items.map((it) => {
+    let lane = 0;
+    while (lanes[lane] !== undefined && it.inDays - lanes[lane] < 1.5) lane += 1;
+    lanes[lane] = it.inDays;
+    return { ...it, lane };
+  });
+  const rows = Math.max(1, lanes.length);
+  const height = 14 + rows * 16;
+  const axisTop = height - 10;
+  const at = (d) => `${Math.min(100, Math.max(0, (d / HUB_TIMELINE_DAYS) * 100))}%`;
+  const dayLabel = (n) => {
+    if (typeof todayYmd !== 'string') return null;
+    const [y, m, d] = todayYmd.split('-').map(Number);
+    return new Date(y, m - 1, d + n).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+  return (
+    <div className="hub-tl" aria-hidden="true">
+      <div className="hub-tl-track" style={{ height: `${height}px` }}>
+        <div className="hub-tl-axis" style={{ top: `${axisTop}px` }} />
+        {[0, 7, 14, 21, 30].map((d) => <span key={`tick-${d}`} className="hub-tl-tick" style={{ left: at(d), top: `${axisTop - 3}px` }} />)}
+        {placed.map((it) => (
+          <span
+            key={it.key}
+            title={it.title}
+            className="hub-tl-dot"
+            style={{
+              left: at(it.inDays),
+              top: `${axisTop - 5 - it.lane * 16}px`,
+              backgroundColor: it.kind === 'end' ? 'var(--bg-card-solid)' : colors.steel,
+              border: `2px solid ${it.kind === 'end' ? 'var(--text-secondary)' : colors.steel}`,
+            }}
+          />
+        ))}
+      </div>
+      <div className="hub-tl-labels">
+        <span style={{ left: 0 }}>Today</span>
+        <span className="hub-tl-mid" style={{ left: at(14) }}>{dayLabel(14)}</span>
+        <span className="hub-tl-end">{dayLabel(HUB_TIMELINE_DAYS)}</span>
+      </div>
     </div>
+  );
+}
+
+function HubComingUp({ h, colors }) {
+  const c = h.costs || {};
+  const navy = colors.navy;
+  const today = h.month && h.month.todayYmd;
+  // A list cut short leaves the burn moves out, as the Costs card does.
+  const truncated = !!(h.expenses && h.expenses.truncated);
+  const upcoming = (Array.isArray(c.upcoming) ? c.upcoming : [])
+    .map((u) => ({ ...u, inDays: hubDaysUntil(today, u.on) }));
+  const ending = (Array.isArray(c.ending) ? c.ending : [])
+    .map((e) => ({ ...e, inDays: hubDaysUntil(today, e.endsOn), burnMove: hubBurnMove(e, truncated) }));
+  const totals = Array.isArray(c.upcomingTotals) ? c.upcomingTotals : [];
+  const showTotals = totals.some((t) => t.bills > 0) && !truncated;
+  const month = totals.find((t) => t.days === HUB_TIMELINE_DAYS);
+  const undated = c.undatedMonthly && Array.isArray(c.undatedMonthly.lines) ? c.undatedMonthly : null;
+  const inWindow = (d) => d !== null && d >= 0 && d <= HUB_TIMELINE_DAYS;
+  const dots = [
+    ...upcoming.filter((u) => inWindow(u.inDays)).map((u) => ({ key: `dot-r-${u.expenseId}-${u.on}`, inDays: u.inDays, kind: 'renew', title: `${hubDay(u.on)}: ${u.label}` })),
+    ...ending.filter((e) => inWindow(e.inDays)).map((e) => ({ key: `dot-e-${e.expenseId}`, inDays: e.inDays, kind: 'end', title: `${hubDay(e.endsOn)}: ${e.label} ends` })),
+  ].sort((a, b) => a.inDays - b.inDays);
+  const jump = (
+    <a className="hit44" href={`#${HUB_CARD.expenses.id}`} onClick={hubJump(HUB_CARD.expenses.id)} style={{ ...hubStyle.link, marginTop: 0, whiteSpace: 'nowrap' }}>{HUB_CARD.expenses.link}</a>
+  );
+  return (
+    <HubCard
+      id="hub-coming-up"
+      title="Coming up"
+      sub="Renewals and bills ending, from the dated bills on the expense list."
+      chips={showTotals && month ? <HubChip tone="muted">{`${hubMoney(month.cents)} in ${HUB_TIMELINE_DAYS} days`}</HubChip> : null}
+    >
+      {showTotals && (
+        <div className="hub-minis">
+          {totals.map((t) => (
+            <div key={`total-${t.days}`} className="hub-mini" data-hub-fig="">
+              <p className="hub-mini-label">{`Next ${t.days} days`}</p>
+              <p className="hub-mini-value">{hubMoney(t.cents)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {dots.length > 0 && (
+        <>
+          <HubTimeline items={dots} todayYmd={today} colors={colors} />
+          <div className="hub-legend" aria-hidden="true">
+            <span><span className="hub-swatch" style={{ borderRadius: '50%', backgroundColor: colors.steel }} />Renews</span>
+            {dots.some((d) => d.kind === 'end') && <span><span className="hub-swatch" style={{ borderRadius: '50%', border: '2px solid var(--text-secondary)', boxSizing: 'border-box' }} />Ends</span>}
+          </div>
+        </>
+      )}
+
+      <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 90} days</p>
+      {upcoming.length === 0 ? (
+        <p style={hubStyle.note}>None dated. A bill on the expense list shows here once it has a renewal or last-charge date; the code's lines carry no dates.</p>
+      ) : upcoming.map((u) => (
+        <HubRow
+          key={`renew-${u.expenseId}-${u.on}`}
+          navy={navy}
+          label={u.label}
+          sub={u.inDays === null ? `Renews ${hubDay(u.on)}` : `Renews ${hubWhen(u.inDays)}, ${hubDay(u.on)}`}
+          value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
+        >
+          <p className="hub-note">{u.estimated ? 'Worked out from the last charge date.' : 'The renewal date on the expense list.'}{' '}{jump}</p>
+        </HubRow>
+      ))}
+
+      {ending.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Set to end</p>
+          {ending.map((e) => (
+            <HubRow
+              key={`end-${e.expenseId}`}
+              navy={navy}
+              label={e.label}
+              sub={e.inDays === null || e.inDays < 0 ? `Ends ${hubDay(e.endsOn)}` : `Ends ${hubWhen(e.inDays)}, ${hubDay(e.endsOn)}`}
+              value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
+            >
+              <p className="hub-note">{hubEndingWords(e, truncated)}{' '}{jump}</p>
+            </HubRow>
+          ))}
+        </>
+      )}
+
+      {/* The monthly bills the renewals cannot date (moneyHub.js, MONTHLY
+          BILLS THE RENEWAL TOTALS CANNOT DATE). The totals above count dated
+          bills only, and read as everything going out while the code's own
+          monthly bills were in none of them. Withheld with the totals when
+          the list is cut short. */}
+      {undated && undated.lines.length > 0 && !truncated && (
+        <>
+          <p style={hubStyle.kicker}>Monthly bills with no date</p>
+          <p style={hubStyle.note}>Charged every month on a day nothing here records, so they are in none of the renewals above: {hubMoney(undated.perMonthCents)} a month in all.</p>
+          {undated.lines.map((l) => (
+            <HubRow
+              key={`undated-${l.id}`}
+              navy={navy}
+              label={l.label}
+              value={`${hubMoney(l.perMonthCents)} a month`}
+              note={l.cadence === 'usage' ? 'Billed by use, at its latest figure.' : null}
+            />
+          ))}
+        </>
+      )}
+      {showTotals && (
+        <HubWhy>{'The totals count every charge each dated dollar bill on the expense list makes in the window.'}</HubWhy>
+      )}
+    </HubCard>
   );
 }
 
@@ -1327,9 +1869,9 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
     line ? `counts instead of ${line} in the code` : null,
   ].filter(Boolean).join(', ');
   return (
-    <div style={{ padding: '8px 0', borderTop: '1px solid var(--border-light)' }}>
+    <div className="hub-row" data-hub-fig="" style={{ padding: '10px 0' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: running ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
+        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: running ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
           {label}
           {x.isCredit && <span style={hubTag('good')}>Credit</span>}
           {!x.verified && <span style={hubTag('warn')}>Unverified</span>}
@@ -1342,7 +1884,7 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
         </span>
       </div>
       <p style={hubStyle.note}>{facts.charAt(0).toUpperCase() + facts.slice(1)}.{x.note ? ` ${x.note}` : ''}</p>
-      <div style={{ display: 'flex', gap: '16px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
         {/* Named for the bill, since every row's buttons read the same. */}
         <button className="hit44" type="button" aria-label={`Edit ${label}`} onClick={onEdit} style={hubStyle.textButton}>Edit</button>
         <button className="hit44" type="button" aria-label={busy ? undefined : `${x.active ? 'Mark as stopped' : 'Mark as charged again'}: ${label}`} disabled={busy} onClick={toggle} style={hubStyle.textButton}>
@@ -1443,21 +1985,21 @@ function HubExpenses({ h, colors, onChanged }) {
     }
   };
   return (
-    <div id={HUB_CARD.expenses.id} style={hubStyle.card}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
-        <div style={{ minWidth: 0 }}>
-          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Expense list</h3>
-          <p style={hubStyle.sub}>Bills the code does not carry, from your own invoices: the tools the app is built with, company and legal costs, anything else. Stored in the database, never in the published source.</p>
-        </div>
-        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+    <HubCard
+      id={HUB_CARD.expenses.id}
+      title="Expense list"
+      sub="Bills the code does not carry, from your own invoices."
+      chips={(
+        <>
           {e.status === 'ok' && rows.length > 0 && !e.truncated && (
-            <button className="hit44" type="button" onClick={exportCsv} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Download CSV</button>
+            <button className="hit44" type="button" onClick={exportCsv} style={{ ...hubStyle.textButton, flexShrink: 0 }}>{Icons.download('currentColor', 12)}Download CSV</button>
           )}
           {editing !== 'new' && (
-            <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Add a bill</button>
+            <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>{Icons.plus('currentColor', 12)}Add a bill</button>
           )}
-        </div>
-      </div>
+        </>
+      )}
+    >
       {exportNote && <p role="status" style={hubStyle.foot}>{exportNote}</p>}
       {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled bills only." />}
       {e.truncated && <HubNotice status="error" reason={`The list has more than ${e.limit || 500} bills. These are the first ${e.limit || 500}, and the totals above are left unread because bills are missing from them.`} />}
@@ -1473,7 +2015,10 @@ function HubExpenses({ h, colors, onChanged }) {
         <HubExpenseRow key={`row-${x.id}`} x={x} codeLines={codeLines} colors={colors} onEdit={() => setEditing(x.id)} onChanged={onChanged} />
       )))}
       <HubExpenseImport colors={colors} onImported={onChanged} />
-    </div>
+      <HubWhy label="What goes on this list">
+        {'The tools the app is built with, company and legal costs, anything else the code does not carry. Stored in the database, never in the published source.'}
+      </HubWhy>
+    </HubCard>
   );
 }
 
@@ -1494,17 +2039,18 @@ function HubPriceSheet({ h, colors }) {
   if (!ps || !Array.isArray(ps.rows) || ps.rows.length === 0) return null;
   const navy = colors.navy;
   return (
-    <div id={HUB_CARD.priceSheet.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Price sheet</h3>
-      <p style={hubStyle.sub}>Every bill and rate card Flock pays, with the day each was last checked against its source. Never checked and oldest first. A price read off a vendor's page or bill is due again after {ps.staleAfterDays} days; a bill on the expense list is due once its next charge should have landed, so a yearly one after a year; a one-time charge never is.</p>
-      <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: ps.stale > 0 ? 'var(--accent-amber-text)' : 'var(--accent-green-text)' }}>
-        {ps.stale > 0 ? `${hubPlural(ps.stale, 'price', 'prices')} due for a check` : 'Every price is within its check'}
-      </p>
+    <HubCard
+      id={HUB_CARD.priceSheet.id}
+      title="Price sheet"
+      sub="Every bill and rate card Flock pays, with the day each was last checked against its source. Never checked and oldest first."
+      chips={<HubChip tone={ps.stale > 0 ? 'warn' : 'good'}>{ps.stale > 0 ? `${hubPlural(ps.stale, 'price', 'prices')} due for a check` : 'Every price is within its check'}</HubChip>}
+    >
       {ps.rows.map((r) => (
         <HubRow
           key={r.id}
           navy={navy}
           label={r.label}
+          tag={r.stale ? { tone: 'warn', text: 'Due' } : null}
           tone={r.stale ? 'warn' : undefined}
           value={Number.isFinite(r.priceCents)
             ? `${hubMoney(r.priceCents)} ${r.unit}`
@@ -1512,7 +2058,10 @@ function HubPriceSheet({ h, colors }) {
           note={`${r.checkedOn ? `Checked ${r.checkedOn}${Number.isFinite(r.ageDays) ? `, ${hubPlural(r.ageDays, 'day', 'days')} ago` : ''}` : 'Never checked against a receipt or a pricing page'}${r.source ? `, from ${r.source}` : ''}.`}
         />
       ))}
-    </div>
+      <HubWhy label="When a price is due">
+        {`A price read off a vendor's page or bill is due again after ${ps.staleAfterDays} days; a bill on the expense list is due once its next charge should have landed, so a yearly one after a year; a one-time charge never is.`}
+      </HubWhy>
+    </HubCard>
   );
 }
 
@@ -1526,12 +2075,16 @@ function HubPrices({ h, colors }) {
   const count = Number.isFinite(p.mismatches) ? p.mismatches : 0;
   const every = (iv) => (iv === 'year' ? 'a year' : iv === 'month' ? 'a month' : iv ? `every ${iv}` : 'once');
   return (
-    <div id={HUB_CARD.prices.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Prices</h3>
-      <p style={hubStyle.sub}>What Stripe and the App Store charge, next to every price written down in the code and the decision documents.</p>
-      <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: count > 0 ? 'var(--accent-red-text)' : s.status === 'ok' ? 'var(--accent-green-text)' : 'var(--text-secondary)' }}>
-        {count > 0 ? `${hubPlural(count, 'disagreement', 'disagreements')} to fix` : s.status === 'ok' ? 'No disagreements found' : 'Not checked against Stripe'}
-      </p>
+    <HubCard
+      id={HUB_CARD.prices.id}
+      title="Prices"
+      sub="What Stripe and the App Store charge, next to every price written down in the code and the decision documents."
+      chips={(
+        <HubChip tone={count > 0 ? 'bad' : s.status === 'ok' ? 'good' : 'muted'}>
+          {count > 0 ? `${hubPlural(count, 'disagreement', 'disagreements')} to fix` : s.status === 'ok' ? 'No disagreements found' : 'Not checked against Stripe'}
+        </HubChip>
+      )}
+    >
       {s.status !== 'ok' && <HubNotice status={s.status} reason={s.reason} />}
 
       {Array.isArray(h.planNets) && h.planNets.length > 0 && (
@@ -1601,8 +2154,8 @@ function HubPrices({ h, colors }) {
           note={pr.env ? `${pr.env} points here (${pr.id}).` : `${pr.id}. Active in Stripe, and no price variable points at it, so the app never sells it.`}
         />
       ))}
-      {p.paywallNote && <p style={hubStyle.foot}>{p.paywallNote}</p>}
-    </div>
+      {p.paywallNote && <HubWhy label="Where the paywall gets its prices">{p.paywallNote}</HubWhy>}
+    </HubCard>
   );
 }
 
@@ -1613,9 +2166,7 @@ function HubHealth({ h, colors }) {
   const st = STATE[c.state] || { text: 'Not read', tone: 'muted' };
   const ago = hubAgo;
   return (
-    <div id={HUB_CARD.health.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Health</h3>
-      <p style={hubStyle.sub}>The paid data feed, read from the rows it writes rather than from the job.</p>
+    <HubCard id={HUB_CARD.health.id} title="Health" sub="The paid data feed, read from the rows it writes rather than from the job.">
       {c.status === 'error' ? (
         <HubNotice status="error" reason={c.reason} />
       ) : (
@@ -1624,6 +2175,7 @@ function HubHealth({ h, colors }) {
           label="Crowd data collector"
           value={st.text}
           tone={st.tone}
+          chip
           note={`${c.latestAt ? `Last row ${ago(c.minutesSinceLatest)} ago, at ${hubTime(c.latestAt)}.` : 'No live crowd row has landed yet.'} ${hubPlural(c.rows24h, 'row', 'rows')} across ${hubPlural(c.hours24h, 'hour', 'hours')} of the last day. It runs hourly, so ${Math.round(((c.lateAfterMinutes || 150) / 60) * 10) / 10} hours without a row reads as late. Last heartbeat alert: ${c.lastAlertOn ? hubDay(c.lastAlertOn) : 'none'}. From ml_training_data.`}
         />
       )}
@@ -1634,7 +2186,7 @@ function HubHealth({ h, colors }) {
         tone="muted"
         note="Nothing in this database records a backup or a restore point, so this panel has nothing to report. Railway's dashboard holds both."
       />
-    </div>
+    </HubCard>
   );
 }
 
@@ -1665,16 +2217,17 @@ function HubCrowdData({ h, colors }) {
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
   const counterValue = (n) => (Number.isFinite(n) ? hubCount(n) : 'Not reported');
   return (
-    <div id={HUB_CARD.crowd.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Crowd data</h3>
-      <p style={hubStyle.sub}>BestTime, the paid feed behind Flock&apos;s crowd numbers. Only its key endpoint is asked, which admits no venue and spends nothing.</p>
+    <HubCard id={HUB_CARD.crowd.id} title="Crowd data" sub="BestTime, the paid feed behind Flock's crowd numbers. Only its key endpoint is asked, which admits no venue and spends nothing.">
       {!ready && <HubNotice status={b.status} reason={b.reason} />}
+      <div className="hub-halves">
+      <div>
       {ready && (
         <HubRow
           navy={navy}
           label="BestTime key"
           value={key.healthy ? 'Working' : 'Not working'}
           tone={key.healthy ? 'good' : 'bad'}
+          chip
           note={key.healthy
             ? 'BestTime says the key is valid and active.'
             : `BestTime says status ${key.status === null || key.status === undefined ? 'none' : key.status}, valid ${String(key.valid)}, active ${String(key.active)}.`}
@@ -1719,6 +2272,8 @@ function HubCrowdData({ h, colors }) {
           />
         </>
       )}
+      </div>
+      <div>
       {ready && (
         <>
           <HubRow
@@ -1749,12 +2304,14 @@ function HubCrowdData({ h, colors }) {
           ? `Rows the hourly collector wrote, across ${hubPlural(c.hours24h, 'hour', 'hours')}. From ml_training_data, the same read as the Health card below.`
           : (c.reason || 'The collector\'s rows could not be read.')}
       />
-      <p style={hubStyle.foot}>
+      </div>
+      </div>
+      <HubWhy label="Where these come from">
         {ready
           ? `Read from BestTime's key endpoint at ${hubTime(b.asOf)} and held for ${holdMinutes} minutes${cachedAge !== null ? `; this answer is ${hubPlural(cachedAge, 'second', 'seconds')} old` : ''}. The key itself never reaches this page.`
           : 'Nothing was read from BestTime, so no counter is shown. The plan rows come from the code either way.'}
-      </p>
-    </div>
+      </HubWhy>
+    </HubCard>
   );
 }
 
@@ -1907,120 +2464,143 @@ function HubModel({ h, colors }) {
     gapNote = gap > 0 ? 'The goal less the within-one share, in percentage points.' : 'The within-one share is at or above the goal.';
   }
   return (
-    <div id={HUB_CARD.model.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Model</h3>
-      <p style={hubStyle.sub}>What makes Flock&apos;s crowd numbers now, and how the served ones held up against what the collector measured in the same hour.</p>
-      {serving && (
-        <HubRow
-          navy={navy}
-          label="Made by"
-          value={serving.mode === 'curve_offset' ? "Venue's own curve" : serving.mode === 'model' ? 'Trained model' : 'Not read'}
-          tone={servingWords ? undefined : 'muted'}
-          note={servingWords || 'The server did not say which serve mode it runs.'}
-        />
-      )}
-      <HubRow
-        navy={navy}
-        label="Model version"
-        tag={v.status === 'ok' && v.loaded === false ? { tone: 'warn', text: 'Not loaded' } : null}
-        value={v.status === 'ok' ? v.value : 'Not read'}
-        tone={v.status === 'ok' ? undefined : 'muted'}
-        note={versionNote}
-      />
-      <p style={hubStyle.kicker}>Against the live reading, last {Number.isFinite(a.windowDays) ? a.windowDays : 30} days</p>
-      {!ready && <HubNotice status={a.status} reason={a.reason} />}
-      {measured && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '10px' }}>
-            <div style={{ minWidth: 0 }}>
-              <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.exactPercent)}</p>
-              <p style={hubStyle.note}>named the exact crowd level of the reading</p>
-            </div>
-            <div style={{ minWidth: 0 }}>
-              <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
-              <p style={hubStyle.note}>landed within one level, the reading&apos;s or the one next to it</p>
-            </div>
-          </div>
-          <p style={hubStyle.note}>
-            Of forecasts made from a venue&apos;s own data. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.exactBand) && Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.exactBand)} at the exact level and ${hubCount(a.withinOneBand)} within one` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window. Within one alone would flatter a forecast that always named the same level, so the exact share sits beside it.
-          </p>
-        </>
-      )}
-      {shareArrived && !measured && (
-        <>
-          <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not shown alone</p>
-          <p style={hubStyle.note}>
-            This server sent the within-one share without the exact level beside it. Within one alone would flatter a forecast that always named the same level, so neither is shown until both arrive.
-          </p>
-        </>
-      )}
-      {ready && !shareArrived && (
-        <>
-          <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not enough observations yet</p>
-          <p style={hubStyle.note}>
-            {hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')} so far, from {hubPlural(a.served, 'forecast', 'forecasts')} served. The shares show from {hubCount(a.minSample)} venue-hours across at least {hubPlural(a.minDays, 'day', 'days')}; below that they mostly measure chance.
-          </p>
-        </>
-      )}
-      <div style={{ marginTop: '8px' }}>
-        <HubRow
-          navy={navy}
-          label="Goal"
-          value={Number.isFinite(goal.percent) ? `${goal.percent}%` : 'Not set'}
-          note="Of served forecasts within one crowd level. Not the blended training figure, which mostly scores rows whose answer was known in advance."
-        />
-        <HubRow navy={navy} label="Gap to goal" value={gapValue} tone={gapTone} note={gapNote} />
-      </div>
-      {versions.length > 1 && (
-        <p style={hubStyle.foot}>This window mixes {versions.length} served versions: {versions.join(', ')}. A +curve_offset or +nowcast ending names a switch that changed the number.</p>
-      )}
-      <p style={hubStyle.foot}>
-        Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the crowd levels the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
-      </p>
-      {/* WHAT ANSWERED. The shares above score forecasts made from a venue's
-          own data only, so on their own they cannot say whether those were most
-          of what people saw or almost none of it, the rest coming from the
-          rule engine. This is that split, from the same table, beside it. */}
-      {cov && (
-        <>
-          <p style={hubStyle.kicker}>What answered, last {Number.isFinite(cov.windowDays) ? cov.windowDays : 7} days</p>
-          {cov.status !== 'ok' && <HubNotice status={cov.status} reason={cov.reason} />}
-          {cov.status === 'ok' && cov.total === 0 && (
-            <HubRow navy={navy} label="Forecasts from a venue's own data" value="None served" tone="muted" note="No forecast was served to a signed-in person in this window." />
+    <HubCard id={HUB_CARD.model.id} title="Model" sub="What makes Flock's crowd numbers now, and how the served ones held up against what the collector measured in the same hour.">
+      <div className="hub-halves">
+        <div style={{ minWidth: 0 }}>
+          {serving && (
+            <HubRow
+              navy={navy}
+              label="Made by"
+              value={serving.mode === 'curve_offset' ? "Venue's own curve" : serving.mode === 'model' ? 'Trained model' : 'Not read'}
+              tone={servingWords ? undefined : 'muted'}
+              note={servingWords || 'The server did not say which serve mode it runs.'}
+            />
           )}
-          {cov.status === 'ok' && cov.total > 0 && (() => {
-            const madeBy = hubMadeBy(cov.mlFromCurve, cov.ml);
-            // The ml count named by what made it, where the server split it.
-            const parts = cov.byMethod.flatMap((x) => {
-              if (x.method !== 'ml' || !Number.isFinite(cov.mlFromCurve)) return [`${hubMethodWords(x.method)} ${hubCount(x.served)}`];
-              const curve = Math.min(Math.max(cov.mlFromCurve, 0), x.served);
-              return [[HUB_FROM_CURVE, curve], [HUB_FROM_MODEL, x.served - curve]]
-                .filter(([, n]) => n > 0)
-                .map(([words, n]) => `${words} ${hubCount(n)}`);
-            });
-            return (
-              <>
-                <HubRow
-                  navy={navy}
-                  label="Forecasts from a venue's own data"
-                  value={`${Math.round(cov.mlPercent)}% of ${hubCount(cov.total)}`}
-                  note={`${hubCount(cov.ml)} of ${hubPlural(cov.total, 'forecast', 'forecasts')} served to signed-in people, counted once per card served, from served_predictions.${madeBy ? ` Of those, ${madeBy}.` : ''} The Costs tab counts forecast hours since the last deploy instead, so the two differ.`}
-                />
-                {cov.topFallback && (
+          <HubRow
+            navy={navy}
+            label="Model version"
+            tag={v.status === 'ok' && v.loaded === false ? { tone: 'warn', text: 'Not loaded' } : null}
+            value={v.status === 'ok' ? v.value : 'Not read'}
+            tone={v.status === 'ok' ? undefined : 'muted'}
+            note={versionNote}
+          />
+          <p style={hubStyle.kicker}>Against the live reading, last {Number.isFinite(a.windowDays) ? a.windowDays : 30} days</p>
+          {!ready && <HubNotice status={a.status} reason={a.reason} />}
+          {measured && (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '10px', marginTop: '4px' }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.exactPercent)}</p>
+                  <p style={hubStyle.note}>named the exact crowd level of the reading</p>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
+                  <p style={hubStyle.note}>landed within one level, the reading&apos;s or the one next to it</p>
+                </div>
+              </div>
+              {/* Both shares on one 0 to 100 scale, the exact one darker inside
+                  the within-one one, with the goal as a mark. The words above and
+                  the goal row below carry every number. */}
+              <div className="hub-meter" aria-hidden="true" style={{ marginTop: '12px' }}>
+                <div className="hub-meter-fill" style={{ width: `${Math.min(100, Math.max(0, a.percent))}%`, backgroundColor: 'var(--hub-c2)' }} />
+                <div className="hub-meter-fill" style={{ width: `${Math.min(100, Math.max(0, a.exactPercent))}%`, backgroundColor: colors.steel }} />
+                {Number.isFinite(goal.percent) && <span className="hub-meter-mark" style={{ left: `${Math.min(100, Math.max(0, goal.percent))}%` }} />}
+              </div>
+            </>
+          )}
+          {shareArrived && !measured && (
+            <>
+              <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not shown alone</p>
+              <p style={hubStyle.note}>
+                This server sent the within-one share without the exact level beside it. Within one alone would flatter a forecast that always named the same level, so neither is shown until both arrive.
+              </p>
+            </>
+          )}
+          {ready && !shareArrived && (
+            <>
+              <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not enough observations yet</p>
+              <p style={hubStyle.note}>
+                {hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')} so far, from {hubPlural(a.served, 'forecast', 'forecasts')} served. The shares show from {hubCount(a.minSample)} venue-hours across at least {hubPlural(a.minDays, 'day', 'days')}; below that they mostly measure chance.
+              </p>
+            </>
+          )}
+          <div style={{ marginTop: '8px' }}>
+            <HubRow
+              navy={navy}
+              label="Goal"
+              value={Number.isFinite(goal.percent) ? `${goal.percent}%` : 'Not set'}
+              note="Of served forecasts within one crowd level. Not the blended training figure, which mostly scores rows whose answer was known in advance."
+            />
+            <HubRow navy={navy} label="Gap to goal" value={gapValue} tone={gapTone} note={gapNote} />
+          </div>
+          <HubWhy>
+            {measured && (
+              <p>
+                Of forecasts made from a venue&apos;s own data. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.exactBand) && Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.exactBand)} at the exact level and ${hubCount(a.withinOneBand)} within one` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window. Within one alone would flatter a forecast that always named the same level, so the exact share sits beside it.
+              </p>
+            )}
+            {versions.length > 1 && `This window mixes ${versions.length} served versions: ${versions.join(', ')}. A +curve_offset or +nowcast ending names a switch that changed the number.`}
+            <p>
+              Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the crowd levels the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
+            </p>
+          </HubWhy>
+        </div>
+        {/* WHAT ANSWERED. The shares above score forecasts made from a venue's
+            own data only, so on their own they cannot say whether those were most
+            of what people saw or almost none of it, the rest coming from the
+            rule engine. This is that split, from the same table, beside it, as
+            bars on one scale. */}
+        {cov && (
+          <div style={{ minWidth: 0 }}>
+            <p style={hubStyle.kicker}>What answered, last {Number.isFinite(cov.windowDays) ? cov.windowDays : 7} days</p>
+            {cov.status !== 'ok' && <HubNotice status={cov.status} reason={cov.reason} />}
+            {cov.status === 'ok' && cov.total === 0 && (
+              <HubRow navy={navy} label="Forecasts from a venue's own data" value="None served" tone="muted" note="No forecast was served to a signed-in person in this window." />
+            )}
+            {cov.status === 'ok' && cov.total > 0 && (() => {
+              const madeBy = hubMadeBy(cov.mlFromCurve, cov.ml);
+              // The ml count named by what made it, where the server split it.
+              const pairs = cov.byMethod.flatMap((x) => {
+                if (x.method !== 'ml' || !Number.isFinite(cov.mlFromCurve)) return [[hubMethodWords(x.method), x.served, x.method === 'ml']];
+                const curve = Math.min(Math.max(cov.mlFromCurve, 0), x.served);
+                return [[HUB_FROM_CURVE, curve, true], [HUB_FROM_MODEL, x.served - curve, true]]
+                  .filter(([, n]) => n > 0);
+              });
+              const parts = pairs.map(([words, n]) => `${words} ${hubCount(n)}`);
+              return (
+                <>
                   <HubRow
                     navy={navy}
-                    label="Most common fallback"
-                    value={hubCount(cov.topFallback.served)}
-                    note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${HUB_NO_BASELINE_METHODS.includes(cov.topFallback.method) ? ' A venue gets numbers from its own data once the collector has read it.' : ''}`}
+                    label="Forecasts from a venue's own data"
+                    value={`${Math.round(cov.mlPercent)}% of ${hubCount(cov.total)}`}
+                    note={`${hubCount(cov.ml)} of ${hubPlural(cov.total, 'forecast', 'forecasts')} served to signed-in people, counted once per card served, from served_predictions.${madeBy ? ` Of those, ${madeBy}.` : ''} The Costs tab counts forecast hours since the last deploy instead, so the two differ.`}
                   />
-                )}
-                <p style={hubStyle.foot}>By what answered: {parts.join('; ')}. Held for an hour with the check above.</p>
-              </>
-            );
-          })()}
-        </>
-      )}
-    </div>
+                  {cov.topFallback && (
+                    <HubRow
+                      navy={navy}
+                      label="Most common fallback"
+                      value={hubCount(cov.topFallback.served)}
+                      note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${HUB_NO_BASELINE_METHODS.includes(cov.topFallback.method) ? ' A venue gets numbers from its own data once the collector has read it.' : ''}`}
+                    />
+                  )}
+                  <HubBarList
+                    color={colors.steel}
+                    rows={pairs.map(([words, n, own], i) => ({
+                      key: `answered-${i}`,
+                      label: words.replace(/^./, (ch) => ch.toUpperCase()),
+                      value: n,
+                      valueText: hubCount(n),
+                      color: own ? colors.steel : 'var(--text-tertiary)',
+                    }))}
+                  />
+                  <HubWhy>{`By what answered: ${parts.join('; ')}. Held for an hour with the check above.`}</HubWhy>
+                </>
+              );
+            })()}
+          </div>
+        )}
+      </div>
+    </HubCard>
   );
 }
 
@@ -2104,50 +2684,57 @@ function HubPeople({ h, colors }) {
     body = (
       <>
         <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>Signups, last 14 days</p>
-        <HubSignupBars days={s.days} navy={navy} />
+        <HubSignupBars days={s.days} navy={colors.steel} />
         {fortnight === 0 && <p style={hubStyle.note}>Nobody signed up in the last 14 days.</p>}
         <div style={{ marginTop: '8px' }}>
+          {/* The week before is on the line under each weekly count, so the
+              trend reads without opening anything; what each count counts is
+              behind the row. */}
           <HubRow
             navy={navy}
             label="Signups, last 7 days"
             value={hubCount(s.last7)}
-            note={`${hubCount(s.prior7)} in the 7 days before. Both count back from now, so a morning never reads as a drop. The bars are New York days.`}
+            sub={`${hubCount(s.prior7)} in the 7 days before`}
+            note="Both count back from now, so a morning never reads as a drop. The bars are New York days."
           />
           <HubRow navy={navy} label="Made or accepted a plan in their first week" value={activationValue} note={activationNote} />
           <HubRow
             navy={navy}
             label="Used Flock, last 7 days"
             value={hubCount(act.last7)}
-            note={`${hubCount(act.prior7)} in the 7 days before. Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in.`}
+            sub={`${hubCount(act.prior7)} in the 7 days before`}
+            note="Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in."
           />
-          <HubRow navy={navy} label="Plans made, last 7 days" value={hubCount(pl.madeLast7)} note={`${hubCount(pl.madePrior7)} in the 7 days before.`} />
+          <HubRow navy={navy} label="Plans made, last 7 days" value={hubCount(pl.madeLast7)} sub={`${hubCount(pl.madePrior7)} in the 7 days before`} />
           <HubRow navy={navy} label="Confirmed before their time" value={confirmedValue} note={confirmedNote} />
           <HubRow
             navy={navy}
             label="Guest answers from share links"
             value={hubCount(pl.guestAnswersLast7)}
-            note={`${hubCount(pl.guestAnswersPrior7)} in the 7 days before. Someone without an account answering a plan's link, in or out.`}
+            sub={`${hubCount(pl.guestAnswersPrior7)} in the 7 days before`}
+            note="Someone without an account answering a plan's link, in or out."
           />
         </div>
       </>
     );
   }
   return (
-    <div id={HUB_CARD.people.id} style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>People</h3>
-      <p style={hubStyle.sub}>People accounts only: not venue owners, admins or banned accounts. Counts from the database{p.status === 'ok' ? `, read at ${hubTime(p.asOf)}` : ''}.</p>
+    <HubCard
+      id={HUB_CARD.people.id}
+      title="People"
+      sub={`People accounts only: not venue owners, admins or banned accounts. Counts from the database${p.status === 'ok' ? `, read at ${hubTime(p.asOf)}` : ''}.`}
+    >
       {body}
-    </div>
+    </HubCard>
   );
 }
 
-// NEEDS ATTENTION: every live problem the payload already carries, in one list
-// at the top of the Overview. On a phone the month's figures alone fill the
-// first screen, and each of these sat inside a long card further down: a
-// stopped collector in Health, which is the last card; an open dispute near
-// the end of Revenue; a price disagreement in Prices; the steps still to do
-// behind a summary line. Nothing here is read a second time. Each row is built
-// from a field another card draws, and jumps to that card.
+// NEEDS YOU: every live problem the payload already carries, in one list
+// straight under the month's tiles. Each of these sits inside a long card
+// further down: a stopped collector in Health, which is the last card; an open
+// dispute near the end of Revenue; a price disagreement in Prices; the steps
+// still to do behind a summary line. Nothing here is read a second time. Each
+// row is built from a field another card draws, and jumps to that card.
 //
 // A source that was asked and did not answer is a row too, because "nothing
 // needs you" is a claim about what was checked, and a Stripe that did not
@@ -2155,14 +2742,36 @@ function HubPeople({ h, colors }) {
 // no Stripe key nothing is sold through Stripe, so there is no dispute to
 // miss, and connecting one is a step the steps card already counts.
 //
-// Renewals coming up are listed apart, under their own heading, and never
-// count as a problem: a bill due Tuesday is something to know, not something
-// that went wrong.
+// Renewals and bills set to end are never a problem: a bill due Tuesday is
+// something to know, not something that went wrong. They are on Coming up.
 const HUB_SEVERITY = { bad: 0, warn: 1 };
-const HUB_SOON_DAYS = 7;
-// A bill set to end is listed a month ahead, not a week: that is the time
-// there is to turn its renewal back on if it should go on.
-const HUB_ENDING_DAYS = 30;
+
+// The picture beside each problem, by what it is about rather than how bad
+// it is: the chip beside it carries the tone, in words.
+const HUB_NEED_ICON = {
+  collector: 'activity',
+  besttime: 'zap',
+  prices: 'tag',
+  stripe: 'creditCard',
+  'stripe-part': 'creditCard',
+  'stripe-test': 'creditCard',
+  disputes: 'flag',
+  revenuecat: 'users',
+  'pro-nothing-live': 'users',
+  model: 'barChart',
+  steps: 'checkCircle',
+  doubles: 'layers',
+  'past-end': 'calendar',
+  expenses: 'fileText',
+  jumps: 'trendingUp',
+  'price-sheet': 'repeat',
+  maptiler: 'map',
+  'maptiler-cap': 'map',
+  'maptiler-near': 'map',
+  licence: 'fileText',
+};
+const hubNeedIcon = (key) => HUB_NEED_ICON[key]
+  || (/^(past-due|unpaid)-/.test(key) ? 'clock' : /^resend/.test(key) ? 'mail' : 'alertCircle');
 
 // Whole calendar days from one YYYY-MM-DD to another, or null. Both are New
 // York dates from the server, so no zone is involved.
@@ -2462,20 +3071,7 @@ function hubAttention(h) {
 
   // Worst first; the order each was added in breaks a tie.
   problems.sort((x, y) => (HUB_SEVERITY[x.tone] ?? 2) - (HUB_SEVERITY[y.tone] ?? 2));
-
-  const today = h.month && h.month.todayYmd;
-  const soon = (Array.isArray(costs.upcoming) ? costs.upcoming : [])
-    .map((u) => ({ ...u, inDays: hubDaysUntil(today, u.on) }))
-    .filter((u) => u.inDays !== null && u.inDays >= 0 && u.inDays <= HUB_SOON_DAYS);
-  // Bills set to end within the month, listed apart like the renewals: a
-  // bill that stops is something to know, and to undo if it should not. What
-  // the burn does then is left out when the list was cut short, as it is on
-  // the Costs card.
-  const listCutShort = !!(h.expenses && h.expenses.truncated);
-  const ending = (Array.isArray(costs.ending) ? costs.ending : [])
-    .map((e) => ({ ...e, inDays: hubDaysUntil(today, e.endsOn), burnMove: hubBurnMove(e, listCutShort) }))
-    .filter((e) => e.inDays !== null && e.inDays >= 0 && e.inDays <= HUB_ENDING_DAYS);
-  return { problems, soon, ending };
+  return { problems };
 }
 
 // Moves the Overview to a card without touching the address bar, where a hash
@@ -2498,66 +3094,53 @@ function hubJump(id) {
   };
 }
 
-function HubAttention({ h, colors }) {
-  const navy = colors.navy;
-  const { problems, soon, ending } = hubAttention(h);
+// One problem per line: a picture for what it is about, its name, and a chip
+// with the count or the state in its tone. A tap opens the sentence the card
+// below would say, with the jump to that card at its end.
+function HubAttention({ h }) {
+  const { problems } = hubAttention(h);
   const at = hubTime(h.generatedAt);
   const checked = at ? `Checked at ${at}.` : '';
   // The quiet morning is one line, and says when it was true.
-  if (problems.length === 0 && soon.length === 0 && ending.length === 0) {
+  if (problems.length === 0) {
     return (
-      <div style={hubStyle.card}>
-        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-green-text)', margin: 0 }}>{`Nothing needs you. ${checked}`.trim()}</p>
-      </div>
+      <HubCard id="hub-needs">
+        <p style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-green-text)', margin: 0 }}>
+          {Icons.checkCircle('currentColor', 16)}{`Nothing needs you. ${checked}`.trim()}
+        </p>
+      </HubCard>
     );
   }
-  // The jump sits at the end of the note rather than on a line of its own, so
-  // a morning with five problems is not five extra lines of links.
-  const withJump = (text, card) => (
-    <>
-      {text}{' '}
-      <a className="hit44" href={`#${card.id}`} onClick={hubJump(card.id)} style={{ ...hubStyle.link, marginTop: 0, whiteSpace: 'nowrap' }}>{card.link}</a>
-    </>
-  );
-  const when = (d) => (d === 0 ? 'today' : d === 1 ? 'tomorrow' : `in ${d} days`);
   return (
-    <div style={hubStyle.card}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: problems.length > 0 ? navy : 'var(--accent-green-text)', margin: '0 0 2px' }}>
-        {problems.length > 0 ? hubPlural(problems.length, 'thing needs you', 'things need you') : 'Nothing needs you'}
-      </h3>
-      <p style={hubStyle.sub}>{[checked, problems.length > 0 ? 'Each one is read from a card below and jumps to it.' : ''].filter(Boolean).join(' ')}</p>
-      {problems.map((r) => (
-        <HubRow key={r.key} navy={navy} label={r.label} value={r.value} tone={r.tone} note={withJump(r.note, r.card)} />
-      ))}
-      {soon.length > 0 && (
-        <>
-          <p style={hubStyle.kicker}>Renewing in the next {HUB_SOON_DAYS} days</p>
-          {soon.map((u) => (
-            <HubRow
-              key={`soon-${u.expenseId}-${u.on}`}
-              navy={navy}
-              label={u.label}
-              value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
-              note={withJump(`Renews ${when(u.inDays)}, ${hubDay(u.on)}.${u.estimated ? ' Worked out from the last charge date.' : ''}`, HUB_CARD.costs)}
-            />
-          ))}
-        </>
-      )}
-      {ending.length > 0 && (
-        <>
-          <p style={hubStyle.kicker}>Ending in the next {HUB_ENDING_DAYS} days</p>
-          {ending.map((e) => (
-            <HubRow
-              key={`ending-${e.expenseId}`}
-              navy={navy}
-              label={e.label}
-              value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
-              note={withJump(`Ends ${when(e.inDays)}, ${hubDay(e.endsOn)}${e.burnMove ? `, and ${e.burnMove}` : ''}.`, HUB_CARD.costs)}
-            />
-          ))}
-        </>
-      )}
-    </div>
+    <HubCard
+      id="hub-needs"
+      title={hubPlural(problems.length, 'thing needs you', 'things need you')}
+      sub={[checked, 'Tap one for the detail and where to fix it.'].filter(Boolean).join(' ')}
+    >
+      {problems.map((r) => {
+        const icon = Icons[hubNeedIcon(r.key)] || Icons.alertCircle;
+        return (
+          <details key={r.key} className="hub-need hub-disclose" data-hub-fig="" data-hub-need={r.key}>
+            <summary className="hit44">
+              <div className="hub-need-head">
+                <span className="hub-need-icon" style={{ color: HUB_TONE[r.tone] || 'var(--text-secondary)' }}>{icon('currentColor', 16)}</span>
+                <span className="hub-need-label">{r.label}</span>
+                <HubChip tone={r.tone}>{r.value}</HubChip>
+                {hubChevron()}
+              </div>
+            </summary>
+            {/* The jump sits at the end of the sentence rather than on a line
+                of its own. */}
+            <div className="hub-need-more">
+              <p className="hub-note">
+                {r.note}{' '}
+                <a className="hit44" href={`#${r.card.id}`} onClick={hubJump(r.card.id)} style={{ ...hubStyle.link, marginTop: 0, whiteSpace: 'nowrap' }}>{r.card.link}</a>
+              </p>
+            </div>
+          </details>
+        );
+      })}
+    </HubCard>
   );
 }
 
@@ -2587,55 +3170,86 @@ function MoneyHub({ colors, onExpensesChanged }) {
 
   if (!data) {
     return (
-      <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }} role="status">
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>
-          {loading ? 'Reading Stripe, RevenueCat, BestTime and the database' : error ? 'The money hub did not load' : 'Nothing read yet'}
-        </h3>
-        <p style={hubStyle.sub}>
-          {loading ? 'The first read asks each vendor and can take a few seconds.' : error ? `${error} Nothing is shown rather than a guess.` : 'The hub has not been read yet.'}
-        </p>
-        {!loading && (
-          <button className="hit44" type="button" onClick={() => load(false)}
-            style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
-            {error ? 'Try again' : 'Read it'}
-          </button>
+      <div role="status">
+        <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }}>
+          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>
+            {loading ? 'Reading Stripe, RevenueCat, BestTime and the database' : error ? 'The money hub did not load' : 'Nothing read yet'}
+          </h3>
+          <p style={hubStyle.sub}>
+            {loading ? 'The first read asks each vendor and can take a few seconds.' : error ? `${error} Nothing is shown rather than a guess.` : 'The hub has not been read yet.'}
+          </p>
+          {!loading && (
+            <button className="hit44" type="button" onClick={() => load(false)}
+              style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+              {error ? 'Try again' : 'Read it'}
+            </button>
+          )}
+        </div>
+        {/* Where the tiles are about to land, while the first read is out. A
+            shape and never a number: a figure nobody read is the one thing
+            this screen must not paint. */}
+        {loading && (
+          <div className="hub-tiles" aria-hidden="true" style={{ marginTop: '12px' }}>
+            {[0, 1, 2, 3].map((i) => <div key={`tile-skeleton-${i}`} className="skeleton" style={{ height: '96px', borderRadius: '14px' }} />)}
+          </div>
         )}
       </div>
     );
   }
 
-  // The attention list goes first, above the month. On a phone the month's
-  // card alone is taller than the screen under the console's header and tabs,
-  // so anything below it is already a scroll away.
+  // The month's four tiles first: on a phone they and the top of Needs you are
+  // the first screen under the console's header and tabs. Then two pairs that
+  // sit side by side on the wide console and stack on a phone, in the order
+  // written here: what needs the owner beside whether subscribers cover the
+  // bills, then what is about to be charged beside where the money goes.
   //
-  // On a desktop browser the console is wide (App.js consoleContainer), so
-  // the cards run in two columns; on a phone the 440px floor leaves one, in
-  // the order written here. Columns rather than a grid: a grid row is as tall
-  // as its taller card, and "Only you can do these" beside People left most
-  // of a screen blank. Each column stacks on its own. The attention list, the
-  // month, the expense list and crowd data read across a row, so they span
-  // both columns.
-  const cell = { breakInside: 'avoid', marginBottom: '12px', minWidth: 0 };
-  const full = { columnSpan: 'all', marginBottom: '12px', minWidth: 0 };
+  // The cards after them sit in bands of two stacks on the wide console
+  // (App.js consoleContainer) and in one column on a phone, where the order
+  // is the one written here. Stacks rather than one grid: a grid row is as
+  // tall as its taller card, and "Only you can do these" beside People left
+  // most of a screen blank; CSS columns balanced the tall Revenue card into
+  // the first column and left the second half empty. Each stack runs on its
+  // own, paired so the two come out close in height: Health, short, rides
+  // under the steps, since both say what is working. The expense list, crowd
+  // data and the model read across a row, so they take the full width.
+  const full = { margin: '0 0 12px', minWidth: 0 };
   return (
-    <div style={{ columns: '2 440px', columnGap: '12px' }}>
-      <div style={full}><HubAttention h={data} colors={colors} /></div>
-      <div style={full}><HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} /></div>
-      <div style={cell}><HubPeople h={data} colors={colors} /></div>
-      <div style={cell}><HubOwnerActions h={data} colors={colors} /></div>
-      <div style={cell}><HubRevenue h={data} colors={colors} /></div>
-      <div style={cell}><HubCosts h={data} colors={colors} /></div>
+    <div>
+      <HubMonth h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
+      <div className="hub-pair">
+        <HubAttention h={data} />
+        <HubCover h={data} colors={colors} />
+      </div>
+      <div className="hub-pair">
+        <HubComingUp h={data} colors={colors} />
+        <HubCosts h={data} colors={colors} />
+      </div>
+      <div className="hub-pair">
+        <div className="hub-stack-col">
+          <HubPeople h={data} colors={colors} />
+          <HubOwnerActions h={data} colors={colors} />
+          <HubHealth h={data} colors={colors} />
+        </div>
+        <div className="hub-stack-col">
+          <HubRevenue h={data} colors={colors} />
+        </div>
+      </div>
       {/* An expense saved here is also in the Costs tab's all-in figure and
           the Projections burn, which read the separate costs payload. That
           payload was fetched once per session, so after adding a bill here
           Costs still showed the old total while its own comment says the two
           tabs cannot disagree (money hub audit 2026-10-03). Both reload. */}
       <div style={full}><HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} /></div>
-      <div style={cell}><HubPrices h={data} colors={colors} /></div>
-      <div style={cell}><HubPriceSheet h={data} colors={colors} /></div>
+      <div className="hub-pair">
+        <div className="hub-stack-col">
+          <HubPrices h={data} colors={colors} />
+        </div>
+        <div className="hub-stack-col">
+          <HubPriceSheet h={data} colors={colors} />
+        </div>
+      </div>
       <div style={full}><HubCrowdData h={data} colors={colors} /></div>
-      <div style={cell}><HubModel h={data} colors={colors} /></div>
-      <div style={cell}><HubHealth h={data} colors={colors} /></div>
+      <div style={full}><HubModel h={data} colors={colors} /></div>
     </div>
   );
 }
@@ -2775,19 +3389,13 @@ export default function RevenueScreen({
     const helperStyle = {
       fontSize: 'var(--t-meta)',
       color: 'var(--text-tertiary)',
-      marginTop: '2px',
-    };
-
-    const cardStyle = {
-      backgroundColor: 'var(--bg-card-solid)',
-      borderRadius: '12px',
-      padding: '12px',
-      marginBottom: '10px',
-      boxShadow: 'var(--card-shadow-sm)',
+      margin: '3px 0 0',
+      lineHeight: 1.4,
     };
 
     return (
-      <div key="revenue-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+      <div key="revenue-screen-container" className="hub-root" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+        <style>{HUB_CSS}</style>
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2840,11 +3448,11 @@ export default function RevenueScreen({
         </div>
 
         {/* Tab Navigation */}
-        <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '8px 4px', gap: '4px' }}>
+        <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '6px', gap: '4px' }}>
           {adminTabs.map(tab => (
-            <button className="hit44" key={tab.id} aria-pressed={activeTab === tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, minWidth: 0, padding: '12px 4px', border: 'none', backgroundColor: activeTab === tab.id ? colors.navyBg : 'var(--bg-card-solid)', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', transition: 'opacity 0.2s' }}>
-              {tab.icon(activeTab === tab.id ? 'white' : colors.navy, 18)}
-              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: activeTab === tab.id ? 'white' : colors.navy }}>{tab.label}</span>
+            <button className="hit44" key={tab.id} aria-pressed={activeTab === tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, minWidth: 0, padding: '8px 4px', border: 'none', backgroundColor: activeTab === tab.id ? colors.navyBg : 'transparent', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'background-color 0.15s ease' }}>
+              {tab.icon(activeTab === tab.id ? 'white' : 'var(--text-secondary)', 18)}
+              <span style={{ fontSize: 'var(--t-meta)', fontWeight: activeTab === tab.id ? '600' : '500', color: activeTab === tab.id ? 'white' : 'var(--text-secondary)' }}>{tab.label}</span>
             </button>
           ))}
         </div>
@@ -2853,212 +3461,176 @@ export default function RevenueScreen({
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
           {/* OVERVIEW TAB: the money hub, defined above this component. */}
-          {activeTab === 'overview' && <MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />}
+          {activeTab === 'overview' && (
+            <MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />
+          )}
 
           {/* THE WHAT-IF SIMULATOR, at the top of the Projections tab. It was
               the Revenue tab until 2026-09-25, when real revenue got a tab of
               its own; it is arithmetic on typed inputs, which is what the
               Projections tab is for. The inputs still live in FlockAppInner. */}
           {activeTab === 'projections' && (<>
-          <div style={{ marginBottom: '8px' }}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>What-if simulator</h3>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>Type a venue count and a price and read what they would add up to. Real subscribers and revenue are on the Overview tab.</p>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-
-            {/* LEFT COLUMN - INPUTS */}
-            <div>
-              <h3 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.navy, margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Inputs</h3>
-
-              {/* Number of Venues */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-venues">Number of Venues</label>
-                <input id="rev-venues"
-                  type="number"
-                  value={numVenues}
-                  onChange={(e) => setNumVenues(Math.max(0, parseInt(e.target.value) || 0))}
-                  style={inputStyle}
-                  min="0"
-                />
-                <p style={helperStyle}>Venues subscribed to Flock</p>
-              </div>
-
-              {/* Subscription Price */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-subscription">Monthly Subscription</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input id="rev-subscription"
-                    type="number"
-                    value={subscriptionPrice}
-                    onChange={(e) => setSubscriptionPrice(Math.max(0, parseInt(e.target.value) || 0))}
-                    style={{ ...inputStyle, paddingLeft: '28px' }}
-                    min="0"
-                  />
-                </div>
-                <p style={helperStyle}>Monthly fee per venue</p>
-              </div>
-
-              {/* Events Per Venue */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-events">Events Per Venue/Month</label>
-                <input id="rev-events"
-                  type="number"
-                  value={eventsPerVenue}
-                  onChange={(e) => setEventsPerVenue(Math.max(0, parseInt(e.target.value) || 0))}
-                  style={inputStyle}
-                  min="0"
-                />
-                <p style={helperStyle}>Avg bookings per venue</p>
-              </div>
-
-              {/* Average Spend */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-spend">Avg Group Spend</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input id="rev-spend"
-                    type="number"
-                    value={avgSpend}
-                    onChange={(e) => setAvgSpend(Math.max(0, parseInt(e.target.value) || 0))}
-                    style={{ ...inputStyle, paddingLeft: '28px' }}
-                    min="0"
-                  />
-                </div>
-                <p style={helperStyle}>Per event transaction</p>
-              </div>
-
-              {/* Take Rate */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-takerate">Transaction Take Rate</label>
-                <div style={{ position: 'relative' }}>
-                  <input id="rev-takerate"
-                    type="number"
-                    value={takeRate}
-                    onChange={(e) => setTakeRate(Math.max(0, parseFloat(e.target.value) || 0))}
-                    style={{ ...inputStyle, paddingRight: '28px' }}
-                    min="0"
-                    step="0.1"
-                  />
-                  <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>%</span>
-                </div>
-                <p style={helperStyle}>% of each transaction. Flock takes none today; this is a what-if.</p>
-              </div>
-
-              {/* Operating Costs */}
-              <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle} htmlFor="rev-costs">Monthly Operating Costs</label>
-                <div style={{ position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input id="rev-costs"
-                    type="number"
-                    value={operatingCosts}
-                    onChange={(e) => { setOperatingCostsSource('typed'); setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0)); }}
-                    style={{ ...inputStyle, paddingLeft: '28px' }}
-                    min="0"
-                  />
-                </div>
-                <p style={helperStyle}>Starts at the monthly burn the Overview reads; type over it to try another.</p>
-              </div>
+          <div className="hub-month-head">
+            <div style={{ minWidth: 0 }}>
+              <h2 className="hub-month-title">What-if simulator</h2>
+              <p className="hub-month-sub">Type a venue count and a price and read what they would add up to. Real subscribers and revenue are on the Overview tab.</p>
             </div>
+          </div>
+          <div className="hub-sim">
 
-            {/* RIGHT COLUMN - OUTPUTS */}
-            <div>
-              <h3 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.navy, margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Projections</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px', lineHeight: '1.4' }}>
+            {/* INPUTS */}
+            <HubCard title="Inputs">
+              <div className="hub-fields">
+                {/* Number of Venues */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-venues">Number of Venues</label>
+                  <input id="rev-venues"
+                    type="number"
+                    value={numVenues}
+                    onChange={(e) => setNumVenues(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={inputStyle}
+                    min="0"
+                  />
+                  <p style={helperStyle}>Venues subscribed to Flock</p>
+                </div>
+
+                {/* Subscription Price */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-subscription">Monthly Subscription</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
+                    <input id="rev-subscription"
+                      type="number"
+                      value={subscriptionPrice}
+                      onChange={(e) => setSubscriptionPrice(Math.max(0, parseInt(e.target.value) || 0))}
+                      style={{ ...inputStyle, paddingLeft: '28px' }}
+                      min="0"
+                    />
+                  </div>
+                  <p style={helperStyle}>Monthly fee per venue</p>
+                </div>
+
+                {/* Events Per Venue */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-events">Events Per Venue/Month</label>
+                  <input id="rev-events"
+                    type="number"
+                    value={eventsPerVenue}
+                    onChange={(e) => setEventsPerVenue(Math.max(0, parseInt(e.target.value) || 0))}
+                    style={inputStyle}
+                    min="0"
+                  />
+                  <p style={helperStyle}>Avg bookings per venue</p>
+                </div>
+
+                {/* Average Spend */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-spend">Avg Group Spend</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
+                    <input id="rev-spend"
+                      type="number"
+                      value={avgSpend}
+                      onChange={(e) => setAvgSpend(Math.max(0, parseInt(e.target.value) || 0))}
+                      style={{ ...inputStyle, paddingLeft: '28px' }}
+                      min="0"
+                    />
+                  </div>
+                  <p style={helperStyle}>Per event transaction</p>
+                </div>
+
+                {/* Take Rate */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-takerate">Transaction Take Rate</label>
+                  <div style={{ position: 'relative' }}>
+                    <input id="rev-takerate"
+                      type="number"
+                      value={takeRate}
+                      onChange={(e) => setTakeRate(Math.max(0, parseFloat(e.target.value) || 0))}
+                      style={{ ...inputStyle, paddingRight: '28px' }}
+                      min="0"
+                      step="0.1"
+                    />
+                    <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>%</span>
+                  </div>
+                  <p style={helperStyle}>% of each transaction. Flock takes none today; this is a what-if.</p>
+                </div>
+
+                {/* Operating Costs */}
+                <div>
+                  <label style={labelStyle} htmlFor="rev-costs">Monthly Operating Costs</label>
+                  <div style={{ position: 'relative' }}>
+                    <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
+                    <input id="rev-costs"
+                      type="number"
+                      value={operatingCosts}
+                      onChange={(e) => { setOperatingCostsSource('typed'); setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0)); }}
+                      style={{ ...inputStyle, paddingLeft: '28px' }}
+                      min="0"
+                    />
+                  </div>
+                  <p style={helperStyle}>Starts at the monthly burn the Overview reads; type over it to try another.</p>
+                </div>
+              </div>
+            </HubCard>
+
+            {/* OUTPUTS: what the typed numbers come to, as tiles, then the
+                same money as bars on one scale, then the working. */}
+            <div style={{ minWidth: 0 }}>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 2px 8px', lineHeight: '1.4' }}>
                 Arithmetic on the numbers you typed, not measurements. The real numbers are on the Overview tab.
               </p>
-
-              {/* Revenue Breakdown */}
-              <div style={cardStyle}>
-                <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Projected Revenue</h4>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Subscriptions</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{formatCurrency(subscriptionRevenue)}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Transactions</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{formatCurrency(transactionRevenue)}</span>
-                </div>
-                <div style={{ borderTop: `1px solid ${colors.creamDark}`, paddingTop: '8px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>Monthly Total</span>
-                    <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>{formatCurrency(totalMonthlyRevenue)}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Annualised run rate</span>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navyMid }}>{formatCurrency(annualRevenue)}</span>
-                  </div>
-                  {/* Not ARR. ARR may only count the recurring stream; this is
-                      the monthly total times twelve, so it folds in transaction
-                      revenue and assumes no venue ever cancels. */}
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: '1.4' }}>
-                    This month times twelve. It includes transaction fees, which are not recurring, and assumes no venue cancels.
-                  </p>
-                </div>
+              <div className="hub-tiles" style={{ marginBottom: '12px' }}>
+                <HubTile navy={colors.navy} label="Revenue a month" value={formatCurrency(totalMonthlyRevenue)} sub="Subscriptions and transactions" />
+                {/* Profitability: the accent tokens' text on the accent wash
+                    it is designed against, and both flip with the theme. A
+                    hardcoded light mint here once read about 1.7:1 in dark
+                    mode. */}
+                <HubTile navy={colors.navy} label="Profit a month" value={`${monthlyProfit >= 0 ? '+' : ''}${formatCurrency(monthlyProfit)}`} tone={isProfitable ? 'good' : 'bad'} wash={isProfitable ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)'} sub={isProfitable ? 'Profitable' : 'Not Profitable'} />
+                <HubTile
+                  navy={colors.navy}
+                  label="Break-even point"
+                  value={breakEvenReachable ? hubPlural(breakEvenVenues, 'venue', 'venues') : 'Not reachable'}
+                  tone={!breakEvenReachable ? 'muted' : isAboveBreakEven ? 'good' : undefined}
+                  sub={!breakEvenReachable
+                    ? 'A venue brings in nothing at these inputs, so there is no break-even point.'
+                    : isAboveBreakEven
+                      ? `${hubPlural(numVenues - breakEvenVenues, 'venue', 'venues')} above break-even`
+                      : `Need ${hubPlural(breakEvenVenues - numVenues, 'more venue', 'more venues')}`}
+                />
+                <HubTile navy={colors.navy} label="Revenue per venue" value={revenuePerVenueDefined ? `${formatCurrency(revenuePerVenue)}/mo` : 'n/a'} sub="Each venue, a month" />
               </div>
-
-              {/* Profitability.
-                  The background used to be a hardcoded light mint gradient (or
-                  the light red pair) while every piece of text on it uses the
-                  accent TOKENS, which flip to a light green and a light red in
-                  dark mode. Light on light, about 1.7:1: the profit headline
-                  and the margin were unreadable in dark mode, and this is the
-                  one card on the screen whose whole job is a single number.
-                  --accent-green-bg / --accent-red-bg are the tokens those text
-                  colours are already designed against and they flip together,
-                  so the pair stays legible in both themes. Flat rather than a
-                  gradient, which is also what the design rules ask for. */}
-              <div style={{ ...cardStyle, background: isProfitable ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)' }}>
-                <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)', margin: '0 0 8px', textTransform: 'uppercase' }}>
-                  {isProfitable ? 'Profitable' : 'Not Profitable'}
-                </h4>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Monthly Profit</span>
-                  <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>
-                    {monthlyProfit >= 0 ? '+' : ''}{formatCurrency(monthlyProfit)}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>Profit Margin</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isProfitable ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>
-                    {marginDefined ? `${profitMargin.toFixed(1)}%` : 'n/a'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Unit Economics */}
-              <div style={cardStyle}>
-                <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase' }}>Unit Economics</h4>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Revenue/Venue</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{revenuePerVenueDefined ? `${formatCurrency(revenuePerVenue)}/mo` : 'n/a'}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Break-Even Point</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{breakEvenReachable ? hubPlural(breakEvenVenues, 'venue', 'venues') : 'Not reachable'}</span>
-                </div>
-                <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: isAboveBreakEven ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', textAlign: 'center' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isAboveBreakEven ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
-                    {!breakEvenReachable
-                      ? 'A venue brings in nothing at these inputs, so there is no break-even point.'
-                      : isAboveBreakEven
-                        ? `${hubPlural(numVenues - breakEvenVenues, 'venue', 'venues')} above break-even`
-                        : `Need ${breakEvenVenues - numVenues} more venues`}
-                  </span>
-                </div>
-              </div>
+              <HubCard title="Projected Revenue" style={{ marginBottom: '12px' }}>
+                <HubBarList
+                  color={colors.steel}
+                  rows={[
+                    { key: 'sim-subs', label: 'Subscriptions', value: subscriptionRevenue, valueText: formatCurrency(subscriptionRevenue), color: colors.steel },
+                    { key: 'sim-txn', label: 'Transactions', value: transactionRevenue, valueText: formatCurrency(transactionRevenue), color: 'var(--hub-c2)' },
+                    { key: 'sim-costs', label: 'Operating costs', value: operatingCosts, valueText: formatCurrency(operatingCosts), color: 'var(--hub-c3)' },
+                  ]}
+                />
+                <HubRow navy={colors.navy} label="Monthly Total" value={formatCurrency(totalMonthlyRevenue)} />
+                {/* Not ARR. ARR may only count the recurring stream; this is
+                    the monthly total times twelve, so it folds in transaction
+                    revenue and assumes no venue ever cancels. */}
+                <HubRow
+                  navy={colors.navy}
+                  label="Annualised run rate"
+                  value={formatCurrency(annualRevenue)}
+                  note="This month times twelve. It includes transaction fees, which are not recurring, and assumes no venue cancels."
+                />
+                <HubRow navy={colors.navy} label="Profit Margin" value={marginDefined ? `${profitMargin.toFixed(1)}%` : 'n/a'} tone={isProfitable ? 'good' : 'bad'} />
+              </HubCard>
 
               {/* Business Model Info */}
-              <div style={{ ...cardStyle, backgroundColor: 'var(--bg-card-solid)', border: `1px solid ${colors.creamDark}` }}>
-                <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px' }}>The plan behind these numbers</h4>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
+              <HubCard title="The plan behind these numbers">
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>
                   Two streams: a monthly <strong>venue subscription</strong> (Roost), which recurs, and a
                   cut of <strong>group transactions</strong>, which would not. Roost billing is built and
                   switched off, and no transaction fee exists in the product, so every figure above is what the
                   arithmetic would say if the inputs on the left were real.
                 </p>
-              </div>
+              </HubCard>
             </div>
           </div>
           </>)}
@@ -3104,44 +3676,25 @@ export default function RevenueScreen({
             const moneyOr = (n, fallback = 'Not measured', dp = 2) => money(n, dp) || fallback;
             const count = (n) => (Number.isFinite(n) ? n.toLocaleString() : null);
 
-            const card = {
-              backgroundColor: 'var(--bg-card-solid)',
-              borderRadius: '12px',
-              padding: '12px',
-              boxShadow: 'var(--card-shadow-sm)',
-            };
+            // The Overview's parts, so the two tabs read as one console: a
+            // bordered card, each headline figure in a box of its own, and
+            // every row's note behind a tap on the row (THE LOOK, above).
+            const card = hubStyle.card;
             const h3 = { fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' };
-            const sub = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.4 };
-            const big = { fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 };
-            const kicker = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' };
-            const foot = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.4 };
+            const sub = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 };
+            const big = { fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0', lineHeight: 1.15, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' };
+            const kicker = { fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.3 };
+            const foot = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.45 };
 
             const row = (key, left, right, note) => (
-              <div key={key} style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{left}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{right}</span>
-                </div>
-                {note && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35 }}>{note}</p>}
-              </div>
+              <HubRow key={key} navy={colors.navy} label={left} value={right} note={note} />
             );
 
             // The mark on a figure nobody has seen on an invoice. It sits
             // beside the LABEL rather than the amount because the amount is
             // the part that has to stay scannable, and a reader who takes the
             // number without the tag has still read a marked row.
-            const unverifiedTag = {
-              fontSize: 'var(--t-micro)',
-              fontWeight: '700',
-              color: 'var(--accent-amber-text)',
-              backgroundColor: 'var(--accent-amber-bg)',
-              borderRadius: '6px',
-              padding: '1px 5px',
-              marginLeft: '6px',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px',
-              whiteSpace: 'nowrap',
-            };
+            const unverifiedTag = hubTag('warn');
 
             // A FIXED BILL, WITH THE TWO FACTS THE OLD ROW THREW AWAY.
             //
@@ -3158,22 +3711,27 @@ export default function RevenueScreen({
             // An unverified line is still counted in the totals, and the panel
             // says so rather than dropping it.
             const fixedRow = (e, period) => (
-              <div key={e.id} style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                    {e.label}
-                    {!e.verified && <span style={unverifiedTag}>Unverified</span>}
-                  </span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{moneyOr(e.usd, 'No figure')}{period}</span>
+              <details key={e.id} className="hub-row hub-disclose" data-hub-fig="">
+                <summary className="hit44">
+                  <div className="hub-row-head">
+                    <span className="hub-row-label">
+                      {e.label}
+                      {!e.verified && <span style={unverifiedTag}>Unverified</span>}
+                    </span>
+                    <span className="hub-row-value" style={{ color: colors.navy }}>{moneyOr(e.usd, 'No figure')}{period}</span>
+                    {hubChevron()}
+                  </div>
+                </summary>
+                <div className="hub-row-more">
+                  <p className="hub-note">
+                    {e.verified
+                      ? `Seen on an invoice. Checked ${e.checked}.`
+                      : `Not seen on an invoice. This is a published price or an assumption, counted in the totals anyway. Checked ${e.checked}.`}
+                    {e.note ? ` ${e.note}` : ''}
+                    {e.source ? ` ${e.source}` : ''}
+                  </p>
                 </div>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35 }}>
-                  {e.verified
-                    ? `Seen on an invoice. Checked ${e.checked}.`
-                    : `Not seen on an invoice. This is a published price or an assumption, counted in the totals anyway. Checked ${e.checked}.`}
-                  {e.note ? ` ${e.note}` : ''}
-                  {e.source ? ` ${e.source}` : ''}
-                </p>
-              </div>
+              </details>
             );
 
             if (!d) {
@@ -3244,9 +3802,7 @@ export default function RevenueScreen({
             // figure is the one recorded on the Reconciled card above.
             const reconciledById = Object.fromEntries((d.reconciled?.lines || []).map((l) => [l.id, l]));
 
-            const depLine = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.4 };
-            const groupLabel = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' };
-            const groupNote = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 6px 2px', lineHeight: 1.4 };
+            const depLine = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 4px', lineHeight: 1.5 };
 
             // Four different facts share the right-hand slot on an inventory
             // row and they must not be allowed to look alike: a measured
@@ -3290,14 +3846,18 @@ export default function RevenueScreen({
               return e.configuredNote || 'The server cannot see whether this is configured.';
             };
 
-            const depBlock = (e, i) => {
+            const depBlock = (e) => {
               const w = e.watchlistId ? watchById[e.watchlistId] : null;
               return (
-                <div key={e.id} style={{ padding: i === 0 ? '0 0 9px' : '9px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-                    <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{e.label}</span>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{depCost(e)}</span>
-                  </div>
+                <details key={e.id} className="hub-row hub-disclose" data-hub-fig="">
+                  <summary className="hit44">
+                    <div className="hub-row-head">
+                      <span className="hub-row-label" style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{e.label}</span>
+                      <span className="hub-row-value" style={{ color: colors.navy }}>{depCost(e)}</span>
+                      {hubChevron()}
+                    </div>
+                  </summary>
+                  <div className="hub-row-more">
                   <p style={depLine}>{e.what} Lives in {e.where}.</p>
                   <p style={depLine}>
                     Price: {e.unitPrice || (e.unpriceable ? 'no published rate on file for this model id' : 'no published unit price')}.
@@ -3332,7 +3892,8 @@ export default function RevenueScreen({
                     </p>
                   )}
                   {e.source && <p style={depLine}>{e.source}, checked {e.checked}.</p>}
-                </div>
+                  </div>
+                </details>
               );
             };
 
@@ -3366,26 +3927,26 @@ export default function RevenueScreen({
                       <p style={sub}>Fixed bills plus the usage bills a human has read off each vendor's own billing page.</p>
                     </div>
                     <button className="hit44" disabled={costsLoading} onClick={() => fetchCosts()}
-                      style={{ border: 'none', background: 'transparent', cursor: costsLoading ? 'default' : 'pointer', padding: '4px', flexShrink: 0 }}>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{costsLoading ? 'Reading' : 'Refresh'}</span>
+                      style={{ ...hubStyle.textButton, cursor: costsLoading ? 'default' : 'pointer', flexShrink: 0 }}>
+                      {Icons.repeat('currentColor', 12)}{costsLoading ? 'Reading' : 'Refresh'}
                     </button>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <div>
+                  <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <div className="hub-stat">
                       <p style={kicker}>All in, monthly</p>
                       <p style={big}>{moneyOr(allInMonthly, 'Not measured', 0)}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <p className="hub-stat-note">
                         {ledger
                           ? `The code's fixed bills, the reconciled bills, and ${ledger.activeRows} ${ledger.activeRows === 1 ? 'bill' : 'bills'} from the expense list, each counted once.`
                           : `${moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus ${moneyOr(reconciledTotal, 'nothing', 0)} of reconciled usage bills. ${d.expenses && d.expenses.readError ? d.expenses.readError : 'The expense list was not read.'}`}
                       </p>
                     </div>
-                    <div>
+                    <div className="hub-stat">
                       <p style={kicker}>Reconciled</p>
                       <p style={big}>{moneyOr(reconciledTotal, 'None on file', 0)}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <HubWhy><p>
                         Read off each vendor's own bill by hand{d.reconciled?.oldestAsOf ? `, the oldest figure on ${d.reconciled.oldestAsOf}` : ''}. Nothing in the app can verify it, so the total is only as current as its oldest line.
-                      </p>
+                      </p></HubWhy>
                     </div>
                   </div>
                   {/* RECORD A PAID INVOICE HERE, NOT IN CODE. Until 2026-09-01
@@ -3437,22 +3998,34 @@ export default function RevenueScreen({
                     const plural = (n) => (n === 1 ? 'venue' : 'venues');
                     return (
                       <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-default)' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                          <div>
+                        <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                          <div className="hub-stat">
                             <p style={kicker}>Serving venues</p>
                             <p style={big}>{moneyOr(infra, 'Not measured', 0)}</p>
-                            <p style={{ ...sub, margin: '3px 0 0' }}>Hosting, data vendors and the reconciled Google Cloud and Railway bills. This is the number to quote as what it costs to serve.</p>
+                            <HubWhy><p>Hosting, data vendors and the reconciled Google Cloud and Railway bills. This is the number to quote as what it costs to serve.</p></HubWhy>
                           </div>
-                          <div>
+                          <div className="hub-stat">
                             <p style={kicker}>Development tooling</p>
                             <p style={big}>{moneyOr(tooling, 'Not read', 0)}</p>
-                            <p style={{ ...sub, margin: '3px 0 0' }}>
+                            <HubWhy><p>
                               {ledger
                                 ? 'Real bills that no user causes, from the expense list on the Overview tab. In the all-in total, and not in the cost of service.'
                                 : 'The expense list, where tooling bills live, could not be read, so this is not shown rather than shown as zero.'}
-                            </p>
+                            </p></HubWhy>
                           </div>
                         </div>
+                        {Number.isFinite(infra) && Number.isFinite(tooling) && infra + tooling > 0 && (
+                          <>
+                            <div className="hub-stack" aria-hidden="true" style={{ marginTop: '10px' }}>
+                              {infra > 0 && <div style={{ width: `${(infra / (infra + tooling)) * 100}%`, backgroundColor: colors.steel }} />}
+                              {tooling > 0 && <div style={{ width: `${(tooling / (infra + tooling)) * 100}%`, backgroundColor: 'var(--hub-c2)' }} />}
+                            </div>
+                            <div className="hub-legend" aria-hidden="true">
+                              <span><span className="hub-swatch" style={{ backgroundColor: colors.steel }} />Serving venues</span>
+                              <span><span className="hub-swatch" style={{ backgroundColor: 'var(--hub-c2)' }} />Development tooling</span>
+                            </div>
+                          </>
+                        )}
                         {price ? (
                           <p style={{ ...sub, margin: '10px 0 0' }}>
                             At {moneyOr(roostNet && roostBe && Number.isFinite(roostBe.priceCents) ? roostBe.priceCents / 100 : (listPrice || price), '', 0)} a venue{roostNet ? `, ${moneyOr(roostNet, '', 2)} after Stripe's fees` : ', before Stripe’s fees'}, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
@@ -3504,20 +4077,20 @@ export default function RevenueScreen({
                     <p style={sub}>
                       Everything Flock reaches outside itself, priced where there is a price and named where there is not. The rows resolve against the meters, the fixed bills and the watchlist rather than holding their own copy of a number.
                     </p>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      <div>
+                    <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                      <div className="hub-stat">
                         <p style={kicker}>Dependencies</p>
                         <p style={big}>{dep.total}</p>
-                        <p style={{ ...sub, margin: '3px 0 0' }}>
+                        <p className="hub-stat-note">
                           {dep.groups.map((g) => `${g.entries.length} ${g.short || g.id}`).join(', ')}.
                         </p>
                       </div>
-                      <div>
+                      <div className="hub-stat">
                         <p style={kicker}>Without a meter</p>
                         <p style={big}>{(dep.unmeteredIds || []).length}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {dep.total}</span></p>
-                        <p style={{ ...sub, margin: '3px 0 0' }}>
+                        <HubWhy><p>
                           Nothing here counts their usage, so those rows read as not measured. A zero meaning no meter and a zero meaning no spend are different facts.
-                        </p>
+                        </p></HubWhy>
                       </div>
                     </div>
                     {(dep.unknownCostIds || []).length > 0 && (
@@ -3534,12 +4107,10 @@ export default function RevenueScreen({
                 )}
 
                 {(dep.groups || []).map((g) => (
-                  <div key={g.id}>
-                    <p style={groupLabel}>{g.label}</p>
-                    <p style={groupNote}>{g.note}</p>
-                    <div style={card}>
-                      {g.entries.map(depBlock)}
-                    </div>
+                  <div key={g.id} style={card}>
+                    <h3 style={h3}>{g.label}</h3>
+                    <p style={{ ...sub, margin: '0 0 4px' }}>{g.note}</p>
+                    {g.entries.map(depBlock)}
                   </div>
                 ))}
 
@@ -3559,21 +4130,19 @@ export default function RevenueScreen({
                     two is the effective monthly burn on the row below. */}
                 <div style={card}>
                   <h3 style={h3}>Fixed, whether anyone uses it or not</h3>
-                  <p style={sub}>
-                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes. Railway and Google Cloud bill by usage, so they sit on the reconciled card above rather than here. Bills the code does not carry are on the expense list on the Overview tab.
-                  </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
-                    <div>
+                  <p style={sub}>Maintained by hand in backend/services/costModel.js. Tap a bill for the day a person last checked it.</p>
+                  <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <div className="hub-stat">
                       <p style={kicker}>Recurring monthly</p>
                       <p style={big}>{moneyOr(fixed.monthlyUsd, 'None on file', 0)}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <p className="hub-stat-note">
                         {(fixed.monthly || []).length} {(fixed.monthly || []).length === 1 ? 'bill' : 'bills'} that arrive every month.
                       </p>
                     </div>
-                    <div>
+                    <div className="hub-stat">
                       <p style={kicker}>Committed annually</p>
                       <p style={big}>{moneyOr(fixed.annualUsd, 'None on file', 0)}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <p className="hub-stat-note">
                         {(fixed.annual || []).length} {(fixed.annual || []).length === 1 ? 'bill' : 'bills'} that arrive once a year, which is {moneyOr(fixed.annualPerMonthUsd, 'nothing')} a month once spread.
                       </p>
                     </div>
@@ -3601,6 +4170,9 @@ export default function RevenueScreen({
                       {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published vendor price or an assumption rather than an invoice you have seen: {fixed.unverifiedLines.join(', ')}. They are counted in every total above, marked unverified on their own row, and worth {moneyOr(fixed.unverifiedMonthlyUsd, '$0', 2)} a month and {moneyOr(fixed.unverifiedAnnualUsd, '$0', 2)} a year between them.
                     </p>
                   )}
+                  <HubWhy label="How these are kept">
+                    {'Every line carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes. Railway and Google Cloud bill by usage, so they sit on the reconciled card above rather than here. Bills the code does not carry are on the expense list on the Overview tab.'}
+                  </HubWhy>
                 </div>
 
                 {/* 2b. PLANS AND TIERS. Nobody could answer, from any
@@ -3655,8 +4227,8 @@ export default function RevenueScreen({
                   <p style={sub}>
                     Real usage, priced at the rate card. This is an estimate of a bill and not a bill. Lines marked as this process only live in one container's memory, so they read zero after every deploy and do not add up across a month.
                   </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
-                    <div>
+                  <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <div className="hub-stat">
                       <p style={kicker}>Today so far</p>
                       <p style={big}>
                         {moneyOr(obs.todayUsd, 'Not measured')}
@@ -3664,12 +4236,12 @@ export default function RevenueScreen({
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> to {money(obs.todayUsdHigh)}</span>
                         )}
                       </p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>A band where a meter counted calls without recording which SKU they were.</p>
+                      <HubWhy><p>A band where a meter counted calls without recording which SKU they were.</p></HubWhy>
                     </div>
-                    <div>
+                    <div className="hub-stat">
                       <p style={kicker}>Coverage</p>
                       <p style={big}>{(obs.lines || []).length - (obs.unmeasuredLines || []).length}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {(obs.lines || []).length}</span></p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <p className="hub-stat-note">
                         {(obs.unmeasuredLines || []).length === 0 ? 'Every meter reported.' : `Not reporting: ${obs.unmeasuredLines.join(', ')}.`}
                       </p>
                     </div>
@@ -3713,25 +4285,30 @@ export default function RevenueScreen({
                       <p style={sub}>
                         Google charges for each photo Flock buys, and Flock keeps every one it buys for thirty days in Postgres, so this counts venues photographed rather than cards viewed. A photo already bought costs nothing to show again, however many people look at it.
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
+                      <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="hub-stat">
                           <p style={kicker}>This month</p>
                           <p style={big}>
                             {count(pb.monthUsed)}
                             <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {count(lim.fetchesPerMonth)}</span>
                           </p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <p className="hub-stat-note">
                             {moneyOr(pb.monthUsd, 'nothing yet')} so far. The first {count(lim.freePerMonth)} photos a month are free.
                           </p>
                         </div>
-                        <div>
+                        <div className="hub-stat">
                           <p style={kicker}>Budget</p>
                           <p style={big}>{moneyOr(lim.budgetUsdPerYear, 'Not set', 0)}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/yr</span></p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             Set in backend/services/photoStore.js, or by PHOTO_BUDGET_USD_PER_YEAR on Railway. Every other photo limit is derived from it.
-                          </p>
+                          </p></HubWhy>
                         </div>
                       </div>
+                      {monthPct !== null && (
+                        <div className="hub-track" aria-hidden="true" style={{ margin: '10px 0 2px' }}>
+                          <div className="hub-fill" style={{ width: `${Math.max(2, monthPct)}%`, backgroundColor: tight ? 'var(--accent-amber-text)' : colors.steel }} />
+                        </div>
+                      )}
                       {row('photo-day', 'Bought today', `${count(pb.dayUsed)} of ${count(lim.burstPerDay)}`,
                         'A daily brake at three times the even pace, so one bad day cannot spend the month.')}
                       {row('photo-month-left', 'Left this month', count(pb.monthRemaining),
@@ -3761,20 +4338,20 @@ export default function RevenueScreen({
                       <p style={sub}>
                         Set by hand in the Cloud console on {q.checked}, on project {q.project}. A quota refuses the call. It does not slow it down and it does not queue it.
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
+                      <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="hub-stat">
                           <p style={kicker}>Caps the month at</p>
                           <p style={big}>{moneyOr(q.perMonthUsdAfterFree, 'Not priced', 0)}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {moneyOr(q.perMonthUsdGross, 'nothing', 0)} before each SKU keeps its own free allowance, which is named on its row below. Every quota spent every day, which nothing has ever done.
-                          </p>
+                          </p></HubWhy>
                         </div>
-                        <div>
+                        <div className="hub-stat">
                           <p style={kicker}>Budget alert</p>
                           <p style={big}>{moneyOr(q.budget?.usdPerMonth, 'None', 0)}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo</span></p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             Named {q.budget?.name}. It emails at {(q.budget?.alertsAtPct || []).join(', ')} percent. {q.budget?.note}
-                          </p>
+                          </p></HubWhy>
                         </div>
                       </div>
                       {(q.lines || []).map((l) => {
@@ -3845,21 +4422,21 @@ export default function RevenueScreen({
                       <p style={sub}>
                         Every photo is screened by Cloud Vision before it is stored, and an image that cannot be screened is refused rather than kept. That makes a Vision bill of zero two different things, so this is measured rather than assumed.
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
+                      <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="hub-stat">
                           <p style={kicker}>Provider</p>
                           <p style={big}>{headline}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {vp.configured === false
                               ? 'No VISION_API_KEY on this server.'
                               : `Asked Google directly, with zero images, so the check bought nothing. Key from ${vp.keyVar}.`}
                             {vp.detail ? ` ${vp.detail}` : ''}
-                          </p>
+                          </p></HubWhy>
                         </div>
-                        <div>
+                        <div className="hub-stat">
                           <p style={kicker}>Uploads</p>
                           <p style={big}>{uploads}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {uploads === 'Unscreened'
                               ? 'Screening is not required on this server, so an image that cannot be screened is stored anyway. That is the dev default and it must never be the production one.'
                               : uploads === 'Refused'
@@ -3867,7 +4444,7 @@ export default function RevenueScreen({
                                 : uploads === 'Screened'
                                   ? 'Screening is required and the provider answers, which is the correct production setting.'
                                   : 'Screening is required and the probe could not reach Google, which says nothing either way. Check again before concluding anything from it.'}
-                          </p>
+                          </p></HubWhy>
                         </div>
                       </div>
                       {row('vision-last', 'Last real screen',
@@ -3941,31 +4518,31 @@ export default function RevenueScreen({
                       <p style={sub}>
                         Every notification this app sends passes through one place and writes a row there, so this is the whole record for the last {p.days} days. It holds no titles, no message bodies and no device tokens. Rows are kept for 30 days and then deleted.
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
+                      <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="hub-stat">
                           <p style={kicker}>Landed</p>
                           <p style={big}>{count(t.delivered) || 'Not measured'}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {attempts === null
                               ? 'The ledger could not be read, which says nothing either way.'
                               : attempts === 0
                                 ? 'Nothing has been attempted in this window at all. On a product with no users that is the expected reading, and it is not evidence that delivery works.'
                                 : `${count(reached)} device${reached === 1 ? '' : 's'} reached across ${count(attempts)} attempt${attempts === 1 ? '' : 's'}.`}
-                          </p>
+                          </p></HubWhy>
                         </div>
-                        <div>
+                        <div className="hub-stat">
                           <p style={kicker}>Provider</p>
                           <p style={big}>{p.configured === false ? 'Switched off' : 'Configured'}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {p.configured === false
                               ? 'FIREBASE_SERVICE_ACCOUNT is not set on this server, so every notification in the app is a no-op and no row below can be anything but a skip.'
                               : 'FIREBASE_SERVICE_ACCOUNT is set, so a count of zero below means nothing was sent rather than that sending is off.'}
-                          </p>
+                          </p></HubWhy>
                         </div>
                       </div>
                       {ordered.length === 0
                         ? <p style={foot}>No push has been attempted in the last {p.days} days.</p>
-                        : ordered.map((k) => row(`push-${k}`, WORDS[k] || k, count(byOutcome[k])))}
+                        : <HubBarList rows={ordered.map((k) => ({ key: `push-${k}`, label: WORDS[k] || k, value: byOutcome[k], valueText: count(byOutcome[k]), color: k === 'delivered' ? colors.steel : k === 'failed' ? 'var(--accent-red-text)' : 'var(--text-tertiary)' }))} />}
                     </div>
                   );
                 })()}
@@ -4002,28 +4579,28 @@ export default function RevenueScreen({
                       <p style={sub}>
                         Whether a venue&apos;s own data or the rule engine made each forecast. This counter lives in the server&apos;s memory, so it starts again from nothing on every deploy and reads the time since the last restart rather than all time. A small number here is not evidence that a venue&apos;s own data goes unused.
                       </p>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                        <div>
+                      <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                        <div className="hub-stat">
                           <p style={kicker}>From a venue&apos;s own data</p>
                           <p style={big}>{share === null ? 'Not measured' : `${share}%`}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {total === null
                               ? 'The meter could not be read, which says nothing either way.'
                               : total === 0
                                 ? 'Nothing has asked for a forecast since the last deploy, so nothing has answered.'
                                 : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. ${hubRestWords(total, ml, p.categoryCurve)}${madeBy ? ` Of the ${count(ml)}, ${madeBy}.` : ''}`}
-                          </p>
+                          </p></HubWhy>
                         </div>
-                        <div>
+                        <div className="hub-stat">
                           <p style={kicker}>Model file</p>
                           <p style={big}>{p.modelLoaded ? (p.modelVersion || 'Loaded') : 'Not loaded'}</p>
-                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                          <HubWhy><p>
                             {p.modelLoaded
                               ? (p.serveMode === 'curve_offset'
                                 ? "The ONNX model is in memory. Serve mode curve_offset does not run it. A venue's own data answers only while it is loaded."
                                 : 'The ONNX model is in memory and available to serve.')
                               : "Every forecast is coming from the rule engine. That is the designed fallback and the product still works, but no forecast is made from a venue's own data."}
-                          </p>
+                          </p></HubWhy>
                         </div>
                       </div>
                       {modeWords && (
@@ -4048,18 +4625,18 @@ export default function RevenueScreen({
                   <p style={sub}>
                     Gemini is the only per-venue cost that scales with use. The ceiling below is that venue's own daily token cap, spent in full every day of the month, which is the most one venue can possibly cost.
                   </p>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                    <div>
+                  <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                    <div className="hub-stat">
                       <p style={kicker}>Costs at most</p>
                       <p style={big}>{moneyOr(v.ceilingMonthlyUsdHigh, 'Not priced')}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                      <p className="hub-stat-note">
                         {Number.isFinite(v.ceilingMonthlyUsdLow) ? `From ${money(v.ceilingMonthlyUsdLow)} if every token were input.` : 'No rate on file for this model.'}
                       </p>
                     </div>
-                    <div>
+                    <div className="hub-stat">
                       <p style={kicker}>Gross margin</p>
                       <p style={big}>{Number.isFinite(v.ceilingMarginPct) ? `${v.ceilingMarginPct}%` : 'Not priced'}</p>
-                      <p style={{ ...sub, margin: '3px 0 0' }}>Against the dear end of the band, before any payment processing.</p>
+                      <p className="hub-stat-note">Against the dear end of the band, before any payment processing.</p>
                     </div>
                   </div>
                   {Number.isFinite(v.laterCeilingMonthlyUsd) && v.laterFrom && row(
@@ -4090,7 +4667,7 @@ export default function RevenueScreen({
                   <p style={sub}>
                     Not spend. Not a forecast. This is what the limits written into the code permit before something refuses, and nothing has ever come close to one of them. It is here so the worst case is a number rather than a worry.
                   </p>
-                  <div>
+                  <div className="hub-stat">
                     <p style={kicker}>Would cost, monthly</p>
                     <p style={big}>
                       {moneyOr(worst.perMonthUsd, 'Not priced', 0)}
@@ -4151,32 +4728,6 @@ export default function RevenueScreen({
                   2026-08-12. What replaces them is burn and break-even, which
                   are computed from the expense arrays below. */}
 
-              {/* Growth Levers */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Growth Levers</h3>
-                {[
-                  { lever: 'Venue Acquisition', impact: 'High', effort: 'Medium', icon: Icons.building },
-                  { lever: 'User Referrals', impact: 'High', effort: 'Low', icon: Icons.users },
-                  { lever: 'City Expansion', impact: 'Very High', effort: 'High', icon: Icons.globe },
-                  { lever: 'Premium Upsells', impact: 'Medium', effort: 'Low', icon: Icons.sparkles },
-                ].map(item => (
-                  <div key={item.lever} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${colors.cream}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      {item.icon(colors.navy, 14)}
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{item.lever}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: item.impact === 'Very High' ? 'var(--accent-green-bg)' : item.impact === 'High' ? 'var(--accent-blue-bg)' : 'var(--accent-amber-bg)', color: item.impact === 'Very High' ? 'var(--accent-green-text)' : item.impact === 'High' ? 'var(--accent-blue-text)' : 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                        {item.impact}
-                      </span>
-                      <span style={{ padding: '2px 6px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                        {item.effort}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
               {/* Burn and break-even.
                   ------------------------------------------------------------
                   These used to be computed from a MONTHLY / ANNUAL / ONE_TIME
@@ -4207,7 +4758,7 @@ export default function RevenueScreen({
 
                 if (!fixed) {
                   return (
-                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
+                    <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}` }}>
                       <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Burn and break-even</h4>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
                         {costsLoading
@@ -4264,44 +4815,37 @@ export default function RevenueScreen({
                 const appSubsToBreakEven = appCents && burnCents > 0 ? Math.ceil(burnCents / appCents) : null;
                 const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
-                  <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderTop: '1px solid var(--border-light)' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{name}</span>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{amount}<span style={{ fontWeight: '500', color: 'var(--text-tertiary)' }}>{sub}</span></span>
-                  </div>
+                  <HubRow key={name} navy={colors.navy} label={name} value={`${amount}${sub}`} />
                 );
                 return (
                   <>
-                  <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', marginBottom: '12px' }}>
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Burn and break-even</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                      <div>
-                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Monthly burn</p>
-                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{effectiveMonthly === null ? 'Not read' : usd0(effectiveMonthly)}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
-                          {listCutShort ? 'The expense list has more bills than the hub reads at once, so the burn would leave some out and is not shown.' : ledger
-                            ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled bills and the expense list.'
-                            : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months, plus ${usd0(reconciledMonthly)}/mo of reconciled usage bills. The expense list could not be read, so its bills are not in this.`}
-                        </p>
+                  <HubCard title="Burn and break-even">
+                    <div className="hub-stats" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+                      <div className="hub-stat" data-hub-fig="">
+                        <p className="hub-stat-label">Monthly burn</p>
+                        <p className="hub-stat-value">{effectiveMonthly === null ? 'Not read' : usd0(effectiveMonthly)}</p>
+                        <p className="hub-stat-note">What the repeating bills cost a month</p>
                       </div>
-                      <div>
-                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target to cover it</p>
-                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{subsToBreakEven === null ? 'Not read' : subsToBreakEven}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
-                          {webNet
-                            ? `Flock Pro subscriptions at $${(hubBe && hubBe.proWeb && Number.isFinite(hubBe.proWeb.priceCents) ? hubBe.proWeb.priceCents / 100 : PRO_MONTHLY_USD).toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
-                            : `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo, before Stripe's fees and Apple's cut. Open the Overview tab for the figure after fees.`}
-                        </p>
+                      <div className="hub-stat" data-hub-fig="">
+                        <p className="hub-stat-label">Target to cover it</p>
+                        <p className="hub-stat-value">{subsToBreakEven === null ? 'Not read' : subsToBreakEven}</p>
+                        <p className="hub-stat-note">Flock Pro subscribers on the web</p>
                       </div>
                     </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)' }}>
-                      {subsToBreakEven === null ? 'Break-even' : subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab.
-                    </p>
-                  </div>
-                  <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                      <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Fixed expenses in the code</h4>
-                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{usd0(fixed.effectiveMonthlyUsd)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
-                    </div>
+                    <HubWhy>
+                      {listCutShort ? 'The expense list has more bills than the hub reads at once, so the burn would leave some out and is not shown.' : ledger
+                        ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled bills and the expense list.'
+                        : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months, plus ${usd0(reconciledMonthly)}/mo of reconciled usage bills. The expense list could not be read, so its bills are not in this.`}
+                      {webNet
+                        ? `Flock Pro subscriptions at $${(hubBe && hubBe.proWeb && Number.isFinite(hubBe.proWeb.priceCents) ? hubBe.proWeb.priceCents / 100 : PRO_MONTHLY_USD).toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
+                        : `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo, before Stripe's fees and Apple's cut. Open the Overview tab for the figure after fees.`}
+                      {`${subsToBreakEven === null ? 'Break-even' : subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab.`}
+                    </HubWhy>
+                  </HubCard>
+                  <HubCard
+                    title="Fixed expenses in the code"
+                    chips={<HubChip tone="muted">{`${usd0(fixed.effectiveMonthlyUsd)}/mo effective`}</HubChip>}
+                  >
                     {/* A LINE NOBODY HAS SEEN ON AN INVOICE SAYS SO HERE TOO.
                         This list printed a label and a number and nothing
                         else, so Vercel's assumed $0 read as a confirmed free
@@ -4312,26 +4856,48 @@ export default function RevenueScreen({
                     {(fixed.monthly || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/mo'))}
                     {(fixed.annual || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/yr'))}
                     {(fixed.oneTime || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd.toLocaleString()}`, ' once'))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: '3px', borderTop: '1px solid var(--border-default)' }}>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Recurring {usd0(monthlyTotal)}/mo plus {usd0(annualTotal)}/yr</span>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>One-time invested: {usd0(fixed.oneTimeUsd)}</span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '4px 12px', padding: '8px 0 0', borderTop: '1px solid var(--border-default)' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>Recurring {usd0(monthlyTotal)}/mo plus {usd0(annualTotal)}/yr</span>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>One-time invested: {usd0(fixed.oneTimeUsd)}</span>
                     </div>
-                    {(fixed.unverifiedLines || []).length > 0 && (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
-                        {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published price or an assumption rather than an invoice, marked above and counted in the burn anyway. The Costs tab says what each one assumes and where to confirm it.
-                      </p>
-                    )}
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
-                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab. Railway and Google Cloud bill by usage, so they are recorded on the Costs tab&apos;s Reconciled card rather than listed here, and are in the burn above. Bills the code does not carry, such as the tools the app is built with, are on the Overview tab&apos;s expense list and in the burn above.
-                    </p>
-                  </div>
+                    <HubWhy>
+                      {(fixed.unverifiedLines || []).length > 0 && `${fixed.unverifiedLines.length} ${fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published price or an assumption rather than an invoice, marked above and counted in the burn anyway. The Costs tab says what each one assumes and where to confirm it.`}
+                      {'Vendors on free tiers, and what each meter has actually spent, are on the Costs tab. Railway and Google Cloud bill by usage, so they are recorded on the Costs tab\'s Reconciled card rather than listed here, and are in the burn above. Bills the code does not carry, such as the tools the app is built with, are on the Overview tab\'s expense list and in the burn above.'}
+                    </HubWhy>
+                  </HubCard>
                   </>
                 );
               })()}
 
+              {/* Growth Levers: judgements, not measurements, so they come
+                  after every figure on the tab. */}
+              <HubCard title="Growth Levers" sub="How much each could move, and the work it would take.">
+                {[
+                  { lever: 'Venue Acquisition', impact: 'High', effort: 'Medium', icon: Icons.building },
+                  { lever: 'User Referrals', impact: 'High', effort: 'Low', icon: Icons.users },
+                  { lever: 'City Expansion', impact: 'Very High', effort: 'High', icon: Icons.globe },
+                  { lever: 'Premium Upsells', impact: 'Medium', effort: 'Low', icon: Icons.sparkles },
+                ].map(item => (
+                  <div key={item.lever} className="hub-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', minHeight: '40px', padding: '6px 0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                      {item.icon('var(--text-secondary)', 14)}
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>{item.lever}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      <span className="hub-chip" style={{ backgroundColor: item.impact === 'Very High' ? 'var(--accent-green-bg)' : item.impact === 'High' ? 'var(--accent-blue-bg)' : 'var(--accent-amber-bg)', color: item.impact === 'Very High' ? 'var(--accent-green-text)' : item.impact === 'High' ? 'var(--accent-blue-text)' : 'var(--accent-amber-text)' }}>
+                        {`${item.impact} impact`}
+                      </span>
+                      <span className="hub-chip" style={{ backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)' }}>
+                        {`${item.effort} effort`}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </HubCard>
+
               {/* Where the projection charts used to be. An honest empty state
                   beats a plausible-looking fake. */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
+              <div style={{ ...hubStyle.card, border: `1px dashed ${colors.creamDark}`, boxShadow: 'none' }}>
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Revenue and growth</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
                   No chart here. Real revenue, subscribers and recurring revenue are on the Overview tab, read from Stripe and RevenueCat. A chart waits until those numbers have a history worth drawing.
@@ -4356,9 +4922,9 @@ export default function RevenueScreen({
             // The toggle, in one place so the two directions stay symmetrical.
             const modeToggle = (
               <button className="hit44" disabled={researchLoading} onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', padding: '6px', width: '100%', border: 'none', background: 'transparent', cursor: researchLoading ? 'default' : 'pointer' }}>
+                style={{ ...hubStyle.textButton, alignSelf: 'center', flexShrink: 0, cursor: researchLoading ? 'default' : 'pointer' }}>
                 <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{researchLoading ? 'Reading the database...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{researchLoading ? 'Reading the database...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
               </button>
             );
 
@@ -4367,8 +4933,8 @@ export default function RevenueScreen({
             // as zeros under a "Live data" label is inventing a measurement.
             if (!data) {
               return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '20px 14px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }} role="status">
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ ...hubStyle.card, width: '100%', boxSizing: 'border-box', padding: '20px 14px', textAlign: 'center' }} role="status">
                     {!researchLoading && <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />}
                     <h3 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
                       {researchLoading ? 'Reading the database' : researchError ? 'These numbers did not load' : 'Nothing read yet'}
@@ -4429,63 +4995,75 @@ export default function RevenueScreen({
               { label: 'Time to Confirm', value: ttcShown ? hoursWords(ttc.medianHours) : ttc ? 'Not yet' : 'No data', color: colors.navy, note: ttcNote },
               { label: 'Total Users', value: stat(data.totalUsers, (v) => v.toLocaleString()), color: colors.navy, note: 'people accounts, not venue owners, admins or banned accounts' },
             ];
+            // Who keeps their plans, by how often they turn up. The bar's
+            // widths are each group's share of the four; the numbers beside
+            // the swatches are the server's.
+            const reliability = [
+              { key: 'reliable', label: '80%+', value: data.reliabilityDistribution?.reliable || 0, color: colors.steel },
+              { key: 'moderate', label: '50-79%', value: data.reliabilityDistribution?.moderate || 0, color: '#F59E0B' },
+              { key: 'flaky', label: '<50%', value: data.reliabilityDistribution?.flaky || 0, color: '#EF4444' },
+              { key: 'unscored', label: 'New', value: data.reliabilityDistribution?.unscored || 0, color: 'var(--border-mid)' },
+            ];
+            const reliabilityWhole = reliability.reduce((sum, r) => sum + (parseInt(r.value) || 0), 0);
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                {/* Two across on a phone rather than three, so a label and
-                    the line under it saying what it counts have room. */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px' }}>
+                <div className="hub-month-head" style={{ marginBottom: 0 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <h2 className="hub-month-title">Research</h2>
+                    <p className="hub-month-sub">How plans move from made to confirmed.</p>
+                  </div>
+                  {modeToggle}
+                </div>
+                {/* Two across on a phone and three on the wide console, so a
+                    label and the line under it saying what it counts have room. */}
+                <div className="hub-tiles hub-tiles-3">
                   {statCards.map(s => (
-                    <div key={s.label} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)', minWidth: 0 }}>
-                      <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: s.color, margin: '0 0 2px' }}>{s.value}</p>
-                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>{s.label}</p>
-                      {s.note && <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.35, overflowWrap: 'anywhere' }}>{s.note}</p>}
+                    <div key={s.label} className="hub-tile">
+                      <p className="hub-tile-label">{s.label}</p>
+                      <p className="hub-tile-value" style={{ color: s.color }}>{s.value}</p>
+                      {s.note && <p className="hub-tile-sub">{s.note}</p>}
                     </div>
                   ))}
                 </div>
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Where Flocks Stall</h3>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.4 }}>
-                    Plans a host closed by hand: {plans(stallCount)}. A plan closed automatically once its time passed is not in this.
-                  </p>
-                  {(data.stallPointDistribution || []).map(p => {
-                    const pct = Math.round((parseInt(p.count) / stallTotal) * 100);
-                    return (
-                      <div key={p.stall_point} style={{ marginBottom: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
-                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, textTransform: 'capitalize' }}>{p.stall_point}</span>
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{p.count} ({pct}%)</span>
+                <div className="hub-pair" style={{ margin: 0 }}>
+                  <HubCard title="Where Flocks Stall" sub={`Plans a host closed by hand: ${plans(stallCount)}. A plan closed automatically once its time passed is not in this.`}>
+                    <HubBarList
+                      max={100}
+                      rows={(data.stallPointDistribution || []).map((p) => ({
+                        key: p.stall_point,
+                        label: p.stall_point === 'rsvp' ? 'RSVP' : String(p.stall_point).replace(/^./, (ch) => ch.toUpperCase()),
+                        value: Math.round((parseInt(p.count) / stallTotal) * 100),
+                        valueText: `${p.count} (${Math.round((parseInt(p.count) / stallTotal) * 100)}%)`,
+                        color: stallColors[p.stall_point] || colors.navy,
+                      }))}
+                    />
+                  </HubCard>
+                  <div className="hub-stack-col">
+                    <HubCard title="User Reliability" sub="People by how often they turn up to plans they said yes to.">
+                      {reliabilityWhole > 0 && (
+                        <div className="hub-stack" aria-hidden="true" style={{ marginTop: '4px' }}>
+                          {reliability.filter((r) => (parseInt(r.value) || 0) > 0).map((r) => (
+                            <div key={`rel-${r.key}`} style={{ width: `${((parseInt(r.value) || 0) / reliabilityWhole) * 100}%`, backgroundColor: r.color }} />
+                          ))}
                         </div>
-                        <div style={{ height: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', overflow: 'hidden' }}>
-                          <div style={{ height: '100%', width: `${pct}%`, backgroundColor: stallColors[p.stall_point] || colors.navy, borderRadius: '4px' }} />
-                        </div>
+                      )}
+                      <div className="hub-stats" style={{ marginTop: '10px' }}>
+                        {reliability.map((item) => (
+                          <div key={item.label} className="hub-stat">
+                            <p className="hub-stat-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span className="hub-swatch" style={{ backgroundColor: item.color }} />{item.label}</p>
+                            <p className="hub-stat-value">{item.value}</p>
+                          </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>User Reliability</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-                    {[
-                      { label: '80%+', value: data.reliabilityDistribution?.reliable || 0, color: colors.steel },
-                      { label: '50-79%', value: data.reliabilityDistribution?.moderate || 0, color: '#F59E0B' },
-                      { label: '<50%', value: data.reliabilityDistribution?.flaky || 0, color: '#EF4444' },
-                      { label: 'New', value: data.reliabilityDistribution?.unscored || 0, color: 'var(--text-secondary)' },
-                    ].map(item => (
-                      <div key={item.label} style={{ textAlign: 'center', padding: '8px 4px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                        <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: item.color, margin: '0 0 2px' }}>{item.value}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0 }}>{item.label}</p>
-                      </div>
-                    ))}
+                    </HubCard>
+                    <HubCard title="New Users This Week">
+                      <p style={{ ...hubStyle.big, color: colors.steel, margin: 0 }}>
+                        {has(data.newUsersThisWeek) ? `+${data.newUsersThisWeek.toLocaleString()}` : 'No data'}
+                      </p>
+                      <p style={{ ...hubStyle.note, marginTop: '4px' }}>People accounts made in the last 7 days.</p>
+                    </HubCard>
                   </div>
                 </div>
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', textAlign: 'center' }}>
-                  <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 4px' }}>New Users This Week</p>
-                  <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.steel, margin: 0 }}>
-                    {has(data.newUsersThisWeek) ? `+${data.newUsersThisWeek.toLocaleString()}` : 'No data'}
-                  </p>
-                  <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People accounts made in the last 7 days.</p>
-                </div>
-                {modeToggle}
               </div>
             );
           })()}

@@ -24,7 +24,10 @@
 //   * the operator's own steps: done and to do in the server's words, the
 //     database's network and its timed round trip (words and no number when
 //     it was not timed), the fix as a command, and the steps the server
-//     cannot see marked Check yourself with a link out and no claim.
+//     cannot see marked Check yourself with a link out and no claim;
+//   * the look: the month as four tiles, the problems as one line each, the
+//     bills on bars and a line a month long, every explanation behind a tap
+//     that starts closed, and the cards in their order.
 //
 // It also pins every price backend/services/statedPrices.js lists against the
 // file that states it. The backend suite does the same, but a push that only
@@ -418,8 +421,16 @@ async function renderHub(payload, over) {
   return utils;
 }
 
-// One ruled row of the hub, label, value and note together, found by its label.
-const hubRow = (label) => screen.getByText(label).parentElement.parentElement;
+// One labelled figure of the hub (a row, a tile, a bar), its value and its
+// note together, found by its label. Every figure carries data-hub-fig
+// whatever it is drawn as, and the note behind a row's tap is inside it.
+const hubRow = (label) => screen.getByText(label).closest('[data-hub-fig]');
+// The same, inside one card or section.
+const figIn = (el, label) => within(el).getByText(label).closest('[data-hub-fig]');
+// A card, found by its heading; every card carries data-hub-card.
+const cardOf = (name) => screen.getByRole('heading', { name }).closest('[data-hub-card]');
+// One of the month's four tiles, found by its label inside the month.
+const tile = (label) => figIn(cardOf('September 2026'), label);
 
 // Resend's meter as the hub sends it (backend/services/moneyHub.js,
 // judgeResendUsage): both windows with the reset worded in New York time, and
@@ -469,17 +480,21 @@ describe('nothing connected: words, not zeros', () => {
     // Each empty figure names what it waits for: the net only on Stripe, since
     // the App Store alone never empties it; the burn after recurring revenue
     // on both stores, since subscribers pay in both.
-    expect(within(hubRow('Net this month')).getByText('Needs Stripe')).toBeInTheDocument();
-    expect(within(hubRow('Burn after recurring revenue')).getByText('Needs Stripe and RevenueCat')).toBeInTheDocument();
-    expect(hubRow('Break-even, Flock Pro').textContent).toMatch(/Paying now: not known, waiting on Stripe and RevenueCat\./);
-    expect(hubRow('Break-even, Roost').textContent).toMatch(/Paying now: not known, waiting on Stripe\./);
+    expect(within(tile('Profit or loss')).getByText('Needs Stripe')).toBeInTheDocument();
+    expect(within(hubRow('Still to cover each month')).getByText('Needs Stripe and RevenueCat')).toBeInTheDocument();
+    expect(hubRow('Flock Pro subscribers needed').textContent).toMatch(/Paying now: not known, waiting on Stripe and RevenueCat\./);
+    expect(hubRow('Roost venues needed').textContent).toMatch(/Paying now: not known, waiting on Stripe\./);
+    // How many pay is not known either, so nothing is drawn as paying.
+    expect(within(hubRow('Flock Pro subscribers needed')).getByText('How many pay now is not known.')).toBeInTheDocument();
+    expect(within(cardOf('Do subscribers cover the bills?')).getByText('Not known yet')).toBeInTheDocument();
     // The one thing a money screen must never do: a revenue figure for a
     // source nobody read. The cost table's real zeros elsewhere are fine.
-    const revenueBlock = screen.getByText('Revenue this month').parentElement;
-    expect(within(revenueBlock).getByText('Not read')).toBeInTheDocument();
-    expect(revenueBlock.textContent).not.toMatch(/\$/);
+    const revenueTile = tile('Money in');
+    expect(within(revenueTile).getByText('Not read')).toBeInTheDocument();
+    expect(within(revenueTile).getByText('Stripe is not connected')).toBeInTheDocument();
+    expect(revenueTile.textContent).not.toMatch(/\$/);
     expect(screen.queryByText(/FLOCKFRIENDS/)).toBeNull();
-    expect(screen.queryByText('Web recurring revenue')).toBeNull();
+    expect(screen.queryByText('Web subscriptions bring in')).toBeNull();
   });
 
   test('the cost half stands, because it never needed a vendor', async () => {
@@ -513,7 +528,7 @@ describe('everything connected: the numbers, each with its source', () => {
     await renderHub(CONNECTED);
     expect(screen.getByText('Web, monthly')).toBeInTheDocument();
     expect(screen.getByText('On a free code')).toBeInTheDocument();
-    expect(screen.getByText('Web recurring revenue')).toBeInTheDocument();
+    expect(screen.getByText('Web subscriptions bring in')).toBeInTheDocument();
     expect(screen.getAllByText('$3.99 a month').length).toBeGreaterThan(0);
     expect(screen.getByText(/\$47\.88 a year as annual recurring revenue\. \$3\.55 a month after Stripe fees\./)).toBeInTheDocument();
     expect(screen.getByText(/1 more on a trial, not yet paying\./)).toBeInTheDocument();
@@ -522,7 +537,7 @@ describe('everything connected: the numbers, each with its source', () => {
   test('the App Store comes from RevenueCat, and a key without v2 access says so', async () => {
     await renderHub(CONNECTED);
     expect(screen.getByText('App Store, monthly')).toBeInTheDocument();
-    expect(screen.getByText('Sandbox')).toBeInTheDocument();
+    expect(screen.getByText('Test purchases')).toBeInTheDocument();
     expect(screen.getByText(/REVENUECAT_V2_SECRET_API_KEY must be a RevenueCat API v2 secret key/)).toBeInTheDocument();
     expect(screen.getAllByText('Key cannot read this').length).toBeGreaterThan(0);
   });
@@ -543,12 +558,13 @@ describe('everything connected: the numbers, each with its source', () => {
     // It is read from the accounts that are Pro now, so a subscriber who paid
     // through Apple this month and then deleted their account is not in it.
     await renderHub(CONNECTED);
-    const revenueBlock = screen.getByText('Revenue this month').parentElement;
+    const revenueTile = tile('Money in');
     // Apple's 30% is named as an estimate, with the 15% case beside it
     // (review 2026-10-03).
-    expect(revenueBlock.textContent).toMatch(/plus App Store charges after Apple's 30%, an estimate: Apple takes 15% under the Small Business Program and from a subscriber's second year\. The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it\./);
+    expect(revenueTile.textContent).toMatch(/plus App Store charges after Apple's 30%, an estimate: Apple takes 15% under the Small Business Program and from a subscriber's second year\. The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it\./);
+    expect(within(revenueTile).getByText('Stripe and the App Store, after fees')).toBeInTheDocument();
     expect(hubRow('App Store charged this month').textContent).toMatch(/Counted from current Pro accounts only: a subscriber who deleted their account is not in it\./);
-    expect(hubRow('App Store recurring revenue').textContent).toMatch(/Counted from current Pro accounts only/);
+    expect(hubRow('App Store subscriptions bring in').textContent).toMatch(/Counted from current Pro accounts only/);
   });
 
   test('collected this month, disputes and promotion codes', async () => {
@@ -615,16 +631,16 @@ describe('a partial read empties the figures it would shrink', () => {
         },
       },
     });
-    const costsBlock = screen.getByText('Costs this month').parentElement;
-    expect(within(costsBlock).getByText('Not read')).toBeInTheDocument();
-    expect(costsBlock.textContent).not.toMatch(/\$/);
-    expect(costsBlock.textContent).toMatch(/The expense list could not be read, so costs are not totalled here\./);
-    expect(within(hubRow('Net this month')).getByText('Needs the expense list')).toBeInTheDocument();
-    expect(within(hubRow('Burn a month')).getByText('Not read')).toBeInTheDocument();
-    expect(within(hubRow('Burn after recurring revenue')).getByText('Needs the expense list')).toBeInTheDocument();
-    expect(within(hubRow('Break-even, Flock Pro')).getByText('Not read')).toBeInTheDocument();
-    expect(within(hubRow('Break-even, Roost')).getByText('Not read')).toBeInTheDocument();
-    expect(hubRow('Break-even, Flock Pro').textContent).toMatch(/The expense list could not be read\./);
+    const costsTile = tile('Costs');
+    expect(within(costsTile).getByText('Not read')).toBeInTheDocument();
+    expect(costsTile.textContent).not.toMatch(/\$/);
+    expect(costsTile.textContent).toMatch(/The expense list could not be read, so costs are not totalled here\./);
+    expect(within(tile('Profit or loss')).getByText('Needs the expense list')).toBeInTheDocument();
+    expect(within(tile('Monthly bills')).getByText('Not read')).toBeInTheDocument();
+    expect(within(hubRow('Still to cover each month')).getByText('Needs the expense list')).toBeInTheDocument();
+    expect(within(hubRow('Flock Pro subscribers needed')).getByText('Not read')).toBeInTheDocument();
+    expect(within(hubRow('Roost venues needed')).getByText('Not read')).toBeInTheDocument();
+    expect(hubRow('Flock Pro subscribers needed').textContent).toMatch(/The expense list could not be read\./);
     // Revenue never needed the list, so it still stands.
     expect(screen.getByText('$944.07')).toBeInTheDocument();
     // The Costs card says what it could read instead of passing it off as whole.
@@ -647,12 +663,12 @@ describe('a partial read empties the figures it would shrink', () => {
         netMissing: ['stripe_partial'],
       },
     });
-    const revenueBlock = screen.getByText('Revenue this month').parentElement;
-    expect(within(revenueBlock).getByText('Withheld')).toBeInTheDocument();
-    expect(revenueBlock.textContent).not.toMatch(/\$/);
-    expect(revenueBlock.textContent).toMatch(/withheld rather than shown short/);
-    expect(within(hubRow('Net this month')).getByText('Needs a full Stripe read')).toBeInTheDocument();
-    expect(hubRow('Net this month').textContent).toMatch(/Stripe had more entries this month than the hub reads, and a missing page could move a total either way\./);
+    const revenueTile = tile('Money in');
+    expect(within(revenueTile).getByText('Withheld')).toBeInTheDocument();
+    expect(revenueTile.textContent).not.toMatch(/\$/);
+    expect(revenueTile.textContent).toMatch(/withheld rather than shown short/);
+    expect(within(tile('Profit or loss')).getByText('Needs a full Stripe read')).toBeInTheDocument();
+    expect(tile('Profit or loss').textContent).toMatch(/Stripe had more entries this month than the hub reads, and a missing page could move a total either way\./);
     expect(screen.getByText(/could be off in either direction\. The revenue at the top is withheld for the same reason\./)).toBeInTheDocument();
   });
 
@@ -681,15 +697,19 @@ describe('a partial read empties the figures it would shrink', () => {
       },
     });
     // Revenue and net carry Stripe alone, with the reason beside them.
-    const revenueBlock = screen.getByText('Revenue this month').parentElement;
-    expect(within(revenueBlock).getByText('$941.28')).toBeInTheDocument();
-    expect(revenueBlock.textContent).toMatch(/Stripe, after refunds, disputes and fees\. The App Store is not in it, because RevenueCat answered for only some Pro accounts\./);
-    expect(within(hubRow('Net this month')).getByText('+$732.84')).toBeInTheDocument();
+    const revenueTile = tile('Money in');
+    expect(within(revenueTile).getByText('$941.28')).toBeInTheDocument();
+    expect(within(revenueTile).getByText('Stripe only, after fees')).toBeInTheDocument();
+    expect(revenueTile.textContent).toMatch(/Stripe, after refunds, disputes and fees\. The App Store is not in it, because RevenueCat answered for only some Pro accounts\./);
+    expect(within(tile('Profit or loss')).getByText('+$732.84')).toBeInTheDocument();
     // Figures that need every subscriber in both stores wait for them.
-    expect(within(hubRow('Burn after recurring revenue')).getByText('Needs every Pro account in RevenueCat')).toBeInTheDocument();
-    expect(hubRow('Break-even, Flock Pro').textContent).toMatch(/Paying now: not known, waiting on every Pro account in RevenueCat\./);
-    expect(hubRow('Break-even, Roost').textContent).toMatch(/Paying now: 0\./);
-    expect(screen.getByText(/1 could not be read\..*These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it\./)).toBeInTheDocument();
+    expect(within(hubRow('Still to cover each month')).getByText('Needs every Pro account in RevenueCat')).toBeInTheDocument();
+    expect(hubRow('Flock Pro subscribers needed').textContent).toMatch(/Paying now: not known, waiting on every Pro account in RevenueCat\./);
+    expect(hubRow('Roost venues needed').textContent).toMatch(/Paying now: 0\./);
+    // Which accounts could not be read, and that the totals leave the App
+    // Store out for it.
+    expect(screen.getByText(/2 of 3 checked, 1 could not be read\./)).toBeInTheDocument();
+    expect(screen.getByText('These App Store figures are incomplete, so the totals at the top leave the App Store out rather than add a part of it.')).toBeInTheDocument();
   });
 
   test('a live subscription with no price empties the totals it would shrink, and each figure names why', async () => {
@@ -724,16 +744,16 @@ describe('a partial read empties the figures it would shrink', () => {
       },
     });
     // Revenue and net carry Stripe alone, with the reason beside them.
-    const revenueBlock = screen.getByText('Revenue this month').parentElement;
-    expect(within(revenueBlock).getByText('$941.28')).toBeInTheDocument();
-    expect(revenueBlock.textContent).toMatch(/Stripe, after refunds, disputes and fees\. The App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat\./);
-    expect(within(hubRow('Net this month')).getByText('+$732.84')).toBeInTheDocument();
+    const revenueTile = tile('Money in');
+    expect(within(revenueTile).getByText('$941.28')).toBeInTheDocument();
+    expect(revenueTile.textContent).toMatch(/Stripe, after refunds, disputes and fees\. The App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat\./);
+    expect(within(tile('Profit or loss')).getByText('+$732.84')).toBeInTheDocument();
     // Recurring revenue waits for a price in both stores, and says so.
-    const netBurn = hubRow('Burn after recurring revenue');
+    const netBurn = hubRow('Still to cover each month');
     expect(within(netBurn).getByText('Needs a price for every Stripe subscription and a price for every App Store subscription')).toBeInTheDocument();
     expect(netBurn.textContent).toMatch(/Some live Stripe subscriptions carry a price or a discount this read could not work out in dollars; the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat\./);
     // And the rows below say which subscriptions.
-    expect(hubRow('App Store recurring revenue').textContent).toMatch(/1 subscription carries no dollar price in RevenueCat and is left out, so the recurring total at the top waits for it\./);
+    expect(hubRow('App Store subscriptions bring in').textContent).toMatch(/1 subscription carries no dollar price in RevenueCat and is left out, so the recurring total at the top waits for it\./);
     expect(hubRow('App Store charged this month').textContent).toMatch(/1 of these charges has no dollar price in RevenueCat, so the revenue at the top leaves the App Store out\./);
     expect(within(hubRow('Not priced')).getByText('1')).toBeInTheDocument();
   });
@@ -754,7 +774,7 @@ describe('a partial read empties the figures it would shrink', () => {
 // code's, and must say why it has nothing when BestTime was not read.
 // ---------------------------------------------------------------------------
 describe('crowd data: what BestTime says, beside the plan the code records', () => {
-  const crowdCard = () => screen.getByRole('heading', { name: 'Crowd data' }).parentElement;
+  const crowdCard = () => cardOf('Crowd data');
   const withBestTime = (besttime) => ({ ...CONNECTED, crowdData: { ...CROWD_DATA, besttime } });
 
   test('a working key; the plan and its cap as stated; used and left not reported; the collector beside it', async () => {
@@ -842,7 +862,7 @@ describe('crowd data: what BestTime says, beside the plan the code records', () 
 // card names what made the numbers and never calls the curve's the model's.
 // ---------------------------------------------------------------------------
 describe('the model: what makes the numbers, and the served ones against the goal', () => {
-  const modelCard = () => screen.getByRole('heading', { name: 'Model' }).parentElement;
+  const modelCard = () => cardOf('Model');
   const percentsIn = (el) => el.textContent.match(/\d+(\.\d+)?%/g);
   const withModel = (over) => ({ ...CONNECTED, model: { ...MODEL, ...over } });
   // Any wording that hands the curve's numbers to the model.
@@ -1255,19 +1275,20 @@ describe('the Costs tab: what answered the forecasts', () => {
 // nothing about it, and must link out only over https.
 // ---------------------------------------------------------------------------
 describe('only you can do these: the operator\'s own steps', () => {
-  const stepsCard = () => screen.getByRole('heading', { name: 'Only you can do these' }).parentElement;
+  const stepsCard = () => cardOf('Only you can do these');
   const withSteps = (over) => ({ ...CONNECTED, ownerActions: { ...OWNER_ACTIONS, ...over } });
   const replaceSteps = (changes) => OWNER_ACTIONS.items.map((s) => (changes[s.id] ? { ...s, ...changes[s.id] } : s));
   const DB = "Database on Railway's private network";
 
-  test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the month and its people', async () => {
+  test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the people', async () => {
     await renderHub(CONNECTED);
     const card = stepsCard();
-    // Straight after the month's figures and the people behind them. Each
-    // card sits in its own cell of the hub's columns, so the cells line up.
-    const cell = card.parentElement;
-    expect(cell.previousSibling).toBe(screen.getByRole('heading', { name: 'People' }).parentElement.parentElement);
-    expect(cell.previousSibling.previousSibling.textContent).toMatch(/^September 2026/);
+    // Straight after the people behind the figures, with Health under it:
+    // the first stack of the detail cards (the order test pins the page).
+    expect(card.previousSibling).toBe(cardOf('People'));
+    expect(card.nextSibling).toBe(cardOf('Health'));
+    // The chip answers the card before it is read.
+    expect(within(card).getByText('2 to do')).toBeInTheDocument();
     expect(within(card).getByText('Checked by the server')).toBeInTheDocument();
     expect(within(card).getByText('2 to do, 1 optional step not done, 2 done.')).toBeInTheDocument();
 
@@ -1391,14 +1412,15 @@ describe('only you can do these: the operator\'s own steps', () => {
 // a week with nothing in it says so in words.
 // ---------------------------------------------------------------------------
 describe('people: signups, first weeks, the active and their plans', () => {
-  const peopleCard = () => screen.getByRole('heading', { name: 'People' }).parentElement;
+  const peopleCard = () => cardOf('People');
   const withPeople = (people) => ({ ...CONNECTED, people });
   const percentsIn = (el) => el.textContent.match(/\d+(\.\d+)?%/g);
 
-  test('right after the month, every figure with what it counts, and a bar for each New York day', async () => {
+  test('first of the detail cards, every figure with what it counts, and a bar for each New York day', async () => {
     await renderHub(CONNECTED);
     const card = peopleCard();
-    expect(card.parentElement.previousSibling.textContent).toMatch(/^September 2026/);
+    expect(card.previousSibling).toBeNull();
+    expect(card.parentElement.parentElement.previousSibling).toBe(cardOf('Costs').parentElement);
     expect(card.textContent).toMatch(/People accounts only: not venue owners, admins or banned accounts\./);
 
     // Fourteen bars, the busiest one full height, a day with nobody new a
@@ -1414,23 +1436,28 @@ describe('people: signups, first weeks, the active and their plans', () => {
     expect(within(card).getByText('Busiest day 7')).toBeInTheDocument();
     expect(within(card).getByText('Today so far')).toBeInTheDocument();
 
+    // The week before sits under each weekly count; what it counts is behind
+    // the row.
     const signups = hubRow('Signups, last 7 days');
     expect(within(signups).getByText('25')).toBeInTheDocument();
-    expect(signups.textContent).toMatch(/15 in the 7 days before\. Both count back from now, so a morning never reads as a drop\. The bars are New York days\./);
+    expect(within(signups).getByText('15 in the 7 days before')).toBeInTheDocument();
+    expect(signups.textContent).toMatch(/Both count back from now, so a morning never reads as a drop\. The bars are New York days\./);
     const first = hubRow('Made or accepted a plan in their first week');
     expect(within(first).getByText('43%')).toBeInTheDocument();
     expect(first.textContent).toMatch(/17 of the 40 accounts made 8 to 37 days ago made a plan or accepted one within 7 days of signing up\./);
     const active = hubRow('Used Flock, last 7 days');
     expect(within(active).getByText('61')).toBeInTheDocument();
-    expect(active.textContent).toMatch(/55 in the 7 days before\. Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in\./);
+    expect(within(active).getByText('55 in the 7 days before')).toBeInTheDocument();
+    expect(active.textContent).toMatch(/Each person once, for a message or DM, a venue vote, a plan made or accepted, or a crowd forecast opened while signed in\./);
     expect(within(hubRow('Plans made, last 7 days')).getByText('12')).toBeInTheDocument();
-    expect(hubRow('Plans made, last 7 days').textContent).toMatch(/8 in the 7 days before\./);
+    expect(within(hubRow('Plans made, last 7 days')).getByText('8 in the 7 days before')).toBeInTheDocument();
     const confirmed = hubRow('Confirmed before their time');
     expect(within(confirmed).getByText('70%')).toBeInTheDocument();
     expect(confirmed.textContent).toMatch(/Of the 10 plans whose time came in the last 7 days, 7 had been confirmed\./);
     const guests = hubRow('Guest answers from share links');
     expect(within(guests).getByText('23')).toBeInTheDocument();
-    expect(guests.textContent).toMatch(/15 in the 7 days before\./);
+    expect(within(guests).getByText('15 in the 7 days before')).toBeInTheDocument();
+    expect(guests.textContent).toMatch(/Someone without an account answering a plan's link, in or out\./);
     expect(percentsIn(card)).toEqual(['43%', '70%']);
     expect(card.textContent).not.toMatch(/—/);
   });
@@ -1499,26 +1526,31 @@ describe('people: signups, first weeks, the active and their plans', () => {
   });
 });
 
+// CONNECTED with everything put right: no price disagreement, no open
+// dispute, every step the server checks done, and no bill due this week.
+const setItems = (state) => OWNER_ACTIONS.items.map((s) => (s.checkedBy === 'server' ? { ...s, state } : s));
+const QUIET = {
+  ...CONNECTED,
+  revenue: { ...CONNECTED.revenue, stripe: { ...CONNECTED.revenue.stripe, disputes: { status: 'ok', open: 0, openAmountCents: 0, openOtherCurrency: 0, truncated: false } } },
+  pricing: { ...CONNECTED.pricing, mismatches: 0 },
+  ownerActions: { ...OWNER_ACTIONS, items: setItems('done'), counts: { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 } },
+};
+
 // ---------------------------------------------------------------------------
-// NEEDS ATTENTION. The first card on the Overview gathers every live problem
-// the payload carries, each linking to the card it came from, so a morning
-// look finds a stopped collector or an open dispute without scrolling past
-// the lot. With nothing wrong it is one line that says when it was checked.
-// A source that was asked and did not answer is a row, because it checked
-// nothing; one that is not connected is not.
+// NEEDS YOU. The card under the month's tiles gathers every live problem the
+// payload carries, one line each: a picture for what it is about, its name,
+// and a chip with the count or the state. A tap opens the sentence, which
+// ends with the jump to the card it came from, so a morning look finds a
+// stopped collector or an open dispute without scrolling past the lot. With
+// nothing wrong it is one line that says when it was checked. A source that
+// was asked and did not answer is a row, because it checked nothing; one that
+// is not connected is not. Renewals and bills ending are never problems: they
+// are on Coming up (below).
 // ---------------------------------------------------------------------------
-describe('needs attention: every live problem at the top, each linking to its card', () => {
-  const attentionCard = () => screen.getByRole('heading', { name: /needs? you$/ }).parentElement;
-  const rowsIn = (card) => Array.from(card.children).filter((el) => el.tagName === 'DIV');
-  const setItems = (state) => OWNER_ACTIONS.items.map((s) => (s.checkedBy === 'server' ? { ...s, state } : s));
-  // CONNECTED with everything put right: no price disagreement, no open
-  // dispute, every step the server checks done, and no bill due this week.
-  const QUIET = {
-    ...CONNECTED,
-    revenue: { ...CONNECTED.revenue, stripe: { ...CONNECTED.revenue.stripe, disputes: { status: 'ok', open: 0, openAmountCents: 0, openOtherCurrency: 0, truncated: false } } },
-    pricing: { ...CONNECTED.pricing, mismatches: 0 },
-    ownerActions: { ...OWNER_ACTIONS, items: setItems('done'), counts: { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 } },
-  };
+describe('needs you: every live problem under the month, each opening to its card', () => {
+  const attentionCard = () => cardOf(/needs? you$/);
+  // The problems in the order they are drawn, by their labels.
+  const needLabels = (card) => Array.from(card.querySelectorAll('[data-hub-need]')).map((r) => r.querySelector('.hub-need-label').textContent);
   const stripeWith = (over) => ({ ...QUIET.revenue.stripe, ...over });
   const withRevenue = (over) => ({ ...QUIET, revenue: { ...QUIET.revenue, ...over } });
 
@@ -1526,29 +1558,31 @@ describe('needs attention: every live problem at the top, each linking to its ca
     delete Element.prototype.scrollIntoView;
   });
 
-  test('with nothing wrong it is one line, with the time it was checked, and it comes first', async () => {
+  test('with nothing wrong it is one line, with the time it was checked, right under the month', async () => {
     await renderHub(QUIET);
     const line = screen.getByText(/^Nothing needs you\. Checked at .+\.$/);
     // One line: no heading, no rows, no links.
-    const card = line.parentElement;
+    const card = line.closest('[data-hub-card]');
     expect(card.children).toHaveLength(1);
+    expect(card.querySelectorAll('[data-hub-need]')).toHaveLength(0);
     expect(within(card).queryByRole('link')).toBeNull();
     expect(screen.queryByRole('heading', { name: /needs? you$/ })).toBeNull();
-    // First on the page, above the month. Each card sits in its own cell of
-    // the hub's grid (two columns on a wide console), so the cells are what
-    // line up.
-    const cell = card.parentElement;
-    expect(cell.nextSibling.textContent).toMatch(/^September 2026/);
-    expect(cell.parentElement.firstChild).toBe(cell);
+    // First of the pair straight under the month's tiles.
+    expect(card.parentElement.firstChild).toBe(card);
+    expect(card.parentElement.previousSibling).toBe(cardOf('September 2026'));
   });
 
-  test('each problem is a row with its own words, worst first, and each jumps to its card', async () => {
+  test('each problem is one line with its words behind a tap, worst first, and each jumps to its card', async () => {
     Element.prototype.scrollIntoView = jest.fn();
     await renderHub(CONNECTED);
     const card = attentionCard();
     expect(within(card).getByText('3 things need you')).toBeInTheDocument();
-    const labels = rowsIn(card).map((r) => r.firstChild.firstChild.firstChild.textContent);
-    expect(labels).toEqual(['Price disagreements', 'Disputes to answer', 'Steps only you can take']);
+    expect(needLabels(card)).toEqual(['Price disagreements', 'Disputes to answer', 'Steps only you can take']);
+    // One line each until it is opened: a native disclosure, closed at first.
+    for (const row of card.querySelectorAll('[data-hub-need]')) {
+      expect(row.tagName).toBe('DETAILS');
+      expect(row.open).toBe(false);
+    }
 
     const prices = hubRow('Price disagreements');
     expect(within(prices).getByText('1')).toBeInTheDocument();
@@ -1574,7 +1608,7 @@ describe('needs attention: every live problem at the top, each linking to its ca
     expect(within(document.getElementById('hub-revenue')).getByRole('heading', { name: 'Revenue' })).toBeInTheDocument();
     expect(window.location.hash).toBe('');
     fireEvent.click(within(steps).getByRole('link', { name: 'Go to the steps' }));
-    expect(Element.prototype.scrollIntoView.mock.instances[1]).toBe(screen.getByRole('heading', { name: 'Only you can do these' }).parentElement);
+    expect(Element.prototype.scrollIntoView.mock.instances[1]).toBe(cardOf('Only you can do these'));
     // Plain sentences.
     expect(card.textContent).not.toMatch(/—/);
   });
@@ -1648,7 +1682,7 @@ describe('needs attention: every live problem at the top, each linking to its ca
     await renderHub(payload);
     const card = attentionCard();
     expect(within(card).getByText('1 thing needs you')).toBeInTheDocument();
-    const row = within(card).getByText(label).parentElement.parentElement;
+    const row = figIn(card, label);
     expect(within(row).getByText(value)).toBeInTheDocument();
     expect(row.textContent).toMatch(note);
     expect(within(row).getByRole('link')).toHaveAttribute('href', `#${target}`);
@@ -1665,44 +1699,68 @@ describe('needs attention: every live problem at the top, each linking to its ca
     await renderHub(withRevenue({ stripe: stripeWith({ mode: 'test' }), flags: { paywallEnabled: false, venueBillingEnabled: false, proWebCheckoutEnabled: false } }));
     expect(screen.getByText(/^Nothing needs you\. Checked at .+\.$/)).toBeInTheDocument();
   });
+});
 
-  test('a bill renewing this week is listed apart and is not counted as a problem', async () => {
+// ---------------------------------------------------------------------------
+// COMING UP. The dated bills on the expense list, renewing or set to end, on a
+// line a month long and in a list by date, each with how far off it is and a
+// jump to the list where it is changed. None of it is a problem, so none of it
+// is in Needs you.
+// ---------------------------------------------------------------------------
+describe('coming up: renewals and bills ending, by date, never as problems', () => {
+  test('a bill renewing this week is on Coming up with how far off it is, and is not a problem', async () => {
     const soon = { expenseId: 9, label: 'Example Host, Pro', on: '2026-09-28', estimated: false, amountCents: 2000, currency: 'USD', cadence: 'monthly' };
-    await renderHub({ ...QUIET, costs: { ...COSTS, upcoming: [...COSTS.upcoming, soon] } });
-    const card = attentionCard();
-    expect(within(card).getByRole('heading', { name: 'Nothing needs you' })).toBeInTheDocument();
-    expect(within(card).getByText('Renewing in the next 7 days')).toBeInTheDocument();
-    const row = within(card).getByText('Example Host, Pro').parentElement.parentElement;
+    await renderHub({ ...QUIET, costs: { ...COSTS, upcoming: [soon, ...COSTS.upcoming] } });
+    // Needs you is the one quiet line: a renewal is not a problem.
+    expect(screen.getByText(/^Nothing needs you\. Checked at .+\.$/)).toBeInTheDocument();
+    const coming = cardOf('Coming up');
+    const row = await waitFor(() => figIn(coming, 'Example Host, Pro'));
     expect(within(row).getByText('$20.00')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/Renews in 3 days, Sep 28\./);
-    expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
-    // Oct 16 is 21 days out, past the week, and stays on the Costs card only.
-    expect(within(card).queryByText('Example Tool, Team')).toBeNull();
+    expect(within(row).getByText(/^Renews in 3 days, Sep 28(, 2026)?$/)).toBeInTheDocument();
+    expect(within(row).getByRole('link', { name: 'Go to the expense list' })).toHaveAttribute('href', '#hub-expenses');
+    // Oct 16, three weeks out, is on the same list after it, with its date
+    // worked out from the last charge.
+    const later = figIn(coming, 'Example Tool, Team');
+    expect(within(later).getByText(/^Renews in 21 days, Oct 16(, 2026)?$/)).toBeInTheDocument();
+    expect(later.textContent).toMatch(/Worked out from the last charge date\./);
+    expect(row.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Both fall inside the month the line draws, one mark each.
+    expect(coming.querySelectorAll('.hub-tl-dot')).toHaveLength(2);
+    // The date in the middle is two weeks out, and sits on the two-week tick.
+    const mid = coming.querySelector('.hub-tl-mid');
+    expect(mid.textContent).toBe('Oct 9');
+    expect(mid.style.left).toBe(coming.querySelectorAll('.hub-tl-tick')[2].style.left);
+    expect(coming.textContent).not.toMatch(/—/);
   });
 
-  test('a bill ending within the month is listed apart, with what the burn does, and is not counted as a problem', async () => {
+  test('a bill set to end is on Coming up with what the burn does then, and is not a problem', async () => {
     const ending = [
       // Stands in for a $119 code line, so the burn falls by $30 when it ends,
       // not by its own $149 (review 2026-10-06): the server's burnChangeCents.
       { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 14900, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 14900, burnChangeCents: -3000, restores: ['BestTime.app Pro, Package 100'] },
       // A payload from before burnChangeCents: the bill's own share.
       { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-10-20', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500 },
-      // Past the month: on the Costs card only.
+      // Past the month: listed, and on no day of the month's line.
       { expenseId: 10, label: 'Yearly tool', endsOn: '2027-01-15', amountCents: 12000, currency: 'USD', cadence: 'yearly', isCredit: false, perMonthCents: 1000 },
     ];
     await renderHub({ ...QUIET, costs: { ...COSTS, ending } });
-    expect(await screen.findByText('Ending in the next 30 days')).toBeInTheDocument();
-    const card = attentionCard();
-    expect(within(card).getByRole('heading', { name: 'Nothing needs you' })).toBeInTheDocument();
-    const row = within(card).getByText('Store tool, Plus').parentElement.parentElement;
+    expect(await screen.findByText('Set to end')).toBeInTheDocument();
+    expect(screen.getByText(/^Nothing needs you\. Checked at .+\.$/)).toBeInTheDocument();
+    const coming = cardOf('Coming up');
+    const row = figIn(coming, 'Store tool, Plus');
     expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?, and the burn falls by \$30\.00 a month\./);
-    expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
-    const credit = within(card).getByText('Host, Startup credit').parentElement.parentElement;
+    expect(within(row).getByText(/^Ends in 10 days, Oct 5(, 2026)?$/)).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$30\.00 a month, as the code's BestTime\.app Pro, Package 100 counts again\./);
+    expect(within(row).getByRole('link', { name: 'Go to the expense list' })).toHaveAttribute('href', '#hub-expenses');
+    const credit = figIn(coming, 'Host, Startup credit');
     expect(within(credit).getByText('−$15.00 a month')).toBeInTheDocument();
-    expect(credit.textContent).toMatch(/Ends in 25 days, Oct 20(, 2026)?, and the burn rises by \$15\.00 a month\./);
-    expect(within(card).queryByText('Yearly tool')).toBeNull();
-    expect(card.textContent).not.toMatch(/—/);
+    expect(within(credit).getByText(/^Ends in 25 days, Oct 20(, 2026)?$/)).toBeInTheDocument();
+    expect(credit.textContent).toMatch(/No credit on or after this day\. Then the burn rises by \$15\.00 a month\./);
+    const yearly = figIn(coming, 'Yearly tool');
+    expect(within(yearly).getByText(/^Ends in 112 days, Jan 15(, 2027)?$/)).toBeInTheDocument();
+    // On the line: the Oct 16 renewal and the two that end inside the month.
+    expect(coming.querySelectorAll('.hub-tl-dot')).toHaveLength(3);
+    expect(coming.textContent).not.toMatch(/—/);
   });
 });
 
@@ -1737,7 +1795,7 @@ describe('the expense list writes through the API and then re-reads the hub', ()
   test('stopping a bill sends the whole row with active false', async () => {
     await renderHub(NOT_CONNECTED);
     api.updateAdminExpense.mockResolvedValue({ success: true });
-    const row = screen.getByText('Example Tool, Team').closest('div').parentElement;
+    const row = figIn(document.getElementById('hub-expenses'), 'Example Tool, Team');
     fireEvent.click(within(row).getByRole('button', { name: /^Mark as stopped/ }));
     await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
     const [id, body] = api.updateAdminExpense.mock.calls[0];
@@ -1801,14 +1859,15 @@ describe('quarterly bills and credits', () => {
 
   test('a credit is marked and shown with a minus sign, in the list and in the tables', async () => {
     await renderHub(WITH_CREDIT);
-    const row = (await screen.findByText('Example Host, Refund')).closest('div').parentElement;
+    const list = document.getElementById('hub-expenses');
+    const row = (await within(list).findByText('Example Host, Refund')).closest('[data-hub-fig]');
     expect(within(row).getByText('Credit')).toBeInTheDocument();
     expect(row.textContent).toMatch(/−\$12\.50 once/);
-    const charge = screen.getByText('Example Tool, Team').closest('div').parentElement;
+    const charge = figIn(list, 'Example Tool, Team');
     expect(within(charge).queryByText('Credit')).toBeNull();
     expect(charge.textContent).toMatch(/\$20\.00 a month/);
     expect(charge.textContent).not.toMatch(/−/);
-    expect(screen.getByText('Quarterly Tool').closest('div').parentElement.textContent).toMatch(/\$30\.00 a quarter/);
+    expect(figIn(list, 'Quarterly Tool').textContent).toMatch(/\$30\.00 a quarter/);
     expect(screen.getAllByText('−$12.50').length).toBeGreaterThan(0);
     expect(screen.getByText(/Abroad, Credit \(−9\.00 EUR\)/)).toBeInTheDocument();
   });
@@ -1833,7 +1892,7 @@ describe('quarterly bills and credits', () => {
   test('editing a credit keeps it a credit', async () => {
     await renderHub(WITH_CREDIT);
     api.updateAdminExpense.mockResolvedValue({ success: true });
-    const row = (await screen.findByText('Example Host, Refund')).closest('div').parentElement;
+    const row = (await within(document.getElementById('hub-expenses')).findByText('Example Host, Refund')).closest('[data-hub-fig]');
     fireEvent.click(within(row).getByRole('button', { name: /^Mark as stopped/ }));
     await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
     expect(api.updateAdminExpense.mock.calls[0][1]).toMatchObject({ amount: '12.50', isCredit: true, active: false });
@@ -1891,7 +1950,7 @@ describe('plan nets and unit costs', () => {
     expect(screen.getByText('What each plan leaves you, a month')).toBeInTheDocument();
     // The code-price row carries the same label, so the row with the web net is the one.
     await screen.findByText('$3.55 web');
-    const pro = screen.getAllByText('Flock Pro, monthly').map((el) => el.parentElement.parentElement).find((r) => /web/.test(r.textContent));
+    const pro = screen.getAllByText('Flock Pro, monthly').map((el) => el.closest('[data-hub-fig]')).find((r) => /web/.test(r.textContent));
     expect(pro.textContent).toMatch(/\$3\.55 web/);
     expect(pro.textContent).toMatch(/\$2\.79 after Apple's 30%, or \$3\.39 at the 15%/);
     // An App Store figure from the stated price says so (review 2026-10-03).
@@ -1955,10 +2014,17 @@ describe('downloading the expense list', () => {
 });
 
 describe('renewal totals', () => {
-  test('the Costs card says what is due in the next week, month and quarter', async () => {
+  test('Coming up says what is due in the next week, month and quarter', async () => {
     await renderHub({ ...CONNECTED, costs: { ...CONNECTED.costs, upcomingWindowDays: 90, upcomingTotals: [{ days: 7, cents: 0, charges: 0, bills: 0 }, { days: 30, cents: 20000, charges: 1, bills: 1 }, { days: 90, cents: 69900, charges: 4, bills: 2 }] } });
-    expect(await screen.findByText(/Next 7 days: \$0\.00 · Next 30 days: \$200\.00 · Next 90 days: \$699\.00\./)).toBeInTheDocument();
-    expect(screen.getByText('Renewals in the next 90 days')).toBeInTheDocument();
+    const coming = cardOf('Coming up');
+    // The hub paints the last payload first, so wait for this one.
+    await within(coming).findByText('Next 90 days');
+    expect(within(figIn(coming, 'Next 7 days')).getByText('$0.00')).toBeInTheDocument();
+    expect(within(figIn(coming, 'Next 30 days')).getByText('$200.00')).toBeInTheDocument();
+    expect(within(figIn(coming, 'Next 90 days')).getByText('$699.00')).toBeInTheDocument();
+    // The chip answers the month before the card is read.
+    expect(within(coming).getByText('$200.00 in 30 days')).toBeInTheDocument();
+    expect(within(coming).getByText('Renewals in the next 90 days')).toBeInTheDocument();
   });
 });
 
@@ -2016,7 +2082,7 @@ describe('a bill that ends rather than renews', () => {
     expenses: { ...EXPENSES, rows: [...EXPENSES.rows, ENDING_ROW, ENDED_ROW] },
   };
   // The hub paints the last payload first, so each look waits for this one.
-  const expenseRow = async (label) => (await within(document.getElementById('hub-expenses')).findByText(label)).closest('div').parentElement;
+  const expenseRow = async (label) => (await within(document.getElementById('hub-expenses')).findByText(label)).closest('[data-hub-fig]');
 
   test('the row says when it ends in place of a renewal that never comes, and an ended one says so', async () => {
     await renderHub(WITH_ENDING);
@@ -2080,14 +2146,17 @@ describe('a bill that ends rather than renews', () => {
     expect(screen.getByText(/renewsOn, endsOn for a bill whose renewal is turned off, verified/)).toBeInTheDocument();
   });
 
-  test('the Costs card lists it under Set to end, and the burn says where it goes', async () => {
+  test('Coming up lists it under Set to end, and the burn says where it goes', async () => {
     await renderHub(WITH_ENDING);
-    const costs = document.getElementById('hub-costs');
-    expect(await within(costs).findByText('Set to end')).toBeInTheDocument();
-    const row = within(costs).getByText(/^Oct 5(, 2026)?, Store tool, Plus$/).parentElement.parentElement;
+    const coming = document.getElementById('hub-coming-up');
+    expect(await within(coming).findByText('Set to end')).toBeInTheDocument();
+    const row = figIn(coming, 'Store tool, Plus');
     expect(within(row).getByText('$31.80 a month')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$31\.80 a month\./);
-    expect(hubRow('Burn a month').textContent).toMatch(/One-time charges are left out\. It falls to \$176\.64 on Oct 5(, 2026)?, when Store tool, Plus ends\./);
+    expect(within(row).getByText(/^Ends in 10 days, Oct 5(, 2026)?$/)).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$31\.80 a month\. Go to the expense list$/);
+    expect(tile('Monthly bills').textContent).toMatch(/One-time charges are left out\. It falls to \$176\.64 on Oct 5(, 2026)?, when Store tool, Plus ends\./);
+    // And in short on the tile, under the figure.
+    expect(within(tile('Monthly bills')).getByText(/^Falls to \$176\.64 on Oct 5(, 2026)?$/)).toBeInTheDocument();
   });
 
   test('several set to end, a credit among them, or one in another currency, each read right', async () => {
@@ -2097,14 +2166,14 @@ describe('a bill that ends rather than renews', () => {
       ...CONNECTED,
       costs: { ...COSTS, ending: [ENDING, credit, euro], afterEnding: { burnCents: 19164, changeCents: -1680, by: '2026-11-01', bills: 2, label: null } },
     });
-    const costs = document.getElementById('hub-costs');
-    const creditRow = (await within(costs).findByText(/Host, Startup credit$/)).parentElement.parentElement;
-    expect(hubRow('Burn a month').textContent).toMatch(/It falls to \$191\.64 by Nov 1(, 2026)?, once the 2 bills set to end have ended\./);
+    const coming = document.getElementById('hub-coming-up');
+    const creditRow = (await within(coming).findByText('Host, Startup credit')).closest('[data-hub-fig]');
+    expect(tile('Monthly bills').textContent).toMatch(/It falls to \$191\.64 by Nov 1(, 2026)?, once the 2 bills set to end have ended\./);
     expect(within(creditRow).getByText('−$15.00 a month')).toBeInTheDocument();
     expect(creditRow.textContent).toMatch(/No credit on or after this day\. Then the burn rises by \$15\.00 a month\./);
-    const euroRow = within(costs).getByText(/Abroad tool$/).parentElement.parentElement;
+    const euroRow = figIn(coming, 'Abroad tool');
     expect(within(euroRow).getByText('9.00 EUR a month')).toBeInTheDocument();
-    expect(euroRow.textContent).toMatch(/No charge on or after this day\.$/);
+    expect(euroRow.textContent).toMatch(/No charge on or after this day\. Go to the expense list$/);
   });
 
   test('a usage bill set to end says its last bill comes after the day', async () => {
@@ -2116,13 +2185,14 @@ describe('a bill that ends rather than renews', () => {
       ...CONNECTED,
       costs: { ...COSTS, ending: [ENDING, metered], afterEnding: { burnCents: 4649, changeCents: -16195, by: '2026-10-05', bills: 2, label: null } },
     });
-    const costs = document.getElementById('hub-costs');
-    const row = (await within(costs).findByText(/^Oct 1(, 2026)?, Build service$/)).parentElement.parentElement;
+    const coming = document.getElementById('hub-coming-up');
+    const row = (await within(coming).findByText('Build service')).closest('[data-hub-fig]');
     expect(within(row).getByText('$130.15 a month, usage')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/Use stops on this day, and its last bill comes after\. From this day the burn falls by \$130\.15 a month\.$/);
+    expect(within(row).getByText(/^Ends in 6 days, Oct 1(, 2026)?$/)).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Use stops on this day, and its last bill comes after\. From this day the burn falls by \$130\.15 a month\. Go to the expense list$/);
     expect(row.textContent).not.toMatch(/No charge/);
     // A bill paid ahead keeps its words.
-    const plus = within(costs).getByText(/^Oct 5(, 2026)?, Store tool, Plus$/).parentElement.parentElement;
+    const plus = figIn(coming, 'Store tool, Plus');
     expect(plus.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$31\.80 a month\./);
   });
 
@@ -2133,11 +2203,11 @@ describe('a bill that ends rather than renews', () => {
       ...CONNECTED,
       costs: { ...COSTS, ending: [stand], afterEnding: { burnCents: 17844, changeCents: -3000, by: '2026-10-05', bills: 1, label: 'BestTime, Package 100' } },
     });
-    const costs = document.getElementById('hub-costs');
-    const row = (await within(costs).findByText(/BestTime, Package 100$/)).parentElement.parentElement;
+    const coming = document.getElementById('hub-coming-up');
+    const row = (await within(coming).findByText('BestTime, Package 100')).closest('[data-hub-fig]');
     expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
     expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$30\.00 a month, as the code's BestTime\.app Pro, Package 100 counts again\./);
-    expect(hubRow('Burn a month').textContent).toMatch(/It falls to \$178\.44 on Oct 5(, 2026)?, when BestTime, Package 100 ends\./);
+    expect(tile('Monthly bills').textContent).toMatch(/It falls to \$178\.44 on Oct 5(, 2026)?, when BestTime, Package 100 ends\./);
   });
 
   test('a row charged on or after its end date says it counts as running only while it is still charged', async () => {
@@ -2193,7 +2263,7 @@ describe('a bill that ends rather than renews', () => {
     // stated that the ended usage row breaks. The usage charge is sent to the
     // invoice and is never said to pay for use past the end date, which the
     // dates cannot show (review 2026-10-06).
-    const attention = screen.getByText('Charged after the end date').parentElement.parentElement;
+    const attention = hubRow('Charged after the end date');
     expect(within(attention).getByText('2')).toBeInTheDocument();
     expect(attention.textContent).toMatch(/Store tool, Renewed, set to end Sep 20(, 2026)? and charged Sep 20(, 2026)?\. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running\. Clear the end date, or set the new one\. MapTiler, Flex, set to end Jul 31(, 2026)?, its last bill expected by Aug 30(, 2026)?, and charged Sep 2(, 2026)?\. For a usage bill, a charge later than its last bill was expected counts as running\. Check it against the invoice\. If the invoice covers use after the end date, clear the end date or set the new one\. If it was the last bill, mark its row stopped\./);
     expect(attention.textContent).not.toMatch(/A charge on or after/);
@@ -2214,7 +2284,7 @@ describe('a bill that ends rather than renews', () => {
     });
     const row = await expenseRow('Build minutes');
     expect(row.textContent).toMatch(/last charged Oct 2(, 2026)?, after the last bill expected by Sep 30(, 2026)? for its end date of Sep 1(, 2026)?, so it counts as running until the charge is checked against its invoice\./);
-    const attention = screen.getByText('Charged after the end date').parentElement.parentElement;
+    const attention = hubRow('Charged after the end date');
     expect(attention.textContent).toMatch(/Build minutes, set to end Sep 1(, 2026)?, its last bill expected by Sep 30(, 2026)?, and charged Oct 2(, 2026)?\. For a usage bill, a charge later than its last bill was expected counts as running\. Check it against the invoice\. If the invoice covers use after the end date, clear the end date or set the new one\. If it was the last bill, mark its row stopped\./);
     for (const text of [row.textContent, attention.textContent]) {
       expect(text).not.toMatch(/pays for use|use past the end date|until the date is cleared/);
@@ -2243,27 +2313,26 @@ describe('a bill that ends rather than renews', () => {
         breakEven: { ...CONNECTED.net.breakEven, burnMissing: ['expenses'] },
       },
     });
+    const coming = document.getElementById('hub-coming-up');
     const costs = document.getElementById('hub-costs');
-    expect(await within(costs).findByText('Set to end')).toBeInTheDocument();
-    const row = within(costs).getByText(/^Oct 5(, 2026)?, BestTime, Package 100$/).parentElement.parentElement;
+    expect(await within(coming).findByText('Set to end')).toBeInTheDocument();
+    // Coming up names the day it ends, and nothing about the burn.
+    const row = figIn(coming, 'BestTime, Package 100');
     expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/No charge on or after this day\.$/);
-    // The attention list names the day it ends, and nothing about the burn.
-    const attention = screen.getByText('Ending in the next 30 days').parentElement;
-    const soon = within(attention).getByText('BestTime, Package 100').parentElement.parentElement;
-    expect(soon.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?\./);
-    for (const card of [costs, attention]) {
+    expect(within(row).getByText(/^Ends in 10 days, Oct 5(, 2026)?$/)).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\. Go to the expense list$/);
+    for (const card of [costs, coming]) {
       expect(card.textContent).not.toMatch(/(falls|rises) by/);
       expect(card.textContent).not.toMatch(/counts? again\b/);
     }
-    // And the burn line, which the server's null burn already withholds.
-    expect(hubRow('Burn a month').textContent).not.toMatch(/It (falls|rises) to/);
+    // And the burn's tile, which the server's null burn already withholds.
+    expect(tile('Monthly bills').textContent).not.toMatch(/It (falls|rises) to/);
   });
 
   test('a server from before migration 117 draws none of it', async () => {
     await renderHub(CONNECTED);
     await waitFor(() => expect(screen.queryByText('Set to end')).toBeNull());
-    expect(hubRow('Burn a month').textContent).toMatch(/One-time charges are left out\.$/);
+    expect(tile('Monthly bills').textContent).toMatch(/One-time charges are left out\.$/);
     expect(within(document.getElementById('hub-expenses')).queryByText('Ending')).toBeNull();
   });
 });
@@ -2284,9 +2353,9 @@ describe('the monthly bills the renewals cannot date', () => {
 
   test('they are named beside the renewals, with what they come to', async () => {
     await renderHub({ ...CONNECTED, costs: { ...COSTS, undatedMonthly: UNDATED } });
-    const costs = document.getElementById('hub-costs');
-    expect(await within(costs).findByText('Monthly bills with no date')).toBeInTheDocument();
-    expect(within(costs).getByText('Charged every month on a day nothing here records, so they are in none of the renewals above: $143.47 a month in all.')).toBeInTheDocument();
+    const coming = document.getElementById('hub-coming-up');
+    expect(await within(coming).findByText('Monthly bills with no date')).toBeInTheDocument();
+    expect(within(coming).getByText('Charged every month on a day nothing here records, so they are in none of the renewals above: $143.47 a month in all.')).toBeInTheDocument();
     const railway = hubRow('Railway (backend and Postgres)');
     expect(within(railway).getByText('$24.47 a month')).toBeInTheDocument();
     expect(railway.textContent).toMatch(/Billed by use, at its latest figure\./);
@@ -2394,8 +2463,8 @@ describe('Resend email usage', () => {
   test('both caps can raise a row at once, the one at its cap first', async () => {
     await renderHub(withResend(resendRead({ daily: 100, monthly: 2500, alerts: [resendAlert('daily', 'at', 100), resendAlert('monthly', 'near', 2500)] })));
     await screen.findByText('Email near its monthly limit');
-    const card = screen.getByRole('heading', { name: /needs? you$/ }).parentElement;
-    const labels = Array.from(card.children).filter((el) => el.tagName === 'DIV').map((r) => r.firstChild.firstChild.firstChild.textContent);
+    const card = cardOf(/needs? you$/);
+    const labels = Array.from(card.querySelectorAll('[data-hub-need]')).map((r) => r.querySelector('.hub-need-label').textContent);
     expect(labels.indexOf('Email at its daily limit')).toBeGreaterThanOrEqual(0);
     expect(labels.indexOf('Email near its monthly limit')).toBeGreaterThan(labels.indexOf('Email at its daily limit'));
     expect(card.textContent).not.toMatch(/—/);
@@ -2411,5 +2480,103 @@ describe('Resend email usage', () => {
     };
     render(React.createElement(RevenueScreen, screenProps({ adminTab: 'costs', costsData: { dependencies } })));
     expect(screen.getByText('Live from Resend: Email today 40 of 100 · this month 900 of 3,000.')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE LOOK (the November 2026 redesign). The figures come first and every
+// explanation is one tap away, in a native disclosure that starts closed; the
+// cards keep one order on every screen size.
+// ---------------------------------------------------------------------------
+describe('the Overview reads top to bottom: the month, what needs you, the bills, then the detail', () => {
+  test('every card in its place, the month first, and no waitlist launch card', async () => {
+    await renderHub(CONNECTED);
+    const order = Array.from(document.querySelectorAll('[data-hub-card]')).map((c) => {
+      const heading = c.querySelector('h2, h3');
+      return heading ? heading.textContent : '';
+    });
+    expect(order).toEqual([
+      'September 2026',
+      '3 things need you',
+      'Do subscribers cover the bills?',
+      'Coming up',
+      'Costs',
+      'People',
+      'Only you can do these',
+      'Health',
+      'Revenue',
+      'Expense list',
+      'Prices',
+      'Crowd data',
+      'Model',
+    ]);
+    // The launch email went to the whole waitlist, and its card left the
+    // Overview with it.
+    expect(screen.queryByText('Waitlist launch email')).toBeNull();
+    const src = fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
+    expect(src).not.toMatch(/waitlistLaunch|WaitlistLaunch/);
+  });
+
+  test('the month is four tiles in plain words, each with how it is counted behind a closed tap', async () => {
+    await renderHub(CONNECTED);
+    const month = cardOf('September 2026');
+    expect(month.textContent).toMatch(/Day 25 of 30, New York time\. Read at .+\./);
+    const tiles = Array.from(month.querySelectorAll('[data-hub-fig]'));
+    expect(tiles.map((t) => t.querySelector('.hub-tile-label').textContent)).toEqual(['Money in', 'Costs', 'Profit or loss', 'Monthly bills']);
+    expect(within(tile('Money in')).getByText('$944.07')).toBeInTheDocument();
+    expect(within(tile('Costs')).getByText('$208.44')).toBeInTheDocument();
+    expect(within(tile('Costs')).getByText("This month's share of every bill")).toBeInTheDocument();
+    expect(within(tile('Profit or loss')).getByText('+$735.63')).toBeInTheDocument();
+    expect(within(tile('Profit or loss')).getByText('Money in minus costs')).toBeInTheDocument();
+    expect(within(tile('Monthly bills')).getByText('$208.44')).toBeInTheDocument();
+    for (const t of tiles) {
+      const why = t.querySelector('details');
+      expect(why).not.toBeNull();
+      expect(why.open).toBe(false);
+      expect(within(why).getByText('How this is counted')).toBeInTheDocument();
+    }
+    // What the tile says in short, the disclosure says in full.
+    expect(tile('Costs').textContent).toMatch(/Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month\. Credits and refunds are taken off\./);
+    expect(tile('Profit or loss').textContent).toMatch(/Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought/);
+  });
+
+  test('every note on a row is behind the row itself, closed at first', async () => {
+    await renderHub(CONNECTED);
+    const notes = Array.from(document.querySelectorAll('[data-hub-fig] .hub-note'));
+    expect(notes.length).toBeGreaterThan(20);
+    for (const note of notes) {
+      const holder = note.closest('details');
+      expect(holder).not.toBeNull();
+      expect(holder.open).toBe(false);
+    }
+  });
+});
+
+describe('do subscribers cover the bills', () => {
+  test('the bills beside what subscribers pay, what is left, and how many would cover it against how many pay', async () => {
+    await renderHub(CONNECTED);
+    const card = cardOf('Do subscribers cover the bills?');
+    expect(within(card).getByText('Not yet')).toBeInTheDocument();
+    expect(within(figIn(card, 'Monthly bills')).getByText('$208.44 a month')).toBeInTheDocument();
+    expect(within(figIn(card, 'Subscribers pay')).getByText('$6.34 a month')).toBeInTheDocument();
+    expect(within(figIn(card, 'Still to cover each month')).getByText('$202.10')).toBeInTheDocument();
+    expect(figIn(card, 'Still to cover each month').textContent).toMatch(/The burn less what subscribers pay each month, after Stripe fees and Apple’s cut\./);
+    const pro = figIn(card, 'Flock Pro subscribers needed');
+    expect(within(pro).getByText('59 web, 75 App Store')).toBeInTheDocument();
+    expect(within(pro).getByText('2 subscribers pay now.')).toBeInTheDocument();
+    expect(within(figIn(card, 'Roost venues needed')).getByText('2 venues')).toBeInTheDocument();
+    expect(within(figIn(card, 'Roost venues needed')).getByText('0 venues pay now.')).toBeInTheDocument();
+    // The meters carry no words of their own, so a screen reader reads the
+    // numbers once, from the lines beside them.
+    for (const meter of card.querySelectorAll('.hub-meter')) expect(meter).toHaveAttribute('aria-hidden', 'true');
+    expect(card.querySelectorAll('.hub-meter')).toHaveLength(2);
+  });
+
+  test('subscribers who already pay for the bills read as yes', async () => {
+    await renderHub({ ...CONNECTED, net: { ...CONNECTED.net, recurringNetCents: 30000, netBurnCents: -9156 } });
+    const card = cardOf('Do subscribers cover the bills?');
+    expect(await within(card).findByText('Yes')).toBeInTheDocument();
+    expect(within(figIn(card, 'Still to cover each month')).getByText('−$91.56')).toBeInTheDocument();
+    expect(figIn(card, 'Still to cover each month').textContent).toMatch(/Subscribers already pay for the monthly costs/);
   });
 });
