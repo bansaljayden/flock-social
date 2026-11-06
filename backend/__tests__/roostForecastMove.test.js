@@ -3493,3 +3493,43 @@ test('a question reads advisorFacts once, never a path per fact on every payload
     assert.strictEqual(n, 0);
   });
 });
+
+// ── THE RECHECK (2026-11-06) ─────────────────────────────────────────────────
+// Each test below is one finding of the independent recheck of the day
+// reader, on a pinned clock.
+
+test('only the owner\'s own venue said shut takes a day out, never another venue, a negation or the past, and a day said shut is no day asked', async () => {
+  const { saidShut } = require('../services/roostDayReader');
+  for (const [q, want] of [
+    ['The bar next door is closed Sundays, how busy will we be this weekend?', []],
+    ['We\'re not closed Sundays anymore. How does this weekend look?', []],
+    ['We are no longer closed on Sundays, how busy will this weekend be?', []],
+    ['Since they\'re closed Sundays, will our weekend be busier?', []],
+    ['We used to be closed Sundays. How busy will this weekend be?', []],
+    ['we close at 3 on sundays, how busy will saturday be', []],
+    ['We close on Sundays, how busy is the weekend?', ['Sunday']],
+    ['Closed on Sundays, how does this weekend look?', ['Sunday']],
+    ['saturday we are closed, how does the weekend look?', ['Saturday']],
+    ['how busy will friday be, saturday we are closed', ['Saturday']],
+    ['We\'re closed Sundays. How does this weekend look?', ['Sunday']],
+  ]) {
+    assert.deepStrictEqual(saidShut(q), want, q);
+  }
+  assert.strictEqual(saidDays('how busy will friday be, saturday we are closed'), 'Friday');
+  // The bar on its Wednesday: the first two dropped Sunday from the weekend,
+  // and the last led with Saturday as the week's busiest.
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr8SaidShutWed0000000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    for (const question of ['The bar next door is closed Sundays, how busy will we be this weekend?', 'We\'re not closed Sundays anymore. How does this weekend look?']) {
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14', 'typical_peak_2026-11-15'], question);
+    }
+    let r = await call('/api/venue/advisor/question', { question: 'We close on Sundays, how busy is the weekend?' });
+    assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    r = await call('/api/venue/advisor/question', { question: 'how busy will friday be, saturday we are closed' });
+    assert.strictEqual(r.body.text.split('\n')[0], `${KIND_OPEN}Friday peaks around 9 PM at 66 on our 0 to 100 index.`);
+  });
+});

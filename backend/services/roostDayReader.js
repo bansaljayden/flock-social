@@ -206,6 +206,8 @@ const CROWD_SAID = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|q
 
 function tokensIn(piece, shouting = false) {
   const out = [];
+  // The weekdays this part says the venue is shut on (shutDaysIn below).
+  const shutHere = shutDaysIn(piece);
   for (const m of piece.matchAll(TOKEN)) {
     const g = { ...m.groups };
     const before = piece.slice(0, m.index);
@@ -247,7 +249,12 @@ function tokensIn(piece, shouting = false) {
       if (AFTER_NEXT.test(after)) tok.afterNext = true;
       out.push(tok);
     }
-    if (given && out.length > at) Object.assign(out[at], { weak: true, possessive: false });
+    // A DAY THE OWNER SAYS THE VENUE IS SHUT ON IS NO DAY ASKED (recheck,
+    // 2026-11-06): "how busy will friday be, saturday we are closed" asks
+    // about Friday, and was answered with Saturday as the week's busiest. It
+    // counts only when no other day word does, as a reason given does.
+    const shutSaid = Boolean(g.day) && out.length > at && shutHere.includes(out[at].weekday);
+    if ((given || shutSaid) && out.length > at) Object.assign(out[at], { weak: true, possessive: false });
   }
   return out;
 }
@@ -255,21 +262,49 @@ function tokensIn(piece, shouting = false) {
 // THE WEEKDAYS AN OWNER SAYS THE VENUE IS SHUT ON (acceptance, 2026-11-06):
 // "We're closed Sundays. How does this weekend look?" asked on a Sunday is
 // about the coming weekend, and was answered with that Sunday. Read from the
-// owner's own words, "closed" or "shut" beside the weekdays, either way round
-// ("closed on Mondays and Tuesdays", "Sundays we're closed"); the weekend's
-// route leaves those days out (routes/advisor.js weekend_outlook).
+// owner's own words, either way round ("we are closed on Mondays and
+// Tuesdays", "we close on Sundays", "Sundays we're closed", "saturday we are
+// closed"), or "closed on Sundays" with no subject at all; the weekend's
+// route leaves those days out (routes/advisor.js weekend_outlook), and the
+// day reader does not read them as a day asked (tokensIn above).
+//
+// ONLY THE OWNER'S OWN VENUE, AND ONLY SHUT NOW (recheck, 2026-11-06). "The bar
+// next door is closed Sundays, how busy will we be this weekend?" and "We're
+// not closed Sundays anymore. How does this weekend look?" each dropped
+// Sunday from the weekend: "closed" was read beside any subject and after
+// "not". Another subject ("the bar next door is", "they're"), a negation ("not
+// closed", "no longer closed", "aren't closed") and the past ("we used to be
+// closed") say nothing of this venue's week. "We close early on Sundays" and
+// "we close at 3 on Sundays" are its hours, not a day shut.
 const DAY_NAME = '(?:mon|tues|wednes|thurs|fri|satur|sun)days?';
 const DAY_LIST = `${DAY_NAME}(?:\\s*(?:,|and|&|\\/|or)\\s*${DAY_NAME})*`;
-const SHUT_ON = new RegExp(`\\b(?:closed|shut)\\s+(?:on\\s+|all\\s+day\\s+)?(${DAY_LIST})|\\b(${DAY_LIST})\\s*,?\\s+(?:we're|we\\s+are|we|i'm|i\\s+am)\\s+(?:always\\s+)?(?:closed|shut)\\b`, 'gi');
-function saidShut(question) {
+const OWN_SUBJECT = "(?:we're|we\\s+are|we|i'm|i\\s+am)";
+const STILL = '(?:(?:always|usually|also|now)\\s+)?';
+const ON_DAYS = `(?:on\\s+|all\\s+day\\s+|every\\s+)?(?:this\\s+)?(${DAY_LIST})`;
+// Not a time of day after the days, nor "early" or "at 3" after "close".
+const NO_TIME = '(?!\\s+(?:at|by|around|from|till|until)\\s+\\d|\\s+(?:early|earlier)\\b)';
+const NO_HOURS = '(?!\\s+(?:at|by|around|before|after|early|earlier|late|later)\\b|\\s+\\d)';
+const SHUT_ON = new RegExp([
+  // "we're closed Sundays", "we close on Sundays", "I'm shut on Mondays".
+  `\\b${OWN_SUBJECT}\\s+${STILL}(?:closed|shut|close)\\s+${ON_DAYS}\\b${NO_TIME}`,
+  // "Closed on Sundays, how does this weekend look?": no subject at all.
+  `(?:^|[.!?;:,]\\s*|\\n\\s*)(?:(?:but|and|so|also)\\s+)?(?:closed|shut)\\s+${ON_DAYS}\\b${NO_TIME}`,
+  // "Sundays we're closed", "saturday we are closed", "on Sundays we close".
+  `\\b(${DAY_LIST})\\s*,?\\s+${OWN_SUBJECT}\\s+${STILL}(?:closed|shut|close)\\b${NO_HOURS}`,
+].join('|'), 'gi');
+// The weekdays `text` (already normalised) says the venue is shut on.
+function shutDaysIn(text) {
   const out = [];
-  for (const m of normalize(question).matchAll(SHUT_ON)) {
-    for (const d of (m[1] || m[2]).match(new RegExp(DAY_NAME, 'gi')) || []) {
+  for (const m of text.matchAll(SHUT_ON)) {
+    for (const d of (m[1] || m[2] || m[3]).match(new RegExp(DAY_NAME, 'gi')) || []) {
       const day = WEEKDAY(d.replace(/s$/i, ''));
       if (!out.includes(day)) out.push(day);
     }
   }
   return out;
+}
+function saidShut(question) {
+  return shutDaysIn(normalize(question));
 }
 
 const same = (a, b) => a.kind === b.kind && a.weekday === b.weekday && a.scope === b.scope
