@@ -1231,10 +1231,18 @@ function shapeWeek(which) {
     // the card says that first (services/kindForecast.js), so a lone card day
     // is said the way a named day is. A lone day of the venue's own forecast
     // keeps its label, as before. Since 2026-11-06 the weekend is read from
-    // today (routes/advisor.js inThisWeekend), and it is one day on a Sunday,
+    // today (routes/advisor.js weekendWindow), and it is one day on a Sunday,
     // or on a Saturday before a shut Sunday.
-    if (days.length === 1 && isKindForecast(days[0])) {
-      return { lead: weekVoice(days).open(dayPeak(days[0])), points: rest.map(templateLine), used: [days[0], ...rest] };
+    // A lone day of next weekend is said as next weekend's ("next Friday
+    // peaks ..."), for a venue with crowd history too (2026-11-06).
+    const nextDay = days.length === 1 && weekendMarks().isNextWeekendDay(days[0]);
+    if (days.length === 1 && (isKindForecast(days[0]) || nextDay)) {
+      const said = nextDay ? `next ${dayPeak(days[0])}` : dayPeak(days[0]);
+      return {
+        lead: isKindForecast(days[0]) ? weekVoice(days).open(said) : sentenceCase(said),
+        points: rest.map(templateLine),
+        used: [days[0], ...rest],
+      };
     }
     if (days.length < 2) return null;
     const top = days[0];

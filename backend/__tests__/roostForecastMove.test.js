@@ -1056,25 +1056,28 @@ test('today phrased: the model is handed today\'s fact with its source, and a dr
   }
 });
 
-test('today with nothing to read keeps the refusal: closed today by its listing, or a model number on the card', async () => {
+test('a today closed by the listing says so, and today with nothing else to read keeps the refusal: a model number on the card', async () => {
   const gateText = (p) => {
     const gate = advisorFacts.corpusGate(p);
     return `We can't answer that yet. ${gate.reason} ${gate.whatWouldUnlock}`;
   };
-  // Closed today by its listed hours, open every other day: today refuses,
-  // and the week still answers.
+  // Closed today by its listed hours, open every other day: today says so
+  // plainly, and the week still answers. It refused with "We have no crowd
+  // history for this venue" until 2026-11-06, the wrong reason, and the chip
+  // was held back as one that would refuse; it answers now, so it is offered.
   setUp({ placeId: 'ChIJforecastTodayClosed00' });
   const todayDow = new Date().getUTCDay();
   placePeriods = periodsOf(Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter((d) => d !== todayDow).map((d) => [d, [16, 23]])));
   const { intel } = await cardWeek();
   assert.strictEqual(intel.today.closed, true, JSON.stringify(intel.today));
   let r = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
-  assert.strictEqual(r.body.mode, 'refusal', r.body.text);
-  assert.ok(r.body.text.startsWith(gateText(profile)), r.body.text);
+  assert.strictEqual(r.body.mode, 'template', r.body.text);
+  assert.strictEqual(r.body.text, 'Your Google listing has you closed today.');
+  assert.deepStrictEqual(r.body.sources.map((s) => [s.id, s.source]), [['today_closed', 'google_listing']]);
   r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
   assert.notStrictEqual(r.body.mode, 'refusal', r.body.text);
   const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
-  assert.ok(!offered.includes('tonight_outlook'), 'a today chip that would refuse');
+  assert.ok(offered.includes('tonight_outlook'), offered.join(', '));
   assert.ok(offered.includes('money_move'), offered.join(', '));
 
   // One model number on the card: the venue has a curve its profile has not
@@ -1663,26 +1666,30 @@ test('today beside the card\'s week, read directly: the template and the playboo
   assert.strictEqual(roostPlaybook.groundedLead('quiet_nights', [beside]), null);
 });
 
-test('a bakery shut on Sundays, on its Sunday, has no open day left this weekend: the weekend says so plainly and goes on to next weekend, and today keeps its refusal', async () => {
+test('a bakery shut on Sundays, on its Sunday, has no open day left this weekend: the weekend says so plainly and goes on to next weekend, and today says it is closed', async () => {
   // It answered about next Friday and Saturday as this weekend until
   // 2026-11-06, and then, for a day, with "We can't answer that yet. We have
-  // no crowd history for this venue." (review: the wrong reason).
+  // no crowd history for this venue." (review: the wrong reason); today did
+  // too.
   await pinnedAt('2026-11-08T15:00:00Z', async () => {
     bakeryAt({ placeId: 'ChIJweekendBakerySunday00', shut: 0 });
     const { intel } = await cardWeek();
     assert.deepStrictEqual([intel.today.weekday, intel.today.closed], ['Sun', true]);
     const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
-    assert.ok(offered.includes('weekend_outlook'), offered.join(', '));
-    assert.ok(!offered.includes('tonight_outlook'), offered.join(', '));
+    assert.ok(offered.includes('weekend_outlook') && offered.includes('tonight_outlook'), offered.join(', '));
     const r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
     assert.strictEqual(r.body.mode, 'template', r.body.text);
-    assert.strictEqual(r.body.text, 'Your Google listing has you closed for the rest of this weekend. In Flock\'s forecast for places like yours, no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.');
+    assert.strictEqual(r.body.text, [
+      'Your Google listing has you closed for the rest of this weekend. In Flock\'s forecast for places like yours, no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.',
+      '• Next Sunday is past the seven days the forecast covers.',
+    ].join('\n'));
     assert.deepStrictEqual(r.body.sources.map((s) => [s.id, s.source]), [
       ['weekend_closed', 'google_listing'], ['typical_peak_2026-11-14', 'category_pattern'], ['typical_peak_2026-11-13', 'category_pattern'],
+      ['next_weekend_past_forecast', 'category_pattern'],
     ]);
     const today = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
-    assert.strictEqual(today.body.mode, 'refusal', today.body.text);
-    assert.ok(today.body.text.startsWith(gateText(profile)), today.body.text);
+    assert.strictEqual(today.body.mode, 'template', today.body.text);
+    assert.strictEqual(today.body.text, 'Your Google listing has you closed today.');
   });
 });
 
@@ -1990,7 +1997,7 @@ const weatherOn = (date) => advisorFacts.makeFact({
   label: `${LONG[shortOf(date)]} ${advisorFacts.shortDate(date)}: clear sky, around 60 F midday.`,
 });
 
-test('a venue with crowd history, shut on Sundays, on its Sunday: its curve shows nothing for the rest of the weekend, said plainly, then next weekend, never the weather alone', async () => {
+test('a venue with crowd history, shut on Sundays, on its Sunday: its curve shows nothing today or for the rest of the weekend, said plainly, then next weekend, never the weather alone', async () => {
   // The review's case: "Sunday Nov 8: clear sky, around 60 F midday." and
   // nothing else, until 2026-11-06, because one weather fact kept the week's
   // refusal out. The week here is the real builder's, over a curve with no
@@ -2013,13 +2020,45 @@ test('a venue with crowd history, shut on Sundays, on its Sunday: its curve show
       assert.strictEqual(r.body.mode, 'template', r.body.text);
       assert.deepStrictEqual(r.body.text.split('\n'), [
         'Your Google profile\'s curve shows no activity for the rest of this weekend. No day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.',
+        '• Next Sunday is past the seven days the forecast covers.',
         '• Friday Nov 13: clear sky, around 60 F midday.',
         '• Saturday Nov 14: clear sky, around 60 F midday.',
       ]);
       assert.deepStrictEqual(r.body.sources.map((s) => [s.id, s.source]), [
         ['weekend_closed', 'google_baseline'], ['peak_2026-11-14', 'model_holdout'], ['peak_2026-11-13', 'model_holdout'],
-        ['weather_2026-11-13', 'weather'], ['weather_2026-11-14', 'weather'],
+        ['next_weekend_past_forecast', 'model_holdout'], ['weather_2026-11-13', 'weather'], ['weather_2026-11-14', 'weather'],
       ]);
+      // Today, the same way. With today's weather line beside the refusal it
+      // read "Sunday Nov 8: clear sky, around 60 F midday." and nothing else
+      // until 2026-11-06.
+      const today = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+      assert.strictEqual(today.body.mode, 'template', today.body.text);
+      assert.strictEqual(today.body.text, 'Your Google profile\'s curve shows no activity today.');
+      assert.deepStrictEqual(today.body.sources.map((s) => [s.id, s.source]), [['today_closed', 'google_baseline']]);
+    } finally {
+      mlPredictor.predictBusyness = realPredict;
+      advisorFacts.buildAroundYou = realAround;
+    }
+  });
+});
+
+test('a street line on a day the venue is shut is left out of its weekend: on its Saturday, Sunday\'s weather goes', async () => {
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJreviewShutSundaySat00', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 } });
+    mlVenueRow = CORPUS_ROW;
+    for (let day = 1; day < 7; day += 1) {
+      for (let hour = 17; hour <= 22; hour += 1) baselineRows.push({ day_of_week: day, hour, baseline: 40 + hour, source: 'google', updated_at: '2026-10-01T00:00:00Z' });
+    }
+    const realPredict = mlPredictor.predictBusyness;
+    const realAround = advisorFacts.buildAroundYou;
+    mlPredictor.predictBusyness = async (_venue, _weather, ts) => ({ score: CARD[SHORT[new Date(ts).getDay()]], label: 'Moderate', predictionMethod: 'ml', modelVersion: 'test' });
+    advisorFacts.buildAroundYou = async () => ['2026-11-07', '2026-11-08'].map(weatherOn);
+    try {
+      const r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+      const lines = r.body.text.split('\n');
+      assert.match(lines[0], /^Saturday projects busiest around \d{1,2} [AP]M, at 74 on our 0 to 100 index\.$/, r.body.text);
+      assert.deepStrictEqual(lines.slice(1), ['• Saturday Nov 7: clear sky, around 60 F midday.'], r.body.text);
+      assert.ok(!r.body.sources.some((s) => s.id === 'weather_2026-11-08'), JSON.stringify(r.body.sources));
     } finally {
       mlPredictor.predictBusyness = realPredict;
       advisorFacts.buildAroundYou = realAround;
@@ -2091,39 +2130,62 @@ test('"next weekend" is the one after this weekend: the days of it the forecast 
     let payload = null;
     draftFor = (role, p) => { payload = p; return null; };
     const r = await call('/api/venue/advisor/question', { question });
-    assert.strictEqual(r.body.text, 'In Flock\'s forecast for places like yours, no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.');
-    assert.deepStrictEqual(r.body.sources.map((s) => s.id).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
+    assert.strictEqual(r.body.text, [
+      'In Flock\'s forecast for places like yours, no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.',
+      '• Next Sunday is past the seven days the forecast covers.',
+    ].join('\n'));
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id).sort(), ['next_weekend_past_forecast', 'typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
     assert.deepStrictEqual(handedDates(payload), ['2026-11-13', '2026-11-14']);
-    assert.ok(payloadFacts(payload).every((f) => advisorFacts.isNextWeekendDay(f)), payload);
+    assert.ok(payloadFacts(payload).filter((f) => f.id.startsWith('typical_peak_')).every((f) => advisorFacts.isNextWeekendDay(f)), payload);
   });
-  // On a Saturday it holds next Friday alone.
+  // On a Saturday it holds next Friday alone: the answer is about next
+  // Friday, and then says plainly that next Saturday and Sunday are past the
+  // forecast. It read "Friday peaks around 9 PM at 66" and nothing more,
+  // until 2026-11-06.
   await pinnedAt('2026-11-07T16:00:00Z', async () => {
     setUp({ placeId: 'ChIJreviewNextWeekendSat0', phrasing: true });
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     draftFor = () => null;
     const r = await call('/api/venue/advisor/question', { question });
-    assert.strictEqual(r.body.text, 'In Flock\'s forecast for places like yours, Friday peaks around 9 PM at 66 on our 0 to 100 index.');
-    assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['typical_peak_2026-11-13']);
+    assert.strictEqual(r.body.text, [
+      'In Flock\'s forecast for places like yours, next Friday peaks around 9 PM at 66 on our 0 to 100 index.',
+      '• Next Saturday and Sunday are past the seven days the forecast covers.',
+    ].join('\n'));
+    assert.deepStrictEqual(r.body.sources.map((s) => [s.id, s.source]), [
+      ['typical_peak_2026-11-13', 'category_pattern'], ['next_weekend_past_forecast', 'category_pattern'],
+    ]);
   });
-  // A venue with crowd history reads it the same way.
-  await pinnedAt('2026-11-08T16:00:00Z', async () => {
-    setUp({ placeId: 'ChIJreviewNextWeekendOwn0', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
-    mlVenueRow = CORPUS_ROW;
-    route = { mode: 'grounded', intentId: 'weekend_outlook' };
-    draftFor = () => null;
-    const realWeek = advisorFacts.buildWeekAhead;
-    const realAround = advisorFacts.buildAroundYou;
-    advisorFacts.buildWeekAhead = async () => ownWeekFrom('2026-11-08');
-    advisorFacts.buildAroundYou = async () => [];
-    try {
-      const r = await call('/api/venue/advisor/question', { question });
-      assert.strictEqual(r.body.text, 'No day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.');
-      assert.deepStrictEqual(r.body.sources.map((s) => s.id).sort(), ['peak_2026-11-13', 'peak_2026-11-14']);
-    } finally {
-      advisorFacts.buildWeekAhead = realWeek;
-      advisorFacts.buildAroundYou = realAround;
-    }
-  });
+  // A venue with crowd history reads it the same way, on its Sunday and on
+  // its Saturday.
+  for (const [at, start, text, ids] of [
+    ['2026-11-08T16:00:00Z', '2026-11-08', [
+      'No day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.',
+      '• Next Sunday is past the seven days the forecast covers.',
+    ], ['next_weekend_past_forecast', 'peak_2026-11-13', 'peak_2026-11-14']],
+    ['2026-11-07T16:00:00Z', '2026-11-07', [
+      'Next Friday peaks around 9 PM at 66 on our 0 to 100 index.',
+      '• Next Saturday and Sunday are past the seven days the forecast covers.',
+    ], ['next_weekend_past_forecast', 'peak_2026-11-13']],
+  ]) {
+    await pinnedAt(at, async () => {
+      setUp({ placeId: `ChIJreviewNextWeekendOwn${start.slice(-1)}`, extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
+      mlVenueRow = CORPUS_ROW;
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      draftFor = () => null;
+      const realWeek = advisorFacts.buildWeekAhead;
+      const realAround = advisorFacts.buildAroundYou;
+      advisorFacts.buildWeekAhead = async () => ownWeekFrom(start);
+      advisorFacts.buildAroundYou = async () => [];
+      try {
+        const r = await call('/api/venue/advisor/question', { question });
+        assert.strictEqual(r.body.text, text.join('\n'), at);
+        assert.deepStrictEqual(r.body.sources.map((s) => s.id).sort(), ids, at);
+      } finally {
+        advisorFacts.buildWeekAhead = realWeek;
+        advisorFacts.buildAroundYou = realAround;
+      }
+    });
+  }
 });
 
 test('a venue on a half-hour offset reads today\'s card after its own midnight, though the server\'s hour has not turned', async () => {

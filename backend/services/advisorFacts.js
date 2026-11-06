@@ -1250,6 +1250,10 @@ function isNextWeekendDay(fact) {
 
 const joinDays = (days) => (days.length < 3 ? days.join(' and ') : `${days.slice(0, -1).join(', ')} and ${days[days.length - 1]}`);
 
+// Who says the venue is shut, in its own words: the listing's hours on the
+// card, or the venue's own curve.
+const shutWho = (listing) => (listing ? 'Your Google listing has you closed' : "Your Google profile's curve shows no activity");
+
 /**
  * The fact that a weekend has nothing open. `listing` when the card's listed
  * hours say so, else the venue's own curve; `scope` 'this' (with `todayIn`
@@ -1257,7 +1261,6 @@ const joinDays = (days) => (days.length < 3 ? days.join(' and ') : `${days.slice
  * forecast holds of it; `from` and `through` its first and last dates.
  */
 function weekendClosedFact({ listing, scope, todayIn = false, weekdays = [], from, through, asOf }) {
-  const who = listing ? 'Your Google listing has you closed' : "Your Google profile's curve shows no activity";
   const when = scope === 'next'
     ? `on ${joinDays(weekdays)} next weekend`
     : (todayIn ? 'for the rest of this weekend' : 'this weekend');
@@ -1266,7 +1269,44 @@ function weekendClosedFact({ listing, scope, todayIn = false, weekdays = [], fro
     value: { fromDate: from, throughDate: through },
     source: listing ? 'google_listing' : 'google_baseline',
     asOf,
-    label: `${who} ${when}.`,
+    label: `${shutWho(listing)} ${when}.`,
+  });
+}
+
+// TODAY SHUT, SAID THE SAME WAY (2026-11-06). "How does today look?" on a day
+// the venue is shut refused with "We have no crowd history for this venue"
+// for a venue answered from its card, and for a venue with history either
+// refused with the day's no-activity sentence or, under a street line, said
+// only that. It says so plainly now, from the same record as a shut weekend.
+const TODAY_CLOSED_ID = 'today_closed';
+
+/** The fact that the venue is shut today, on `date`, by its listing or its own curve. */
+function todayClosedFact({ listing, date, asOf }) {
+  return makeFact({
+    id: TODAY_CLOSED_ID,
+    value: { date },
+    source: listing ? 'google_listing' : 'google_baseline',
+    asOf,
+    label: `${shutWho(listing)} today.`,
+  });
+}
+
+// NEXT WEEKEND'S DAYS PAST THE FORECAST, SAID PLAINLY (2026-11-06). The
+// forecast holds seven days from today, so on a Saturday it holds next Friday
+// and not next Saturday or Sunday, and on a Sunday next Friday and Saturday.
+// An answer about next weekend names the days it cannot speak for, in the
+// words of the refusal for a next weekend it holds none of. Its source is the
+// forecast whose reach it states.
+const PAST_FORECAST_ID = 'next_weekend_past_forecast';
+
+/** The days of next weekend (`weekdays`, `from` to `through`) past the seven days the forecast covers. */
+function pastForecastFact({ card, weekdays, from, through, asOf }) {
+  return makeFact({
+    id: PAST_FORECAST_ID,
+    value: { fromDate: from, throughDate: through },
+    source: card ? KIND_FORECAST_SOURCE : 'model_holdout',
+    asOf,
+    label: `Next ${joinDays(weekdays)} ${weekdays.length > 1 ? 'are' : 'is'} past the seven days the forecast covers.`,
   });
 }
 
@@ -2036,12 +2076,16 @@ module.exports = {
   buildWeekAhead,
   isShutDay,
   venueToday,
-  // a weekend with nothing open, and next weekend
+  // a weekend or a today with nothing open, and next weekend
   WEEKEND_CLOSED_ID,
+  TODAY_CLOSED_ID,
+  PAST_FORECAST_ID,
   NEXT_WEEKEND_NOTE,
   nextWeekendDay,
   isNextWeekendDay,
   weekendClosedFact,
+  todayClosedFact,
+  pastForecastFact,
   // a venue with no crowd history: the dashboard's Week Ahead, as facts
   buildWeekProjection,
   buildTodayProjection,

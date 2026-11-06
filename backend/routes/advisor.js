@@ -300,6 +300,21 @@ async function daysFromToday(b) {
   return { days: week, today: week.map(entryDate).find(Boolean) || null, closed: [], asOf: null, card: false };
 }
 
+// Today's shut-day fact, or null: the card's listed hours have the venue shut
+// on its today (off the block's one read of the card), or the night ahead in
+// the venue's own week is a day its curve shows no hours of its own on.
+async function shutToday(b, tonight) {
+  const asOf = (b.now || new Date()).toISOString();
+  if (gatedVenue(b) && typeof b.card === 'function') {
+    const card = await b.card();
+    if (!ISO_DATE.test(String(card.date)) || !(card.closed || []).includes(card.date)) return null;
+    return advisorFacts.todayClosedFact({ listing: true, date: card.date, asOf: card.asOf || asOf });
+  }
+  const night = tonight[0];
+  if (!advisorFacts.isShutDay(night)) return null;
+  return advisorFacts.todayClosedFact({ listing: false, date: entryDate(night), asOf });
+}
+
 // One plan per chip: which builder outputs, filtered how. Filtering and
 // ordering existing facts is composition; no plan computes a number the fact
 // engine did not already construct. Builders are memoised per request because
@@ -321,6 +336,12 @@ const INTENT_PLANS = {
     // (advisorFacts.buildWeekAhead, nightInProgress).
     const week = await (b.tonight ? b.tonight() : b.week());
     const tonight = week.slice(0, 1);
+    // TODAY SHUT IS SAID PLAINLY (2026-11-06; advisorFacts.todayClosedFact):
+    // by the listing's hours on the card for a venue answered from it, by its
+    // own curve otherwise, and nothing beside it, since a street line under a
+    // shut day used to stand in for the answer.
+    const shut = await shutToday(b, tonight);
+    if (shut) return [shut];
     const date = tonight.length ? entryDate(tonight[0]) : null;
     const around = await b.around();
     const street = around.filter((e) => {
@@ -384,15 +405,25 @@ const INTENT_PLANS = {
       return out;
     };
     const shut = (date) => closed.includes(date) || days.some((e) => entryDate(e) === date && advisorFacts.isShutDay(e));
+    const stamp = asOf || (b.now || new Date()).toISOString();
+    const named = (dates) => dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]);
     const shutFact = (s, dates) => advisorFacts.weekendClosedFact({
-      listing: card,
-      scope: s,
-      todayIn: dates.includes(today),
-      weekdays: dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]),
-      from: dates[0],
-      through: dates[dates.length - 1],
-      asOf: asOf || (b.now || new Date()).toISOString(),
+      listing: card, scope: s, todayIn: dates.includes(today), weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp,
     });
+    // Next weekend's days the seven days do not reach, said after an answer
+    // about next weekend ("Next Saturday and Sunday are past the seven days the
+    // forecast covers."), so a lone next Friday is not read as the weekend.
+    const pastNext = () => {
+      const { from, to } = weekendWindow(today, 'next');
+      const last = addDaysTo(today, 6);
+      const dates = [];
+      for (let d = from; d <= to; d = addDaysTo(d, 1)) if (d > last) dates.push(d);
+      return dates.length
+        ? [advisorFacts.pastForecastFact({ card, weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp })]
+        : [];
+    };
+    // A street line on a day the venue is shut says nothing about its weekend.
+    const streetOpen = async (s) => (await street(s)).filter((e) => entryDate(e) === null || !shut(entryDate(e)));
     if (scope === 'after_next' || (scope === 'next' && !held('next').length)) {
       return [advisorFacts.makeRefusal({
         id: 'refuse_weekend_past_forecast',
@@ -402,14 +433,14 @@ const INTENT_PLANS = {
     }
     if (scope === 'next') {
       const next = days.filter(keep('next'));
-      if (open(next).length) return [...asNext(next), ...asNext(await street('next'))];
-      return held('next').every(shut) ? [shutFact('next', held('next'))] : next;
+      if (open(next).length) return [...asNext(next), ...pastNext(), ...asNext(await streetOpen('next'))];
+      return held('next').every(shut) ? [shutFact('next', held('next')), ...pastNext()] : next;
     }
     let week = days.filter(keep('this'));
-    if (open(week).length) return [...week, ...(await street('this'))];
+    if (open(week).length) return [...week, ...(await streetOpen('this'))];
     if (held('this').length && held('this').every(shut)) {
       const next = open(days.filter(keep('next')));
-      return [shutFact('this', held('this')), ...asNext(next), ...(next.length ? asNext(await street('next')) : [])];
+      return [shutFact('this', held('this')), ...(next.length ? [...asNext(next), ...pastNext(), ...asNext(await streetOpen('next'))] : [])];
     }
     // No day of this weekend to read for another reason: a card's says why
     // through the venue's own week, as today's chip does (tonightFor).
