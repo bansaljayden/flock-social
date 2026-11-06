@@ -62,6 +62,8 @@ import { createSosFollowUp } from './services/sosFollowUp';
 // Capacitor filesystem and share plumbing. An `await import()` at the call
 // site keeps all of it off the boot path.
 import { onVenuePhotoError } from './lib/venuePhoto';
+// Google's attribution, for the Nest's plan cards (they name their venues).
+import { GoogleMapsMark } from './components/ui/GoogleCredit';
 import { lsGet, lsSet, lsRemove } from './lib/storage';
 import { glideFabHome, stopFabGlide } from './lib/fabGlide';
 import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
@@ -18215,6 +18217,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </button>
             );
           })}
+          {/* The cards name their venues, which is Google Maps data off a
+              Google map, so the list ends on Google's attribution
+              (components/ui/GoogleCredit.js), as the Explore list does. */}
+          {liveFlocks.some((f) => f.venueId && f.venue && f.venue !== 'TBD') && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
+              <GoogleMapsMark />
+            </div>
+          )}
         </div>
 
       </div>
@@ -20085,6 +20095,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         isLoading,
         needsEmailVerification,
         newlyCreatedFlockRef,
+        openVenueDetail,
         selectedVenueForCreate,
         setCurrentScreen,
         setCurrentTab,

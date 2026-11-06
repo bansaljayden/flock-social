@@ -129,6 +129,7 @@ import { createFlock as apiCreateFlock, createFlockInviteLink, sendMessage as ap
 import { hapticSuccess } from '../services/haptics';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { GoogleMapsMark, isPlacesPhotoUrl } from '../components/ui/GoogleCredit';
 
 // The group signpost, outside the container. Section-label size in tertiary
 // grey, with an optional right-aligned value so the label row answers "what
@@ -193,6 +194,8 @@ export default function CreateScreen({
   isLoading,
   needsEmailVerification,
   newlyCreatedFlockRef,
+  // The venue sheet, for the picked venue's photo and name.
+  openVenueDetail,
   selectedVenueForCreate,
   setCurrentScreen,
   setCurrentTab,
@@ -648,23 +651,64 @@ export default function CreateScreen({
                   <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Venue</span>
                   <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontWeight: '600' }}>Optional</span>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {selectedVenueForCreate.photo_url ? (
-                    <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                {(() => {
+                  /* A Google place's photo and name open its venue sheet,
+                     which credits the photo in full, so the 48px photo goes
+                     uncredited here as a thumbnail (components/ui/GoogleCredit.js).
+                     An event's own image is not Google's and opens nothing. A
+                     Google photo with no place id has no sheet behind it, so
+                     it is not drawn. */
+                  const v = selectedVenueForCreate;
+                  const showPhoto = !!v.photo_url && (!!v.place_id || !isPlacesPhotoUrl(v.photo_url));
+                  const photo = showPhoto ? (
+                    <img src={v.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                   ) : (
                     <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navy, 20)}</div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.name}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                      {selectedVenueForCreate.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
-                      {selectedVenueForCreate.rating && <StarRating rating={selectedVenueForCreate.rating} />}
-                      {selectedVenueForCreate.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
+                  );
+                  const facts = (
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.name}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                        {v.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{v.rating}</span>}
+                        {v.rating && <StarRating rating={v.rating} />}
+                        {v.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(v.price_level)}</span>}
+                      </div>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.addr}</p>
                     </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
-                  </div>
-                  <button className="hit44 glass-btn glass-secondary" onClick={openVenuePicker} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
-                </div>
+                  );
+                  return (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {v.place_id ? (
+                          <button
+                            type="button"
+                            className="hit44"
+                            aria-label={`${v.name}${v.addr ? `, ${v.addr}` : ''}. Open the place.`}
+                            onClick={() => openVenueDetail(v.place_id, { name: v.name, formatted_address: v.addr, place_id: v.place_id, rating: v.rating, price_level: v.price_level, photo_url: showPhoto ? v.photo_url : null, photo_attribution: v.photo_attribution || null, lat: v.lat, lng: v.lng })}
+                            style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, margin: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}
+                          >
+                            {photo}
+                            {facts}
+                          </button>
+                        ) : (
+                          <>
+                            {photo}
+                            {facts}
+                          </>
+                        )}
+                        <button className="hit44 glass-btn glass-secondary" onClick={openVenuePicker} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                      </div>
+                      {/* A Google place's name, rating, address and photo are
+                          Google Maps data off a Google map, so the row carries
+                          Google's attribution. */}
+                      {v.place_id && (
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                          <GoogleMapsMark />
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 <Hint style={{ marginTop: '8px' }}>It goes into the chat as the first card, and the group can still vote on somewhere else.</Hint>
               </FormRow>
             ) : (

@@ -71,6 +71,7 @@ import React from 'react';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import { onVenuePhotoError } from '../lib/venuePhoto';
+import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 
 export default function ChatListScreen({
   // Declared at App.js module scope and shared with screens other than this
@@ -413,13 +414,15 @@ export default function ChatListScreen({
                     {/* Flock card */}
                     <button className="hit44" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
                       {/* Tile — the flock's venue photo if it has picked one,
-                          otherwise its initial on a colour keyed to its id. */}
+                          otherwise its initial on a colour keyed to its id.
+                          The photo only with the venue's place id, which is
+                          what lets the plan's header credit it. */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         {(() => {
                           const swatch = flockTileSwatch(f.id);
                           return (
                             <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                              {f.venuePhoto ? (
+                              {f.venuePhoto && f.venueId ? (
                                 <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
                               ) : (
                                 <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: swatch.fg, lineHeight: 1, letterSpacing: '-0.01em' }}>{flockTileInitial(f.name)}</span>
@@ -482,6 +485,17 @@ export default function ChatListScreen({
                   </div>
                 );
               })}
+              {/* The tiles' venue photos and names are Google Maps data off a
+                  Google map, so the list ends on Google's attribution
+                  (components/ui/GoogleCredit.js), as the Explore list does.
+                  A 46px tile is a thumbnail: it opens the chat, and from
+                  there "Open the plan" reaches the plan's header photo, which
+                  is credited. */}
+              {filteredFlocks.some((f) => f.venueId && ((f.venue && f.venue !== 'TBD') || f.venuePhoto)) && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
+                  <GoogleMapsMark />
+                </div>
+              )}
             </>
           )}
 
