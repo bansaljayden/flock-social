@@ -243,20 +243,41 @@ const NOTHING = { photo_url: null, photo_attribution: null };
 // 1. Which photo
 // =============================================================================
 
-test('the rule: the stored photo while Google lists it, else the heal\'s pick', () => {
-  const { currentPhotoFor } = venueSearch;
+test('the rule: the stored photo while Google lists it, else the heal\'s memory, else the heal\'s pick', () => {
+  const { currentPhotoFor, firstCurrentPhoto } = venueSearch;
   // Listed, and not first: the plan keeps its own photograph.
   assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], SECOND), PHOTO_SECOND);
   // Not listed: the first current photo, which is what healDeadPhoto serves.
   assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED), PHOTO_FIRST);
+  assert.equal(firstCurrentPhoto([PHOTO_FIRST, PHOTO_SECOND], EXPIRED), PHOTO_FIRST);
   // Malformed names and holes are stepped over, as the heal steps over them.
   assert.equal(currentPhotoFor([null, { name: 'not a photo name' }, PHOTO_SECOND], EXPIRED), PHOTO_SECOND);
   assert.equal(currentPhotoFor([], EXPIRED), null);
   assert.equal(currentPhotoFor(undefined, EXPIRED), null);
+  // The photo the heal remembers for the place, found by its hash, wherever
+  // Google lists it now; and none when Google no longer lists it.
+  const keysOf = (name) => ({ 160: vs.photoCacheKey(name, 160), 400: vs.photoCacheKey(name, 400) });
+  const remembers = (name) => ({ held: true, keys: keysOf(name) });
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED, remembers(SECOND)), PHOTO_SECOND);
+  assert.equal(currentPhotoFor([PHOTO_FIRST], EXPIRED, remembers(SECOND)), null);
+  // ...though the stored photo, listed and alive, still comes first.
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], FIRST, remembers(SECOND)), PHOTO_FIRST);
+  // Held with no photo: the bird, unless a free lookup lets the heal pick again.
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED, { held: true, keys: null }), null);
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED, { held: true, keys: null, looksAgain: true }), PHOTO_FIRST);
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], SECOND, { held: true, keys: null }), PHOTO_SECOND);
   // A name Google refused today is never the pick, listed or not.
   vs.rememberDeadPhotoRef(FIRST);
   assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], FIRST), PHOTO_SECOND);
   assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED), PHOTO_SECOND);
+  assert.equal(currentPhotoFor([PHOTO_FIRST, PHOTO_SECOND], EXPIRED, remembers(FIRST)), null);
+});
+
+test('the heal picks with the same function, not a copy of it', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueSearch.js'), 'utf8');
+  const heal = src.slice(src.indexOf('async function healDeadPhoto('), src.indexOf('router.use(authenticate);', src.indexOf('async function healDeadPhoto(')));
+  assert.match(heal, /const current = \(firstCurrentPhoto\(out\.photos, deadRef\) \|\| \{\}\)\.name;/);
+  assert.doesNotMatch(heal, /\.find\(\(name\) => isPhotoRefShaped\(name\)/);
 });
 
 test('a plan whose photo Google still lists is handed that photo and its own credit', async () => {
@@ -299,6 +320,75 @@ test('Google refused the first current photo too: the credit and the heal both p
   // (and healed to SECOND on the way, which is the rule under test).
   assert.equal((await photo(proxyUrl(FIRST))).text, `pixels of ${SECOND}`);
   assert.equal(vs.deadPhotoRefs.size, 1);
+
+  const credit = await askCredit();
+  assert.deepEqual(credit.body, { photo_url: proxyUrl(SECOND), photo_attribution: CREDIT_SECOND });
+  const healed = await photo(proxyUrl(EXPIRED));
+  assert.equal(healed.text, `pixels of ${SECOND}`);
+  assert.equal((await photo(credit.body.photo_url)).text, healed.text);
+});
+
+test('the photo the heal remembers for the place is the one credited, after Google reorders the list too', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  expired.add(EXPIRED);
+  planWithPhoto(proxyUrl(EXPIRED));
+  // The chat list's tile heals the stored name to FIRST, which the proxy keeps.
+  assert.equal((await photo(proxyUrl(EXPIRED))).text, `pixels of ${FIRST}`);
+  placeWithPhotos(P, [PHOTO_SECOND, PHOTO_FIRST]);
+
+  const credit = await askCredit();
+  assert.deepEqual(credit.body, { photo_url: proxyUrl(FIRST), photo_attribution: CREDIT_FIRST });
+  assert.equal((await photo(proxyUrl(EXPIRED))).text, `pixels of ${FIRST}`, 'the tile keeps the remembered photo');
+  assert.equal((await photo(credit.body.photo_url)).text, `pixels of ${FIRST}`, 'and the plan draws the same one');
+});
+
+test('the photo the place healed to read dead too: the tile shows the bird today, and the plan draws its map for nothing', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  expired.add(EXPIRED);
+  expired.add(FIRST);
+  planWithPhoto(proxyUrl(EXPIRED));
+  // The tile's request heals to FIRST, Google refuses FIRST's purchase, and
+  // the place keeps its day with no photo (0e1fac23).
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404);
+  const asked = calls.length;
+  const spent = placesBudgetStatus().globalUsed;
+
+  assert.deepEqual((await askCredit()).body, NOTHING);
+  assert.equal(calls.length, asked, 'nothing asked of Google to learn there is nothing to draw');
+  assert.equal(placesBudgetStatus().globalUsed, spent, 'and nothing charged');
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404, 'the tile still shows the bird');
+});
+
+test('a stored photo Google still lists is shown, whatever the heal holds for its place', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  // Another plan's dead name of the place healed to a photo that read dead.
+  vs.rememberHealedPlace(P, null);
+  planWithPhoto(proxyUrl(SECOND));
+  const credit = await askCredit();
+  assert.deepEqual(credit.body, { photo_url: proxyUrl(SECOND), photo_attribution: CREDIT_SECOND });
+  assert.equal((await photo(proxyUrl(SECOND))).text, `pixels of ${SECOND}`, 'the proxy serves a live name as it is');
+  // And when the photo the heal remembers is this live stored name itself.
+  vs.rememberHealedPlace(P, { 160: vs.photoCacheKey(SECOND, 160), 400: vs.photoCacheKey(SECOND, 400) });
+  assert.deepEqual((await askCredit()).body, { photo_url: proxyUrl(SECOND), photo_attribution: CREDIT_SECOND });
+});
+
+test('a stored name Google no longer lists, of a place the heal holds with no photo: the plan draws its map, as the tile draws the bird', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  vs.rememberHealedPlace(P, null);
+  expired.add(EXPIRED);
+  planWithPhoto(proxyUrl(EXPIRED));
+  assert.deepEqual((await askCredit()).body, NOTHING);
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404);
+});
+
+test('a warm venue card makes the lookup free: the heal picks again, and so does the credit', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  expired.add(EXPIRED);
+  expired.add(FIRST);
+  planWithPhoto(proxyUrl(EXPIRED));
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404);
+  // A venue card opens, and its Place Details read is cached.
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
 
   const credit = await askCredit();
   assert.deepEqual(credit.body, { photo_url: proxyUrl(SECOND), photo_attribution: CREDIT_SECOND });

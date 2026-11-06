@@ -1198,10 +1198,9 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
     if (!out.ok) return PHOTO_GONE;
 
     // The first current photo, skipping the refused name itself and any name
-    // already known dead, so a heal can never loop back into one.
-    const current = out.photos
-      .map((photo) => photo && photo.name)
-      .find((name) => isPhotoRefShaped(name) && name !== deadRef && !isDeadPhotoRef(name));
+    // already known dead, so a heal can never loop back into one. The rule is
+    // firstCurrentPhoto's, which the plan photo credit picks with too.
+    const current = (firstCurrentPhoto(out.photos, deadRef) || {}).name;
     if (!current) return PHOTO_GONE;
 
     // Hashes, never the name (see healedPlaces). Written before the bytes are
@@ -2071,6 +2070,21 @@ module.exports.warmPhoto = (photoRef, maxWidth, req) =>
 // plan draws the photo_url it is handed, so the picture and the name on it are
 // always one photograph, whether or not Google still lists the one it stored.
 //
+// THE SAME CHOICE THE PROXY MAKES. The stored URL is what the chat list's tile
+// draws, and for a name Google has expired the proxy shows what healDeadPhoto
+// decides for the place, from its memory of the day (healedPlaces). So the
+// credit follows that memory, which it reads and never adds to or changes:
+//   - the heal remembers a photo for the place: the credit is that photo's,
+//     found in the current list by its cache-key hash, or nothing when Google
+//     no longer lists it;
+//   - the heal holds the place with no photo (the photo it healed to read dead
+//     too, or the place had none) and would not look it up again today: the
+//     tile shows the bird, and the plan draws its map; when the stored name is
+//     already known dead, nothing is spent learning that;
+//   - otherwise the heal would pick firstCurrentPhoto, and so does the credit.
+// The stored photo itself comes first in every case while Google still lists
+// it and has not refused it, because the proxy serves a live name as it is.
+//
 // THE CHARGE is the one healDeadPhoto pays for the same request: the
 // per-address gate and one unit of the shared Places day marked as the photo
 // proxy's, asked only when photosLookupWillCost says a request will go out,
@@ -2100,23 +2114,63 @@ function photoRefOfUrl(url) {
 }
 
 /**
- * WHICH OF A PLACE'S CURRENT PHOTOS A STORED NAME SHOWS, as this proxy serves
- * it: the stored photo itself while Google still lists it and has not refused
- * it today, else the photo healDeadPhoto answers an expired name with, which is
- * the first current name shaped like one and not known dead (photos[0], unless
- * Google refused that one too). The second branch is healDeadPhoto's rule,
- * word for word, and __tests__/planPhotoCredit.test.js drives the heal and the
- * credit against one place so the two cannot drift to different photographs.
+ * THE PHOTO A HEAL PICKS: the first of a place's current photos whose name is
+ * shaped like one, is not the refused name, and is not known dead (photos[0],
+ * unless Google refused that one too). healDeadPhoto picks with this, and so
+ * does the plan photo credit, so the two cannot pick different photographs.
+ *
+ * @param {object[]} photos      Google's Photo objects, `name` first
+ * @param {string} refusedRef    the name being healed
+ * @returns {object|null}        the Photo object, or null when none will do
+ */
+function firstCurrentPhoto(photos, refusedRef) {
+  return (Array.isArray(photos) ? photos : []).find((p) => p && typeof p === 'object'
+    && isPhotoRefShaped(p.name) && p.name !== refusedRef && !isDeadPhotoRef(p.name)) || null;
+}
+
+// WHAT THE HEAL HOLDS FOR A PLACE TODAY, read through readHealedPlace and never
+// added to or changed here: `held` when healedPlaces has a live entry, and
+// `keys` when that entry names a photo the heal serves for a dead name of the
+// place. A remembered photo that is the stored name, once Google has refused
+// that name, does not count: the heal forgets it rather than serve it
+// (healDeadPhoto).
+function healHoldFor(placeId, storedRef) {
+  const entry = readHealedPlace(placeId);
+  if (!entry) return { held: false, keys: null };
+  const forgotten = !!entry.keys && isDeadPhotoRef(storedRef)
+    && (entry.keys[160] === photoCacheKey(storedRef, 160) || entry.keys[400] === photoCacheKey(storedRef, 400));
+  return { held: true, keys: entry.keys && !forgotten ? entry.keys : null };
+}
+
+/**
+ * WHICH OF A PLACE'S CURRENT PHOTOS A STORED NAME SHOWS, as this proxy shows
+ * it, in this order:
+ *   1. the stored photo itself while Google still lists it and has not
+ *      refused it today, because the proxy serves a live name as it is;
+ *   2. the photo the heal remembers for the place (by its hash), or none when
+ *      Google no longer lists that one;
+ *   3. none while the heal holds the place with no photo and would not look it
+ *      up again, which is when it draws the bird;
+ *   4. firstCurrentPhoto, the heal's own pick.
+ * __tests__/planPhotoCredit.test.js drives the heal and the credit against one
+ * place to hold the two together.
  *
  * @param {object[]} photos   Google's Photo objects, `name` first
  * @param {string} storedRef  the photo name the row kept
+ * @param {object} [hold]     healHoldFor's answer, and `looksAgain` when a
+ *                            lookup is free, so the heal would pick again
  * @returns {object|null}     the Photo object, or null when none will do
  */
-function currentPhotoFor(photos, storedRef) {
+function currentPhotoFor(photos, storedRef, hold = {}) {
   const list = (Array.isArray(photos) ? photos : []).filter((p) => p && typeof p === 'object');
   const kept = list.find((p) => p.name === storedRef && !isDeadPhotoRef(p.name));
   if (kept) return kept;
-  return list.find((p) => isPhotoRefShaped(p.name) && p.name !== storedRef && !isDeadPhotoRef(p.name)) || null;
+  if (hold.keys) {
+    return list.find((p) => isPhotoRefShaped(p.name) && !isDeadPhotoRef(p.name)
+      && (photoCacheKey(p.name, 400) === hold.keys[400] || photoCacheKey(p.name, 160) === hold.keys[160])) || null;
+  }
+  if (hold.held && !hold.looksAgain) return null;
+  return firstCurrentPhoto(list, storedRef);
 }
 
 /**
@@ -2135,14 +2189,20 @@ async function currentPhotoCredit(storedUrl, placeId, req) {
     // The name says whose photo it is. A stored photo of some other place
     // answers nothing, and no Google call is made about either place.
     if (!storedRef || !isPlaceIdShaped(placeId) || placeIdOfPhotoRef(storedRef) !== placeId) return NOTHING_TO_DRAW;
+    const hold = healHoldFor(placeId, storedRef);
     // NO `await` FROM THE QUESTION TO THE CALL (photosLookupWillCost is only
     // true for this tick). Free answers skip both gates.
-    if (photosLookupWillCost(placeId)) {
+    const looksAgain = !photosLookupWillCost(placeId);
+    if (!looksAgain) {
+      // A stored name Google has refused, of a place the heal holds with no
+      // photo and would not look up again today: the proxy draws the bird for
+      // it, so the plan draws its map, and nothing is spent learning that.
+      if (hold.held && !hold.keys && isDeadPhotoRef(storedRef)) return NOTHING_TO_DRAW;
       if (!allowPhotoFetch(req) || !allowGlobalPlacesCall(1, { photo: true })) return NOTHING_TO_DRAW;
     }
     const out = await fetchPlacePhotos(placeId);
     if (!out.ok) return NOTHING_TO_DRAW;
-    const photo = currentPhotoFor(out.photos, storedRef);
+    const photo = currentPhotoFor(out.photos, storedRef, { ...hold, looksAgain });
     const credit = photo ? photoCredit(photo) : null;
     // Drawn with its credit or not drawn at all.
     if (!credit) return NOTHING_TO_DRAW;
@@ -2153,6 +2213,7 @@ async function currentPhotoCredit(storedUrl, placeId, req) {
   }
 }
 
+module.exports.firstCurrentPhoto = firstCurrentPhoto;
 module.exports.currentPhotoFor = currentPhotoFor;
 module.exports.currentPhotoCredit = currentPhotoCredit;
 
