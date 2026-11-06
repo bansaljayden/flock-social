@@ -165,8 +165,10 @@ describe('confirming a plan', () => {
   test('the host can lock a plan in from the plan screen, not only from the vote panel', () => {
     // The vote panel's Confirm was hidden on the ASSIGNED venue, so a host who
     // picked a venue any other way had no confirm control in the product at
-    // all. Creator only, because PUT /api/flocks/:id is.
-    expect(APP).toMatch(/isCreator && !isConfirmed && !isCompleted && hasVenue/);
+    // all. Creator only, because PUT /api/flocks/:id is. Since 2026-11-06 it
+    // is a step of its own at the end of the plan screen's sheet: the host's,
+    // on a plan still being made, and its button needs a venue to lock.
+    expect(APP).toMatch(/\{isCreator && !isConfirmed && !isCompleted && \(\s*<>[\s\S]{0,1500}?\{hasVenue && \(\s*<button className="hit44 glass-btn glass-primary" disabled=\{confirmingPlan\}/);
     expect(APP_SRC).toMatch(/Lock it in/);
     expect(APP).toMatch(/confirmFlockPlan\(flock\.id\)/);
   });
