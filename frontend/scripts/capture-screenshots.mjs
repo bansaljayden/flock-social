@@ -972,6 +972,12 @@ const SCREENS = [
   { id: 'made', title: 'Create: the plan is made, send the link', appstore: false, narrow: true, replaces: {} },
   { id: 'stillin', title: 'Night-of window: chat strip and roster marks', appstore: false, narrow: true, replaces: {} },
   { id: 'guestlink', title: 'Guest link: answered, still in, budget given', appstore: false, narrow: true, replaces: {} },
+  /* THE PLAN SCREEN, as its host sees it while the plan is still being made.
+     The rig reached it only through the night-of plan's roster frame, which
+     is a guest's-eye confirmed plan, so the header, the venue card and the
+     Lock it in step had never been photographed. No Places search. Shot at
+     320 as well, because the header's pills are what wraps there. */
+  { id: 'plan', title: 'Plan screen: the host, still planning, venue picked', appstore: false, narrow: true, replaces: {} },
 ];
 
 // Which screens a size takes: the narrow size only those that asked for it,
@@ -1210,6 +1216,33 @@ const DRIVERS = {
       return el ? Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) : null;
     });
     log(`  chat: ${gap === null ? 'no .chat-scroller on screen' : `${gap}px between the view and the newest message${gap > 2 ? ' (short of the bottom)' : ''}`}`);
+  },
+  /* THE PLAN SCREEN (screens/FlockDetail.js), opened from its card on the
+     Nest the way most people reach it. The camera account hosts the seeded
+     plan, so every host control is on screen. Two frames: the top as it
+     opens, and the scroll area run to its end, because the screen scrolls
+     under a fixed header and a full-page frame would only repeat the top. */
+  async plan(page, shoot) {
+    await tab(page, 'Nest').click();
+    await page.getByRole('button', { name: new RegExp(DEMO.flockName) }).filter({ visible: true }).first().click();
+    await page.getByRole('heading', { level: 1, name: DEMO.flockName }).waitFor({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Back to your plans' }).waitFor({ timeout: 10000 });
+    await settle(page);
+    await shoot('top');
+    const scrolled = await page.evaluate(() => {
+      const scrollers = [...document.querySelectorAll('div')].filter((el) => {
+        const oy = getComputedStyle(el).overflowY;
+        return (oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+      });
+      const area = scrollers.sort((a, b) => b.clientHeight - a.clientHeight)[0];
+      if (!area) return null;
+      area.scrollTop = area.scrollHeight;
+      return Math.round(area.scrollHeight - area.clientHeight);
+    });
+    log(`  plan: ${scrolled === null ? 'the plan fits without scrolling' : `scroll area runs ${scrolled}px past the fold`}`);
+    await page.waitForTimeout(300);
+    await shoot('end');
+    return true;
   },
   async discover(page) {
     await openDiscoverPins(page);
