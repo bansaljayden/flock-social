@@ -284,6 +284,46 @@ describe("the website's Sign in with Apple script is described as it loads", () 
   });
 });
 
+describe("Google's sign-in script is described as it loads", () => {
+  const app = read('frontend', 'src', 'App.js');
+  // The installed library, the code that actually fetches the script.
+  const lib = fs.readFileSync(require.resolve('@react-oauth/google'), 'utf8');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+
+  test('the policy names the host the script comes from', () => {
+    const src = lib.match(/scriptTag\.src = '([^']+)'/);
+    expect(src).not.toBeNull();
+    const host = new URL(src[1]).hostname;
+    for (const [name, text] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, text.includes(`Google's sign-in script from Google (${host})`)]).toEqual([name, true]);
+    }
+  });
+
+  test('the script loads when a signed-out screen opens, on the web and in the iPhone app, and the policy says so', () => {
+    // Mounting GoogleOAuthProvider is what fetches it: the provider's own
+    // effect appends the script tag on mount, before anyone taps anything.
+    expect(lib).toMatch(/function GoogleOAuthProvider\([^)]*\)\s*\{\s*const scriptLoadedSuccessfully = useLoadGsiScript\(/);
+    expect(lib).toMatch(/useEffect\(\(\) => \{\s*const scriptTag = document\.createElement\('script'\)/);
+
+    // App.js mounts it over all three signed-out screens, gated on the client
+    // id alone. The iPhone build carries that id too (the native sheet needs
+    // it as iOSServerClientId), so the app's sign-in screen fetches the script
+    // as the website's does. If the provider is ever kept off native, the
+    // iPhone half of the sentence below stops being true and has to go.
+    const loggedOut = app.slice(app.indexOf('  if (!authUser) {'),
+      app.indexOf('const FlockAppWithProviders'));
+    for (const screen of ['<SignupScreen', '<VenueLoginScreen', '<LoginScreen']) {
+      expect([screen, loggedOut.includes(screen)]).toEqual([screen, true]);
+    }
+    expect(loggedOut).toMatch(/\{GOOGLE_CLIENT_ID \? \(\s*<GoogleOAuthProvider clientId=\{GOOGLE_CLIENT_ID\}>\s*\{authScreenEl\}/);
+
+    for (const [name, text] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, /On flockcorp\.com and in the iPhone app, the sign-in and sign-up screens, the venue sign-in included, load Google's sign-in script/.test(text)]).toEqual([name, true]);
+      expect([name, text.includes('even if you never tap Continue with Google')]).toEqual([name, true]);
+    }
+  });
+});
+
 describe('deletion copy matches the deletion path', () => {
   const users = read('backend', 'routes', 'users.js');
 
