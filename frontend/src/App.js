@@ -3085,12 +3085,13 @@ const ChatSkeleton = ({ label = 'Loading messages' }) => (
 export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
   if (kind === 'plan') {
     // screens/FlockDetail.js: the round back button, the name and host lines,
-    // the two status pills, then the Going card in the scroll area.
+    // the status pill and the time pill (the time in full, so the wider of
+    // the two), then the Going card in the scroll area.
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button className="hit44" aria-label="Back to your plans" onClick={onBack} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
+            <button className="hit44 plan-head-control" aria-label="Back to your plans" onClick={onBack} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
             <div aria-hidden="true" style={{ flex: 1, minWidth: 0 }}>
               <SkeletonBar dark width="55%" height={18} radius={5} style={{ margin: '2px 0 3px' }} />
               <SkeletonBar dark width="40%" height={13} style={{ margin: '5px 0 1px' }} />
@@ -3098,7 +3099,7 @@ export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
           </div>
           <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <SkeletonBar dark width={78} height={24} radius={20} />
-            <SkeletonBar dark width={112} height={24} radius={20} />
+            <SkeletonBar dark width={150} height={24} radius={20} />
           </div>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '14px' }}>
@@ -20178,8 +20179,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // parameter over there cannot drift apart.
       const flockDetailProps = {
         DialogBehavior,
-        MOMENTUM_STAGES,
-        momentumStageKey,
         onVenuePhotoError,
         resolveEventTime,
         voteTotal,

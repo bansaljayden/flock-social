@@ -365,7 +365,6 @@ test('the day and time you pick are the day and time the flock says', async ({ b
   await expect(page.getByRole('button', { name: '8 PM', exact: true })).toHaveAttribute('aria-pressed', 'true');
 
   const when = tomorrowAt8pm();
-  const shortWhen = when.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   const longWhen = when.toLocaleString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
   });
@@ -389,9 +388,10 @@ test('the day and time you pick are the day and time the flock says', async ({ b
   await goTab(page, 'Nest');
   await page.getByRole('heading', { name, exact: true }).click();
 
-  // Two places print it, and both have to say what was chosen.
-  await expect(page.getByText(shortWhen, { exact: false })).toBeVisible({ timeout: 25_000 });
-  await expect(page.getByText(longWhen, { exact: false })).toBeVisible();
+  // One place prints it, the header's time pill, in full: the day it was
+  // chosen for and the hour.
+  await expect(page.getByText(longWhen, { exact: false })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByText(longWhen, { exact: false })).toHaveCount(1);
 
   expect(host.errors).toEqual([]);
   await host.context.close();

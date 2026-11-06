@@ -1268,10 +1268,14 @@ describe('a cancelled plan is called cancelled where it is still listed', () => 
     expect(label.indexOf("'Cancelled'")).toBeLessThan(label.indexOf("'Planning'"));
   });
 
-  test('the plan screen: the status row says Cancelled, not Done beside a check', () => {
+  test('the plan screen: the status says Cancelled, once, and never Done', () => {
+    // The Details "Status" row that once read "Done" beside a green check
+    // for a cancelled plan is gone (2026-11-06): it only repeated the
+    // header's badge, so the badge is the one place the status is said.
     const detail = read('screens', 'FlockDetail.js');
-    expect(detail).toContain("{flock.status === 'cancelled' ? 'Cancelled' : isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Still Planning'}");
-    expect(detail).toContain("flock.status === 'cancelled' ? Icons.x('var(--text-secondary)', 12) : isCompleted ? Icons.check(");
+    expect(detail).toContain("{isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked In' : 'Planning'}");
+    expect(detail).not.toContain("'Still Planning'");
+    expect(detail.match(/'Cancelled'/g)).toHaveLength(1);
   });
 
   test('the plan screen: Invite is gone once the plan has ended, like its neighbours', () => {

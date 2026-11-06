@@ -716,7 +716,8 @@ test('only the host can lock the plan in, and locking it changes what everyone s
   const openDetail = async (page) => {
     await page.getByRole('button', { name: 'Nest', exact: true }).click();
     await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
-    await expect(page.getByText(/still planning|locked in/i).first()).toBeVisible({ timeout: 30_000 });
+    // The header badge is the one place the plan screen says its status.
+    await expect(page.getByText(/^(planning|locked in)$/i).first()).toBeVisible({ timeout: 30_000 });
   };
   await openDetail(alpha.page);
   await openDetail(bravo.page);
@@ -724,7 +725,7 @@ test('only the host can lock the plan in, and locking it changes what everyone s
   // A member who did not create the flock cannot lock it. PUT /api/flocks/:id
   // answers 403, so offering the control would be a lie.
   await expect(bravo.page.getByRole('button', { name: /^lock it in$/i })).toHaveCount(0);
-  await expect(bravo.page.getByText(/still planning/i)).toBeVisible();
+  await expect(bravo.page.getByText('Planning', { exact: true })).toBeVisible();
 
   // The host can, and is told what it does before tapping it.
   await expect(alpha.page.getByText(/locking it in tells everyone the plan is on/i)).toBeVisible();
@@ -746,8 +747,8 @@ test('only the host can lock the plan in, and locking it changes what everyone s
   // plan locked in the next time they open it.
   await bravo.page.reload();
   await openDetail(bravo.page);
-  await expect(bravo.page.getByText(/still planning/i)).toHaveCount(0);
-  await expect(bravo.page.getByText(/locked in/i).first()).toBeVisible();
+  await expect(bravo.page.getByText('Planning', { exact: true })).toHaveCount(0);
+  await expect(bravo.page.getByText('Locked In', { exact: true })).toBeVisible();
 
   expect(errors).toEqual([]);
   for (const p of [alpha, bravo, charlie]) await p.context.close();

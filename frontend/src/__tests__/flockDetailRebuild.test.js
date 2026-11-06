@@ -7,22 +7,27 @@
  *   1. THE TILE PAIR DIED. Chat / Change Venue were two equal icon-in-a-
  *      rounded-square tiles (the exact banned card-grid tell, DESIGN-STANDARD A14),
  *      each drawn with a hand-rolled inline <svg>. Chat's primary action is
- *      the Open Chat bar; the venue action is now one quiet row.
+ *      the Open Chat pill; the venue action is now one quiet row.
  *
- *   2. THE DETAILS LIST IS RULED. Created by / When / Status were three rows
- *      of colored 32px icon chips with uppercase micro eyebrows. They are now
- *      a label/value list divided by hairline rules, no chips, no eyebrows.
+ *   2. THE DETAILS LIST IS GONE (2026-11-06). Created by / When / Status were
+ *      three rows of colored 32px icon chips with uppercase micro eyebrows,
+ *      then a ruled label/value list, and every row repeated a fact the
+ *      header already printed. The host and the status are the header's, the
+ *      time is the header's pill (the host's way into the time editor), and
+ *      what the list held that nothing else did, Lock it in and its sentence,
+ *      is a ruled step at the end of the sheet. planScreenFactsOnce.test.js
+ *      renders the screen and counts each fact.
  *
  *   3. THE BRAND BIRDS LANDED. The warm bird sits beside the roster when the
  *      only accepted person is the viewer; cobalt Birdie marks the genuine
  *      no-venue-yet empty state. Both are BirdieStill (no rAF loop) at photo
  *      sizes, never below the 40px smudge floor.
  *
- *   4. THE MOMENTUM METER CARRIES TWO CHANNELS. Unreached segments are hollow
- *      outlines rather than a dimmer fill, met/unmet signals differ by glyph
- *      (check vs open ring) as well as color, the stage label reads in white
- *      instead of the stage color, and the bar names its stage to assistive
- *      tech.
+ *   4. THE MOMENTUM METER IS GONE (2026-11-06). Its stage word read "Ready"
+ *      beside a "Planning" badge, and its signals ("Venue set", "Time set",
+ *      "4 voted") each said again what the venue card, the time pill and the
+ *      votes list say. Its one fact found nowhere else, how many of the
+ *      people asked are going, is the Going row's "3 of 5".
  *
  *   5. THE HEADER SPEAKS THE SYSTEM. The back control draws Icons.arrowLeft
  *      instead of a raw arrow character, and both icon-only header buttons
@@ -106,35 +111,44 @@ describe('the banned tile pair is gone', () => {
   it('Open Chat stays the single chat affordance', () => {
     expect((R_CODE.match(/Open Chat/g) || []).length).toBe(1);
   });
+
+  it('Open Chat is a pill, not the full-width bar', () => {
+    const cta = R.slice(R.indexOf('── Bottom CTA ──'));
+    expect(cta).toContain("minHeight: '44px', padding: '0 20px'");
+    expect(cta).toContain("display: 'inline-flex'");
+    expect(codeOnly(cta)).not.toContain("width: '100%'");
+    // The scroll area keeps the pill's height clear under the last row.
+    expect(R).toContain("paddingBottom: '84px'");
+  });
 });
 
-describe('the details list is ruled, not chipped', () => {
-  const details = R.slice(R.indexOf('Details</h4>'));
+describe('the details list is gone, and Lock it in is a step of its own', () => {
+  const lock = R.slice(R.indexOf('LOCK IT IN, which is what is left of the Details list'), R.indexOf('── When editor ──'));
 
-  it('keeps its three rows', () => {
+  it('no label/value row repeats the header', () => {
+    expect(R_CODE).not.toContain('Details</h4>');
     for (const label of ['Created by', 'When', 'Status']) {
-      expect(details).toContain(`>${label}</span>`);
+      expect(R_CODE).not.toContain(`>${label}</span>`);
     }
+    expect(R_CODE).not.toContain('Still Planning');
   });
 
-  it('rows divide with hairline rules', () => {
-    expect(details).toContain("borderBottom: '1px solid var(--border-subtle)'");
+  it('the lock-in step is the host\'s, on a plan still being made, with its sentence first', () => {
+    expect(lock).toContain('{isCreator && !isConfirmed && !isCompleted && (');
+    expect(lock).toContain("'Locking it in tells everyone the plan is on, and the done step appears afterwards.'");
+    expect(lock).toContain("'Pick a venue and you can lock the plan in.'");
+    expect(lock).toMatch(/\{hasVenue && \(\s*\n\s*<button className="hit44 glass-btn glass-primary" disabled=\{confirmingPlan\}/);
+    expect(lock).toContain("{confirmingPlan ? 'Locking...' : 'Lock it in'}");
   });
 
   it('carries no uppercase micro eyebrows', () => {
-    expect(codeOnly(details)).not.toContain("textTransform: 'uppercase'");
+    expect(codeOnly(lock)).not.toContain("textTransform: 'uppercase'");
   });
 
-  it('the Set time control survives, creator-gated, at tap size', () => {
-    expect(details).toContain('isCreator && !isCompleted');
-    expect(details).toMatch(/className="hit44[^"]*"[^>]*onClick=\{\(\) => \{\s*\n\s*const when = flock\.eventTime/);
-    expect(details).toContain("{flock.eventTime ? 'Change' : 'Set time'}");
-  });
-
-  it('status reads through an icon and words, never color alone', () => {
-    expect(details).toContain("Icons.check('var(--accent-green-text)', 12)");
-    expect(details).toContain("Icons.clock('var(--accent-amber-text)', 12)");
-    expect(details).toContain("'Locked In' : 'Still Planning'");
+  it('the time control moved to the header pill, creator-gated, at tap size', () => {
+    expect(R).toContain('const canEditTime = isCreator && !isCompleted;');
+    expect(R).toMatch(/\{canEditTime \? \(\s*\n\s*<button type="button" className="hit44 plan-head-control" onClick=\{openTimeEditor\}/);
+    expect(R).toContain("{whenText ? <><span className=\"sr-only\">Change the time, </span>{whenText}</> : 'Set a time'}");
   });
 });
 
@@ -173,36 +187,19 @@ describe('the brand birds are in the flock screen, honestly placed', () => {
   });
 });
 
-describe('the momentum meter carries more than color', () => {
-  const meter = R.slice(R.indexOf('Momentum Meter'), R.indexOf('Slide to complete'));
-
-  it('unreached segments are hollow outlines, not a dimmer fill', () => {
-    expect(meter).toContain("boxShadow: i <= activeIdx ? 'none' : 'inset 0 0 0 1px rgba(255,255,255,0.35)'");
-    expect(meter).toContain("background: i <= activeIdx ? activeColor : 'transparent'");
-  });
-
-  it('met and unmet signals differ by glyph, check vs open ring', () => {
-    expect(meter).toMatch(/sig\.met \? Icons\.check\(.*?, 12\) : Icons\.circle\(.*?, 12\)/);
-  });
-
-  it('the bar names its stage to assistive tech', () => {
-    expect(meter).toMatch(/role="img" aria-label=\{`Momentum stage \$\{activeIdx \+ 1\} of \$\{stages\.length\}/);
-  });
-
-  it('the stage label reads in near-white, not the stage color', () => {
-    // #94a3b8 (the Idea stage) measured borderline on the navy header; the
-    // color channel lives in the bar, the words stay legible.
-    expect(codeOnly(meter)).not.toContain('color: activeColor');
-  });
-
-  it('signal copy stays honest about what is missing', () => {
-    expect(meter).toContain("'No venue yet'");
-    expect(meter).toContain("'No time yet'");
+describe('the momentum meter is gone', () => {
+  it('draws no meter, no stage word and no repeated signal', () => {
+    expect(R_CODE).not.toContain('MOMENTUM_STAGES');
+    expect(R_CODE).not.toContain('momentumStageKey');
+    expect(R_CODE).not.toContain('flock.momentum');
+    for (const word of ['Momentum', "'Venue set'", "'Time set'", 'RSVPs', ' voted']) {
+      expect(R_CODE).not.toContain(word);
+    }
   });
 });
 
 describe('the header speaks the icon system and names its controls', () => {
-  const header = R.slice(0, R.indexOf('Momentum Meter'));
+  const header = R.slice(0, R.indexOf('Slide to complete bar'));
 
   it('back is Icons.arrowLeft, not a raw arrow character', () => {
     expect(header).toContain("Icons.arrowLeft('white', 16)");
@@ -237,7 +234,7 @@ describe('theme parity and copy hygiene', () => {
   it('vote selection survives dark mode and announces itself', () => {
     // navyBg === --bg-tertiary in dark, so a navyBg pill would render the
     // voted and unvoted states identically there.
-    const votes = R.slice(R.indexOf('Venue votes</h4>'), R.indexOf('Details</h4>'));
+    const votes = R.slice(R.indexOf('Venue votes</h4>'), R.indexOf('LOCK IT IN, which is what is left of the Details list'));
     expect(votes).toContain('backgroundColor: isMyVote ? colors.navyMidBg');
     // The row is a button only while the plan is open. A completed or
     // cancelled one renders the same tally as static rows, because the server
@@ -253,7 +250,7 @@ describe('theme parity and copy hygiene', () => {
     expect(R_CODE).not.toContain('—');
   });
 
-  it('going, votes and details share one ruled sheet with full-bleed rules', () => {
+  it('going, votes and the lock-in step share one ruled sheet with full-bleed rules', () => {
     expect(R).toContain("padding: '2px 16px'");
     const rules = R.match(/height: '1px', background: 'var\(--border-default\)', margin: '0 -16px'/g) || [];
     expect(rules.length).toBe(2);

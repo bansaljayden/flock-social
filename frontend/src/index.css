@@ -469,6 +469,14 @@ body::after {
   outline-offset: -3px;
 }
 
+/* The plan screen's header is navy in both themes, and in light mode the
+   steel ring above measures 1.9:1 on it, under the 3:1 WCAG 1.4.11 asks
+   for. Its two controls (the back arrow and the host's time pill) draw the
+   ring in near-white: 12.1:1 on the light navy, 9.7:1 on the dark. */
+.plan-head-control:focus-visible {
+  outline-color: rgba(255,255,255,0.9);
+}
+
 /* Roost's composer (VenueAdvisorChat.js) draws its focus treatment on the BOX
    around the field: the border lights up and takes a one pixel ring, the way
    Birdie's does. App.js carries an app-wide `input:focus, textarea:focus` rule

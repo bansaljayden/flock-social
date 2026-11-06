@@ -2,8 +2,8 @@
  * FLOCK PLAN DETAIL SCREEN
  *
  * The screen a tap on any flock card lands on: roster, RSVP state, venue,
- * votes, the time editor, the momentum meter, check in, the night recap and
- * the post-hangout feedback sheet. It was about 670 lines of App.js,
+ * votes, the time editor, check in, the night recap and the post-hangout
+ * feedback sheet. It was about 670 lines of App.js,
  * declared as an arrow function inside FlockAppInner and called rather than
  * mounted. It moved out on 2026-09-01 for the same reason the venue owner
  * dashboard, the flock chat, Add Friends, the DM thread, the profile and
@@ -115,8 +115,6 @@ export default function FlockDetail({
   // are shared with screens other than this one, so they stay declared there
   // and arrive here.
   DialogBehavior,
-  MOMENTUM_STAGES,
-  momentumStageKey,
   onVenuePhotoError,
   resolveEventTime,
   voteTotal,
@@ -265,6 +263,45 @@ export default function FlockDetail({
     // A Google photo is drawn only where a tap reaches that sheet, which takes
     // the place id; with none the card keeps its map.
     const showVenuePhoto = !!(flock.venuePhoto && flock.venueId);
+    // EACH FACT ONCE (2026-11-06). The host was printed twice ("Hosted by" up
+    // top, "Created by" in Details), the time three times (a pill, "Time set"
+    // in the momentum meter, the When row) and the status twice, with the
+    // meter's "Ready" beside a "Planning" badge saying the opposite. Each now
+    // has one home: host and status in the header, the time in the header's
+    // pill, the head count on the Going row. The meter went, and the one
+    // thing it said that nothing else did, how many of the people asked are
+    // going, is that row's "3 of 5".
+    //
+    // The time in full, weekday and date, because "Fri 8:00 PM" alone reads
+    // the same for this Friday and the one after.
+    const whenText = flock.eventTime
+      ? localeDateTime(new Date(flock.eventTime), [], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : (flock.time && flock.time !== 'TBD' ? flock.time : null);
+    // PUT /api/flocks/:id is creator-only, and an ended plan has no time left
+    // to move, so only the host of a live plan gets the editor.
+    const canEditTime = isCreator && !isCompleted;
+    const openTimeEditor = () => {
+      const when = flock.eventTime ? new Date(flock.eventTime) : null;
+      if (when && !isNaN(when.getTime())) {
+        const h = when.getHours();
+        const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
+        const hourLabel = FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM';
+        setTimeEditHour(hourLabel);
+        // The plan's own day, not 'Tonight': see dayChipFor above.
+        setTimeEditDay(dayChipFor(resolveEventTime, FLOCK_DAY_CHOICES, when, hourLabel));
+      } else {
+        setTimeEditHour('9 PM');
+        setTimeEditDay('Tonight');
+      }
+      setShowTimeEditor(true);
+    };
+    // Everyone asked, whatever they answered: the roster as it is on screen
+    // (members of every status and every guest, the people this reader
+    // blocked already left out by the server), so the count and the faces
+    // can never disagree. The server's momentum.totalMembers counts the same
+    // way over the unfiltered roster, and is read once per visit where these
+    // arrays move live.
+    const askedCount = (flock.members || []).length + (flock.guests || []).length;
 
     return (
       <div key="flock-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -272,11 +309,13 @@ export default function FlockDetail({
         {/* ── Header ── */}
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
-            <button className="hit44" aria-label="Back to your plans" onClick={leaveToPlans} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
+            <button className="hit44 plan-head-control" aria-label="Back to your plans" onClick={leaveToPlans} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
             <div style={{ flex: 1, minWidth: 0 }}>
               <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', margin: 0, fontSize: 'var(--t-title)', fontWeight: '600', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h1>
+              {/* The host, once. The head count that rode on this line is the
+                  Going row's, beside the faces it counts. */}
               <div style={{ color: 'rgba(255,255,255,0.75)', fontSize: 'var(--t-label)', marginTop: '3px' }}>
-                Hosted by {flock.host} {goingCount > 0 && <span style={{ marginLeft: '4px' }}>· {goingCount} going</span>}
+                Hosted by {flock.host}
               </div>
             </div>
             {/* The add-to-calendar button that sat here wrote a manual row
@@ -292,55 +331,25 @@ export default function FlockDetail({
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'rgba(34,197,94,0.25)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? '#86efac' : '#fcd34d' }}>
               {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked In' : 'Planning'}
             </span>
-            {flock.time && flock.time !== 'TBD' && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>
-                {Icons.calendar('white', 12)} {flock.time}
+            {/* WHEN, once, and for the host the way to change it. This pill
+                is the only place in the app where a plan's time can be set
+                after it was created; it took over from the Details "When"
+                row, which printed the same time a second time with its own
+                Change button. Everyone else reads it, and a live plan with
+                no time says so rather than drawing nothing, in the words the
+                chat header and the Messages list use. */}
+            {canEditTime ? (
+              <button type="button" className="hit44 plan-head-control" onClick={openTimeEditor} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '20px', fontFamily: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', cursor: 'pointer' }}>
+                {Icons.calendar('white', 12)}
+                {whenText ? <><span className="sr-only">Change the time, </span>{whenText}</> : 'Set a time'}
+                {Icons.edit('rgba(255,255,255,0.8)', 12)}
+              </button>
+            ) : (whenText || !isCompleted) && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>
+                {Icons.calendar('white', 12)} {whenText || 'Time still open'}
               </span>
             )}
           </div>
-
-          {/* ── Momentum Meter ── */}
-          {!isCompleted && flock.momentum && (() => {
-            const m = flock.momentum;
-            const stages = MOMENTUM_STAGES;
-            const activeIdx = stages.findIndex(s => s.key === momentumStageKey(m));
-            const activeColor = stages[activeIdx]?.color || '#94a3b8';
-            return (
-              <div style={{ marginTop: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'rgba(255,255,255,0.72)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
-                  {/* Stage label reads in white; the stage colour lives in the
-                      bar below it, where contrast rules for text do not apply. */}
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'rgba(255,255,255,0.92)' }}>{stages[activeIdx]?.label}</span>
-                </div>
-                {/* Progress bar. Reached segments are filled, unreached ones are
-                    hollow outlines, so the boundary survives without colour. */}
-                <div role="img" aria-label={`Momentum stage ${activeIdx + 1} of ${stages.length}: ${stages[activeIdx]?.label}`} style={{ display: 'flex', gap: '3px', height: '6px' }}>
-                  {stages.map((s, i) => (
-                    <div key={s.key} style={{ flex: 1, borderRadius: '3px', background: i <= activeIdx ? activeColor : 'transparent', boxShadow: i <= activeIdx ? 'none' : 'inset 0 0 0 1px rgba(255,255,255,0.35)', transition: 'background 0.3s cubic-bezier(0.16, 1, 0.3, 1)' }} />
-                  ))}
-                </div>
-                {/* Signal summary: check = done, open ring = not yet, so the
-                    two states differ by shape as well as colour. */}
-                <div style={{ display: 'flex', gap: '12px', marginTop: '8px', flexWrap: 'wrap' }}>
-                  {[
-                    { met: m.accepted === m.totalMembers, label: `${m.accepted}/${m.totalMembers} RSVPs` },
-                    { met: !!m.hasVenue, label: m.hasVenue ? 'Venue set' : 'No venue yet' },
-                    { met: !!m.hasTime, label: m.hasTime ? 'Time set' : 'No time yet' },
-                  ].map(sig => (
-                    <span key={sig.label} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', fontWeight: '500', color: sig.met ? 'rgba(134,239,172,0.95)' : 'rgba(255,255,255,0.72)' }}>
-                      {sig.met ? Icons.check('rgba(134,239,172,0.95)', 12) : Icons.circle('rgba(255,255,255,0.55)', 12)} {sig.label}
-                    </span>
-                  ))}
-                  {m.uniqueVoters > 0 && (
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'rgba(255,255,255,0.72)' }}>
-                      {m.uniqueVoters} voted
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
         </div>
 
         {/* Slide to complete bar — confirmed flocks, creator only.
@@ -454,7 +463,7 @@ export default function FlockDetail({
         )}
 
         {/* ── Scrollable content ── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '90px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '84px' }}>
 
           {/* Venue Card. No fade overlay on the photo: the old one faded to
               white, which in dark mode painted a white fog over the card. A
@@ -561,8 +570,8 @@ export default function FlockDetail({
 
           {/* One venue action, one register: quiet row under the venue block.
               Replaces the old Chat / Change Venue tile pair. Chat's primary
-              action is the Open Chat bar pinned below; a second equal tile for
-              it said nothing the bar does not. */}
+              action is the Open Chat button pinned below; a second equal tile
+              for it said nothing the button does not. */}
           {!isCompleted && (
             <button className="hit44 glass-btn glass-secondary" onClick={() => {
               if (isCreator) {
@@ -710,14 +719,18 @@ export default function FlockDetail({
             </div>
           )}
 
-          {/* ── The sheet ── Going, votes and details share one ruled surface:
-              full-bleed rules divide the sections and no row wears an
-              icon-in-a-rounded-square chip. Rule lines, not floating cards. */}
+          {/* ── The sheet ── Going, votes and the lock-in step share one
+              ruled surface: full-bleed rules divide the sections and no row
+              wears an icon-in-a-rounded-square chip. Rule lines, not
+              floating cards. */}
           <div style={{ ...styles.card, padding: '2px 16px' }}>
           <div style={{ padding: '10px 0 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              {/* The head count, once, beside the faces it counts, and out
+                  of everyone asked when some have not said yes (askedCount
+                  above). */}
               <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>
-                Going ({goingCount})
+                Going ({askedCount > goingCount ? `${goingCount} of ${askedCount}` : goingCount})
               </h4>
               {/* Gated like the venue action and the time editor: an invite,
                   by name or by link, is refused on an ended plan, so the
@@ -834,7 +847,7 @@ export default function FlockDetail({
           </div>
 
           {/* Venue votes — the flock-detail venue action itself moved up under
-              the venue card, and chat's action is the Open Chat bar below. */}
+              the venue card, and chat's action is the Open Chat button below. */}
           {flock.votes && flock.votes.length > 0 && (
             <>
             <div style={{ height: '1px', background: 'var(--border-default)', margin: '0 -16px' }} />
@@ -920,62 +933,32 @@ export default function FlockDetail({
             </>
           )}
 
-          {/* Details: a ruled label/value list. No icon chips; the labels do
-              the work and the rules keep the rows apart. */}
-          <div style={{ height: '1px', background: 'var(--border-default)', margin: '0 -16px' }} />
-          <div style={{ padding: '12px 0 4px' }}>
-            <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>Details</h4>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
-              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Created by</span>
-              <span style={{ flex: 1, textAlign: 'right', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.host}</span>
-            </div>
-            {/* WHEN. Always shown, and the creator can change it here. This
-                row is the only place in the app where a flock's time can be
-                set after it was created. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border-subtle)', minHeight: '44px', boxSizing: 'border-box' }}>
-              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>When</span>
-              <span style={{ flex: 1, textAlign: 'right', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', minWidth: 0 }}>
-                {flock.eventTime
-                  ? localeDateTime(new Date(flock.eventTime), [], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-                  : (flock.time && flock.time !== 'TBD' ? flock.time : 'Not set yet')}
-              </span>
-              {isCreator && !isCompleted && (
-                <button className="hit44 glass-btn glass-secondary" onClick={() => {
-                  const when = flock.eventTime ? new Date(flock.eventTime) : null;
-                  if (when && !isNaN(when.getTime())) {
-                    const h = when.getHours();
-                    const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
-                    const hourLabel = FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM';
-                    setTimeEditHour(hourLabel);
-                    // The plan's own day, not 'Tonight': see dayChipFor above.
-                    setTimeEditDay(dayChipFor(resolveEventTime, FLOCK_DAY_CHOICES, when, hourLabel));
-                  } else {
-                    setTimeEditHour('9 PM');
-                    setTimeEditDay('Tonight');
-                  }
-                  setShowTimeEditor(true);
-                }} style={{ padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>
-                  {flock.eventTime ? 'Change' : 'Set time'}
-                </button>
-              )}
-            </div>
-            {/* STATUS, and the control that changes it. The row used to be a
-                read-only label, and the only other confirm control in the app
-                was hidden behind the vote panel and hidden again on the venue
-                that was already assigned. So a host who picked a venue from
-                search rather than from a vote had no way to lock a plan in at
-                all, and every flock stayed in planning forever. Creator only,
-                because PUT /api/flocks/:id is. */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', minHeight: '44px', boxSizing: 'border-box' }}>
-              <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Status</span>
-              <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600' }}>
-                {/* isCompleted covers a cancelled plan too, and this row read
-                    "Done" beside a green check for one while the badge at
-                    the top said Cancelled. A plan the host called off did not
-                    happen, so it gets its own word and no check. */}
-                {flock.status === 'cancelled' ? Icons.x('var(--text-secondary)', 12) : isCompleted ? Icons.check('var(--accent-green-text)', 12) : isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {flock.status === 'cancelled' ? 'Cancelled' : isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Still Planning'}
-              </span>
-              {isCreator && !isConfirmed && !isCompleted && hasVenue && (
+          {/* LOCK IT IN, which is what is left of the Details list. Its rows
+              each repeated a fact this screen already shows: Created by was
+              the header's host, When was the header's time and Status was
+              the header's badge in other words ("Still Planning" under
+              "Planning"). The one thing the list held that nothing else did
+              is the control that moves a plan out of planning, so that stays,
+              with its sentence, for the host of a plan still being made.
+
+              The control is here because the only other confirm in the app
+              was behind the vote panel and hidden again on the venue already
+              assigned, so a host who picked a venue from search had no way to
+              lock a plan in, and every flock stayed in planning forever.
+              Creator only, because PUT /api/flocks/:id is. The sentence is
+              said before the tap, not after it: locking sends every other
+              member a push, and it is what makes the slide-to-done bar and
+              the attendance step exist at all. */}
+          {isCreator && !isConfirmed && !isCompleted && (
+            <>
+            <div style={{ height: '1px', background: 'var(--border-default)', margin: '0 -16px' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', minHeight: '44px', boxSizing: 'border-box' }}>
+              <p style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.45 }}>
+                {hasVenue
+                  ? 'Locking it in tells everyone the plan is on, and the done step appears afterwards.'
+                  : 'Pick a venue and you can lock the plan in.'}
+              </p>
+              {hasVenue && (
                 <button className="hit44 glass-btn glass-primary" disabled={confirmingPlan} onClick={async (e) => {
                   confirmClick(e);
                   setConfirmingPlan(true);
@@ -985,17 +968,8 @@ export default function FlockDetail({
                 </button>
               )}
             </div>
-            {/* Said before the tap, not after it. Locking a plan sends every
-                other member a push, and it is what makes the slide-to-done bar
-                and the attendance step exist at all. */}
-            {isCreator && !isConfirmed && !isCompleted && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>
-                {hasVenue
-                  ? 'Locking it in tells everyone the plan is on, and the done step appears afterwards.'
-                  : 'Pick a venue and you can lock the plan in.'}
-              </p>
-            )}
-          </div>
+            </>
+          )}
           </div>
 
         </div>
@@ -1061,10 +1035,14 @@ export default function FlockDetail({
           </div>
         )}
 
-        {/* ── Bottom CTA ── */}
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
-          <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ width: '100%', padding: '14px', background: colors.navyBg, border: 'none', borderRadius: '14px', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.10)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', pointerEvents: 'auto' }}>
-            {Icons.chat('white', 18)} Open Chat
+        {/* ── Bottom CTA ── A pill, not the full-width bar it was, which was
+            the heaviest thing on the screen. It is still the one Open Chat
+            here, centred and 44pt tall, so it reads as the next step without
+            covering the sheet's last row; the scroll area keeps 84px clear
+            under that row for it. */}
+        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', display: 'flex', justifyContent: 'center', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ minHeight: '44px', padding: '0 20px', background: colors.navyBg, border: 'none', borderRadius: '22px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.16)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '7px', pointerEvents: 'auto' }}>
+            {Icons.chat('white', 16)} Open Chat
           </button>
         </div>
 
