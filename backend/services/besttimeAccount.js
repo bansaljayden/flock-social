@@ -33,10 +33,13 @@ const KEY_STATUS_URL = 'https://besttime.app/api/v1/keys/';
 
 // THE PLAN'S TERMS, AS THE CODE RECORDS THEM, because the endpoint above
 // reports none of them. services/costModel.js carries the plan's name, price
-// and checked date on its besttime-subscription line ("Package 100"); a package
-// plan meters new venue admissions per calendar month, and by-id, live and
-// query calls on venues already admitted are unlimited (the note on that same
-// line). Stated, never read: whatever shows these says so.
+// and checked date on its besttime-subscription line ("Package 100"). The code
+// counts the 100 as new venue admissions per calendar month, with by-id, live
+// and query calls on venues already admitted unlimited, as the pricing page
+// read in September 2026. The page read 2026-11-06 says the package
+// covers up to 100 different venues per calendar month (UTC), and whether that
+// applies to this subscription is not confirmed (the note on that same line).
+// Stated, never read: whatever shows these says so.
 const STATED_PLAN = Object.freeze({
   costLineId: 'besttime-subscription',
   newVenuesPerMonth: 100,

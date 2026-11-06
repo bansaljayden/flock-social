@@ -2822,6 +2822,13 @@ test('the steps the server cannot see carry no state, and each links to the page
   assert.match(sbp.words, new RegExp(`^Enrolling takes Apple's cut from ${stores.appleStandardPct}% to ${stores.appleSmallBusinessPct}%\\. The App Store break-even on this page assumes ${stores.appleStandardPct}%`));
   assert.strictEqual(r.body.net.appleCommissionPct, stores.appleStandardPct);
   assert.match(yours.find((s) => s.id === 'besttime_admissions').words, /key endpoint does not report them/);
+  // BestTime's pricing page (read 2026-11-06) words the allowance as different
+  // venues a month, where the code counts new admissions; the step says so and
+  // that it is not confirmed for this subscription.
+  const bt = yours.find((s) => s.id === 'besttime_admissions').words;
+  assert.match(bt, /covers up to 100 different venues a calendar month, which would count every venue the hourly collector calls/);
+  assert.match(bt, /not confirmed for this subscription: ask BestTime support whether it applies/);
+  assert.doesNotMatch(bt, /shows how many are left this month/, 'the settings counter read 0 even after 100 lookups');
 
   // Plain sentences in the words this block sends: no em dash, and none of the
   // marketing words the copy rules ban.

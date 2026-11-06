@@ -34,6 +34,26 @@ test('the domain keeps the date its price was last read, because its source stat
   assert.match(domain.note, /on 2026-11-06 the registrar page named no \.com price, so the date stays/);
 });
 
+test('BestTime\'s line quotes the pricing page\'s venue allowance and says it is unconfirmed for this account', () => {
+  // besttime.app/subscription/pricing, read 2026-11-06, words the 100 as
+  // different venues per calendar month. The code has counted it as new
+  // venue admissions, with by-id and live calls unlimited. A line checked that
+  // day must not state the old terms as the page's.
+  const line = find(cm.FIXED_MONTHLY, 'besttime-subscription');
+  assert.strictEqual(line.checked, '2026-11-06');
+  assert.strictEqual(line.usd, 119);
+  assert.match(line.note, /"Your package covers up to 100 different venues per calendar month \(UTC\)\. Reusing a venue within that month does not use another unique-venue slot"/);
+  assert.match(line.note, /"Unlimited venue week forecasts and queries for 100 unique venues per month"/);
+  assert.match(line.note, /NOT CONFIRMED; BestTime support can say/);
+  assert.match(line.note, /1,000 venues at \$249, 5,000 at \$399 and 20,000 at \$999 a month/);
+  assert.doesNotMatch(line.note, /the 100 is the monthly cap on new venue admissions/);
+  assert.doesNotMatch(line.note, /because Package 100 meters new admissions/);
+  const row = dep('besttime-subscription');
+  assert.match(row.what, /up to 100 different venues per calendar month \(UTC\)/);
+  assert.match(row.what, /not confirmed for this subscription/);
+  assert.doesNotMatch(row.what, /the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited/);
+});
+
 test('Railway volume and point-in-time recovery are priced the way Railway bills them', () => {
   assert.match(watch('postgres-images').note, /\$0\.15 per GB per month/);
   assert.doesNotMatch(watch('postgres-images').note, /0\.22/);

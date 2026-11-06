@@ -4017,7 +4017,7 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat, maptiler = nul
     {
       id: 'besttime_admissions',
       label: 'BestTime new-venue admissions this month',
-      words: 'BestTime\'s key endpoint does not report them, so the server cannot count them. BestTime\'s settings page shows how many are left this month.',
+      words: `BestTime's key endpoint does not report them, so the server cannot count them. BestTime's settings page shows a count, though it has read 0 of ${besttime.STATED_PLAN.newVenuesPerMonth} even after ${besttime.STATED_PLAN.newVenuesPerMonth} lookups. BestTime's pricing page, read 2026-11-06, says the package covers up to ${besttime.STATED_PLAN.newVenuesPerMonth} different venues a calendar month, which would count every venue the hourly collector calls. That is not confirmed for this subscription: ask BestTime support whether it applies.`,
       link: { href: 'https://besttime.app/settings', text: 'BestTime settings' },
     },
     {
