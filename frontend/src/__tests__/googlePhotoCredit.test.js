@@ -220,10 +220,8 @@ describe('the venue sheet', () => {
       flocks: [],
       flocksRef: { current: [] },
       meRef: { current: null },
-      crowdData: null,
-      // The forecast the sheet draws: no read of this place, none on the way.
-      crowdLoading: false,
-      crowdFetchFailed: false,
+      // The sheet's own crowd read: none of this place, none on the way.
+      venueDetailCrowd: null,
       partySize: null,
     }, over);
   };
@@ -351,7 +349,9 @@ describe('the credits travel with the photos', () => {
   });
 
   test('the pan after the sheet opens carries the photo\'s credit to the pin it may drop', () => {
-    expect(APP).toMatch(/window\.__flockPanToVenue\(\{ place_id: placeId, [^;]*photo_attribution: panFromList \? \(\(venue\.photo_attributions \|\| \[\]\)\[0\] \|\| null\) : \(venue\.photo_attribution \|\| null\) \}\)/);
+    // sheetOpen after it: the sheet is already open on the place, so the pan
+    // does not reopen it (venueSheetCrowdForecast.test.js).
+    expect(APP).toMatch(/window\.__flockPanToVenue\(\{ place_id: placeId, [^;]*photo_attribution: panFromList \? \(\(venue\.photo_attributions \|\| \[\]\)\[0\] \|\| null\) : \(venue\.photo_attribution \|\| null\), sheetOpen: true \}\)/);
   });
 
   test('the owner\'s own venue on the dashboard map keeps its photo\'s credit', () => {

@@ -1905,7 +1905,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             markersRef.current.push({ marker, el, venue: tempVenue });
           }
           setActiveVenue(tempVenue);
-          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_attribution: target?.photo_attribution || null, photo_url: venuePhoto, lat: fLat, lng: fLng });
+          // Not when the pan came from the sheet itself (openVenueDetail's
+          // panMap passes sheetOpen): the sheet is already open on this place
+          // with its details in, and reopening it read them and the crowd a
+          // second time and put it back to its loading shapes.
+          if (placeId && !target?.sheetOpen) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_attribution: target?.photo_attribution || null, photo_url: venuePhoto, lat: fLat, lng: fLng });
         }
       }
     };

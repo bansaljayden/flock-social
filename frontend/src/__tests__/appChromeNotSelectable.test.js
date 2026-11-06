@@ -206,9 +206,8 @@ describe('the things people copy carry the mark', () => {
       flocks: [],
       flocksRef: { current: [] },
       meRef: { current: null },
-      crowdData: null,
-      crowdLoading: false,
-      crowdFetchFailed: false,
+      // The sheet's own crowd read: none of this place, none on the way.
+      venueDetailCrowd: null,
       partySize: null,
     });
     const { container } = render(<VenueDetailSheet {...p} />);

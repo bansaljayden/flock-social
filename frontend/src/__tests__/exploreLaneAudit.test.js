@@ -13,17 +13,21 @@ test('the venue sheet is sequence-guarded, reads included', () => {
   expect(app).toContain('const venueDetailSeqRef = useRef(0);');
   expect(app).toContain('const seq = ++venueDetailSeqRef.current;');
   expect(app).toContain("      ]);\n      if (!current()) return;\n");
-  expect(app).toContain(".then(res => { if (current()) setCrowdAlternatives(res.alternatives || []); })");
-  expect(app).toContain("    } finally {\n      if (current()) {\n        setVenueDetailLoading(false);\n        setCrowdLoading(false);\n      }");
+  expect(app).toContain("    } finally {\n      if (current()) setVenueDetailLoading(false);\n    }");
   expect(app).toContain("if (venueDetailReviewsForRef.current !== String(placeId)) return;");
 });
 
-test('a calm venue asks for no alternatives, on both paths', () => {
+test('a calm venue asks for no alternatives, on every path that asks', () => {
   const app = read('App.js');
-  expect(app).toContain("if (crowd && !(typeof crowd.score === 'number' && crowd.score <= 39)) {");
+  // The sheet draws no "less crowded nearby" list, so openVenueDetail asks
+  // for none (venueSheetCrowdForecast.test.js). The map card asks, after its
+  // own read and after one it borrows from the sheet.
+  const open = app.slice(app.indexOf('const openVenueDetail = useCallback'), app.indexOf('const handleVenueQueryChange'));
+  expect(open).not.toContain('getCrowdAlternatives(');
   // A card whose crowd level is covered (the month's venues are spent) asks
   // for none either: the server would answer an empty list anyway.
   expect(app).toContain("if (data && !data.forecastAccess?.locked && !(typeof data.score === 'number' && data.score <= 39)) getCrowdAlternatives(pid)");
+  expect(app).toContain("if (!inHand.forecastAccess?.locked && !(typeof inHand.score === 'number' && inHand.score <= 39)) getCrowdAlternatives(pid)");
 });
 
 test('the dot and ring leave with Location', () => {

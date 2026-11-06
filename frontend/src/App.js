@@ -76,6 +76,7 @@ import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins 
 // How old the position Birdie is sent is, when it is a device fix.
 import { birdieLocationAgeSec } from './lib/birdieLocation';
 import { foldSensorReading } from './lib/sensorHistory';
+import { freshCrowdReadFor } from './lib/crowdReadInHand';
 import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
@@ -5653,9 +5654,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // a batch lands (requestCrowdScores dedupes against this).
   const crowdPredictionsRef = useRef(crowdPredictions);
   crowdPredictionsRef.current = crowdPredictions;
+  // The map card's crowd read: the one for the pin the card shows, tagged with
+  // its place (forPlaceId). The venue sheet has its own, below.
   const [crowdData, setCrowdData] = useState(null);
+  // Read by the card's activeVenue effect, which has to see the read in hand
+  // without re-running whenever it changes (lib/crowdReadInHand.js).
+  const crowdDataRef = useRef(crowdData);
+  crowdDataRef.current = crowdData;
   const [crowdLoading, setCrowdLoading] = useState(false);
   const [crowdAlternatives, setCrowdAlternatives] = useState([]);
+  // THE VENUE SHEET'S OWN CROWD READ: { placeId, read, loading, failed }, the
+  // read openVenueDetail makes beside Place Details, which the sheet's
+  // forecast draws. It used to go into `crowdData` above, shared with the map
+  // card, and the two kept overwriting each other. A sheet opened with panMap
+  // pans the map, the card switches to the place, and the card's effect
+  // cleared the shared read and asked again: the sheet's forecast blanked to
+  // skeletons and counted up a second time, and when the pan settled on a
+  // different pin within 100 m (MapLibreMapView), the sheet ended on "No crowd
+  // read" for a venue whose read it had. The other way round, the sheet wrote
+  // its venue's read over the card's, and a card left open for another venue
+  // pulsed skeletons for ever. Now the sheet reads only this and writes only
+  // this, and the card reads only `crowdData`; the card borrows this read when
+  // it switches to the same place while the read is fresh, so nothing is
+  // asked for twice.
+  const [venueDetailCrowd, setVenueDetailCrowd] = useState(null);
+  const venueDetailCrowdRef = useRef(venueDetailCrowd);
+  venueDetailCrowdRef.current = venueDetailCrowd;
   // Persisted: this was session state, so every relaunch re-asked "How was
   // {venue}?" on every completed flock ever opened, and a re-answer past the
   // server's dedupe window wrote another row. Same localStorage pattern as
@@ -6314,10 +6338,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const current = () => seq === venueDetailSeqRef.current;
     setVenueDetailLoading(true);
     setVenueDetailPhotoIdx(0);
-    setCrowdData(null);
-    setCrowdFetchFailed(false);
-    setCrowdLoading(true);
-    setCrowdAlternatives([]);
+    // The sheet's own read (venueDetailCrowd has why it is not the map card's
+    // crowdData). The card's state is left alone: it may be showing another
+    // venue, and if this open pans the map to this one, the card borrows the
+    // read below instead of asking again.
+    setVenueDetailCrowd({ placeId, read: null, loading: true, failed: false });
     // No venue in hand (a notification tap, the forecast's way back) means no
     // name yet. It used to be the string 'Loading...', which the sheet printed
     // as the venue's name; empty, the sheet draws the name's line instead.
@@ -6331,7 +6356,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       const venue = detailResult.status === 'fulfilled' ? detailResult.value.venue : fallbackData;
       const crowd = crowdResult.status === 'fulfilled' ? crowdResult.value : null;
-      setCrowdFetchFailed(crowdResult.status !== 'fulfilled');
 
       // THE PHOTO THE SEED OBJECT WAS CARRYING MUST SURVIVE THIS SWAP. Every
       // caller of openVenueDetail hands in a venue that already has a working
@@ -6362,10 +6386,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
 
-      // Tagged with the place it describes. `crowdData` is shared with the map
-      // card, which may be showing a different venue (pin B open, search result
-      // A tapped); the card reads it only when the tag is its own.
-      setCrowdData(crowd ? { ...crowd, forPlaceId: placeId } : null);
+      // The sheet's read, tagged with the place the sheet now shows: the
+      // details' own id when they answered, else the one asked for. Written in
+      // the same commit as the venue above, so the forecast never draws one
+      // place's read under another's name. Only the sheet's state: the map
+      // card's crowdData is not touched (venueDetailCrowd has why).
+      const sheetPlaceId = (venue && venue.place_id) || placeId;
+      setVenueDetailCrowd({ placeId: sheetPlaceId, read: crowd ? { ...crowd, forPlaceId: sheetPlaceId } : null, loading: false, failed: crowdResult.status !== 'fulfilled' });
 
       // A13: the score fetched here used to stay in the modal, so the list and
       // the map behind it kept quoting whatever they had (or nothing). Write it
@@ -6385,34 +6412,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const lat = venue.location?.latitude || venue.geometry?.location?.lat;
         const lng = venue.location?.longitude || venue.geometry?.location?.lng;
         if (lat && lng) {
-          // The photo travels with its credit. A place that is no pin on the
-          // map yet gets a temporary pin, and the pan reopens this sheet on
-          // that pin's seed; without the credit the sheet would drop to its
-          // map for the length of that second read.
+          // The photo travels with its credit, for the temporary pin a place
+          // that is no pin on the map yet gets. `sheetOpen` tells the pan this
+          // sheet is already open on the place: it used to reopen it on the
+          // temporary pin's seed, which read the details and the crowd a
+          // second time and put the whole sheet back to its loading shapes.
+          // The card the pan opens borrows this open's read (the activeVenue
+          // effect) and fetches its own "Less crowded nearby" with it; the
+          // sheet draws no such list, so this open no longer asks for one.
           const panFromList = !!(venue.photos && venue.photos[0]);
-          window.__flockPanToVenue({ place_id: placeId, lat, lng, name: venue.name || venue.displayName?.text, address: venue.formatted_address, rating: venue.rating, photo_url: (venue.photos && venue.photos[0]) || venue.photo_url, photo_attribution: panFromList ? ((venue.photo_attributions || [])[0] || null) : (venue.photo_attribution || null) });
+          window.__flockPanToVenue({ place_id: placeId, lat, lng, name: venue.name || venue.displayName?.text, address: venue.formatted_address, rating: venue.rating, photo_url: (venue.photos && venue.photos[0]) || venue.photo_url, photo_attribution: panFromList ? ((venue.photo_attributions || [])[0] || null) : (venue.photo_attribution || null), sheetOpen: true });
         }
-      }
-
-      // Fetch quieter alternatives (non-blocking)
-      // A quiet or not-busy venue (score 39 or under) has no "less crowded
-      // nearby", and the section hides on an empty list; the paid search
-      // used to run anyway (Explore audit, 2026-09-05).
-      if (crowd && !(typeof crowd.score === 'number' && crowd.score <= 39)) {
-        getCrowdAlternatives(placeId)
-          .then(res => { if (current()) setCrowdAlternatives(res.alternatives || []); })
-          .catch(() => { if (current()) setCrowdAlternatives([]); });
       }
     } catch (err) {
       if (!current()) return;
       console.error('[VenueDetail] Failed:', err.message);
       if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
+      // Nothing came back to draw, so the forecast says there is no read
+      // rather than waiting on one.
+      setVenueDetailCrowd(prev => (prev && prev.loading ? { ...prev, loading: false, failed: !prev.read } : prev));
     } finally {
-      if (current()) {
-        setVenueDetailLoading(false);
-        setCrowdLoading(false);
-      }
+      if (current()) setVenueDetailLoading(false);
     }
   }, []);
 
@@ -8518,15 +8539,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       restoredStale = true;
     }
     let cancelled = false;
+    const pid = activeVenue.place_id;
+    // A READ ALREADY IN HAND IS NOT ASKED FOR AGAIN (lib/crowdReadInHand.js):
+    // the card's own, when it switches to a new object for the same place,
+    // or the venue sheet's, when a sheet opened with panMap pans the map onto
+    // its place. That second case used to clear the shared read under the
+    // open sheet and fetch it again. The flags are settled here because the
+    // previous venue's fetch, if one was out, was just cancelled and will
+    // never clear them.
+    const inHand = freshCrowdReadFor(pid, [crowdDataRef.current, venueDetailCrowdRef.current && venueDetailCrowdRef.current.read], CROWD_FRESH_MS);
+    if (inHand) {
+      setCrowdLoading(false);
+      setCrowdFetchFailed(false);
+      if (inHand !== crowdDataRef.current) {
+        // The sheet's read, and the card's extras that come with a read.
+        setCrowdData({ ...inHand, forPlaceId: pid });
+        setCrowdAlternatives([]);
+        if (inHand.weather) setLiveWeather(inHand.weather);
+        if (!inHand.forecastAccess?.locked && !(typeof inHand.score === 'number' && inHand.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
+      }
+      return () => { cancelled = true; };
+    }
     setCrowdLoading(true);
-    // Cleared per venue, the way openVenueDetail clears it. A failure that
-    // outlived the venue it belonged to would caption the next one.
+    // Cleared per venue, the way the sheet's own read starts clean on every
+    // open. A failure that outlived the venue it belonged to would caption the
+    // next one.
     setCrowdFetchFailed(false);
     if (!restoredStale) {
       setCrowdData(null);
       setCrowdAlternatives([]);
     }
-    const pid = activeVenue.place_id;
     getCrowdPrediction(pid)
       .then(data => {
         if (cancelled) return;
@@ -8631,13 +8673,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     };
   }, [activeVenue]);
 
-  // Auto-refresh crowd data every 5 minutes when venue detail modal is open
+  // Auto-refresh the sheet's crowd read every 5 minutes while the sheet is
+  // open. Into the sheet's own read, and only while that read is still this
+  // place's: it used to write the map card's shared crowdData, which put this
+  // venue's read over a card left open for another one. A refresh that fails
+  // keeps the read on screen.
   const venueDetailPlaceId = venueDetailModal?.place_id;
   useEffect(() => {
     if (!venueDetailPlaceId) return;
     const interval = setInterval(() => {
       getCrowdPrediction(venueDetailPlaceId)
-        .then(data => setCrowdData(data ? { ...data, forPlaceId: venueDetailPlaceId } : null))
+        .then(data => setVenueDetailCrowd(prev => (prev && prev.placeId === venueDetailPlaceId
+          ? { ...prev, read: data ? { ...data, forPlaceId: venueDetailPlaceId } : null, loading: false, failed: false }
+          : prev)))
         .catch(() => {});
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
@@ -21981,9 +22029,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             flocks={flocks}
             flocksRef={flocksRef}
             meRef={meRef}
-            crowdData={crowdData}
-            crowdFetchFailed={crowdFetchFailed}
-            crowdLoading={crowdLoading}
+            venueDetailCrowd={venueDetailCrowd}
             partySize={partySize}
             setPartySize={setPartySize}
             setPaywallTrigger={openPaywall}

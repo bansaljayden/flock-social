@@ -169,17 +169,22 @@ describe('lib/storage answers a blocked storage with a value, never a throw', ()
 
 describe('the map card reads only its own crowd data', () => {
   it('every crowdData write is null, a restored snapshot, or tagged with its place id', () => {
+    // Six since the venue sheet keeps its own read (venueDetailCrowd): the
+    // sheet's open and its five-minute refresh no longer write this one, and
+    // the card borrows the sheet's read under its own tag.
     const writes = APP_AND_CARD.match(/setCrowdData\(([^;]*)\);/g) || [];
-    expect(writes.length).toBeGreaterThanOrEqual(8);
+    expect(writes.length).toBeGreaterThanOrEqual(6);
     writes.forEach((w) => {
       const ok = w === 'setCrowdData(null);'
         || w === 'setCrowdData(prev.crowdData);'
         || w.includes('forPlaceId:');
       expect({ write: w, ok }).toEqual({ write: w, ok: true });
     });
-    expect(APP).toContain('setCrowdData(crowd ? { ...crowd, forPlaceId: placeId } : null);');
     expect(APP).toContain('setCrowdData(data ? { ...data, forPlaceId: pid } : null);');
-    expect(APP).toContain('setCrowdData(data ? { ...data, forPlaceId: venueDetailPlaceId } : null)');
+    expect(APP).toContain('setCrowdData({ ...inHand, forPlaceId: pid });');
+    // The sheet's read is tagged the same way, in its own state.
+    expect(APP).toContain("setVenueDetailCrowd({ placeId: sheetPlaceId, read: crowd ? { ...crowd, forPlaceId: sheetPlaceId } : null, loading: false, failed: crowdResult.status !== 'fulfilled' });");
+    expect(APP).toContain('read: data ? { ...data, forPlaceId: venueDetailPlaceId } : null');
   });
 
   it('the card gates the shared state on its own place id and treats a non-finite score as no estimate', () => {

@@ -21,6 +21,7 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import VenueDetailSheet from '../components/overlays/VenueDetailSheet';
 import { CrowdForecastPanel } from '../components/venue/ConsumerVenueCard';
+import { freshCrowdReadFor } from '../lib/crowdReadInHand';
 
 const fs = require('fs');
 const path = require('path');
@@ -31,6 +32,7 @@ const SHEET_SRC = read('components', 'overlays', 'VenueDetailSheet.js');
 const CARD_SRC = read('components', 'venue', 'ConsumerVenueCard.js');
 const APP_SRC = read('App.js');
 const BIRDIE_SRC = read('components', 'birdie', 'BirdiePanel.js');
+const MAP_SRC = read('components', 'map', 'MapLibreMapView.js');
 
 const PLACE = 'ChIJcopperFinch01';
 const colors = {
@@ -47,6 +49,9 @@ const HOUR_ORDERING_MIN_GAP = 10;
 
 const HOURS = ['3 PM', '4 PM', '5 PM', '6 PM', '7 PM', '8 PM', '9 PM', '10 PM', '11 PM', '12 AM', '1 AM', '2 AM'];
 const hourly = HOURS.map((hour, i) => ({ hour, score: 30 + (i % 4) * 5, open: i < 7 }));
+
+/** The sheet's own read as App.js keeps it (venueDetailCrowd). */
+const sheetRead = (read, over = {}) => ({ placeId: PLACE, read, loading: false, failed: false, ...over });
 
 /** A crowd read the way GET /api/crowd/:placeId answers, tagged for its place. */
 function read30(over = {}) {
@@ -116,9 +121,7 @@ function sheetProps(over = {}) {
     flocks: [],
     flocksRef: { current: [] },
     meRef: { current: null },
-    crowdData: read30(),
-    crowdLoading: false,
-    crowdFetchFailed: false,
+    venueDetailCrowd: sheetRead(read30()),
     partySize: null,
   }, over);
 }
@@ -172,14 +175,14 @@ describe('the venue sheet shows the forecast on the first tap', () => {
     const { unmount } = render(<VenueDetailSheet {...sheetProps()} />);
     expect(screen.getByText('LIVE')).toBeTruthy();
     unmount();
-    render(<VenueDetailSheet {...sheetProps({ crowdData: read30({ predictionMethod: 'rule_engine' }) })} />);
+    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ predictionMethod: 'rule_engine' })) })} />);
     expect(screen.queryByText('LIVE')).toBeNull();
     expect(screen.getByText('ESTIMATED')).toBeTruthy();
   });
 
   test('the owner\'s number is said as theirs, under no chip', () => {
     render(<VenueDetailSheet {...sheetProps({
-      crowdData: read30({ score: 40, label: 'Steady', predictionMethod: 'owner_report', ownerReport: { applied: true, noun: 'bar', percent: 40, reportedAt: new Date().toISOString() } }),
+      venueDetailCrowd: sheetRead(read30({ score: 40, label: 'Steady', predictionMethod: 'owner_report', ownerReport: { applied: true, noun: 'bar', percent: 40, reportedAt: new Date().toISOString() } })),
     })} />);
     expect(screen.getByText("The bar says it's at 40% right now")).toBeTruthy();
     expect(screen.queryByText('LIVE')).toBeNull();
@@ -189,20 +192,23 @@ describe('the venue sheet shows the forecast on the first tap', () => {
   test('a closed venue reads closed, never a crowd', () => {
     render(<VenueDetailSheet {...sheetProps({
       venueDetailModal: { ...VENUE, opening_hours: { ...VENUE.opening_hours, openNow: false } },
-      crowdData: read30({ isOpen: false }),
+      venueDetailCrowd: sheetRead(read30({ isOpen: false })),
     })} />);
     expect(screen.getAllByText(/Closed Today|Currently Closed/).length).toBeGreaterThan(0);
     expect(screen.queryByText('Not Busy')).toBeNull();
   });
 
-  test('a read for another place is never drawn on this one', () => {
-    const { unmount } = render(<VenueDetailSheet {...sheetProps({ crowdData: read30({ forPlaceId: 'ChIJsomewhereElse' }), crowdLoading: true })} />);
+  test('while this place\'s read is out, the forecast waits for it', () => {
+    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(null, { loading: true }) })} />);
     expect(screen.queryByText('Not Busy')).toBeNull();
     expect(screen.getByText('Loading the crowd reading')).toBeTruthy();
-    unmount();
-    // Nothing in hand and nothing coming: said once, under no chip.
-    render(<VenueDetailSheet {...sheetProps({ crowdData: read30({ forPlaceId: 'ChIJsomewhereElse' }), crowdLoading: false })} />);
+  });
+
+  test('a read for another place is never drawn on this one', () => {
+    const elsewhere = 'ChIJsomewhereElse';
+    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ forPlaceId: elsewhere }), { placeId: elsewhere }) })} />);
     expect(screen.queryByText('Not Busy')).toBeNull();
+    // Nothing in hand and nothing coming: said, under no chip.
     expect(screen.getAllByText('No crowd read for this spot right now.').length).toBeGreaterThan(0);
     expect(screen.queryByText('ESTIMATED')).toBeNull();
     expect(screen.queryByText('LIVE')).toBeNull();
@@ -211,7 +217,7 @@ describe('the venue sheet shows the forecast on the first tap', () => {
   test('a covered forecast says so, and See Pro closes the sheet before the paywall opens over the map', () => {
     const calls = [];
     const p = sheetProps({
-      crowdData: { forPlaceId: PLACE, forecastAccess: { locked: true, limit: 3 } },
+      venueDetailCrowd: sheetRead({ forPlaceId: PLACE, forecastAccess: { locked: true, limit: 3 } }),
       setVenueDetailModal: jest.fn((v) => calls.push(['close', v])),
       setPaywallTrigger: jest.fn((t, place) => calls.push(['paywall', t, place])),
     });
@@ -223,7 +229,7 @@ describe('the venue sheet shows the forecast on the first tap', () => {
   });
 
   test('while the details load, the forecast\'s shape waits between the stat tiles and the hours', () => {
-    const { container } = render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { place_id: PLACE, name: 'The Copper Finch', loading: true }, crowdData: null, crowdLoading: true })} />);
+    const { container } = render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { place_id: PLACE, name: 'The Copper Finch', loading: true }, venueDetailCrowd: sheetRead(null, { loading: true }) })} />);
     const dial = Array.from(container.querySelectorAll('.skeleton')).find((b) => b.style.width === '60px' && b.style.height === '60px');
     expect(dial).toBeTruthy();
     const tiles = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '62px' && d.style.borderRadius === '12px');
@@ -242,22 +248,23 @@ describe('the venue sheet shows the forecast on the first tap', () => {
 });
 
 describe('one forecast, wired once', () => {
-  test('App.js hands the sheet what the map card reads, and the paywall opener that takes a place', () => {
+  test('App.js hands the sheet its own read, the map card\'s helpers, and the paywall opener that takes a place', () => {
     const at = APP_SRC.indexOf('<VenueDetailSheet');
     const tag = APP_SRC.slice(at, APP_SRC.indexOf('/>', at));
     for (const prop of [
       'CROWD_FRESH_MS={CROWD_FRESH_MS}', 'HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}',
-      'crowdColorFor={crowdColorFor}', 'crowdInkFor={crowdInkFor}', 'crowdData={crowdData}',
-      'crowdFetchFailed={crowdFetchFailed}', 'crowdLoading={crowdLoading}',
+      'crowdColorFor={crowdColorFor}', 'crowdInkFor={crowdInkFor}', 'venueDetailCrowd={venueDetailCrowd}',
       'partySize={partySize}', 'setPartySize={setPartySize}', 'setPaywallTrigger={openPaywall}',
     ]) expect(tag).toContain(prop);
+    // Never the map card's read or its flags.
+    for (const prop of ['crowdData={', 'crowdLoading={', 'crowdFetchFailed={']) expect(tag).not.toContain(prop);
   });
 
   test('no second request: the read the sheet draws is the one openVenueDetail makes beside the details, and Birdie\'s Details goes through it', () => {
     expect(SHEET_SRC).not.toMatch(/getCrowdPrediction|getCrowdBatch/);
     const open = APP_SRC.slice(APP_SRC.indexOf('const openVenueDetail = useCallback'), APP_SRC.indexOf('const handleVenueQueryChange'));
     expect(open).toMatch(/Promise\.allSettled\(\[\s*getVenueDetails\(placeId\),\s*getCrowdPrediction\(placeId\),\s*\]\)/);
-    expect(open).toContain('setCrowdData(crowd ? { ...crowd, forPlaceId: placeId } : null);');
+    expect(open).toContain("setVenueDetailCrowd({ placeId: sheetPlaceId, read: crowd ? { ...crowd, forPlaceId: sheetPlaceId } : null, loading: false, failed: crowdResult.status !== 'fulfilled' });");
     expect(BIRDIE_SRC).toMatch(/openVenueDetail\(v\.place_id, \{ name: v\.name, formatted_address: v\.address, place_id: v\.place_id, rating: v\.rating \}\);/);
   });
 
@@ -269,6 +276,94 @@ describe('one forecast, wired once', () => {
     const panel = SHEET_SRC.slice(SHEET_SRC.indexOf('<CrowdForecastPanel'), SHEET_SRC.indexOf('/>', SHEET_SRC.indexOf('<CrowdForecastPanel')));
     expect(panel).toContain('venue={venueDetailModal}');
     for (const prop of ['crowdAlternatives=', 'allVenues=', 'venueDetailHistory=', 'openVenueDetail=', 'setActiveVenue=']) expect(panel).not.toContain(prop);
+  });
+});
+
+describe('the sheet keeps its own read, and the map card keeps its own', () => {
+  // A sheet opened with panMap (a chat or DM venue card, a plan's venue, a
+  // "Less crowded nearby" row, the return from checkout, an NFC tap) pans the
+  // map, and the card switches to the place. The card's effect used to clear
+  // the read both shared and ask again: the sheet's forecast went read,
+  // skeletons, read, with the dial counting up twice, and when the pan settled
+  // on another pin within 100 m the sheet ended on "No crowd read" for a venue
+  // whose read it had, and where no pin was near, the pan dropped a temporary
+  // one and reopened the sheet. Measured on the local stack before the fix,
+  // through a "Less crowded nearby" row: two crowd GETs and a read, loading,
+  // read sheet onto a pin; "No crowd read" onto a pin 50 m away; three crowd
+  // GETs and two details GETs onto a temporary pin. After: one of each, and
+  // the read stays up.
+  const effect = APP_SRC.slice(APP_SRC.indexOf('// Fetch crowd data when activeVenue changes (map pin tapped)'), APP_SRC.indexOf('// Sensor: fetch + subscribe when active venue changes'));
+  const open = APP_SRC.slice(APP_SRC.indexOf('const openVenueDetail = useCallback'), APP_SRC.indexOf('const handleVenueQueryChange'));
+
+  test('the sheet takes no part of the map card\'s crowd state', () => {
+    for (const name of ['crowdData', 'crowdLoading', 'crowdFetchFailed']) expect(PARAMS).not.toContain(name);
+    expect(PARAMS).toContain('venueDetailCrowd');
+  });
+
+  test('openVenueDetail writes only the sheet\'s read, and asks for no "less crowded" list the sheet does not draw', () => {
+    expect(open).toContain('setVenueDetailCrowd({ placeId, read: null, loading: true, failed: false });');
+    expect(open).not.toMatch(/setCrowd(Data|Loading|FetchFailed|Alternatives)\(/);
+    expect(open).not.toContain('getCrowdAlternatives(');
+  });
+
+  test('the card\'s effect uses a fresh read of the same place before it asks again, the sheet\'s included', () => {
+    const check = 'const inHand = freshCrowdReadFor(pid, [crowdDataRef.current, venueDetailCrowdRef.current && venueDetailCrowdRef.current.read], CROWD_FRESH_MS);';
+    expect(effect).toContain(check);
+    expect(effect.indexOf(check)).toBeLessThan(effect.indexOf('getCrowdPrediction(pid)'));
+    const branch = effect.slice(effect.indexOf('if (inHand) {'), effect.indexOf('setCrowdLoading(true);'));
+    // Nothing in it clears a read or says one is on the way.
+    expect(branch).not.toContain('setCrowdData(null)');
+    expect(branch).toContain('setCrowdLoading(false);');
+    expect(branch).toContain('setCrowdData({ ...inHand, forPlaceId: pid });');
+    expect(branch).toContain('return () => { cancelled = true; };');
+    // The refs it reads are the live state, assigned on every render.
+    expect(APP_SRC).toContain('crowdDataRef.current = crowdData;');
+    expect(APP_SRC).toContain('venueDetailCrowdRef.current = venueDetailCrowd;');
+  });
+
+  test('the pan does not reopen a sheet that is already open on the place', () => {
+    expect(open).toMatch(/window\.__flockPanToVenue\(\{ place_id: placeId, [^\n]*sheetOpen: true \}\);/);
+    expect(MAP_SRC).toContain('if (placeId && !target?.sheetOpen) openVenueDetail(placeId,');
+  });
+
+  test('the five-minute refresh writes the sheet\'s read, never the card\'s', () => {
+    const refresh = APP_SRC.slice(APP_SRC.indexOf('const venueDetailPlaceId = venueDetailModal?.place_id;'), APP_SRC.indexOf('}, [venueDetailPlaceId]);'));
+    expect(refresh).toContain('setVenueDetailCrowd(prev =>');
+    expect(refresh).not.toContain('setCrowdData(');
+  });
+
+  test('the read the sheet draws is the read the sheet holds, whatever the card holds', () => {
+    // The same sheet, re-rendered as App.js does when the card's own read is
+    // cleared and fetched again underneath it: the sheet is handed nothing of
+    // that, so the forecast stays on its read with no loading shape.
+    const { rerender } = render(<VenueDetailSheet {...sheetProps()} />);
+    expect(screen.getByText('Not Busy')).toBeTruthy();
+    rerender(<VenueDetailSheet {...sheetProps({ crowdData: null, crowdLoading: true })} />);
+    expect(screen.getByText('Not Busy')).toBeTruthy();
+    expect(screen.queryByText('Loading the crowd reading')).toBeNull();
+  });
+});
+
+describe('freshCrowdReadFor', () => {
+  const now = Date.parse('2026-11-06T22:00:00Z');
+  const at = (minsAgo, over = {}) => ({ forPlaceId: PLACE, score: 30, lastUpdated: new Date(now - minsAgo * 60000).toISOString(), ...over });
+
+  test('a read of the place stamped inside the window is in hand', () => {
+    const r = at(1);
+    expect(freshCrowdReadFor(PLACE, [null, r], CROWD_FRESH_MS, now)).toBe(r);
+  });
+
+  test('another place\'s read, a stale one and an unstamped one are not', () => {
+    expect(freshCrowdReadFor(PLACE, [at(1, { forPlaceId: 'ChIJother' })], CROWD_FRESH_MS, now)).toBeNull();
+    expect(freshCrowdReadFor(PLACE, [at(6)], CROWD_FRESH_MS, now)).toBeNull();
+    expect(freshCrowdReadFor(PLACE, [at(1, { lastUpdated: undefined })], CROWD_FRESH_MS, now)).toBeNull();
+    expect(freshCrowdReadFor(null, [at(1)], CROWD_FRESH_MS, now)).toBeNull();
+  });
+
+  test('the card\'s own read wins over the sheet\'s when both are in hand', () => {
+    const card = at(2);
+    const sheet = at(1);
+    expect(freshCrowdReadFor(PLACE, [card, sheet], CROWD_FRESH_MS, now)).toBe(card);
   });
 });
 

@@ -438,10 +438,8 @@ describe('the venue sheet header', () => {
       flocks: [],
       flocksRef: { current: [] },
       meRef: { current: null },
-      crowdData: null,
-      // The forecast the sheet draws: no read of this place, none on the way.
-      crowdLoading: false,
-      crowdFetchFailed: false,
+      // The sheet's own crowd read: none of this place, none on the way.
+      venueDetailCrowd: null,
       partySize: null,
     });
   };

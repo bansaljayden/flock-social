@@ -60,7 +60,7 @@ import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
 import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
 import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
-// The map card's own forecast, so the two cannot disagree (sheetCrowdRead,
+// The map card's own forecast, so the two cannot disagree (sheetCrowd,
 // below, has why the sheet draws it).
 import { CrowdForecastPanel } from '../venue/ConsumerVenueCard';
 
@@ -140,14 +140,14 @@ const VenueDetailSheet = ({
   flocks,
   flocksRef,
   meRef,
-  // Carried onto the plan the footer creates, and drawn as the forecast.
-  crowdData,
-  // The forecast, drawn by the map card's own CrowdForecastPanel with the same
-  // names the card is handed: the read's state, the Group chips' party, the
-  // paywall opener that takes a place, and the four App.js helpers the panel
-  // shares with the card rather than re-deriving.
-  crowdFetchFailed,
-  crowdLoading,
+  // The sheet's own crowd read, { placeId, read, loading, failed }, which
+  // openVenueDetail makes beside Place Details (App.js venueDetailCrowd has
+  // why it is not the map card's crowdData). Drawn as the forecast and
+  // carried onto the plan the footer creates.
+  venueDetailCrowd,
+  // The forecast, drawn by the map card's own CrowdForecastPanel: the Group
+  // chips' party, the paywall opener that takes a place, and the four App.js
+  // helpers the panel shares with the card rather than re-deriving.
   partySize,
   setPartySize,
   setPaywallTrigger,
@@ -240,12 +240,15 @@ const VenueDetailSheet = ({
         // live only on the map card underneath it: from a search it appeared
         // after closing the sheet with X, from Birdie never. The sheet draws
         // the card's own panel now, from the read openVenueDetail already
-        // makes beside Place Details (so no request of its own), and only when
-        // that read is this venue's: `crowdData` is shared with the map card
-        // and tagged with the place it describes. With no read of this place
-        // in hand and none on the way, the panel is told the read failed, so
-        // it says there is none instead of pulsing skeletons for ever.
-        const sheetCrowdRead = !!crowdData && !!venueDetailModal.place_id && crowdData.forPlaceId === venueDetailModal.place_id;
+        // makes beside Place Details (so no request of its own), kept in the
+        // sheet's own state so the map card's fetches can neither blank it nor
+        // replace it. Only while that read is this venue's. With no read of
+        // this place in hand and none on the way, the panel is told the read
+        // failed, so it says there is none instead of pulsing skeletons for
+        // ever.
+        const sheetCrowd = venueDetailCrowd && venueDetailModal.place_id && venueDetailCrowd.placeId === venueDetailModal.place_id ? venueDetailCrowd : null;
+        const sheetCrowdData = sheetCrowd ? sheetCrowd.read : null;
+        const sheetCrowdLoading = !!sheetCrowd && sheetCrowd.loading;
         // The paywall sheet is drawn inside the app frame, under this
         // full-screen sheet, so a See Pro tap here closes the sheet first.
         // The place still rides along, for the trip back from checkout.
@@ -447,7 +450,7 @@ const VenueDetailSheet = ({
                   </div>
 
                   {/* The crowd forecast, the map card's own panel (see
-                      sheetCrowdRead above), high on the sheet so the first tap
+                      sheetCrowd above), high on the sheet so the first tap
                       shows it. Every rule the card keeps comes with it: the
                       paywall cover, LIVE only for the model's fresh number,
                       the owner's number, a closed room, a read that failed.
@@ -464,9 +467,9 @@ const VenueDetailSheet = ({
                         crowdColorFor={crowdColorFor}
                         crowdInkFor={crowdInkFor}
                         colors={colors}
-                        crowdData={crowdData}
-                        crowdFetchFailed={crowdFetchFailed || (!crowdLoading && !sheetCrowdRead)}
-                        crowdLoading={crowdLoading}
+                        crowdData={sheetCrowdData}
+                        crowdFetchFailed={!sheetCrowdLoading && !sheetCrowdData}
+                        crowdLoading={sheetCrowdLoading}
                         partySize={partySize}
                         setPartySize={setPartySize}
                         setPaywallTrigger={openPaywallFromSheet}
@@ -786,7 +789,7 @@ const VenueDetailSheet = ({
                 } else if (venueDetailReturnTo) {
                   returnToChat();
                 } else {
-                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, photo_attribution: photoCredit, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: (typeof crowdData?.score === 'number' ? crowdData.score : null), crowdLabel: crowdData?.label || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, photo_attribution: photoCredit, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: (typeof sheetCrowdData?.score === 'number' ? sheetCrowdData.score : null), crowdLabel: sheetCrowdData?.label || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
