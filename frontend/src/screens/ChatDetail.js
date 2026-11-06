@@ -4936,10 +4936,13 @@ export default function ChatDetail({
                     </div>
                     {/* Places data off a Google map, so the list ends on
                         Google's attribution (components/ui/GoogleCredit.js),
-                        as the Explore list does. */}
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
-                      <GoogleMapsMark />
-                    </div>
+                        as the Explore list does: when a row came from Google,
+                        which its place id says. */}
+                    {suggestedVenues.some((v) => v.place_id) && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
+                        <GoogleMapsMark />
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -5093,8 +5096,9 @@ export default function ChatDetail({
                 ))}
               </div>
               {/* Places data off a Google map, so the list ends on Google's
-                  attribution (components/ui/GoogleCredit.js). */}
-              {budgetFilteredVenues.length > 0 && (
+                  attribution (components/ui/GoogleCredit.js), when a row came
+                  from Google, which its place id says. */}
+              {budgetFilteredVenues.some((v) => v.place_id) && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
                   <GoogleMapsMark />
                 </div>

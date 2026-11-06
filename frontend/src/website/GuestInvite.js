@@ -2135,9 +2135,12 @@ export default function GuestInvite() {
             </ul>
             {/* The places up for the vote are Google Maps places, named off a
                 Google map, so the list ends on Google's attribution
-                (components/ui/GoogleCredit.js). Its colour is this page's
-                own token (GuestInvite.css), which follows the page into
-                dark mode the way the app's theme token cannot here. */}
+                (components/ui/GoogleCredit.js). The page gets names and
+                counts only (routes/guest.js sends { venue_name, votes }), no
+                place id, so the mark shows whenever a venue is named. Its
+                colour is this page's own token (GuestInvite.css), which
+                follows the page into dark mode the way the app's theme token
+                cannot here. */}
             <div className="gi-google-mark">
               <GoogleMapsMark />
             </div>
