@@ -62,7 +62,7 @@ const pool = require('../config/database');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
 const {
-  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, ownsCard, unownPlay, cardQuietDay, isBesideWeek,
+  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, ownsCard, unownPlay, cardQuietDay, isBesideWeek, ranksToday,
 } = require('./kindForecast');
 const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
@@ -2031,6 +2031,20 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     for (const unit of kept) {
       for (const s of advisorAnswer.splitSentences(unit)) {
         if (ownsCard(s)) return reject('a forecast for places like this one, given as the venue\'s own');
+      }
+    }
+  }
+  // TODAY, HANDED OVER BESIDE THE CARD'S WEEK, IS NEVER RANKED (review,
+  // 2026-11-06; services/kindForecast.js ranksToday). Its parts carry the note
+  // that marks it, and the weekday part names the day.
+  const todayParts = list.filter(isBesideWeek);
+  if (todayParts.length) {
+    const day = todayParts.map((f) => f.value).find((v) => typeof v === 'string' && /^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/.test(v)) || null;
+    const ids = new Set(todayParts.map((f) => String(f.id)));
+    const citesToday = (s) => [...String(s).matchAll(PLACEHOLDER)].some((m) => ids.has(m[1]));
+    for (const unit of kept) {
+      for (const s of advisorAnswer.splitSentences(unit)) {
+        if (ranksToday(s, day, citesToday)) return reject('today, ranked against the days of the week');
       }
     }
   }

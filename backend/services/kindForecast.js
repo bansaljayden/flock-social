@@ -152,6 +152,33 @@ function isBesideWeek(fact) {
   return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(BESIDE_WEEK_NOTE);
 }
 
+// A PHRASED ANSWER NEVER RANKS TODAY (review, 2026-11-06). The model is handed
+// today alone for a question about today, and was once handed the week beside
+// it and wrote "Flock's forecast for places like yours has Sunday as the
+// quietest day this week" while the money move said Monday. So a draft built
+// on today's entry goes to the template if any sentence puts a word that ranks
+// a day (a superlative or a comparative, best or worst, "the peak night") in
+// a sentence that names today: its weekday, "today" or "tonight", or a
+// placeholder of today's fact. A sentence about a day's place in its week
+// ("the quietest day this week") is one whichever day it names, since today
+// is the only day such an answer was given. Blunt on purpose, like the rules
+// above: a false alarm costs wording, and the template is today's true line.
+const RANKS_A_DAY = /\b(?:quiet(?:er|est)|slow(?:er|est)|busi(?:er|est)|bigg(?:er|est)|small(?:er|est)|low(?:er|est)|high(?:er|est)|strong(?:er|est)|weak(?:er|est)|dead(?:er|est)|empt(?:ier|iest)|full(?:er|est)|best|better|worst|worse|least|most|top|peak\s+(?:day|night|evening)s?)\b/i;
+const DAY_IN_ITS_WEEK = /\b(?:day|night|evening)s?\s+(?:this\s+week|of\s+the\s+week|in\s+the\s+week|all\s+week)\b/i;
+const TODAY_WORD = /\b(?:today|tonight)\b/i;
+
+/**
+ * True when `sentence` ranks today against other days: a ranking word beside
+ * today's weekday (`day`), "today" or "tonight", or a placeholder of today's
+ * fact (`citesToday`), or beside a day's place in its week.
+ */
+function ranksToday(sentence, day = null, citesToday = () => false) {
+  const s = String(sentence === null || sentence === undefined ? '' : sentence);
+  if (!RANKS_A_DAY.test(s)) return false;
+  if (DAY_IN_ITS_WEEK.test(s) || TODAY_WORD.test(s) || citesToday(s)) return true;
+  return typeof day === 'string' && /^[A-Za-z]+$/.test(day) && new RegExp(`\\b${day}s?\\b`, 'i').test(s);
+}
+
 module.exports = {
   KIND_FORECAST_SOURCE,
   KIND_FORECAST,
@@ -166,4 +193,5 @@ module.exports = {
   BESIDE_WEEK_NOTE,
   besideWeek,
   isBesideWeek,
+  ranksToday,
 };

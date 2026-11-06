@@ -251,6 +251,16 @@ const idFor = (facts, weekday, part) => facts.find((f) => f.id.startsWith(`typic
   (g) => g.id === f.id.replace(`_${part}`, '_weekday') && g.value === weekday,
 )).id;
 
+// Every way Roost reads the dashboard's card, counted: the week, today, and
+// the one read a block shares (routes/advisor.js cardFor, 2026-11-06).
+function countCardReads() {
+  const names = ['buildWeekProjection', 'buildTodayProjection', 'buildCardProjection'];
+  const real = Object.fromEntries(names.map((n) => [n, advisorFacts[n]]));
+  let reads = 0;
+  for (const n of names) advisorFacts[n] = async (...a) => { reads += 1; return real[n](...a); };
+  return { reads: () => reads, restore: () => { for (const n of names) advisorFacts[n] = real[n]; } };
+}
+
 // The demo's card as the dashboard would serve it, for tests that need no
 // route: the six evenings from a Friday, as filmed.
 const DEMO_INTEL = {
@@ -429,16 +439,14 @@ test('the other week questions answer from the card the same way, and what the c
   // The kitchen line sets the venue's own forecast beside its last orders,
   // never a forecast for places like it: it reads back what the owner told
   // us, as it did before the card was read, and does not read the card.
-  const realProjection = advisorFacts.buildWeekProjection;
-  let projectionReads = 0;
-  advisorFacts.buildWeekProjection = async (...a) => { projectionReads += 1; return realProjection(...a); };
+  const cardReads = countCardReads();
   try {
     const kitchen = await call('/api/venue/advisor/ask', { intentId: 'kitchen_vs_peak' });
     assert.strictEqual(kitchen.body.text, 'You told us the kitchen takes last orders at 9:30 PM.');
     assert.ok(!kitchen.body.sources.some((s) => s.source === 'category_pattern'), JSON.stringify(kitchen.body.sources));
-    assert.strictEqual(projectionReads, 0, 'the listing lines read the venue\'s own week only');
+    assert.strictEqual(cardReads.reads(), 0, 'the listing lines read the venue\'s own week only');
   } finally {
-    advisorFacts.buildWeekProjection = realProjection;
+    cardReads.restore();
   }
 });
 
@@ -678,10 +686,8 @@ test('a venue with its own crowd history never reads the card: its week is its o
     advisorFacts.makeFact({ id: 'peak_2026-11-07', value: { date: '2026-11-07', weekday: 'Saturday', peakHour: 20, peakScore: 88 }, source: 'model_holdout', asOf: '2026-11-03T12:00:00Z', unit: '0-100 index' }),
   ];
   const realWeek = advisorFacts.buildWeekAhead;
-  const realProjection = advisorFacts.buildWeekProjection;
-  let projectionReads = 0;
+  const cardReads = countCardReads();
   advisorFacts.buildWeekAhead = async () => own;
-  advisorFacts.buildWeekProjection = async (...a) => { projectionReads += 1; return realProjection(...a); };
   try {
     const r = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
     assert.strictEqual(r.body.mode, 'template');
@@ -689,10 +695,10 @@ test('a venue with its own crowd history never reads the card: its week is its o
     assert.strictEqual(lines[0], 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.');
     // The playbook's own words for the venue's own week.
     assert.ok(lines.some((l) => l.startsWith('• Give your slowest day one recurring reason to visit')), r.body.text);
-    assert.strictEqual(projectionReads, 0);
+    assert.strictEqual(cardReads.reads(), 0);
   } finally {
     advisorFacts.buildWeekAhead = realWeek;
-    advisorFacts.buildWeekProjection = realProjection;
+    cardReads.restore();
   }
 });
 
@@ -884,16 +890,14 @@ test('the week chips are offered to a no-history venue exactly when the card ans
 
 test('a corpus venue\'s chips are as they were, and never read the card', async () => {
   setUp({ placeId: 'ChIJforecastChipsCorpus00', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 } });
-  const realProjection = advisorFacts.buildWeekProjection;
-  let projectionReads = 0;
-  advisorFacts.buildWeekProjection = async (...a) => { projectionReads += 1; return realProjection(...a); };
+  const cardReads = countCardReads();
   try {
     const r = await call('/api/venue/advisor/questions');
     const offered = offeredIds(r.body);
     for (const id of [...WEEK_CHIPS, 'tonight_outlook']) assert.ok(offered.includes(id), `${id}: ${offered.join(', ')}`);
-    assert.strictEqual(projectionReads, 0);
+    assert.strictEqual(cardReads.reads(), 0);
   } finally {
-    advisorFacts.buildWeekProjection = realProjection;
+    cardReads.restore();
   }
 });
 
@@ -1538,7 +1542,7 @@ test('the bar on every day of a week, at the turn of the UTC day and at midday, 
   assert.strictEqual(runs, 28);
 });
 
-test('on a Monday, "How do I fill a slow Monday?" leads with Monday off the card\'s today, and the phrasing model is handed today beside the week', async (t) => {
+test('on a Monday, "How do I fill a slow Monday?" leads with Monday off the card\'s today, and the phrasing model is handed today alone', async (t) => {
   const clock = pinClock(Date.parse('2026-11-09T16:00:00Z'));
   t.after(() => clock.restore());
   setUp({ placeId: 'ChIJweekendMonday00000000', phrasing: true });
@@ -1564,9 +1568,9 @@ test('on a Monday, "How do I fill a slow Monday?" leads with Monday off the card
   assert.strictEqual(r.body.mode, 'advice', r.body.text);
   assert.ok(advicePayload && !/category_pattern|typical_peak_/.test(advicePayload), 'the card reached the advice model');
 
-  // Typed and grounded: the model is handed today's entry first, with the
-  // note that sets it beside the week, and the card's six days after it; a
-  // draft built on today's entry is served.
+  // Typed and grounded: the model is handed today's entry alone, the one day
+  // the template answers with, every part of it carrying the note that sets
+  // it beside the week; a draft built on it is served.
   route = { mode: 'grounded', intentId: 'peak_hours' };
   let payload = null;
   draftFor = (role, p) => {
@@ -1578,15 +1582,8 @@ test('on a Monday, "How do I fill a slow Monday?" leads with Monday off the card
   assert.strictEqual(r.body.mode, 'phrased', r.body.text);
   assert.strictEqual(r.body.text, 'Flock\'s forecast for places like yours has Monday peaking around 9 PM at 48 on our index.');
   const handed = payloadFacts(payload);
-  assert.deepStrictEqual(handedDates(payload), ['2026-11-09', ...intel.week.map((d) => d.date)].sort());
-  // Every part of today's fact carries the note, and no part of a day of the
-  // week does. Today is first, so its parts carry no letter on the end.
-  const suffix = idFor(handed, 'Monday', 'weekday').slice('typical_peak_weekday'.length);
-  assert.strictEqual(suffix, '', 'today is handed over first');
-  const todayPart = /^typical_peak_[a-zA-Z]+$/;
-  const noted = handed.filter((f) => kindForecast.isBesideWeek(f)).map((f) => f.id).sort();
-  assert.deepStrictEqual(noted, handed.filter((f) => todayPart.test(f.id)).map((f) => f.id).sort(), JSON.stringify(handed));
-  assert.ok(noted.length >= 3 && handed.filter((f) => todayPart.test(f.id)).every((f) => f.note === kindForecast.BESIDE_WEEK_NOTE), JSON.stringify(handed));
+  assert.deepStrictEqual(handedDates(payload), ['2026-11-09']);
+  assert.ok(handed.length >= 3 && handed.every((f) => f.note === kindForecast.BESIDE_WEEK_NOTE), JSON.stringify(handed));
   // The model out, the template: today's own line, then the move.
   draftFor = () => null;
   r = await call('/api/venue/advisor/question', { question: 'How busy will Monday be?' });
@@ -1671,4 +1668,166 @@ test('a bakery shut on Sundays, on its Sunday, has no open day left this weekend
       assert.ok(r.body.text.startsWith(gateText(profile)), `${id}: ${r.body.text}`);
     }
   });
+});
+
+// ── 12. The review of section 11 (2026-11-06) ───────────────────────────────
+//
+// An adversarial review of section 11 found the phrasing model, handed today
+// beside the card's week, writing "Flock's forecast for places like yours has
+// Sunday as the quietest day this week" on the bar's Sunday while the money
+// move said to fill Monday, and that answer was served. Today is now handed to
+// the model alone, the check sends any ranking of today to the template, and
+// the move and what to ask next name the day the answer does. A card week too
+// level to name a quiet day still answers about today, and a block reads the
+// card once, so a weekend asked as the hour turns comes off one build.
+
+const quietMove = () => roostPlaybook.moveFor('quiet_nights', { facts: [] }, roostPlaybook.venueOf({ profile })).move;
+
+test('a phrased answer never ranks today: on the bar\'s Sunday the model\'s "Sunday as the quietest day this week" goes to the template, and the model is handed Sunday alone', async (t) => {
+  // The review's draft was served for both questions until 2026-11-06: "Flock's
+  // forecast for places like yours has Sunday as the quietest day this week,
+  // peaking at 45 on our index."
+  const clock = pinClock(Date.parse('2026-11-08T16:00:00Z'));
+  t.after(() => clock.restore());
+  setUp({ placeId: 'ChIJreviewRankToday000000', phrasing: true });
+  const { intel, low } = await cardWeek();
+  assert.deepStrictEqual([intel.today.weekday, intel.today.peakScore, low.weekday], ['Sun', 45, 'Mon']);
+  for (const [intentId, question] of [['peak_hours', 'How quiet will Sunday be?'], ['quiet_nights', 'Is Sunday going to be quiet?']]) {
+    route = { mode: 'grounded', intentId };
+    let payload = null;
+    draftFor = (role, p) => {
+      payload = p;
+      const f = payloadFacts(p);
+      return { answer: `Flock's forecast for places like yours has Sunday as the quietest day this week, peaking at {{fact:${idFor(f, 'Sunday', 'score')}}} on our index.`, points: [] };
+    };
+    const r = await call('/api/venue/advisor/question', { question });
+    assert.strictEqual(r.body.mode, 'template', `${intentId}: ${r.body.text}`);
+    assert.strictEqual(r.body.text.split('\n')[0], 'In Flock\'s forecast for places like yours, Sunday peaks around 9 PM at 45 on our 0 to 100 index.', intentId);
+    assert.ok(!/\b(?:quietest|busiest)\b/.test(r.body.text), `${intentId}: ${r.body.text}`);
+    // The one day the template answers with, and nothing to rank it against.
+    assert.deepStrictEqual(handedDates(payload), ['2026-11-08'], intentId);
+  }
+  route = null;
+  draftFor = () => null;
+  const money = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+  assert.match(money.body.text, /^Fill Monday\. In Flock's forecast for places like yours, it is the quietest day this week/);
+});
+
+test('the check reads a draft built on today for any ranking of it, its day named or not', () => {
+  const hourOf = venueDashboardRouter.hourOfLabel;
+  const [today] = advisorFacts.todayProjectionFacts({
+    ...DEMO_INTEL,
+    today: { date: '2026-11-08', weekday: 'Sun', peakScore: 45, peakHour: '9 PM', method: 'rule_engine_no_baseline', window: 'evening' },
+  }, { hourOf });
+  const block = { facts: advisorPhrasing.aliasFacts(advisorPhrasing.flattenFacts([kindForecast.besideWeek(today)])) };
+  const id = (part) => block.facts.find((f) => f.id === `typical_peak_${part}`).id;
+  const say = (answer, points = []) => JSON.stringify({ answer, points });
+  const opening = 'Flock\'s forecast for places like yours';
+  for (const [answer, points] of [
+    [`${opening} has Sunday as the quietest day this week, peaking at {{fact:${id('score')}}} on our index.`, []],
+    [`${opening} has Sunday peaking at {{fact:${id('score')}}} around {{fact:${id('hour')}}}.`, ['That makes it the quietest day this week.']],
+    [`${opening} puts tonight at {{fact:${id('score')}}}, the busiest night of the week.`, []],
+    [`${opening} has {{fact:${id('weekday')}}} at {{fact:${id('score')}}}, lower than the weekend.`, []],
+    [`${opening} has Sundays at {{fact:${id('score')}}}, the slowest stretch.`, []],
+  ]) {
+    const why = [];
+    assert.strictEqual(advisorPhrasing.applyValve(say(answer, points), block, { reject: (r) => { why.push(r); return null; } }), null, answer);
+    assert.deepStrictEqual(why, ['today, ranked against the days of the week'], answer);
+  }
+  for (const [answer, points] of [
+    [`${opening} has Sunday peaking around {{fact:${id('hour')}}} at {{fact:${id('score')}}} on our index.`, []],
+    [`${opening} has Sunday peaking at {{fact:${id('score')}}}.`, [`Have your second bartender on before {{fact:${id('hour')}}}.`]],
+  ]) {
+    const out = advisorPhrasing.applyValve(say(answer, points), block);
+    assert.ok(out && out.text.includes('45'), answer);
+  }
+  // The reader on its own.
+  assert.ok(kindForecast.ranksToday('Sunday is the quietest day this week', 'Sunday'));
+  assert.ok(kindForecast.ranksToday('Saturday is the busiest night of the week', 'Sunday'), 'a day\'s place in its week, whichever day');
+  assert.ok(kindForecast.ranksToday('Tonight looks busier than usual', 'Sunday'));
+  assert.ok(!kindForecast.ranksToday('Sunday peaks around 9 PM at 45 on our index', 'Sunday'));
+  assert.ok(!kindForecast.ranksToday('Stagger your shifts so staff arrive as the rush builds', 'Sunday'));
+  // Nothing in a block without today's entry is read this way.
+  assert.ok(advisorPhrasing.applyValve(say(`${opening} has Sunday as the quietest day this week, at {{fact:typical_peak_score}}.`),
+    { facts: [advisorFacts.makeFact({ id: 'typical_peak_score', value: 45, source: 'category_pattern', asOf: '2026-11-03T12:00:00Z' })] }));
+});
+
+test('today asked by name on every day of a week: the answer, its move and what to ask next all name today, for the quiet days and the peaks', async () => {
+  // Until 2026-11-06 the quiet answer led with today and moved on Sunday, the
+  // card's quiet day, on every day of the week: "Saturday peaks around 9 PM at
+  // 74" over "Give Sunday one recurring reason to visit", under "How do I fill
+  // Saturdays?".
+  for (let d = 0; d < 7; d += 1) {
+    await pinnedAt(`2026-11-${String(9 + d).padStart(2, '0')}T16:00:00Z`, async () => {
+      setUp({ placeId: `ChIJreviewNamedDay${d}000000`, phrasing: true });
+      draftFor = () => null;
+      const { intel } = await cardWeek();
+      const day = LONG[intel.today.weekday];
+      const lead = `In Flock's forecast for places like yours, ${day} peaks around 9 PM at ${CARD[intel.today.weekday]} on our 0 to 100 index.`;
+      route = { mode: 'grounded', intentId: 'quiet_nights' };
+      const quiet = await call('/api/venue/advisor/question', { question: `How quiet will ${day} be?` });
+      assert.deepStrictEqual(quiet.body.text.split('\n'), [lead, `• ${kindForecast.unownDays(quietMove(), day)}`], day);
+      assert.deepStrictEqual(quiet.body.sources.map((s) => s.id), [`typical_peak_${intel.today.date}`, 'roost_playbook'], day);
+      assert.ok(quiet.body.followUps.some((f) => f.kind === 'question' && f.text === `How do I fill ${day}s?`), `${day}: ${JSON.stringify(quiet.body.followUps)}`);
+      route = { mode: 'grounded', intentId: 'peak_hours' };
+      const peaks = await call('/api/venue/advisor/question', { question: `How busy will ${day} be?` });
+      assert.deepStrictEqual(peaks.body.text.split('\n'), [lead, `• ${peakMove()}`], day);
+    });
+  }
+});
+
+test('a card week too level to name a quiet day still answers a question about today from today\'s entry', async () => {
+  // "How quiet will Monday be?" refused with the level week's reason until
+  // 2026-11-06, though the card had Monday's number.
+  const saved = { ...CARD };
+  Object.assign(CARD, { Sat: 52, Sun: 45, Mon: 48, Tue: 48, Wed: 48, Thu: 50, Fri: 50 });
+  try {
+    await pinnedAt('2026-11-09T16:00:00Z', async () => {
+      setUp({ placeId: 'ChIJreviewLevelToday00000', phrasing: true });
+      draftFor = () => null;
+      const { intel } = await cardWeek();
+      assert.deepStrictEqual([intel.today.weekday, intel.today.peakScore], ['Mon', 48]);
+      route = { mode: 'grounded', intentId: 'quiet_nights' };
+      const r = await call('/api/venue/advisor/question', { question: 'How quiet will Monday be?' });
+      assert.strictEqual(r.body.mode, 'template', r.body.text);
+      assert.deepStrictEqual(r.body.text.split('\n'), [
+        'In Flock\'s forecast for places like yours, Monday peaks around 9 PM at 48 on our 0 to 100 index.',
+        `• ${kindForecast.unownDays(quietMove(), 'Monday')}`,
+      ]);
+      // The chip, which asks about the week, still says the week has no quiet day.
+      const chip = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+      assert.strictEqual(chip.body.mode, 'refusal', chip.body.text);
+      assert.match(chip.body.text, /no day stands out as quiet in the week ahead/);
+    });
+  } finally {
+    Object.assign(CARD, saved);
+  }
+});
+
+test('a block reads the card once: a weekend asked as the hour turns comes off one build, with one Places lookup', async () => {
+  // A cold build that started before midnight and finished after it was read
+  // twice until 2026-11-06, once for the week and once for today, from two
+  // builds a day apart: "the busiest day this weekend is Saturday ... •
+  // Saturday is close behind", Saturday's id twice, and two Places lookups.
+  const realHourly = mlPredictor.predictHourlyForecast;
+  mlPredictor.predictHourlyForecast = async (...args) => {
+    await new Promise((resolve) => { setTimeout(resolve, 120); });
+    return realHourly(...args);
+  };
+  try {
+    await pinnedAt('2026-11-06T23:59:59.900Z', async () => {
+      setUp({ placeId: 'ChIJreviewOneRead00000000' });
+      const before = placesCalls;
+      const r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+      assert.ok(Date.now() > Date.parse('2026-11-07T00:00:00Z'), 'the build finished after midnight');
+      assert.strictEqual(placesCalls - before, 1, 'one Places lookup for the block');
+      const ids = r.body.sources.map((s) => s.id);
+      assert.strictEqual(new Set(ids).size, ids.length, `a day named twice: ${r.body.text}`);
+      // The build that started on Friday: today, Saturday and Sunday.
+      assert.deepStrictEqual([...ids].sort(), ['typical_peak_2026-11-06', 'typical_peak_2026-11-07', 'typical_peak_2026-11-08']);
+      assert.match(r.body.text, FRAMED);
+    });
+  } finally {
+    mlPredictor.predictHourlyForecast = realHourly;
+  }
 });

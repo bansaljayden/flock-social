@@ -251,13 +251,24 @@ function inThisWeekend(date, today) {
 // dated entry is today, the same contract tonight_outlook reads. A venue with
 // no crowd history is answered from its dashboard card, whose week starts
 // tomorrow: today is the card's own entry, read on today's hours, and the card
-// dates today even when its listing has the venue shut (b.card(),
-// advisorFacts.buildCardProjection). `card` says which of the two it was.
+// dates today even when its listing has the venue shut. The week, today and
+// the date all come off the block's one read of the card (b.card(),
+// advisorFacts.buildCardProjection), never off two. `card` says which of the
+// two kinds of week it was.
+const gatedVenue = (b) => Boolean(b.ctx && b.ctx.profile && advisorFacts.corpusGate(b.ctx.profile));
 async function daysFromToday(b) {
+  if (gatedVenue(b) && typeof b.card === 'function') {
+    const card = await b.card();
+    if (card.week.length) return { days: [...card.today, ...card.week], today: card.date, card: true };
+    // No card to read: the venue's own week, which is the corpus refusal.
+    return { days: typeof b.ownWeek === 'function' ? await b.ownWeek() : [], today: null, card: false };
+  }
   const week = await b.week();
   if (week.some(isKindForecast)) {
-    // A builder that cannot read the card's today has no today to count the
-    // weekend from, and the weekend then holds nothing rather than a guess.
+    // A builder handed the card's week with no venue on it (a plan driven
+    // directly): today and its date off the read it hands over. One that
+    // cannot read the card's today has no today to count the weekend from,
+    // and the weekend then holds nothing rather than a guess.
     const card = typeof b.card === 'function' ? await b.card() : { today: [], date: null };
     return { days: [...card.today, ...week], today: card.date, card: true };
   }
@@ -556,14 +567,11 @@ const INTENT_PLANS = {
 // Flock's forecast for places like this one. With no card to read, the
 // refusal stands as it was. The listing lines, which set the venue's own
 // forecast beside what the owner told us, read the venue's own week only
-// (`ownWeek`). Whether the card was read is kept on `memo` (true or false once
-// tried), so a question that would read it a second time in the same request
-// does not pay a second lookup that just failed.
-async function weekFor(ctx, opts, ownWeek, memo = {}) {
-  if (advisorFacts.corpusGate(ctx.profile) && typeof advisorFacts.buildWeekProjection === 'function') {
-    const projected = await advisorFacts.buildWeekProjection(ctx, opts);
-    memo.cardRead = projected.length > 0;
-    if (projected.length) return projected;
+// (`ownWeek`).
+async function weekFor(ctx, ownWeek, card) {
+  if (advisorFacts.corpusGate(ctx.profile)) {
+    const { week } = await card();
+    if (week.length) return week;
   }
   return ownWeek();
 }
@@ -573,39 +581,64 @@ async function weekFor(ctx, opts, ownWeek, memo = {}) {
 // draws today's peak. The card's own function reads today on today's hours
 // (venueIntelligence `today`), so where the corpus gate is the reason today
 // would refuse, today is that one entry, framed like the week's days
-// (advisorFacts.buildTodayProjection), from the same cache entry as the week.
+// (advisorFacts.todayProjectionFacts), from the same read as the week.
 // Nothing to read (no card, today closed by the listing, a model number) keeps
-// the refusal. A card this request already failed to read is not asked again.
-async function tonightFor(ctx, opts, ownTonight, memo = {}) {
-  if (memo.cardRead !== false && advisorFacts.corpusGate(ctx.profile)
-      && typeof advisorFacts.buildTodayProjection === 'function') {
-    const today = await advisorFacts.buildTodayProjection(ctx, opts);
-    if (typeof memo.cardRead !== 'boolean') memo.cardRead = today.length > 0;
+// the refusal.
+async function tonightFor(ctx, ownTonight, card) {
+  if (advisorFacts.corpusGate(ctx.profile)) {
+    const { today } = await card();
     if (today.length) return today;
   }
   return ownTonight();
+}
+
+// ONE READ OF THE CARD PER BLOCK (review, 2026-11-06). The week, today, the
+// weekend and a question about today's weekday all read the card, and each
+// used to read it on its own: two reads either side of the turn of an hour
+// came from two builds, so a weekend asked at midnight held a Saturday from
+// one build as today and a Saturday from the other as tomorrow ("Saturday ...
+// Saturday is close behind"), and paid a second Places lookup. Every reader
+// in a block now shares this one: { week, today, date }
+// (advisorFacts.buildCardProjection). Whether it held anything is kept on
+// `memo.cardRead`, so the advice path's second block does not pay again for a
+// lookup that just failed.
+function cardFor(ctx, opts, memo) {
+  if (!memo.card) {
+    memo.card = advisorFacts.buildCardProjection(ctx, opts).then((c) => {
+      memo.cardRead = c.week.length > 0 || c.today.length > 0;
+      return c;
+    });
+  }
+  return memo.card;
 }
 
 // A QUESTION ABOUT TODAY'S WEEKDAY IS ANSWERED FROM TODAY (2026-11-06). A
 // no-history venue's week is its card's, which starts tomorrow, so on a
 // Monday "How busy will Monday be?" found no Monday and was answered about the
 // week, and "How do I fill a slow Monday?" had no number to lead with. When
-// the question names today's weekday and the block holds the card without
-// it, today's entry on the card goes in beside the week, never ranked in it
-// (kindForecast.besideWeek): the week's busiest and quietest stay the card's
-// own days, as the money move and the dashboard's tiles name them. Only for
-// the plans that answer a named day (advisorPhrasing shapeWeek); the money
-// move ranks its week and is not about one day. A venue's own week holds
-// today already. The weekend reads today on its own (weekend_outlook).
+// the question asks about today and the venue is answered from its card,
+// today's entry on the card is the answer, marked as standing beside the week
+// (kindForecast.besideWeek), and the week's days go: the template says today's
+// own line, and the phrasing model is handed the same one day, so neither can
+// rank today against the week, whose busiest and quietest stay the card's own
+// days, as the money move and the dashboard's tiles name them (review: handed
+// the week as well, the model called Sunday "the quietest day this week"
+// while the money move said to fill Monday). The move and what to ask next
+// then name the same day the answer does. A card week too level to name a
+// quiet day still has today's number, so the quiet-days plan's refusal goes
+// too. Only for the plans that answer a named day (advisorPhrasing
+// shapeWeek); the money move ranks its week and is not about one day. A
+// venue's own week holds today already. The weekend reads today on its own
+// (weekend_outlook).
 const NAMED_TODAY_INTENTS = new Set(['peak_hours', 'quiet_nights']);
+const isDayEntry = (e) => Boolean(e && e.value && typeof e.value.weekday === 'string' && 'peakScore' in e.value);
 async function withNamedToday(entries, intentId, b, named) {
   if (!named || !NAMED_TODAY_INTENTS.has(intentId) || typeof b.card !== 'function') return entries;
-  if (!entries.some(isKindForecast)) return entries;
-  if (entries.some((e) => e && e.value && e.value.weekday === named)) return entries;
+  if (!entries.some(isKindForecast) && !gatedVenue(b)) return entries;
   const { today } = await b.card();
   const day = today.find((f) => f.value && f.value.weekday === named);
-  // First, in date order, so a tie with a day of the week reads today first.
-  return day ? [besideWeek(day), ...entries] : entries;
+  if (!day) return entries;
+  return [besideWeek(day), ...entries.filter((e) => !advisorFacts.isRefusal(e) && !isDayEntry(e))];
 }
 
 // `question`, when there is one, is what the owner asked: a question that
@@ -631,16 +664,15 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
     // The week a question about the week ahead reads (weekFor above).
-    week: () => (memo.week = memo.week || weekFor(ctx, opts, b.ownWeek, memo)),
+    week: () => (memo.week = memo.week || weekFor(ctx, b.ownWeek, b.card)),
     // The same week, started from last night's evening while that night is
     // still running: what "tonight" means at 12:30 AM. For a venue with no
     // crowd history, today off its dashboard card (tonightFor above).
-    tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx, opts,
-      () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), memo)),
-    // The card's week and today off one read, and the venue's own today on
-    // it. Asked only once the week has been read as the card
-    // (daysFromToday, withNamedToday), so from the same cache entry.
-    card: () => (memo.card = memo.card || advisorFacts.buildCardProjection(ctx, opts)),
+    tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx,
+      () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), b.card)),
+    // The card's week, today and today's date off one read (cardFor above).
+    // Read only for a venue the corpus gate sends to the card.
+    card: () => cardFor(ctx, opts, memo),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
