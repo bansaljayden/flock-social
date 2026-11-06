@@ -22,6 +22,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import VenueDetailSheet from '../components/overlays/VenueDetailSheet';
 import { CrowdForecastPanel } from '../components/venue/ConsumerVenueCard';
 import { freshCrowdReadFor } from '../lib/crowdReadInHand';
+import { compactHourLabel } from '../lib/crowd';
 
 const fs = require('fs');
 const path = require('path');
@@ -208,8 +209,8 @@ describe('the venue sheet shows the forecast on the first tap', () => {
     const elsewhere = 'ChIJsomewhereElse';
     render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ forPlaceId: elsewhere }), { placeId: elsewhere }) })} />);
     expect(screen.queryByText('Not Busy')).toBeNull();
-    // Nothing in hand and nothing coming: said, under no chip.
-    expect(screen.getAllByText('No crowd read for this spot right now.').length).toBeGreaterThan(0);
+    // Nothing in hand and nothing coming: said once, under no chip.
+    expect(screen.getAllByText('No crowd read for this spot right now.')).toHaveLength(1);
     expect(screen.queryByText('ESTIMATED')).toBeNull();
     expect(screen.queryByText('LIVE')).toBeNull();
   });
@@ -244,6 +245,82 @@ describe('the venue sheet shows the forecast on the first tap', () => {
     render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { ...VENUE, place_id: undefined } })} />);
     expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
     expect(screen.queryByText(/Less Crowded Nearby/i)).toBeNull();
+  });
+});
+
+describe('no read, no verdict', () => {
+  // Probed on the sheet before the fix, with the Group chips' party set: no
+  // read and a party of 4 drew "No crowd read for this spot right now. Walk
+  // right in (4)"; the loading chip drew "Walk right in (4)" under it; a
+  // closed room with 6 drew "Closed Today ... Expect a wait (6)". The verdict
+  // was the placeholder 0 plus the party's weight. No read also said "No
+  // crowd read" twice, over an empty chart heading, and kept the two tiles in
+  // the tree at opacity 0, where VoiceOver read "Est. Wait Right Now, No wait".
+  const VERDICT = /Walk right in|Should be fine|Might wait briefly|Expect a wait|Reservation needed|Call ahead recommended|Book ahead|Buy tickets|No issues for groups/;
+
+  test('with no read: said once, and no group verdict, chips, chart heading or tiles', () => {
+    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(null, { failed: true }), partySize: 4 })} />);
+    expect(screen.getAllByText('No crowd read for this spot right now.')).toHaveLength(1);
+    expect(screen.queryByText(VERDICT)).toBeNull();
+    expect(screen.queryByText('(4)')).toBeNull();
+    expect(screen.queryByText('Group:')).toBeNull();
+    expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
+    expect(screen.queryByText('Busiest Hours')).toBeNull();
+    expect(screen.queryByText(/Est\. Wait/)).toBeNull();
+  });
+
+  test('while the read is out: the loading chip and nothing under it that needs a read', () => {
+    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(null, { loading: true }), partySize: 4 })} />);
+    expect(screen.getByText('Loading the crowd reading')).toBeTruthy();
+    expect(screen.queryByText(VERDICT)).toBeNull();
+    expect(screen.queryByText('(4)')).toBeNull();
+    expect(screen.queryByText('Busiest Hours')).toBeNull();
+  });
+
+  test('a closed room: closed, and no verdict for a party', () => {
+    render(<VenueDetailSheet {...sheetProps({
+      venueDetailModal: { ...VENUE, opening_hours: { ...VENUE.opening_hours, openNow: false } },
+      venueDetailCrowd: sheetRead(read30({ isOpen: false, score: 70 })),
+      partySize: 6,
+    })} />);
+    expect(screen.getAllByText(/Closed Today|Currently Closed/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(VERDICT)).toBeNull();
+    expect(screen.queryByText('(6)')).toBeNull();
+  });
+
+  test('a read of this place with no number is no read: said once, and nothing pulses', () => {
+    const { container } = render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead({ forPlaceId: PLACE, score: null }), partySize: 4 })} />);
+    expect(screen.getAllByText('No crowd read for this spot right now.')).toHaveLength(1);
+    expect(container.querySelectorAll('.skeleton')).toHaveLength(0);
+    expect(screen.queryByText(VERDICT)).toBeNull();
+  });
+
+  test('an open room with a read still answers for the party', () => {
+    render(<VenueDetailSheet {...sheetProps({ partySize: 4 })} />);
+    expect(screen.getByText('Walk right in')).toBeTruthy();
+    expect(screen.getByText('(4)')).toBeTruthy();
+    expect(screen.getByText('Est. Wait')).toBeTruthy();
+  });
+});
+
+describe('the hours fit a phone', () => {
+  test('each bar\'s hour prints compact, with the full hour kept for a screen reader', () => {
+    const { container } = render(<VenueDetailSheet {...sheetProps()} />);
+    const short = screen.getByText('4p');
+    expect(short.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByText('4 PM').className).toBe('sr-only');
+    expect(screen.getByText('Now')).toBeTruthy();
+    // Every other label is the one a narrow window blanks; "Now" never is.
+    const labels = Array.from(container.querySelectorAll('.crowd-hour'));
+    expect(labels.length).toBeGreaterThan(2);
+    labels.forEach((el, i) => expect(el.classList.contains('crowd-hour-alt')).toBe(i % 2 === 1));
+    expect(labels[0].textContent).toBe('Now');
+    expect(read('index.css')).toMatch(/@media \(max-width: 359px\) \{\s*\.crowd-hour-alt \.crowd-hour-text \{\s*visibility: hidden;\s*\}\s*\}/);
+  });
+
+  test('compactHourLabel shortens an hour and leaves anything else alone', () => {
+    expect(['10 PM', '12 AM', '9:30 PM', '1 am', '11 P.M.'].map(compactHourLabel)).toEqual(['10p', '12a', '9:30p', '1a', '11p']);
+    expect(['Now', 'Noon', '', null, 21].map(compactHourLabel)).toEqual(['Now', 'Noon', '', null, 21]);
   });
 });
 

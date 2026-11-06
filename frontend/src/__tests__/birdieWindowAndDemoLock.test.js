@@ -1100,7 +1100,7 @@ describe('the venue sheet under the same paywall', () => {
   const peakTile = () => {
     const start = appSource.indexOf('>Busiest Hours</span>');
     expect(start).toBeGreaterThan(-1);
-    const end = appSource.indexOf("'Est. Wait Right Now'", start);
+    const end = appSource.indexOf("'Est. Wait'", start);
     expect(end).toBeGreaterThan(start);
     return appSource.slice(start, end);
   };

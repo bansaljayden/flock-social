@@ -50,6 +50,19 @@ export const crowdArcFor = (score) => {
 };
 
 /**
+ * An hour as the forecast's bar labels print it: "10 PM" is "10p", "12 AM" is
+ * "12a", "9:30 PM" is "9:30p". The full hour, as the server wrote it, is
+ * three characters too wide for one of twelve bars on a phone, so it wrapped
+ * to two lines; the bar's screen-reader text keeps the full hour. Anything
+ * that is not an hour in that shape comes back as it was, so a label is never
+ * lost to the shortening.
+ */
+export const compactHourLabel = (hour) => {
+  const m = typeof hour === 'string' ? hour.trim().match(/^(\d{1,2}(?::\d{2})?)\s*([AaPp])\.?\s*[Mm]\.?$/) : null;
+  return m ? `${m[1]}${m[2].toLowerCase()}` : hour;
+};
+
+/**
  * What made a crowd number, in words, when the server says a serving switch
  * changed the arithmetic.
  *

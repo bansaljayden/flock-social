@@ -86,7 +86,7 @@ import React, { useState } from 'react';
 import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
-import { crowdLabelFor, cardSourceLine, isPatternOnlySource } from '../../lib/crowd';
+import { crowdLabelFor, cardSourceLine, isPatternOnlySource, compactHourLabel } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
 // Tables at this venue, for venues whose Flux sensor watches them. The read
 // is lib/tableSummaries.js's (one GET a minute while the card is open, its
@@ -1031,7 +1031,18 @@ export function CrowdForecastPanel({
                   <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} ownerAsserted={!!cd?.ownerReport?.applied} />
                 )}
 
-                {/* Group Admission */}
+                {/* Group Admission. Only over a read of an open room. The
+                    verdict is the read's score plus the party's weight, and
+                    with no read `score` falls back to the pin's number, or to
+                    a placeholder 0 on the sheet, whose venue carries none. So
+                    the sheet said "No crowd read for this spot right now.
+                    Walk right in (4)" under no read, the same under the
+                    loading chip, and "Closed Today ... Expect a wait (6)" for
+                    a closed room. partySize lasts the session, so one tap on a
+                    chip put that on every venue after it. The chips go with
+                    the verdict: a party asked for with nothing to answer it
+                    is a question the card cannot answer. */}
+                {!!cd && !isClosed && (
                 <m.div initial={{ opacity: 0, y: 16, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.4, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   {partySize === null ? (
                     <>
@@ -1068,6 +1079,7 @@ export function CrowdForecastPanel({
                     );
                   })()}
                 </m.div>
+                )}
 
                 {/* THE LOCKED FORECAST. The gate (routes/crowd.js
                     LOCKED_FORECAST_FIELDS) sends `hourly: []`, which is truthy,
@@ -1087,6 +1099,19 @@ export function CrowdForecastPanel({
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, whiteSpace: 'nowrap' }}>See Pro</span>
                     </button>
                   </m.div>
+                ) : (!cd && noEstimate) ? (
+                  /* NO READ IS SAID ONCE. With no read (it failed, or came
+                     back without a number) the dial's column already says so,
+                     and this block used to say it again under an "Expected
+                     Crowd by Hour" heading with no chart under it. A closed
+                     room's column says Closed instead, so there the one line
+                     is here, with no heading over it. A read that came back
+                     tagged for this venue with no finite score is the same
+                     no-read: the chart used to test crowdFetchFailed alone and
+                     pulsed twelve skeleton bars under it for ever. */
+                  isClosed ? (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>No crowd read for this spot right now.</p>
+                  ) : null
                 ) : (
                 /* Hourly Forecast Graph — fades in immediately, bars animate up */
                 <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
@@ -1098,7 +1123,7 @@ export function CrowdForecastPanel({
                       Expected Crowd by Hour{venueLocalTime ? <span style={{ fontWeight: '500', textTransform: 'none' }}> · {venueLocalTime} there</span> : ''}
                     </p>
                     {(() => {
-                      if (!cd && !isClosed) return null; // no trend claims while loading
+                      if (!cd) return null; // no trend claims without a read
                       // No trend out of a closed hour or into one. Closed hours
                       // carry real model scores (the server marks them with
                       // flags, not zeros), so the `next <= 0` test below never
@@ -1134,10 +1159,11 @@ export function CrowdForecastPanel({
                     })()}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
-                    {/* Skeleton bars while the prediction loads — never fake colored data */}
-                    {(!cd && crowdFetchFailed) ? (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, alignSelf: 'center', width: '100%', textAlign: 'center' }}>No crowd read for this spot right now.</p>
-                    ) : (!cd && !isClosed) ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
+                    {/* Skeleton bars while the prediction loads — never fake
+                        colored data. A closed room included: it used to fall
+                        through to genHourly, which drew a curve out of the
+                        placeholder 0 before any read had landed. */}
+                    {!cd ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
                         <div className="skeleton" style={{ width: '100%', height: `${hgt}px`, borderRadius: '3px 3px 1px 1px' }} />
                       </div>
@@ -1172,9 +1198,23 @@ export function CrowdForecastPanel({
                       );
                     })}
                   </div>
+                  {/* THE HOURS FIT ONE LINE. A slot is about 26px wide at 390
+                      and 20px at 320, and "10 PM" is about 33px of 12px text,
+                      so every label wrapped to two lines ("10 / PM"). Each is
+                      "10p" on screen now (compactHourLabel) with the full hour
+                      kept for a screen reader, and under 360px every other one
+                      is left blank (index.css .crowd-hour-alt) so the ones
+                      shown have two slots of room. */}
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
-                    {(!cd && !isClosed) ? null : chartBars.map((b, i) => (
-                      <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 'var(--t-meta)', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '500' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
+                    {!cd ? null : chartBars.map((b, i) => (
+                      <span key={i} className={i % 2 ? 'crowd-hour crowd-hour-alt' : 'crowd-hour'} style={{ flex: 1, textAlign: 'center', fontSize: 'var(--t-meta)', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '500' : '400', minWidth: 0, whiteSpace: 'nowrap' }}>
+                        {b.isNow ? 'Now' : (
+                          <>
+                            <span className="crowd-hour-text" aria-hidden="true">{compactHourLabel(b.h.hour)}</span>
+                            <span className="sr-only">{b.h.hour}</span>
+                          </>
+                        )}
+                      </span>
                     ))}
                   </div>
                   {/* The server sent a crowd read with no hour-by-hour curve, so
@@ -1189,8 +1229,12 @@ export function CrowdForecastPanel({
                 </m.div>
                 )}
 
-                {/* Busiest Hours & Wait */}
-                <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+                {/* Busiest Hours & Wait. Drawn with a read only. They used to
+                    be drawn without one at opacity 0, so they held an empty
+                    gap open under "No crowd read" and VoiceOver still read
+                    "Est. Wait Right Now, No wait" out of the placeholder 0. */}
+                {!!cd && (
+                <m.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.trendingUp(colors.red, 12)}
@@ -1221,11 +1265,15 @@ export function CrowdForecastPanel({
                   <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
                       {Icons.zap(colors.amber, 12)}
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait Right Now' : 'Crowd Level'}</span>
+                      {/* "Est. Wait": "Est. Wait Right Now" wrapped to two
+                          lines in a 320 tile. The wait under it is the one the
+                          dial's line gives for now. */}
+                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait' : 'Crowd Level'}</span>
                     </div>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
                   </div>
                 </m.div>
+                )}
 
                 {/* Quieter Options */}
                 {/* `v.crowd < score` used to do the filtering, and

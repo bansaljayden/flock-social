@@ -486,6 +486,17 @@ html.flock-app code {
   }
 }
 
+/* THE CROWD FORECAST'S HOUR LABELS IN THE SAME WINDOW. Twelve bars leave each
+   label about 20 px there, and even "10p" (components/venue/ConsumerVenueCard.js,
+   compactHourLabel) needs that much, so every other hour is left blank on
+   screen and the ones shown can use the blank slot beside them. Only the
+   visible text goes: each bar's full hour stays in its screen-reader text. */
+@media (max-width: 359px) {
+  .crowd-hour-alt .crowd-hour-text {
+    visibility: hidden;
+  }
+}
+
 /* Film-grain texture — fixed, non-interactive, barely-there. Gives surfaces a
    physical, editorial feel instead of flat digital vectors (high-end technique).
    Self-contained SVG so it works offline inside the Capacitor WebView. */
