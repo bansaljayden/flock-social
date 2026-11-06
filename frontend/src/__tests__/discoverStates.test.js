@@ -28,7 +28,11 @@ const explore = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ExploreSc
 
 test('a failed crowd read ends the skeleton and says so', () => {
   expect(app).toMatch(/const \[crowdFetchFailed, setCrowdFetchFailed\] = useState\(false\);/);
-  expect(app).toMatch(/setCrowdFetchFailed\(crowdResult\.status !== 'fulfilled'\);/);
+  // The venue sheet's read records its failure in its own state since the
+  // sheet stopped sharing the map card's (venueSheetCrowdForecast.test.js),
+  // and the card's effect records the card's.
+  expect(app).toMatch(/failed: crowdResult\.status !== 'fulfilled' \}\);/);
+  expect(app).toMatch(/if \(!cancelled\) setCrowdFetchFailed\(true\);/);
   expect(card).toMatch(/No crowd read for this spot right now\./);
 });
 
