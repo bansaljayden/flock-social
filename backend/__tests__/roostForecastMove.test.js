@@ -2125,3 +2125,27 @@ test('"next weekend" is the one after this weekend: the days of it the forecast 
     }
   });
 });
+
+test('a venue on a half-hour offset reads today\'s card after its own midnight, though the server\'s hour has not turned', async () => {
+  // Kolkata is UTC+5:30: 18:20 UTC is 11:50 PM on Friday there, and 18:40 UTC
+  // is 12:10 AM on Saturday, inside one server hour. Until 2026-11-06 the
+  // second read answered with Friday's card for up to half an hour.
+  let first = null;
+  await pinnedAt('2026-11-06T18:20:00Z', async () => {
+    setUp({ placeId: 'ChIJreviewHalfHourZone000' });
+    placeZone = 'Asia/Kolkata';
+    placeOffset = 330;
+    first = (await cardWeek()).intel;
+  });
+  assert.deepStrictEqual([first.today.date, first.today.weekday], ['2026-11-06', 'Fri']);
+  await pinnedAt('2026-11-06T18:40:00Z', async () => {
+    const before = placesCalls;
+    const { intel } = await cardWeek();
+    assert.deepStrictEqual([intel.today.date, intel.today.weekday], ['2026-11-07', 'Sat']);
+    assert.strictEqual(placesCalls - before, 1, 'built again, once');
+    await cardWeek();
+    assert.strictEqual(placesCalls - before, 1, 'and kept');
+    const weekend = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+    assert.deepStrictEqual(weekend.body.sources.map((s) => s.id).sort(), ['typical_peak_2026-11-07', 'typical_peak_2026-11-08']);
+  });
+});

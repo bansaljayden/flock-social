@@ -1878,8 +1878,10 @@ const cacheGet = (k) => {
   intelCache.delete(k);
   return null;
 };
-const cacheSet = (k, data) => {
-  intelCache.set(k, { ts: Date.now(), data });
+// `clock`, for an owner's forecast, is the venue's own clock as its lookup
+// gave it ({ utcOffsetMinutes, timeZone }), read back by dayTurned below.
+const cacheSet = (k, data, clock = null) => {
+  intelCache.set(k, { ts: Date.now(), data, ...(clock ? { clock } : {}) });
   // Round 9: unbounded before — one entry per place id the owner can relink to.
   if (intelCache.size > INTEL_MAX) {
     const now = Date.now();
@@ -1915,9 +1917,17 @@ const cacheSet = (k, data) => {
 // gives at its own cache key: the venue's clock arrives as utcOffsetMinutes from
 // the paid lookup this cache exists to avoid, so it cannot be read before the
 // key is built. On a whole-hour offset the two roll together; where they do not,
-// the entry is keyed on a number that does not describe the venue, which costs a
-// duplicate entry rather than a wrong answer. Nothing in the key is chosen by
-// the caller, which is the other half of why crowd.js keys this way.
+// the entry is keyed on a number that does not describe the venue. Nothing in
+// the key is chosen by the caller, which is the other half of why crowd.js
+// keys this way.
+//
+// AND A DAY THAT TURNS INSIDE THE HOUR IS A MISS (review, 2026-11-06). A venue
+// on a half-hour offset (Kolkata, Adelaide, St. John's) reaches midnight half
+// way through the server's hour, and for up to thirty minutes the entry kept
+// answering with yesterday's today and yesterday's week, which Roost reads as
+// today's. An owner's forecast keeps the venue's clock beside it, and an entry
+// whose today is not the venue's today any more is built again: one more
+// lookup a day for those venues, none for any other.
 //
 // Read ONCE per request and used for both the get and the set, so an hour that
 // rolls over mid-request cannot file this hour's answer under the next one.
@@ -1925,6 +1935,15 @@ const cacheClock = () => {
   const d = new Date();
   return `${d.getHours()}:${d.getDay()}`;
 };
+const SHORT_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// True when the venue's own day has turned since the forecast under `k` was
+// built: its today is not the venue's today any more.
+function dayTurned(k) {
+  const hit = intelCache.get(k);
+  if (!hit || !hit.clock || !hit.data || !hit.data.today) return false;
+  const local = crowdEngine.venueLocalNow(hit.clock.utcOffsetMinutes, new Date(), hit.clock.timeZone);
+  return Boolean(local) && SHORT_WEEKDAYS[local.day] !== hit.data.today.weekday;
+}
 
 // Returned instead of a venue when the shared Places budget is spent, so the
 // route can answer 429 rather than pretend Google was unreachable.
@@ -2257,7 +2276,7 @@ async function buildIntelligence(placeId, userId, clockKey) {
       : {}),
     generatedAt: new Date().toISOString(),
   };
-  cacheSet(`intel:${placeId}:${clockKey}`, result);
+  cacheSet(`intel:${placeId}:${clockKey}`, result, { utcOffsetMinutes: venue.utcOffsetMinutes, timeZone: venue.timeZone });
   return result;
 }
 
@@ -2284,7 +2303,9 @@ async function venueIntelligence(ctx, userId) {
   // see THE CLOCK IN THE KEY above cacheClock.
   const clockKey = cacheClock();
   const cached = cacheGet(`intel:${placeId}:${clockKey}`);
-  if (cached) return cached;
+  // A forecast built before the venue's own midnight is yesterday's
+  // (dayTurned above): it is built again, under the same key.
+  if (cached && !dayTurned(`intel:${placeId}:${clockKey}`)) return cached;
   // A finished result, or a build already under way for this venue and hour:
   // ONE BUILD FOR THE THREE THAT ASK AT ONCE. The dashboard's own request,
   // Roost's cards and Roost's question list all open with the Analytics tab,
