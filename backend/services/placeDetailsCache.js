@@ -173,6 +173,49 @@ const PLACE_DETAILS_FIELD_MASK = [
   'types', 'location', 'googleMapsUri', 'utcOffsetMinutes', 'timeZone',
 ].join(',');
 
+// ---------------------------------------------------------------------------
+// A PLACE'S CURRENT PHOTO NAMES, FOR THE PHOTO PROXY'S HEAL.
+// ---------------------------------------------------------------------------
+// routes/venueSearch.js answers a photo name Google has expired with the same
+// place's CURRENT first photo (healDeadPhoto there says where the expired names
+// come from). The place id is inside the name, so all the proxy needs from here
+// is that place's `photos` list, and fetchPlacePhotos below hands it over by the
+// cheapest door that is open:
+//
+//   1. a fresh detailsCache entry, or a Place Details flight already under way:
+//      PLACE_DETAILS_FIELD_MASK asks for `photos`, so a venue whose card was
+//      opened in the last ten minutes costs nothing at all;
+//   2. otherwise ONE request with PLACE_PHOTOS_FIELD_MASK.
+//
+// THE SKU OF THAT REQUEST. `id` and `photos` are both on Google's "Place Details
+// Essentials IDs Only" field list, and the pricing page lists that SKU at
+// Unlimited free usage with no price per 1,000 (both read 2026-11-05:
+// developers.google.com/maps/documentation/places/web-service/place-details and
+// developers.google.com/maps/billing-and-pricing/pricing). Any other field moves
+// the call to a paid SKU: Pro at $17 or Enterprise at $20 per 1,000 after the
+// free allowance, and the Enterprise allowance is the 1,000 a month the venue
+// cards draw on. __tests__/photoHeal.test.js pins the mask. It is still a Place
+// Details request against the project's quota, so the photo proxy charges the
+// shared ledger (utils/placesBudget.js) before it asks, the way
+// services/poiPlaceResolver.js charges its free IDs-only Text Search.
+//
+// READ, NEVER WRITTEN. The answer of a photos-only request is not written to
+// detailsCache: it has no rating, userRatingCount or priceLevel, and every
+// consumer of that cache would score the venue at the corpus median (this
+// header's whole warning). Nor is it cached anywhere else. It is a list of photo
+// NAMES, which the Place Photos reference says may not be cached, so it lives
+// exactly as long as its flight, and what the photo proxy keeps afterwards is a
+// hash per width. It does not write gonePlaceIds either: the proxy remembers a
+// place it looked up for a day on its own, so that map keeps the writers and the
+// bound its inventory row argues.
+//
+// AND THE LEDGER LINE IN "WHO SHARES THIS" HOLDS. The worry there is an
+// unauthenticated request served a payload an account paid for, and the
+// reverse. The photo proxy only READS this cache: reading costs nobody
+// anything, no account is ever served something the unauthenticated share paid
+// for, and nothing unauthenticated can evict the signed-in working set.
+const PLACE_PHOTOS_FIELD_MASK = 'id,photos';
+
 // See the TTL argument in the header. Bounded by `currentOpeningHours.openNow`,
 // which is the only field Google computes at request time.
 const PLACE_DETAILS_TTL = 10 * 60 * 1000;
@@ -192,6 +235,9 @@ const PLACE_DETAILS_CACHE_LOW_WATER = Math.floor(PLACE_DETAILS_CACHE_MAX * 0.9);
 const detailsCache = new Map();
 // placeId -> Promise<result>. Self-draining; the worker never rejects.
 const detailsInflight = new Map();
+// placeId -> Promise<photos result>, for PLACE_PHOTOS_FIELD_MASK requests only.
+// Self-draining the same way. It is the only place a photos-only answer lives.
+const photosInflight = new Map();
 
 // PLACE IDS GOOGLE HAS SAID NAME NOTHING. A failure is never cached (see the
 // header), and that is right for a timeout or a 429. It is wrong for NOT_FOUND,
@@ -303,6 +349,22 @@ function willCostUpstreamCall(placeId) {
   return readFresh(placeId) === null;
 }
 
+/**
+ * The same question for fetchPlacePhotos: would it send a NEW request to
+ * Google right now? False when a fresh payload, a flight of either mask, or a
+ * remembered NOT_FOUND answers it for nothing. Same contract as
+ * willCostUpstreamCall: synchronous, true only for this tick, so ask, charge
+ * and call fetchPlacePhotos with no `await` in between.
+ *
+ * @param {string} placeId
+ * @returns {boolean}
+ */
+function photosLookupWillCost(placeId) {
+  if (detailsInflight.has(placeId) || photosInflight.has(placeId)) return false;
+  if (isGonePlace(placeId)) return false;
+  return readFresh(placeId) === null;
+}
+
 // The worker. NEVER REJECTS — every exit is a result object — because the
 // in-flight map is drained with `.then()` and a rejecting worker would both
 // leak an entry and hand every follower an unhandled rejection.
@@ -313,7 +375,7 @@ function willCostUpstreamCall(placeId) {
 // <message>" and anything else with 500, while routes/crowd.js turned both into
 // null (and then a 502). Collapsing them here would have quietly changed one of
 // those, which is the kind of thing a "pure refactor" ships by accident.
-// HEALTH RECORDING, in one place rather than at all six of fetchOnceRaw's
+// HEALTH RECORDING, in one place rather than at all six of askPlaces's
 // exits. utils/placesHealth.js turns a RUN of failures into one alert a day;
 // this is the call site that feeds it for Place Details.
 //
@@ -324,8 +386,12 @@ function willCostUpstreamCall(placeId) {
 // 'not_found' is recorded as HEALTH. Google answered, precisely, about one
 // place id; see isPlaceNotFoundAnswer in utils/placesHealth.js for the spurious
 // "Places is down" email that counting it as a failure produced.
-async function fetchOnce(placeId) {
-  const out = await fetchOnceRaw(placeId);
+//
+// `raw` is fetchOnceRaw for the full payload and fetchPhotosOnceRaw for the
+// photo proxy's photos-only ask. Both are Place Details requests, so both feed
+// the same leg of the alarm.
+async function fetchOnce(placeId, raw = fetchOnceRaw) {
+  const out = await raw(placeId);
   if (out.kind !== 'unconfigured') {
     recordPlacesResult(
       out.ok === true || out.kind === 'not_found',
@@ -335,10 +401,44 @@ async function fetchOnce(placeId) {
   return out;
 }
 
+// The full payload. What it keeps is decided here and only here: a success is
+// cached and a NOT_FOUND is remembered; askPlaces below only reads Google.
 async function fetchOnceRaw(placeId) {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) return { ok: false, kind: 'unconfigured', message: 'Google Places API key not configured' };
 
+  const out = await askPlaces(placeId, {
+    'X-Goog-Api-Key': apiKey,
+    'X-Goog-FieldMask': PLACE_DETAILS_FIELD_MASK,
+  });
+  // NOT_FOUND (or an INVALID_ARGUMENT naming the place id) is Google's final
+  // answer about this id, not a fault, so it is remembered (gonePlaceIds above)
+  // and the routes answer it 404, which the client does not retry.
+  if (out.kind === 'not_found') rememberGone(placeId);
+  // Cached only here, on the success path. A failure returns without writing,
+  // so the next request retries instead of being served a poisoned negative for
+  // the rest of the TTL.
+  if (out.ok) write(placeId, out.place);
+  return out;
+}
+
+// The photo proxy's photos-only ask (see PLACE_PHOTOS_FIELD_MASK). Keeps
+// nothing at all: not detailsCache, which a payload without the model's inputs
+// would poison, and not gonePlaceIds.
+async function fetchPhotosOnceRaw(placeId) {
+  const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+  if (!apiKey) return { ok: false, kind: 'unconfigured', message: 'Google Places API key not configured' };
+
+  const out = await askPlaces(placeId, {
+    'X-Goog-Api-Key': apiKey,
+    'X-Goog-FieldMask': PLACE_PHOTOS_FIELD_MASK,
+  });
+  return out.ok ? { ok: true, photos: photosOf(out.place) } : out;
+}
+
+// ONE PLACE DETAILS REQUEST AND THE READING OF ITS ANSWER, for both masks. It
+// writes nothing and remembers nothing; the two workers above decide that.
+async function askPlaces(placeId, headers) {
   let p;
   // The HTTP status, carried out of the try so the checks below can see it.
   // Left at 0 when the fetch itself threw, which the catch already returns on.
@@ -352,10 +452,7 @@ async function fetchOnceRaw(placeId) {
     // function is not a route handler and nothing in its signature says its
     // argument was validated, so it defends itself.
     const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-      headers: {
-        'X-Goog-Api-Key': apiKey,
-        'X-Goog-FieldMask': PLACE_DETAILS_FIELD_MASK,
-      },
+      headers,
       // Round 12: no deadline meant a hung Google socket parked the request and
       // its pg pool slot for ~5 minutes. See utils/upstream.js.
       signal: upstreamSignal('places'),
@@ -377,22 +474,20 @@ async function fetchOnceRaw(placeId) {
   // message rather than the code).
   //
   // Except NOT_FOUND, which gets its own kind, and so does an INVALID_ARGUMENT
-  // that names the place id (isPlaceNotFoundAnswer says which). It is Google's
-  // final answer about this id, not a fault, so it is remembered (gonePlaceIds
-  // above) and the routes answer it 404, which the client does not retry.
+  // that names the place id (isPlaceNotFoundAnswer says which). fetchOnceRaw
+  // remembers it; see there.
   if (p.error) {
     if (isPlaceNotFoundAnswer(httpStatus, p.error)) {
-      rememberGone(placeId);
       return { ok: false, kind: 'not_found', message: p.error.message || 'NOT_FOUND' };
     }
     return { ok: false, kind: 'api', message: p.error.message };
   }
 
-  // NOTHING BELOW `write()` IS A FAILURE, SO NOTHING ABOVE IT MAY BE ONE. The
-  // two checks here exist because `p.error` is not the only shape a non-answer
-  // arrives in, and this entry is now shared: one bad payload is pinned for the
-  // whole TTL and served to routes/venueSearch.js AND routes/crowd.js, for every
-  // caller, not just the one that fetched it.
+  // NOTHING THIS ANSWERS `ok` MAY BE A FAILURE, because fetchOnceRaw writes
+  // every `ok` to the cache. The two checks here exist because `p.error` is not
+  // the only shape a non-answer arrives in, and that entry is shared: one bad
+  // payload is pinned for the whole TTL and served to routes/venueSearch.js AND
+  // routes/crowd.js, for every caller, not just the one that fetched it.
   //
   //   * A NON-2xx STATUS. `response.ok` was never read here or in either former
   //     call site, so a 5xx from Google's edge or an intermediary carrying any
@@ -422,11 +517,12 @@ async function fetchOnceRaw(placeId) {
     return { ok: false, kind: 'unreachable', message: 'Places response carried no place id' };
   }
 
-  // Cached only here, on the success path. A failure above returns without
-  // writing, so the next request retries instead of being served a poisoned
-  // negative for the rest of the TTL.
-  write(placeId, p);
   return { ok: true, place: p };
+}
+
+// The `photos` list off a Places payload, always an array.
+function photosOf(place) {
+  return place && Array.isArray(place.photos) ? place.photos : [];
 }
 
 /**
@@ -467,12 +563,54 @@ function fetchPlaceDetails(placeId) {
   return flight;
 }
 
+/**
+ * One place's current `photos` list (Google's Photo objects, `name` first),
+ * for the photo proxy's heal. From a fresh detailsCache entry, from a Place
+ * Details flight already under way, or from ONE photos-only request (see
+ * PLACE_PHOTOS_FIELD_MASK for its SKU). Never writes detailsCache.
+ *
+ * Does NOT charge: ask photosLookupWillCost() first and charge yourself.
+ *
+ * @param {string} placeId
+ * @returns {Promise<{ok: true, photos: object[]} | {ok: false, kind: string, message: string}>}
+ *   Never rejects.
+ */
+function fetchPlacePhotos(placeId) {
+  const cached = readFresh(placeId);
+  if (cached) return Promise.resolve({ ok: true, photos: photosOf(cached) });
+  if (isGonePlace(placeId)) {
+    return Promise.resolve({ ok: false, kind: 'not_found', message: 'NOT_FOUND (remembered)' });
+  }
+  // A card buying the full payload right now is buying the photos too. Both
+  // arms, so this can never hand the heal a rejection.
+  const details = detailsInflight.get(placeId);
+  if (details) {
+    return details.then(
+      (out) => (out.ok ? { ok: true, photos: photosOf(out.place) } : out),
+      (err) => ({ ok: false, kind: 'unreachable', message: String((err && err.message) || err) }),
+    );
+  }
+
+  let flight = photosInflight.get(placeId);
+  if (!flight) {
+    flight = fetchOnce(placeId, fetchPhotosOnceRaw);
+    photosInflight.set(placeId, flight);
+    // Both arms, for the reason fetchPlaceDetails gives above.
+    const drain = () => { photosInflight.delete(placeId); };
+    flight.then(drain, drain);
+  }
+  return flight;
+}
+
 module.exports = {
   willCostUpstreamCall,
   fetchPlaceDetails,
+  photosLookupWillCost,
+  fetchPlacePhotos,
   isGonePlace,
   rememberGonePlace: rememberGone,
   PLACE_DETAILS_FIELD_MASK,
+  PLACE_PHOTOS_FIELD_MASK,
   PLACE_DETAILS_TTL,
   PLACE_DETAILS_CACHE_MAX,
   PLACE_DETAILS_CACHE_LOW_WATER,
@@ -486,10 +624,12 @@ module.exports.__test = {
   reset() {
     detailsCache.clear();
     detailsInflight.clear();
+    photosInflight.clear();
     gonePlaceIds.clear();
   },
   size: () => detailsCache.size,
   inflightSize: () => detailsInflight.size,
+  photosInflightSize: () => photosInflight.size,
   goneSize: () => gonePlaceIds.size,
   // Backdates a remembered NOT_FOUND, so a test can walk past the TTL.
   ageGone(placeId, ms) {

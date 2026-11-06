@@ -119,6 +119,14 @@
 //                             services/photoStore.js, tighter than anything in
 //                             this file; that is where the photo money is
 //                             decided, and this ledger only sees it pass by.
+//                             And 1 per photos-only Place Details lookup when
+//                             the proxy heals a photo name Google has expired
+//                             (healDeadPhoto), behind the same allowPhotoFetch()
+//                             and at most once per place per day. Its SKU is
+//                             Place Details Essentials IDs Only, which Google
+//                             lists at $0 with unlimited free usage, so it is
+//                             marked `photo: true` like a miss and the cost
+//                             panel does not price it as Enterprise Details.
 //
 //   THE UNAUTHENTICATED SHARE, and the sentence that used to be wrong.
 //   SECURITY-AUDIT-money.md M5-1 (MEDIUM). Round 23's commit message said the

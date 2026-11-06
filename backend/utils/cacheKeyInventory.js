@@ -654,6 +654,16 @@ const INVENTORY = [
     why: 'An entry is written only AFTER Google refused the name, which means the caller already paid the metadata charge every other gate in this path meters; filling it costs a charged call per entry. Bounded, expiring, hashed, and cleared on restart with the rest of memory. A transient failure (429, 5xx, timeout) is never written, so the next request for a healthy name still goes upstream.',
   },
   {
+    file: 'routes/venueSearch.js', name: 'healedPlaces', kind: 'cache',
+    key: 'the place id inside a photo name Google refused (`places/{placeId}/photos/...`), shape-checked by utils/places.js isPlaceIdShaped',
+    callerControls: 'the ref, within isPhotoRefShaped; but an entry is written only for a name Google has already refused, and learning that took a metadata call the per-address gate, the shared ledger and the photo budget all charged',
+    protects: 'the photos-only Place Details lookup healDeadPhoto makes (Essentials IDs Only: $0, but a unit of the unauthenticated Places share and of the project quota), and the purchase of the current photo, which a repeat request for any dead name of the place is served without',
+    denominator: 'places, one entry each holding the photoCacheKey hashes of the current photo at 160 and 400, or null when the lookup found nothing to show; 24h TTL',
+    bound: 'MAX_HEALED_PLACES = 5000, oldest out first with delete-before-set; cleared on restart',
+    verdict: 'SAFE',
+    why: 'Writes are bounded by money already spent: an entry follows a refused name, and a name is refused only after chargePhotoFetch let its metadata call through, so a day writes at most PHOTO_FETCH_BURST_PER_DAY (451) entries however many addresses ask, against a ceiling of 5000. The entry is also what holds a place to one lookup a day: it is stamped when the lookup is charged, and while it lives no second lookup is charged. It holds hashes and place ids only. A place id is the part of Places content the terms let us keep, and photoCacheKey cannot give the name back, so nothing here widens what services/photoStore.js keeps or for how long. Pinned by __tests__/photoHeal.test.js.',
+  },
+  {
     file: 'routes/venueSearch.js', name: 'venueCache', kind: 'cache',
     key: '`search:${normalized}|${lat2dp,lng2dp}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js on 2026-08-20, so the duplicate Place Details call the venue detail screen was making could be collapsed onto one shared payload)',
     callerControls: 'the ~80-char free-text query',
@@ -1103,7 +1113,7 @@ const INVENTORY = [
     denominator: 'cache entries, 10 min TTL',
     bound: 'PLACE_DETAILS_CACHE_MAX 500, low-water 450, expire-then-oldest-first with delete-before-set',
     verdict: 'FIXED-THIS-ROUND',
-    why: 'This map is why the venue detail screen costs ONE Place Details call instead of two. routes/venueSearch.js /details and routes/crowd.js were each buying the same payload for the same place id in the same tick (App.js openVenueDetail fires both in one Promise.allSettled), with the crowd mask a strict subset of the details mask, from two caches that could not see each other. The KEY drops the hour that routes/crowd.js carries on its own full:placeId:localHour:localDay entries: that hour protects the DERIVED PREDICTION, which really does change hour to hour, and never protected the Places payload, which does not — so the old key re-bought an identical response on every hour boundary. The CAP is sized the way VENUE_CACHE_MAX is, against what one account can mint: every write is behind one allowPlacesSearch unit and PER_USER_HOURLY is 30 against a 10-minute TTL, so a single account can hold at most 30 live entries against a ceiling of 500. One caller cannot evict the shared working set. The TTL is bounded by currentOpeningHours.openNow, the only field Google computes at request time; everything else in the payload is immutable or moves over days. Birdie\'s get_crowd_prediction (routes/ai.js) reads the same entries: it charges the same per-user allowPlacesSearch ledger, shape-checks the id first, and charges only when willCostUpstreamCall says a new call will be made, so the per-account bound above covers it unchanged.',
+    why: 'This map is why the venue detail screen costs ONE Place Details call instead of two. routes/venueSearch.js /details and routes/crowd.js were each buying the same payload for the same place id in the same tick (App.js openVenueDetail fires both in one Promise.allSettled), with the crowd mask a strict subset of the details mask, from two caches that could not see each other. The KEY drops the hour that routes/crowd.js carries on its own full:placeId:localHour:localDay entries: that hour protects the DERIVED PREDICTION, which really does change hour to hour, and never protected the Places payload, which does not — so the old key re-bought an identical response on every hour boundary. The CAP is sized the way VENUE_CACHE_MAX is, against what one account can mint: every write is behind one allowPlacesSearch unit and PER_USER_HOURLY is 30 against a 10-minute TTL, so a single account can hold at most 30 live entries against a ceiling of 500. One caller cannot evict the shared working set. The TTL is bounded by currentOpeningHours.openNow, the only field Google computes at request time; everything else in the payload is immutable or moves over days. Birdie\'s get_crowd_prediction (routes/ai.js) reads the same entries: it charges the same per-user allowPlacesSearch ledger, shape-checks the id first, and charges only when willCostUpstreamCall says a new call will be made, so the per-account bound above covers it unchanged. The photo proxy\'s heal (fetchPlacePhotos) also reads an entry\'s photos when one is fresh, and never writes one: its own photos-only answers stay out of this map, so nothing unauthenticated adds an entry, and its read only ever drops one already past the TTL.',
   },
   {
     file: 'services/placeDetailsCache.js', name: 'detailsInflight', kind: 'inflight',
@@ -1123,7 +1133,17 @@ const INVENTORY = [
     denominator: 'NOT_FOUND answers (and INVALID_ARGUMENT naming the place id), 6h TTL',
     bound: 'GONE_PLACE_MAX = 2000, oldest out first with delete-before-set',
     verdict: 'SAFE',
-    why: 'Written only after Google answered NOT_FOUND, or INVALID_ARGUMENT with a message naming the place id and no API key reason (utils/placesHealth.js isPlaceNotFoundAnswer), to a call the caller was already charged a unit for. The two cards and Birdie all charge allowPlacesSearch, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries across all three. A 429, a 5xx, a timeout, a dead API key\'s INVALID_ARGUMENT and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart.',
+    why: 'Written only after Google answered NOT_FOUND, or INVALID_ARGUMENT with a message naming the place id and no API key reason (utils/placesHealth.js isPlaceNotFoundAnswer), to a call the caller was already charged a unit for. The two cards and Birdie all charge allowPlacesSearch, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries across all three. A 429, a 5xx, a timeout, a dead API key\'s INVALID_ARGUMENT and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart. The photo proxy\'s heal (fetchPlacePhotos) reads it to skip a lookup for a place Google retired and never writes it, so the writers and the bound above are unchanged.',
+  },
+  {
+    file: 'services/placeDetailsCache.js', name: 'photosInflight', kind: 'inflight',
+    key: 'the same placeId',
+    callerControls: 'the place id inside a photo name Google refused, shape-checked by isPlaceIdShaped in routes/venueSearch.js before it reaches here',
+    protects: 'the photo proxy\'s photos-only Place Details request (PLACE_PHOTOS_FIELD_MASK, Essentials IDs Only) in the concurrent case: a chat list drawing two flocks planned at one venue asks Google once',
+    denominator: 'in-flight promises',
+    bound: 'none, deleted on settle',
+    verdict: 'SAFE',
+    why: 'Self-draining on both arms, so a rejection cannot wedge it. The leader is charged by routes/venueSearch.js healDeadPhoto in the same tick the flight is registered; followers ride for nothing. It is the only place a photos-only answer lives: the answer is a list of photo names, which may not be cached, so it is gone when the flight settles, and it is never written to detailsCache, whose readers would score a payload without rating, review count and price at the corpus median.',
   },
 
   // ── services/poiPlaceResolver.js ──────────────────────────────────────────

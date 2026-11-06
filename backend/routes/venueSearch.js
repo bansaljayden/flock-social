@@ -42,6 +42,10 @@ const {
 // here is the charge and the response shape.
 const {
   willCostUpstreamCall, fetchPlaceDetails,
+  // The photo proxy's heal reads a place's current photo names from the same
+  // module: a cached payload when there is one, else a photos-only ask. See
+  // healDeadPhoto below and PLACE_PHOTOS_FIELD_MASK there.
+  photosLookupWillCost, fetchPlacePhotos,
 } = require('../services/placeDetailsCache');
 // A glyph tapped on the Discover map, turned into a place id with one free
 // IDs-only Text Search. The cost note and the match rule live in that file.
@@ -248,6 +252,29 @@ function dropPhotoEntry(cacheKey) {
   return true;
 }
 
+// One L1 read, for GET /photo and for healDeadPhoto alike: the entry, or null.
+//
+// A hit is what makes the entry recently used; without the re-insert the map
+// is FIFO and the eviction comment above would be a lie.
+//
+// An entry past the window is DELETED here rather than stepped over. This read
+// is the one moment the process is certain these bytes are expired, and merely
+// skipping them kept Places content in memory past the 30-day window until
+// either the cache grew to 32 MB or a deploy threw it away (see
+// prunePhotoMemory). The caller's answer is unchanged: its flight reads L2 or
+// re-buys the photo exactly as it did when the entry was skipped, and
+// storePhoto puts a fresh entry back.
+function readPhotoMemory(cacheKey) {
+  const cached = photoCache.get(cacheKey);
+  if (!cached) return null;
+  if (Date.now() - cached.ts < PHOTO_CACHE_TTL) {
+    touchPhotoCache(cacheKey, cached);
+    return cached;
+  }
+  dropPhotoEntry(cacheKey);
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // THE HEAP SIDE OF THE 30-DAY WINDOW, WHICH NOTHING WAS ENFORCING.
 // ---------------------------------------------------------------------------
@@ -317,9 +344,11 @@ const photoInflight = new Map(); // photo cacheKey -> Promise<descriptor>
 // tiles whose stored photo names Google no longer accepts was five paid
 // metadata calls per render, five 502s in the error rate, and five placeholder
 // birds anyway. Those names are kept here, by the same hash the caches use
-// (the name itself is never stored), for a day, and answered 404 without a
-// charge. Bounded, oldest out first; cleared with the rest of memory on a
-// restart, which is when a re-ask is cheap enough to be worth it.
+// (the name itself is never stored), for a day, and never asked about again
+// for that day: GET /photo answers one with the place's current photo when it
+// can (healDeadPhoto, below) and 404 when it cannot, without a charge for the
+// name either way. Bounded, oldest out first; cleared with the rest of memory
+// on a restart, which is when a re-ask is cheap enough to be worth it.
 const DEAD_PHOTO_REF_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_DEAD_PHOTO_REFS = 5000;
 const deadPhotoRefs = new Map(); // photoCacheKey(ref, 0) -> ts
@@ -345,6 +374,81 @@ function isDeadPhotoRef(photoRef) {
 }
 
 const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer available.' };
+
+// ---------------------------------------------------------------------------
+// A DEAD NAME HEALS TO THE SAME PLACE'S CURRENT PHOTO.
+// ---------------------------------------------------------------------------
+// WHERE DEAD NAMES COME FROM. Every URL this proxy serves carries a Google
+// photo NAME (photoUrl below; routes/ai.js and routes/publicCrowd.js build the
+// same URL), and rows keep that URL long after the search that minted it:
+// flocks.venue_photo_url (the plan's venue, copied as-is into a new plan by
+// POST /flocks/:id/rerun), the venue cards in messages.venue_data and
+// direct_messages.venue_data (and their copies in content_report_evidence),
+// dm_pinned_venues.venue_photo_url and venue_profiles.photo_url. Google
+// expires names ("the name can expire", Place Photos reference), so the
+// chat list's flock tiles asked for names Google answers 400 INVALID_ARGUMENT
+// and drew the placeholder bird on every load.
+//
+// THE PLACE ID IS INSIDE THE NAME (`places/{placeId}/photos/{photo}`), and a
+// place id is the one part of it the terms let us keep. So healDeadPhoto
+// answers a dead name with that place's CURRENT first photo:
+//   * its current names come from services/placeDetailsCache.js
+//     fetchPlacePhotos: free from a fresh venue-card payload or one already in
+//     flight, else ONE photos-only Place Details request, which Google bills as
+//     "Place Details Essentials IDs Only": $0, unlimited free usage. It is
+//     still charged to the per-address gate and the shared Places ledger
+//     before it is sent, as the photo proxy's own unit;
+//   * the bytes then come through fetchPhotoOnce like any other photo, so L1,
+//     L2, the gates and the photo budget apply to them unchanged, and a
+//     current photo some card has already bought costs nothing more.
+//
+// SERVE TIME ONLY; NOTHING STORED IS REPAIRED. Writing the current name back
+// into a flock row would store a photo NAME for months, which the Place Photos
+// reference refuses ("You cannot cache a photo name") and services/photoStore.js
+// keeps to in terms, and it would expire in its turn.
+//
+// WHAT IS REMEMBERED, PER PLACE, FOR A DAY (healedPlaces): the photoCacheKey
+// of the current photo at both widths, which is a hash and never the name, or
+// null when the lookup found nothing to show. A repeat request for ANY dead
+// name of that place is then served from L1 or L2 with no Google call, and the
+// entry is what holds a place to one lookup a day: it is written the moment a
+// lookup is charged, and while it lives no second lookup is charged.
+//
+// BOUNDED. An entry follows a dead name, and a name becomes dead only after a
+// metadata call the photo budget charged, so writes are bounded by its daily
+// brake (PHOTO_FETCH_BURST_PER_DAY, 451) whoever is asking; MAX_HEALED_PLACES
+// sits well above a day of that. Oldest out first, cleared on restart.
+//
+// A HEAL THAT CANNOT FINISH (no photos, a refusal, an error) answers PHOTO_GONE,
+// the same 404 a dead name got before, and the app draws the bird as it did.
+const HEALED_PLACE_TTL_MS = DEAD_PHOTO_REF_TTL_MS;
+const MAX_HEALED_PLACES = 5000;
+const healedPlaces = new Map(); // placeId -> { keys: { 160, 400 } | null, ts }
+
+// `places/{placeId}/photos/{photo}` -> placeId, or null when that segment is not
+// shaped like a place id (utils/places.js), so nothing else is ever looked up.
+function placeIdOfPhotoRef(photoRef) {
+  const m = /^places\/([^/]+)\/photos\//.exec(String(photoRef || ''));
+  return m && isPlaceIdShaped(m[1]) ? m[1] : null;
+}
+
+function readHealedPlace(placeId) {
+  const entry = healedPlaces.get(placeId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts >= HEALED_PLACE_TTL_MS) {
+    healedPlaces.delete(placeId);
+    return null;
+  }
+  return entry;
+}
+
+function rememberHealedPlace(placeId, keys) {
+  healedPlaces.delete(placeId);
+  healedPlaces.set(placeId, { keys, ts: Date.now() });
+  while (healedPlaces.size > MAX_HEALED_PLACES) {
+    healedPlaces.delete(healedPlaces.keys().next().value);
+  }
+}
 
 // What Google said, bounded, for the log. The body is JSON with an
 // error.message on a 400; anything else is still worth a glance.
@@ -505,25 +609,10 @@ router.get('/photo',
       }
 
       // L1, this container's memory. Free, and the only tier that costs nothing
-      // at all to consult.
-      const cached = photoCache.get(cacheKey);
-      if (cached) {
-        if (Date.now() - cached.ts < PHOTO_CACHE_TTL) {
-          // A hit is what makes this entry recently used; without the re-insert
-          // the map is FIFO and the eviction comment above would be a lie.
-          touchPhotoCache(cacheKey, cached);
-          return sendPhoto(res, cached, cacheKey);
-        }
-        // Past the window, so the entry is DELETED here rather than stepped
-        // over. This read is the one moment the process is certain these bytes
-        // are expired, and merely skipping them kept Places content in memory
-        // past the 30-day window until either the cache grew to 32 MB or a
-        // deploy threw it away (see prunePhotoMemory). The answer the caller
-        // gets is unchanged: the flight below reads L2 or re-buys the photo
-        // exactly as it did when the entry was skipped, and storePhoto puts a
-        // fresh entry back.
-        dropPhotoEntry(cacheKey);
-      }
+      // at all to consult. readPhotoMemory moves a hit to the back of the LRU
+      // order and deletes an entry past the window.
+      const cached = readPhotoMemory(cacheKey);
+      if (cached) return sendPhoto(res, cached, cacheKey);
 
       // Everything past L1 rides ONE flight per key: the L2 database read, the
       // gates, and the Google call. A concurrent request for the same photo
@@ -532,13 +621,11 @@ router.get('/photo',
       // viewers are waiting on it. The gates moved INSIDE the flight when L2
       // arrived, because a photo already in Postgres must not be refused by a
       // spending limit: it costs nothing to serve.
-      let flight = photoInflight.get(cacheKey);
-      if (!flight) {
-        flight = fetchPhotoOnce(photoRef, maxWidth, cacheKey, req);
-        photoInflight.set(cacheKey, flight);
-        flight.then(() => photoInflight.delete(cacheKey));
-      }
-      const out = await flight;
+      //
+      // `heal` is this route's alone. A name Google has expired comes back as
+      // the same place's current photo (healDeadPhoto); warmPhoto, which only
+      // ever holds names a search just returned, leaves it off.
+      const out = await photoFlight(photoRef, maxWidth, cacheKey, req, { heal: true });
       if (out.status !== 200) {
         // The header, not only the body. This response is what an <img> tag
         // receives, and an <img> never reads a JSON body: Retry-After is the
@@ -665,11 +752,28 @@ function sendPhoto(res, { buffer, contentType, ts }, cacheKey) {
   res.send(buffer);
 }
 
+// The ONE flight per cache key that the in-flight note above describes, for
+// GET /photo and for healDeadPhoto alike, so a heal that wants a photo another
+// request is already buying rides that purchase instead of making its own.
+function photoFlight(photoRef, maxWidth, cacheKey, req, opts) {
+  let flight = photoInflight.get(cacheKey);
+  if (!flight) {
+    flight = fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, opts);
+    photoInflight.set(cacheKey, flight);
+    flight.then(() => photoInflight.delete(cacheKey));
+  }
+  return flight;
+}
+
 // The worker behind the photo proxy. Never rejects: resolves to
 // { status: 200, buffer, contentType, ts } or { status, error }, so a failure
 // reaches every coalesced waiter as the same clean response and is never
 // written to photoCache — only a real image is.
-async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
+//
+// `heal: true` (GET /photo only) turns the two PHOTO_GONE answers for a name
+// Google has refused into healDeadPhoto's answer: the same place's current
+// photo, or that same PHOTO_GONE when there is none to give.
+async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false } = {}) {
   try {
     // Step 0: L2, the durable cache in Postgres. This is the tier that makes a
     // deploy free. It is consulted BEFORE any gate, because serving bytes we
@@ -685,7 +789,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // Step 0-and-a-half: a name Google already refused today. Answered before
     // every gate below, because it costs nothing and would otherwise cost a
     // paid call, again, for the same no.
-    if (isDeadPhotoRef(photoRef)) return PHOTO_GONE;
+    if (isDeadPhotoRef(photoRef)) return heal ? healDeadPhoto(photoRef, maxWidth, req) : PHOTO_GONE;
 
     // Step 0a: the abuse gate. Per address, on MISSES only, so one script cannot
     // spend a budget everyone draws on. Nothing about money is decided here.
@@ -782,7 +886,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
       if (googleSaysNameIsBad(metaRes.status, why)) {
         recordPlacesResult(true, null, PHOTOS);
         rememberDeadPhotoRef(photoRef);
-        return PHOTO_GONE;
+        return heal ? healDeadPhoto(photoRef, maxWidth, req) : PHOTO_GONE;
       }
       recordPlacesResult(false, `HTTP ${metaRes.status}`, PHOTOS);
       // A quota refusal (429) or a key or billing refusal (403) is Google
@@ -834,6 +938,88 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
   } catch (err) {
     console.error('[Photo Proxy] Error:', err.message, '| ref:', photoRef.slice(0, 60));
     return { status: 500, error: 'That photo could not be loaded. Try again in a moment.' };
+  }
+}
+
+const servedEntry = (e) => ({ status: 200, buffer: e.buffer, contentType: e.contentType, ts: e.ts });
+
+// A healed place's current photo, from the tiers that cost nothing: L1, a
+// purchase already in flight, then L2. The asked-for width first, then the
+// other, because a 400px photo drawn at 160 beats the bird and buying the
+// second width would be a second purchase. Null when no tier holds either.
+async function heldHealedPhoto(keys, maxWidth) {
+  for (const width of maxWidth === 160 ? [160, 400] : [400, 160]) {
+    const key = keys[width];
+    const mem = readPhotoMemory(key);
+    if (mem) return servedEntry(mem);
+    const flight = photoInflight.get(key);
+    if (flight) {
+      const out = await flight;
+      if (out.status === 200) return out;
+      continue;
+    }
+    const stored = await readStoredPhoto(key);
+    if (stored) {
+      storePhoto(key, stored);
+      return servedEntry(stored);
+    }
+  }
+  return null;
+}
+
+// Answer a name Google has refused with the same place's CURRENT first photo,
+// or PHOTO_GONE. The block above healedPlaces says why and what it costs.
+// Never rejects.
+async function healDeadPhoto(deadRef, maxWidth, req) {
+  try {
+    const placeId = placeIdOfPhotoRef(deadRef);
+    if (!placeId) return PHOTO_GONE;
+
+    // Healed already today: the current photo by its hash, no Google call.
+    const healed = readHealedPlace(placeId);
+    if (healed && healed.keys) {
+      const held = await heldHealedPhoto(healed.keys, maxWidth);
+      if (held) return held;
+    }
+
+    // The place's current photo names. NO `await` FROM THE QUESTION TO THE
+    // CALL: photosLookupWillCost is only true for this tick, and the stamp is
+    // what makes any later request for this place wait a day for a lookup.
+    // Free answers (a cached or in-flight payload, a place Google already said
+    // is gone) skip every gate, because they cost nothing.
+    if (photosLookupWillCost(placeId)) {
+      // Looked up, or healed, within the day: the once-a-day rule stands.
+      if (healed) return PHOTO_GONE;
+      // The same two gates the metadata call passes. The unit is marked as
+      // the photo proxy's: the SKU is $0, and the cost panel prices every
+      // unmarked unit as Enterprise Place Details or Text Search.
+      if (!allowPhotoFetch(req) || !allowGlobalPlacesCall(1, { photo: true })) return PHOTO_GONE;
+      rememberHealedPlace(placeId, null);
+    }
+    const out = await fetchPlacePhotos(placeId);
+    if (!out.ok) return PHOTO_GONE;
+
+    // The first current photo, skipping the refused name itself and any name
+    // already known dead, so a heal can never loop back into one.
+    const current = out.photos
+      .map((photo) => photo && photo.name)
+      .find((name) => isPhotoRefShaped(name) && name !== deadRef && !isDeadPhotoRef(name));
+    if (!current) return PHOTO_GONE;
+
+    // Hashes, never the name (see healedPlaces). Written before the bytes are
+    // fetched, and in the same tick as the flight below, so a request for
+    // another dead name of this place rides this purchase.
+    const keys = { 160: photoCacheKey(current, 160), 400: photoCacheKey(current, 400) };
+    rememberHealedPlace(placeId, keys);
+    const mem = readPhotoMemory(keys[maxWidth]);
+    if (mem) return servedEntry(mem);
+    // No `heal`: the current name goes through fetchPhotoOnce like any other,
+    // and if Google refuses it too the answer is PHOTO_GONE, not another heal.
+    const fresh = await photoFlight(current, maxWidth, keys[maxWidth], req);
+    return fresh.status === 200 ? fresh : PHOTO_GONE;
+  } catch (err) {
+    console.error('[Photo Proxy] heal failed:', err.message);
+    return PHOTO_GONE;
   }
 }
 
@@ -1548,6 +1734,15 @@ module.exports.prunePhotoMemory = prunePhotoMemory;
 module.exports.__test = {
   deadPhotoRefs,
   DEAD_PHOTO_REF_TTL_MS,
+  MAX_DEAD_PHOTO_REFS,
+  rememberDeadPhotoRef,
+  // The heal (__tests__/photoHeal.test.js).
+  healedPlaces,
+  HEALED_PLACE_TTL_MS,
+  MAX_HEALED_PLACES,
+  rememberHealedPlace,
+  placeIdOfPhotoRef,
+  photoInflightSize: () => photoInflight.size,
   // Round 23 — the two sized-against-something numbers and the constants they
   // are sized against, so the inequalities are pinned from one source.
   VENUE_CACHE_MAX,
