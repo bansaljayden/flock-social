@@ -92,6 +92,19 @@ function moneyMoveQuestion(block) {
   return quietDayQuestion(block);
 }
 
+// A SHUT DAY HAS NO RUSH TO STAFF (final review, 2026-11-06). "Your Google
+// listing has you closed today." was followed by "How should I staff today?",
+// and a weekend shut by "How do I get more out of a busy weekend?". After an
+// answer that opens on the venue being shut, today or for a weekend, no money
+// question is offered, and the chip is the week ahead, the days it is open.
+// advisorFacts is read when asked for, as advisorPhrasing reads it.
+const shutMarks = () => require('./advisorFacts');
+function opensShut(block) {
+  const first = block && Array.isArray(block.facts) ? block.facts[0] : null;
+  const id = first ? String(first.sourceId || first.id) : '';
+  return id === shutMarks().TODAY_CLOSED_ID || id === shutMarks().WEEKEND_CLOSED_ID;
+}
+
 function same(a, b) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   return norm(a) === norm(b);
@@ -113,9 +126,10 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
   const out = [];
   const advice = mode === 'advice';
   const next = intentId ? NEXT[intentId] : null;
+  const shut = !advice && opensShut(block);
 
   let ask = followUp;
-  if (!ask && !advice && next) {
+  if (!ask && !advice && next && !shut) {
     if (intentId === 'quiet_nights') ask = quietDayQuestion(block);
     else if (intentId === 'money_move') ask = moneyMoveQuestion(block);
     else ask = next.question;
@@ -124,9 +138,10 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
   // others (roostPlaybook.restates).
   if (ask && !same(ask, question) && !restates(ask, question)) out.push({ kind: 'question', text: ask });
 
-  const chip = advice
+  let chip = advice
     ? intentId || (topic && TOPIC_INTENT[topic]) || null
     : (next && next.intent) || null;
+  if (shut) chip = 'peak_hours';
   if (chip && (advice || chip !== intentId) && isKnownIntent(chip)) {
     out.push({ kind: 'intent', id: chip, label: ADVISOR_INTENTS[chip].chip });
   }

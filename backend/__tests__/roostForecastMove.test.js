@@ -2756,3 +2756,34 @@ test('a block of facts that are their own sentence alone costs no model call and
     pool.query = realQuery;
   }
 });
+
+test('after an answer that opens on the venue being shut, today or for a weekend, the week ahead is offered, and no staffing or busy-weekend question', async () => {
+  // Until the final review (2026-11-06) "Your Google listing has you closed
+  // today." was followed by "How should I staff today?", and a shut weekend
+  // by "How do I get more out of a busy weekend?".
+  const weekAhead = [{ kind: 'intent', id: 'peak_hours', label: advisorPhrasing.ADVISOR_INTENTS.peak_hours.chip }];
+  await pinnedAt('2026-11-08T15:00:00Z', async () => {
+    bakeryAt({ placeId: 'ChIJr5ShutFollowUpSun0000', shut: 0 });
+    for (const intentId of ['tonight_outlook', 'weekend_outlook']) {
+      const r = await call('/api/venue/advisor/ask', { intentId });
+      assert.ok(/^Your Google listing has you closed /.test(r.body.text), r.body.text);
+      assert.deepStrictEqual(r.body.followUps, weekAhead, `${intentId}: ${JSON.stringify(r.body.followUps)}`);
+    }
+  });
+  await pinnedAt('2026-11-09T15:00:00Z', async () => {
+    bakeryAt({ placeId: 'ChIJr5ShutFollowUpMon0000' });
+    placePeriods = periodsOf({ 1: [6, 14], 2: [6, 14], 3: [6, 14], 4: [6, 14] });
+    process.env.ADVISOR_PHRASING_ENABLED = 'true';
+    draftFor = () => null;
+    let r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed this weekend.');
+    assert.deepStrictEqual(r.body.followUps, weekAhead, JSON.stringify(r.body.followUps));
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    r = await call('/api/venue/advisor/question', { question: 'What does next weekend look like?' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed over the coming weekend, Nov 13 to 15.');
+    assert.deepStrictEqual(r.body.followUps, weekAhead, JSON.stringify(r.body.followUps));
+    // An open today still offers the staffing question.
+    const open = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+    assert.ok(open.body.followUps.some((f) => f.kind === 'question' && f.text === 'How should I staff today?'), JSON.stringify(open.body.followUps));
+  });
+});
