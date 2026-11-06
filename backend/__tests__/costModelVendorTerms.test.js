@@ -24,6 +24,16 @@ test('the domain renews at cost with ICANN\'s $0.20 fee', () => {
   assert.match(domain.note, /\$0\.20 fee/);
 });
 
+test('the domain keeps the date its price was last read, because its source states no .com price', () => {
+  // cloudflare.com/products/registrar says only that it charges at cost. On
+  // 2026-11-06 it still named no .com figure, so the $11.17 was not re-read
+  // that day and the 2026-10-03 check stands.
+  const domain = find(cm.FIXED_ANNUAL, 'domain');
+  assert.strictEqual(domain.source, 'https://www.cloudflare.com/products/registrar/');
+  assert.strictEqual(domain.checked, '2026-10-03');
+  assert.match(domain.note, /on 2026-11-06 the registrar page named no \.com price, so the date stays/);
+});
+
 test('Railway volume and point-in-time recovery are priced the way Railway bills them', () => {
   assert.match(watch('postgres-images').note, /\$0\.15 per GB per month/);
   assert.doesNotMatch(watch('postgres-images').note, /0\.22/);

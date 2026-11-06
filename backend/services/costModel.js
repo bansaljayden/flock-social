@@ -487,9 +487,12 @@ const FIXED_ANNUAL = [
     usd: 11.17,
     verified: false,
     kind: 'infrastructure',
-    checked: '2026-11-06',
+    // Not moved on 2026-11-06: the registrar page still says only that it
+    // charges at cost and names no .com price, so nothing re-read the $11.17
+    // that day.
+    checked: '2026-10-03',
     source: 'https://www.cloudflare.com/products/registrar/',
-    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 since 2026-11-01, when the wholesale price rose to $10.97, so the next renewal is $11.17. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
+    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 since 2026-11-01, when the wholesale price rose to $10.97, so the next renewal is $11.17. Checked 2026-10-03; on 2026-11-06 the registrar page named no .com price, so the date stays. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
   },
 ];
 
