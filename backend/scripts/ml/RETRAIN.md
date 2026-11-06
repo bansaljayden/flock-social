@@ -189,11 +189,17 @@ November export.**
   Overview's "Made by" row names the mix (`services/moneyHub.js` readServing
   and the revenue screen). The Birdie eval reads `CROWD_SERVE_MODE` through
   the serving code's readers, so under the mix its fixture answers take the
-  model where a venue has an hour-old reading and the curve elsewhere
-  (`scripts/birdie/birdieEval.js`, pinned by
-  `__tests__/birdieEvalServeModes.test.js`). A model number from an artifact
-  that reads the live features says `usedLiveReadings: true` when the hour-old
-  reading or the trailing offset was one of its inputs
+  model where a venue has an hour-old reading and the curve elsewhere. Its
+  model side answers as the artifact serving loads, read from that
+  artifact's metadata, and `--artifact=F` names a candidate's
+  `model_metadata.json` to run it before the ship. As a retrained artifact
+  that reads the live features, a venue with an hour-old reading tells
+  Birdie no `crowd_method`, live readings yes and the artifact's own
+  confidence figure, and every other number carries the figure serving
+  publishes for the arithmetic that made it (`scripts/birdie/birdieEval.js`,
+  pinned by `__tests__/birdieEvalServeModes.test.js`). A model number from
+  an artifact that reads the live features says `usedLiveReadings: true`
+  when the hour-old reading or the trailing offset was one of its inputs
   (`liveFeaturesUsedReadings` in `services/mlPredictor.js`, pinned by
   `__tests__/mlFeatureFamiliesServe.test.js`); until 2026-11-06 it said
   false there, because such a model takes no offset after it and a retrained
