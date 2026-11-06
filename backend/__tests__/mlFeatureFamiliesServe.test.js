@@ -11,7 +11,9 @@
 // stand-in that records its input and answers a delta of zero.
 //
 // It also pins that such an artifact is not handed the trailing offset a
-// second time after the model (artifactLearnsOffset).
+// second time after the model (artifactLearnsOffset), and that its numbers say
+// a live reading is in them exactly when one was in the graph's inputs
+// (liveFeaturesUsedReadings, usedLiveReadings, liveReadingsReached).
 //
 // No database, no network. Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -125,4 +127,162 @@ test('predictBusyness hands a live-and-sports artifact the vector the band repla
     delete require.cache[PREDICTOR];
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── Whether such an artifact's numbers say a live reading is in them ───────
+//
+// A model that takes the live features is handed no offset after it
+// (artifactLearnsOffset), and under a version the nowcast tables were not
+// fitted on, no nowcast either, so the offset and the nowcast alone said "no
+// live readings" about every number it made, the hour-old reading among its
+// inputs included. That is the number model_when_fresh serves wherever the
+// reading is fresh, and what Birdie is told about it (live_readings).
+
+const SWITCHES = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED', 'CROWD_NO_CURVE_FALLBACK'];
+
+// The fixture through predictBusyness under `env`, for v2.6.0-starling's
+// metadata with the live family appended, the graph a stand-in that records
+// its input. Each response comes back with the vector its graph was handed
+// (null where no graph ran: a rule-engine exit or the curve_offset side).
+// `version` replaces the artifact's version, as a retrained artifact's would.
+async function serveLiveArtifact(env, { version = null } = {}) {
+  const fx = FX.buildFixture();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-live-readings-'));
+  const csv = path.join(dir, 'fixture.csv');
+  FX.writeFixtureCsv(csv, fx);
+  const pool = require('../config/database');
+  const realQuery = pool.query;
+  const moments = new Map();
+  const stub = FX.makeFixturePool(fx, (alias) => moments.get(alias));
+  pool.query = (text, params) => stub.query(text, params);
+  const saved = Object.fromEntries(SWITCHES.map((k) => [k, process.env[k]]));
+  for (const k of SWITCHES) delete process.env[k];
+  Object.assign(process.env, env);
+  const quiet = [console.log, console.warn, console.error];
+  try {
+    B.pinUtcClock();
+    const corpus = await B.readCorpus([csv]);
+    delete require.cache[PREDICTOR];
+    const predictor = require(PREDICTOR);
+    console.log = () => {};
+    console.warn = () => {};
+    console.error = () => {};
+    assert.equal(await predictor.init(), true);
+    const I = predictor._internals;
+    const meta = I.getMetadata();
+    meta.feature_names = [...meta.feature_names, ...I.LIVE_FEATURE_NAMES];
+    if (version) meta.model_version = version;
+    assert.equal(I.artifactLearnsOffset(), true);
+    const session = I.getSession();
+    const inputName = meta.onnx_input_name || 'input';
+    const outName = session.outputNames[0];
+    let captured = null;
+    session.run = async (feeds) => {
+      captured = Array.from(feeds[inputName].data);
+      return { [outName]: { data: new Float32Array([0]) } };
+    };
+    const prepared = B.prepareRows(corpus.live, corpus, { I, crowdEngine });
+    const rows = [];
+    for (let i = 0; i < prepared.length; i++) {
+      const r = prepared[i];
+      const alias = `ChIJliveReadings_${r.venueId}_${i}`;
+      moments.set(alias, { venueId: Number(r.venueId), date: r.date, hour: r.hour });
+      captured = null;
+      const res = await predictor.predictBusyness({ ...r.venue, place_id: alias }, r.weather, r.ts);
+      const vec = captured;
+      const at = (n) => vec[meta.feature_names.indexOf(n)];
+      rows.push({ res, ran: vec !== null, at });
+    }
+    assert.deepEqual(stub.unknown, []);
+    return { rows, I, liveReadingsReached: predictor.liveReadingsReached };
+  } finally {
+    [console.log, console.warn, console.error] = quiet;
+    pool.query = realQuery;
+    for (const k of SWITCHES) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    delete require.cache[PREDICTOR];
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+for (const [label, env, version = null] of [
+  ['with every switch off', {}],
+  ['as production serves today (model, nowcast on)', { CROWD_SERVE_MODE: 'model', CROWD_NOWCAST_ENABLED: 'true' }],
+  ['under model_when_fresh with the nowcast on', { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' }],
+  ['under model_when_fresh with the nowcast off', { CROWD_SERVE_MODE: 'model_when_fresh' }],
+  // The November ship: a retrained version, which the model nowcast tables
+  // were not fitted on (nowcastBaseKey), so its model side carries no nowcast
+  // and the reading in its inputs is the only live reading in its numbers.
+  ['under model_when_fresh with the nowcast on, for a retrained version', { CROWD_SERVE_MODE: 'model_when_fresh', CROWD_NOWCAST_ENABLED: 'true' }, '2.8.0-retrained'],
+]) {
+  test(`a live-feature artifact's number says yes to live readings exactly when one reached it, ${label}`, async () => {
+    const { rows, I, liveReadingsReached } = await serveLiveArtifact(env, { version });
+    const switched = Object.keys(env).length > 0;
+    let held = 0;
+    let none = 0;
+    let modelSide = 0;
+    for (const [i, { res, ran, at }] of rows.entries()) {
+      if (res.predictionMethod !== 'ml') continue;
+      if (!ran) {
+        // The curve_offset side: no graph, so nothing is said about its inputs.
+        assert.equal(res.serveMode, 'curve_offset', `row ${i}`);
+        assert.ok(!('liveFeaturesUsedReadings' in res), `row ${i}`);
+        assert.equal(res.usedLiveReadings, Boolean(res.recentDeviation || res.nowcast), `row ${i}`);
+        continue;
+      }
+      const read = at('last_live_age_h') !== I.LIVE_MISSING_AGE_H || at('recent_offset_n') > 0;
+      if (read) held++; else none++;
+      assert.equal(res.recentDeviation, null, `row ${i}: no offset after a model that took it as an input`);
+      const want = read || Boolean(res.nowcast);
+      if (switched) assert.equal(res.usedLiveReadings, want, `row ${i}: usedLiveReadings`);
+      else assert.ok(!('usedLiveReadings' in res), `row ${i}: a switched-off response gains no switch key`);
+      assert.equal(liveReadingsReached(res), want, `row ${i}: what Birdie and the strip are told`);
+      assert.equal(res.liveFeaturesUsedReadings, read, `row ${i}: what the graph was handed`);
+      if (res.freshMix) {
+        // The mix runs the model only on an hour-old reading, which is one of
+        // its inputs, so every number its model side makes says yes.
+        assert.equal(res.freshMix.answered, 'model');
+        assert.equal(at('last_live_age_h'), 1, `row ${i}`);
+        assert.equal(res.usedLiveReadings, true, `row ${i}`);
+        if (version) assert.equal(res.nowcast, null, `row ${i}: no nowcast for a version its tables were not fitted on`);
+        modelSide++;
+      }
+    }
+    assert.ok(held > 20, `too few numbers with a reading in their inputs (${held})`);
+    if (env.CROWD_SERVE_MODE === 'model_when_fresh') assert.ok(modelSide > 20, `too few fresh numbers (${modelSide})`);
+    else assert.ok(none > 0, 'the fixture has a model number with no reading in its inputs');
+  });
+}
+
+test('only a feature the artifact lists, and never the curve an hour earlier, counts as a live reading in its inputs', () => {
+  const I = require(PREDICTOR)._internals;
+  const all = { feature_names: ['hour', ...I.LIVE_FEATURE_NAMES] };
+  const only = (...names) => ({ feature_names: ['hour', ...names] });
+  const reading = { ...I.LIVE_FEATURE_DEFAULTS, last_live_dev: -12, last_live_age_h: 1, curve_prev_hour: 40 };
+  const offset = { ...I.LIVE_FEATURE_DEFAULTS, recent_offset: 6, recent_offset_n: 3, curve_prev_hour: 40 };
+  const curveOnly = { ...I.LIVE_FEATURE_DEFAULTS, curve_prev_hour: 40 };
+  assert.equal(I.liveFeaturesUsedReadings(I.LIVE_FEATURE_DEFAULTS, all), false);
+  assert.equal(I.liveFeaturesUsedReadings(null, all), false);
+  assert.equal(I.liveFeaturesUsedReadings(curveOnly, all), false, 'the curve is not a reading');
+  assert.equal(I.liveFeaturesUsedReadings(reading, all), true);
+  assert.equal(I.liveFeaturesUsedReadings(offset, all), true);
+  // A reading the newest-reading features carry, read only by an artifact listing one of them.
+  assert.equal(I.liveFeaturesUsedReadings(reading, only('last_live_age_h')), true);
+  assert.equal(I.liveFeaturesUsedReadings(reading, only('last_live_dev')), true);
+  assert.equal(I.liveFeaturesUsedReadings(reading, only('recent_offset', 'recent_offset_n', 'curve_prev_hour')), false);
+  // The offset, read only by an artifact listing one of its two features.
+  assert.equal(I.liveFeaturesUsedReadings(offset, only('recent_offset_n')), true);
+  assert.equal(I.liveFeaturesUsedReadings(offset, only('recent_offset')), true);
+  assert.equal(I.liveFeaturesUsedReadings(offset, only('last_live_dev', 'last_live_age_h', 'curve_prev_hour')), false);
+  // A reading whose value equals the curve (last_live_dev 0) is still a reading.
+  assert.equal(I.liveFeaturesUsedReadings({ ...reading, last_live_dev: 0 }, only('last_live_dev')), true);
+  // Off a stored row, through liveFeatureValues: an 18:00 reading for 19:00
+  // is a yes, and the same row scored at 18:00 (its own hour) is a no.
+  const slot = (hour) => I.slotDayNumber('2026-09-06') * 24 + hour;
+  const row = { readings: I.parseRecentReadings([{ v: 55, d: '2026-09-06', h: 18 }]), offsetReadings: null, fresh: true };
+  assert.equal(I.liveFeaturesUsedReadings(I.liveFeatureValues(row, slot(19), 40, 38), all), true);
+  assert.equal(I.liveFeaturesUsedReadings(I.liveFeatureValues(row, slot(18), 40, 38), all), false);
+  delete require.cache[PREDICTOR];
 });

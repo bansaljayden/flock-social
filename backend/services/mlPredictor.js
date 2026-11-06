@@ -3148,6 +3148,26 @@ function liveFeatureValues(entry, targetSlot, baseline, curvePrevHour) {
 }
 const LIVE_FEATURE_DEFAULTS = Object.freeze(liveFeatureValues(null, null, 0, 0));
 
+// WHETHER A LIVE READING REACHED THE MODEL AS AN INPUT: whether the values
+// liveFeatureValues handed the graph hold anything read from the venue's live
+// readings, in a feature the artifact lists. The newest earlier reading is in
+// last_live_dev and last_live_age_h, the strict offset in recent_offset and
+// recent_offset_n. curve_prev_hour is the curve, not a reading, so an artifact
+// that lists only it reads none. At LIVE_FEATURE_DEFAULTS nothing was read.
+// Such a model takes no offset after it (artifactLearnsOffset) and, under a
+// version the nowcast tables were not fitted on, no nowcast either, so without
+// this its numbers said usedLiveReadings: false while the hour-old reading was
+// one of their inputs.
+function liveFeaturesUsedReadings(live, meta = metadata) {
+  if (!live) return false;
+  const names = artifactFeatureNames(meta);
+  const reading = live.last_live_age_h !== LIVE_MISSING_AGE_H
+    && (names.includes('last_live_dev') || names.includes('last_live_age_h'));
+  const offset = live.recent_offset_n > 0
+    && (names.includes('recent_offset') || names.includes('recent_offset_n'));
+  return reading || offset;
+}
+
 // ---------------------------------------------------------------------------
 // THE SPORTS FEATURES: IS A TRACKED TEAM PLAYING TONIGHT, AND HOW NEAR.
 //
@@ -4887,6 +4907,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
 
     const ort = require('onnxruntime-node');
     let score;
+    // Whether the model's own live features held a reading (see
+    // liveFeaturesUsedReadings): null unless the graph ran with them.
+    let liveFeatureReadings = null;
     if (curveOffsetMode) {
       // The venue's own curve at this hour, the value blendBaselineRows
       // served. No model delta and no quantile map; the trailing offset joins
@@ -4915,6 +4938,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
             getBaseline(placeId, prevDay, prevHour, userId),
           ]);
           context.live = liveFeatureValues(entry, venueSlotOf(ts), baseline, curvePrev);
+          liveFeatureReadings = liveFeaturesUsedReadings(context.live);
         }
         if (artifactReadsSportsFeatures()) context.sports = await getSportsTable();
       }
@@ -5166,6 +5190,14 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       recentDeviation: deviationApplied,
     };
 
+    // Whether the model's own live features held a reading, present only for
+    // an artifact that lists them and only on a number its graph made, so an
+    // artifact that lists none (v2.6.0-starling) carries exactly the keys it
+    // did. Internal like recentDeviation. With the serving switches off it is
+    // how liveReadingsReached knows a live reading is in such a number, since
+    // that model takes no offset after it.
+    if (liveFeatureReadings !== null) response.liveFeaturesUsedReadings = liveFeatureReadings;
+
     // The two switches' own account of this number, present only while either
     // is on, so a switched-off response carries exactly the keys it always
     // did. Internal, like recentDeviation: routes name the fields they
@@ -5181,8 +5213,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       // answer is null whenever the strict offset happens to land on the
       // stored one's score, and a live offset may still be in such a number,
       // so its absence cannot mean "no live readings". True when an offset of
-      // live readings or a nowcast reading moved the number, false otherwise.
-      response.usedLiveReadings = Boolean(deviationApplied || nowcastApplied);
+      // live readings or a nowcast reading moved the number, or when the
+      // model read one as an input (liveFeaturesUsedReadings), false otherwise.
+      response.usedLiveReadings = Boolean(deviationApplied || nowcastApplied || liveFeatureReadings);
       // Under model_when_fresh, which side answered and the age in hours of
       // the newest earlier reading it was decided on (null when there is none
       // within NOWCAST_MAX_LAG_HOURS). serveMode above names the same side;
@@ -5280,13 +5313,15 @@ function hourlyAttributionOn() {
 // both serving switches off the model's number still carries the stored
 // offset, a median of the venue's live readings, and says nothing about it, so
 // the offset it recorded (recentDeviation, set whenever one was applied)
-// answers instead. A rule-engine or category-table number read no live
-// reading. A switched-off hour that only said "no" would be telling Birdie
-// never to mention live readings that are in the number.
+// answers instead, and for an artifact that reads the live features, whether
+// they held a reading (liveFeaturesUsedReadings): that model takes no offset
+// after it. A rule-engine or category-table number read no live reading. A
+// switched-off hour that only said "no" would be telling Birdie never to
+// mention live readings that are in the number.
 function liveReadingsReached(result) {
   if (!result) return false;
   if (typeof result.usedLiveReadings === 'boolean') return result.usedLiveReadings;
-  return Boolean(result.recentDeviation);
+  return Boolean(result.recentDeviation || result.liveFeaturesUsedReadings === true);
 }
 
 // ONE HOUR OF A STRIP, built from the answer predictBusyness gave for it.
@@ -5952,6 +5987,7 @@ module.exports = {
     artifactReadsLiveFeatures,
     artifactLearnsOffset,
     liveFeatureValues,
+    liveFeaturesUsedReadings,
     SPORTS_FEATURE_NAMES,
     SPORTS_DIST_CAP_KM,
     SPORTS_LOCAL_KM,
