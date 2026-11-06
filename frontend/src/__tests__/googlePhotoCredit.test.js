@@ -9,10 +9,17 @@
  *
  *   - components/ui/GoogleCredit.js draws a credit only from Google links over
  *     https, and the mark to Google's spec;
- *   - the venue sheet credits the photo on screen and carries the mark;
+ *   - the venue sheet credits the photo on screen and carries the mark, and
+ *     draws a seed photo only with its credit (2026-11-06);
  *   - each Happening-here card credits the photo it is drawn over, and a card
  *     on the drawn art or over a failed photo credits nobody;
- *   - the lists and cards that show Places data carry the mark.
+ *   - the plan screen's header draws its photo with the credit the server
+ *     works out when the plan opens (lib/planPhotoCredit.js), else its map;
+ *   - every thumbnail reaches the credited sheet: chat and DM venue cards,
+ *     the pinned venue, the Create screen's pick, and a vote or share row's
+ *     photo through a button of its own (ThumbToSheet);
+ *   - the lists, cards, strips and the map that show Places data carry the
+ *     mark, and every Places photo drawn large carries its credit.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npm test -- --watchAll=false --testPathPattern=googlePhotoCredit
@@ -20,7 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, within } = require('@testing-library/react');
+const { render, screen, fireEvent, within, waitFor, act } = require('@testing-library/react');
 
 jest.mock('../components/ui/MapsChooser', () => ({
   __esModule: true,
@@ -32,14 +39,19 @@ jest.mock('../services/api', () => ({
   __esModule: true,
   submitVenueReview: jest.fn(),
   getPublicReviews: jest.fn(() => Promise.resolve({ reviews: [] })),
+  getFlockVenuePhoto: jest.fn(),
 }));
 
 const {
-  GoogleMapsMark, PhotoCredit, googleLink, usableCredit, creditAt,
+  GoogleMapsMark, PhotoCredit, CreditedPhoto, ThumbToSheet, googleLink, usableCredit, creditAt, isPlacesPhotoUrl,
 } = require('../components/ui/GoogleCredit');
 const VenueEventsSection = require('../components/overlays/VenueEventsSection').default;
 const { eventPhotoIndex, eventPhoto } = require('../components/overlays/VenueEventsSection');
 const VenueDetailSheet = require('../components/overlays/VenueDetailSheet').default;
+const VenueCardRow = require('../components/chat/cards/VenueCardRow').default;
+const PinStrip = require('../components/chat/sheets/PinStrip').default;
+const { usePlanPhotoCredit } = require('../lib/planPhotoCredit');
+const { getFlockVenuePhoto } = require('../services/api');
 
 const SRC = path.resolve(__dirname, '..');
 const readSrc = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -66,6 +78,13 @@ describe('the credit helpers', () => {
     expect(creditAt([CREDIT_A, null], 1)).toBeNull();
     expect(creditAt(undefined, 0)).toBeNull();
     expect(creditAt([CREDIT_A], 0)).toEqual(CREDIT_A);
+  });
+
+  test('a Places photo is one the photo proxy serves; an event\'s own image is not', () => {
+    expect(isPlacesPhotoUrl(PHOTO_A)).toBe(true);
+    expect(isPlacesPhotoUrl('/api/venues/photo?ref=places%2FP%2Fphotos%2FR&maxwidth=400')).toBe(true);
+    expect(isPlacesPhotoUrl('https://s1.ticketm.net/dam/a/123/poster.jpg')).toBe(false);
+    expect(isPlacesPhotoUrl(null)).toBe(false);
   });
 });
 
@@ -241,6 +260,41 @@ describe('the venue sheet', () => {
     fireEvent.error(header);
     expect(screen.queryByTestId('photo-credit')).toBeNull();
   });
+
+  test('a seed photo that came without its credit is not drawn: the map stands in, and the events go on the art', () => {
+    // A chat card, a pinned venue or a failed details read hands the sheet a
+    // photo with no credit. It waits for Place Details' credited photos.
+    for (const loading of [true, false]) {
+      const { container, unmount } = render(React.createElement(VenueDetailSheet, props({
+        venueDetailModal: { place_id: 'ChIJcopperFinch01', name: 'The Copper Finch', loading, photos: [], photo_url: PHOTO_A, photo_attribution: null, lat: 40.6, lng: -75.4 },
+        venueDetailEvents: [{ id: 41, title: 'Trivia Night', event_date: null, event_time: null }],
+      })));
+      expect(container.querySelector(`img[src="${PHOTO_A}"]`)).toBeNull();
+      expect(screen.queryByTestId('photo-credit')).toBeNull();
+      if (!loading) expect(screen.getAllByTestId('venue-event-art')).toHaveLength(1);
+      unmount();
+    }
+  });
+
+  test('a venue taken from the sheet into a new plan keeps its photo\'s credit', () => {
+    const p = props();
+    render(React.createElement(VenueDetailSheet, p));
+    fireEvent.click(screen.getByRole('button', { name: /Add to Flock/ }));
+    expect(p.setSelectedVenueForCreate).toHaveBeenCalledTimes(1);
+    expect(p.setSelectedVenueForCreate.mock.calls[0][0]).toMatchObject({ photo_url: PHOTO_A, photo_attribution: CREDIT_A });
+  });
+
+  test('and so does one a member puts on a plan\'s table', () => {
+    const p = props({
+      pickingVenueForFlockId: 5,
+      flocksRef: { current: [{ id: 5, creatorId: 99, votes: [] }] },
+      meRef: { current: { id: 7 } },
+    });
+    render(React.createElement(VenueDetailSheet, p));
+    fireEvent.click(screen.getByRole('button', { name: /Suggest to flock/ }));
+    expect(p.shareVenueToChat).toHaveBeenCalledTimes(1);
+    expect(p.shareVenueToChat.mock.calls[0][1]).toMatchObject({ photo_url: PHOTO_A, photo_attribution: CREDIT_A });
+  });
 });
 
 describe('the credits travel with the photos', () => {
@@ -262,12 +316,51 @@ describe('the credits travel with the photos', () => {
       ['screens', 'ExploreScreen.js'],
       ['components', 'venue', 'ConsumerVenueCard.js'],
       ['components', 'map', 'MapLibreMapView.js'],
+      // 2026-11-06: the plan's Details, the Create screen's pick, and a vote
+      // or share row's photo in either chat screen.
+      ['screens', 'FlockDetail.js'],
+      ['screens', 'CreateScreen.js'],
+      ['screens', 'ChatDetail.js'],
+      ['screens', 'DmDetail.js'],
     ]) {
       const src = readSrc(...rel);
       const seeds = [...src.matchAll(/openVenueDetail\([^;]*photo_url: (?!null)[^;]*\)/g)].map((m) => m[0]);
       expect(seeds.length).toBeGreaterThan(0);
       for (const seed of seeds) expect(`${rel.join('/')}: ${/photo_attribution/.test(seed)}`).toBe(`${rel.join('/')}: true`);
     }
+  });
+
+  test('a chat card and a pinned venue keep no credit, so they hand the sheet no photo', () => {
+    // The card's and the pin's seeds name the place and nothing it cannot
+    // credit; the sheet shows its map until the details answer.
+    for (const [rel, ids] of [
+      [['screens', 'ChatDetail.js'], ['vc.place_id', 'flock.venueId']],
+      [['screens', 'DmDetail.js'], ['vd.place_id', 'pinned.place_id']],
+    ]) {
+      const src = readSrc(...rel);
+      for (const id of ids) {
+        const seed = src.slice(src.indexOf(`openVenueDetail(${id}, {`), src.indexOf('}, { panMap: true })', src.indexOf(`openVenueDetail(${id}, {`)));
+        expect(seed.length).toBeGreaterThan(20);
+        expect(`${id}: ${/photo_url/.test(seed)}`).toBe(`${id}: false`);
+      }
+    }
+  });
+
+  test('the pan after the sheet opens carries the photo\'s credit to the pin it may drop', () => {
+    expect(APP).toMatch(/window\.__flockPanToVenue\(\{ place_id: placeId, [^;]*photo_attribution: panFromList \? \(\(venue\.photo_attributions \|\| \[\]\)\[0\] \|\| null\) : \(venue\.photo_attribution \|\| null\) \}\)/);
+  });
+
+  test('the owner\'s own venue on the dashboard map keeps its photo\'s credit', () => {
+    expect(APP).toMatch(/photo_url: \(v\.photos && v\.photos\[0\]\) \|\| null,\s*\/\/[^\n]*\n(\s*\/\/[^\n]*\n)*\s*photo_attribution: \(v\.photo_attributions && v\.photo_attributions\[0\]\) \|\| null,/);
+  });
+
+  test('the dashboard keeps the credit with the cover photo it picks and with each logo choice', () => {
+    expect(APP).toMatch(/url: photos\[i\] \|\| null, credit: \(data\?\.venue\?\.photo_attributions \|\| \[\]\)\[i\] \|\| null/);
+    expect(APP).toContain('setVenueLogoPicker({ photos: data?.venue?.photos || [], credits: data?.venue?.photo_attributions || [] })');
+    const dash = readSrc('screens', 'VenueDashboard.js');
+    expect(dash).toContain('const coverCredit = venueCoverUrl ? usableCredit(venueCoverCredit) : null;');
+    expect(dash).toMatch(/\{coverCredit && \(\s*<PhotoCredit credit=\{coverCredit\}/);
+    expect(dash).toContain('<PhotoCredit credit={creditAt(venueLogoPicker.credits, i)}');
   });
 });
 
@@ -279,12 +372,201 @@ describe('every container of Places data off a Google map carries the mark', () 
     [['components', 'venue', 'ConsumerVenueCard.js']],
     [['components', 'birdie', 'BirdiePanel.js']],
     [['website', 'LiveDemo.js']],
+    // 2026-11-06: the plan screen's venue card, the chat list, both chat
+    // screens (vote and share lists, the share sheets' current venue), the
+    // chat venue card, the pinned venue, the Create screen's pick, the
+    // Nest's plan cards, the Discover map and the guest invite's venue list.
+    [['screens', 'FlockDetail.js']],
+    [['screens', 'ChatListScreen.js']],
+    [['screens', 'ChatDetail.js']],
+    [['screens', 'DmDetail.js']],
+    [['components', 'chat', 'cards', 'VenueCardRow.js']],
+    [['components', 'chat', 'sheets', 'PinStrip.js']],
+    [['screens', 'CreateScreen.js']],
+    [['App.js']],
+    [['components', 'map', 'MapLibreMapView.js']],
+    [['website', 'GuestInvite.js']],
   ])('%j', (rel) => {
     expect(readSrc(...rel)).toMatch(/<GoogleMapsMark\b/);
+  });
+
+  test('both chat screens end each venue list on the mark, and the current venue carries it', () => {
+    for (const rel of [['screens', 'ChatDetail.js'], ['screens', 'DmDetail.js']]) {
+      const src = readSrc(...rel);
+      // The vote list, the share list and the share sheet's current venue.
+      expect(`${rel[1]}: ${(src.match(/<GoogleMapsMark\b/g) || []).length}`).toBe(`${rel[1]}: 3`);
+    }
+  });
+
+  test('the map carries one mark, only while Places pins are on it', () => {
+    const map = readSrc('components', 'map', 'MapLibreMapView.js');
+    expect((map.match(/<GoogleMapsMark\b/g) || []).length).toBe(1);
+    expect(map).toMatch(/\{mapReady && !mapFailed && !keyRefused && Array\.isArray\(venues\) && venues\.length > 0 && \(\s*<div[^>]*>\s*<GoogleMapsMark dark=\{false\} \/>/);
+  });
+
+  test('the guest invite page themes the mark itself, in both of its schemes', () => {
+    // The app's token follows <html data-theme>, which that page never sets.
+    const css = readSrc('website', 'GuestInvite.css');
+    expect(css).toMatch(/\.gi \{[\s\S]*?--google-maps-attribution: #5E5E5E;/);
+    expect(css).toMatch(/@media \(prefers-color-scheme: dark\) \{\s*\.gi \{[\s\S]*?--google-maps-attribution: #FFFFFF;/);
   });
 
   test('the website demo credits its photo, and not the placeholder', () => {
     const demo = readSrc('website', 'LiveDemo.js');
     expect(demo).toMatch(/\{!photoFailed && \(\s*<PhotoCredit credit=\{selected\.photo_attribution\}/);
+  });
+});
+
+describe('every Places photo drawn large carries its credit', () => {
+  test.each([
+    [['components', 'overlays', 'VenueDetailSheet.js']],
+    [['components', 'overlays', 'VenueEventsSection.js']],
+    [['website', 'LiveDemo.js']],
+    // 2026-11-06: the plan screen's header, and the venue dashboard's cover
+    // and logo picker.
+    [['screens', 'FlockDetail.js']],
+    [['screens', 'VenueDashboard.js']],
+  ])('%j', (rel) => {
+    expect(readSrc(...rel)).toMatch(/<(PhotoCredit|CreditedPhoto)\b/);
+  });
+});
+
+describe('every thumbnail reaches the credited sheet', () => {
+  test('the policy names the routes, the chat list\'s one included', () => {
+    const policy = readSrc('components', 'ui', 'GoogleCredit.js');
+    expect(policy).toMatch(/chat list's 46px plan tile opens the chat, and from there the route\s*\n\s*\*\s*is the chat, then "Open the plan"/);
+    expect(policy).toMatch(/screens\/FlockDetail\.js/);
+    expect(policy).toMatch(/ThumbToSheet/);
+  });
+
+  test('a chat venue card draws a Google photo and the mark only with a place behind it', () => {
+    const venue = { name: 'Kome', addr: '17 W Broad St', photo_url: PHOTO_A, place_id: 'ChIJkome000001' };
+    const first = render(React.createElement(VenueCardRow, { venue, onOpen: jest.fn(), onAction: jest.fn() }));
+    expect(first.container.querySelector(`img[src="${PHOTO_A}"]`)).toBeTruthy();
+    const mark = screen.getByTestId('google-maps-attribution');
+    expect(mark.textContent).toBe('Google Maps');
+    // A 16px line of its own in the text column.
+    expect(mark.parentElement.className).toBe('chat-venue-text');
+    expect(mark.style.lineHeight).toBe('16px');
+    first.unmount();
+
+    const { container } = render(React.createElement(VenueCardRow, {
+      venue: { ...venue, place_id: undefined }, placeholder: '/marks/venue-placeholder.jpg', onOpen: jest.fn(), onAction: jest.fn(),
+    }));
+    expect(container.querySelector(`img[src="${PHOTO_A}"]`)).toBeNull();
+    expect(container.querySelector('img').getAttribute('src')).toBe('/marks/venue-placeholder.jpg');
+    expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
+  });
+
+  test('the pinned venue carries the mark beside "Pinned"; a vote does not', () => {
+    const { unmount } = render(React.createElement(PinStrip, { model: { kind: 'venue', name: 'Kome', thumbUrl: PHOTO_A, caption: 'Pinned', placeId: 'ChIJkome000001' }, onOpen: jest.fn() }));
+    const mark = screen.getByTestId('google-maps-attribution');
+    expect(mark.parentElement.className).toBe('cs-strip-caption');
+    expect(mark.parentElement.textContent).toBe('PinnedGoogle Maps');
+    unmount();
+    const vote = render(React.createElement(PinStrip, { model: { kind: 'vote', votedCount: 1, memberCount: 4 }, onOpen: jest.fn() }));
+    expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
+    vote.unmount();
+    render(React.createElement(PinStrip, { model: { kind: 'venue', name: 'Somewhere', caption: 'Pinned' }, onOpen: jest.fn() }));
+    expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
+  });
+
+  test('both chat screens open the pinned venue\'s sheet itself, not a pan to whatever pin is nearby', () => {
+    const chat = readSrc('screens', 'ChatDetail.js');
+    const strip = chat.slice(chat.indexOf('const openPinStrip = (model) => {'), chat.indexOf('const openListVenue = (venue) => {'));
+    expect(strip).toMatch(/openVenueDetail\(flock\.venueId, \{[^;]*\}, \{ panMap: true \}\)/);
+    expect(strip).not.toMatch(/window\.__flockPanToVenue\(\{ place_id/);
+    expect(chat).toMatch(/thumbUrl: \(flock\.venueId && flock\.venuePhoto\) \|\| undefined, caption: 'Pinned', placeId: flock\.venueId \|\| null/);
+    const dm = readSrc('screens', 'DmDetail.js');
+    const pin = dm.slice(dm.indexOf('const openPinnedVenueOnMap = () => {'), dm.indexOf('const openListVenue = (venue) => {'));
+    expect(pin).toMatch(/openVenueDetail\(pinned\.place_id, \{[^;]*\}, \{ panMap: true \}\)/);
+    expect(pin).not.toMatch(/__flockPanToVenue/);
+    expect(dm).toMatch(/thumbUrl: dmPinnedVenue\.place_id \? resolveVenuePhoto\(dmPinnedVenue\.photo_url\) : null,\s*placeId: dmPinnedVenue\.place_id \|\| null,/);
+  });
+
+  test('a vote or share row\'s photo is a button of its own that opens the sheet, beside the row and not inside it', () => {
+    const onOpen = jest.fn();
+    const onRow = jest.fn();
+    render(React.createElement('div', { onClick: onRow, style: { position: 'relative' } },
+      React.createElement('button', { type: 'button' }, 'Vote'),
+      React.createElement(ThumbToSheet, { label: 'Open Kome', onOpen, left: '13px', size: '36px', radius: '8px' })));
+    const thumb = screen.getByRole('button', { name: 'Open Kome' });
+    expect(thumb.parentElement.closest('button')).toBeNull();
+    expect(thumb.parentElement.tagName).toBe('DIV');
+    expect(thumb.style.position).toBe('absolute');
+    fireEvent.click(thumb);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onRow).not.toHaveBeenCalled();
+    for (const rel of [['screens', 'ChatDetail.js'], ['screens', 'DmDetail.js']]) {
+      const src = readSrc(...rel);
+      expect(`${rel[1]}: ${(src.match(/<ThumbToSheet label=\{`Open \$\{venue\.name\}`\} onOpen=\{\(\) => openListVenue\(venue\)\}/g) || []).length}`).toBe(`${rel[1]}: 2`);
+    }
+  });
+
+  test('the Create screen\'s pick opens its sheet with its credit, and an event\'s own image stays', () => {
+    const create = readSrc('screens', 'CreateScreen.js');
+    expect(create).toContain('const showPhoto = !!v.photo_url && (!!v.place_id || !isPlacesPhotoUrl(v.photo_url));');
+    expect(create).toMatch(/\{v\.place_id \? \(\s*<button[\s\S]*?onClick=\{\(\) => openVenueDetail\(v\.place_id, \{[^;]*photo_attribution: v\.photo_attribution \|\| null/);
+  });
+
+  test('the chat list draws a plan tile\'s photo only with its place, and names the route in the policy', () => {
+    const list = readSrc('screens', 'ChatListScreen.js');
+    expect(list).toContain('{f.venuePhoto && f.venueId ? (');
+  });
+});
+
+describe('the plan screen\'s header asks for its credit when the plan opens', () => {
+  function Probe({ flockId, photo, venueId }) {
+    const got = usePlanPhotoCredit(flockId, photo, venueId);
+    return React.createElement('output', { 'data-testid': 'probe' }, got ? `${got.url}|${got.credit.name}` : 'none');
+  }
+  const probe = (props) => render(React.createElement(Probe, props));
+
+  test('a credited answer is drawn: the photo it names, with the credit it names', async () => {
+    getFlockVenuePhoto.mockResolvedValueOnce({ photo_url: PHOTO_B, photo_attribution: CREDIT_B });
+    probe({ flockId: 7, photo: PHOTO_A, venueId: 'ChIJcopperFinch01' });
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe(`${PHOTO_B}|Lee Park`));
+    expect(getFlockVenuePhoto).toHaveBeenCalledWith(7);
+  });
+
+  test('no credit, a refusal, or a throw: nothing is drawn', async () => {
+    for (const answer of [
+      () => getFlockVenuePhoto.mockResolvedValueOnce({ photo_url: PHOTO_B, photo_attribution: null }),
+      () => getFlockVenuePhoto.mockResolvedValueOnce({ photo_url: null, photo_attribution: CREDIT_B }),
+      () => getFlockVenuePhoto.mockRejectedValueOnce(new Error('404')),
+      () => getFlockVenuePhoto.mockImplementationOnce(() => { throw new Error('boom'); }),
+    ]) {
+      answer();
+      const { unmount } = probe({ flockId: 7, photo: PHOTO_A, venueId: 'ChIJcopperFinch01' });
+      await waitFor(() => expect(getFlockVenuePhoto).toHaveBeenCalled());
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(screen.getByTestId('probe').textContent).toBe('none');
+      unmount();
+      getFlockVenuePhoto.mockClear();
+    }
+  });
+
+  test('a plan with no photo, or no place, asks nothing', async () => {
+    probe({ flockId: 7, photo: null, venueId: 'ChIJcopperFinch01' });
+    probe({ flockId: 8, photo: PHOTO_A, venueId: null });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(getFlockVenuePhoto).not.toHaveBeenCalled();
+  });
+
+  test('the header draws that answer, and its Details hand the sheet the same photo and credit', () => {
+    const detail = readSrc('screens', 'FlockDetail.js');
+    expect(detail).toContain('const headerPhoto = usePlanPhotoCredit(flock?.id, flock?.venuePhoto, flock?.venueId);');
+    expect(detail).toMatch(/\{headerPhoto && \(\s*<div style=\{\{ position: 'relative', height: '170px' \}\}>\s*<CreditedPhoto key=\{headerPhoto\.url\} src=\{headerPhoto\.url\} credit=\{headerPhoto\.credit\} \/>/);
+    expect(detail).toMatch(/\{!headerPhoto && \(\s*<StaticVenueMap/);
+    expect(detail).toContain('photo_url: headerPhoto ? headerPhoto.url : null, photo_attribution: headerPhoto ? headerPhoto.credit : null');
+    expect(detail).not.toMatch(/<img src=\{flock\.venuePhoto\}/);
+  });
+
+  test('the shared photo-and-credit piece drops the credit when the photo fails', () => {
+    const { container } = render(React.createElement('div', { style: { position: 'relative', height: '170px' } },
+      React.createElement(CreditedPhoto, { src: PHOTO_A, credit: CREDIT_A })));
+    expect(screen.getByTestId('photo-credit').textContent).toMatch(/Dana Reyes/);
+    fireEvent.error(container.querySelector('img'));
+    expect(screen.queryByTestId('photo-credit')).toBeNull();
   });
 });
