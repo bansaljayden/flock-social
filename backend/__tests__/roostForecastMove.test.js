@@ -264,6 +264,11 @@ const DEMO_INTEL = {
   ].map(([date, weekday, peakScore, peakHour]) => ({ date, weekday, peakScore, peakHour, method: 'rule_engine_no_baseline' })),
 };
 const demoCard = () => advisorFacts.projectionFacts(DEMO_INTEL, { hourOf: venueDashboardRouter.hourOfLabel });
+// That Friday, for a route test that needs the demo's week: 11 AM in New
+// York, 16:00 at the venue this file's listing puts on UTC, whose card then
+// runs DEMO_INTEL's Saturday to Thursday. The card's week starts tomorrow, so
+// on a venue's own Saturday, Sunday or Monday that day is today and not in it.
+const DEMO_FRIDAY = Date.parse('2026-11-06T16:00:00Z');
 
 // ── 1. The facts ────────────────────────────────────────────────────────────
 
@@ -346,7 +351,12 @@ test('a card that is not a week of category priors read on hours the venue keeps
 
 // ── 2. The answer ───────────────────────────────────────────────────────────
 
-test('the money move names the card\'s quietest and busiest days, from the card\'s own function and cache entry', async () => {
+test('the money move names the card\'s quietest and busiest days, from the card\'s own function and cache entry', async (t) => {
+  // On the demo's Friday: its quiet Sunday and busy Saturday, pinned below,
+  // are both in the week ahead only from a venue's Monday to its Friday, and
+  // this failed on the others (2026-11-05).
+  const clock = pinClock(DEMO_FRIDAY);
+  t.after(() => clock.restore());
   setUp({ placeId: 'ChIJforecastMoneyMove0000' });
   const { intel, low, top } = await cardWeek();
   const before = { evenings: eveningCalls, places: placesCalls };
@@ -562,7 +572,12 @@ test('the playbook\'s copy beside the card names the quiet day, and leaves the b
 
 // ── 4. Advice ───────────────────────────────────────────────────────────────
 
-test('the advice model is never handed the card; its answer reads as it did, and the playbook\'s leads with the card, framed', async () => {
+test('the advice model is never handed the card; its answer reads as it did, and the playbook\'s leads with the card, framed', async (t) => {
+  // On the demo's Friday: a named day's lead reads the week ahead, and on a
+  // venue's own Monday the week ahead holds no Monday, so this failed there
+  // (2026-11-05).
+  const clock = pinClock(DEMO_FRIDAY);
+  t.after(() => clock.restore());
   setUp({ placeId: 'ChIJforecastAdvice000000', phrasing: true });
   await cardWeek();
   route = { mode: 'advice', intentId: 'quiet_nights' };
