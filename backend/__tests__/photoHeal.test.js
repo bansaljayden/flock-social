@@ -774,6 +774,61 @@ test('two photos with no image: neither is bought twice in the day', async () =>
   assert.equal(vs.healedPlaces.get(P).skips.length, 2);
 });
 
+test('the skip filter leaves the venue card\'s cached photo list as it was', async () => {
+  // The pick reads a venue card's cached payload for free. Skipping a name
+  // must make a new list, not cut the card's own.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  const card = await placeDetailsCache.fetchPlaceDetails(P);
+  assert.equal(card.ok, true);
+  const listed = card.place.photos;
+  const asListed = JSON.stringify(listed);
+  expired.add(OLD);
+  noImage.add(FIRST);
+
+  assertBird(await get(OLD)); // FIRST has no image: skipped
+  const next = await get(OLD); // the pick passes over FIRST to SECOND
+  assert.equal(next.status, 200);
+  assert.equal(next.text, `pixels of ${SECOND}`);
+  assert.equal(JSON.stringify(listed), asListed, 'the skip filter shrank the card\'s own photo list');
+});
+
+test('skips stay at ten, however many names answer "Photo not found"', async () => {
+  // Places (New) lists at most ten photos a place, which is MAX_HEAL_SKIPS.
+  // Twelve here, every one without an image.
+  const names = Array.from({ length: 12 }, (_, i) => `places/${P}/photos/AU_no_image_${i}`);
+  placeWithPhotos(P, names);
+  names.forEach((name) => noImage.add(name));
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  expired.add(OLD);
+  for (let i = 0; i < 12; i++) assertBird(await get(OLD));
+  assert.equal(vs.healedPlaces.get(P).skips.length, 10, 'the skips on one place grew past ten');
+});
+
+test('a skip ends after its day, even when a later fault keeps the place\'s entry alive', async () => {
+  placeWithPhotos(P, [FIRST, SECOND]);
+  expired.add(OLD);
+  noImage.add(FIRST);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  assertBird(await get(OLD)); // FIRST has no image: skipped for a day
+
+  // Twenty hours on, the pick passes over FIRST to SECOND, which answers 503:
+  // that fault keeps the entry for another day.
+  passTime(20 * HOUR);
+  failing.add(SECOND);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  assertBird(await get(OLD));
+  assert.ok(vs.healedPlaces.get(P).keepUntil - Date.now() > 23 * HOUR);
+
+  // Twenty-five hours on, FIRST's day is over and FIRST has an image again:
+  // the pick takes it, although the entry that held the skip is still alive.
+  passTime(5 * HOUR);
+  noImage.delete(FIRST);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`, 'a skip outlived its day');
+});
+
 test('"Photo not found" during a heal blacks nothing out: a live request for that name still asks Google', async () => {
   placeWithPhotos(P, [FIRST, SECOND]);
   expired.add(OLD);
