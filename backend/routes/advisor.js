@@ -358,6 +358,7 @@ async function namedShut(b, dates) {
     asOf: asOf || (b.now || new Date()).toISOString(),
   });
 }
+const isClosedFact = (e) => Boolean(e) && (e.id === advisorFacts.WEEKEND_CLOSED_ID || e.id === advisorFacts.TODAY_CLOSED_ID);
 
 // THE SMALL HOURS, midnight to 5 AM on the venue's own clock: off the card
 // for a venue answered from it (its today's `smallHours`), off its own clock
@@ -1150,7 +1151,9 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
       if (named.some((t) => !inWeekend(t.date, today, 'this'))) {
         const week = await bothAnswer('peak_hours', b, targets, todayCue);
         const answered = new Set(week.entries.filter((e) => !advisorFacts.isRefusal(e)).map(entryDate));
-        const shut = await namedShut(b, named.map((t) => t.date).filter((d) => !answered.has(d)));
+        // The peaks' answer says a named day the venue is shut on already.
+        const shut = week.entries.some(isClosedFact) ? null
+          : await namedShut(b, named.map((t) => t.date).filter((d) => !answered.has(d)));
         return { ...week, entries: [...(shut ? [shut] : []), ...week.entries], intent: 'peak_hours' };
       }
       const main = await INTENT_PLANS.weekend_outlook({ ...b, weekendScope: 'this' });
@@ -1233,7 +1236,14 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
   const inWeek = (date) => week.find((e) => entryDate(e) === date && !advisorFacts.isRefusal(e)) || null;
   const mentioned = days.map((t) => inWeek(t.date)).filter((e) => e && !have.has(e.id));
   const asked = days.filter((t) => !(todayCue === 'out' && todayT && t.date === todayT.date));
-  return { entries: [...ranked, ...mentioned, ...besideToday, ...pasts], askedFor: undefined, askedDays: asked.map((t) => t.weekday) };
+  // A day compared that the venue is shut on is said to be, first ("Will
+  // tomorrow be busier than tonight?" of a cafe shut on Saturdays, asked on
+  // its Friday, recheck 2026-11-06), as on the weekend's route. The money
+  // move ranks its week and names no day asked.
+  const held = (d) => Boolean(inWeek(d)) || besideToday.some((e) => entryDate(e) === d);
+  const shut = intentId === 'money_move' ? null
+    : await namedShut(b, [...new Set(asked.map((t) => t.date))].filter((d) => !held(d)));
+  return { entries: [...(shut ? [shut] : []), ...ranked, ...mentioned, ...besideToday, ...pasts], askedFor: undefined, askedDays: asked.map((t) => t.weekday) };
 }
 
 // The bridge's step after a plan, for a typed question (readingFor above): a
