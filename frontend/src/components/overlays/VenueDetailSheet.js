@@ -298,7 +298,7 @@ const VenueDetailSheet = ({
                     It used to print "Loading..." here as if that were the
                     venue's name; the name's line is drawn instead. */}
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name || (venueDetailModal.loading ? <SkeletonBar dark width="60%" height={18} radius={5} style={{ margin: '3px 0 2px' }} /> : null)}</h2>
-                {venueDetailModal.formatted_address && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 'var(--t-meta)', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
+                {venueDetailModal.formatted_address && <p className="selectable" style={{ color: 'rgba(255,255,255,0.85)', fontSize: 'var(--t-meta)', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
               </div>
             </div>
 
@@ -434,7 +434,7 @@ const VenueDetailSheet = ({
                       {venueDetailModal.formatted_phone_number && (
                         <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
                           {Icons.phone(colors.navy, 16)}
-                          <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
+                          <span className="selectable" style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
                         </a>
                       )}
                       {httpUrl(venueDetailModal.website) && (

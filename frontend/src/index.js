@@ -1195,6 +1195,15 @@ if (page && prerendered) {
     </React.StrictMode>
   );
 } else if (appMounted) {
+  // THE APP'S OWN WORDS ARE NOT TEXT TO COPY. index.css turns selection and
+  // the long-press callout off under this class, with an allow-list for what
+  // people do copy (fields, messages, Birdie's answers, a venue's address).
+  // On <html> and here, before the first render, for the theme's reasons: it
+  // holds for the boot skeleton and for every overlay drawn outside the app's
+  // root. Only this branch adds it, so the website, the paper, the legal pages
+  // and the invite page keep ordinary selection. A throw costs nothing worse
+  // than selectable labels.
+  try { document.documentElement.classList.add('flock-app'); } catch { /* selection stays on */ }
   // Nothing about the theme is worth a white screen: everything below this
   // point still renders if the attribute never gets written.
   try { applyStoredTheme(); } catch { /* index.css defaults to the light tokens */ }

@@ -232,7 +232,7 @@ class ErrorBoundary extends React.Component {
           {/* The error's own text ("Cannot read properties of undefined") is
               for us, not the person: it goes to the console, to Sentry and
               into "Send this to Flock", and never onto this screen. */}
-          {eventId && <p style={styles.detail}>Reference {eventId}</p>}
+          {eventId && <p className="selectable" style={styles.detail}>Reference {eventId}</p>}
           {/* Something to do while you wait for a reload. Collapsed by
               default so the failure and the reference id are read first. */}
           <FloppyBird />

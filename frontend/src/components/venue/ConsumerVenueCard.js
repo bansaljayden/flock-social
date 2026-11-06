@@ -585,7 +585,7 @@ export default function ConsumerVenueCard({
               {activeVenue.addr && (
                 <m.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '4px' }}>
                   {Icons.mapPin(colors.textSecondary, 12)}
-                  <span>{activeVenue.addr}</span>
+                  <span className="selectable">{activeVenue.addr}</span>
                 </m.div>
               )}
 

@@ -372,6 +372,61 @@ button, a, [role="button"], input, select, textarea {
   touch-action: manipulation;
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   THE APP'S OWN WORDS ARE NOT TEXT TO COPY.
+
+   A long press on a label in the app ("No suggestions yet" under Add
+   friends, any row on You) raised iOS's Copy / Translate / Share bar, and
+   a drag selected the whole You screen, name, handle, counts and settings
+   rows, and pasted it as text. A native app's chrome is not a document.
+   So inside the app, in the iPhone shell and on the web alike, nothing is
+   selectable and a long press raises no callout, except the allow-list
+   below. `flock-app` is put on <html> by index.js in the one branch that
+   mounts the app, so the website, the paper, the legal pages and the
+   invite page never carry it and keep ordinary selection.
+
+   WebKit inherits -webkit-user-select, so the one declaration on body
+   reaches everything and the allow-list has to say `text` to win it back.
+   That matters most for fields: a WKWebView input that inherits `none` can
+   refuse the caret and the keyboard, so they are named first.
+   -webkit-touch-callout inherits too. It goes back to `default` on fields
+   only, so the Paste bubble in an empty field is never in question, and it
+   stays off everywhere else, so a long press on a link or a photo opens no
+   preview sheet over the app (chat.css made the same call for a message
+   row).
+
+   THE ALLOW-LIST. Add to it here, never per component:
+     - input, textarea, anything contenteditable: typing, the caret, paste.
+     - .chat-row-body: a chat or DM message's text (chat.css has why).
+     - .selectable: a piece of content someone will paste somewhere else,
+       Birdie's answers, a venue's address and phone number, an error's
+       reference number.
+     - .hub-root, pre, code: the admin console, where the figures, commands
+       and ids are there to be copied.
+   The You screen's handle is not on it: there is no copy control for it,
+   so it is chrome like the name beside it.
+   ═══════════════════════════════════════════════════════════════════ */
+html.flock-app body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+html.flock-app input,
+html.flock-app textarea,
+html.flock-app [contenteditable]:not([contenteditable="false"]) {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+html.flock-app .chat-row-body,
+html.flock-app .selectable,
+html.flock-app .hub-root,
+html.flock-app pre,
+html.flock-app code {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Visible to assistive tech, invisible on screen. Used for screen titles that
    the visual design carries some other way (the Discover screen's identity is
    the map itself, but a screen with no h1 gives a screen-reader user nothing
