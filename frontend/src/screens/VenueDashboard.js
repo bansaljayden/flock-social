@@ -79,6 +79,9 @@ import {
 } from '../services/api';
 import { tableSettingsFrom } from '../lib/venueTablesReading';
 import { fallbackVenueCover } from '../lib/venueCover';
+// Google's credit on the listing photos: the header's cover and each tile of
+// the logo picker are Places photos drawn at a size that carries one.
+import { PhotoCredit, creditAt, usableCredit } from '../components/ui/GoogleCredit';
 
 // An hour label from the forecast ("12 AM") as the owner reads it in a
 // sentence. Roost says "around midnight" and "noon" for the same hour
@@ -573,6 +576,8 @@ export default function VenueDashboard({
   venueLogoPlaceId,
   venueLogoUploading,
   venueCoverUrl,
+  // Google's credit for the cover photo, or null for the generated interior.
+  venueCoverCredit,
   venueLogoUrl,
   venueMapState,
   venueOnboardingData,
@@ -1190,6 +1195,10 @@ export default function VenueDashboard({
       </div>
     );
 
+    // Google's credit for the listing photo behind the header. The generated
+    // interior is the app's own and carries none.
+    const coverCredit = venueCoverUrl ? usableCredit(venueCoverCredit) : null;
+
     return (
       <div key="venue-dashboard-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         {/* Header */}
@@ -1199,8 +1208,12 @@ export default function VenueDashboard({
             (lib/venueCover.js), so no header is ever a flat block of navy.
             The top layer fades from navyBg, the colour the status bar strip
             above this screen is painted (screenTopIsNavy in App.js), so on a
-            phone the strip runs into the photo with no seam. */}
-        <div style={{ padding: '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, ${colors.navyBg}, transparent 26%), linear-gradient(to bottom, rgba(10,18,32,0.3), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+            phone the strip runs into the photo with no seam.
+            A listing photo is a Places photo, so it carries its
+            photographer's name in the bottom right corner, the one the name
+            row leaves free; the header grows 16px under the name row to hold
+            it clear of a category line that runs long. */}
+        <div style={{ position: 'relative', padding: coverCredit ? '16px 16px 34px' : '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, ${colors.navyBg}, transparent 26%), linear-gradient(to bottom, rgba(10,18,32,0.3), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
@@ -1273,6 +1286,11 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
+          {/* Last in the header, so its two links are the last tab stops in
+              it rather than the first. */}
+          {coverCredit && (
+            <PhotoCredit credit={coverCredit} style={{ position: 'absolute', right: '10px', bottom: '8px', maxWidth: 'calc(100% - 20px)', zIndex: 1 }} />
+          )}
         </div>
 
         {/* Tab Navigation */}
@@ -3324,17 +3342,23 @@ export default function VenueDashboard({
                 )}
                 {typeof venueLogoPicker === 'object' && venueLogoPicker.photos.length > 0 && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                    {/* Each tile is a Places photo at a size that carries its
+                        photographer's name, so the credit is drawn on it. It
+                        sits beside the tile's button, not inside it: the
+                        credit's links are controls of their own. */}
                     {venueLogoPicker.photos.map((url, i) => (
-                      <button
-                        key={url}
-                        type="button"
-                        className="hit44"
-                        onClick={() => handleVenueLogoPick(url)}
-                        aria-label={`Use listing photo ${i + 1} as your logo`}
-                        style={{ padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
-                      >
-                        <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
-                      </button>
+                      <div key={url} style={{ position: 'relative' }}>
+                        <button
+                          type="button"
+                          className="hit44"
+                          onClick={() => handleVenueLogoPick(url)}
+                          aria-label={`Use listing photo ${i + 1} as your logo`}
+                          style={{ display: 'block', width: '100%', padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                        >
+                          <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
+                        </button>
+                        <PhotoCredit credit={creditAt(venueLogoPicker.credits, i)} style={{ position: 'absolute', left: '6px', bottom: '6px', maxWidth: 'calc(100% - 12px)', zIndex: 1 }} />
+                      </div>
                     ))}
                   </div>
                 )}

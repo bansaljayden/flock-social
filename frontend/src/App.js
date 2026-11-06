@@ -18717,6 +18717,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         types: v.types || [],
         location: loc,
         photo_url: (v.photos && v.photos[0]) || null,
+        // The credit for that same photo, so the sheet the owner's pin opens
+        // can draw the photo before its own details read answers.
+        photo_attribution: (v.photo_attributions && v.photo_attributions[0]) || null,
         opening_hours: v.opening_hours || null,
         utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
         timeZone: v.timeZone || null,
@@ -18890,8 +18893,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // paid Places call, so it is read only once the dashboard is open and once
   // per place id after that. With no listing, or a read that fails, the
   // header uses a generated interior for the venue's kind (lib/venueCover.js).
-  const [venueCover, setVenueCover] = useState({ placeId: null, url: null });
+  // The listing photo keeps Google's credit for it (photo_attributions is
+  // index-aligned with photos), which the header draws in its corner: a
+  // Places photo is drawn with its photographer's name.
+  const [venueCover, setVenueCover] = useState({ placeId: null, url: null, credit: null });
   const venueCoverUrl = venueCover.placeId === venueLogoPlaceId ? venueCover.url : null;
+  const venueCoverCredit = venueCover.placeId === venueLogoPlaceId ? venueCover.credit : null;
   const onVenueDashboard = currentScreen === 'venueDashboard';
   useEffect(() => {
     if (!onVenueDashboard || !venueLogoPlaceId || venueCover.placeId === venueLogoPlaceId) return undefined;
@@ -18899,9 +18906,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getVenueDetails(venueLogoPlaceId)
       .then((data) => {
         const photos = data?.venue?.photos || [];
-        if (live) setVenueCover({ placeId: venueLogoPlaceId, url: photos.find((u) => u !== venueLogoUrl) || photos[0] || null });
+        const notTheLogo = photos.findIndex((u) => u !== venueLogoUrl);
+        const i = notTheLogo >= 0 ? notTheLogo : 0;
+        if (live) setVenueCover({ placeId: venueLogoPlaceId, url: photos[i] || null, credit: (data?.venue?.photo_attributions || [])[i] || null });
       })
-      .catch(() => { if (live) setVenueCover({ placeId: venueLogoPlaceId, url: null }); });
+      .catch(() => { if (live) setVenueCover({ placeId: venueLogoPlaceId, url: null, credit: null }); });
     return () => { live = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onVenueDashboard, venueLogoPlaceId]);
@@ -18911,7 +18920,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVenueLogoPicker('loading');
     try {
       const data = await getVenueDetails(venueLogoPlaceId);
-      setVenueLogoPicker({ photos: data?.venue?.photos || [] });
+      // Each tile is drawn with Google's credit for its photo.
+      setVenueLogoPicker({ photos: data?.venue?.photos || [], credits: data?.venue?.photo_attributions || [] });
     } catch (err) {
       setVenueLogoPicker('error');
     }
@@ -20661,6 +20671,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueLogoPlaceId,
         venueLogoUploading,
         venueCoverUrl,
+        venueCoverCredit,
         venueLogoUrl,
         venueMapState,
         venueOnboardingData,
