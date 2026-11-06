@@ -54,6 +54,12 @@
   --gi-invite-btn: #f1ede0;
   --gi-invite-btn-ink: #16283d;
 
+  /* Google's "Google Maps" mark under the venue list. Google allows white,
+     #1F1F1F or #5E5E5E only (components/ui/GoogleCredit.js); #5E5E5E is 5.5:1
+     on the paper. The app's own token is themed off <html data-theme>, which
+     this page never sets, so the page carries its own. */
+  --google-maps-attribution: #5E5E5E;
+
   /* The page gutter, named so the join band can break out of the reading
      column by exactly as much as the page is inset and land on the screen
      edges at phone widths. */
@@ -97,6 +103,9 @@
     --gi-invite-dim: rgba(244, 239, 227, 0.72);
     --gi-invite-btn: #8fb4d6;
     --gi-invite-btn-ink: #0f172a;
+
+    /* White on the dark paper, the other colour Google allows. */
+    --google-maps-attribution: #FFFFFF;
   }
   /* Tells the browser to render form controls and scrollbars dark, so the
      name field is not a white slab on a navy page. */
@@ -823,6 +832,13 @@
 }
 
 .gi-venue-name { overflow-wrap: anywhere; }
+
+/* Google's attribution, at the list's right edge, under its last rule. */
+.gi .gi-google-mark {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0 0;
+}
 
 .gi-venue-count {
   flex-shrink: 0;

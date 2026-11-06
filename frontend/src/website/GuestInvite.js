@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import Icons from '../components/ui/Icons';
+import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 import { lsGet } from '../lib/storage';
 import './GuestInvite.css';
 
@@ -2132,6 +2133,14 @@ export default function GuestInvite() {
                 );
               })}
             </ul>
+            {/* The places up for the vote are Google Maps places, named off a
+                Google map, so the list ends on Google's attribution
+                (components/ui/GoogleCredit.js). Its colour is this page's
+                own token (GuestInvite.css), which follows the page into
+                dark mode the way the app's theme token cannot here. */}
+            <div className="gi-google-mark">
+              <GoogleMapsMark />
+            </div>
           </>
         )}
 
