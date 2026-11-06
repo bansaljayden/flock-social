@@ -2658,3 +2658,67 @@ test('a level stretch whose days peak alike says the one number, and names every
   assert.strictEqual(out.text, 'In Flock\'s forecast for places like yours, no day stands out this weekend: every day peaks at 74 on our 0 to 100 index.');
   assert.deepStrictEqual(out.sources.map((s) => s.id), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
 });
+
+test('a weekday the weekend\'s route is asked about that this weekend does not hold is answered from the week ahead, and one past it is said to be', async () => {
+  // Until the final review (2026-11-06), on its Saturday "How busy will
+  // Friday be?" routed to the weekend got "the busiest day this weekend is
+  // Saturday", on its Sunday "How busy will Saturday be?" got Sunday's line,
+  // and "How busy will next Saturday be?" on a Saturday got this weekend.
+  const kind = 'In Flock\'s forecast for places like yours, ';
+  let n = 0;
+  for (const [iso, question, lead, source] of [
+    ['2026-11-07T16:00:00Z', 'How busy will Friday be?', `${kind}Friday peaks around 9 PM at 66 on our 0 to 100 index.`, 'typical_peak_2026-11-13'],
+    ['2026-11-08T16:00:00Z', 'How busy will Friday be this weekend?', `${kind}Friday peaks around 9 PM at 66 on our 0 to 100 index.`, 'typical_peak_2026-11-13'],
+    ['2026-11-08T16:00:00Z', 'How busy will Saturday be?', `${kind}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`, 'typical_peak_2026-11-14'],
+    ['2026-11-09T16:00:00Z', 'How busy will Tuesday be?', `${kind}Tuesday peaks around 9 PM at 48 on our 0 to 100 index.`, 'typical_peak_2026-11-10'],
+    // A day this weekend holds is still answered from the weekend.
+    ['2026-11-07T16:00:00Z', 'How busy will Sunday be?', `${kind}Sunday peaks around 9 PM at 45 on our 0 to 100 index.`, 'typical_peak_2026-11-08'],
+    ['2026-11-09T16:00:00Z', 'How busy will Saturday be?', `${kind}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`, 'typical_peak_2026-11-14'],
+  ]) {
+    n += 1;
+    await pinnedAt(iso, async () => {
+      setUp({ placeId: `ChIJr5WeekendNamedDay${String(n).padStart(2, '0')}00`, phrasing: true });
+      draftFor = () => null;
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.strictEqual(r.body.text.split('\n')[0], lead, `${iso}: ${question}: ${r.body.text}`);
+      assert.strictEqual(r.body.sources[0].id, source, `${iso}: ${question}`);
+    });
+  }
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr5WeekendNextSatBar00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will next Saturday be?' });
+    assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', 'We can\'t answer that yet. Next Saturday is past the seven days the forecast covers. It comes into them tomorrow.']);
+    // A day of next weekend asked about as next weekend's is that weekend's
+    // answer, as before.
+    r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday be next weekend?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      `${kind}next Friday peaks around 9 PM at 66 on our 0 to 100 index.`,
+      '• Next Saturday and Sunday are past the seven days the forecast covers.',
+    ]);
+    // The chip and a question naming no day are the weekend's, as before.
+    const chip = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+    assert.ok(chip.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), chip.body.text);
+    r = await call('/api/venue/advisor/question', { question: 'What does the weekend look like?' });
+    assert.strictEqual(r.body.text, chip.body.text);
+  });
+  // A venue with crowd history, on its Saturday: Friday is next Friday, off
+  // its own week.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr5WeekendNamedOwn0000', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
+    mlVenueRow = CORPUS_ROW;
+    draftFor = () => null;
+    const realWeek = advisorFacts.buildWeekAhead;
+    advisorFacts.buildWeekAhead = async () => ownWeekFrom('2026-11-07');
+    try {
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question: 'How busy will Friday be?' });
+      assert.strictEqual(r.body.text.split('\n')[0], 'Friday peaks around 9 PM at 66 on our 0 to 100 index.', r.body.text);
+      assert.strictEqual(r.body.sources[0].id, 'peak_2026-11-13');
+    } finally {
+      advisorFacts.buildWeekAhead = realWeek;
+    }
+  });
+});

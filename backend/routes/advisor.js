@@ -903,13 +903,38 @@ async function withNamedToday(entries, intentId, b, named) {
 // its answer, with that weekday taken out, could name the wrong busiest day;
 // and today on its own for a question about today (withNamedToday). A chip
 // asks about no day and passes through untouched.
+//
+// A DAY NAMED ON THE WEEKEND'S ROUTE THAT THIS WEEKEND DOES NOT HOLD (final
+// review, 2026-11-06). This weekend is today through Sunday from Friday on
+// (weekendWindow), so on a Saturday "How busy will Friday be?" routed to the
+// weekend was answered "the busiest day this weekend is Saturday", and on a
+// Sunday "How busy will Saturday be?" with Sunday's line. A weekday outside
+// this weekend is answered from the week ahead, as the peaks chip answers it,
+// and one past the week ahead ("next Saturday" on a Saturday) is said to be.
+// A question that names next weekend or the one after asks about that
+// weekend's days (weekendAsked), and its plan says which ones the forecast
+// holds.
 async function forQuestion(entries, intentId, b, question) {
   if (!question || !DAY_INTENTS.has(intentId)) return { entries, askedFor: undefined };
   const askedFor = await askedDayFor(b, question, intentId);
   if (askedFor === null && NAMED_TODAY_INTENTS.has(intentId)) {
     return { entries: [await pastDayRefusal(b, question)], askedFor };
   }
+  if (intentId === 'weekend_outlook' && askedFor !== undefined && weekendAsked(question) === 'this') {
+    if (askedFor === null) return { entries: [await pastDayRefusal(b, question)], askedFor };
+    const { today } = await daysFromToday(b);
+    if (today && !weekendDays(today).includes(askedFor)) {
+      return { entries: await withNamedToday(await INTENT_PLANS.peak_hours(b), 'peak_hours', b, askedFor), askedFor };
+    }
+  }
   return { entries: await withNamedToday(entries, intentId, b, askedFor), askedFor };
+}
+// The weekdays of this weekend, counted from the venue's `today`.
+function weekendDays(today) {
+  const { from, to } = weekendWindow(today, 'this');
+  const out = [];
+  for (let d = from; d <= to; d = addDaysTo(d, 1)) out.push(WEEKDAY_NAMES_LONG[weekdayOf(d)]);
+  return out;
 }
 
 // `question`, when there is one, is what the owner asked: a question that
