@@ -9737,6 +9737,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      slide into the corner behind the sheet and back out. */
   const birdieInset = safetyOn && birdieCorner === sosCorner ? FAB_EDGE + FAB_SIZE + FAB_EDGE : FAB_EDGE;
 
+  /* THE MAP'S GOOGLE MARK NEVER RESTS UNDER SOS (2026-11-06). On Discover the
+     docked row sits right on the map: the dock bottom counts the Filters row,
+     and the map ends at that row's top, so a docked disc covers 12..64px above
+     the map's bottom edge. The map's "Google Maps" mark rests in its bottom
+     left corner 40px up, so SOS dragged to the left covered "Google", and
+     Google's attribution has to stay readable while the pins show. With SOS on
+     the left the map is told how far the docked row reaches up over that
+     corner, and the mark stands above it (googleMarkBottom in
+     MapLibreMapView.js). On the right, or with Safety off, it is 0 and the
+     mark stays where it was. Keyed on Safety being on, as Birdie's inset is:
+     the button also hides while its own sheet or Birdie's panel is drawn over
+     that corner, and the mark should not drop into its spot and lift out
+     again around it. */
+  const discoverMapLeftClear = safetyOn && sosCorner === 'bottom-left' ? dockedRowHeight : 0;
+
   // Drag FABs — smooth 60fps transform, snap to nearest corner on release
   const handleFabPointerDown = useCallback((e, id) => {
     const el = e.currentTarget;
@@ -21373,6 +21388,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     connectSearch,
     connectSearchError,
     connectSearching,
+    discoverMapLeftClear,
     discoverNavOpen,
     eventsSearchQuery,
     eventsSearchTimerRef,

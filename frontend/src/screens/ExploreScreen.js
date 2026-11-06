@@ -124,6 +124,9 @@ export default function ExploreScreen({
   SearchInputLocal,
   connectSearchError,
   connectSearching,
+  // How far SOS reaches up over the map's bottom left corner when it is
+  // docked on that side (App.js), so the map's Google mark stands above it.
+  discoverMapLeftClear,
   discoverNavOpen,
   eventsSearchQuery,
   eventsSearchTimerRef,
@@ -448,6 +451,7 @@ export default function ExploreScreen({
           mapVisible={isExploreVisible}
           tableSummaries={tableSummaries}
           tableParty={tableParty}
+          bottomLeftClear={discoverMapLeftClear}
         />
 
         {/* Live location sharing indicator on map */}

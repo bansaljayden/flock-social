@@ -602,7 +602,21 @@ function paintCrowdBuildings(map, venues, filterCategory, tinted) {
 // opens at the default view instead.
 const IP_VIEW_WAIT_MS = 1500;
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null, tableSummaries = null, tableParty = TABLE_PARTY_DEFAULT }) => {
+/* WHERE THE PINS' GOOGLE MARK STANDS, in px up from the map's bottom edge:
+   40px, just above the basemap's own credit, unless something in that corner
+   reaches higher, and then 8px above the highest of them. One is the POI
+   notice, 24px up and noticeHeight tall, which at 320px wide reaches into the
+   corner. The other is bottomLeftClear, how far up from this edge a button
+   docked over the map's bottom left corner reaches: on Discover, SOS dragged
+   to the left (App.js's discoverMapLeftClear), whose 52px disc is drawn over
+   the map and covered "Google" at 40px. */
+export const googleMarkBottom = (noticeHeight, bottomLeftClear) => Math.max(
+  40,
+  noticeHeight ? 24 + noticeHeight + 8 : 0,
+  bottomLeftClear ? bottomLeftClear + 8 : 0,
+);
+
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null, tableSummaries = null, tableParty = TABLE_PARTY_DEFAULT, bottomLeftClear = 0 }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -2229,10 +2243,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           (attributionControl is off in the constructor and added compact).
           On a light plate in both themes, as that credit is, so #5E5E5E
           clears 4.5:1 over any tile underneath. It takes no taps, and while
-          a POI notice shows it stands above that notice rather than under
-          it. */}
+          a POI notice shows, or SOS is docked on the left, it stands above
+          them rather than under them (googleMarkBottom). */}
       {mapReady && !mapFailed && !keyRefused && Array.isArray(venues) && venues.some((v) => v && v.place_id) && (
-        <div style={{ position: 'absolute', left: '10px', bottom: poiNoticeHeight ? `${24 + poiNoticeHeight + 8}px` : '40px', zIndex: 2, pointerEvents: 'none', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.88)', lineHeight: 0 }}>
+        <div style={{ position: 'absolute', left: '10px', bottom: `${googleMarkBottom(poiNoticeHeight, bottomLeftClear)}px`, zIndex: 2, pointerEvents: 'none', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.88)', lineHeight: 0 }}>
           <GoogleMapsMark dark={false} />
         </div>
       )}

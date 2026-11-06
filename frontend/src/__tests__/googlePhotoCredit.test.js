@@ -402,7 +402,7 @@ describe('every container of Places data off a Google map carries the mark', () 
     }
   });
 
-  test('the map carries one mark, only while Google places are pinned, and above the POI notice while it shows', () => {
+  test('the map carries one mark, only while Google places are pinned, and above the POI notice while it shows and a left-docked SOS', () => {
     const map = readSrc('components', 'map', 'MapLibreMapView.js');
     expect((map.match(/<GoogleMapsMark\b/g) || []).length).toBe(1);
     expect(map).toMatch(/\{mapReady && !mapFailed && !keyRefused && Array\.isArray\(venues\) && venues\.some\(\(v\) => v && v\.place_id\) && \(\s*<div[^>]*>\s*<GoogleMapsMark dark=\{false\} \/>/);
@@ -411,7 +411,10 @@ describe('every container of Places data off a Google map carries the mark', () 
     expect(map).toContain('<p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: \'absolute\', bottom: \'24px\'');
     expect(map).toContain('const el = poiNotice ? poiNoticeRef.current : null;');
     expect(map).toContain('const measure = () => setPoiNoticeHeight(el.offsetHeight);');
-    expect(map).toContain("bottom: poiNoticeHeight ? `${24 + poiNoticeHeight + 8}px` : '40px'");
+    // The mark's offset is the highest of its own 40px, 8px over the notice
+    // and 8px over a docked SOS on its side (mapGoogleMarkClearsSos.test.js).
+    expect(map).toContain('bottom: `${googleMarkBottom(poiNoticeHeight, bottomLeftClear)}px`');
+    expect(map).toMatch(/export const googleMarkBottom = \(noticeHeight, bottomLeftClear\) => Math\.max\(\s*40,\s*noticeHeight \? 24 \+ noticeHeight \+ 8 : 0,\s*bottomLeftClear \? bottomLeftClear \+ 8 : 0,\s*\);/);
     // Measured again while it shows: a rotation rewraps the notice. The watch
     // is taken down when the notice goes, and the effect follows the notice.
     expect(map).toMatch(/const watch = new ResizeObserver\(measure\);\s*watch\.observe\(el\);\s*return \(\) => watch\.disconnect\(\);/);
