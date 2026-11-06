@@ -46,9 +46,13 @@ delete process.env.ROOST_PLAYBOOK_FIRST;
 const pool = require('../config/database');
 
 let profile = null;
+// The venue's corpus row, for a test of a venue with crowd history that needs
+// its clock (advisorFacts.venueToday); none otherwise.
+let mlVenueRow = null;
 pool.query = async (sql) => {
   const q = String(sql).replace(/\s+/g, ' ');
   if (/FROM venue_profiles WHERE user_id/.test(q)) return { rows: profile ? [profile] : [], rowCount: profile ? 1 : 0 };
+  if (/FROM ml_venues WHERE google_place_id/.test(q)) return { rows: mlVenueRow ? [mlVenueRow] : [], rowCount: mlVenueRow ? 1 : 0 };
   if (/roost_ai_consent_at FROM users/.test(q)) return { rows: [{ roost_ai_consent_at: '2026-10-01T00:00:00Z' }], rowCount: 1 };
   if (/INSERT INTO advisor_(?:venue_)?spend/.test(q)) return { rows: [{ tokens: 1 }], rowCount: 1 };
   // No corpus row and no curve: a venue Flock has never collected.
@@ -207,6 +211,7 @@ advisorPhrasing.__setGenAIForTests({
 
 function setUp({ placeId, phrasing = false, extra = {} } = {}) {
   profile = noHistoryVenue(placeId, extra);
+  mlVenueRow = null;
   process.env.ADVISOR_PHRASING_ENABLED = phrasing ? 'true' : 'false';
   advisorPhrasing.__resetAdvisorSpend();
   method = 'rule_engine_no_baseline';
@@ -1830,4 +1835,135 @@ test('a block reads the card once: a weekend asked as the hour turns comes off o
   } finally {
     mlPredictor.predictHourlyForecast = realHourly;
   }
+});
+
+// The day a question asks about, read against the venue's own today (review,
+// 2026-11-06): "today" and "tonight" are today, "Sat" and "Fri" are days, and
+// "next Monday" asked on a Monday is a week away, which nothing held stands for.
+
+// A venue's own week of seven days from `start`, as buildWeekAhead walks them,
+// and the corpus row that gives the venue its clock.
+const ownWeekFrom = (start) => Array.from({ length: 7 }, (_, i) => {
+  const date = addDays(start, i);
+  const weekday = LONG[shortOf(date)];
+  const score = CARD[shortOf(date)];
+  return advisorFacts.makeFact({
+    id: `peak_${date}`,
+    value: { date, weekday, peakHour: 21, peakScore: score },
+    source: 'model_holdout',
+    asOf: `${start}T12:00:00Z`,
+    predictionMethod: 'ml',
+    unit: '0-100 index',
+    label: advisorFacts.weekAheadPeakLabel({ weekday, hour: 21, score }),
+  });
+});
+const CORPUS_ROW = Object.freeze({
+  name: 'Thistle Room', latitude: 39.95, longitude: -75.16, venue_category: 'bar', google_types: ['bar'],
+  price_level: 2, rating: 4.4, review_count: 320, timezone: 'UTC',
+});
+
+test('the day a question asks about, read off its words: the short forms, today and tonight, and "next"', () => {
+  const read = (q) => roostPlaybook.askedDay(q);
+  assert.deepStrictEqual(read('How busy will Sat be?'), { weekday: 'Saturday', next: false });
+  assert.deepStrictEqual(read('How\'s Fri looking?'), { weekday: 'Friday', next: false });
+  assert.deepStrictEqual(read('thurs night'), { weekday: 'Thursday', next: false });
+  assert.deepStrictEqual(read('is Tues slow'), { weekday: 'Tuesday', next: false });
+  assert.deepStrictEqual(read('Wed night'), { weekday: 'Wednesday', next: false });
+  assert.deepStrictEqual(read('sun brunch any good'), { weekday: 'Sunday', next: false });
+  assert.deepStrictEqual(read('SAT night?'), { weekday: 'Saturday', next: false });
+  assert.deepStrictEqual(read('How busy will next Monday be?'), { weekday: 'Monday', next: true });
+  assert.deepStrictEqual(read('How busy will Monday be next week?'), { weekday: 'Monday', next: true });
+  assert.deepStrictEqual(read('How do I fill wensdays?'), { weekday: 'Wednesday', next: false }, 'the owner\'s spelling put right');
+  assert.deepStrictEqual(read('Saturdays are packed, how do I fill Tuesdays'), { weekday: 'Tuesday', next: false }, 'the last day named');
+  assert.deepStrictEqual(read('How busy is Monday tonight?'), { weekday: 'Monday', next: false }, 'a named day over tonight');
+  for (const q of ['Is tonight going to be slow?', 'How busy will we be today?', 'what about this evening']) {
+    assert.deepStrictEqual(read(q), { today: true }, q);
+  }
+  // The short forms that are English words too, written as words.
+  for (const q of ['we sat down for an hour', 'the sun is out', 'c\'mon how busy', 'what does next weekend look like']) {
+    assert.strictEqual(read(q), null, q);
+    assert.strictEqual(roostPlaybook.namedWeekday(q), null, q);
+  }
+  assert.strictEqual(roostPlaybook.namedWeekday('How busy will Sat be?'), 'Saturday');
+});
+
+test('today and tonight are answered from today\'s entry, as today by name is, and "Sat" names Saturday: the bar on its Monday', async (t) => {
+  const clock = pinClock(Date.parse('2026-11-09T16:00:00Z'));
+  t.after(() => clock.restore());
+  setUp({ placeId: 'ChIJreviewTonightBar00000', phrasing: true });
+  draftFor = () => null;
+  const { intel } = await cardWeek();
+  assert.deepStrictEqual([intel.today.weekday, intel.today.peakScore], ['Mon', 48]);
+  const lead = 'In Flock\'s forecast for places like yours, Monday peaks around 9 PM at 48 on our 0 to 100 index.';
+  // Until 2026-11-06 the two typed peak questions got the week's answer
+  // ("the busiest day this week is Saturday ...") and "Is tonight going to be
+  // slow?" got the week's quietest day ("the quietest day this week is Sunday").
+  for (const question of ['How busy will we be tonight?', 'How busy will we be today?']) {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question });
+    assert.deepStrictEqual(r.body.text.split('\n'), [lead, `• ${peakMove()}`], question);
+  }
+  route = { mode: 'grounded', intentId: 'quiet_nights' };
+  let r = await call('/api/venue/advisor/question', { question: 'Is tonight going to be slow?' });
+  assert.deepStrictEqual(r.body.text.split('\n'), [lead, `• ${kindForecast.unownDays(quietMove(), 'Monday')}`]);
+  assert.ok(r.body.followUps.some((f) => f.text === 'How do I fill Mondays?'), JSON.stringify(r.body.followUps));
+  // As advice, the model out. "How do I fill a slow night tonight?" led with
+  // Sunday, the week's quietest day, and "How do I fill tonight?" with no
+  // number at all, until 2026-11-06.
+  route = { mode: 'advice', intentId: 'quiet_nights' };
+  r = await call('/api/venue/advisor/question', { question: 'How do I fill a slow night tonight?' });
+  assert.ok(r.body.text.startsWith('In Flock\'s forecast for places like yours, Monday projects busiest around 9 PM, at 48 on our 0 to 100 index. Give Monday '), r.body.text);
+  route = { mode: 'advice', intentId: 'tonight_outlook' };
+  r = await call('/api/venue/advisor/question', { question: 'How do I fill tonight?' });
+  assert.ok(r.body.text.startsWith('In Flock\'s forecast for places like yours, Monday projects busiest around 9 PM, at 48 on our 0 to 100 index. '), r.body.text);
+  assert.ok(r.body.sources.some((s) => s.id === 'typical_peak_2026-11-09'), JSON.stringify(r.body.sources));
+  // The short forms: "Mon" is today, "Sat" a day of the card's week.
+  route = { mode: 'grounded', intentId: 'peak_hours' };
+  r = await call('/api/venue/advisor/question', { question: 'How busy will Mon be?' });
+  assert.deepStrictEqual(r.body.text.split('\n'), [lead, `• ${peakMove()}`]);
+  r = await call('/api/venue/advisor/question', { question: 'How busy will Sat be?' });
+  assert.strictEqual(r.body.text.split('\n')[0], 'In Flock\'s forecast for places like yours, Saturday peaks around 9 PM at 74 on our 0 to 100 index.');
+});
+
+test('"next Monday" asked on a Monday is a week away: no answer gives it today\'s number, with or without crowd history', async () => {
+  await pinnedAt('2026-11-09T16:00:00Z', async () => {
+    // A venue with no crowd history: the card's week holds no Monday, and
+    // today's entry is not next Monday. It read "Monday peaks around 9 PM at
+    // 48 on our 0 to 100 index." until 2026-11-06.
+    setUp({ placeId: 'ChIJreviewNextMondayBar00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will next Monday be?' });
+    assert.strictEqual(r.body.mode, 'template', r.body.text);
+    assert.match(r.body.text, /^In Flock's forecast for places like yours, the busiest day this week is Saturday/);
+    assert.ok(!/Monday/.test(r.body.text), r.body.text);
+    assert.ok(!r.body.sources.some((s) => s.id === 'typical_peak_2026-11-09'), JSON.stringify(r.body.sources));
+    // As advice: no lead names a Monday.
+    route = { mode: 'advice', intentId: 'quiet_nights' };
+    r = await call('/api/venue/advisor/question', { question: 'How do I fill next Monday?' });
+    assert.ok(!/\bMonday projects\b/.test(r.body.text), r.body.text);
+
+    // A venue with crowd history: its week holds today's Monday, which is not
+    // next Monday either, so it leaves the answer and what the model is
+    // handed. "tonight" on the same venue is today's Monday.
+    setUp({ placeId: 'ChIJreviewNextMondayOwn00', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
+    mlVenueRow = CORPUS_ROW;
+    const realWeek = advisorFacts.buildWeekAhead;
+    advisorFacts.buildWeekAhead = async () => ownWeekFrom('2026-11-09');
+    try {
+      let payload = null;
+      draftFor = (role, p) => { payload = p; return null; };
+      route = { mode: 'grounded', intentId: 'peak_hours' };
+      r = await call('/api/venue/advisor/question', { question: 'How busy will next Monday be?' });
+      assert.strictEqual(r.body.mode, 'template', r.body.text);
+      assert.match(r.body.text, /^Your busiest day this week is Saturday/);
+      assert.ok(!/Monday/.test(r.body.text), r.body.text);
+      assert.ok(!handedDates(payload).includes('2026-11-09'), 'the model was handed today for next Monday');
+      draftFor = () => null;
+      r = await call('/api/venue/advisor/question', { question: 'How busy will we be tonight?' });
+      assert.strictEqual(r.body.text.split('\n')[0], 'Monday peaks around 9 PM at 48 on our 0 to 100 index.');
+    } finally {
+      advisorFacts.buildWeekAhead = realWeek;
+    }
+  });
 });

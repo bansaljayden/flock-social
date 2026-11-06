@@ -607,6 +607,19 @@ function venueBaseDate(utcOffsetMinutes, now) {
   return base;
 }
 
+/**
+ * The venue's own today as its week ahead dates it (buildWeekAhead's first
+ * day): { date, weekday }, or null for a venue with no corpus row to read its
+ * clock from. A field read and arithmetic, no forecast: the route reads a
+ * question's day against it (routes/advisor.js askedDayFor).
+ */
+function venueToday(ctx, { now = new Date() } = {}) {
+  const venue = ctx && ctx.mlVenue ? venueForScoring(ctx, now) : null;
+  if (!venue) return null;
+  const base = venueBaseDate(venue.utcOffsetMinutes, now);
+  return { date: base.toISOString().slice(0, 10), weekday: WEEKDAY_NAMES[base.getDay()] };
+}
+
 const intakeAsOf = (profile) =>
   profile.updated_at ? `owner-set ${toDateStr(profile.updated_at)}` : 'owner-set (date not recorded)';
 
@@ -1950,6 +1963,7 @@ module.exports = {
   // context + cards
   getVenueContext,
   buildWeekAhead,
+  venueToday,
   // a venue with no crowd history: the dashboard's Week Ahead, as facts
   buildWeekProjection,
   buildTodayProjection,

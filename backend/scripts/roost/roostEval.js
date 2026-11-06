@@ -416,7 +416,6 @@ async function noHistoryBlock(v, intentId, question = '') {
   const card = advisorFacts.projectionFacts(v.card);
   const today = advisorFacts.todayProjectionFacts(v.card);
   const advisorRoute = require(path.join(B, 'routes', 'advisor'));
-  const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
   // `card` is the bridge's one read of the card (advisorFacts.buildCardProjection):
   // the weekend counts from the card's today.
   const b = {
@@ -426,16 +425,16 @@ async function noHistoryBlock(v, intentId, question = '') {
     card: async () => ({ week: card, today, date: v.card.today.date }),
     around: async () => [],
   };
-  // A typed question that names today's weekday gets today's entry beside
-  // the week, as the bridge gives it.
-  const entries = await advisorRoute.__withNamedToday(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b,
-    roostPlaybook.namedWeekday(question));
+  // A typed question is read for the day it asks about, against the card's
+  // today, and one about today gets today's entry alone, as the bridge does.
+  const { entries, askedFor } = await advisorRoute.__forQuestion(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b, question);
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
+  const asked = askedFor !== undefined ? { askedDay: askedFor } : {};
   // Nothing on the card for it: the corpus refusal, as the bridge gives.
   return facts.length
-    ? { intent: intentId, facts, refusals: [] }
-    : { intent: intentId, facts: [], refusals: refusals.length ? refusals : [refusalText(gate)] };
+    ? { intent: intentId, facts, refusals: [], ...asked }
+    : { intent: intentId, facts: [], refusals: refusals.length ? refusals : [refusalText(gate)], ...asked };
 }
 
 // The block a chip gets, carrying what the real fact bridge adds beside the

@@ -1436,7 +1436,13 @@ const TEMPLATE_SHAPERS = Object.freeze({
 function renderTemplate(block, question = '') {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
   const shaper = TEMPLATE_SHAPERS[block?.intent];
-  const shaped = shaper ? shaper(facts, { named: roostPlaybook.namedWeekday(question) }) : null;
+  // The day the question asks about, as the route read it against the
+  // venue's own today (routes/advisor.js askedDayFor: "tonight" is today's
+  // weekday, "next Monday" on a Monday is none); else the day it names.
+  const named = block && Object.prototype.hasOwnProperty.call(block, 'askedDay')
+    ? block.askedDay
+    : roostPlaybook.namedWeekday(question);
+  const shaped = shaper ? shaper(facts, { named }) : null;
   let lead;
   let points;
   let used;

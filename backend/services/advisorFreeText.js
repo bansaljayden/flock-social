@@ -1320,14 +1320,17 @@ const PLAYS_IN_PAYLOAD = 3;
  * `exclude` is the moves an earlier answer already gave, for "what else"
  * (advisorFollowOn): they are neither handed to the model nor answered with.
  * `tactics` in the result is the moves this answer drew on, which the chat
- * sends back with the owner's next question.
+ * sends back with the owner's next question. `askedFor` is the weekday the
+ * question asks about as the route read it against the venue's own today
+ * ("tonight" is today's weekday, "next Monday" on a Monday is none), passed to
+ * the playbook's lead (roostPlaybook.groundedLead).
  *
  * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null, tactics: string[]}>}
  */
-async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [], unrouted = false }) {
+async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [], unrouted = false, askedFor = undefined }) {
   const venue = roostPlaybook.venueOf(ctx);
   const playbookAnswer = () => {
-    const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude });
+    const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude, askedFor });
     if (!answer) return null;
     return {
       mode: 'advice',

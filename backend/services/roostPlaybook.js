@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 const advisorAnswer = require('./advisorAnswer');
-const { normalizeOwnerText } = require('./ownerWords');
+const { normalizeOwnerText, SPELLING } = require('./ownerWords');
 
 // The closed topic list. A tactic outside it fails at load, not in front of
 // an owner.
@@ -808,11 +808,55 @@ function moneyLine(tactic, spend) {
 // it, or null. "How do I fill Thursdays" names Thursday. With 2 days named it
 // is the last: "Saturdays are packed, how do I fill Tuesdays" asks about
 // Tuesday, and the first one named is the setup (2026-10-28 second review).
-const NAMED_DAY = /\b(mon|tues|wednes|thurs|fri|satur|sun)days?\b/g;
+//
+// THE SHORT FORMS COUNT TOO (review, 2026-11-06): "How busy will Sat be?",
+// "Fri night", "Tues". Four of them are English words as well ("we sat
+// down", "the sun is out", "they wed", "c'mon"), so those four count only
+// when written the way a day is: capitalised ("Sat", "SUN"), or before a part
+// of the day ("sat night", "sun brunch"). A sentence that opens on "Sun's
+// out" still reads as Sunday; the cost is one answer about Sunday.
+const SHORT_DAYS = Object.freeze({
+  mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday', weds: 'Wednesday', thu: 'Thursday',
+  thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
+});
+const WORDS_TOO = new Set(['mon', 'wed', 'sat', 'sun']);
+const DAY_TOKEN = /\b(?:(mon|tues|wednes|thurs|fri|satur|sun)days?|(mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun))\b\.?/gi;
+const PART_OF_DAY_NEXT = /^\s*(?:night|morning|afternoon|evening|brunch|lunch|dinner|service|shift)s?\b/i;
+const TODAY_ASKED = /\b(?:today|tonight|this\s+(?:evening|afternoon|morning))\b/i;
+
+/**
+ * The day a question asks about: { weekday, next } for a weekday it names
+ * (the last one named; `next` when it says "next Monday"), { today: true } for
+ * today or tonight with no weekday named, or null. Which date that is depends
+ * on the venue's own today, which the route reads (routes/advisor.js
+ * askedDayFor): "next Monday" asked on a Monday is a week away, not today.
+ */
+function askedDay(question) {
+  // The owner's spelling put right as normalizeOwnerText does ("wensday",
+  // "saterday"), with the case left as typed for the short forms above.
+  const text = String(question || '').normalize('NFKC').replace(/[‘’]/g, "'")
+    .replace(/[A-Za-z]+/g, (w) => (Object.hasOwn(SPELLING, w.toLowerCase()) ? SPELLING[w.toLowerCase()] : w));
+  let found = null;
+  for (const m of text.matchAll(DAY_TOKEN)) {
+    let weekday = null;
+    if (m[1]) {
+      weekday = `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()}day`;
+    } else {
+      const short = m[2].toLowerCase();
+      const asDay = !WORDS_TOO.has(short) || /^[A-Z]/.test(m[2])
+        || PART_OF_DAY_NEXT.test(text.slice(m.index + m[0].length));
+      if (asDay) weekday = SHORT_DAYS[short];
+    }
+    // "next Monday", or "Monday next week".
+    if (weekday) found = { weekday, next: /\bnext\s+$/i.test(text.slice(0, m.index)) || /\bnext\s+week\b/i.test(text) };
+  }
+  if (found) return found;
+  return TODAY_ASKED.test(normalizeOwnerText(text)) ? { today: true } : null;
+}
+
 function namedWeekday(question) {
-  const all = [...normalizeOwnerText(String(question || '')).matchAll(NAMED_DAY)];
-  const m = all[all.length - 1];
-  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)}day` : null;
+  const asked = askedDay(question);
+  return asked && asked.weekday ? asked.weekday : null;
 }
 
 // "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
@@ -821,7 +865,11 @@ const {
   KIND_FORECAST, isKindForecast, unownDays, isBesideWeek,
 } = require('./kindForecast');
 
-function groundedLead(intentId, facts, question = '') {
+// `askedFor`, when the route has read the question against the venue's own
+// today (routes/advisor.js askedDayFor), is the weekday it asks about, or null
+// for a day no fact can stand for ("next Monday" asked on a Monday); left out,
+// the question's own named day is read.
+function groundedLead(intentId, facts, question = '', askedFor = undefined) {
   const peaks = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
     && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
   if (!peaks.length) return null;
@@ -841,7 +889,7 @@ function groundedLead(intentId, facts, question = '') {
   // Thursdays" used to open on whichever day was quietest (2026-10-28), an
   // answer to a different question. With no forecast for the named day there
   // is no lead at all, rather than one about another day.
-  const named = namedWeekday(question);
+  const named = askedFor !== undefined ? askedFor : namedWeekday(question);
   if (named) {
     const day = peaks.find((f) => f.value.weekday === named);
     if (!day) return null;
@@ -969,7 +1017,7 @@ function calculatorAnswer(book, { question, ctx, venue, intentId, exclude = [] }
  * Returns null when no tactic clears the floor.
  * @returns {{mode: 'advice', text: string, sources: Array, tactics: string[], followUp: string|null}|null}
  */
-function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [], exclude = [] } = {}) {
+function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [], exclude = [], askedFor = undefined } = {}) {
   const venue = venueOf(ctx);
   const calc = calculatorAnswer(book, { question: normalizeOwnerText(String(question || '')), ctx, venue, intentId, exclude });
   if (calc) {
@@ -1009,7 +1057,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const second = runnerUp ? runnerUp.t : null;
   const picks = second ? [first, second] : [first];
   const spend = spendOf(ctx);
-  const lead = groundedLead(intentId, groundedFacts, question);
+  const lead = groundedLead(intentId, groundedFacts, question, askedFor);
   // Under a lead that names a day of Flock's forecast for places like this
   // venue, the move names that day, never "your slowest day"
   // (services/kindForecast.js unownDays).
@@ -1232,6 +1280,7 @@ module.exports = {
   moneyLine,
   groundedLead,
   namedWeekday,
+  askedDay,
   coversIn,
   dollars,
   MOVE_INTENTS,

@@ -632,6 +632,37 @@ function cardFor(ctx, opts, memo) {
 // (weekend_outlook).
 const NAMED_TODAY_INTENTS = new Set(['peak_hours', 'quiet_nights']);
 const isDayEntry = (e) => Boolean(e && e.value && typeof e.value.weekday === 'string' && 'peakScore' in e.value);
+
+// THE DAY A QUESTION ASKS ABOUT, READ AGAINST THE VENUE'S OWN TODAY (review,
+// 2026-11-06). "How busy will we be tonight?" named no weekday and was
+// answered about the week; "Sat" and "Fri" were not read as days; "next
+// Monday" asked on a Monday was answered with today's Monday, a date a week
+// out. roostPlaybook.askedDay reads the words, and this reads them against the
+// venue's own today: the card's, off the block's one read, for a venue with no
+// crowd history, and its own week's clock otherwise (advisorFacts.venueToday,
+// a field read). It answers the weekday asked about, null for a day nothing
+// held stands for ("next Monday" on a Monday is a week away, past the week
+// ahead), or undefined when the question names no day, or names today on a
+// venue whose today cannot be read. Only for the questions about the week's
+// days, whose plans have read the card already.
+const DAY_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+const WEEKDAY_NAMES_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+async function venueWeekday(b) {
+  if (gatedVenue(b) && typeof b.card === 'function') {
+    const card = await b.card();
+    return ISO_DATE.test(String(card.date)) ? WEEKDAY_NAMES_LONG[weekdayOf(card.date)] : null;
+  }
+  const today = b.ctx ? advisorFacts.venueToday(b.ctx, { now: b.now }) : null;
+  return today ? today.weekday : null;
+}
+async function askedDayFor(b, question) {
+  const asked = roostPlaybook.askedDay(question);
+  if (!asked) return undefined;
+  const today = await venueWeekday(b);
+  if (asked.today) return today || undefined;
+  if (asked.next && asked.weekday === today) return null;
+  return asked.weekday;
+}
 async function withNamedToday(entries, intentId, b, named) {
   if (!named || !NAMED_TODAY_INTENTS.has(intentId) || typeof b.card !== 'function') return entries;
   if (!entries.some(isKindForecast) && !gatedVenue(b)) return entries;
@@ -639,6 +670,23 @@ async function withNamedToday(entries, intentId, b, named) {
   const day = today.find((f) => f.value && f.value.weekday === named);
   if (!day) return entries;
   return [besideWeek(day), ...entries.filter((e) => !advisorFacts.isRefusal(e) && !isDayEntry(e))];
+}
+
+// The bridge's step after a plan, for a typed question: the day it asks
+// about (askedDayFor); a day a week out ("next Monday" on a Monday) taken out
+// of a week that holds today under the same weekday, so no answer gives
+// today's number for it, and the week's answer stands with no date claimed;
+// and today on its own for a question about today (withNamedToday). A chip
+// asks about no day and passes through untouched.
+async function forQuestion(entries, intentId, b, question) {
+  if (!question || !DAY_INTENTS.has(intentId)) return { entries, askedFor: undefined };
+  const askedFor = await askedDayFor(b, question);
+  let out = entries;
+  if (askedFor === null && NAMED_TODAY_INTENTS.has(intentId)) {
+    const { weekday } = roostPlaybook.askedDay(question);
+    out = out.filter((e) => !(isDayEntry(e) && e.value.weekday === weekday));
+  }
+  return { entries: await withNamedToday(out, intentId, b, askedFor), askedFor };
 }
 
 // `question`, when there is one, is what the owner asked: a question that
@@ -660,6 +708,7 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
   const memo = {};
   const b = {
     ctx,
+    now: opts.now,
     // The venue's own week: its corpus forecast, or the corpus refusal, which
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
@@ -690,7 +739,7 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
   };
 
   const plan = INTENT_PLANS[intentId];
-  const entries = await withNamedToday(plan ? await plan(b) : [], intentId, b, roostPlaybook.namedWeekday(question));
+  const { entries, askedFor } = await forQuestion(plan ? await plan(b) : [], intentId, b, question);
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
@@ -708,9 +757,14 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
     spendAsOf: ctx.profile.updated_at ? `owner-set ${String(ctx.profile.updated_at).slice(0, 10)}` : 'owner-set',
-    // Whether this block tried the no-history venue's Week Ahead card and
-    // found it (weekFor); absent when it never needed to.
+    // Whether this block read the no-history venue's Week Ahead card and
+    // found anything on it (cardFor); absent when it never needed to.
     ...(typeof memo.cardRead === 'boolean' ? { cardRead: memo.cardRead } : {}),
+    // The day the question asks about, read against the venue's own today
+    // (askedDayFor): the template and the playbook's lead answer about this
+    // day, not the one the question's words alone would name. Absent when
+    // the question names no day.
+    ...(askedFor !== undefined ? { askedDay: askedFor } : {}),
   };
 }
 
@@ -1386,11 +1440,21 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // none is not asked again: the second read is a second paid lookup that
     // fails the same way (2026-11-03 review). Today's weekday comes off the
     // card's today for a venue with no crowd history (withNamedToday).
-    const named = roostPlaybook.namedWeekday(asked);
-    if (named && !(block && block.cardRead === false)
-        && !groundedFacts.some((f) => f && f.value && f.value.weekday === named)) {
+    //
+    // The day is the one a block read against the venue's own today
+    // (askedDayFor, 2026-11-06): "tonight" is today's weekday, and "next
+    // Monday" on a Monday is no day held, so nothing stands for it and no
+    // lead names it. A question about a day its route did not read ("How do
+    // I fill a slow night tonight?" routed to no week at all) reads the
+    // week's peaks, which read the day as well.
+    const asksDay = roostPlaybook.askedDay(asked) !== null;
+    const readDay = (blk) => Boolean(blk) && Object.prototype.hasOwnProperty.call(blk, 'askedDay');
+    let named = readDay(block) ? block.askedDay : roostPlaybook.namedWeekday(asked);
+    if (asksDay && !(block && block.cardRead === false)
+        && (named ? !groundedFacts.some((f) => f && f.value && f.value.weekday === named) : !readDay(block))) {
       try {
         const week = await buildFactBlock(userId, 'peak_hours', { question: asked });
+        if (!readDay(block) && readDay(week)) named = week.askedDay;
         const have = new Set(groundedFacts.map((f) => f && f.id));
         groundedFacts = [...groundedFacts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
       } catch (err) {
@@ -1410,6 +1474,8 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       fallback: route.fallback || null,
       exclude: follow.exclude,
       unrouted: route.unrouted === true,
+      // The day as read above, when the question asks about one.
+      ...(asksDay ? { askedFor: named } : {}),
     });
     return res.json({
       mode: answer.mode,
@@ -1450,6 +1516,7 @@ module.exports = router;
 // endpoint would mean standing up a whole database fixture to test a sort.
 module.exports.__INTENT_PLANS = INTENT_PLANS;
 // The bridge's step after a plan, for the live eval's stand-in bridge
-// (scripts/roost/roostEval.js): a question naming today's weekday gets
-// today's entry on the card beside the week.
-module.exports.__withNamedToday = withNamedToday;
+// (scripts/roost/roostEval.js): the day a typed question asks about, read
+// against the venue's own today, and today's entry on the card for a
+// question about today.
+module.exports.__forQuestion = forQuestion;
