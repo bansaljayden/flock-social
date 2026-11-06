@@ -145,10 +145,24 @@ const RATES = {
   // gemini-3.7-flash is on promotional pricing that DOUBLES on 2027-01-01.
   // Roost's whole variable cost is this model, so that date is a real event for
   // this business and both rate cards are carried rather than only today's.
+  //
+  // Google deprecated gemini-3.7-flash on 2026-10-08 and routes every request
+  // for it to gemini-3.8-flash, so those calls bill at 3.8 Flash's price. The
+  // pricing page no longer lists 3.7 Flash; 3.8 Flash is listed at the same
+  // figures and the same 2027-01-01 doubling (read 2026-11-06), so the 3.7
+  // card stands and 3.8 is carried beside it for a model swap.
   gemini: {
-    checked: '2026-10-03',
-    source: 'https://ai.google.dev/gemini-api/docs/pricing',
+    checked: '2026-11-06',
+    source: 'https://aistudio.google.com/docs/pricing',
     models: {
+      'gemini-3.8-flash': {
+        inputPerMTok: 0.75,
+        outputPerMTok: 3.75,
+        laterInputPerMTok: 1.50,
+        laterOutputPerMTok: 7.50,
+        laterFrom: '2027-01-01',
+        freeTier: true,
+      },
       'gemini-3.7-flash': {
         inputPerMTok: 0.75,
         outputPerMTok: 3.75,
@@ -174,9 +188,11 @@ const RATES = {
   // Google Places (New). Per 1,000 requests, with a per-SKU monthly free cap.
   // The tier names are Google's and they are decided by the FIELD MASK, not by
   // the endpoint. See the correction in the header.
+  // The prices are on Google's price list: the SKU details page this used to
+  // cite stopped quoting them and links to the list (2026-11-06).
   places: {
-    checked: '2026-10-03',
-    source: 'https://developers.google.com/maps/billing-and-pricing/sku-details',
+    checked: '2026-11-06',
+    source: 'https://developers.google.com/maps/billing-and-pricing/pricing',
     skus: {
       textSearchEnterprise: { label: 'Text Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
       detailsEnterprise: { label: 'Place Details (Enterprise fields)', perThousand: 20.00, freePerMonth: 1000 },
@@ -201,7 +217,7 @@ const RATES = {
   // imported from utils/visionBudget.js, which already owns it and already
   // prints it in its own log lines. Two copies of a price is how they drift.
   vision: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://cloud.google.com/vision/pricing',
     perThousand: VISION_UNIT_PRICE_USD * 1000,
     freePerMonth: 1000,
@@ -214,7 +230,7 @@ const RATES = {
   // allowance. This is $0 and stays $0 until the call volume grows by a factor
   // of thirty.
   weather: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://openweathermap.org/price',
     freePerMonth: 1000000,
     freePerMinute: 60,
@@ -247,7 +263,7 @@ const RATES = {
   // headroom. Its calls are in no ledger here, because they happen in another
   // process: the observed Ticketmaster line counts the app's calls only.
   ticketmaster: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://developer.ticketmaster.com/products-and-docs/apis/getting-started/',
     freePerDay: 5000,
     perCallOverFree: null,
@@ -306,10 +322,12 @@ const RATES = {
     requestsPerStaticImage: 15,
   },
 
-  // PostHog. Product analytics events.
+  // PostHog. Product analytics events. posthog.com/pricing draws its per-event
+  // prices in the browser, so the source is the product's own price table,
+  // which states them in the page (2026-11-06).
   posthog: {
-    checked: '2026-10-03',
-    source: 'https://posthog.com/pricing',
+    checked: '2026-11-06',
+    source: 'https://posthog.com/docs/product-analytics/pricing',
     freeEventsPerMonth: 1000000,
     perEventOverFree: 0.00005,
   },
@@ -317,17 +335,17 @@ const RATES = {
   // Sentry. SENTRY_DSN is unset on the Railway service, so nothing is being
   // sent and the free tier is not even being consumed.
   sentry: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://sentry.io/pricing/',
     freeErrorsPerMonth: 5000,
     nextTierUsd: 26.00,
-    nextTierNote: 'Team, billed annually ($312 a year). Billed monthly it is $29 (sentry.io/pricing, read 2026-09-30).',
+    nextTierNote: 'Team, billed annually ($312 a year). Billed monthly it is $29 (sentry.io/pricing, read 2026-11-06).',
   },
 
   // RevenueCat. Free under $2,500 monthly tracked revenue, then 1% of it. The
   // paywall has never been switched on, so tracked revenue is $0.
   revenuecat: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://www.revenuecat.com/pricing/',
     freeMonthlyTrackedRevenueUsd: 2500,
     percentOverFree: 1.0,
@@ -337,7 +355,7 @@ const RATES = {
   // Billing share on a subscription. Stripe Tax adds its own share only where a
   // tax registration exists. Nothing has been charged, so this costs $0.
   stripe: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://stripe.com/pricing',
     percent: 2.9,
     fixedUsd: 0.30,
@@ -349,7 +367,7 @@ const RATES = {
   // Developer Program. The APNs line is a conclusion from an ABSENCE of any
   // published price, which is weaker evidence than a quoted zero.
   push: {
-    checked: '2026-09-30',
+    checked: '2026-11-06',
     source: 'https://firebase.google.com/pricing',
     fcmUsd: 0,
     apnsUsd: 0,
@@ -357,9 +375,11 @@ const RATES = {
   },
 
   // Store commissions. Not a cost today (nothing is purchasable) but the number
-  // that decides what a subscription is actually worth when it is.
+  // that decides what a subscription is actually worth when it is. The source
+  // states the 15%; the 30% first year and 15% after a year of paid service are
+  // on developer.apple.com/app-store/subscriptions (both read 2026-11-06).
   stores: {
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://developer.apple.com/app-store/small-business-program/',
     appleStandardPct: 30,
     appleSmallBusinessPct: 15,
@@ -423,9 +443,9 @@ const FIXED_MONTHLY = [
     usd: 119.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://besttime.app/subscription/pricing',
-    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id and live calls are unlimited on venues already admitted, the 100 is the monthly cap on new venue admissions, and the pricing page also caps Venue Filter queries at 200,000 a month and searches by query at 5,000 (besttime.app pricing, read 2026-09-30). The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
+    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id and live calls are unlimited on venues already admitted, the 100 is the monthly cap on new venue admissions, and the pricing page also caps Venue Filter results at 200,000 a month and Venue Search at 100 searches a month, one search per 20 venues returned, and it says a new venue that Venue Filter returns takes one of the monthly venue slots (besttime.app pricing, read 2026-11-06; on 2026-09-30 it said 5,000 searches by query). The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
   },
   {
     id: 'sportsdb',
@@ -433,8 +453,8 @@ const FIXED_MONTHLY = [
     usd: 9.00,
     verified: true,
     kind: 'infrastructure',
-    // Re-read 2026-10-03 on the pricing page: Single Developer $9/month.
-    checked: '2026-10-03',
+    // Re-read 2026-11-06 on the pricing page: Single Developer $9/month.
+    checked: '2026-11-06',
     source: 'https://www.thesportsdb.com/pricing',
     note: 'Dedicated key, commercial use permitted. Bought monthly rather than at the $90 annual rate because only a three-month test was committed. Feeds scripts/ml/collectSportsSchedules.js, which the hourly collector runs about once a day.',
   },
@@ -457,7 +477,7 @@ const FIXED_ANNUAL = [
     usd: 99.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://developer.apple.com/support/enrollment/',
     note: 'Also covers APNs, which has no separate price.',
   },
@@ -467,9 +487,9 @@ const FIXED_ANNUAL = [
     usd: 11.17,
     verified: false,
     kind: 'infrastructure',
-    checked: '2026-10-03',
+    checked: '2026-11-06',
     source: 'https://www.cloudflare.com/products/registrar/',
-    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 from 2026-11-01 when the wholesale price rises to $10.97, so the next renewal is $11.17. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
+    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 since 2026-11-01, when the wholesale price rose to $10.97, so the next renewal is $11.17. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
   },
 ];
 
@@ -1246,7 +1266,7 @@ const DEPENDENCIES = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter: the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited, and Venue Filter queries are capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on that filter allowance, about 3,200 queries for a whole city, and spends no admissions.',
+    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter: the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited, and Venue Filter results are capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on that filter allowance, about 3,200 queries for a whole city. A harvest measured on 2026-09-28 was billed in query credits and spent no admissions, but the pricing page read 2026-11-06 says each new venue a filter returns takes one of the monthly venue slots.',
     where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *)',
     group: 'fixed',
     fixedId: 'besttime-subscription',

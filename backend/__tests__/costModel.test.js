@@ -526,6 +526,26 @@ test('the promotional Gemini price is modelled as ending', () => {
   assert.strictEqual(before.promotional, true);
 });
 
+test('gemini-3.8-flash, where Google routes every gemini-3.7-flash call, is priced like it', () => {
+  // Google deprecated gemini-3.7-flash on 2026-10-08 and serves its requests
+  // with gemini-3.8-flash, listed at the same prices and the same doubling
+  // (aistudio.google.com/docs/pricing, read 2026-11-06). An ADVISOR_MODEL or
+  // BIRDIE_MODEL set to the new name has to price, not read as unpriceable.
+  for (const day of ['2026-11-06', '2027-01-01']) {
+    const now = cm.geminiRate('gemini-3.8-flash', day);
+    assert.ok(now, `gemini-3.8-flash has no rate on ${day}`);
+    assert.deepStrictEqual(now, cm.geminiRate('gemini-3.7-flash', day), `3.8 and 3.7 differ on ${day}`);
+  }
+  const promo = cm.geminiRate('gemini-3.8-flash', '2026-12-31');
+  assert.strictEqual(promo.inputPerMTok, 0.75);
+  assert.strictEqual(promo.outputPerMTok, 3.75);
+  assert.strictEqual(promo.changesOn, '2027-01-01');
+  const list = cm.geminiRate('gemini-3.8-flash', '2027-01-01');
+  assert.strictEqual(list.inputPerMTok, 1.5);
+  assert.strictEqual(list.outputPerMTok, 7.5);
+  assert.strictEqual(list.promotional, false);
+});
+
 test('the dearest call shape sets the top of the band, not the chip shape', () => {
   // The advice call has a shorter system prompt against a large output budget,
   // so its output fraction is higher than the chip call's, and output bills at
