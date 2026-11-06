@@ -6399,7 +6399,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const lat = venue.location?.latitude || venue.geometry?.location?.lat;
         const lng = venue.location?.longitude || venue.geometry?.location?.lng;
         if (lat && lng) {
-          window.__flockPanToVenue({ place_id: placeId, lat, lng, name: venue.name || venue.displayName?.text, address: venue.formatted_address, rating: venue.rating, photo_url: (venue.photos && venue.photos[0]) || venue.photo_url });
+          // The photo travels with its credit. A place that is no pin on the
+          // map yet gets a temporary pin, and the pan reopens this sheet on
+          // that pin's seed; without the credit the sheet would drop to its
+          // map for the length of that second read.
+          const panFromList = !!(venue.photos && venue.photos[0]);
+          window.__flockPanToVenue({ place_id: placeId, lat, lng, name: venue.name || venue.displayName?.text, address: venue.formatted_address, rating: venue.rating, photo_url: (venue.photos && venue.photos[0]) || venue.photo_url, photo_attribution: panFromList ? ((venue.photo_attributions || [])[0] || null) : (venue.photo_attribution || null) });
         }
       }
 

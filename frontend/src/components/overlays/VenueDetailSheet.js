@@ -55,31 +55,14 @@ import Icons from '../ui/Icons';
 import { openMapsChooser } from '../ui/MapsChooser';
 import StaticVenueMap, { paletteIsDark } from '../map/StaticVenueMap';
 import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
-import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
-import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
+// CreditedPhoto is the header photo and Google's credit for it, as one piece:
+// a photo that fails to load becomes the placeholder bird and the credit goes
+// with it. It lives beside the credit itself because the plan screen's header
+// draws the same piece.
+import { GoogleMapsMark, CreditedPhoto, creditAt, usableCredit } from '../ui/GoogleCredit';
 import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
-
-// The header photo and Google's credit for it, as one piece, keyed by photo
-// so each photo starts clean. A photo that fails to load becomes the
-// placeholder bird, and the credit goes with it: the bird is not the
-// photographer's. Out here, not inside the sheet, because the sheet returns
-// early and may not call a hook. A function declaration, not an arrow: the
-// sheet's tests read its prop list up to the first arrow head in this file.
-function CreditedPhoto({ src, credit }) {
-  const [failed, setFailed] = React.useState(false);
-  return (
-    <>
-      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { setFailed(true); onVenuePhotoError(e); }} />
-      {!failed && (
-        // Top left, the one corner the close button, the arrows, the dots and
-        // the name leave free.
-        <PhotoCredit credit={credit} style={{ position: 'absolute', top: '12px', left: '12px', maxWidth: 'calc(100% - 70px)', zIndex: 1 }} />
-      )}
-    </>
-  );
-}
 
 const VenueDetailSheet = ({
   // Module scope helpers and components that live in App.js and are not
@@ -212,6 +195,13 @@ const VenueDetailSheet = ({
         // and the header keeps its plain box.
         const at = venueDetailModal.location || (venueDetailModal.geometry && venueDetailModal.geometry.location) || {};
         const venueMapAt = { lat: at.latitude ?? at.lat ?? venueDetailModal.lat, lng: at.longitude ?? at.lng ?? venueDetailModal.lng };
+        // A Places photo is drawn with its credit or not at all
+        // (components/ui/GoogleCredit.js). A seed photo brings its credit
+        // from a pin, a search row or a plan whose credit is known; a chat
+        // card, a pinned venue or a failed details read brings none, and then
+        // the header is the block the venue is on until Place Details answers
+        // with credited photos. The same goes for the events drawn over it.
+        const seedCredit = venueDetailModal.photo_url ? usableCredit(venueDetailModal.photo_attribution) : null;
         // Get Directions and a tap on the header map both open the chooser.
         // The Google link needs a url or a place id; a card holding neither
         // (a seed the header map can still draw from coordinates) offers
@@ -256,11 +246,12 @@ const VenueDetailSheet = ({
                     </>
                   )}
                 </>
-              ) : venueDetailModal.photo_url ? (
-                <CreditedPhoto key={venueDetailModal.photo_url} src={venueDetailModal.photo_url} credit={usableCredit(venueDetailModal.photo_attribution)} />
+              ) : seedCredit ? (
+                <CreditedPhoto key={venueDetailModal.photo_url} src={venueDetailModal.photo_url} credit={seedCredit} />
               ) : (
                 /* No photo, which is every venue Places has none for and
-                   every venue once the photo spend cap is reached: the block
+                   every venue once the photo spend cap is reached, and a seed
+                   photo with no credit in hand (seedCredit, above): the block
                    it is on, in the app theme, with its credit top left where
                    the name and the close button leave room. A real photo beats
                    a map in a header, so this is the no-photo branch only. With
@@ -398,9 +389,11 @@ const VenueDetailSheet = ({
                     // to one venue and start over when the sheet moves on.
                     key={venueDetailModal.place_id || 'venue'}
                     events={venueDetailEvents}
-                    photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : [venueDetailModal.photo_url]}
+                    // The seed photo only with its credit; without one the
+                    // events are drawn on the art.
+                    photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : (seedCredit ? [venueDetailModal.photo_url] : [])}
                     // Google's credits, aligned with that same list.
-                    credits={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photo_attributions : [venueDetailModal.photo_attribution]}
+                    credits={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photo_attributions : (seedCredit ? [seedCredit] : [])}
                     colors={colors}
                     onReport={(e) => setModerationTarget({ userName: 'this venue', contentType: 'venue_event', contentId: e.id })}
                   />
@@ -658,6 +651,9 @@ const VenueDetailSheet = ({
               <button onClick={(e) => {
                 confirmClick(e);
                 const photoUrl = (venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null;
+                // Google's credit for that same photo, from the list it came
+                // from, so a venue picked here can be credited where it lands.
+                const photoCredit = (venueDetailModal.photos && venueDetailModal.photos[0]) ? creditAt(venueDetailModal.photo_attributions, 0) : seedCredit;
                 if (pickingVenueForDm) {
                   const v = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl };
                   pinDmVenueNow(selectedDmId, v);
@@ -673,7 +669,7 @@ const VenueDetailSheet = ({
                   // their vote on it.
                   const picked = flocksRef.current.find(f => f.id === pickingVenueForFlockId);
                   const pickerIsCreator = !picked || String(picked.creatorId) === String(meRef.current?.id);
-                  const pickedVenue = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, photo_url: photoUrl, location: venueDetailModal.geometry?.location ? { latitude: venueDetailModal.geometry.location.lat, longitude: venueDetailModal.geometry.location.lng } : undefined, type: venueDetailModal.category || null };
+                  const pickedVenue = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, photo_url: photoUrl, photo_attribution: photoCredit, location: venueDetailModal.geometry?.location ? { latitude: venueDetailModal.geometry.location.lat, longitude: venueDetailModal.geometry.location.lng } : undefined, type: venueDetailModal.category || null };
                   if (pickerIsCreator) {
                   updateFlockVenue(pickingVenueForFlockId, { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   } else {
@@ -694,7 +690,7 @@ const VenueDetailSheet = ({
                 } else if (venueDetailReturnTo) {
                   returnToChat();
                 } else {
-                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: (typeof crowdData?.score === 'number' ? crowdData.score : null), crowdLabel: crowdData?.label || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                  setSelectedVenueForCreate({ name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, price_level: venueDetailModal.price_level, price: venueDetailModal.price_level ? '$'.repeat(venueDetailModal.price_level) : null, photo_url: photoUrl, photo_attribution: photoCredit, type: venueDetailModal.types?.[0]?.replace(/_/g, ' ')?.replace(/\b\w/g, c => c.toUpperCase()) || 'Venue', crowd: (typeof crowdData?.score === 'number' ? crowdData.score : null), crowdLabel: crowdData?.label || null, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }

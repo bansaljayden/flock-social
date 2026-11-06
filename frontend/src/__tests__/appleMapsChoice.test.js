@@ -303,7 +303,7 @@ describe('every way to a map goes through the sheet', () => {
   });
 
   test("a plan's Details hands the venue card the plan's coordinates, so Apple Maps has the pin before the details load", () => {
-    expect(flockDetail).toContain('photo_url: flock.venuePhoto, lat: flock.venueLat, lng: flock.venueLng })}');
+    expect(flockDetail).toContain('photo_attribution: headerPhoto ? headerPhoto.credit : null, lat: flock.venueLat, lng: flock.venueLng })}');
     expect(venueSheet).toMatch(/lat: at\.latitude \?\? at\.lat \?\? venueDetailModal\.lat,/);
   });
 

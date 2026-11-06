@@ -322,6 +322,8 @@ describe('App.js loads, retracts and hands over the list', () => {
   test('the sheet is handed the list', () => {
     expect(APP).toContain('venueDetailEvents={venueDetailEvents}');
     expect(SHEET).toContain('events={venueDetailEvents}');
-    expect(SHEET).toContain('photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : [venueDetailModal.photo_url]}');
+    // The seed photo goes under the events only with its Google credit
+    // (googlePhotoCredit.test.js): without one, the events go on the art.
+    expect(SHEET).toContain('photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : (seedCredit ? [venueDetailModal.photo_url] : [])}');
   });
 });

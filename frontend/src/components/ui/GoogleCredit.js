@@ -20,10 +20,28 @@
  * uncredited "provided that the user is able to access a larger version of the
  * image that includes the full author attribution". A map pin, a search card,
  * an Explore row, a Birdie card and the map's venue card all open the venue
- * sheet, whose header photo is credited.
+ * sheet, whose header photo is credited. So do a venue card in a flock chat or
+ * a DM, the pinned venue over either, and the picked venue on the Create
+ * screen. Where a thumbnail cannot reach a sheet it draws no Google photo: a
+ * chat card with no place_id shows the placeholder instead.
+ *
+ * Two thumbnails reach the larger version another way:
+ *   - a row whose own tap votes or shares (the vote panels and the
+ *     share-a-venue lists in both chat screens) gives its photo a button of
+ *     its own, ThumbToSheet below, which opens the sheet;
+ *   - the chat list's 46px plan tile opens the chat, and from there the route
+ *     is the chat, then "Open the plan" (the chat header), then the plan
+ *     screen's header photo (screens/FlockDetail.js), which is credited.
+ *
+ * A PLACES PHOTO WITH NO CREDIT IN HAND IS NOT DRAWN LARGE. The plan row keeps
+ * its photo's URL and not who took it, so the plan header asks the server when
+ * the plan opens (lib/planPhotoCredit.js) and draws the block the venue is on
+ * until the answer names the photographer. The venue sheet does the same with
+ * a seed photo that came without its credit, until Place Details answers.
  */
 import React from 'react';
 import Icons from './Icons';
+import { onVenuePhotoError } from '../../lib/venuePhoto';
 
 // Google hosts over https only. These links are Google's own, so anything else
 // arriving in those fields is not a credit and is not drawn as a link.
@@ -49,6 +67,12 @@ export function usableCredit(c) {
 // The credit for photo i of a list the server sent index-aligned with it.
 export function creditAt(credits, i) {
   return Array.isArray(credits) ? usableCredit(credits[i]) : null;
+}
+
+// A photo the app's Places photo proxy serves, which is Google's, as against
+// an event listing's own image, which is not and needs no Google credit.
+export function isPlacesPhotoUrl(u) {
+  return typeof u === 'string' && u.includes('/api/venues/photo?');
 }
 
 // `dark` true or false picks white or gray outright (the venue sheet knows its
@@ -127,3 +151,40 @@ export const PhotoCredit = ({ credit, style }) => {
     </span>
   );
 };
+
+// A large photo and Google's credit for it, as one piece, keyed by photo by
+// the caller so each photo starts clean. A photo that fails to load becomes the
+// placeholder bird, and the credit goes with it: the bird is not the
+// photographer's. Fills its parent, which sets the size and position:relative.
+// The venue sheet's header and the plan screen's header both draw this.
+export function CreditedPhoto({ src, credit }) {
+  const [failed, setFailed] = React.useState(false);
+  return (
+    <>
+      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { setFailed(true); onVenuePhotoError(e); }} />
+      {!failed && (
+        // Top left, the one corner the sheet's close button, arrows, dots and
+        // name leave free.
+        <PhotoCredit credit={credit} style={{ position: 'absolute', top: '12px', left: '12px', maxWidth: 'calc(100% - 70px)', zIndex: 1 }} />
+      )}
+    </>
+  );
+}
+
+// THE PHOTO'S OWN DOOR TO THE VENUE SHEET, for a row whose tap does something
+// else. A vote row votes and a share row shares, so their thumbnail never
+// reached the sheet that credits it. This is a button laid over the photo, a
+// sibling of the row's own button rather than a child (a button inside a button
+// is not a control anybody can rely on), so the row keeps its paint and its tap
+// and the photo opens the sheet. The parent is position:relative; `left`,
+// `size` and `radius` are the photo's own box inside the row.
+export const ThumbToSheet = ({ label, onOpen, left, size, radius }) => (
+  <button
+    type="button"
+    className="hit44"
+    aria-label={label}
+    title={label}
+    onClick={(e) => { e.stopPropagation(); onOpen(); }}
+    style={{ position: 'absolute', left, top: '50%', transform: 'translateY(-50%)', width: size, height: size, padding: 0, margin: 0, border: 'none', borderRadius: radius, background: 'transparent', cursor: 'pointer', zIndex: 1 }}
+  />
+);
