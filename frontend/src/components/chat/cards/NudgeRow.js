@@ -14,11 +14,12 @@
  * sentence with a control next to it, and a sentence set in caps beside a
  * mixed case chip label reads as shouting.
  *
- * WHAT IT REPLACES. The 40pt momentum meter that sits pinned under the chat
- * header today, and the standalone notification prompt. The meter retires to
- * the plan page (rebuild plan, "Momentum nudges"); what is left of it is this
- * row, posted at most once per plan per stage, never while somebody is
- * typing, never more than one unresolved, and never after the plan locks.
+ * WHAT IT REPLACES. The 40pt momentum meter that sat pinned under the chat
+ * header, and the standalone notification prompt. The meter retired to the
+ * plan page (rebuild plan, "Momentum nudges") and later left that too; what
+ * is left of it is this row, posted at most once per plan per stage, never
+ * while somebody is typing, never more than one unresolved, and never after
+ * the plan locks.
  * None of those rules live here: this component draws a nudge the parent has
  * already decided to show, the same way every other file in this folder takes
  * its whole world as props.

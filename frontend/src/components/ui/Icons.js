@@ -472,8 +472,9 @@ const Icons = {
 
   // A plain closed ring: the "not yet" mark. Exists so a checklist can pair
   // it with `check` and carry met/unmet on shape as well as colour - the
-  // flock detail momentum signals are the first caller. Deliberately empty
-  // inside; a dot would make it a target, a slash would make it a ban.
+  // flock detail momentum signals were the first caller, and left with the
+  // meter on 2026-11-06. Deliberately empty inside; a dot would make it a
+  // target, a slash would make it a ban.
   circle: make(<circle cx="12" cy="12" r="9" />),
 
   cloud: make(<path d="M4 18 4 14A4 4 0 0 1 9 10A5 5 0 0 1 15 9A5 5 0 0 1 20 14L20 18Z" />, {

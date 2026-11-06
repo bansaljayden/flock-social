@@ -106,8 +106,8 @@
  * heavy. What is left in that space is one 36pt strip, and only when there is
  * something to put in it.
  *
- *   The momentum meter    GONE. screens/FlockDetail.js already draws the same
- *                         meter off the same data, and draws it better.
+ *   The momentum meter    GONE. It moved to screens/FlockDetail.js, and left
+ *                         that screen too on 2026-11-06 (each fact once).
  *   The 40pt plan bar     GONE. Its two facts, the time and the status, are
  *                         the header's subtitle now, and the header itself is
  *                         the button that opens the plan.
@@ -137,13 +137,14 @@
  * fixed 58px typing slot is gone. The always-present Send button at 45%
  * opacity is gone.
  *
- * EIGHT PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
- * chatNavOpen, getRelativeTime, profilePic, isDark, colorsLight,
- * MOMENTUM_STAGES, momentumStageKey and memberCountLabel. The last three
- * joined on the chrome pass: the meter they drew retired to the plan screen,
- * and the member count gave up its half of the header subtitle to the time
- * and the status of the plan. App.js still computes all three for
- * screens/FlockDetail.js and the flock list, so nothing upstream changed.
+ * SIX PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
+ * chatNavOpen, getRelativeTime, profilePic, isDark, colorsLight and
+ * memberCountLabel. The last joined on the chrome pass: the member count gave
+ * up its half of the header subtitle to the time and the status of the plan.
+ * App.js still computes it for the flock list, so nothing upstream changed.
+ * MOMENTUM_STAGES and momentumStageKey were on this list too, for the meter
+ * that retired to the plan screen; they left with it on 2026-11-06, when the
+ * plan screen stopped drawing it and App.js stopped computing them.
  * chatNavOpen joined them when the header rail went behind the plus; App.js
  * still owns the flag and `setChatNavOpen(false)` on the way out still closes
  * it, so nothing is left half open if the rail ever comes back. It was seven
@@ -671,13 +672,11 @@ export default function ChatDetail({
   DM_PAGE_SIZE,
   DialogBehavior,
   ListSkeleton,
-  MOMENTUM_STAGES,
   SearchInputLocal,
   colorsLight, // unused: the text bubble it tinted is gone
   crowdColorFor,
   memberCountLabel,
   messagePreview,
-  momentumStageKey,
   oldestServerId,
   onVenuePhotoError,
   paymentRoutes,
@@ -3259,13 +3258,13 @@ export default function ChatDetail({
 
             NOTHING WAS LOST WITH IT, and that is worth saying plainly because
             "it moved to the plan page" is the kind of claim that turns out to
-            be a plan rather than a fact. screens/FlockDetail.js already draws
-            the same meter off the same `flock.momentum` and the same
-            MOMENTUM_STAGES, and draws it BETTER: hollow outlines for the
-            stages not yet reached so the boundary survives without colour, a
-            role="img" label naming the stage for a screen reader, and a
-            three-signal summary with check and ring glyphs instead of a
-            run-on sentence. The header above is one tap from it.
+            be a plan rather than a fact. screens/FlockDetail.js drew the same
+            meter off the same `flock.momentum` until 2026-11-06, when it went
+            from there as well: its stage word read "Ready" beside a
+            "Planning" badge, and its signals repeated what the plan screen
+            already says. The one fact it carried that nothing else did, how
+            many of the people asked are going, is the plan screen's Going
+            row ("3 of 5"), one tap from the header above.
 
             The Birdie nudge row the rebuild plan puts in this meter's place is
             a separate piece of work and is deliberately NOT here. Drawing a

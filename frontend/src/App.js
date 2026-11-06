@@ -2988,32 +2988,14 @@ const formatEventTime = (iso) => {
   return localeDateTime(d, [], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 };
 
-/* Momentum. The server scores a brand-new flock at 50/100 (it hands out a
-   full 20 points for "no budget to collect" and 30 for the creator's own
-   RSVP), so a plan with no venue, no time and one person read "Almost
-   There". The score is still useful as a bar; the STAGE is re-derived here
-   from the three facts a person would actually check. */
-const MOMENTUM_STAGES = [
-  { key: 'idea', label: 'Idea', color: '#94a3b8' },
-  { key: 'building', label: 'Building', color: '#f59e0b' },
-  { key: 'almost_there', label: 'Almost There', color: '#F59E0B' },
-  // 'Ready', not 'Locked In': Locked In is the STATUS word for a confirmed
-  // flock, and this stage fires on signals alone, so the old label sat next
-  // to a "Planning" chip claiming the opposite. The stage means "everything
-  // is in place", and only the status may say locked.
-  { key: 'locked_in', label: 'Ready', color: '#22c55e' },
-  { key: 'lets_go', label: "Let's Go", color: '#4a7ba7' },
-];
-
-const momentumStageKey = (m) => {
-  if (!m) return 'idea';
-  const hasPeople = (m.accepted || 0) >= 2;
-  const signals = [!!m.hasVenue, !!m.hasTime, hasPeople].filter(Boolean).length;
-  if (signals === 3) return (m.score || 0) >= 85 ? 'lets_go' : 'locked_in';
-  if (signals === 2) return 'almost_there';
-  if (signals === 1) return 'building';
-  return 'idea';
-};
+/* The momentum meter's stages and their picker (MOMENTUM_STAGES and
+   momentumStageKey) lived here, and were the only reader of a score the
+   server still sends as flock.momentum. The meter left the chat header on
+   2026-09-05 and the plan screen on 2026-11-06, where its stage word read
+   "Ready" beside a "Planning" badge and each of its signals repeated a fact
+   the screen already showed (screens/FlockDetail.js, "EACH FACT ONCE"). With
+   no meter anywhere the two went too. flock.momentum stays on the flock:
+   App.js still reads momentum.accepted for the going count. */
 
 /* ── LIST SKELETON ───────────────────────────────────────────────────────
    Three cards in the shape of the rows they stand in for. Every list that
@@ -11613,9 +11595,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // banned accounts not). member_count stays behind it only for a
             // server that does not send it yet.
             billableCount: data.flock?.billable_count ?? data.flock?.member_count ?? accepted.length,
-            // momentum is left as the server sent it on purpose: it drives a
-            // progress stage ("has two or more people"), not a headcount, and
-            // a blocked member is still coming to the thing.
+            // momentum is left as the server sent it on purpose: it drove the
+            // retired meter's progress stage ("has two or more people"), not a
+            // headcount, and a blocked member is still coming to the thing.
             momentum: data.momentum || null,
             // The night-of window while one is open: { open, deadline, count,
             // total, me }. Null for a plan that is not being asked.
@@ -20269,13 +20251,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         DM_PAGE_SIZE,
         DialogBehavior,
         ListSkeleton,
-        MOMENTUM_STAGES,
         SearchInputLocal,
         colorsLight,
         crowdColorFor,
         memberCountLabel,
         messagePreview,
-        momentumStageKey,
         oldestServerId,
         onVenuePhotoError,
         paymentRoutes,
