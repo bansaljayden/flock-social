@@ -1160,6 +1160,10 @@ const dayName = (f) => `${f.value.weekday}${f.value.afterMidnight === true ? ' n
 
 const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 
+// One day's peak said on its own: the lead of an answer about a named day,
+// and the whole answer when a block holds one day of the card.
+const dayPeak = (f) => `${dayName(f)} peaks ${peakAt(f)} on our 0 to 100 index.`;
+
 // WHOSE WEEK IT IS (2026-11-03). A venue with no crowd history of its own is
 // answered from its dashboard's Week Ahead, Flock's forecast for places like
 // it (advisorFacts.buildWeekProjection, services/kindForecast.js). Its lines
@@ -1180,8 +1184,21 @@ function weekVoice(days) {
 function shapeWeek(which) {
   return (facts, { named = null } = {}) => {
     const days = facts.filter(isPeakFact).sort(byScore);
-    if (days.length < 2) return null;
     const rest = facts.filter((f) => !isPeakFact(f));
+    // ONE DAY OF THE CARD STILL OPENS ON WHOSE FORECAST IT IS (2026-11-05).
+    // The card's week starts tomorrow, so a venue shut on Sundays has one open
+    // weekend day in it on a Friday (Saturday) and on a Saturday (next
+    // Friday). One day is no week to rank, so this shaper stepped aside and
+    // the twin led with that day's own label, which names whose forecast it
+    // is last: "Saturday projects busiest around 8 AM, at 74 on our 0 to 100
+    // index, in Flock's forecast for places like yours." Every answer built on
+    // the card says that first (services/kindForecast.js), so a lone card day
+    // is said the way a named day is. A lone day of the venue's own forecast
+    // keeps its label, as before.
+    if (days.length === 1 && isKindForecast(days[0])) {
+      return { lead: weekVoice(days).open(dayPeak(days[0])), points: rest.map(templateLine), used: [days[0], ...rest] };
+    }
+    if (days.length < 2) return null;
     const top = days[0];
     const low = days[days.length - 1];
     const v = weekVoice(days);
@@ -1196,7 +1213,7 @@ function shapeWeek(which) {
     // second review). From a partial block the named day's own line stands alone.
     if (asked && days.length < 6) {
       return {
-        lead: v.open(`${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`),
+        lead: v.open(dayPeak(asked)),
         points: rest.map(templateLine),
         used: [asked, ...rest],
       };
@@ -1215,7 +1232,7 @@ function shapeWeek(which) {
         if (low === asked) points.unshift(`That makes it ${v.your} quietest day this week.`);
       }
       return {
-        lead: v.open(`${dayName(asked)} peaks ${peakAt(asked)} on our 0 to 100 index.`),
+        lead: v.open(dayPeak(asked)),
         points: [...points, ...rest.map(templateLine)],
         used: [...new Set(used), ...rest],
       };
@@ -1398,7 +1415,13 @@ function renderTemplate(block, question = '') {
   if (shaped) {
     ({ lead, points, used } = shaped);
   } else {
-    const lines = facts.map(templateLine);
+    // The first fact's own sentence leads, unless it is a day of the card:
+    // its label names whose forecast it is last, so it leads the way
+    // shapeWeek says a lone card day, with that first. Any block a shaper
+    // steps aside from, or an intent with no shaper, is held to the same rule.
+    const lines = facts.map((f, i) => (i === 0 && isPeakFact(f) && isKindForecast(f)
+      ? weekVoice([f]).open(dayPeak(f))
+      : templateLine(f)));
     [lead] = lines;
     points = lines.slice(1);
     used = facts;

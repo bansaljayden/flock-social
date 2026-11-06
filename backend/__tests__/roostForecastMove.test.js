@@ -34,6 +34,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const express = require('express');
+const { pinClock } = require('./helpers/pinnedClock');
 
 process.env.JWT_SECRET = 'roost-forecast-move-test-secret';
 // Set BEFORE requiring the dashboard router: it captures the key at load.
@@ -126,6 +127,11 @@ let placeTypes = ['bar'];
 // test gives the place either.
 let placePrimary = null;
 let placePeriods = null;
+// The listing's clock: Google's utcOffsetMinutes, and its IANA zone when a
+// test gives the place one. A venue on UTC unless a test moves it, so "today"
+// at the venue is the UTC day (new Date().getUTCDay() in the tests below).
+let placeOffset = 0;
+let placeZone = null;
 // How long Google takes to answer. Zero answers at once; a test that needs
 // requests to overlap gives the lookup time to still be under way.
 let placesDelayMs = 0;
@@ -146,7 +152,8 @@ global.fetch = (url, opts) => {
         ...(placePrimary ? { primaryType: placePrimary } : {}),
         location: { latitude: 39.95, longitude: -75.16 },
         currentOpeningHours: placePeriods ? { openNow: true, periods: placePeriods } : { openNow: true },
-        utcOffsetMinutes: 0,
+        utcOffsetMinutes: placeOffset,
+        ...(placeZone ? { timeZone: { id: placeZone } } : {}),
       } : { error: { code: 503, message: 'unavailable' } }),
     };
     return placesDelayMs > 0
@@ -208,6 +215,8 @@ function setUp({ placeId, phrasing = false, extra = {} } = {}) {
   placeTypes = ['bar'];
   placePrimary = null;
   placePeriods = null;
+  placeOffset = 0;
+  placeZone = null;
   placesDelayMs = 0;
   route = null;
   draftFor = null;
@@ -1072,4 +1081,157 @@ test('typed, "how does today look" is answered off the card the same way, and th
   assert.strictEqual(r.body.mode, 'advice', r.body.text);
   assert.ok(advicePayload, 'the advice model was asked');
   assert.ok(!/category_pattern|typical_peak_/.test(advicePayload), 'today\'s fact reached the advice model');
+});
+
+// ── 10. Any day of the week, and the turn of the UTC day (2026-11-05) ──────
+//
+// The bakery test above was added on Wednesday 2026-11-04 and failed at 8:10
+// PM on Thursday 2026-11-05 in New York, 01:10 on Friday in UTC, the clock of
+// the venue this file's listing puts on UTC. The venue's day was read right:
+// it was Friday there. The card's week starts tomorrow, so on a venue's
+// Friday or Saturday the weekend in it holds one open day for a venue shut on
+// Sundays, and one day is no week to rank: the weekend shaper stepped aside
+// and the twin led with that day's own label, which names whose forecast it
+// is last (advisorPhrasing shapeWeek). Pinned here: every template over every
+// set of the card's days, and the week chips on every day of a week, at the
+// turn of the UTC day and at midday, for a venue on UTC and one in New York,
+// so the day and the hour the suite runs at cannot decide whether they pass.
+
+const FRAMED = /^(?:Fill [A-Z][a-z]+(?: night)?\. )?In Flock's forecast for places like yours, /;
+
+test('a template built on the card opens on whose forecast it is whatever days it holds: one day, part of a week, a named day, or an intent with no shaper', () => {
+  const card = demoCard();
+  let renders = 0;
+  // Every set of the card's six days a plan could hand over, under each week
+  // chip and an intent with no shaper of its own, asked plainly and about
+  // each weekday by name.
+  for (let mask = 1; mask < 1 << card.length; mask += 1) {
+    const facts = card.filter((_, i) => mask & (1 << i));
+    for (const intent of [...WEEK_CHIPS, 'around_you']) {
+      for (const day of [null, ...Object.values(LONG)]) {
+        const question = day ? `How busy will ${day} be?` : 'What does the weekend look like?';
+        const first = advisorPhrasing.renderTemplate({ intent, facts }, question).text.split('\n')[0];
+        const where = `${intent} over ${facts.map((f) => f.value.weekday).join(', ')}, asked "${question}"`;
+        assert.match(first, FRAMED, `${where}: ${first}`);
+        assert.ok(!NO_YOUR_RANKING.test(first), `${where}: ${first}`);
+        renders += 1;
+      }
+    }
+  }
+  assert.strictEqual(renders, 63 * 6 * 8);
+  // The answer that failed: a venue shut on Sundays, asked about the weekend
+  // on its Friday, has Saturday alone. It read "Saturday projects busiest
+  // around 10 PM, at 74 on our 0 to 100 index, in Flock's forecast for places
+  // like yours." until 2026-11-05.
+  const saturday = card.filter((f) => f.value.weekday === 'Saturday');
+  assert.strictEqual(advisorPhrasing.renderTemplate({ intent: 'weekend_outlook', facts: saturday }).text,
+    'In Flock\'s forecast for places like yours, Saturday peaks around 10 PM at 74 on our 0 to 100 index.');
+  // A lone day of the venue's own forecast reads its own label, as it did.
+  const own = advisorFacts.makeFact({
+    id: 'peak_2026-11-07',
+    value: { date: '2026-11-07', weekday: 'Saturday', peakHour: 22, peakScore: 74 },
+    source: 'model_holdout',
+    asOf: '2026-11-03T12:00:00Z',
+    unit: '0-100 index',
+    label: advisorFacts.weekAheadPeakLabel({ weekday: 'Saturday', hour: 22, score: 74 }),
+  });
+  for (const intent of ['weekend_outlook', 'peak_hours']) {
+    assert.strictEqual(advisorPhrasing.renderTemplate({ intent, facts: [own] }).text,
+      'Saturday projects busiest around 10 PM, at 74 on our 0 to 100 index.');
+  }
+});
+
+// The bakery of the test above, open 6 AM to 2 PM and shut on `shut` (0 is
+// Sunday), on a listing whose clock is `zone` (else UTC).
+function bakeryAt({ placeId, zone = null, offset = 0, shut = 0 }) {
+  setUp({ placeId, extra: { service_style: 'counter_order', typical_spend_per_person: 9 } });
+  placeTypes = ['bakery', 'food', 'store'];
+  placePrimary = 'bakery';
+  placeZone = zone;
+  placeOffset = offset;
+  placePeriods = periodsOf(Object.fromEntries([0, 1, 2, 3, 4, 5, 6].filter((d) => d !== shut).map((d) => [d, [6, 14]])));
+}
+
+// The global clock pinned at `iso` while `fn` runs (helpers/pinnedClock.js),
+// then the real one back. Every venue under a pin has a place id of its own,
+// so no cache entry made at one instant is read at another.
+async function pinnedAt(iso, fn) {
+  const clock = pinClock(Date.parse(iso));
+  try {
+    return await fn();
+  } finally {
+    clock.restore();
+  }
+}
+
+const NEW_YORK = { zone: 'America/New_York', offset: -300 };
+
+test('at 01:10 UTC on a Friday, still Thursday evening in New York, each venue\'s week and today are its own, and a lone weekend day opens on whose forecast it is', async () => {
+  const seen = {};
+  for (const [name, placeId, clock] of [['utc', 'ChIJforecastTurnUtc000000', {}], ['newYork', 'ChIJforecastTurnNewYork00', NEW_YORK]]) {
+    await pinnedAt('2026-11-06T01:10:00Z', async () => {
+      bakeryAt({ placeId, ...clock });
+      const { intel } = await cardWeek();
+      const weekend = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+      const today = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
+      const ids = (days) => intel.week.filter((d) => days.includes(d.weekday)).map((d) => `typical_peak_${d.date}`).sort();
+      seen[name] = { intel, weekend: weekend.body, today: today.body, ids };
+    });
+  }
+  const { utc, newYork } = seen;
+  // On UTC it is Friday: the card's week starts on Saturday, its weekend is
+  // Saturday alone (Sunday is shut), said with whose forecast it is first.
+  assert.deepStrictEqual([utc.intel.today.weekday, utc.intel.week[0].weekday], ['Fri', 'Sat']);
+  assert.strictEqual(utc.weekend.mode, 'template', utc.weekend.text);
+  assert.strictEqual(utc.weekend.text, 'In Flock\'s forecast for places like yours, Saturday peaks around 8 AM at 74 on our 0 to 100 index.');
+  assert.deepStrictEqual(utc.weekend.sources.map((s) => s.id), utc.ids(['Sat']));
+  assert.strictEqual(utc.today.text, 'In Flock\'s forecast for places like yours, today peaks around 8 AM at 66 on our 0 to 100 index.');
+  // In New York it is 8:10 PM on Thursday: the week starts on Friday, Friday
+  // and Saturday are the weekend, and today is Thursday, not the UTC day.
+  assert.deepStrictEqual([newYork.intel.today.weekday, newYork.intel.week[0].weekday], ['Thu', 'Fri']);
+  assert.strictEqual(newYork.weekend.mode, 'template', newYork.weekend.text);
+  assert.strictEqual(newYork.weekend.text, 'In Flock\'s forecast for places like yours, no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.');
+  assert.deepStrictEqual(newYork.weekend.sources.map((s) => s.id).sort(), newYork.ids(['Fri', 'Sat']));
+  assert.strictEqual(newYork.today.text, 'In Flock\'s forecast for places like yours, today peaks around 8 AM at 64 on our 0 to 100 index.');
+});
+
+test('every week chip answers the bakery framed on every day of a week, at the turn of the UTC day and at midday, on UTC and in New York', async () => {
+  let runs = 0;
+  for (let d = 0; d < 7; d += 1) {
+    for (const time of ['01:10', '15:00']) {
+      const iso = `2026-11-${String(6 + d).padStart(2, '0')}T${time}:00Z`;
+      for (const [tag, clock] of [['U', {}], ['N', NEW_YORK]]) {
+        runs += 1;
+        // The venue's own today, and the bakery shut on Sundays, or on
+        // Mondays when today is a Sunday, so that the shut day is in the week
+        // ahead and today's chip is offered (the bakery test above).
+        const today = new Intl.DateTimeFormat('en-US', { timeZone: clock.zone || 'UTC', weekday: 'short' }).format(Date.parse(iso));
+        const where = `${iso}, ${clock.zone || 'UTC'} (${today})`;
+        await pinnedAt(iso, async () => {
+          bakeryAt({ placeId: `ChIJforecastEveryDay${tag}${String(runs).padStart(2, '0')}00`, ...clock, shut: today === 'Sun' ? 1 : 0 });
+          const { intel, week } = await cardWeek();
+          assert.strictEqual(intel.today.weekday, today, `${where}: the card's today is not the venue's`);
+          const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
+          for (const id of WEEK_CHIPS) {
+            assert.ok(offered.includes(id), `${where}: ${id} not offered: ${offered.join(', ')}`);
+            const a = await call('/api/venue/advisor/ask', { intentId: id });
+            assert.strictEqual(a.body.mode, 'template', `${where}: ${id}: ${a.body.text}`);
+            assert.match(a.body.text, FRAMED, `${where}: ${id}`);
+            // The bakery test's two rules: the card's reading never says
+            // "your", and the playbook's quiet-day words name the day.
+            assert.ok(!NO_YOUR_RANKING.test(a.body.text.split('\n')[0]), `${where}: ${id}: ${a.body.text}`);
+            assert.ok(!/\byour (?:quietest|slowest)\b/i.test(a.body.text), `${where}: ${id}: ${a.body.text}`);
+            if (id === 'weekend_outlook') {
+              // The weekend is the open Friday, Saturday and Sunday in the
+              // card's week, on the venue's own dates. With a day shut there are
+              // never more than two of them, and the answer names both.
+              const days = week.filter((x) => !x.closed && ['Fri', 'Sat', 'Sun'].includes(x.weekday)).map((x) => `typical_peak_${x.date}`);
+              assert.deepStrictEqual(a.body.sources.map((s) => s.id).sort(), days.sort(), `${where}: ${a.body.text}`);
+            }
+          }
+        });
+      }
+    }
+  }
+  assert.strictEqual(runs, 28);
 });
