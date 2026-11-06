@@ -5604,6 +5604,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [nfcPlaceId, setNfcPlaceId] = useState(nfcInitialPlaceId);
   const [nfcSig, setNfcSig] = useState(nfcInitialSig);
   const [venueDetailReturnTo, setVenueDetailReturnTo] = useState(null);
+  // THE WAY BACK TO A CHAT LASTS AS LONG AS THE TRIP TO DISCOVER IT WAS MADE
+  // FOR. A chat or DM venue card sets it and goes to Discover, and the sheet
+  // and the map card there offer "Back to Chat" until it is used. Nothing
+  // else cleared it, so after leaving Discover by the tab bar it outlived the
+  // trip: Birdie's Details on the Nest drew "Back to Chat", and the button
+  // took the person to a flock or DM from earlier rather than back to Birdie.
+  // Leaving Discover ends the trip. Every place that sets it moves to
+  // Discover in the same tap, so this never clears one on its way in.
+  useEffect(() => {
+    if (currentTab !== 'explore') setVenueDetailReturnTo(null);
+  }, [currentTab]);
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
   const [pickingVenueForFlockId, setPickingVenueForFlockId] = useState(null); // existing flock ID when assigning venue
@@ -6439,6 +6450,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const handleVenueQueryChange = useCallback((val) => {
     setVenueQuery(val);
+    // A search typed on Discover is a new errand, so the chat's way back
+    // (venueDetailReturnTo) does not ride onto the places it finds: their
+    // sheet and card offer Add to Flock and Start Flock Here, not a
+    // "Back to Chat" that retraces a tap from before the search.
+    if (typeof val === 'string' && val.trim()) setVenueDetailReturnTo(null);
     if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
