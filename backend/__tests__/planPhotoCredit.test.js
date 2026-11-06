@@ -40,7 +40,7 @@ test.after(() => pinnedClock.restore());
 
 // --- Postgres: two plans, their rosters, and the photo proxy's two tables ----
 const pool = require('../config/database');
-const db = { photos: new Map(), charges: 0, flocks: new Map(), members: new Map() };
+const db = { photos: new Map(), charges: 0, flocks: new Map(), members: new Map(), planReads: 0 };
 const unknown = [];
 pool.query = (text, params = []) => {
   const sql = String(text && text.text ? text.text : text).replace(/\s+/g, ' ').trim();
@@ -49,6 +49,7 @@ pool.query = (text, params = []) => {
     return Promise.resolve(status ? { rows: [{ status }], rowCount: 1 } : { rows: [], rowCount: 0 });
   }
   if (sql === 'SELECT venue_id, venue_photo_url FROM flocks WHERE id = $1') {
+    db.planReads += 1;
     const f = db.flocks.get(Number(params[0]));
     return Promise.resolve(f ? { rows: [{ ...f }], rowCount: 1 } : { rows: [], rowCount: 0 });
   }
@@ -211,6 +212,7 @@ test.beforeEach(() => {
   db.photos.clear();
   db.charges = 0;
   db.flocks.clear();
+  db.planReads = 0;
   db.members.clear();
   calls.length = 0;
   expired.clear();
@@ -500,11 +502,17 @@ test('two opens at once ride one request', async () => {
   let release;
   holdDetails = new Promise((r) => { release = r; });
   const both = Promise.all([askCredit(), askCredit()]);
+  // Held until BOTH requests are past the plan row, so the second has asked
+  // for the place's photos while the first one's flight is still out. A
+  // release on the first lookup alone let a slow second request (the full
+  // suite runs files side by side) arrive after the flight had landed. The
+  // ceiling is generous for the same reason; nothing after it depends on it.
   const start = Date.now();
-  while (lookups().length === 0) {
-    if (Date.now() - start > 15000) throw new Error('the lookup never reached Google');
+  while (lookups().length === 0 || db.planReads < 2) {
+    if (Date.now() - start > 30000) throw new Error('the two asks never both reached the lookup');
     await new Promise((r) => setTimeout(r, 5));
   }
+  await new Promise((r) => setTimeout(r, 25));
   release();
   const [a, b] = await both;
   assert.deepEqual(a.body, { photo_url: proxyUrl(FIRST), photo_attribution: CREDIT_FIRST });
