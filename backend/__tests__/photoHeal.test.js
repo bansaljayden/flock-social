@@ -205,7 +205,9 @@ function assertBird(res, why) {
   assert.match(res.text, /no longer available/, why);
 }
 
-async function waitFor(condition, ms = 2000) {
+// Generous on purpose: the full suite runs files in parallel, and nothing
+// asserted after the wait depends on how long it took.
+async function waitFor(condition, ms = 15000) {
   const start = Date.now();
   while (!condition()) {
     if (Date.now() - start > ms) throw new Error('timed out waiting for the requests to reach Google');
