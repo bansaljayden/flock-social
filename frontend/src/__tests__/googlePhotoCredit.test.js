@@ -658,7 +658,7 @@ describe('the plan screen\'s header photo is a thumbnail whose tap opens the cre
     const policy = readSrc('components', 'ui', 'GoogleCredit.js');
     expect(policy).toMatch(/the plan screen's header photo \(screens\/FlockDetail\.js\), which is a\s*\n\s*\*\s*button to the sheet/);
     expect(policy).toMatch(/new resource name on every answer/);
-    expect(policy).toMatch(/checked 2026-11-06,\s*\n\s*\*\s*repeated 0 of 10 names/);
+    expect(policy).toMatch(/\(checked\s*\n\s*\*\s*2026-11-06: 0 of 10 names repeated across two lookups, for each of two\s*\n\s*\*\s*places\)/);
     // The shared photo-and-credit piece went back to the sheet, its one user.
     expect(policy).not.toMatch(/CreditedPhoto/);
   });

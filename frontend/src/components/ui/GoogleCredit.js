@@ -29,12 +29,11 @@
  *
  * WHY A STORED PHOTO CANNOT CARRY ITS OWN CREDIT. Rows keep a photo's proxy
  * URL (a plan's venue photo, a venue card in a chat, a pinned venue), and
- * Google gives every photo a new resource name on every answer: two
- * photos-only lookups a few seconds apart, for two places, checked 2026-11-06,
- * repeated 0 of 10 names for either. So a stored name can never be matched to
- * the place's current list to find who took it. The thumbnail rule is what
- * lets those photos be drawn: the sheet each one opens shows Google's current
- * photos, credited.
+ * Google gives every photo a new resource name on every answer (checked
+ * 2026-11-06: 0 of 10 names repeated across two lookups, for each of two
+ * places). So a stored name can never be matched to the place's current list
+ * to find who took it. The thumbnail rule is what lets those photos be drawn:
+ * the sheet each one opens shows Google's current photos, credited.
  *
  * Two thumbnails reach the larger version another way:
  *   - a row whose own tap votes or shares (the vote panels and the
