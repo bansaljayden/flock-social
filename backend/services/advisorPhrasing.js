@@ -1194,7 +1194,9 @@ function shapeWeek(which) {
     // index, in Flock's forecast for places like yours." Every answer built on
     // the card says that first (services/kindForecast.js), so a lone card day
     // is said the way a named day is. A lone day of the venue's own forecast
-    // keeps its label, as before.
+    // keeps its label, as before. Since 2026-11-06 the weekend is read from
+    // today (routes/advisor.js inThisWeekend), and it is one day on a Sunday,
+    // or on a Saturday before a shut Sunday.
     if (days.length === 1 && isKindForecast(days[0])) {
       return { lead: weekVoice(days).open(dayPeak(days[0])), points: rest.map(templateLine), used: [days[0], ...rest] };
     }

@@ -224,9 +224,42 @@ function entryDate(entry) {
   const m = entry && typeof entry.id === 'string' ? entry.id.match(ID_DATE) : null;
   return m ? m[1] : null;
 }
-function isWeekendDate(date) {
-  const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
-  return dow === 5 || dow === 6 || dow === 0;
+// THIS WEEKEND IS THE ONE IN PROGRESS OR THE NEXT ONE (2026-11-06): on a
+// Friday, Saturday or Sunday, today through Sunday; on Monday to Thursday, the
+// coming Friday to Sunday. Never a day of the week after. Every Friday,
+// Saturday and Sunday in the week read used to count, and that week runs
+// seven days, so on a Saturday the venue's own week held next Friday, and on
+// a Sunday next Friday and Saturday. A no-history venue's card starts
+// tomorrow, so on its Saturday "the busiest day this weekend is Friday" meant
+// next Friday, said with today's Saturday left out. `today` is the venue's
+// own today (daysFromToday below), and both are its own dates.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const weekdayOf = (date) => new Date(`${date}T12:00:00Z`).getUTCDay();
+function inThisWeekend(date, today) {
+  if (!ISO_DATE.test(String(date)) || !ISO_DATE.test(String(today))) return false;
+  const dow = weekdayOf(date);
+  if (dow !== 5 && dow !== 6 && dow !== 0) return false;
+  const sunday = new Date(`${today}T12:00:00Z`);
+  sunday.setUTCDate(sunday.getUTCDate() + ((7 - weekdayOf(today)) % 7));
+  return date >= today && date <= sunday.toISOString().slice(0, 10);
+}
+
+// THE DAYS FROM TODAY, AND WHICH DAY TODAY IS. The venue's own week walks
+// seven days from its own today (advisorFacts.buildWeekAhead), so its first
+// dated entry is today, the same contract tonight_outlook reads. A venue with
+// no crowd history is answered from its dashboard card, whose week starts
+// tomorrow: today is the card's own entry, read on today's hours, and the card
+// dates today even when its listing has the venue shut (b.card(),
+// advisorFacts.buildCardProjection). `card` says which of the two it was.
+async function daysFromToday(b) {
+  const week = await b.week();
+  if (week.some(isKindForecast)) {
+    // A builder that cannot read the card's today has no today to count the
+    // weekend from, and the weekend then holds nothing rather than a guess.
+    const card = typeof b.card === 'function' ? await b.card() : { today: [], date: null };
+    return { days: [...card.today, ...week], today: card.date, card: true };
+  }
+  return { days: week, today: week.map(entryDate).find(Boolean) || null, card: false };
 }
 
 // One plan per chip: which builder outputs, filtered how. Filtering and
@@ -266,17 +299,30 @@ const INTENT_PLANS = {
   // corpus gate's refusal has no day attached, so this filter dropped it and
   // the block arrived empty. Undated entries are kept when they are refusals,
   // which is the only kind of undated entry the week builder emits.
+  // The weekend is this one (inThisWeekend above), read from today: for a
+  // venue with no crowd history, today's entry on its card first when today
+  // is a Friday, Saturday or Sunday, then the card's days, so the template
+  // and the phrasing model are handed the same days and neither can name
+  // next week's Friday.
   weekend_outlook: async (b) => {
-    const week = (await b.week()).filter((e) => {
+    const { days, today, card } = await daysFromToday(b);
+    const thisWeekend = (e) => {
       const d = entryDate(e);
       if (d === null) return advisorFacts.isRefusal(e);
-      return isWeekendDate(d);
-    });
-    // Around-you weather facts are weekend-only already; keep dated street
-    // entries that fall on the weekend, plus the no-events line if present.
+      return inThisWeekend(d, today);
+    };
+    let week = days.filter(thisWeekend);
+    // A card with no open day left this weekend (a bakery shut on Sundays,
+    // asked on its Sunday) has nothing to say about it, and the venue's own
+    // week says why, as today's chip does on a day its listing has it shut
+    // (tonightFor).
+    if (card && !week.length && typeof b.ownWeek === 'function') week = (await b.ownWeek()).filter(thisWeekend);
+    // Around-you weather facts are Fridays to Sundays already; keep dated
+    // street entries that fall on this weekend, plus the no-events line if
+    // present.
     const street = (await b.around()).filter((e) => {
       const d = entryDate(e);
-      return (d !== null && isWeekendDate(d)) || e.id === 'no_listed_events';
+      return (d !== null && inThisWeekend(d, today)) || e.id === 'no_listed_events';
     });
     return [...week, ...street];
   },
@@ -565,6 +611,10 @@ async function bridgeFactBlock(userId, intentId) {
     // crowd history, today off its dashboard card (tonightFor above).
     tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx, opts,
       () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), memo)),
+    // The card's week and today off one read, and the venue's own today on
+    // it. Asked only once the week has been read as the card
+    // (daysFromToday), so from the same cache entry.
+    card: () => (memo.card = memo.card || advisorFacts.buildCardProjection(ctx, opts)),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
@@ -895,10 +945,13 @@ const CARD_INTENTS = Object.freeze(['money_move', 'tonight_outlook', 'peak_hours
 async function cardAnswers(ctx, userId) {
   if (typeof advisorFacts.buildCardProjection !== 'function') return new Set();
   // The week and today off one read of the card, so a lookup that fails is
-  // paid for once.
-  const { week: card, today } = await advisorFacts.buildCardProjection(ctx, { userId });
+  // paid for once. The weekend reads today's entry and date off the same read.
+  const projection = await advisorFacts.buildCardProjection(ctx, { userId });
+  const { week: card, today } = projection;
   if (!card.length && !today.length) return new Set();
-  const b = { ctx, week: async () => card, tonight: async () => today, around: async () => [] };
+  const b = {
+    ctx, week: async () => card, tonight: async () => today, card: async () => projection, around: async () => [],
+  };
   const answered = new Set();
   for (const id of CARD_INTENTS) {
     const entries = await INTENT_PLANS[id](b);

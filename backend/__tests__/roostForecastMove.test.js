@@ -1181,7 +1181,20 @@ async function pinnedAt(iso, fn) {
 
 const NEW_YORK = { zone: 'America/New_York', offset: -300 };
 
-test('at 01:10 UTC on a Friday, still Thursday evening in New York, each venue\'s week and today are its own, and a lone weekend day opens on whose forecast it is', async () => {
+// This weekend on a card as an owner means it (2026-11-06): the open days
+// from today through the first Sunday, of Friday, Saturday and Sunday. On
+// Monday to Thursday that is the coming Friday to Sunday; on a Friday,
+// Saturday or Sunday it starts today; it never reaches the week after. The
+// card's today and its six days are a run of seven from today.
+function weekendIds(intel) {
+  const run = [intel.today, ...intel.week];
+  const sunday = run.findIndex((d) => d.weekday === 'Sun');
+  return run.slice(0, sunday + 1)
+    .filter((d) => ['Fri', 'Sat', 'Sun'].includes(d.weekday) && !d.closed && d.peakScore !== null)
+    .map((d) => `typical_peak_${d.date}`);
+}
+
+test('at 01:10 UTC on a Friday, still Thursday evening in New York, each venue\'s week, today and weekend are its own', async () => {
   const seen = {};
   for (const [name, placeId, clock] of [['utc', 'ChIJforecastTurnUtc000000', {}], ['newYork', 'ChIJforecastTurnNewYork00', NEW_YORK]]) {
     await pinnedAt('2026-11-06T01:10:00Z', async () => {
@@ -1194,12 +1207,13 @@ test('at 01:10 UTC on a Friday, still Thursday evening in New York, each venue\'
     });
   }
   const { utc, newYork } = seen;
-  // On UTC it is Friday: the card's week starts on Saturday, its weekend is
-  // Saturday alone (Sunday is shut), said with whose forecast it is first.
+  // On UTC it is Friday: the card's week starts on Saturday, and the weekend
+  // is today and Saturday (Sunday is shut), 66 and 74, inside the ordering
+  // floor. It was Saturday alone, with today left out, until 2026-11-06.
   assert.deepStrictEqual([utc.intel.today.weekday, utc.intel.week[0].weekday], ['Fri', 'Sat']);
   assert.strictEqual(utc.weekend.mode, 'template', utc.weekend.text);
-  assert.strictEqual(utc.weekend.text, 'In Flock\'s forecast for places like yours, Saturday peaks around 8 AM at 74 on our 0 to 100 index.');
-  assert.deepStrictEqual(utc.weekend.sources.map((s) => s.id), utc.ids(['Sat']));
+  assert.strictEqual(utc.weekend.text, 'In Flock\'s forecast for places like yours, no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.');
+  assert.deepStrictEqual(utc.weekend.sources.map((s) => s.id).sort(), [`typical_peak_${utc.intel.today.date}`, ...utc.ids(['Sat'])].sort());
   assert.strictEqual(utc.today.text, 'In Flock\'s forecast for places like yours, today peaks around 8 AM at 66 on our 0 to 100 index.');
   // In New York it is 8:10 PM on Thursday: the week starts on Friday, Friday
   // and Saturday are the weekend, and today is Thursday, not the UTC day.
@@ -1224,7 +1238,7 @@ test('every week chip answers the bakery framed on every day of a week, at the t
         const where = `${iso}, ${clock.zone || 'UTC'} (${today})`;
         await pinnedAt(iso, async () => {
           bakeryAt({ placeId: `ChIJforecastEveryDay${tag}${String(runs).padStart(2, '0')}00`, ...clock, shut: today === 'Sun' ? 1 : 0 });
-          const { intel, week } = await cardWeek();
+          const { intel } = await cardWeek();
           assert.strictEqual(intel.today.weekday, today, `${where}: the card's today is not the venue's`);
           const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
           for (const id of WEEK_CHIPS) {
@@ -1237,11 +1251,11 @@ test('every week chip answers the bakery framed on every day of a week, at the t
             assert.ok(!NO_YOUR_RANKING.test(a.body.text.split('\n')[0]), `${where}: ${id}: ${a.body.text}`);
             assert.ok(!/\byour (?:quietest|slowest)\b/i.test(a.body.text), `${where}: ${id}: ${a.body.text}`);
             if (id === 'weekend_outlook') {
-              // The weekend is the open Friday, Saturday and Sunday in the
-              // card's week, on the venue's own dates. With a day shut there are
-              // never more than two of them, and the answer names both.
-              const days = week.filter((x) => !x.closed && ['Fri', 'Sat', 'Sun'].includes(x.weekday)).map((x) => `typical_peak_${x.date}`);
-              assert.deepStrictEqual(a.body.sources.map((s) => s.id).sort(), days.sort(), `${where}: ${a.body.text}`);
+              // The weekend is this one, on the venue's own dates: its open
+              // days from today through the coming Sunday (weekendIds). With a
+              // day shut there are never more than two of them, and the answer
+              // names both.
+              assert.deepStrictEqual(a.body.sources.map((s) => s.id).sort(), weekendIds(intel).sort(), `${where}: ${a.body.text}`);
             }
           }
         });
@@ -1279,4 +1293,239 @@ test('on a tie at the quiet end every chip names the first of the quietest days,
   }));
   assert.strictEqual(advisorPhrasing.renderTemplate({ intent: 'quiet_nights', facts: own }).text.split('\n')[0],
     'Your quietest day this week is Monday, with its peak around 9 PM at 48 on our 0 to 100 index.');
+});
+
+// ── 11. This weekend (2026-11-06) ───────────────────────────────────────────
+//
+// Left over from section 10: a venue with no crowd history is answered from
+// its card, whose week starts tomorrow, while a venue's own week runs seven
+// days from today. On its Saturday the demo bar heard "the busiest day this
+// weekend is Friday", next Friday, with today's Saturday at 74 left out, and a
+// venue's own week held next Friday on its Saturday too. Pinned here: "this
+// weekend" is the one in progress or the next one (today through Sunday on a
+// Friday, Saturday or Sunday; the coming Friday to Sunday on Monday to
+// Thursday), the same days with history and without, and the same days for
+// the template and the phrasing model.
+
+const PLANS = advisorRouter.__INTENT_PLANS;
+const addDays = (date, n) => {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const shortOf = (date) => SHORT[new Date(`${date}T12:00:00Z`).getUTCDay()];
+// The dates a phrasing payload hands the model, one per fact it was built from.
+const handedDates = (payload) => [...new Set(payloadFacts(payload)
+  .filter((f) => /_date(?:_[a-z]+)?$/.test(f.id)).map((f) => f.value))].sort();
+const gateText = (p) => {
+  const gate = advisorFacts.corpusGate(p);
+  return `We can't answer that yet. ${gate.reason} ${gate.whatWouldUnlock}`;
+};
+// The bar's move under its week's peaks, as the chip shows it: the playbook's.
+const peakMove = () => roostPlaybook.moveFor('peak_hours', { facts: [] }, roostPlaybook.venueOf({ profile })).move;
+
+test('on the demo\'s Friday the weekend is today, Saturday and Sunday, and "When do we peak this week?" is as it was', async (t) => {
+  const clock = pinClock(DEMO_FRIDAY);
+  t.after(() => clock.restore());
+  setUp({ placeId: 'ChIJweekendDemoFriday0000' });
+  const { intel } = await cardWeek();
+  assert.deepStrictEqual([intel.today.date, intel.today.weekday, intel.today.peakScore], ['2026-11-06', 'Fri', 66]);
+  // Until 2026-11-06 the first line was the same and the second "Sunday is
+  // next, around 9 PM at 45.", with today left out.
+  const weekend = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+  assert.strictEqual(weekend.body.mode, 'template');
+  assert.strictEqual(weekend.body.text, [
+    'In Flock\'s forecast for places like yours, the busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.',
+    '• Friday is close behind, around 9 PM at 66.',
+    '• Sunday is the quietest, around 9 PM at 45.',
+  ].join('\n'));
+  assert.deepStrictEqual(weekend.body.sources.map((s) => s.id).sort(), ['typical_peak_2026-11-06', 'typical_peak_2026-11-07', 'typical_peak_2026-11-08']);
+  // The week's peaks read the card's week, as the money move and the tiles do.
+  const peaks = await call('/api/venue/advisor/ask', { intentId: 'peak_hours' });
+  assert.strictEqual(peaks.body.text, [
+    'In Flock\'s forecast for places like yours, the busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.',
+    '• Thursday is next, around 9 PM at 64.',
+    '• Sunday is the quietest, around 9 PM at 45.',
+    `• ${peakMove()}`,
+  ].join('\n'));
+  assert.deepStrictEqual(peaks.body.sources.map((s) => s.id), ['typical_peak_2026-11-07', 'typical_peak_2026-11-12', 'typical_peak_2026-11-08', 'roost_playbook']);
+});
+
+test('on its Saturday the bar\'s weekend is today and Sunday, never next Friday, and the phrasing model is handed the same two days', async (t) => {
+  // It read "In Flock's forecast for places like yours, the busiest day this
+  // weekend is Friday, with its peak around 9 PM at 66 on our 0 to 100
+  // index." and "Sunday is next, around 9 PM at 45." until 2026-11-06:
+  // Friday the 13th, and today's 74 nowhere in it.
+  const clock = pinClock(Date.parse('2026-11-07T16:00:00Z'));
+  t.after(() => clock.restore());
+  setUp({ placeId: 'ChIJweekendSaturday000000', phrasing: true });
+  const { intel } = await cardWeek();
+  assert.deepStrictEqual([intel.today.date, intel.today.weekday], ['2026-11-07', 'Sat']);
+  assert.ok(intel.week.some((d) => d.date === '2026-11-13' && d.weekday === 'Fri'), 'next Friday is on the card');
+  let payload = null;
+  draftFor = (role, p) => { payload = p; return null; }; // the phrasing call fails: the template answers
+  const r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+  assert.strictEqual(r.body.mode, 'template');
+  assert.strictEqual(r.body.text, 'In Flock\'s forecast for places like yours, the busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.');
+  assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['typical_peak_2026-11-07', 'typical_peak_2026-11-08']);
+  // The model is handed the same two days, so it cannot name next Friday either.
+  assert.deepStrictEqual(handedDates(payload), ['2026-11-07', '2026-11-08']);
+  assert.ok(!payload.includes('2026-11-13') && !payloadFacts(payload).some((f) => f.value === 'Friday'), payload);
+});
+
+test('a venue with its own crowd history reads the same weekend: never next Friday on its Saturday, its Sunday alone on its Sunday, its street held to the same days', async () => {
+  setUp({ placeId: 'ChIJweekendCorpus00000000', extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
+  const realWeek = advisorFacts.buildWeekAhead;
+  const realAround = advisorFacts.buildAroundYou;
+  const asOf = '2026-11-06T12:00:00Z';
+  // Seven days from the venue's own today, as buildWeekAhead walks them.
+  const ownWeekFrom = (start) => Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(start, i);
+    const weekday = LONG[shortOf(date)];
+    const score = CARD[shortOf(date)];
+    return advisorFacts.makeFact({
+      id: `peak_${date}`,
+      value: { date, weekday, peakHour: 21, peakScore: score },
+      source: 'model_holdout',
+      asOf,
+      predictionMethod: 'ml',
+      unit: '0-100 index',
+      label: advisorFacts.weekAheadPeakLabel({ weekday, hour: 21, score }),
+    });
+  });
+  // A weather line and a listed event on every Friday to Sunday of the next
+  // eight days: only this weekend's may stay.
+  const streetFrom = (start) => Array.from({ length: 8 }, (_, i) => addDays(start, i))
+    .filter((date) => ['Fri', 'Sat', 'Sun'].includes(shortOf(date)))
+    .flatMap((date) => [
+      advisorFacts.makeFact({ id: `weather_${date}`, value: { date, weekday: LONG[shortOf(date)], conditions: 'clear', middayTempF: 60 }, source: 'weather', asOf, label: `${LONG[shortOf(date)]}: clear, around 60 F midday.` }),
+      advisorFacts.makeFact({ id: `event_${date}`, value: { date, weekday: LONG[shortOf(date)], name: 'Listed event', distanceKm: 0.4, type: 'music' }, source: 'events', asOf, label: `${LONG[shortOf(date)]}: a listed event about 0.4 km away, Listed event.` }),
+    ]);
+  try {
+    for (const [start, expected] of [
+      ['2026-11-07', ['2026-11-07', '2026-11-08']],
+      ['2026-11-08', ['2026-11-08']],
+      ['2026-11-06', ['2026-11-06', '2026-11-07', '2026-11-08']],
+      ['2026-11-09', ['2026-11-13', '2026-11-14', '2026-11-15']],
+    ]) {
+      advisorFacts.buildWeekAhead = async () => ownWeekFrom(start);
+      advisorFacts.buildAroundYou = async () => streetFrom(start);
+      let payload = null;
+      draftFor = (role, p) => { payload = p; return null; };
+      const r = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+      assert.strictEqual(r.body.mode, 'template', r.body.text);
+      const cited = [...new Set(r.body.sources.map((s) => s.id.slice(-10)))].sort();
+      assert.deepStrictEqual(cited, expected, `${start}: ${r.body.text}`);
+      assert.deepStrictEqual(handedDates(payload), expected, `${start}: the phrasing model`);
+    }
+    // Its Saturday, in words: its own two days, said as its own.
+    advisorFacts.buildWeekAhead = async () => ownWeekFrom('2026-11-07');
+    advisorFacts.buildAroundYou = async () => [];
+    draftFor = () => null;
+    const sat = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+    assert.strictEqual(sat.body.text, 'Your busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.');
+  } finally {
+    advisorFacts.buildWeekAhead = realWeek;
+    advisorFacts.buildAroundYou = realAround;
+  }
+});
+
+test('this weekend is the same days with crowd history and without, on every day of a week, and never a day of the week after', async () => {
+  const hourOf = venueDashboardRouter.hourOfLabel;
+  // By today's weekday, the weekend it means.
+  const MEANT = {
+    Mon: ['Fri', 'Sat', 'Sun'], Tue: ['Fri', 'Sat', 'Sun'], Wed: ['Fri', 'Sat', 'Sun'], Thu: ['Fri', 'Sat', 'Sun'],
+    Fri: ['Fri', 'Sat', 'Sun'], Sat: ['Sat', 'Sun'], Sun: ['Sun'],
+  };
+  const asOf = '2026-11-09T12:00:00Z';
+  for (let i = 0; i < 7; i += 1) {
+    const today = addDays('2026-11-09', i); // Monday to Sunday
+    const run = Array.from({ length: 7 }, (_, d) => addDays(today, d));
+    // Each weekday is in the run once, so a name is a date.
+    const expected = run.filter((date) => MEANT[shortOf(today)].includes(shortOf(date)));
+    const sunday = run.find((date) => shortOf(date) === 'Sun');
+    assert.ok(expected.every((date) => date >= today && date <= sunday), `${today}: ${expected}`);
+    // The venue's own week: seven days from today.
+    const own = run.map((date) => advisorFacts.makeFact({
+      id: `peak_${date}`, value: { date, weekday: LONG[shortOf(date)], peakHour: 21, peakScore: CARD[shortOf(date)] }, source: 'model_holdout', asOf, unit: '0-100 index',
+    }));
+    // The card: today on its own, and its six days from tomorrow.
+    const cardDay = (date) => ({ date, weekday: shortOf(date), peakScore: CARD[shortOf(date)], peakHour: '9 PM', method: 'rule_engine_no_baseline' });
+    const intel = { ...DEMO_INTEL, generatedAt: asOf, today: { ...cardDay(today), window: 'evening' }, week: run.slice(1).map(cardDay) };
+    const card = advisorFacts.projectionFacts(intel, { hourOf });
+    const todayFacts = advisorFacts.todayProjectionFacts(intel, { hourOf });
+    assert.strictEqual(card.length, 6);
+    assert.strictEqual(todayFacts.length, 1);
+    // The street on every day of the run and the day after it.
+    const street = [...run, addDays(today, 7)].map((date) => advisorFacts.makeFact({
+      id: `weather_${date}`, value: { date, weekday: LONG[shortOf(date)], conditions: 'clear', middayTempF: 60 }, source: 'weather', asOf, label: `${LONG[shortOf(date)]}: clear.`,
+    }));
+    const withHistory = await PLANS.weekend_outlook({ week: async () => own, around: async () => street });
+    const without = await PLANS.weekend_outlook({
+      week: async () => card,
+      tonight: async () => todayFacts,
+      card: async () => ({ week: card, today: todayFacts, date: today }),
+      around: async () => street,
+    });
+    const datesOf = (entries, re) => entries.filter((e) => re.test(e.id)).map((e) => e.value.date);
+    assert.deepStrictEqual(datesOf(withHistory, /^peak_/), expected, `${today} with history`);
+    assert.deepStrictEqual(datesOf(without, /^typical_peak_/), expected, `${today} without`);
+    assert.deepStrictEqual(datesOf(withHistory, /^weather_/), expected, `${today} the street, with history`);
+    assert.deepStrictEqual(datesOf(without, /^weather_/), expected, `${today} the street, without`);
+    // Today is in it exactly on a Friday, Saturday or Sunday.
+    assert.strictEqual(expected.includes(today), ['Fri', 'Sat', 'Sun'].includes(shortOf(today)), today);
+    // A builder that cannot say which day today is on the card gets no
+    // weekend, never one counted from the card's first day.
+    assert.deepStrictEqual(await PLANS.weekend_outlook({ week: async () => card, around: async () => [] }), [], today);
+  }
+});
+
+test('the bar on every day of a week, at the turn of the UTC day and at midday, on UTC and in New York: the weekend from its own today, and the same days for the model', async () => {
+  let runs = 0;
+  for (let d = 0; d < 7; d += 1) {
+    for (const time of ['01:10', '15:00']) {
+      const iso = `2026-11-${String(6 + d).padStart(2, '0')}T${time}:00Z`;
+      for (const [tag, clock] of [['U', {}], ['N', NEW_YORK]]) {
+        runs += 1;
+        const today = new Intl.DateTimeFormat('en-US', { timeZone: clock.zone || 'UTC', weekday: 'short' }).format(Date.parse(iso));
+        const where = `${iso}, ${clock.zone || 'UTC'} (${today})`;
+        await pinnedAt(iso, async () => {
+          setUp({ placeId: `ChIJweekendEveryDay${tag}${String(runs).padStart(2, '0')}000`, phrasing: true });
+          placeZone = clock.zone || null;
+          placeOffset = clock.offset || 0;
+          const { intel } = await cardWeek();
+          assert.strictEqual(intel.today.weekday, today, `${where}: the card's today is not the venue's`);
+          // The weekend chip, and what the phrasing model is handed for it.
+          let payload = null;
+          draftFor = (role, p) => { payload = p; return null; };
+          const weekend = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
+          assert.strictEqual(weekend.body.mode, 'template', `${where}: ${weekend.body.text}`);
+          assert.match(weekend.body.text, FRAMED, where);
+          assert.ok(!NO_YOUR_RANKING.test(weekend.body.text), `${where}: ${weekend.body.text}`);
+          const ids = weekendIds(intel);
+          assert.deepStrictEqual(weekend.body.sources.map((s) => s.id).sort(), [...ids].sort(), `${where}: ${weekend.body.text}`);
+          assert.deepStrictEqual(handedDates(payload), ids.map((id) => id.slice(-10)).sort(), `${where}: the phrasing model`);
+          assert.strictEqual(ids.includes(`typical_peak_${intel.today.date}`), ['Fri', 'Sat', 'Sun'].includes(today), where);
+        });
+      }
+    }
+  }
+  assert.strictEqual(runs, 28);
+});
+
+test('a bakery shut on Sundays, on its Sunday, has no open day left this weekend: no weekend chip, and asked anyway it refuses the way today does', async () => {
+  // It answered about next Friday and Saturday until 2026-11-06.
+  await pinnedAt('2026-11-08T15:00:00Z', async () => {
+    bakeryAt({ placeId: 'ChIJweekendBakerySunday00', shut: 0 });
+    const { intel } = await cardWeek();
+    assert.deepStrictEqual([intel.today.weekday, intel.today.closed], ['Sun', true]);
+    const offered = offeredIds((await call('/api/venue/advisor/questions')).body);
+    for (const id of ['weekend_outlook', 'tonight_outlook']) assert.ok(!offered.includes(id), `${id}: ${offered.join(', ')}`);
+    assert.ok(offered.includes('money_move'), offered.join(', '));
+    for (const id of ['weekend_outlook', 'tonight_outlook']) {
+      const r = await call('/api/venue/advisor/ask', { intentId: id });
+      assert.strictEqual(r.body.mode, 'refusal', `${id}: ${r.body.text}`);
+      assert.ok(r.body.text.startsWith(gateText(profile)), `${id}: ${r.body.text}`);
+    }
+  });
 });

@@ -1161,13 +1161,28 @@ async function buildTodayProjection(ctx, { userId } = {}) {
   return card ? todayProjectionFacts(card.intel, { hourOf: card.hourOf }) : [];
 }
 
-/** The week and today off one read of the card: { week, today }, each [] when there is none. */
+/**
+ * The venue's own today on the card ('YYYY-MM-DD'), or null. The card dates
+ * today even on a day its listing has the venue shut, when there is no today
+ * fact to read it off.
+ */
+function cardTodayDate(intel) {
+  const date = intel && intel.today && intel.today.date;
+  return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+/**
+ * The week and today off one read of the card: { week, today, date }, each
+ * list [] when there is none, and `date` the venue's own today on the card
+ * (null with no card), which "this weekend" is counted from.
+ */
 async function buildCardProjection(ctx, { userId } = {}) {
   const card = await readCard(ctx, userId);
-  if (!card) return { week: [], today: [] };
+  if (!card) return { week: [], today: [], date: null };
   return {
     week: projectionFacts(card.intel, { hourOf: card.hourOf }),
     today: todayProjectionFacts(card.intel, { hourOf: card.hourOf }),
+    date: cardTodayDate(card.intel),
   };
 }
 

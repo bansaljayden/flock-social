@@ -416,7 +416,15 @@ async function noHistoryBlock(v, intentId) {
   const card = advisorFacts.projectionFacts(v.card);
   const today = advisorFacts.todayProjectionFacts(v.card);
   const plans = require(path.join(B, 'routes', 'advisor')).__INTENT_PLANS;
-  const entries = await plans[intentId]({ ctx: v.ctx, week: async () => card, tonight: async () => today, around: async () => [] });
+  // `card` is the bridge's one read of the card (advisorFacts.buildCardProjection):
+  // the weekend counts from the card's today.
+  const entries = await plans[intentId]({
+    ctx: v.ctx,
+    week: async () => card,
+    tonight: async () => today,
+    card: async () => ({ week: card, today, date: v.card.today.date }),
+    around: async () => [],
+  });
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
   // Nothing on the card for it: the corpus refusal, as the bridge gives.
