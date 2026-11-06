@@ -1267,8 +1267,14 @@ function shapeWeek(which) {
     // The ranking's own lead, beaten by a day said beside it.
     const beaten = quiet ? Boolean(low) && said.some((s) => s < score(low)) : Boolean(top) && said.some((s) => s > score(top));
     if (!comparing && !beaten) return null;
-    // Stable, so days that peak alike keep the order the question asked them.
-    const ordered = [...asked].sort((a, z) => (quiet ? -byScore(a, z) : byScore(a, z)));
+    // Days that peak alike keep the order the question asked them, but for
+    // the week's own busiest (quietest on the quiet days' route), which goes
+    // first so the claim about the week is the lead's: "Friday night peaks
+    // around midnight at 74. That makes it your busiest day this week.
+    // Saturday peaks around 6 PM at 74.", never Saturday first and Friday
+    // called the busiest under it.
+    const claimed = quiet ? low : top;
+    const ordered = [...asked].sort((a, z) => (quiet ? -byScore(a, z) : byScore(a, z)) || (z === claimed) - (a === claimed));
     const v = weekVoice([...asked, ...week]);
     const level = Boolean(top && low) && score(top) - score(low) < HOUR_ORDERING_MIN_GAP;
     const first = [];

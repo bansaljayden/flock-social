@@ -3653,6 +3653,20 @@ test('a comparison leads with the days compared, the higher first, and never und
     assert.strictEqual(r.body.text.split('\n')[0], `Your Google listing has you closed on Saturday. ${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
     assert.ok(!/busiest day this week is Thursday/.test(r.body.text), r.body.text);
   });
+  // Two days that peak alike: the week's busiest of them leads and is called
+  // that, never the other first with the busiest said under it.
+  const day = (date, weekday, score, hour, night = false) => ({
+    id: `peak_${date}`, value: { weekday, peakHour: hour, peakScore: score, ...(night ? { afterMidnight: true } : {}) }, source: 'model_holdout', asOf: '2026-11-06T16:00:00Z', label: `${weekday} projects busiest.`,
+  });
+  const facts = [
+    day('2026-11-06', 'Friday', 74, 0, true), day('2026-11-07', 'Saturday', 74, 18), day('2026-11-08', 'Sunday', 48, 0, true),
+    day('2026-11-09', 'Monday', 50, 20), day('2026-11-10', 'Tuesday', 55, 20), day('2026-11-11', 'Wednesday', 58, 20), day('2026-11-12', 'Thursday', 64, 20),
+  ];
+  assert.deepStrictEqual(advisorPhrasing.renderTemplate({ intent: 'peak_hours', facts, refusals: [], askedDays: ['Saturday', 'Friday'] }, 'Will tomorrow be busier than tonight?').text.split('\n').slice(0, 3), [
+    'Friday night peaks around midnight at 74 on our 0 to 100 index.',
+    '• That makes it your busiest day this week.',
+    '• Saturday peaks around 6 PM at 74.',
+  ]);
   // Two days named with no comparison and no number beating the ranking keep
   // the week's ranking, as main and the catalog's 802 have it.
   await pinnedAt('2026-11-11T16:00:00Z', async () => {
