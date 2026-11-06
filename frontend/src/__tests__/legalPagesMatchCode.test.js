@@ -322,6 +322,17 @@ describe("Google's sign-in script is described as it loads", () => {
       expect([name, text.includes('even if you never tap Continue with Google')]).toEqual([name, true]);
     }
   });
+
+  test('the confirm step before a delete or an export loads it too, for a Google account, and the policy says so', () => {
+    // OAuthReconfirm mounts its own provider while a Google account is asked
+    // to confirm it's you (the delete and export dialogs in You), so the
+    // script is fetched when that step opens, before any tap.
+    const reconfirm = read('frontend', 'src', 'components', 'auth', 'OAuthReconfirm.js');
+    expect(reconfirm).toMatch(/\{provider === 'google' && \(GOOGLE_CLIENT_ID \? \(\s*<GoogleOAuthProvider clientId=\{GOOGLE_CLIENT_ID\}>/);
+    for (const [name, text] of [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]]) {
+      expect([name, text.includes("and so does the step where an account that signs in with Google confirms it's you before a delete or an export")]).toEqual([name, true]);
+    }
+  });
 });
 
 describe('deletion copy matches the deletion path', () => {
