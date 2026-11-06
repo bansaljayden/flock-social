@@ -409,8 +409,13 @@ describe('every container of Places data off a Google map carries the mark', () 
     // The notice is centred at the bottom, 24px up, and at 320px wide it
     // reaches the mark's corner: the mark stands 8px above its measured top.
     expect(map).toContain('<p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: \'absolute\', bottom: \'24px\'');
-    expect(map).toContain("setPoiNoticeHeight(poiNotice && poiNoticeRef.current ? poiNoticeRef.current.offsetHeight : 0);");
+    expect(map).toContain('const el = poiNotice ? poiNoticeRef.current : null;');
+    expect(map).toContain('const measure = () => setPoiNoticeHeight(el.offsetHeight);');
     expect(map).toContain("bottom: poiNoticeHeight ? `${24 + poiNoticeHeight + 8}px` : '40px'");
+    // Measured again while it shows: a rotation rewraps the notice. The watch
+    // is taken down when the notice goes, and the effect follows the notice.
+    expect(map).toMatch(/const watch = new ResizeObserver\(measure\);\s*watch\.observe\(el\);\s*return \(\) => watch\.disconnect\(\);/);
+    expect(map).toMatch(/window\.addEventListener\('resize', measure\);\s*return \(\) => window\.removeEventListener\('resize', measure\);\s*\}, \[poiNotice\]\);/);
   });
 
   test('the guest invite page themes the mark itself, in both of its schemes', () => {

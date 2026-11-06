@@ -672,11 +672,24 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const [poiNotice, setPoiNotice] = useState(null);
   // The notice's height while it shows, so the pins' Google mark can stand
   // above it: the notice is centred at the bottom and, on a 320px phone,
-  // reaches into the left corner the mark holds. Measured before paint.
+  // reaches into the left corner the mark holds. Measured before paint, and
+  // again whenever the notice's box changes while it shows: a rotation or a
+  // resize rewraps its line, and a lift measured for the old width would leave
+  // the mark under it or floating above it.
   const poiNoticeRef = useRef(null);
   const [poiNoticeHeight, setPoiNoticeHeight] = useState(0);
   useLayoutEffect(() => {
-    setPoiNoticeHeight(poiNotice && poiNoticeRef.current ? poiNoticeRef.current.offsetHeight : 0);
+    const el = poiNotice ? poiNoticeRef.current : null;
+    if (!el) { setPoiNoticeHeight(0); return undefined; }
+    const measure = () => setPoiNoticeHeight(el.offsetHeight);
+    measure();
+    if (typeof ResizeObserver === 'function') {
+      const watch = new ResizeObserver(measure);
+      watch.observe(el);
+      return () => watch.disconnect();
+    }
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
   }, [poiNotice]);
   const poiBusyRef = useRef(false);
   const poiNoticeTimerRef = useRef(0);
