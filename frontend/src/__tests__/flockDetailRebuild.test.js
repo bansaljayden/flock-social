@@ -231,9 +231,7 @@ describe('theme parity and copy hygiene', () => {
   });
 
   it('the venue photo reserves its box before it loads', () => {
-    // The photo is drawn with Google's credit (CreditedPhoto) inside a box of
-    // its own fixed height, so it holds 170 before the image arrives.
-    expect(R).toMatch(/<div style=\{\{ position: 'relative', height: '170px' \}\}>\s*<CreditedPhoto key=\{headerPhoto\.url\}/);
+    expect(R).toMatch(/<img src=\{flock\.venuePhoto\}[^>]*width="375" height="170"/);
   });
 
   it('vote selection survives dark mode and announces itself', () => {

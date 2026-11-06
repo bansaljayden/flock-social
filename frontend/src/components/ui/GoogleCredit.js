@@ -21,9 +21,20 @@
  * image that includes the full author attribution". A map pin, a search card,
  * an Explore row, a Birdie card and the map's venue card all open the venue
  * sheet, whose header photo is credited. So do a venue card in a flock chat or
- * a DM, the pinned venue over either, and the picked venue on the Create
- * screen. Where a thumbnail cannot reach a sheet it draws no Google photo: a
- * chat card with no place_id shows the placeholder instead.
+ * a DM, the pinned venue over either, the picked venue on the Create screen,
+ * and the plan screen's header photo (screens/FlockDetail.js), which is a
+ * button to the sheet as its Details button is. Where a thumbnail cannot reach
+ * a sheet it draws no Google photo: a chat card or a plan with no place id
+ * shows the placeholder or the map instead.
+ *
+ * WHY A STORED PHOTO CANNOT CARRY ITS OWN CREDIT. Rows keep a photo's proxy
+ * URL (a plan's venue photo, a venue card in a chat, a pinned venue), and
+ * Google gives every photo a new resource name on every answer: two
+ * photos-only lookups a few seconds apart, for two places, checked 2026-11-06,
+ * repeated 0 of 10 names for either. So a stored name can never be matched to
+ * the place's current list to find who took it. The thumbnail rule is what
+ * lets those photos be drawn: the sheet each one opens shows Google's current
+ * photos, credited.
  *
  * Two thumbnails reach the larger version another way:
  *   - a row whose own tap votes or shares (the vote panels and the
@@ -31,17 +42,14 @@
  *     its own, ThumbToSheet below, which opens the sheet;
  *   - the chat list's 46px plan tile opens the chat, and from there the route
  *     is the chat, then "Open the plan" (the chat header), then the plan
- *     screen's header photo (screens/FlockDetail.js), which is credited.
+ *     screen's header photo, whose tap opens the sheet.
  *
- * A PLACES PHOTO WITH NO CREDIT IN HAND IS NOT DRAWN LARGE. The plan row keeps
- * its photo's URL and not who took it, so the plan header asks the server when
- * the plan opens (lib/planPhotoCredit.js) and draws the block the venue is on
- * until the answer names the photographer. The venue sheet does the same with
- * a seed photo that came without its credit, until Place Details answers.
+ * A SEED PHOTO WITH NO CREDIT IN HAND IS NOT DRAWN LARGE. The venue sheet
+ * opened on a photo that came without its credit draws the block the venue is
+ * on until Place Details answers with credited photos.
  */
 import React from 'react';
 import Icons from './Icons';
-import { onVenuePhotoError } from '../../lib/venuePhoto';
 
 // Google hosts over https only. These links are Google's own, so anything else
 // arriving in those fields is not a credit and is not drawn as a link.
@@ -151,25 +159,6 @@ export const PhotoCredit = ({ credit, style }) => {
     </span>
   );
 };
-
-// A large photo and Google's credit for it, as one piece, keyed by photo by
-// the caller so each photo starts clean. A photo that fails to load becomes the
-// placeholder bird, and the credit goes with it: the bird is not the
-// photographer's. Fills its parent, which sets the size and position:relative.
-// The venue sheet's header and the plan screen's header both draw this.
-export function CreditedPhoto({ src, credit }) {
-  const [failed, setFailed] = React.useState(false);
-  return (
-    <>
-      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { setFailed(true); onVenuePhotoError(e); }} />
-      {!failed && (
-        // Top left, the one corner the sheet's close button, arrows, dots and
-        // name leave free.
-        <PhotoCredit credit={credit} style={{ position: 'absolute', top: '12px', left: '12px', maxWidth: 'calc(100% - 70px)', zIndex: 1 }} />
-      )}
-    </>
-  );
-}
 
 // THE PHOTO'S OWN DOOR TO THE VENUE SHEET, for a row whose tap does something
 // else. A vote row votes and a share row shares, so their thumbnail never

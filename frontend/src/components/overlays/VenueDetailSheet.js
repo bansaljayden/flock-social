@@ -55,14 +55,31 @@ import Icons from '../ui/Icons';
 import { openMapsChooser } from '../ui/MapsChooser';
 import StaticVenueMap, { paletteIsDark } from '../map/StaticVenueMap';
 import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
+import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
-// CreditedPhoto is the header photo and Google's credit for it, as one piece:
-// a photo that fails to load becomes the placeholder bird and the credit goes
-// with it. It lives beside the credit itself because the plan screen's header
-// draws the same piece.
-import { GoogleMapsMark, CreditedPhoto, creditAt, usableCredit } from '../ui/GoogleCredit';
+import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
 import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
+
+// The header photo and Google's credit for it, as one piece, keyed by photo
+// so each photo starts clean. A photo that fails to load becomes the
+// placeholder bird, and the credit goes with it: the bird is not the
+// photographer's. Out here, not inside the sheet, because the sheet returns
+// early and may not call a hook. A function declaration, not an arrow: the
+// sheet's tests read its prop list up to the first arrow head in this file.
+function CreditedPhoto({ src, credit }) {
+  const [failed, setFailed] = React.useState(false);
+  return (
+    <>
+      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { setFailed(true); onVenuePhotoError(e); }} />
+      {!failed && (
+        // Top left, the one corner the close button, the arrows, the dots and
+        // the name leave free.
+        <PhotoCredit credit={credit} style={{ position: 'absolute', top: '12px', left: '12px', maxWidth: 'calc(100% - 70px)', zIndex: 1 }} />
+      )}
+    </>
+  );
+}
 
 const VenueDetailSheet = ({
   // Module scope helpers and components that live in App.js and are not
@@ -197,10 +214,10 @@ const VenueDetailSheet = ({
         const venueMapAt = { lat: at.latitude ?? at.lat ?? venueDetailModal.lat, lng: at.longitude ?? at.lng ?? venueDetailModal.lng };
         // A Places photo is drawn with its credit or not at all
         // (components/ui/GoogleCredit.js). A seed photo brings its credit
-        // from a pin, a search row or a plan whose credit is known; a chat
-        // card, a pinned venue or a failed details read brings none, and then
-        // the header is the block the venue is on until Place Details answers
-        // with credited photos. The same goes for the events drawn over it.
+        // from a pin or a search row; a chat card, a pinned venue, a plan or
+        // a failed details read brings none, and then the header is the block
+        // the venue is on until Place Details answers with credited photos.
+        // The same goes for the events drawn over it.
         const seedCredit = venueDetailModal.photo_url ? usableCredit(venueDetailModal.photo_attribution) : null;
         // Get Directions and a tap on the header map both open the chooser.
         // The Google link needs a url or a place id; a card holding neither

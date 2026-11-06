@@ -30,7 +30,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, cleanup, waitFor } = require('@testing-library/react');
+const { render, screen, fireEvent, cleanup } = require('@testing-library/react');
 
 jest.mock('../components/ui/MapsChooser', () => ({
   __esModule: true,
@@ -43,9 +43,6 @@ jest.mock('../services/api', () => ({
   submitVenueFeedback: jest.fn(),
   submitVenueReview: jest.fn(),
   getPublicReviews: jest.fn(() => Promise.resolve({ reviews: [] })),
-  // The plan header's photo and Google's credit for it (lib/planPhotoCredit.js).
-  // Nothing to draw unless a test says otherwise.
-  getFlockVenuePhoto: jest.fn(() => Promise.resolve({ photo_url: null, photo_attribution: null })),
 }));
 
 const {
@@ -53,7 +50,6 @@ const {
 } = require('../lib/staticMapUrl');
 const StaticVenueMapModule = require('../components/map/StaticVenueMap');
 const { openMapsChooser } = require('../components/ui/MapsChooser');
-const { getFlockVenuePhoto } = require('../services/api');
 const FlockDetail = require('../screens/FlockDetail').default;
 const VenueDetailSheet = require('../components/overlays/VenueDetailSheet').default;
 
@@ -341,13 +337,8 @@ describe("a plan's venue card", () => {
     expect(container.querySelectorAll('[data-static-map]')).toHaveLength(1);
   });
 
-  test('with a credited photo the photo stays on top and the map sits under the address', async () => {
-    getFlockVenuePhoto.mockResolvedValueOnce({
-      photo_url: 'https://api.test/photo?ref=1',
-      photo_attribution: { name: 'Dana Reyes', uri: 'https://maps.google.com/maps/contrib/1', maps_uri: null },
-    });
+  test('with a photo the photo stays on top and the map sits under the address', () => {
     const { container } = render(React.createElement(FlockDetail, props(plan({ venuePhoto: 'https://api.test/photo?ref=1' }))));
-    expect((await screen.findByTestId('photo-credit')).textContent).toMatch(/Dana Reyes/);
     const imgs = [...container.querySelectorAll('img')];
     expect(imgs[0].getAttribute('src')).toBe('https://api.test/photo?ref=1');
     const map = container.querySelector('[data-static-map]');
@@ -355,15 +346,6 @@ describe("a plan's venue card", () => {
     const address = screen.getByText('125 E 3rd St');
     // eslint-disable-next-line no-bitwise
     expect(address.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  test('a photo with no credit in hand is not drawn: the map takes its place', async () => {
-    const { container } = render(React.createElement(FlockDetail, props(plan({ venuePhoto: 'https://api.test/photo?ref=1' }))));
-    await waitFor(() => expect(getFlockVenuePhoto).toHaveBeenCalled());
-    expect(container.querySelector('img[src="https://api.test/photo?ref=1"]')).toBeNull();
-    const map = screen.getByRole('button', { name: "Map of Lucky's. Open it in a maps app" });
-    expect(map.parentElement.firstChild).toBe(map);
-    expect(screen.queryByTestId('photo-credit')).toBeNull();
   });
 
   test('the map follows the theme in the palette the screen is handed', () => {

@@ -74,10 +74,9 @@ import TableAvailability from '../components/venue/TableAvailability';
 // A venue's deal on its vote row, as this member's venue page leads with it
 // (the server sends it per member on each vote row).
 import VenueDealLine from '../components/venue/VenueDealLine';
-// Google's credits: the header photo is drawn with its photographer's name,
-// asked for when the plan opens, and the venue card ends on the attribution.
-import { GoogleMapsMark, CreditedPhoto } from '../components/ui/GoogleCredit';
-import { usePlanPhotoCredit } from '../lib/planPhotoCredit';
+// Google's attribution, for the venue card and the venue votes, which show
+// Places data off a Google map (components/ui/GoogleCredit.js).
+import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -202,10 +201,6 @@ export default function FlockDetail({
     // cached answer from the venue sheet shows through either.
     const tablesOver = !!flock && (flock.status === 'completed' || flock.status === 'cancelled' || isNightOver(flock));
     const tableSummary = useTableSummary(tablesOver ? null : (flock?.venueId || null), tableParty);
-    // The header photo and Google's credit for it, or null until the answer
-    // names who took it (lib/planPhotoCredit.js). Before the missing-plan
-    // return, as the hooks above are.
-    const headerPhoto = usePlanPhotoCredit(flock?.id, flock?.venuePhoto, flock?.venueId);
     if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
     // Guests are merged for DISPLAY only. flock.guests stays its own array
@@ -262,6 +257,14 @@ export default function FlockDetail({
     // The venue map follows the app theme. colors is the theme-aware palette
     // App.js hands every screen, so it already says which theme is on screen.
     const venueMapDark = paletteIsDark(colors);
+    // The venue's own sheet, from the header photo and from Details alike. The
+    // seed carries no photo: the plan keeps no credit for its stored one, so
+    // the sheet shows its map until Place Details answers with Google's
+    // current photos, credited (components/ui/GoogleCredit.js).
+    const openPlanVenue = () => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, lat: flock.venueLat, lng: flock.venueLng });
+    // A Google photo is drawn only where a tap reaches that sheet, which takes
+    // the place id; with none the card keeps its map.
+    const showVenuePhoto = !!(flock.venuePhoto && flock.venueId);
 
     return (
       <div key="flock-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -458,24 +461,21 @@ export default function FlockDetail({
               clean photo edge is right in both themes. */}
           {hasVenue ? (
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
-              {/* The photo is drawn with its photographer's name or not at
-                  all (components/ui/GoogleCredit.js). The plan keeps the
-                  photo's URL and not who took it, so headerPhoto is the
-                  server's answer when the plan opens: the photo to draw and
-                  its credit, which CreditedPhoto keeps together and drops
-                  together if the image fails. The box is 170 tall either way
-                  it loads. */}
-              {headerPhoto && (
-                <div style={{ position: 'relative', height: '170px' }}>
-                  <CreditedPhoto key={headerPhoto.url} src={headerPhoto.url} credit={headerPhoto.credit} />
-                </div>
+              {/* The photo is a thumbnail under Google's rule
+                  (components/ui/GoogleCredit.js): a tap opens the venue's
+                  sheet, which draws Google's current photos credited. It is
+                  a button of its own for that, as Details is. With no place
+                  id there is no sheet, so no Google photo is drawn. */}
+              {showVenuePhoto && (
+                <button type="button" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', width: '100%', padding: 0, margin: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
+                  <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
+                </button>
               )}
-              {/* No photo, or no credit for it yet: the block the venue is on
-                  takes the photo's place, full width. With a photo the map
-                  sits under the address instead (below). StaticVenueMap draws
-                  nothing without a key or coordinates, or when the image
-                  fails. */}
-              {!headerPhoto && (
+              {/* No photo: the block the venue is on takes the photo's place,
+                  full width. With a photo the map sits under the address
+                  instead (below). StaticVenueMap draws nothing without a key
+                  or coordinates, or when the image fails. */}
+              {!showVenuePhoto && (
                 <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
               )}
               <div style={{ padding: '14px' }}>
@@ -498,14 +498,12 @@ export default function FlockDetail({
                 {/* Under the address, because this is where a guest works out
                     how to get there. A tap opens the same maps chooser as
                     Directions. */}
-                {headerPhoto && (
+                {showVenuePhoto && (
                   <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} style={{ borderRadius: '10px', marginBottom: '12px' }} />
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  {/* The card it opens gets the header's photo with its
-                      credit, or no photo while the credit is unknown. */}
                   {flock.venueId && (
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: headerPhoto ? headerPhoto.url : null, photo_attribution: headerPhoto ? headerPhoto.credit : null, lat: flock.venueLat, lng: flock.venueLng })} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-secondary" onClick={openPlanVenue} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.eye(colors.navyMid, 14)} Details
                     </button>
                   )}

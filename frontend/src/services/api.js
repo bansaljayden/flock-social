@@ -2580,17 +2580,6 @@ export async function getFlock(id) {
   return request(`/api/flocks/${id}`);
 }
 
-// The plan's venue photo and Google's credit for it, asked when the plan screen
-// opens (routes/flocks.js GET /:id/venue-photo) and never from a list. The
-// photo comes back absolute, as every other venue photo here does.
-export async function getFlockVenuePhoto(id) {
-  const data = await request(`/api/flocks/${id}/venue-photo`);
-  return {
-    photo_url: data && data.photo_url ? resolvePhotoUrl(data.photo_url) : null,
-    photo_attribution: (data && data.photo_attribution) || null,
-  };
-}
-
 export async function createFlock({ name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, invited_user_ids, budget_enabled, budget_context, ghost_mode_enabled }) {
   const data = await request('/api/flocks', {
     method: 'POST',
