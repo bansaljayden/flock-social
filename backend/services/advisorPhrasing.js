@@ -1200,7 +1200,15 @@ function shapeWeek(which) {
     }
     if (days.length < 2) return null;
     const top = days[0];
-    const low = days[days.length - 1];
+    // ON A TIE, THE FIRST OF THE QUIETEST DAYS IN DATE ORDER, as the busiest
+    // is the first of the busiest, and as the money move, the quiet-days
+    // plan's LOWEST note and the dashboard's tiles read a tie (2026-11-05).
+    // `days` keeps a tie in date order, so its last day is the last of the
+    // quietest: on a venue's Sunday, with the card's Monday to Wednesday level
+    // at the bottom, the week's answer called Wednesday the quietest while
+    // the money move said to fill Monday.
+    const lowest = Number(days[days.length - 1].value.peakScore);
+    const low = days.find((f) => Number(f.value.peakScore) === lowest);
     const v = weekVoice(days);
     // A QUESTION THAT NAMES A DAY IS ANSWERED ABOUT THAT DAY. "How busy will
     // Friday be" got "Your busiest day this week is Saturday" (2026-10-28):
@@ -1239,8 +1247,13 @@ function shapeWeek(which) {
     }
     if (which === 'quiet') {
       // The plan hands over the two lowest, lowest first, and refuses a level
-      // week before it gets here (routes/advisor.js quiet_nights).
-      const [first, second] = [...days].reverse();
+      // week before it gets here (routes/advisor.js quiet_nights). Read
+      // lowest first with a tie left in that order: `days` reversed put the
+      // later of two level days first: on a venue's Sunday, with the card's
+      // Monday to Wednesday level, the quiet chip called Tuesday the quietest
+      // and Monday next.
+      const [first, second] = facts.filter(isPeakFact)
+        .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
       return {
         lead: v.open(`${v.Your} quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`),
         points: [`${dayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],

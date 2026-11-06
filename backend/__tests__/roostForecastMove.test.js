@@ -1235,3 +1235,33 @@ test('every week chip answers the bakery framed on every day of a week, at the t
   }
   assert.strictEqual(runs, 28);
 });
+
+test('on a tie at the quiet end every chip names the first of the quietest days, as the money move and the tile do: the bar on its Sunday, Monday to Wednesday level', async () => {
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJforecastQuietTie00000' });
+    const { week, low } = await cardWeek();
+    assert.deepStrictEqual(week.map((d) => `${d.weekday} ${d.peakScore}`), ['Mon 48', 'Tue 48', 'Wed 48', 'Thu 64', 'Fri 66', 'Sat 74']);
+    assert.strictEqual(low.weekday, 'Mon');
+    const money = await call('/api/venue/advisor/ask', { intentId: 'money_move' });
+    assert.match(money.body.text, /^Fill Monday\. /);
+    // It named Tuesday, with "Monday is next" under it, and the week's
+    // quietest line named Wednesday, until 2026-11-05.
+    const quiet = await call('/api/venue/advisor/ask', { intentId: 'quiet_nights' });
+    assert.deepStrictEqual(quiet.body.text.split('\n').slice(0, 2), [
+      'In Flock\'s forecast for places like yours, the quietest day this week is Monday, with its peak around 9 PM at 48 on our 0 to 100 index.',
+      '• Tuesday is next, around 9 PM at 48.',
+    ]);
+    const peaks = await call('/api/venue/advisor/ask', { intentId: 'peak_hours' });
+    assert.ok(peaks.body.text.split('\n').includes('• Monday is the quietest, around 9 PM at 48.'), peaks.body.text);
+  });
+  // The venue's own forecast reads a tie the same way.
+  const own = ['Monday', 'Tuesday'].map((weekday, i) => advisorFacts.makeFact({
+    id: `peak_2026-11-${String(9 + i).padStart(2, '0')}`,
+    value: { date: `2026-11-${String(9 + i).padStart(2, '0')}`, weekday, peakHour: 21, peakScore: 48 },
+    source: 'model_holdout',
+    asOf: '2026-11-08T12:00:00Z',
+    unit: '0-100 index',
+  }));
+  assert.strictEqual(advisorPhrasing.renderTemplate({ intent: 'quiet_nights', facts: own }).text.split('\n')[0],
+    'Your quietest day this week is Monday, with its peak around 9 PM at 48 on our 0 to 100 index.');
+});
