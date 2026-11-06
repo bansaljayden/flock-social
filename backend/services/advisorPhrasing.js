@@ -1192,9 +1192,13 @@ function weekVoice(days) {
 }
 
 // advisorFacts' weekend marks (a weekend with nothing open, next weekend's
-// days), required lazily like advisorFactsShortDate below.
+// days), required lazily like advisorFactsShortDate below, and once
+// (acceptance, 2026-11-06): every require() call resolved the path again, and
+// SAYS_IDS read it three times for each fact of every payload, which was most
+// of a question's time; a sweep ran three times as long as on main.
+let advisorFactsModule = null;
 // eslint-disable-next-line global-require
-const weekendMarks = () => require('./advisorFacts');
+const weekendMarks = () => (advisorFactsModule = advisorFactsModule || require('./advisorFacts'));
 
 function shapeWeek(which) {
   // TWO DAYS ASKED (2026-11-06; routes/advisor.js bothAnswer): the
@@ -2346,7 +2350,9 @@ function roomWords(venue, serviceStyle) {
 // past the forecast (advisorFacts, 2026-11-06). Their values are dates, so the
 // model is handed the sentence as `says`, and a draft may open on it word for
 // word (checkAnswer).
-const SAYS_IDS = () => new Set([weekendMarks().WEEKEND_CLOSED_ID, weekendMarks().TODAY_CLOSED_ID, weekendMarks().PAST_FORECAST_ID]);
+let saysIds = null;
+const SAYS_IDS = () => (saysIds = saysIds
+  || new Set([weekendMarks().WEEKEND_CLOSED_ID, weekendMarks().TODAY_CLOSED_ID, weekendMarks().PAST_FORECAST_ID]));
 
 // WHAT A PLACEHOLDER WILL SAY, SHOWN BESIDE IT (2026-11-03). The model wrote
 // sentences around values it could not see: "a {{fact:..._turnMinutes}} turn"

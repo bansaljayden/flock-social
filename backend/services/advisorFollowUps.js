@@ -97,8 +97,9 @@ function moneyMoveQuestion(block) {
 // and a weekend shut by "How do I get more out of a busy weekend?". After an
 // answer that opens on the venue being shut, today or for a weekend, no money
 // question is offered, and the chip is the week ahead, the days it is open.
-// advisorFacts is read when asked for, as advisorPhrasing reads it.
-const shutMarks = () => require('./advisorFacts');
+// advisorFacts is read when asked for, and once, as advisorPhrasing reads it.
+let advisorFactsModule = null;
+const shutMarks = () => (advisorFactsModule = advisorFactsModule || require('./advisorFacts'));
 function opensShut(block) {
   const first = block && Array.isArray(block.facts) ? block.facts[0] : null;
   const id = first ? String(first.sourceId || first.id) : '';

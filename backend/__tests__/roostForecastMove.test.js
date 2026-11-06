@@ -3467,3 +3467,29 @@ test('in the small hours of a night still running, this morning and this afterno
     }
   }));
 });
+
+test('a question reads advisorFacts once, never a path per fact on every payload', async () => {
+  // Each require() resolved its path again, and read for every fact the
+  // phrasing payload carried it was most of a question's time (acceptance,
+  // 2026-11-06: a sweep ran three times as long as on main).
+  const Module = require('node:module');
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr7RequireOnceSun0000', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const q = { question: 'How does this weekend look?' };
+    await call('/api/venue/advisor/question', q);
+    const resolve = Module._resolveFilename;
+    let n = 0;
+    Module._resolveFilename = function counted(request, ...rest) {
+      if (/advisorFacts$/.test(String(request))) n += 1;
+      return resolve.call(this, request, ...rest);
+    };
+    try {
+      const r = await call('/api/venue/advisor/question', q);
+      assert.ok(r.body.text.startsWith('Your Google listing has you closed'), r.body.text);
+    } finally {
+      Module._resolveFilename = resolve;
+    }
+    assert.strictEqual(n, 0);
+  });
+});
