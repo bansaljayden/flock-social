@@ -2647,6 +2647,9 @@ export default function ChatDetail({
           .map((v) => ({
             id: v.place_id || v.venue,
             name: v.venue,
+            // A Google place, which is what puts Google's attribution on the
+            // card (components/chat/cards/PollCard.js).
+            placeId: v.place_id || null,
             voteCount: voteTotal(v),
             voted: (v.voters || []).includes('You'),
             // Only when the row really carries one. The card draws a star for

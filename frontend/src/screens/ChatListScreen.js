@@ -363,6 +363,16 @@ export default function ChatListScreen({
                 </div>
                 );
               })}
+              {/* The rows name each plan's venue, which is a Google place's
+                  name in nearly every plan, so the list ends on Google's
+                  attribution (components/ui/GoogleCredit.js). An invite card
+                  carries no place id (the server keeps venue_id to members),
+                  so a named venue is the condition here, not the id. */}
+              {pendingFlockInvites.some((f) => f.venue && f.venue !== 'TBD') && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
+                  <GoogleMapsMark />
+                </div>
+              )}
             </>
           )}
 

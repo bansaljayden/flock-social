@@ -50,6 +50,7 @@ const { eventPhotoIndex, eventPhoto } = require('../components/overlays/VenueEve
 const VenueDetailSheet = require('../components/overlays/VenueDetailSheet').default;
 const VenueCardRow = require('../components/chat/cards/VenueCardRow').default;
 const PinStrip = require('../components/chat/sheets/PinStrip').default;
+const PollCard = require('../components/chat/cards/PollCard').default;
 const { usePlanPhotoCredit } = require('../lib/planPhotoCredit');
 const { getFlockVenuePhoto } = require('../services/api');
 
@@ -386,6 +387,8 @@ describe('every container of Places data off a Google map carries the mark', () 
     [['App.js']],
     [['components', 'map', 'MapLibreMapView.js']],
     [['website', 'GuestInvite.js']],
+    // 2026-11-06, second pass: the in-chat poll card.
+    [['components', 'chat', 'cards', 'PollCard.js']],
   ])('%j', (rel) => {
     expect(readSrc(...rel)).toMatch(/<GoogleMapsMark\b/);
   });
@@ -414,6 +417,59 @@ describe('every container of Places data off a Google map carries the mark', () 
   test('the website demo credits its photo, and not the placeholder', () => {
     const demo = readSrc('website', 'LiveDemo.js');
     expect(demo).toMatch(/\{!photoFailed && \(\s*<PhotoCredit credit=\{selected\.photo_attribution\}/);
+  });
+});
+
+describe('every list that names Google places ends on the mark', () => {
+  const OPTS = [
+    { id: 'ChIJkome000001', placeId: 'ChIJkome000001', name: 'Kome', voteCount: 2 },
+    { id: 'Bolete', name: 'Bolete', voteCount: 1 },
+  ];
+
+  test('the in-chat poll card, when an option is a Google place, and only then', () => {
+    const { unmount } = render(React.createElement(PollCard, { title: 'Where are we going?', options: OPTS, votedCount: 3, memberCount: 5 }));
+    expect(screen.getByTestId('google-maps-attribution').textContent).toBe('Google Maps');
+    unmount();
+    render(React.createElement(PollCard, { title: 'Where are we going?', options: OPTS.map(({ placeId, ...o }) => o), votedCount: 3, memberCount: 5 }));
+    expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
+    // The chat hands the card each option's place id.
+    expect(readSrc('screens', 'ChatDetail.js')).toMatch(/name: v\.venue,\s*\/\/[^\n]*\n\s*\/\/[^\n]*\n\s*placeId: v\.place_id \|\| null,/);
+  });
+
+  test('the plan screen\'s venue votes, when a vote is for a Google place', () => {
+    const detail = readSrc('screens', 'FlockDetail.js');
+    expect(detail).toMatch(/\{flock\.votes\.some\(\(v\) => v\.place_id\) && \(\s*<div[^>]*>\s*<GoogleMapsMark \/>/);
+    // The venue card's mark and the votes list's.
+    expect((detail.match(/<GoogleMapsMark\b/g) || []).length).toBe(2);
+  });
+
+  test('the chat list\'s invites, when an invite names a venue (an invite card carries no place id)', () => {
+    const list = readSrc('screens', 'ChatListScreen.js');
+    expect(list).toMatch(/\{pendingFlockInvites\.some\(\(f\) => f\.venue && f\.venue !== 'TBD'\) && \(\s*<div[^>]*>\s*<GoogleMapsMark \/>/);
+    // The invites list's mark and the Flocks list's.
+    expect((list.match(/<GoogleMapsMark\b/g) || []).length).toBe(2);
+  });
+
+  test('the owner\'s logo, a listing photo, is drawn only on the owner\'s dashboard, where a tap opens the credited picker', () => {
+    // venue_profiles.photo_url reaches the app only through the owner's own
+    // GET /api/venue-profile (backend routes/venueProfile.js); no consumer
+    // screen reads it. The 64px logo is a thumbnail, and its tap opens the
+    // logo picker, whose tiles each carry their photo's credit.
+    const readers = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== '__tests__') walk(full);
+        } else if (/\.js$/.test(entry.name) && /venueLogoUrl/.test(fs.readFileSync(full, 'utf8'))) {
+          readers.push(path.relative(SRC, full).split(path.sep).join('/'));
+        }
+      }
+    };
+    walk(SRC);
+    expect(readers.sort()).toEqual(['App.js', 'screens/VenueDashboard.js']);
+    const dash = readSrc('screens', 'VenueDashboard.js');
+    expect(dash).toMatch(/onClick=\{\(\) => openVenueLogoPicker\(\)\}[\s\S]{0,900}<img src=\{venueLogoUrl\}/);
   });
 });
 

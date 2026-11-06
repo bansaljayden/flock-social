@@ -48,11 +48,18 @@
  * truncating line under the name (components/venue/VenueDealLine.js). Name and
  * deal stack inside the row's 44px, so a row with a deal is no taller and the
  * count, the Tied chip and Lock it in keep their places.
+ *
+ * GOOGLE'S ATTRIBUTION. An option with a `placeId` is a Google place, and its
+ * name and rating are Google Maps data off a Google map, so a card with one
+ * ends on the "Google Maps" mark (components/ui/GoogleCredit.js), as the
+ * Explore list does. A card of names only (no option with a place id) carries
+ * none.
  */
 import React, { useEffect, useState } from 'react';
 import { CardShell } from './SystemRow';
 import Icons from '../../ui/Icons';
 import VenueDealLine from '../../venue/VenueDealLine';
+import { GoogleMapsMark } from '../../ui/GoogleCredit';
 import './cards.css';
 import { localeDate, localeTime } from '../../../lib/localeFormat';
 
@@ -310,6 +317,12 @@ export default function PollCard({
             <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-tertiary)' }}>
               {deadline}
             </span>
+          </div>
+        )}
+
+        {rows.some((o) => o.placeId) && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <GoogleMapsMark />
           </div>
         )}
       </div>

@@ -909,6 +909,15 @@ export default function FlockDetail({
                   </VoteRow>
                 );
               })}
+              {/* The rows name Google places, which is Google Maps data off a
+                  Google map, so the list ends on Google's attribution
+                  (components/ui/GoogleCredit.js), as the Explore list does. A
+                  vote for a place with no place id did not come from Google. */}
+              {flock.votes.some((v) => v.place_id) && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <GoogleMapsMark />
+                </div>
+              )}
             </div>
             </>
           )}
