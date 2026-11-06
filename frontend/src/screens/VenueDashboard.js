@@ -3343,23 +3343,32 @@ export default function VenueDashboard({
                 {typeof venueLogoPicker === 'object' && venueLogoPicker.photos.length > 0 && (
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
                     {/* Each tile is a Places photo at a size that carries its
-                        photographer's name, so the credit is drawn on it. It
-                        sits beside the tile's button, not inside it: the
-                        credit's links are controls of their own. */}
-                    {venueLogoPicker.photos.map((url, i) => (
-                      <div key={url} style={{ position: 'relative' }}>
-                        <button
-                          type="button"
-                          className="hit44"
-                          onClick={() => handleVenueLogoPick(url)}
-                          aria-label={`Use listing photo ${i + 1} as your logo`}
-                          style={{ display: 'block', width: '100%', padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
-                        >
-                          <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
-                        </button>
-                        <PhotoCredit credit={creditAt(venueLogoPicker.credits, i)} style={{ position: 'absolute', left: '6px', bottom: '6px', maxWidth: 'calc(100% - 12px)', zIndex: 1 }} />
-                      </div>
-                    ))}
+                        photographer's name, so the credit goes with it: under
+                        the tile, outside its button, since the credit's links
+                        are controls of their own. Its row is 44px tall, the
+                        maps link's target (.hit44), so that target stays in
+                        the row and a tap anywhere on a tile picks it. */}
+                    {venueLogoPicker.photos.map((url, i) => {
+                      const credit = usableCredit(creditAt(venueLogoPicker.credits, i));
+                      return (
+                        <div key={url} style={{ minWidth: 0 }}>
+                          <button
+                            type="button"
+                            className="hit44"
+                            onClick={() => handleVenueLogoPick(url)}
+                            aria-label={`Use listing photo ${i + 1} as your logo`}
+                            style={{ display: 'block', width: '100%', padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                          >
+                            <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
+                          </button>
+                          {credit && (
+                            <div data-testid="logo-photo-credit-row" style={{ height: '44px', display: 'flex', alignItems: 'center', minWidth: 0 }}>
+                              <PhotoCredit credit={credit} />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <button className="hit44" onClick={() => setVenueLogoPicker(null)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>

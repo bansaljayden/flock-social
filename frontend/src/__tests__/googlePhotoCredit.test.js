@@ -359,7 +359,10 @@ describe('the credits travel with the photos', () => {
     const dash = readSrc('screens', 'VenueDashboard.js');
     expect(dash).toContain('const coverCredit = venueCoverUrl ? usableCredit(venueCoverCredit) : null;');
     expect(dash).toMatch(/\{coverCredit && \(\s*<PhotoCredit credit=\{coverCredit\}/);
-    expect(dash).toContain('<PhotoCredit credit={creditAt(venueLogoPicker.credits, i)}');
+    // Each logo tile's credit sits in a 44px row under the tile, outside its
+    // button (venueLogoPickerCredit.test.js renders it).
+    expect(dash).toContain('const credit = usableCredit(creditAt(venueLogoPicker.credits, i));');
+    expect(dash).toMatch(/<\/button>\s*\{credit && \(\s*<div data-testid="logo-photo-credit-row" style=\{\{ height: '44px'[^}]*\}\}>\s*<PhotoCredit credit=\{credit\} \/>/);
   });
 });
 
