@@ -55,6 +55,7 @@ const props = (over = {}) => {
     meRef: { current: null },
     // The sheet's own crowd read: none of this place, none on the way.
     venueDetailCrowd: null,
+    venueOwnerView: false,
     partySize: null,
   }, over);
 };

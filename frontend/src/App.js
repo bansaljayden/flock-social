@@ -22033,6 +22033,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             partySize={partySize}
             setPartySize={setPartySize}
             setPaywallTrigger={openPaywall}
+            venueOwnerView={userMode === 'venue' || currentScreen === 'venueDashboard'}
             CROWD_FRESH_MS={CROWD_FRESH_MS}
             HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
             crowdColorFor={crowdColorFor}

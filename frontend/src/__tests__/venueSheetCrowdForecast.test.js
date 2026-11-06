@@ -124,6 +124,7 @@ function sheetProps(over = {}) {
     meRef: { current: null },
     venueDetailCrowd: sheetRead(read30()),
     partySize: null,
+    venueOwnerView: false,
   }, over);
 }
 
@@ -300,6 +301,35 @@ describe('no read, no verdict', () => {
     expect(screen.getByText('Walk right in')).toBeTruthy();
     expect(screen.getByText('(4)')).toBeTruthy();
     expect(screen.getByText('Est. Wait')).toBeTruthy();
+  });
+});
+
+describe('a venue account gets the forecast without the consumer actions', () => {
+  // A venue account on its dashboard taps a place on the dashboard map, a
+  // competitor for one, and this sheet opens. It drew "There now? Rate the
+  // crowd", which posts /api/feedback (routes/feedback.js checks no role), and
+  // See Pro; the dashboard's map card leaves both out for a venue account.
+  test('no reality check and no See Pro, with the reading itself unchanged', () => {
+    const { unmount } = render(<VenueDetailSheet {...sheetProps({ venueOwnerView: true })} />);
+    expect(screen.getByText('Not Busy')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /There now\?/ })).toBeNull();
+    unmount();
+    render(<VenueDetailSheet {...sheetProps({ venueOwnerView: true, venueDetailCrowd: sheetRead({ forPlaceId: PLACE, forecastAccess: { locked: true, limit: 3 } }) })} />);
+    expect(screen.getByText('Crowd level is part of Flock Pro')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'See Pro' })).toBeNull();
+  });
+
+  test('a person still gets both', () => {
+    render(<VenueDetailSheet {...sheetProps({ venueOwnerView: false })} />);
+    expect(screen.getByRole('button', { name: 'There now? Rate the crowd' })).toBeTruthy();
+  });
+
+  test('App.js says which it is: venue mode, or the venue dashboard', () => {
+    const at = APP_SRC.indexOf('<VenueDetailSheet');
+    const tag = APP_SRC.slice(at, APP_SRC.indexOf('/>', at));
+    expect(tag).toContain("venueOwnerView={userMode === 'venue' || currentScreen === 'venueDashboard'}");
+    const panel = SHEET_SRC.slice(SHEET_SRC.indexOf('<CrowdForecastPanel'), SHEET_SRC.indexOf('/>', SHEET_SRC.indexOf('<CrowdForecastPanel')));
+    expect(panel).toContain('venueOwnerView={!!venueOwnerView}');
   });
 });
 

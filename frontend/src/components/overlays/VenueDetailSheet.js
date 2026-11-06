@@ -151,6 +151,12 @@ const VenueDetailSheet = ({
   partySize,
   setPartySize,
   setPaywallTrigger,
+  // A venue account looking (venue mode, or its dashboard): the forecast is
+  // drawn as the dashboard's map card draws it, with no "There now? Rate the
+  // crowd" (it posts /api/feedback, a user-shaped crowd signal a venue must
+  // never write) and no See Pro. The dashboard map's basemap places open
+  // this sheet, a competitor's included.
+  venueOwnerView,
   CROWD_FRESH_MS,
   HOUR_ORDERING_MIN_GAP,
   crowdColorFor,
@@ -473,6 +479,7 @@ const VenueDetailSheet = ({
                         partySize={partySize}
                         setPartySize={setPartySize}
                         setPaywallTrigger={openPaywallFromSheet}
+                        venueOwnerView={!!venueOwnerView}
                       />
                     </div>
                   )}
