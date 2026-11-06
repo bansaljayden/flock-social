@@ -817,16 +817,24 @@ function namedWeekday(question) {
 
 // "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
 const { spokenClock: clockHour } = require('./clockWords');
-const { KIND_FORECAST, isKindForecast, unownDays } = require('./kindForecast');
+const {
+  KIND_FORECAST, isKindForecast, unownDays, isBesideWeek,
+} = require('./kindForecast');
 
 function groundedLead(intentId, facts, question = '') {
-  const days = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
+  const peaks = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
     && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
-  if (!days.length) return null;
+  if (!peaks.length) return null;
+  // Today's entry handed beside a no-history venue's card for a question
+  // about today's weekday (routes/advisor.js withNamedToday) answers that
+  // question and is never ranked with the week's days: the card's week starts
+  // tomorrow, and its quietest day is the one the money move names
+  // (services/kindForecast.js besideWeek).
+  const days = peaks.filter((f) => !isBesideWeek(f));
   // Flock's forecast for places like this venue, for a venue with no crowd
   // history of its own, says so first and never says "your" day
   // (services/kindForecast.js); the venue's own forecast reads as it did.
-  const kind = days.some(isKindForecast);
+  const kind = peaks.some(isKindForecast);
   const open = (s) => (kind ? `In ${KIND_FORECAST}, ${s}` : s);
   const your = kind ? 'the' : 'your';
   // A question about a named day is answered about that day. "How do I fill
@@ -835,14 +843,16 @@ function groundedLead(intentId, facts, question = '') {
   // is no lead at all, rather than one about another day.
   const named = namedWeekday(question);
   if (named) {
-    const day = days.find((f) => f.value.weekday === named);
+    const day = peaks.find((f) => f.value.weekday === named);
     if (!day) return null;
     // Named and the quietest of a real week: that is the stronger sentence.
-    const quietest = days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a));
+    const quietest = days.length
+      ? days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a))
+      : null;
     // Only from a whole week, or from the quiet-days plan's own marking of the
     // week's lowest day; 3 days of a weekend cannot say "quietest this week".
     const markedLowest = /LOWEST projected day in the week/.test(String(day.note || ''));
-    if (markedLowest || (days.length >= 6 && quietest === day)) {
+    if (!isBesideWeek(day) && (markedLowest || (days.length >= 6 && quietest === day))) {
       return { text: open(`${named} projects as ${your} quietest day this week.`), fact: day };
     }
     const hour = Number(day.value.peakHour);
@@ -851,6 +861,7 @@ function groundedLead(intentId, facts, question = '') {
     const night = day.value.afterMidnight === true ? ' night' : '';
     return { text: open(`${named}${night} projects busiest${when}, at ${Number(day.value.peakScore)} on our 0 to 100 index.`), fact: day };
   }
+  if (!days.length) return null;
   if (intentId === 'money_move') {
     // A level week has no quiet day to name (the plan's note says so).
     if (days.some((f) => /projects level/.test(String(f.note || '')))) return null;

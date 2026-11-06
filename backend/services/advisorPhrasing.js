@@ -62,7 +62,7 @@ const pool = require('../config/database');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
 const {
-  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, ownsCard, unownPlay, cardQuietDay,
+  KIND_FORECAST, isKindForecast, holdsCard, saysWhose, ownsCard, unownPlay, cardQuietDay, isBesideWeek,
 } = require('./kindForecast');
 const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
@@ -1183,8 +1183,19 @@ function weekVoice(days) {
 
 function shapeWeek(which) {
   return (facts, { named = null } = {}) => {
-    const days = facts.filter(isPeakFact).sort(byScore);
+    const peaks = facts.filter(isPeakFact);
+    // TODAY, ASKED BY NAME BESIDE THE CARD'S WEEK (2026-11-06). The card's
+    // week starts tomorrow, so a question about today's weekday is handed
+    // today's entry beside it (routes/advisor.js withNamedToday) and is
+    // answered with that day's own line. It is never ranked with the week's
+    // days: "the busiest day this week" is the card's, as the money move and
+    // the dashboard's tiles say it.
+    const today = named ? peaks.find((f) => isBesideWeek(f) && f.value.weekday === named) : null;
+    const days = peaks.filter((f) => !isBesideWeek(f)).sort(byScore);
     const rest = facts.filter((f) => !isPeakFact(f));
+    if (today) {
+      return { lead: weekVoice([today]).open(dayPeak(today)), points: rest.map(templateLine), used: [today, ...rest] };
+    }
     // ONE DAY OF THE CARD STILL OPENS ON WHOSE FORECAST IT IS (2026-11-05).
     // The card's week starts tomorrow, so a venue shut on Sundays has one open
     // weekend day in it on a Friday (Saturday) and on a Saturday (next
@@ -1254,7 +1265,7 @@ function shapeWeek(which) {
       // later of two level days first: on a venue's Sunday, with the card's
       // Monday to Wednesday level, the quiet chip called Tuesday the quietest
       // and Monday next.
-      const [first, second] = facts.filter(isPeakFact)
+      const [first, second] = peaks.filter((f) => !isBesideWeek(f))
         .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
       return {
         lead: v.open(`${v.Your} quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`),
@@ -1376,7 +1387,9 @@ function shapeVerdict(facts) {
 // it is worth in the venue's own money are added by the route, which knows
 // the venue (routes/advisor.js withMove).
 function shapeMoneyMove(facts) {
-  const days = facts.filter(isPeakFact).sort(byScore);
+  // The week's days only: today beside a card's week is never ranked in it
+  // (shapeWeek), and the money move is a ranking.
+  const days = facts.filter((f) => isPeakFact(f) && !isBesideWeek(f)).sort(byScore);
   if (!days.length) return null;
   const top = days[0];
   const low = days[days.length - 1];

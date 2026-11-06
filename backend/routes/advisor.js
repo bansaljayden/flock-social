@@ -64,7 +64,9 @@ const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
-const { KIND_FORECAST, isKindForecast, besideCard } = require('../services/kindForecast');
+const {
+  KIND_FORECAST, isKindForecast, besideCard, besideWeek,
+} = require('../services/kindForecast');
 
 // THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
 // point when the facts point at one (advisorPrompt, the venue's own numbers
@@ -584,7 +586,31 @@ async function tonightFor(ctx, opts, ownTonight, memo = {}) {
   return ownTonight();
 }
 
-async function bridgeFactBlock(userId, intentId) {
+// A QUESTION ABOUT TODAY'S WEEKDAY IS ANSWERED FROM TODAY (2026-11-06). A
+// no-history venue's week is its card's, which starts tomorrow, so on a
+// Monday "How busy will Monday be?" found no Monday and was answered about the
+// week, and "How do I fill a slow Monday?" had no number to lead with. When
+// the question names today's weekday and the block holds the card without
+// it, today's entry on the card goes in beside the week, never ranked in it
+// (kindForecast.besideWeek): the week's busiest and quietest stay the card's
+// own days, as the money move and the dashboard's tiles name them. Only for
+// the plans that answer a named day (advisorPhrasing shapeWeek); the money
+// move ranks its week and is not about one day. A venue's own week holds
+// today already. The weekend reads today on its own (weekend_outlook).
+const NAMED_TODAY_INTENTS = new Set(['peak_hours', 'quiet_nights']);
+async function withNamedToday(entries, intentId, b, named) {
+  if (!named || !NAMED_TODAY_INTENTS.has(intentId) || typeof b.card !== 'function') return entries;
+  if (!entries.some(isKindForecast)) return entries;
+  if (entries.some((e) => e && e.value && e.value.weekday === named)) return entries;
+  const { today } = await b.card();
+  const day = today.find((f) => f.value && f.value.weekday === named);
+  // First, in date order, so a tie with a day of the week reads today first.
+  return day ? [besideWeek(day), ...entries] : entries;
+}
+
+// `question`, when there is one, is what the owner asked: a question that
+// names today's weekday is answered from today (withNamedToday above).
+async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile.google_place_id) {
     return {
@@ -613,7 +639,7 @@ async function bridgeFactBlock(userId, intentId) {
       () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), memo)),
     // The card's week and today off one read, and the venue's own today on
     // it. Asked only once the week has been read as the card
-    // (daysFromToday), so from the same cache entry.
+    // (daysFromToday, withNamedToday), so from the same cache entry.
     card: () => (memo.card = memo.card || advisorFacts.buildCardProjection(ctx, opts)),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
@@ -632,7 +658,7 @@ async function bridgeFactBlock(userId, intentId) {
   };
 
   const plan = INTENT_PLANS[intentId];
-  const entries = plan ? await plan(b) : [];
+  const entries = await withNamedToday(plan ? await plan(b) : [], intentId, b, roostPlaybook.namedWeekday(question));
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
@@ -1286,7 +1312,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // reading of the question when the router could not be asked) lands here
     // too, and phrase() serves the template twin while the model is out.
     if (route.mode === 'grounded') {
-      const block = await buildFactBlock(userId, route.intentId);
+      const block = await buildFactBlock(userId, route.intentId, { question: asked });
       // The owner's own words go with the facts (sanitised above, and fenced
       // inside the payload), so "was Friday any good" routed to the week
       // recap is answered about Friday.
@@ -1315,7 +1341,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     let groundedFacts = [];
     let block = null;
     if (route.intentId) {
-      block = await buildFactBlock(userId, route.intentId);
+      block = await buildFactBlock(userId, route.intentId, { question: asked });
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
     // A question about a named day gets that day's forecast beside whatever
@@ -1326,12 +1352,13 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // (2026-10-28 second review: it ran the week twice and could 500). A
     // block that already tried a no-history venue's Week Ahead card and found
     // none is not asked again: the second read is a second paid lookup that
-    // fails the same way (2026-11-03 review).
+    // fails the same way (2026-11-03 review). Today's weekday comes off the
+    // card's today for a venue with no crowd history (withNamedToday).
     const named = roostPlaybook.namedWeekday(asked);
     if (named && !(block && block.cardRead === false)
         && !groundedFacts.some((f) => f && f.value && f.value.weekday === named)) {
       try {
-        const week = await buildFactBlock(userId, 'peak_hours');
+        const week = await buildFactBlock(userId, 'peak_hours', { question: asked });
         const have = new Set(groundedFacts.map((f) => f && f.id));
         groundedFacts = [...groundedFacts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
       } catch (err) {

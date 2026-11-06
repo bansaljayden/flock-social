@@ -129,6 +129,29 @@ function besideCard(text, facts) {
   return day ? unownDays(text, day) : text;
 }
 
+// ── Today, beside the card's week (2026-11-06) ──────────────────────────────
+//
+// The card's week starts tomorrow and today is its own entry, so on a Monday
+// "How do I fill a slow Monday?" found no Monday in a no-history venue's week
+// and had no number to lead with. A question about today's weekday is now
+// answered from today's entry (routes/advisor.js withNamedToday), handed over
+// beside the week with this note and never ranked against it: "the busiest
+// day this week" and "the quietest" stay the card's own days, the ones the
+// money move and the dashboard's tiles name. The note says the same to the
+// phrasing model. The weekend is the one answer that ranks today with the
+// days after it, because today is part of the weekend it asks about.
+const BESIDE_WEEK_NOTE = 'This is today. The other days are the week ahead, which starts tomorrow, so today is not ranked against them.';
+
+/** Today's entry on the card, as a block carries it beside the card's week. */
+function besideWeek(fact) {
+  return { ...fact, note: [fact.note, BESIDE_WEEK_NOTE].filter(Boolean).join(' ') };
+}
+
+/** True for today's entry handed over beside the card's week (besideWeek). */
+function isBesideWeek(fact) {
+  return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(BESIDE_WEEK_NOTE);
+}
+
 module.exports = {
   KIND_FORECAST_SOURCE,
   KIND_FORECAST,
@@ -140,4 +163,7 @@ module.exports = {
   unownPlay,
   cardQuietDay,
   besideCard,
+  BESIDE_WEEK_NOTE,
+  besideWeek,
+  isBesideWeek,
 };
