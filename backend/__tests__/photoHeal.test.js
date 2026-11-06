@@ -20,7 +20,10 @@
 //   3. a heal that cannot finish keeps the 404 the app draws as the bird;
 //   4. the money: what is charged, to which ledger, and that a place is looked
 //      up at most once a day;
-//   5. every map involved stays bounded, holds no photo name, and the
+//   5. no request ever waits on itself, however Google answers;
+//   6. a healed answer is kept by a browser for a day, never pinned, and a name
+//      Google lists is used only if it is shaped like one;
+//   7. every map involved stays bounded, holds no photo name, and the
 //      photos-only answer never reaches the cache the crowd model reads.
 //
 // Driven through the real route over HTTP against the real Places ledger.
@@ -85,6 +88,7 @@ const expired = new Set(); // names the /media leg answers 400 INVALID_ARGUMENT
 const failing = new Set(); // names the /media leg answers 503
 const places = new Map(); // placeId -> { status, body } | { throws }
 let holdDetails = null; // a promise every details answer waits on
+const holdMedia = new Map(); // name -> a promise that name's /media answer waits on
 
 const INVALID_NAME = JSON.stringify({
   error: {
@@ -104,6 +108,7 @@ global.fetch = async (url, opts = {}) => {
   if (u.startsWith(V1) && u.includes('/media?')) {
     const name = u.slice(V1.length, u.indexOf('/media?'));
     calls.push({ kind: 'media', name });
+    if (holdMedia.has(name)) await holdMedia.get(name);
     if (expired.has(name)) return { ok: false, status: 400, text: async () => INVALID_NAME };
     if (failing.has(name)) return { ok: false, status: 503, text: async () => 'unavailable' };
     return { ok: true, status: 200, json: async () => ({ photoUri: CDN + encodeURIComponent(name) }) };
@@ -177,11 +182,12 @@ test.beforeEach(() => {
   failing.clear();
   places.clear();
   holdDetails = null;
+  holdMedia.clear();
 });
 
-function get(ref, width = 400) {
+function get(ref, width = 400, headers = {}) {
   return new Promise((resolve, reject) => {
-    http.get(`${base}/api/venues/photo?ref=${encodeURIComponent(ref)}&maxwidth=${width}`, (res) => {
+    http.get(`${base}/api/venues/photo?ref=${encodeURIComponent(ref)}&maxwidth=${width}`, { headers }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({
@@ -191,6 +197,45 @@ function get(ref, width = 400) {
       }));
     }).on('error', reject);
   });
+}
+
+// The same GET, for the requests that once never answered: it gives up after
+// `ms` and reports HUNG, so a wedged flight fails the test instead of the run.
+function getWithin(ref, width = 400, ms = 10000) {
+  return new Promise((resolve, reject) => {
+    let timer = null;
+    const req = http.get(`${base}/api/venues/photo?ref=${encodeURIComponent(ref)}&maxwidth=${width}`, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    req.on('error', (e) => { if (e.code !== 'ECONNRESET') reject(e); });
+    timer = setTimeout(() => { req.destroy(); resolve({ status: 'HUNG' }); }, ms);
+  });
+}
+
+// Nothing a heal starts may outlive it: no flight left in photoInflight, no key
+// left marked as healing.
+function assertDrained() {
+  assert.equal(vs.photoInflightSize(), 0, 'a photo flight was left behind');
+  assert.equal(vs.healingKeysSize(), 0, 'a key was left marked as healing');
+}
+
+// The address the route sees for this test's requests, learned from the
+// per-address table rather than assumed.
+async function clientAddress() {
+  const probe = 'places/ChIJaddressProbe1/photos/AU_live';
+  assert.equal((await get(probe)).status, 200);
+  const addresses = vs.photoIpAddresses();
+  assert.equal(addresses.length, 1);
+  vs.resetPhotoBudget();
+  calls.length = 0;
+  db.charges = 0;
+  __resetPlacesBudget();
+  return addresses[0];
 }
 
 const seen = () => calls.map((c) => (c.kind === 'details' ? `details ${c.placeId}` : `${c.kind} ${c.name}`));
@@ -234,10 +279,7 @@ test('a dead name heals to the place\'s current first photo', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.text, `pixels of ${FIRST}`, 'the heal must serve the FIRST current photo');
   assert.equal(res.headers['content-type'], 'image/jpeg');
-  assert.match(res.headers['cache-control'], /max-age=2592000, immutable/);
-  // The validator names the URL that was asked for, so the browser's copy of
-  // the stored URL revalidates through the 304 path like any photo.
-  assert.match(res.headers.etag, new RegExp(`^W/"p1-${vs.photoCacheKey(OLD, 400).slice(0, 32)}-`));
+  assert.equal(res.headers['x-content-type-options'], 'nosniff');
 
   assert.deepEqual(seen(), [
     `media ${OLD}`, // Google refuses the stored name
@@ -470,7 +512,9 @@ test('a place is looked up at most once a day, even when the lookup found nothin
 
   // A day later the place gets one more look, and this time it has a photo.
   placeWithPhotos(P, [FIRST]);
-  vs.healedPlaces.get(P).ts -= vs.HEALED_PLACE_TTL_MS;
+  const entry = vs.healedPlaces.get(P);
+  assert.ok(entry.until - Date.now() > vs.HEALED_PLACE_TTL_MS - 60 * 1000, 'the place was held for less than a day');
+  entry.until = Date.now() - 1;
   const later = await get(OLD);
   assert.equal(later.status, 200);
   assert.equal(later.text, `pixels of ${FIRST}`);
@@ -502,10 +546,283 @@ test('when the photo budget will not buy the current photo, the answer is still 
   assertBird(await get(OLD));
   assert.deepEqual(seen(), [`media ${OLD}`, `details ${P}`], 'the current photo was bought past the budget');
   assert.equal(db.charges, 1);
+  // A refused purchase holds the place for an hour, not the day.
+  assert.ok(vs.healedPlaces.get(P).until - Date.now() <= vs.HEAL_RETRY_TTL_MS);
+});
+
+test('a heal spends one per-address unit per Google call it makes, and a repeat spends none', async () => {
+  const ip = await clientAddress();
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+  assert.equal((await get(OLD)).status, 200);
+  assert.equal(vs.photoIpHitCount(ip), 3, 'the refused name, the lookup and the purchase: one unit each');
+
+  await get(OLD);
+  await get(OLD, 160);
+  assert.equal(vs.photoIpHitCount(ip), 3, 'a healed repeat spent a per-address unit');
+});
+
+test('a lookup the per-address gate refuses is never sent, and does not use up the place\'s day', async () => {
+  const ip = await clientAddress();
+  // One miss left this hour, and the ask that learns OLD is dead takes it.
+  for (let i = 0; i < vs.PHOTO_MISS_PER_IP_HOURLY - 1; i++) vs.allowPhotoFetch({ ip });
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+
+  assertBird(await get(OLD));
+  assert.deepEqual(seen(), [`media ${OLD}`], 'a lookup went out past the address\'s hourly gate');
+  assert.equal(vs.healedPlaces.has(P), false, 'a lookup that never happened used up the place\'s day');
+
+  // The next hour (a cleared table stands in for it): the heal goes through.
+  vs.resetPhotoBudget();
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+});
+
+test('a purchase one address\'s gate refuses holds the place for an hour, not a day', async () => {
+  const ip = await clientAddress();
+  // Two misses left: the ask that finds OLD dead and the lookup. The purchase
+  // of the current photo is the one refused.
+  for (let i = 0; i < vs.PHOTO_MISS_PER_IP_HOURLY - 2; i++) vs.allowPhotoFetch({ ip });
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+
+  assertBird(await get(OLD));
+  assert.deepEqual(seen(), [`media ${OLD}`, `details ${P}`], 'the purchase went out past the address\'s hourly gate');
+  const entry = vs.healedPlaces.get(P);
+  assert.equal(entry.keys[400], vs.photoCacheKey(FIRST, 400));
+  assert.ok(entry.until - Date.now() <= vs.HEAL_RETRY_TTL_MS,
+    'one address\'s refusal held the place for every address for longer than an hour');
+
+  // Another address inside that hour still gets the bird, and costs no Google call.
+  vs.resetPhotoBudget();
+  calls.length = 0;
+  assertBird(await get(OLD));
+  assert.deepEqual(seen(), []);
+
+  // After the hour, any address heals it.
+  entry.until = Date.now() - 1;
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+  assert.deepEqual(seen(), [`details ${P}`, `media ${FIRST}`, `cdn ${FIRST}`]);
+});
+
+test('a card and a pin healing one dead name at the same moment buy the current photo once', async () => {
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+  let release;
+  holdDetails = new Promise((r) => { release = r; });
+
+  const pending = Promise.all([get(OLD, 400), get(OLD, 160)]);
+  await waitFor(() => lookups() === 1);
+  await new Promise((r) => setTimeout(r, 50));
+  release();
+  holdDetails = null;
+
+  for (const res of await pending) {
+    assert.equal(res.status, 200);
+    assert.equal(res.text, `pixels of ${FIRST}`);
+  }
+  assert.equal(lookups(), 1);
+  assert.equal(calls.filter((c) => c.kind === 'media' && c.name === FIRST).length, 1, 'two widths bought the photo twice');
+  assertDrained();
 });
 
 // =============================================================================
-// 4. Bounded, and no photo names kept
+// 4. No request ever waits on itself
+// =============================================================================
+// A heal runs inside the flight of the name it heals. Before the guard, a heal
+// whose remembered or chosen photo was that same name, refused later, waited on
+// its own flight: the request never answered and the flight never left
+// photoInflight, so every later request for that photo at that width joined it.
+
+test('a Google blip while a venue sheet is open: the sheet\'s second photo answers', async () => {
+  // The sheet's payload lists two photos, and Google refuses both for a moment.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  expired.add(FIRST);
+  expired.add(SECOND);
+
+  assertBird(await getWithin(FIRST), 'the first photo heals to the second, which is refused too');
+  assertBird(await getWithin(SECOND), 'the second photo\'s own flight is the one healing');
+  assertDrained();
+
+  // Google recovers, and once the day's memories are gone both photos load.
+  expired.clear();
+  vs.deadPhotoRefs.clear();
+  vs.healedPlaces.clear();
+  assert.equal((await getWithin(SECOND)).status, 200);
+  assert.equal((await getWithin(FIRST)).status, 200);
+  assertDrained();
+});
+
+test('a photo a dead name healed to, refused later the same day: its own thumbnail answers', async () => {
+  placeWithPhotos(P, [FIRST]);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  expired.add(OLD);
+  const healed = await getWithin(OLD);
+  assert.equal(healed.status, 200);
+  assert.equal(healed.text, `pixels of ${FIRST}`);
+
+  // Later that day Google expires FIRST, and a pin asks for it.
+  expired.add(FIRST);
+  assertBird(await getWithin(FIRST, 160));
+  assert.equal(vs.healedPlaces.get(P).keys, null, 'the refused photo is still what the place heals to');
+  // And the healed tile's own thumbnail answers rather than riding a wedged flight.
+  assertBird(await getWithin(OLD, 160));
+  assertDrained();
+});
+
+test('a photo the heal chose and Google refused: the next request for it answers', async () => {
+  expired.add(OLD);
+  expired.add(FIRST);
+  placeWithPhotos(P, [FIRST]);
+  assertBird(await getWithin(OLD));
+  assert.equal(vs.healedPlaces.get(P).keys, null, 'the refused pick is still what the place heals to');
+
+  assertBird(await getWithin(FIRST));
+  assertDrained();
+
+  // Once Google takes FIRST again and the day's memory of it has gone, it serves.
+  expired.delete(FIRST);
+  vs.deadPhotoRefs.clear();
+  const later = await getWithin(FIRST);
+  assert.equal(later.status, 200);
+  assert.equal(later.text, `pixels of ${FIRST}`);
+  assertDrained();
+});
+
+test('a heal tries one photo per request: when Google refuses its choice, the next request takes the next', async () => {
+  // The card's payload lists two photos; Google has expired the stored name
+  // and the first current one.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  calls.length = 0;
+  expired.add(OLD);
+  expired.add(FIRST);
+
+  assertBird(await getWithin(OLD));
+  assert.deepEqual(seen(), [`media ${OLD}`, `media ${FIRST}`], 'one try per request, and never a heal of the heal');
+  assert.equal(vs.healedPlaces.get(P).keys, null);
+
+  calls.length = 0;
+  const next = await getWithin(OLD);
+  assert.equal(next.status, 200);
+  assert.equal(next.text, `pixels of ${SECOND}`);
+  assert.deepEqual(seen(), [`media ${SECOND}`, `cdn ${SECOND}`]);
+  assertDrained();
+});
+
+test('the guard: two heals can never wait on each other', async () => {
+  // Two refused names of one place, and nothing current to heal either to, so
+  // both requests must end on the bird. N's metadata answer is held, so its
+  // flight sits in the metadata phase while X's heal starts.
+  const X = `places/${P}/photos/AU_refused_x`;
+  const N = `places/${P}/photos/AU_refused_n`;
+  const keysOf = (name) => ({ 160: vs.photoCacheKey(name, 160), 400: vs.photoCacheKey(name, 400) });
+  expired.add(X);
+  expired.add(N);
+  placeWithPhotos(P, []);
+  let releaseN;
+  holdMedia.set(N, new Promise((r) => { releaseN = r; }));
+
+  const nRequest = getWithin(N);
+  await waitFor(() => calls.some((c) => c.kind === 'media' && c.name === N));
+
+  // The place's entry names N: X's heal waits on N's flight, which is not
+  // healing yet, so that wait is allowed.
+  vs.rememberHealedPlace(P, keysOf(N));
+  const xRequest = getWithin(X);
+  await waitFor(() => vs.healingKeysSize() === 1);
+
+  // The entry then names X, and N's answer comes back refused: N's heal finds
+  // X's flight healing and does not wait on it. Without the guard the two wait
+  // on each other and neither request ever answers.
+  vs.rememberHealedPlace(P, keysOf(X));
+  releaseN();
+  const [n, x] = await Promise.all([nRequest, xRequest]);
+  assertBird(n);
+  assertBird(x);
+  assertDrained();
+});
+
+test('the guard holds even when the dead-name memory lets go in the middle of two heals', async () => {
+  // A heal never picks a name it knows is dead, and a healing flight's name is
+  // always known dead, so a purchase should never meet a healing flight. The
+  // guard does not rely on that: here the memory is emptied while two heals of
+  // one place wait on one lookup, so each picks the other's name. Without the
+  // guard each would wait on the other's flight, forever.
+  const X = `places/${P}/photos/AU_refused_x`;
+  const N = `places/${P}/photos/AU_refused_n`;
+  expired.add(X);
+  expired.add(N);
+  placeWithPhotos(P, [X, N]);
+  let release;
+  holdDetails = new Promise((r) => { release = r; });
+
+  const pending = Promise.all([getWithin(X), getWithin(N)]);
+  await waitFor(() => lookups() === 1 && vs.healingKeysSize() === 2);
+  vs.deadPhotoRefs.clear();
+  release();
+  holdDetails = null;
+
+  const [x, n] = await pending;
+  assertBird(x);
+  assertBird(n);
+  assertDrained();
+});
+
+// =============================================================================
+// 5. What a healed answer tells the browser, and what the heal will use
+// =============================================================================
+
+test('a healed answer is kept for a day, never pinned as immutable, and still revalidates', async () => {
+  // Google refuses a live photo once (a blip, or a 400 misread as a dead name),
+  // and the URL is answered with the place's other photo.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  expired.add(SECOND);
+  const res = await get(SECOND);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+  assert.equal(res.headers['cache-control'], `public, max-age=${24 * 60 * 60}`);
+  assert.equal(vs.HEALED_PHOTO_MAX_AGE_S, vs.HEALED_PLACE_TTL_MS / 1000);
+  assert.equal(res.headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.ok(res.headers.etag, 'a healed answer still carries a validator');
+  assert.doesNotMatch(res.headers.etag, /p1-/,
+    'heldPhotoEtag confirms a p1 validator for 30 days without looking, which would pin the healed photo again');
+
+  // A day later the browser asks again with that validator: the heal runs, and
+  // the same bytes come back as a 304.
+  const again = await get(SECOND, 400, { 'If-None-Match': res.headers.etag });
+  assert.equal(again.status, 304);
+
+  // A photo served under its own name keeps its 30 immutable days.
+  const own = await get(FIRST);
+  assert.equal(own.status, 200);
+  assert.match(own.headers['cache-control'], /max-age=2592000, immutable/);
+});
+
+test('a name Google lists is used only if it is shaped like a photo name', async () => {
+  const BS = String.fromCharCode(92);
+  expired.add(OLD);
+  placeWithPhotos(P, [
+    `places/${P}/photos/a${BS}..${BS}..${BS}x`, // the URL parser reads \ as /
+    `places/${P}/photos/%2e%2e`, // and %2e%2e as ..
+    `places/${P}/photos/x?key=leak`,
+    '',
+    FIRST,
+  ]);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+  assert.deepEqual(seen(), [`media ${OLD}`, `details ${P}`, `media ${FIRST}`, `cdn ${FIRST}`],
+    'a malformed name from Google was put into a request');
+});
+
+// =============================================================================
+// 6. Bounded, and no photo names kept
 // =============================================================================
 
 test('healedPlaces is bounded, oldest out first, and a refreshed place moves to the back', () => {
@@ -547,7 +864,7 @@ test('what the heal keeps is hashes and a place id, and its flights drain', asyn
   assert.ok(![...vs.deadPhotoRefs.keys()].some((k) => k.includes('/photos/')));
 
   assert.equal(placeDetailsCache.__test.photosInflightSize(), 0, 'the lookup flight did not drain');
-  assert.equal(vs.photoInflightSize(), 0, 'a photo flight did not drain');
+  assertDrained();
   // The photos-only answer has no rating, review count or price, so it must
   // never be written where the crowd model reads venues from.
   assert.equal(placeDetailsCache.__test.size(), 0, 'a photos-only answer reached the shared details cache');

@@ -414,16 +414,37 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 // entry is what holds a place to one lookup a day: it is written the moment a
 // lookup is charged, and while it lives no second lookup is charged.
 //
+// TWO ANSWERS CHANGE THAT ENTRY. Google refusing the remembered photo itself,
+// on its own URL or as the photo a heal just tried to buy, forgets the photo
+// (keys back to null) and keeps the day. Any other refusal to buy it (one
+// address's hourly gate, the shared ledger, the photo budget, a Google fault)
+// says nothing about the place, so the entry is re-stamped for
+// HEAL_RETRY_TTL_MS instead: the place may be looked up again within the hour,
+// for every address, rather than tomorrow.
+//
+// NO HEAL EVER WAITS ON A FLIGHT THAT IS HEALING (healingKeys). A heal runs
+// inside the flight of the name it heals, and the photo it remembers or picks
+// can be that very name, refused later: waiting on that flight is waiting on
+// itself, the request never answers, and the flight never leaves photoInflight.
+// So every wait a heal makes goes through joinableFlight, which refuses a
+// flight whose key is healing. That rules out loops of heals as well: a heal
+// only waits on a flight that has not started healing, so along any chain of
+// waits each flight started healing later than the one waiting on it, and the
+// chain can never come back round to where it began.
+//
 // BOUNDED. An entry follows a dead name, and a name becomes dead only after a
 // metadata call the photo budget charged, so writes are bounded by its daily
 // brake (PHOTO_FETCH_BURST_PER_DAY, 451) whoever is asking; MAX_HEALED_PLACES
 // sits well above a day of that. Oldest out first, cleared on restart.
+// healingKeys holds a key only for as long as that flight heals.
 //
 // A HEAL THAT CANNOT FINISH (no photos, a refusal, an error) answers PHOTO_GONE,
 // the same 404 a dead name got before, and the app draws the bird as it did.
 const HEALED_PLACE_TTL_MS = DEAD_PHOTO_REF_TTL_MS;
+const HEAL_RETRY_TTL_MS = 60 * 60 * 1000;
 const MAX_HEALED_PLACES = 5000;
-const healedPlaces = new Map(); // placeId -> { keys: { 160, 400 } | null, ts }
+const healedPlaces = new Map(); // placeId -> { keys: { 160, 400 } | null, until }
+const healingKeys = new Set(); // cache keys of the flights healing right now
 
 // `places/{placeId}/photos/{photo}` -> placeId, or null when that segment is not
 // shaped like a place id (utils/places.js), so nothing else is ever looked up.
@@ -435,19 +456,31 @@ function placeIdOfPhotoRef(photoRef) {
 function readHealedPlace(placeId) {
   const entry = healedPlaces.get(placeId);
   if (!entry) return null;
-  if (Date.now() - entry.ts >= HEALED_PLACE_TTL_MS) {
+  if (Date.now() >= entry.until) {
     healedPlaces.delete(placeId);
     return null;
   }
   return entry;
 }
 
-function rememberHealedPlace(placeId, keys) {
+function rememberHealedPlace(placeId, keys, ttlMs = HEALED_PLACE_TTL_MS) {
   healedPlaces.delete(placeId);
-  healedPlaces.set(placeId, { keys, ts: Date.now() });
+  healedPlaces.set(placeId, { keys, until: Date.now() + ttlMs });
   while (healedPlaces.size > MAX_HEALED_PLACES) {
     healedPlaces.delete(healedPlaces.keys().next().value);
   }
+}
+
+// Google refused the photo this place heals to: forget it, keep the day.
+function forgetHealedPhoto(placeId) {
+  const entry = healedPlaces.get(placeId);
+  if (entry) entry.keys = null;
+}
+
+// The flight for `cacheKey` if a heal may wait on it, or null. One that is
+// healing may be the waiter itself, or waiting on it.
+function joinableFlight(cacheKey) {
+  return healingKeys.has(cacheKey) ? null : (photoInflight.get(cacheKey) || null);
 }
 
 // What Google said, bounded, for the log. The body is JSON with an
@@ -755,12 +788,29 @@ function setPhotoCacheHeaders(res, etag) {
   if (etag) res.set('ETag', etag);
 }
 
-function sendPhoto(res, { buffer, contentType, ts }, cacheKey) {
+// A HEALED ANSWER IS THE ONE EXCEPTION TO `immutable`. Its URL names a photo
+// Google refused, and its bytes are a different photo of the place, chosen
+// today: a wrong "dead" verdict, or a later heal to another photo, must not
+// stay pinned in a browser for 30 days. So it is kept for a day, the life of
+// a healedPlaces entry, without `immutable`, and without our p1 validator,
+// which heldPhotoEtag would confirm for the whole 30-day window. Express's own
+// body-hash ETag still turns an unchanged answer into a 304.
+const HEALED_PHOTO_MAX_AGE_S = Math.floor(HEALED_PLACE_TTL_MS / 1000);
+function setHealedPhotoHeaders(res) {
+  res.set('Cache-Control', `public, max-age=${HEALED_PHOTO_MAX_AGE_S}`);
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+}
+
+function sendPhoto(res, { buffer, contentType, ts, healed }, cacheKey) {
   res.set('Content-Type', photoContentType(contentType));
   res.set('X-Content-Type-Options', 'nosniff');
-  // No fetch time, no tag of ours: Express then falls back to its own
-  // body-hash ETag, which is what every photo carried before.
-  setPhotoCacheHeaders(res, cacheKey && Number.isFinite(ts) ? photoEtag(cacheKey, ts) : null);
+  if (healed) {
+    setHealedPhotoHeaders(res);
+  } else {
+    // No fetch time, no tag of ours: Express then falls back to its own
+    // body-hash ETag, which is what every photo carried before.
+    setPhotoCacheHeaders(res, cacheKey && Number.isFinite(ts) ? photoEtag(cacheKey, ts) : null);
+  }
   res.send(buffer);
 }
 
@@ -784,7 +834,9 @@ function photoFlight(photoRef, maxWidth, cacheKey, req, opts) {
 //
 // `heal: true` (GET /photo only) turns the two PHOTO_GONE answers for a name
 // Google has refused into healDeadPhoto's answer: the same place's current
-// photo, or that same PHOTO_GONE when there is none to give.
+// photo, or that same PHOTO_GONE when there is none to give. The heal runs
+// through healInFlight, which marks this flight's key as healing for as long
+// as it runs (see healingKeys).
 async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false } = {}) {
   try {
     // Step 0: L2, the durable cache in Postgres. This is the tier that makes a
@@ -801,7 +853,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false 
     // Step 0-and-a-half: a name Google already refused today. Answered before
     // every gate below, because it costs nothing and would otherwise cost a
     // paid call, again, for the same no.
-    if (isDeadPhotoRef(photoRef)) return heal ? healDeadPhoto(photoRef, maxWidth, req) : PHOTO_GONE;
+    if (isDeadPhotoRef(photoRef)) return heal ? healInFlight(cacheKey, photoRef, maxWidth, req) : PHOTO_GONE;
 
     // Step 0a: the abuse gate. Per address, on MISSES only, so one script cannot
     // spend a budget everyone draws on. Nothing about money is decided here.
@@ -898,7 +950,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false 
       if (googleSaysNameIsBad(metaRes.status, why)) {
         recordPlacesResult(true, null, PHOTOS);
         rememberDeadPhotoRef(photoRef);
-        return heal ? healDeadPhoto(photoRef, maxWidth, req) : PHOTO_GONE;
+        return heal ? healInFlight(cacheKey, photoRef, maxWidth, req) : PHOTO_GONE;
       }
       recordPlacesResult(false, `HTTP ${metaRes.status}`, PHOTOS);
       // A quota refusal (429) or a key or billing refusal (403) is Google
@@ -953,30 +1005,63 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false 
   }
 }
 
-const servedEntry = (e) => ({ status: 200, buffer: e.buffer, contentType: e.contentType, ts: e.ts });
+// What a heal answers with: the bytes, marked so sendPhoto gives them a day's
+// Cache-Control instead of 30 days of `immutable` (setHealedPhotoHeaders). A
+// copy, never the object a shared flight resolved to, because a direct
+// request for that photo may be holding the same object.
+const healedAnswer = (e) => ({
+  status: 200, buffer: e.buffer, contentType: e.contentType, ts: e.ts, healed: true,
+});
+
+// The heal of the name behind the flight for `cacheKey`, with that key marked
+// as healing while it runs, so no heal anywhere waits on this flight (see
+// healingKeys and joinableFlight).
+async function healInFlight(cacheKey, photoRef, maxWidth, req) {
+  healingKeys.add(cacheKey);
+  try {
+    return await healDeadPhoto(photoRef, maxWidth, req);
+  } finally {
+    healingKeys.delete(cacheKey);
+  }
+}
 
 // A healed place's current photo, from the tiers that cost nothing: L1, a
-// purchase already in flight, then L2. The asked-for width first, then the
-// other, because a 400px photo drawn at 160 beats the bird and buying the
-// second width would be a second purchase. Null when no tier holds either.
+// purchase already in flight that is not itself healing, then L2. The
+// asked-for width first, then the other, because a 400px photo drawn at 160
+// beats the bird and buying the second width would be a second purchase. Null
+// when no tier holds either.
 async function heldHealedPhoto(keys, maxWidth) {
   for (const width of maxWidth === 160 ? [160, 400] : [400, 160]) {
     const key = keys[width];
     const mem = readPhotoMemory(key);
-    if (mem) return servedEntry(mem);
-    const flight = photoInflight.get(key);
+    if (mem) return healedAnswer(mem);
+    const flight = joinableFlight(key);
     if (flight) {
       const out = await flight;
-      if (out.status === 200) return out;
+      if (out.status === 200) return healedAnswer(out);
       continue;
     }
     const stored = await readStoredPhoto(key);
     if (stored) {
       storePhoto(key, stored);
-      return servedEntry(stored);
+      return healedAnswer(stored);
     }
   }
   return null;
+}
+
+// Every heal buys the current photo at the card width. A pin is drawn from it
+// as well as from a 160 (heldHealedPhoto above), so a card and a pin healing
+// one dead name at the same moment ride one purchase instead of making two.
+const HEAL_WIDTH = 400;
+
+// The current photo's purchase: the ordinary flight for its key, joined when
+// one is already buying it and started without `heal` when none is. Null when
+// the flight holding that key is healing, which means Google has refused that
+// photo too, and waiting on it could be waiting on this very heal.
+function healPurchase(photoRef, cacheKey, req) {
+  if (healingKeys.has(cacheKey)) return null;
+  return photoFlight(photoRef, HEAL_WIDTH, cacheKey, req);
 }
 
 // Answer a name Google has refused with the same place's CURRENT first photo,
@@ -988,10 +1073,17 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
     if (!placeId) return PHOTO_GONE;
 
     // Healed already today: the current photo by its hash, no Google call.
+    // Unless the photo remembered is the very name Google has just refused:
+    // then it is forgotten rather than served or waited on (its flight may be
+    // the one running this heal), and the place keeps its day.
     const healed = readHealedPlace(placeId);
     if (healed && healed.keys) {
-      const held = await heldHealedPhoto(healed.keys, maxWidth);
-      if (held) return held;
+      if (healed.keys[160] === photoCacheKey(deadRef, 160) || healed.keys[400] === photoCacheKey(deadRef, 400)) {
+        forgetHealedPhoto(placeId);
+      } else {
+        const held = await heldHealedPhoto(healed.keys, maxWidth);
+        if (held) return held;
+      }
     }
 
     // The place's current photo names. NO `await` FROM THE QUESTION TO THE
@@ -1023,12 +1115,25 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
     // another dead name of this place rides this purchase.
     const keys = { 160: photoCacheKey(current, 160), 400: photoCacheKey(current, 400) };
     rememberHealedPlace(placeId, keys);
-    const mem = readPhotoMemory(keys[maxWidth]);
-    if (mem) return servedEntry(mem);
-    // No `heal`: the current name goes through fetchPhotoOnce like any other,
-    // and if Google refuses it too the answer is PHOTO_GONE, not another heal.
-    const fresh = await photoFlight(current, maxWidth, keys[maxWidth], req);
-    return fresh.status === 200 ? fresh : PHOTO_GONE;
+    const mem = readPhotoMemory(keys[maxWidth]) || readPhotoMemory(keys[HEAL_WIDTH]);
+    if (mem) return healedAnswer(mem);
+    // ONE try per request. No `heal` on this purchase: the current name goes
+    // through fetchPhotoOnce like any other, and if Google refuses it too the
+    // answer is PHOTO_GONE, never a heal of the heal; the next request picks the
+    // next photo.
+    const purchase = healPurchase(current, keys[HEAL_WIDTH], req);
+    const fresh = purchase ? await purchase : PHOTO_GONE;
+    if (fresh.status === 200) return healedAnswer(fresh);
+    if (fresh.gone) {
+      // Google refused the photo just chosen: forget it, keep the day.
+      forgetHealedPhoto(placeId);
+    } else {
+      // A gate, the budget or a Google fault refused the purchase. That is no
+      // reason to hold every address off this place until tomorrow, so the
+      // place may be looked up again within the hour.
+      rememberHealedPlace(placeId, keys, HEAL_RETRY_TTL_MS);
+    }
+    return PHOTO_GONE;
   } catch (err) {
     console.error('[Photo Proxy] heal failed:', err.message);
     return PHOTO_GONE;
@@ -1751,10 +1856,17 @@ module.exports.__test = {
   // The heal (__tests__/photoHeal.test.js).
   healedPlaces,
   HEALED_PLACE_TTL_MS,
+  HEAL_RETRY_TTL_MS,
+  HEALED_PHOTO_MAX_AGE_S,
   MAX_HEALED_PLACES,
   rememberHealedPlace,
   placeIdOfPhotoRef,
+  isPhotoRefShaped,
   photoInflightSize: () => photoInflight.size,
+  healingKeysSize: () => healingKeys.size,
+  // Per-address misses, read without spending one.
+  photoIpAddresses: () => [...photoIpHits.keys()],
+  photoIpHitCount: (ip) => (photoIpHits.get(ip) || []).length,
   // Round 23 — the two sized-against-something numbers and the constants they
   // are sized against, so the inequalities are pinned from one source.
   VENUE_CACHE_MAX,

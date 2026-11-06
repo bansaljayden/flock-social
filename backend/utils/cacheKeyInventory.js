@@ -641,7 +641,7 @@ const INVENTORY = [
     denominator: 'in-flight promises',
     bound: 'none, deleted on settle',
     verdict: 'SAFE',
-    why: 'Self-draining; followers ride free, which is the intended "charge what you spend" reading.',
+    why: 'Self-draining; followers ride free, which is the intended "charge what you spend" reading. A heal (healDeadPhoto) runs inside one of these flights, so it never waits on a flight whose key is healing (healingKeys, a Set that holds a key only while that flight heals): that is what keeps a flight from waiting on itself, directly or round a loop of heals, where it would never settle and never leave this map. Pinned by __tests__/photoHeal.test.js.',
   },
   {
     file: 'routes/venueSearch.js', name: 'deadPhotoRefs', kind: 'cache',
@@ -658,10 +658,10 @@ const INVENTORY = [
     key: 'the place id inside a photo name Google refused (`places/{placeId}/photos/...`), shape-checked by utils/places.js isPlaceIdShaped',
     callerControls: 'the ref, within isPhotoRefShaped; but an entry is written only for a name Google has already refused, and learning that took a metadata call the per-address gate, the shared ledger and the photo budget all charged',
     protects: 'the photos-only Place Details lookup healDeadPhoto makes (Essentials IDs Only: $0, but a unit of the unauthenticated Places share and of the project quota), and the purchase of the current photo, which a repeat request for any dead name of the place is served without',
-    denominator: 'places, one entry each holding the photoCacheKey hashes of the current photo at 160 and 400, or null when the lookup found nothing to show; 24h TTL',
+    denominator: 'places, one entry each holding the photoCacheKey hashes of the current photo at 160 and 400, or null when the lookup found nothing to show; 24h TTL, or 1h after a refused purchase',
     bound: 'MAX_HEALED_PLACES = 5000, oldest out first with delete-before-set; cleared on restart',
     verdict: 'SAFE',
-    why: 'Writes are bounded by money already spent: an entry follows a refused name, and a name is refused only after chargePhotoFetch let its metadata call through, so a day writes at most PHOTO_FETCH_BURST_PER_DAY (451) entries however many addresses ask, against a ceiling of 5000. The entry is also what holds a place to one lookup a day: it is stamped when the lookup is charged, and while it lives no second lookup is charged. It holds hashes and place ids only. A place id is the part of Places content the terms let us keep, and photoCacheKey cannot give the name back, so nothing here widens what services/photoStore.js keeps or for how long. Pinned by __tests__/photoHeal.test.js.',
+    why: 'Writes are bounded by money already spent: a place gets an entry only while one of its names is a known dead name, and a name becomes dead only after chargePhotoFetch let its metadata call through, so the places that get entries in a day are at most PHOTO_FETCH_BURST_PER_DAY (451) however many addresses ask, against a ceiling of 5000. The entry is also what holds a place to one lookup a day: it is stamped when the lookup is charged, and while it lives no second lookup is charged. A purchase of the current photo refused by a gate, the budget or a Google fault re-stamps it for an hour instead, so one address cannot hold a place off for everybody until tomorrow; Google refusing that photo itself forgets the photo and keeps the day. It holds hashes and place ids only. A place id is the part of Places content the terms let us keep, and photoCacheKey cannot give the name back, so nothing here widens what services/photoStore.js keeps or for how long. Pinned by __tests__/photoHeal.test.js.',
   },
   {
     file: 'routes/venueSearch.js', name: 'venueCache', kind: 'cache',
