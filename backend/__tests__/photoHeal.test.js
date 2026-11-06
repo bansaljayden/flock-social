@@ -18,9 +18,12 @@
 //      Place Details request on the free SKU;
 //   2. a second request makes no Google call at all;
 //   3. a heal that cannot finish keeps the 404 the app draws as the bird;
-//   4. the money: what is charged, to which ledger, and that a place is looked
-//      up at most once a day;
-//   5. no request ever waits on itself, however Google answers;
+//   4. the money: what is charged, to which ledger, that a place is looked up
+//      at most once a day, and that a refused or failed purchase waits for its
+//      own reason (a refusal's own wait, a fault's growing back-off) instead of
+//      retrying every hour;
+//   5. no request ever waits on itself, however Google answers, and an answer
+//      that arrives late never undoes a newer heal;
 //   6. a healed answer is kept by a browser for a day, never pinned, and a name
 //      Google lists is used only if it is shaped like one;
 //   7. every map involved stays bounded, holds no photo name, and the
@@ -40,9 +43,18 @@ process.env.GOOGLE_PLACES_API_KEY = 'test-places-key-never-sent';
 
 // The Places ledger keys its counters on the UTC day and the money tests read
 // them back, so the clock is pinned to the middle of one (helpers/pinnedClock.js).
+// Every test starts there, and the retry tests move it forward (passTime) to
+// see what a day of requests costs.
 const { pinClock } = require('./helpers/pinnedClock');
-const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
-test.after(() => pinnedClock.restore());
+const NOON = Date.UTC(2026, 6, 15, 12, 0, 0);
+const HOUR = 60 * 60 * 1000;
+let clock = pinClock(NOON);
+test.after(() => clock.restore());
+function setClock(ms) {
+  clock.restore();
+  clock = pinClock(ms);
+}
+const passTime = (ms) => setClock(Date.now() + ms);
 
 // --- Postgres: the photo cache and the photo spend ledger (migration 046) ----
 // Honest enough that L2 hits, charges and refunds all happen for real.
@@ -86,9 +98,10 @@ const CDN = 'https://cdn.example/';
 const calls = []; // everything that reached "Google", in order
 const expired = new Set(); // names the /media leg answers 400 INVALID_ARGUMENT
 const failing = new Set(); // names the /media leg answers 503
+const noImage = new Set(); // names the /media leg answers with no photoUri
 const places = new Map(); // placeId -> { status, body } | { throws }
 let holdDetails = null; // a promise every details answer waits on
-const holdMedia = new Map(); // name -> a promise that name's /media answer waits on
+const holdMedia = new Map(); // 'name' or 'name|width' -> a promise that /media answer waits on
 
 const INVALID_NAME = JSON.stringify({
   error: {
@@ -107,10 +120,13 @@ global.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (u.startsWith(V1) && u.includes('/media?')) {
     const name = u.slice(V1.length, u.indexOf('/media?'));
-    calls.push({ kind: 'media', name });
-    if (holdMedia.has(name)) await holdMedia.get(name);
+    const width = (/maxWidthPx=(\d+)/.exec(u) || [])[1];
+    calls.push({ kind: 'media', name, width });
+    const hold = holdMedia.get(`${name}|${width}`) || holdMedia.get(name);
+    if (hold) await hold;
     if (expired.has(name)) return { ok: false, status: 400, text: async () => INVALID_NAME };
     if (failing.has(name)) return { ok: false, status: 503, text: async () => 'unavailable' };
+    if (noImage.has(name)) return { ok: true, status: 200, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => ({ photoUri: CDN + encodeURIComponent(name) }) };
   }
   if (u.startsWith(DETAILS)) {
@@ -167,6 +183,7 @@ test.before(() => { console.error = () => {}; });
 test.after(() => { console.error = realError; });
 
 test.beforeEach(() => {
+  setClock(NOON);
   vs.clearPhotoCache();
   vs.resetPhotoBudget();
   vs.deadPhotoRefs.clear();
@@ -180,6 +197,7 @@ test.beforeEach(() => {
   calls.length = 0;
   expired.clear();
   failing.clear();
+  noImage.clear();
   places.clear();
   holdDetails = null;
   holdMedia.clear();
@@ -546,8 +564,10 @@ test('when the photo budget will not buy the current photo, the answer is still 
   assertBird(await get(OLD));
   assert.deepEqual(seen(), [`media ${OLD}`, `details ${P}`], 'the current photo was bought past the budget');
   assert.equal(db.charges, 1);
-  // A refused purchase holds the place for an hour, not the day.
-  assert.ok(vs.healedPlaces.get(P).until - Date.now() <= vs.HEAL_RETRY_TTL_MS);
+  // The day's budget is spent until 00:00 UTC, twelve hours from the pinned
+  // noon, so that is how long the place waits: not an hour, not a day.
+  const held = vs.healedPlaces.get(P).until - Date.now();
+  assert.ok(held > 11.9 * HOUR && held <= 12 * HOUR, `held for ${held / HOUR} hours`);
 });
 
 test('a heal spends one per-address unit per Google call it makes, and a repeat spends none', async () => {
@@ -628,6 +648,112 @@ test('a card and a pin healing one dead name at the same moment buy the current 
   assert.equal(lookups(), 1);
   assert.equal(calls.filter((c) => c.kind === 'media' && c.name === FIRST).length, 1, 'two widths bought the photo twice');
   assertDrained();
+});
+
+test('a spent photo budget holds the place until the budget comes back, with no hourly retry', async () => {
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+  db.brake = 1; // the ask that finds OLD dead is the last photo the budget buys today
+  assertBird(await get(OLD));
+  const spent = placesBudgetStatus(null).unauthUsed;
+  assert.equal(spent, 3, 'the dead name, the lookup and the refused purchase');
+
+  // A viewer every hour until 00:00 UTC, when the budget's day ends: nothing
+  // more is looked up, and nothing more is spent.
+  for (let h = 1; h <= 11; h++) {
+    passTime(HOUR);
+    assertBird(await get(OLD));
+  }
+  assert.equal(lookups(), 1, 'the place was looked up again while the budget was still spent');
+  assert.equal(placesBudgetStatus(null).unauthUsed, spent, 'retries spent the unauthenticated share');
+
+  // Past midnight the budget has a new day, and the next viewer gets the photo.
+  db.brake = Infinity;
+  passTime(HOUR + 60 * 1000);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+  assert.equal(lookups(), 2);
+});
+
+test('a refusal holds the place for its own wait: the shared ledger to midnight, a spent month a day', async () => {
+  // The unauthenticated share has two units left: the ask that finds OLD dead
+  // and the lookup. The ledger refuses the purchase until 00:00 UTC.
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+  while (placesBudgetStatus(null).unauthRemaining > 2) allowGlobalPlacesCall(1);
+  assertBird(await get(OLD));
+  assert.deepEqual(seen(), [`media ${OLD}`, `details ${P}`]);
+  let held = vs.healedPlaces.get(P).until - Date.now();
+  assert.ok(held > 11.9 * HOUR && held <= 12 * HOUR, `the ledger's refusal held the place ${held / HOUR} hours`);
+
+  // A month's budget spent: its own wait runs to the 1st, more than two weeks
+  // from the pinned day, and the place is held for a day, never for weeks.
+  __resetPlacesBudget();
+  const Q = 'ChIJhealTestPlace0005';
+  const qOld = `places/${Q}/photos/AU_expired`;
+  const qFirst = `places/${Q}/photos/AU_current`;
+  vs.rememberDeadPhotoRef(qOld);
+  placeWithPhotos(Q, [qFirst]);
+  db.charges = photoStore.PHOTO_FETCH_BUDGET_MONTH;
+  db.brake = db.charges;
+  assertBird(await get(qOld));
+  held = vs.healedPlaces.get(Q).until - Date.now();
+  assert.ok(held > 23.9 * HOUR && held <= 24 * HOUR, `a spent month held the place ${held / HOUR} hours`);
+  assert.equal(vs.refusalHoldMs(30 * 1000), HOUR, 'a refusal shorter than an hour still holds for an hour');
+});
+
+test('a Google fault on the current photo backs off 1, 2, 4, 8 and 16 hours: five tries a day, not twenty-four', async () => {
+  expired.add(OLD);
+  placeWithPhotos(P, [FIRST]);
+  failing.add(FIRST); // Google's media leg answers 503 for the current photo all day
+  const tries = () => calls.filter((c) => c.kind === 'media' && c.name === FIRST).length;
+
+  assertBird(await get(OLD));
+  const triedAt = [0];
+  for (let h = 1; h <= 23; h++) {
+    passTime(HOUR + 1000);
+    const before = tries();
+    assertBird(await get(OLD));
+    if (tries() > before) triedAt.push(h);
+  }
+  assert.deepEqual(triedAt, [0, 1, 3, 7, 15]);
+  assert.equal(lookups(), 5);
+  assert.equal(db.charges, 6, 'the dead name once and five tries; an hourly retry charged twenty-five');
+  assert.equal(vs.healedPlaces.get(P).faults, 5);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map((n) => vs.faultHoldMs(n) / HOUR), [1, 2, 4, 8, 16, 24, 24]);
+
+  // Google recovers. The next try after the hold buys the photo and clears
+  // the streak. (By then OLD's day as a dead name has passed too, so it is
+  // asked about once more.)
+  failing.delete(FIRST);
+  passTime(9 * HOUR);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(res.text, `pixels of ${FIRST}`);
+  assert.equal(vs.healedPlaces.get(P).faults, 0, 'a purchase that worked left the fault streak standing');
+});
+
+test('"Photo not found" for the chosen photo is final: it is not bought again, and the next photo is', async () => {
+  // A venue card is open, so the heal reads the place's photos for free and a
+  // retry would cost only the purchase.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  calls.length = 0;
+  expired.add(OLD);
+  noImage.add(FIRST);
+
+  assertBird(await get(OLD));
+  assert.deepEqual(seen(), [`media ${OLD}`, `media ${FIRST}`]);
+  const entry = vs.healedPlaces.get(P);
+  assert.equal(entry.keys, null);
+  assert.ok(entry.until - Date.now() > 23 * HOUR, 'a final answer was treated as a passing fault');
+
+  calls.length = 0;
+  const next = await get(OLD);
+  assert.equal(next.status, 200);
+  assert.equal(next.text, `pixels of ${SECOND}`);
+  assert.deepEqual(seen(), [`media ${SECOND}`, `cdn ${SECOND}`], 'a photo Google has no image for was bought again');
 });
 
 // =============================================================================
@@ -775,7 +901,67 @@ test('the guard holds even when the dead-name memory lets go in the middle of tw
 });
 
 // =============================================================================
-// 5. What a healed answer tells the browser, and what the heal will use
+// 5. A late answer never undoes a newer heal
+// =============================================================================
+// A purchase can still be out when a newer heal of the same place forgets the
+// photo it was buying and chooses another. What the old purchase then answers
+// is about the old photo only.
+
+async function newerHealWhileFirstIsBought() {
+  // A venue card is open, so its payload lists both photos.
+  placeWithPhotos(P, [FIRST, SECOND]);
+  assert.equal((await placeDetailsCache.fetchPlaceDetails(P)).ok, true);
+  expired.add(OLD);
+  let release;
+  holdMedia.set(`${FIRST}|400`, new Promise((r) => { release = r; }));
+
+  // The dead tile heals to FIRST, and its purchase of FIRST at 400 is held.
+  const tile = getWithin(OLD);
+  await waitFor(() => calls.some((c) => c.kind === 'media' && c.name === FIRST && c.width === '400'));
+
+  // Google expires FIRST, and a pin asks for it at 160: that heal forgets
+  // FIRST and heals the place to SECOND.
+  expired.add(FIRST);
+  const pin = await getWithin(FIRST, 160);
+  assert.equal(pin.status, 200);
+  assert.equal(pin.text, `pixels of ${SECOND}`);
+  assert.equal(vs.healedPlaces.get(P).keys[400], vs.photoCacheKey(SECOND, 400));
+  return { tile, release };
+}
+
+async function assertStillHealsToSecond() {
+  const entry = vs.healedPlaces.get(P);
+  assert.equal(entry.keys && entry.keys[400], vs.photoCacheKey(SECOND, 400), 'an old answer undid the newer heal');
+  assert.ok(entry.until - Date.now() > 23 * HOUR, 'an old answer cut the newer heal\'s day short');
+  // Ten minutes on, the card's payload has expired: the dead tile shows
+  // SECOND with no Google call at all.
+  placeDetailsCache.__test.reset();
+  calls.length = 0;
+  const next = await getWithin(OLD);
+  assert.equal(next.status, 200);
+  assert.equal(next.text, `pixels of ${SECOND}`);
+  assert.deepEqual(seen(), []);
+  assertDrained();
+}
+
+test('a late "dead" answer for an old pick does not forget the photo a newer heal chose', async () => {
+  const { tile, release } = await newerHealWhileFirstIsBought();
+  release(); // the held purchase of FIRST now answers that FIRST is dead
+  assertBird(await tile);
+  await assertStillHealsToSecond();
+});
+
+test('a late fault for an old pick does not point the place back at it', async () => {
+  const { tile, release } = await newerHealWhileFirstIsBought();
+  expired.delete(FIRST);
+  failing.add(FIRST); // the held purchase of FIRST answers 503 this time
+  release();
+  assertBird(await tile);
+  await assertStillHealsToSecond();
+});
+
+// =============================================================================
+// 6. What a healed answer tells the browser, and what the heal will use
 // =============================================================================
 
 test('a healed answer is kept for a day, never pinned as immutable, and still revalidates', async () => {
@@ -822,7 +1008,7 @@ test('a name Google lists is used only if it is shaped like a photo name', async
 });
 
 // =============================================================================
-// 6. Bounded, and no photo names kept
+// 7. Bounded, and no photo names kept
 // =============================================================================
 
 test('healedPlaces is bounded, oldest out first, and a refreshed place moves to the back', () => {

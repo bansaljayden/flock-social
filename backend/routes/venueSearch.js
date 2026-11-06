@@ -414,13 +414,24 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 // entry is what holds a place to one lookup a day: it is written the moment a
 // lookup is charged, and while it lives no second lookup is charged.
 //
-// TWO ANSWERS CHANGE THAT ENTRY. Google refusing the remembered photo itself,
-// on its own URL or as the photo a heal just tried to buy, forgets the photo
-// (keys back to null) and keeps the day. Any other refusal to buy it (one
-// address's hourly gate, the shared ledger, the photo budget, a Google fault)
-// says nothing about the place, so the entry is re-stamped for
-// HEAL_RETRY_TTL_MS instead: the place may be looked up again within the hour,
-// for every address, rather than tomorrow.
+// WHAT A FAILED PURCHASE OF THE CURRENT PHOTO DOES TO THAT ENTRY depends on
+// why it failed, because a retry is a lookup and, past the gates, a charged
+// metadata call:
+//   * Google refusing the photo, as a dead name or with no image for it
+//     ("Photo not found"), is its final word on that name: the photo is
+//     forgotten (keys back to null) and the place keeps its day.
+//   * A refusal of ours (one address's hourly gate, the shared ledger, the
+//     photo budget) says when it lifts, so the place is held for that long,
+//     never less than HEAL_RETRY_TTL_MS and never more than a day: one
+//     address's spent hour does not hold every address off until tomorrow,
+//     and a spent budget is not retried every hour until midnight.
+//   * A Google fault after a charged call (a 5xx, a CDN failure, a timeout)
+//     backs off: an hour, then two, then four, up to a day. The streak is kept
+//     on the entry, which outlives its hold by a day for that, and a purchase
+//     that succeeds clears it.
+// Only the heal that wrote the entry may change it after its purchase answers:
+// a newer heal of the place may have re-pointed it while the purchase was out,
+// and an older answer must not undo that.
 //
 // NO HEAL EVER WAITS ON A FLIGHT THAT IS HEALING (healingKeys). A heal runs
 // inside the flight of the name it heals, and the photo it remembers or picks
@@ -435,15 +446,20 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 // BOUNDED. An entry follows a dead name, and a name becomes dead only after a
 // metadata call the photo budget charged, so writes are bounded by its daily
 // brake (PHOTO_FETCH_BURST_PER_DAY, 451) whoever is asking; MAX_HEALED_PLACES
-// sits well above a day of that. Oldest out first, cleared on restart.
-// healingKeys holds a key only for as long as that flight heals.
+// sits well above a day of that. Oldest out first, cleared on restart. An
+// entry lives at most a day past its last write and holds two hashes, a fault
+// count and two times. healingKeys holds a key only for as long as that
+// flight heals.
 //
 // A HEAL THAT CANNOT FINISH (no photos, a refusal, an error) answers PHOTO_GONE,
 // the same 404 a dead name got before, and the app draws the bird as it did.
 const HEALED_PLACE_TTL_MS = DEAD_PHOTO_REF_TTL_MS;
 const HEAL_RETRY_TTL_MS = 60 * 60 * 1000;
 const MAX_HEALED_PLACES = 5000;
-const healedPlaces = new Map(); // placeId -> { keys: { 160, 400 } | null, until }
+// placeId -> { keys: { 160, 400 } | null, until, faults, keepUntil }. `until`
+// ends the hold; `keepUntil` ends the entry, and is later than `until` only
+// while a fault streak has to be remembered.
+const healedPlaces = new Map();
 const healingKeys = new Set(); // cache keys of the flights healing right now
 
 // `places/{placeId}/photos/{photo}` -> placeId, or null when that segment is not
@@ -453,27 +469,57 @@ function placeIdOfPhotoRef(photoRef) {
   return m && isPlaceIdShaped(m[1]) ? m[1] : null;
 }
 
-function readHealedPlace(placeId) {
+// The place's entry, its hold over or not, until the entry itself expires.
+function healedEntry(placeId) {
   const entry = healedPlaces.get(placeId);
   if (!entry) return null;
-  if (Date.now() >= entry.until) {
+  if (Date.now() >= entry.keepUntil) {
     healedPlaces.delete(placeId);
     return null;
   }
   return entry;
 }
 
-function rememberHealedPlace(placeId, keys, ttlMs = HEALED_PLACE_TTL_MS) {
+// The place's entry while it holds the place, or null.
+function readHealedPlace(placeId) {
+  const entry = healedEntry(placeId);
+  return entry && Date.now() < entry.until ? entry : null;
+}
+
+// Hold the place for `ttlMs`, carrying its fault streak unless told otherwise.
+function rememberHealedPlace(placeId, keys, ttlMs = HEALED_PLACE_TTL_MS, faults = faultStreak(placeId)) {
+  const now = Date.now();
+  const until = now + ttlMs;
   healedPlaces.delete(placeId);
-  healedPlaces.set(placeId, { keys, until: Date.now() + ttlMs });
+  healedPlaces.set(placeId, {
+    keys,
+    until,
+    faults,
+    keepUntil: faults > 0 ? Math.max(until, now + HEALED_PLACE_TTL_MS) : until,
+  });
   while (healedPlaces.size > MAX_HEALED_PLACES) {
     healedPlaces.delete(healedPlaces.keys().next().value);
   }
 }
 
+function faultStreak(placeId) {
+  const entry = healedEntry(placeId);
+  return entry ? entry.faults : 0;
+}
+
+// How long a refusal of ours holds a place: its own wait, from an hour to a day.
+function refusalHoldMs(retryMs) {
+  return Math.min(HEALED_PLACE_TTL_MS, Math.max(HEAL_RETRY_TTL_MS, retryMs));
+}
+
+// How long the n-th Google fault in a row holds a place: 1h, 2h, 4h, up to a day.
+function faultHoldMs(faults) {
+  return Math.min(HEALED_PLACE_TTL_MS, HEAL_RETRY_TTL_MS * 2 ** Math.max(0, faults - 1));
+}
+
 // Google refused the photo this place heals to: forget it, keep the day.
 function forgetHealedPhoto(placeId) {
-  const entry = healedPlaces.get(placeId);
+  const entry = healedEntry(placeId);
   if (entry) entry.keys = null;
 }
 
@@ -963,10 +1009,11 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req, { heal = false 
     }
     const meta = await metaRes.json();
     if (!meta.photoUri) {
-      // Google answered; it simply has no image for this name.
+      // Google answered; it simply has no image for this name. `noImage` lets
+      // the heal tell this final answer from a fault (healDeadPhoto).
       recordPlacesResult(true, null, PHOTOS);
       console.error('[Photo Proxy] No photoUri in response for ref:', photoRef.slice(0, 60));
-      return { status: 404, error: 'Photo not found' };
+      return { status: 404, noImage: true, error: 'Photo not found' };
     }
 
     // Step 2: fetch the actual image bytes from the CDN
@@ -1123,15 +1170,35 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
     // next photo.
     const purchase = healPurchase(current, keys[HEAL_WIDTH], req);
     const fresh = purchase ? await purchase : PHOTO_GONE;
-    if (fresh.status === 200) return healedAnswer(fresh);
-    if (fresh.gone) {
-      // Google refused the photo just chosen: forget it, keep the day.
-      forgetHealedPhoto(placeId);
-    } else {
-      // A gate, the budget or a Google fault refused the purchase. That is no
-      // reason to hold every address off this place until tomorrow, so the
-      // place may be looked up again within the hour.
-      rememberHealedPlace(placeId, keys, HEAL_RETRY_TTL_MS);
+    // "Photo not found" is Google's final word on the name: no heal picks it
+    // again while it is remembered.
+    if (fresh.noImage) rememberDeadPhotoRef(current);
+
+    // The entry is this heal's to change only if it is still the one this heal
+    // wrote. While the purchase was out, a newer heal of the place may have
+    // forgotten this photo and chosen another; this older answer must not
+    // forget that one or point the place back at this one.
+    const entry = healedEntry(placeId);
+    const mine = entry && entry.keys === keys ? entry : null;
+    if (fresh.status === 200) {
+      if (mine && mine.faults) {
+        mine.faults = 0;
+        mine.keepUntil = mine.until;
+      }
+      return healedAnswer(fresh);
+    }
+    if (mine) {
+      if (fresh.gone || fresh.noImage) {
+        // Google refused the photo just chosen: forget it, keep the day.
+        mine.keys = null;
+      } else if (Number.isFinite(fresh.retryMs)) {
+        // A gate, the ledger or the budget refused it, and said when to come back.
+        rememberHealedPlace(placeId, keys, refusalHoldMs(fresh.retryMs));
+      } else {
+        // A Google fault after a charged call: back off, longer each time.
+        const faults = mine.faults + 1;
+        rememberHealedPlace(placeId, keys, faultHoldMs(faults), faults);
+      }
     }
     return PHOTO_GONE;
   } catch (err) {
@@ -1858,6 +1925,8 @@ module.exports.__test = {
   HEALED_PLACE_TTL_MS,
   HEAL_RETRY_TTL_MS,
   HEALED_PHOTO_MAX_AGE_S,
+  refusalHoldMs,
+  faultHoldMs,
   MAX_HEALED_PLACES,
   rememberHealedPlace,
   placeIdOfPhotoRef,
