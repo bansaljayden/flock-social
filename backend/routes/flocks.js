@@ -1563,6 +1563,47 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
   }
 });
 
+// GET /api/flocks/:id/venue-photo - the plan's venue photo with Google's credit.
+//
+// The plan screen draws its venue's photo large, and a Places photo drawn at
+// that size carries the photographer's name. The plan row keeps the photo's URL
+// and never the credit, so the screen asks here when a plan opens and draws the
+// photo once the answer names who took it. routes/venueSearch.js
+// currentPhotoCredit works that out from the venue's current photos, charged
+// the way the photo proxy charges, and answers the photo to draw beside its
+// credit, or two nulls, and then the screen draws the block the venue is on.
+//
+// Asked once per plan open. GET / and every other list never ask Google this.
+router.get('/:id/venue-photo', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: 'Invalid flock ID' });
+    const flockId = req.params.id;
+    // Accepted members only, asked first and alone, as GET /:id asks it. An
+    // invitee's card names the venue and draws no photo.
+    const membership = await pool.query(
+      prepared('flock-membership-status', 'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2'),
+      [flockId, req.user.id]
+    );
+    if (membership.rows.length === 0 || membership.rows[0].status !== 'accepted') {
+      return res.status(404).json({ error: 'Flock not found' });
+    }
+    const found = await pool.query('SELECT venue_id, venue_photo_url FROM flocks WHERE id = $1', [flockId]);
+    if (found.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
+    // A photo name and a credit are Places content, so nothing between here
+    // and the screen keeps a copy.
+    res.set('Cache-Control', 'private, no-store');
+    const { venue_id: placeId, venue_photo_url: storedUrl } = found.rows[0];
+    if (!placeId || !storedUrl) return res.json({ photo_url: null, photo_attribution: null });
+    // Required when asked, as routes/publicCrowd.js asks for warmPhoto.
+    const { currentPhotoCredit } = require('./venueSearch');
+    return res.json(await currentPhotoCredit(storedUrl, placeId, req));
+  } catch (err) {
+    console.error('Get flock venue photo error:', err);
+    return res.status(500).json({ error: 'Failed to get the venue photo' });
+  }
+});
+
 // PUT /api/flocks/:id - Update a flock (creator only)
 router.put('/:id',
   [

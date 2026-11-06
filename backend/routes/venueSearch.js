@@ -2052,6 +2052,110 @@ module.exports.__test = {
 module.exports.warmPhoto = (photoRef, maxWidth, req) =>
   fetchPhotoOnce(photoRef, maxWidth, photoCacheKey(photoRef, maxWidth), req);
 
+// ---------------------------------------------------------------------------
+// GOOGLE'S CREDIT FOR A PHOTO URL A ROW KEPT, worked out when it is shown.
+// ---------------------------------------------------------------------------
+// A plan keeps its venue's photo as one of this proxy's URLs
+// (flocks.venue_photo_url) and nothing about who took it. The credit is Places
+// content as much as the name is, so it is not stored beside the URL either
+// (services/photoStore.js sets out what the terms let this app keep, and for
+// how long). The plan screen asks for it when a plan opens, through
+// routes/flocks.js GET /:id/venue-photo, and no list ever asks.
+//
+// THE ANSWER IS A PHOTO AND ITS CREDIT TOGETHER: { photo_url, photo_attribution },
+// both null when there is nothing the plan may draw. The photo is
+// currentPhotoFor's pick from the place's current list, which comes from
+// services/placeDetailsCache.js fetchPlacePhotos: free from a fresh venue-card
+// payload or a flight already out, else one photos-only Place Details request
+// on the "Essentials IDs Only" SKU, $0 (PLACE_PHOTOS_FIELD_MASK says why). The
+// plan draws the photo_url it is handed, so the picture and the name on it are
+// always one photograph, whether or not Google still lists the one it stored.
+//
+// THE CHARGE is the one healDeadPhoto pays for the same request: the
+// per-address gate and one unit of the shared Places day marked as the photo
+// proxy's, asked only when photosLookupWillCost says a request will go out,
+// with no await between that question and the call. A refusal answers nothing
+// to draw, and the plan shows the block its venue is on instead.
+//
+// NOTHING IS KEPT. No map is added here; the names and the credit live as long
+// as the request, and routes/flocks.js sends the answer no-store.
+
+// What counts as one of this proxy's URLs is decided in utils/venuePayload.js,
+// which is also what wrote the stored one.
+const { safeVenuePhotoUrl } = require('../utils/venuePayload');
+
+const NOTHING_TO_DRAW = Object.freeze({ photo_url: null, photo_attribution: null });
+
+// The photo name inside one of this proxy's URLs, or null.
+function photoRefOfUrl(url) {
+  const safe = safeVenuePhotoUrl(url);
+  if (!safe) return null;
+  let ref = null;
+  try {
+    ref = new URLSearchParams(safe.slice(safe.indexOf('?') + 1)).get('ref');
+  } catch {
+    return null;
+  }
+  return isPhotoRefShaped(ref) ? ref : null;
+}
+
+/**
+ * WHICH OF A PLACE'S CURRENT PHOTOS A STORED NAME SHOWS, as this proxy serves
+ * it: the stored photo itself while Google still lists it and has not refused
+ * it today, else the photo healDeadPhoto answers an expired name with, which is
+ * the first current name shaped like one and not known dead (photos[0], unless
+ * Google refused that one too). The second branch is healDeadPhoto's rule,
+ * word for word, and __tests__/planPhotoCredit.test.js drives the heal and the
+ * credit against one place so the two cannot drift to different photographs.
+ *
+ * @param {object[]} photos   Google's Photo objects, `name` first
+ * @param {string} storedRef  the photo name the row kept
+ * @returns {object|null}     the Photo object, or null when none will do
+ */
+function currentPhotoFor(photos, storedRef) {
+  const list = (Array.isArray(photos) ? photos : []).filter((p) => p && typeof p === 'object');
+  const kept = list.find((p) => p.name === storedRef && !isDeadPhotoRef(p.name));
+  if (kept) return kept;
+  return list.find((p) => isPhotoRefShaped(p.name) && p.name !== storedRef && !isDeadPhotoRef(p.name)) || null;
+}
+
+/**
+ * The photo a plan may draw for the URL it stored, with Google's credit for it,
+ * or NOTHING_TO_DRAW. Never rejects.
+ *
+ * @param {string} storedUrl  a /api/venues/photo URL as utils/venuePayload.js stores it
+ * @param {string} placeId    the plan's venue_id; the stored name must be this place's
+ * @param {object} req        the request, for the per-address gate
+ * @returns {Promise<{photo_url: string|null, photo_attribution: object|null}>}
+ */
+async function currentPhotoCredit(storedUrl, placeId, req) {
+  try {
+    if (!API_KEY) return NOTHING_TO_DRAW;
+    const storedRef = photoRefOfUrl(storedUrl);
+    // The name says whose photo it is. A stored photo of some other place
+    // answers nothing, and no Google call is made about either place.
+    if (!storedRef || !isPlaceIdShaped(placeId) || placeIdOfPhotoRef(storedRef) !== placeId) return NOTHING_TO_DRAW;
+    // NO `await` FROM THE QUESTION TO THE CALL (photosLookupWillCost is only
+    // true for this tick). Free answers skip both gates.
+    if (photosLookupWillCost(placeId)) {
+      if (!allowPhotoFetch(req) || !allowGlobalPlacesCall(1, { photo: true })) return NOTHING_TO_DRAW;
+    }
+    const out = await fetchPlacePhotos(placeId);
+    if (!out.ok) return NOTHING_TO_DRAW;
+    const photo = currentPhotoFor(out.photos, storedRef);
+    const credit = photo ? photoCredit(photo) : null;
+    // Drawn with its credit or not drawn at all.
+    if (!credit) return NOTHING_TO_DRAW;
+    return { photo_url: photoUrl(photo.name), photo_attribution: credit };
+  } catch (err) {
+    console.error('[Photo Credit] lookup failed:', err.message);
+    return NOTHING_TO_DRAW;
+  }
+}
+
+module.exports.currentPhotoFor = currentPhotoFor;
+module.exports.currentPhotoCredit = currentPhotoCredit;
+
 module.exports.photoProxyStatus = () => photoSpendStatus();
 module.exports.photoBudgetLimits = {
   budgetUsdPerYear: PHOTO_BUDGET_USD_PER_YEAR,
