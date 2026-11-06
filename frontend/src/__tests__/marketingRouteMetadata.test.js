@@ -401,3 +401,62 @@ describe('the prerendered pages carry their own link card', () => {
     });
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('/research names its paper for Google Scholar', () => {
+  // Scholar runs no JavaScript and reads the prerendered snapshot of /research,
+  // which keeps what the page's effect wrote into the head
+  // (src/website/scholarCitation.js).
+  const { PAPER_CITATION } = require('../website/ResearchPage');
+
+  const citation = () => [...document.head.querySelectorAll('meta[name^="citation_"]')]
+    .map((tag) => [tag.getAttribute('name'), tag.getAttribute('content')]);
+
+  test('the tags Scholar asks for, one citation_author per author', () => {
+    const { unmount } = mount('ResearchPage.js');
+    expect(citation()).toEqual([
+      ['citation_title', PAPER_CITATION.title],
+      ...PAPER_CITATION.authors.map((a) => ['citation_author', a]),
+      ['citation_publication_date', PAPER_CITATION.date],
+      ['citation_technical_report_institution', PAPER_CITATION.institution],
+      ['citation_pdf_url', PAPER_CITATION.pdfUrl],
+    ]);
+    expect(PAPER_CITATION.authors.length).toBeGreaterThan(0);
+    // Scholar's two date forms: year/month/day, or a year alone.
+    expect(PAPER_CITATION.date).toMatch(/^\d{4}(\/\d{1,2}\/\d{1,2})?$/);
+    unmount();
+  });
+
+  test('the PDF named is the full paper the page links, and it is in the build', () => {
+    const { container, unmount } = mount('ResearchPage.js');
+    const full = [...container.querySelectorAll('a')].find((a) => /^Full paper/.test(a.textContent));
+    expect(full).toBeTruthy();
+    expect(PAPER_CITATION.pdfUrl).toBe(`https://www.flockcorp.com${full.getAttribute('href')}`);
+    const file = path.join(FRONTEND, 'public', ...new URL(PAPER_CITATION.pdfUrl).pathname.split('/').filter(Boolean));
+    expect(fs.existsSync(file)).toBe(true);
+    unmount();
+  });
+
+  test('the title and the authors are the ones the page prints', () => {
+    const { container, unmount } = mount('ResearchPage.js');
+    const shown = collapse(container.querySelector('.rs-paper-title').textContent);
+    expect(PAPER_CITATION.title.endsWith(shown)).toBe(true);
+    const byline = container.querySelector('.rs-paper-by').textContent;
+    for (const author of PAPER_CITATION.authors) expect(byline).toContain(author);
+    expect(byline).toContain(PAPER_CITATION.institution);
+    unmount();
+  });
+
+  test('booting on top of the snapshot writes one set, and leaving the page removes it', () => {
+    // The snapshot's head already holds the tags when the client renders.
+    const first = mount('ResearchPage.js');
+    const snapshotHead = document.head.innerHTML;
+    first.unmount();
+    document.head.innerHTML = snapshotHead;
+    const { unmount } = render(React.createElement(load('ResearchPage.js')));
+    expect(citation().filter(([name]) => name === 'citation_title')).toHaveLength(1);
+    expect(citation().filter(([name]) => name === 'citation_author')).toHaveLength(PAPER_CITATION.authors.length);
+    unmount();
+    expect(citation()).toEqual([]);
+  });
+});

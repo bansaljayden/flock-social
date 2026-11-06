@@ -5,6 +5,7 @@ import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import { THERMAL_SETS, ROBOFLOW_SETS, COUNT_SOURCES, SOFTWARE } from './researchThanks';
 import { shareThisPage } from './shareCard';
+import { citePaper } from './scholarCitation';
 
 // Two documents, read in order: a three-page summary first (the questions,
 // the findings, the equations and every model input), and the full paper for
@@ -21,6 +22,19 @@ const SUMMARY_THUMB = '/papers/flock-research-summary-p1.png';
 const SUMMARY_PAGES = 3;
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_PAGES = 30;
+
+// The full paper as Google Scholar indexes it (scholarCitation.js), in the
+// words of its first page: the title, the one author, the affiliation and
+// "November 2026". Scholar takes a full date as year/month/day or a year alone,
+// and the paper names no day, so the date is the year. Change these when the
+// paper's first page changes.
+export const PAPER_CITATION = {
+  title: 'Flock: Forecasting How Busy a Venue Will Be, and Counting How Many People Are There',
+  authors: ['Jayden Bansal'],
+  date: '2026',
+  institution: 'Flock Social LLC',
+  pdfUrl: `https://www.flockcorp.com${PAPER_URL}`,
+};
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -118,7 +132,9 @@ export default function ResearchPage() {
     document.title = 'Research: forecasting and counting crowds | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
-    return shareThisPage('/research');
+    const uncite = citePaper(PAPER_CITATION);
+    const unshare = shareThisPage('/research');
+    return () => { uncite(); unshare(); };
   }, []);
 
   return (
