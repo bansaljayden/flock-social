@@ -1677,8 +1677,7 @@ async function captureAll(dbUrl, seeded) {
   if (OUT_OVERRIDE) {
     log(`captures written to ${OUT_DIR}; manifest and the public/ archive step skipped (--out)`);
   } else {
-    writeManifest(manifest);
-    archiveUnshipped();
+    finishInPublic(manifest);
   }
   reportOverflow();
   log(`captured ${manifest.length} images${failures.length ? `, ${failures.length} FAILURES` : ''}`);
@@ -1880,6 +1879,17 @@ function archiveUnshipped() {
   log(`${n} unreferenced capture(s) moved to frontend/screenshots/; ${shipped.size} stay in public/`);
 }
 
+/* A full run's last step: the archive step, then the manifest. The other way
+   round, manifest.json listed every capture the run took, and the archive
+   step then moved the unreferenced ones out to frontend/screenshots/, so the
+   manifest in public/ named files that were not there. Written after, it
+   lists what public/ still holds (see the filter in writeManifest).
+   screenshotRigNotes.test.js runs the two in this order. */
+function finishInPublic(manifest) {
+  archiveUnshipped();
+  writeManifest(manifest);
+}
+
 /* THE MANIFEST, AND NOT WIRING.md (2026-11-04). This used to write WIRING.md
    too, from a template of its own: the swap plan from the first capture run,
    which says the website source is untouched and that files are in public/
@@ -1902,7 +1912,12 @@ function writeManifest(manifest) {
     for (const c of prev.captures || []) byFile.set(c.file, c);
   } catch { /* first run */ }
   for (const c of manifest) byFile.set(c.file, c);
-  const captures = [...byFile.values()].sort((a, b) => a.file.localeCompare(b.file));
+  // Only web captures still in public/: the archive step has run, and an entry
+  // for a file it moved, this run's or an earlier run's, would name a file that
+  // is not there. The App Store set is in store-assets/, which the archive step
+  // never touches, so its entries stay.
+  const left = (c) => !c.file.startsWith('screenshots/') || fs.existsSync(path.join(OUT_DIR, c.file.slice('screenshots/'.length)));
+  const captures = [...byFile.values()].filter(left).sort((a, b) => a.file.localeCompare(b.file));
 
   fs.writeFileSync(manifestPath, JSON.stringify({
     generatedAt: new Date().toISOString(),
