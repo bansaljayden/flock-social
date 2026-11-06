@@ -389,18 +389,25 @@ button, a, [role="button"], input, select, textarea {
    reaches everything and the allow-list has to say `text` to win it back.
    That matters most for fields: a WKWebView input that inherits `none` can
    refuse the caret and the keyboard, so they are named first.
-   -webkit-touch-callout inherits too. It goes back to `default` on fields
-   only, so the Paste bubble in an empty field is never in question, and it
-   stays off everywhere else, so a long press on a link or a photo opens no
-   preview sheet over the app (chat.css made the same call for a message
-   row).
+   -webkit-touch-callout inherits too. It goes back to `default` on fields,
+   so the Paste bubble in an empty field is never in question, and on
+   phone and email links: iOS starts no text selection inside a link, so a
+   number in a tel: link is copied from the long-press link sheet (Copy is
+   on it), and with the callout off it could not be copied at all. It stays
+   off everywhere else, so a long press on any other link or on a photo
+   opens no preview sheet over the app (chat.css made the same call for a
+   message row).
 
    THE ALLOW-LIST. Add to it here, never per component:
      - input, textarea, anything contenteditable: typing, the caret, paste.
      - .chat-row-body: a chat or DM message's text (chat.css has why).
-     - .selectable: a piece of content someone will paste somewhere else,
-       Birdie's answers, a venue's address and phone number, an error's
-       reference number.
+     - .selectable: a piece of content someone will paste somewhere else:
+       Birdie's and Roost's answers and the questions put to them, a
+       venue's address and phone number, a plan's venue address, review
+       text and an owner's reply, an invite link the clipboard refused, the
+       support address written into a sentence (components/ui/
+       SupportAddress.js), an error's reference number.
+     - a[href^="tel:"], a[href^="mailto:"]: the callout only, above.
      - .hub-root, pre, code: the admin console, where the figures, commands
        and ids are there to be copied.
    The You screen's handle is not on it: there is no copy control for it,
@@ -425,6 +432,10 @@ html.flock-app pre,
 html.flock-app code {
   -webkit-user-select: text;
   user-select: text;
+}
+html.flock-app a[href^="tel:"],
+html.flock-app a[href^="mailto:"] {
+  -webkit-touch-callout: default;
 }
 
 /* Visible to assistive tech, invisible on screen. Used for screen titles that

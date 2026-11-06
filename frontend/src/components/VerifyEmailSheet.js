@@ -38,6 +38,8 @@
  * confirmed, clears verifyPrompt, which is what closes this sheet.
  */
 import React from 'react';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from './ui/SupportAddress';
 
 const VerifyEmailSheet = ({
   DialogBehavior,
@@ -64,7 +66,7 @@ const VerifyEmailSheet = ({
         <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
           We sent a link to {authUser?.email || 'your inbox'} when you signed up. Open it and you can {verifyPrompt} right away.
         </p>
-        {verifyNote && <p role="status" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 12px' }}>{verifyNote}</p>}
+        {verifyNote && <p role="status" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 12px' }}>{withSupportAddress(verifyNote)}</p>}
         <button
           className="hit44"
           onClick={resendVerification}

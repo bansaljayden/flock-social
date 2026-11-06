@@ -28,6 +28,8 @@
  * about whether a link can be asked for.
  */
 import React from 'react';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from './ui/SupportAddress';
 
 const textButton = (enabled) => ({
   padding: '8px 0',
@@ -68,7 +70,7 @@ export default function EmailConfirmLine({
         {email ? <> The link goes to <strong style={{ fontWeight: '600' }}>{email}</strong>.</> : null}
       </p>
       {note && (
-        <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.45 }}>{note}</p>
+        <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.45 }}>{withSupportAddress(note)}</p>
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', columnGap: '20px' }}>
         <button type="button" className="hit44" onClick={onResend} disabled={!canResend} style={textButton(canResend)}>

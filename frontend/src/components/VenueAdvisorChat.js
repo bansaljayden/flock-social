@@ -359,6 +359,7 @@ const ThreadTurn =({ turn, first, navy, navyBg, onRetry, next = [], onNext }) =>
           answer below is then free to run the full width it needs. */}
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <p
+          className="selectable"
           style={{
             maxWidth: '85%',
             margin: 0,
@@ -425,12 +426,18 @@ const ThreadTurn =({ turn, first, navy, navyBg, onRetry, next = [], onNext }) =>
                   Small talk ('small_talk', a greeting answered in kind) is
                   NOT a refusal and takes the normal ink: only 'refusal' is
                   drawn quiet. */}
-              <AnswerText text={turn.answer.text} quiet={turn.answer.mode === 'refusal'} />
-              {sourcesLine(turn.answer.sources) && (
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
-                  {sourcesLine(turn.answer.sources)}
-                </p>
-              )}
+              {/* Roost's answer and its sources line select and copy, as
+                  Birdie's answers do (index.css .selectable): an owner pastes
+                  them into a note or a message to staff. The chips under
+                  them stay controls. */}
+              <div className="selectable">
+                <AnswerText text={turn.answer.text} quiet={turn.answer.mode === 'refusal'} />
+                {sourcesLine(turn.answer.sources) && (
+                  <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
+                    {sourcesLine(turn.answer.sources)}
+                  </p>
+                )}
+              </div>
               {next.length > 0 && typeof onNext === 'function' && (
                 <div data-roost="next" role="group" aria-label="Ask next" style={{ margin: '10px 0 0' }}>
                   {next.map((f) => (

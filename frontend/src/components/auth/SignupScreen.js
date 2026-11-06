@@ -7,6 +7,8 @@ import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './Au
 import BirthYearField, { birthYearToDob } from './BirthYearField';
 import Icons from '../ui/Icons';
 import { asksForAge } from '../../lib/nativeShell';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from '../ui/SupportAddress';
 
 // Same live pages the in-app Settings screen and the paywall sheet link to.
 const TERMS_URL = 'https://www.flockcorp.com/terms';
@@ -366,10 +368,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
-            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.'
+            ? withSupportAddress('Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.', { link: false })
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
-        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
+        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{withSupportAddress(resendNote)}</p>}
         {/* The second thing this screen offers, outlined. The filled button
             in the actions bar is the way forward, I opened the link. */}
         <button

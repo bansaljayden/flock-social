@@ -578,8 +578,9 @@ describe('states that arrive on their own announce themselves', () => {
   it('a saved profile says so', () => {
     // The box gained a resend control inside it, so it is no longer a
     // one-line element. What matters is unchanged: the sentence that arrives
-    // without a keypress is inside the live region, not beside it.
-    expect(app).toMatch(/<div role="status"[^>]*>\s*\{editSuccess\}/);
+    // without a keypress is inside the live region, not beside it. Drawn
+    // through withSupportAddress, so the address in it is a mail link.
+    expect(app).toMatch(/<div role="status"[^>]*>\s*\{withSupportAddress\(editSuccess\)\}/);
   });
 });
 

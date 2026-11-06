@@ -210,6 +210,8 @@ import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks
 import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
 import EmailConfirmLine from './components/EmailConfirmLine';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from './components/ui/SupportAddress';
 import { useStableFn } from './components/chat/useStableFn';
 import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 
@@ -22833,7 +22835,7 @@ const FlockApp = () => {
       }}
     >
       <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{noticeText}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{withSupportAddress(noticeText)}</span>
         <button
           type="button"
           className="hit44"

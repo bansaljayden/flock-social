@@ -82,6 +82,8 @@ import { fallbackVenueCover } from '../lib/venueCover';
 // Google's credit on the listing photos: the header's cover and each tile of
 // the logo picker are Places photos drawn at a size that carries one.
 import { PhotoCredit, creditAt, usableCredit } from '../components/ui/GoogleCredit';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from '../components/ui/SupportAddress';
 
 // An hour label from the forecast ("12 AM") as the owner reads it in a
 // sentence. Roost says "around midnight" and "noon" for the same hour
@@ -1399,10 +1401,10 @@ export default function VenueDashboard({
                       : "The map couldn't load"}
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to social@flockcorp.com to link one and the map fills in.'
+                    {withSupportAddress(venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to social@flockcorp.com to link one and the map fills in.'
                       : venueMapState.reason === 'no_coords' ? "Your listing exists but Google returned no location for it, so there is nothing to place a pin on. Users' maps have the same gap."
                       : venueMapState.detail
-                        || 'The venue lookup failed. Check your connection and try again.'}
+                        || 'The venue lookup failed. Check your connection and try again.')}
                   </p>
                   {venueMapState.reason === 'load_failed' && (
                     <button className="hit44" onClick={loadVenueMap} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
@@ -2536,11 +2538,11 @@ export default function VenueDashboard({
                         </div>
                         <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{review.date}</span>
                       </div>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
+                      <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
                           <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRemoved ? 'Your removed reply' : review.replyRetired ? 'Your earlier reply' : 'Owner Reply'}</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
+                          <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                           {review.replyRemoved ? (
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.4 }}>A moderator took this reply off your card after a report. Reply again to post a new one.</p>
                           ) : review.replyRetired && (
@@ -3042,7 +3044,7 @@ export default function VenueDashboard({
                           ? <VenueBillingStatus>{({ status }) => roostNoticeLine(venueProfile, runningRoostPlan(venueProfile, status))}</VenueBillingStatus>
                         : venueTierReason === 'paid'
                           ? (venueTierSource === 'stripe'
-                            ? <VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status), { native: isNativeShell() }).line}</VenueBillingStatus>
+                            ? <VenueBillingStatus>{({ status }) => withSupportAddress(stripePlanLines(runningRoostPlan(venueProfile, status), { native: isNativeShell() }).line)}</VenueBillingStatus>
                             : 'Billed as agreed with us.')
                           : venueTierReason === 'founding_comp'
                             ? 'Comped as a founding venue. Nothing is being charged.'

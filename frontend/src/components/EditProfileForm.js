@@ -39,6 +39,8 @@ import React from 'react';
 import Icons from './ui/Icons';
 import { updateProfile, resendVerificationEmail, userMessage } from '../services/api';
 import { connectSocket } from '../services/socket';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from './ui/SupportAddress';
 
 const EditProfileForm = ({
   authUser,
@@ -281,7 +283,7 @@ const EditProfileForm = ({
                     )}
                     {editSuccess && (
                       <div role="status" style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: 'var(--t-label)', fontWeight: '600' }}>
-                        {editSuccess}
+                        {withSupportAddress(editSuccess)}
                         {/* Only after an address change, and only while the
                             mailbox is one we can still write to. A refused
                             address cannot be helped by pressing this. */}

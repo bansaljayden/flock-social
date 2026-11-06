@@ -10,6 +10,8 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 import { ForgotPasswordScreen } from './PasswordReset';
 import Icons from '../ui/Icons';
 import { asksForAge } from '../../lib/nativeShell';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from '../ui/SupportAddress';
 
 /* ═══════════════════════════════════════════════════════════════════
    VENUE PORTAL — the operator's front door.
@@ -421,13 +423,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
-            ? 'Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.'
+            ? withSupportAddress('Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.', { link: false })
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {mailRefused && !resendNote && (
-          <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'}</p>
+          <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{withSupportAddress('We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.')}</p>
         )}
-        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
+        {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{withSupportAddress(resendNote)}</p>}
         <p className="auth-foot">
           Already confirmed?
           <button type="button" className="auth-textbtn" onClick={() => { setAwaitingVerification(false); setIsSignup(false); }}>Sign in</button>

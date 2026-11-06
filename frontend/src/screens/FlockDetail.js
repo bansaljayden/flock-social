@@ -510,7 +510,7 @@ export default function FlockDetail({
                     )}
                     {flock.venueAddress && (
                       <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '6px 0 0', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
-                        {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
+                        {Icons.mapPin(colors.textSecondary, 13)} <span className="selectable" style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
                       </p>
                     )}
                   </div>

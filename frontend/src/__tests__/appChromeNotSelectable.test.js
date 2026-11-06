@@ -8,9 +8,12 @@
  * not a document. index.js now marks <html> with `flock-app` when, and only
  * when, it mounts the app, and index.css turns selection and the long-press
  * callout off under that mark with an allow-list for the things people copy:
- * fields, message text, Birdie's answers, a venue's address and phone, the
- * admin console. The website, the paper and the legal pages never get the
- * mark, so they keep ordinary selection.
+ * fields, message text, Birdie's and Roost's answers, a venue's address and
+ * phone, a plan's address, review text, an invite link, the support address
+ * in a sentence, the admin console. Phone and email links keep their
+ * long-press sheet, which is where iOS offers Copy for a link. The website,
+ * the paper and the legal pages never get the mark, so they keep ordinary
+ * selection.
  *
  * jsdom applies no stylesheet, so the cascade is resolved here the way WebKit
  * resolves it: -webkit-user-select and -webkit-touch-callout are inherited, so
@@ -23,6 +26,7 @@
 import React from 'react';
 import { render } from '@testing-library/react';
 import VenueDetailSheet from '../components/overlays/VenueDetailSheet';
+import { withSupportAddress, SUPPORT_EMAIL } from '../components/ui/SupportAddress';
 
 const fs = require('fs');
 const path = require('path');
@@ -80,6 +84,8 @@ function mountScreens({ app }) {
       </section>
       <section aria-label="Quick Add"><p id="empty">No suggestions yet</p></section>
       <a id="link" href="https://example.com">Website</a>
+      <a id="tel" href="tel:(610) 555-0142"><span id="telText" class="selectable">(610) 555-0142</span></a>
+      <a id="mail" href="mailto:social@flockcorp.com">social@flockcorp.com</a>
       <img id="photo" alt="" src="data:,">
       <input id="field" type="text">
       <textarea id="area"></textarea>
@@ -126,6 +132,10 @@ describe('index.css', () => {
       expect(selectors).toContain(want);
     }
     expect(selectors.some((s) => /^html\.flock-app \[contenteditable\]/.test(s))).toBe(true);
+    // Phone and email links get their callout back, and no other link does.
+    const callouts = RULES.filter((r) => r.file === 'index.css' && r.decls['-webkit-touch-callout'] === 'default').flatMap((r) => r.selectors);
+    expect(callouts).toEqual(expect.arrayContaining(['html.flock-app a[href^="tel:"]', 'html.flock-app a[href^="mailto:"]']));
+    expect(callouts.filter((c) => /\ba\b|\bimg\b/.test(c) && !/tel:|mailto:/.test(c))).toEqual([]);
   });
 });
 
@@ -141,6 +151,13 @@ describe('inside the app', () => {
     const $ = mountScreens({ app: true });
     expect(used($('link'), '-webkit-touch-callout')).toBe('none');
     expect(used($('photo'), '-webkit-touch-callout')).toBe('none');
+  });
+
+  test('except a phone or email link, whose long-press sheet is where iOS offers Copy', () => {
+    // iOS starts no text selection inside a link, so a .selectable number
+    // inside a tel: link could not be copied with the callout off.
+    const $ = mountScreens({ app: true });
+    for (const id of ['tel', 'telText', 'mail']) expect([id, used($(id), '-webkit-touch-callout')]).toEqual([id, 'default']);
   });
 
   test('fields still take the caret and paste: text selection on, callout back to default', () => {
@@ -223,6 +240,88 @@ describe('the things people copy carry the mark', () => {
     const bubble = birdie.slice(birdie.lastIndexOf('<div', text), text);
     expect(bubble).toMatch(/^<div className="selectable" /);
     expect(read('components', 'ErrorBoundary.js')).toContain('<p className="selectable" style={styles.detail}>Reference {eventId}</p>');
+  });
+
+  test('review text and the owner\'s reply on the venue sheet, and on the owner\'s own dashboard', () => {
+    const p = {};
+    for (const name of PARAMS) p[name] = jest.fn();
+    Object.assign(p, {
+      DialogBehavior: () => null,
+      SearchInputLocal: () => null,
+      httpUrl: () => null,
+      colors: {},
+      venueDetailModal: { place_id: 'ChIJcopperFinch01', name: 'The Copper Finch', loading: false },
+      venueDetailPhotoIdx: 0,
+      venueDetailPromos: [],
+      venueDetailEvents: [],
+      venueDetailReviews: [{ id: 1, user_id: 2, name: 'Sam', rating: 4, text: 'The tacos were worth the wait.', venue_reply: 'Thanks for coming in.' }],
+      venueDetailReviewTotal: 1,
+      venueDetailReviewsError: null,
+      venueDetailReturnTo: null,
+      pickingVenueForDm: null,
+      pickingVenueForFlockId: null,
+      showReviewForm: false,
+      flocks: [],
+      flocksRef: { current: [] },
+      meRef: { current: null },
+      venueDetailCrowd: null,
+      venueOwnerView: false,
+      partySize: null,
+    });
+    const { container } = render(<VenueDetailSheet {...p} />);
+    const marked = Array.from(container.querySelectorAll('.selectable')).map((el) => el.textContent);
+    expect(marked).toEqual(expect.arrayContaining(['The tacos were worth the wait.', 'Thanks for coming in.']));
+    const dash = read('screens', 'VenueDashboard.js');
+    expect(dash).toContain(`<p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>`);
+    expect(dash).toContain(`<p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>`);
+  });
+
+  test('Roost\'s answers and the question put to him, as Birdie\'s are', () => {
+    const roost = read('components', 'VenueAdvisorChat.js');
+    expect(roost).toMatch(/<div className="selectable">\s*<AnswerText text=\{turn\.answer\.text\}/);
+    const q = roost.indexOf('{turn.question}');
+    expect(roost.slice(roost.lastIndexOf('<p', q), q)).toMatch(/^<p\s+className="selectable"/);
+  });
+
+  test('the invite link the toast says to copy when the clipboard refused, and a plan\'s venue address', () => {
+    const chat = read('screens', 'ChatDetail.js');
+    expect(chat).toContain("showToast(copied ? 'Invite link copied' : 'Link ready. Copy it below');");
+    expect(chat).toContain(`<p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>`);
+    expect(read('screens', 'FlockDetail.js')).toContain(`<span className="selectable" style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>`);
+  });
+
+  test('the support address written into a sentence is a mail link with text that copies', () => {
+    const { container, unmount } = render(<p>{withSupportAddress(`Write to ${SUPPORT_EMAIL} to link one.`)}</p>);
+    const a = container.querySelector('a');
+    expect(a.getAttribute('href')).toBe(`mailto:${SUPPORT_EMAIL}`);
+    expect(a.className).toBe('selectable');
+    expect(container.textContent).toBe(`Write to ${SUPPORT_EMAIL} to link one.`);
+    unmount();
+    // Where it names who mail comes from, it is text to copy, not a link.
+    const from = render(<p>{withSupportAddress(`It comes from ${SUPPORT_EMAIL}.`, { link: false })}</p>);
+    expect(from.container.querySelector('a')).toBeNull();
+    expect(from.container.querySelector('span.selectable').textContent).toBe(SUPPORT_EMAIL);
+    expect(withSupportAddress('Sent. Check your inbox.')).toBe('Sent. Check your inbox.');
+    expect(withSupportAddress('')).toBe('');
+    expect(withSupportAddress(null)).toBe(null);
+  });
+
+  test('every sentence that asks people to write to it goes through it', () => {
+    const sites = [
+      ['components/auth/SignupScreen.js', '{withSupportAddress(resendNote)}'],
+      ['components/auth/SignupScreen.js', "It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.', { link: false })"],
+      ['components/auth/VenueLoginScreen.js', '{withSupportAddress(resendNote)}'],
+      ['components/auth/VenueLoginScreen.js', "{withSupportAddress('We cannot mail this address"],
+      ['components/auth/VenueLoginScreen.js', "It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.', { link: false })"],
+      ['components/EditProfileForm.js', '{withSupportAddress(editSuccess)}'],
+      ['components/EmailConfirmLine.js', '{withSupportAddress(note)}'],
+      ['components/VerifyEmailSheet.js', '{withSupportAddress(verifyNote)}'],
+      ['screens/VenueOnboarding.js', '{withSupportAddress(venueSearchError)}'],
+      ['screens/VenueDashboard.js', "{withSupportAddress(venueMapState.reason === 'no_listing'"],
+      ['screens/VenueDashboard.js', 'withSupportAddress(stripePlanLines(runningRoostPlan(venueProfile, status), { native: isNativeShell() }).line)'],
+      ['App.js', '{withSupportAddress(noticeText)}'],
+    ];
+    for (const [file, snippet] of sites) expect([file, read(...file.split('/')).includes(snippet)]).toEqual([file, true]);
   });
 
   test('the You screen\'s handle has no copy control, so it is chrome like the rest', () => {

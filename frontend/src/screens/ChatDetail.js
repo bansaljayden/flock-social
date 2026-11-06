@@ -5227,7 +5227,7 @@ export default function ChatDetail({
                         ? 'Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'
                         : 'Here is the link. Anyone with it can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'}
                   </p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
+                  <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
                 </div>
               )}
               {/* A NEW LINK, FOR ONE THAT HAS GONE SOMEWHERE IT SHOULD NOT.

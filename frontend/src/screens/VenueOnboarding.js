@@ -48,6 +48,8 @@ import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } fr
 import { lsSet } from '../lib/storage';
 import { queueSync } from '../services/userSettings';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
+// The support address in a sentence, as a link and text that copies.
+import { withSupportAddress } from '../components/ui/SupportAddress';
 
 export default function VenueOnboarding({
   // App.js's own input component, shared with screens that are not this one,
@@ -232,7 +234,7 @@ export default function VenueOnboarding({
             {venueSearchError && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', margin: '10px 0 0' }}>
                 <BirdieStill size={56} style={{ flexShrink: 0 }} />
-                <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#fca5a5', margin: 0, lineHeight: 1.5, flex: 1, minWidth: 0 }}>{venueSearchError}</p>
+                <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#fca5a5', margin: 0, lineHeight: 1.5, flex: 1, minWidth: 0 }}>{withSupportAddress(venueSearchError)}</p>
               </div>
             )}
             {venueSearchState === 'searching' && (

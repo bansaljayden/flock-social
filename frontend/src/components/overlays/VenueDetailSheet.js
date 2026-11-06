@@ -684,7 +684,7 @@ const VenueDetailSheet = ({
                       <button aria-label="Report review" className="hit44" onClick={() => setModerationTarget({ userId: r.user_id, userName: r.name || 'this reviewer', contentType: 'venue_review', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report review">{Icons.flag('currentColor', 13)}</button>
                     </div>
                   </div>
-                  {r.text && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
+                  {r.text && <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: '1.4' }}>{r.text}</p>}
                   {/* Owner reply. No 2px side stripe — banned pattern
                       (DESIGN-STANDARD.md). The reply is set apart
                       by its own surface and an indent instead. */}
@@ -699,7 +699,7 @@ const VenueDetailSheet = ({
                         <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
                         <button aria-label="Report owner reply" className="hit44" onClick={() => setModerationTarget({ userName: 'this venue', contentType: 'venue_reply', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report owner reply">{Icons.flag('currentColor', 13)}</button>
                       </div>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
+                      <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
                     </div>
                   )}
                 </div>
