@@ -1904,32 +1904,33 @@ const CORPUS_ROW = Object.freeze({
   price_level: 2, rating: 4.4, review_count: 320, timezone: 'UTC',
 });
 
-test('the day a question asks about, read off its words: the short forms, today and tonight, and "next"', () => {
+test('the day a question asks about, read off its words: whole day words only, today and tonight, tomorrow, and "next"', () => {
   const read = (q) => roostPlaybook.askedDay(q);
-  assert.deepStrictEqual(read('How busy will Sat be?'), { weekday: 'Saturday', next: false });
-  assert.deepStrictEqual(read('How\'s Fri looking?'), { weekday: 'Friday', next: false });
-  assert.deepStrictEqual(read('thurs night'), { weekday: 'Thursday', next: false });
-  assert.deepStrictEqual(read('is Tues slow'), { weekday: 'Tuesday', next: false });
-  assert.deepStrictEqual(read('Wed night'), { weekday: 'Wednesday', next: false });
-  assert.deepStrictEqual(read('sun brunch any good'), { weekday: 'Sunday', next: false });
+  // No short form is a day (2026-11-06): each rule that told one from the
+  // English word met an owner's sentence it misread.
+  for (const q of ['How busy will Sat be?', 'How\'s Fri looking?', 'thurs night', 'is Tues slow', 'Wed night', 'sun brunch any good']) {
+    assert.strictEqual(read(q), null, q);
+  }
   assert.deepStrictEqual(read('How busy will next Monday be?'), { weekday: 'Monday', next: true });
   // "Next week" belongs to the day beside it (second review, 2026-11-06).
   assert.deepStrictEqual(read('How busy will Monday be next week?'), { weekday: 'Monday', next: false, nextWeek: true });
   assert.deepStrictEqual(read('How do I fill wensdays?'), { weekday: 'Wednesday', next: false }, 'the owner\'s spelling put right');
-  assert.deepStrictEqual(read('Saturdays are packed, how do I fill Tuesdays'), { weekday: 'Tuesday', next: false }, 'the last day named');
-  assert.deepStrictEqual(read('How busy is Monday tonight?'), { weekday: 'Monday', next: false }, 'a named day over tonight');
+  assert.deepStrictEqual(read('Saturdays are packed, how do I fill Tuesdays'), { weekday: 'Tuesday', next: false }, 'the clause that asks');
+  // Two day words are both read; the route answers both (bothAnswer).
+  assert.deepStrictEqual(read('How busy is Monday tonight?').several.map((w) => w.kind), ['weekday', 'today']);
   for (const q of ['Is tonight going to be slow?', 'How busy will we be today?', 'what about this evening']) {
     assert.deepStrictEqual(read(q), { today: true }, q);
   }
-  // The short forms that are English words too, written as words.
+  assert.deepStrictEqual(read('how busy tmrw'), { tomorrow: true });
+  assert.deepStrictEqual(read('How busy will the day after tomorrow be?'), { dayAfterTomorrow: true });
   for (const q of ['we sat down for an hour', 'the sun is out', 'c\'mon how busy', 'what does next weekend look like']) {
     assert.strictEqual(read(q), null, q);
     assert.strictEqual(roostPlaybook.namedWeekday(q), null, q);
   }
-  assert.strictEqual(roostPlaybook.namedWeekday('How busy will Sat be?'), 'Saturday');
+  assert.strictEqual(roostPlaybook.namedWeekday('How busy will Saturday be?'), 'Saturday');
 });
 
-test('the second review\'s misreadings: a name, a test, a sentence opening on "Sat", and "next week" away from the day are no days', () => {
+test('the second review\'s misreadings: a name, a test, any short form, and "next week" away from the day are no days', () => {
   // Each read as a day until 2026-11-06 (the review's askedDayProbe).
   const read = (q) => roostPlaybook.askedDay(q);
   for (const q of [
@@ -1948,21 +1949,18 @@ test('the second review\'s misreadings: a name, a test, a sentence opening on "S
     assert.strictEqual(read(q), null, q);
     assert.strictEqual(roostPlaybook.namedWeekday(q), null, q);
   }
-  // Opening a sentence, a short form is a day only as the whole sentence.
   assert.deepStrictEqual(read('Sat through another slow night, how do I fill tonight?'), { today: true });
   assert.deepStrictEqual(read('Sun\'s out, should we open the patio tonight?'), { today: true });
   assert.deepStrictEqual(read('Sat down with my manager, how do I fill Tuesdays?'), { weekday: 'Tuesday', next: false });
-  assert.deepStrictEqual(read('Sat?'), { weekday: 'Saturday', next: false });
-  assert.deepStrictEqual(read('MON'), { weekday: 'Monday', next: false }, 'a question in capitals throughout');
-  // Written where a day is written, every short form still counts.
-  for (const [q, weekday] of [
+  // No short form is a day, wherever it is written (2026-11-06).
+  for (const [q] of [['Sat?'], ['MON'],
     ['Is it worth opening on Sun?', 'Sunday'], ['how busy will sat night be', 'Saturday'], ['sun brunch ideas?', 'Sunday'],
     ['Can I get the Wed crowd back?', 'Wednesday'], ['C\'mon, give me something for Thurs', 'Thursday'],
     ['Thu night is dead, ideas?', 'Thursday'], ['How busy were we last Sat?', 'Saturday'], ['Thanks! See you Fri.', 'Friday'],
     ['How busy will Sat be?', 'Saturday'], ['is Tues slow', 'Tuesday'], ['How\'s Fri looking?', 'Friday'],
     ['We are open Fri and Sat, how do I fill them?', 'Saturday'], ['How busy will Sat Nov 14 be?', 'Saturday'],
   ]) {
-    assert.deepStrictEqual(read(q), { weekday, next: false }, q);
+    assert.strictEqual(read(q), null, q);
   }
   // "Next week" is the day beside it, and only that day.
   assert.deepStrictEqual(read('How busy will Friday be compared to next week?'), { weekday: 'Friday', next: false });
@@ -1976,7 +1974,7 @@ test('the second review\'s misreadings: a name, a test, a sentence opening on "S
   }
 });
 
-test('today and tonight are answered from today\'s entry, as today by name is, and "Sat" names Saturday: the bar on its Monday', async (t) => {
+test('today and tonight are answered from today\'s entry, as today by name is, and Saturday is a day of the week: the bar on its Monday', async (t) => {
   const clock = pinClock(Date.parse('2026-11-09T16:00:00Z'));
   t.after(() => clock.restore());
   setUp({ placeId: 'ChIJreviewTonightBar00000', phrasing: true });
@@ -2006,11 +2004,11 @@ test('today and tonight are answered from today\'s entry, as today by name is, a
   r = await call('/api/venue/advisor/question', { question: 'How do I fill tonight?' });
   assert.ok(r.body.text.startsWith('In Flock\'s forecast for places like yours, Monday projects busiest around 9 PM, at 48 on our 0 to 100 index. '), r.body.text);
   assert.ok(r.body.sources.some((s) => s.id === 'typical_peak_2026-11-09'), JSON.stringify(r.body.sources));
-  // The short forms: "Mon" is today, "Sat" a day of the card's week.
+  // Today by its whole name, and a day of the card's week.
   route = { mode: 'grounded', intentId: 'peak_hours' };
-  r = await call('/api/venue/advisor/question', { question: 'How busy will Mon be?' });
+  r = await call('/api/venue/advisor/question', { question: 'How busy will Monday be?' });
   assert.deepStrictEqual(r.body.text.split('\n'), [lead, `• ${peakMove()}`]);
-  r = await call('/api/venue/advisor/question', { question: 'How busy will Sat be?' });
+  r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday be?' });
   assert.strictEqual(r.body.text.split('\n')[0], 'In Flock\'s forecast for places like yours, Saturday peaks around 9 PM at 74 on our 0 to 100 index.');
 });
 
@@ -2691,13 +2689,10 @@ test('a weekday the weekend\'s route is asked about that this weekend does not h
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     let r = await call('/api/venue/advisor/question', { question: 'How busy will next Saturday be?' });
     assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', 'We can\'t answer that yet. Next Saturday is past the seven days the forecast covers. It comes into them tomorrow.']);
-    // A day of next weekend asked about as next weekend's is that weekend's
-    // answer, as before.
+    // A day of next weekend is that day (2026-11-06): on a Saturday, next
+    // weekend's Saturday is past the seven days.
     r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday be next weekend?' });
-    assert.deepStrictEqual(r.body.text.split('\n'), [
-      `${kind}next Friday peaks around 9 PM at 66 on our 0 to 100 index.`,
-      '• Next Saturday and Sunday are past the seven days the forecast covers.',
-    ]);
+    assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', 'We can\'t answer that yet. Saturday of next weekend is past the seven days the forecast covers. It comes into them tomorrow.']);
     // The chip and a question naming no day are the weekend's, as before.
     const chip = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
     assert.ok(chip.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), chip.body.text);
@@ -2786,4 +2781,251 @@ test('after an answer that opens on the venue being shut, today or for a weekend
     const open = await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' });
     assert.ok(open.body.followUps.some((f) => f.kind === 'question' && f.text === 'How should I staff today?'), JSON.stringify(open.body.followUps));
   });
+});
+
+// THE DAY WORDS, READ BY A SMALL GRAMMAR (2026-11-06). Every
+// phrasing four review rounds found misread, read by roostDayReader: no short
+// form, the clause that asks, a possessive only alone, and two days both kept.
+test('the day words of a question are read where it asks, whole words only, two days both kept', () => {
+  const { dayWords } = require('../services/roostDayReader');
+  const said = (q) => dayWords(q).map((w) => (w.kind === 'weekday'
+    ? `${w.next ? 'next ' : ''}${w.weekday}${w.nextWeek ? ' next week' : ''}${w.afterNext ? ' after next' : ''}`
+    : (w.kind === 'weekend' ? `weekend:${w.scope}` : w.kind))).join(', ');
+  for (const [q, want] of [
+    // "sat" and "sun" are words (third and fourth reviews, 2026-11-06).
+    ['we sat 40 covers last night, how do I get more tonight?', 'today'],
+    ['We sat dinner at 6 and then it died. How busy will tonight be?', 'today'],
+    ['the sun rush on the patio was nice, how busy will tonight be?', 'today'],
+    ['We sat 2nd seating at 8:30, how should I staff tonight?', 'today'],
+    ['sat 1st turn by 6:30, how busy will tonight be?', 'today'],
+    ['We got sun 10 minutes ago, how busy will the patio be tonight?', 'today'],
+    ['we only sat 9 tables, which nights are quiet this week?', 'week'],
+    ['How busy will Sat be?', ''],
+    // The sentence that asks, and the clause after a comma that asks.
+    ['Happy Friday! How busy will this weekend be?', 'weekend:this'],
+    ['It\'s Friday, how\'s the weekend looking?', 'weekend:this'],
+    ['How busy will Saturday be? It\'s Thanksgiving weekend.', 'Saturday'],
+    ['We\'re closed Mondays, how busy will this weekend be?', 'weekend:this'],
+    ['Saturdays are packed, how do I fill Tuesdays?', 'Tuesday'],
+    ['We\'re closed tomorrow. How busy will tonight be', 'today'],
+    ['Slow tonight. Not sure if tomorrow will be any better.', 'tomorrow'],
+    ['tonight was quiet, can you check if tomorrow looks busier', 'tomorrow'],
+    ['Is it me or is this week dead. tonight gonna be any better', 'today'],
+    ['Ruby Tuesday next door is closing, how busy will we be tonight?', 'today'],
+    // Nothing where it asks: the whole question, a plural a habit.
+    ['Sunday Funday is this weekend, how busy will it be?', 'Sunday, weekend:this'],
+    ['Tonight we have a band. what should I expect', 'today'],
+    ['we are closed mondays, what\'s our slowest open day?', ''],
+    // A possessive counts alone.
+    ['After tonight\'s rush, will it stay busy?', 'today'],
+    ['Should I staff up tonight ahead of tomorrow\'s game?', 'today'],
+    ['How\'s the rest of the weekend after Saturday\'s rush?', 'weekend:this'],
+    // Two days, both kept: the route answers both.
+    ['Will tomorrow be busier than tonight?', 'tomorrow, today'],
+    ['Tonight was dead so I\'m wondering if tomorrow will pick up', 'today, tomorrow'],
+    ['How busy will tonight be since tomorrow is a holiday?', 'today, tomorrow'],
+    ['Is Saturday busier than Friday?', 'Saturday, Friday'],
+    ['Which day is busiest this week, starting today?', 'week, today'],
+    ['how does this weekend compare to next weekend?', 'weekend:this, weekend:next_words'],
+    ['How busy will Saturday be next weekend?', 'Saturday, weekend:next_words'],
+    // The week beside a weekday only says which one; a holiday is no weekday.
+    ['How busy will Monday Night Football be this week?', 'Monday'],
+    ['How busy will Black Friday be?', ''],
+    ['How busy will Friday be compared to next week?', 'Friday'],
+    ['How busy will the Friday after next be?', 'Friday after next'],
+    ['How busy will Friday be next week?', 'Friday next week'],
+    ['the day after tomorrow, how busy?', 'dayAfterTomorrow'],
+  ]) {
+    assert.strictEqual(said(q), want, q);
+  }
+});
+
+test('two days asked are both answered, never one picked from them: the bar on the demo Friday', async () => {
+  const kind = 'In Flock\'s forecast for places like yours, ';
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr5BothDaysBar00000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    // The week from today, today in it, with each day it names said.
+    let r = await call('/api/venue/advisor/question', { question: 'Is Thursday busier than Friday?' });
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Saturday, `), r.body.text);
+    for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-12']) {
+      assert.ok(r.body.sources.some((s) => s.id === id), `${id}: ${JSON.stringify(r.body.sources)}`);
+    }
+    r = await call('/api/venue/advisor/question', { question: 'Tonight was dead so I\'m wondering if tomorrow will pick up' });
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Saturday, `), r.body.text);
+    assert.ok(r.body.sources.some((s) => s.id === 'typical_peak_2026-11-06'), JSON.stringify(r.body.sources));
+    // This weekend beside next weekend on a Friday: this weekend, and next
+    // weekend said to be past the seven days, never refused outright.
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    r = await call('/api/venue/advisor/question', { question: 'how does this weekend compare to next weekend?' });
+    assert.strictEqual(r.body.mode !== 'refusal', true, r.body.text);
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), r.body.text);
+    assert.ok(r.body.text.includes('Next Friday, Saturday and Sunday are past the seven days the forecast covers.'), r.body.text);
+    // A weekend said in its own sentence is the weekend, with today in it.
+    r = await call('/api/venue/advisor/question', { question: 'Happy Friday! How busy will this weekend be?' });
+    for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-07', 'typical_peak_2026-11-08']) {
+      assert.ok(r.body.sources.some((s) => s.id === id), `${id}: ${JSON.stringify(r.body.sources)}`);
+    }
+  });
+});
+
+// WHAT THE READER KEEPS, AND WHAT EACH ROUTE ANSWERS WITH IT (2026-11-06).
+// The day words of a question as one line, for the reader's tests below.
+const saidDays = (q) => require('../services/roostDayReader').dayWords(q).map((w) => (w.kind === 'weekday'
+  ? `${w.next ? 'next ' : ''}${w.weekday}${w.nextWeek ? ' next week' : ''}${w.afterNext ? ' after next' : ''}`
+  : (w.kind === 'weekend' ? `weekend:${w.scope}` : w.kind))).join(', ');
+
+test('the day reader keeps the sentence that asks, drops a habit, a possessive beside another day, a day gone by and a holiday, and reads today put in or left out of the week', () => {
+  for (const [q, want] of [
+    // The sentence that asks, not the one around it.
+    ['Will it be busy on Friday? Asking because tonight was dead.', 'Friday'],
+    ['tonight was dead. friday?', 'Friday'],
+    ['We\'re slammed on Saturdays. What about Thursday?', 'Thursday'],
+    // A plural where nothing is asked is a habit.
+    ['We do trivia on Tuesdays. Any tips for a slow night?', ''],
+    // A possessive counts only alone.
+    ['How\'s tomorrow\'s brunch looking?', 'tomorrow'],
+    ['Will Friday\'s game bring a crowd on Saturday?', 'Saturday'],
+    // A day gone by, and a holiday named for a weekday, are no coming day.
+    ['How busy were we last Saturday?', ''],
+    ['We were slow last Friday, how busy will Saturday be?', 'Saturday'],
+    ['How busy will Cyber Monday be?', ''],
+    ['Should we open on Easter Sunday?', ''],
+    ['How busy will Small Business Saturday be?', ''],
+    ['Is Super Bowl Sunday worth staffing up for?', ''],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  const { todayInRanking } = require('../services/roostDayReader');
+  for (const [q, want] of [
+    ['Besides tonight, which day is busiest this week?', 'out'],
+    ['How does the rest of the week look after today?', 'out'],
+    ['Other than today, which nights are quiet?', 'out'],
+    ['Which day is busiest this week, including today?', 'in'],
+    ['Which day is busiest this week, starting today?', 'in'],
+    ['Is tonight the busiest night this week?', 'in'],
+    ['Will tomorrow be busier than tonight?', null],
+    ['After tonight\'s rush, will it stay busy?', null],
+  ]) {
+    assert.strictEqual(todayInRanking(q), want, q);
+  }
+});
+
+test('a day today\'s route does not hold is said with the peaks template, never as today: the bar on the demo Friday', async () => {
+  // Until 2026-11-06 "Is tomorrow night going to be dead?" on today's route
+  // was answered "today peaks around 9 PM at 74", Saturday's number.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6TomorrowNotToday00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is tomorrow night going to be dead?' });
+    assert.strictEqual(r.body.text.split('\n')[0], 'In Flock\'s forecast for places like yours, Saturday peaks around 9 PM at 74 on our 0 to 100 index.');
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-07');
+    // Whatever today's route is asked, a line that calls a day today is
+    // today's own number.
+    for (const question of [
+      'Is tomorrow night going to be dead?', 'Will tomorrow be busier than tonight?', 'How busy will Sunday be?',
+      'Is tonight the busiest night this week?', 'Besides tonight, which day is busiest this week?', 'How busy will tonight be?',
+    ]) {
+      const a = await call('/api/venue/advisor/question', { question });
+      const today = a.body.text.split('\n').filter((l) => /^(?:• )?(?:In Flock's forecast for places like yours, )?today peaks/i.test(l));
+      if (today.length) assert.strictEqual(a.body.sources[0].id, 'typical_peak_2026-11-06', `${question}: ${a.body.text}`);
+    }
+  });
+});
+
+// A cafe with no crowd history, open 7 AM to 3 PM on `days` (0 is Sunday).
+function cafeOpenOn(placeId, days) {
+  setUp({ placeId, phrasing: true });
+  placeTypes = ['cafe', 'food', 'store'];
+  placePrimary = 'cafe';
+  placePeriods = days.map((d) => ({ open: { day: d, hour: 7, minute: 0 }, close: { day: d, hour: 15, minute: 0 } }));
+  draftFor = () => null;
+}
+
+test('today shut, asked beside another day or the week on today\'s route, opens on its shut line and lends today\'s name to no other day', async () => {
+  // The office cafe, open Monday to Friday, on its Saturday: this was "today
+  // peaks around 8 AM at 48", Monday's number, until 2026-11-06.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr6OfficeCafeSat00000', [1, 2, 3, 4, 5]);
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is tonight the busiest night this week?' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed today.');
+  });
+  // The cafe shut on Sundays, on its Sunday: shut today, then Monday.
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr6CafeShutSunday0000', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Will tomorrow be busier than tonight?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      'Your Google listing has you closed today.',
+      '• Monday projects busiest around 8 AM, at 48 on our 0 to 100 index, in Flock\'s forecast for places like yours.',
+    ]);
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['today_closed', 'typical_peak_2026-11-09']);
+  });
+});
+
+// A bar with crowd history, its curve 6 PM to 11 PM and on to 3 AM, each
+// night peaking at 9 PM on the card's number for its weekday, while `fn` runs
+// on the server's UTC calendar.
+async function withNightCurve(placeId, fn) {
+  setUp({ placeId, extra: { corpus_status: 'baselines', corpus_baseline_rows: 168 }, phrasing: true });
+  draftFor = () => null;
+  mlVenueRow = CORPUS_ROW;
+  for (let day = 0; day <= 6; day += 1) {
+    for (let hour = 18; hour <= 23; hour += 1) baselineRows.push({ day_of_week: day, hour, baseline: 40 + hour, source: 'google', updated_at: '2026-10-01T00:00:00Z' });
+    for (const hour of [0, 1, 2, 3]) baselineRows.push({ day_of_week: (day + 1) % 7, hour, baseline: 60, source: 'google', updated_at: '2026-10-01T00:00:00Z' });
+  }
+  const realPredict = mlPredictor.predictBusyness;
+  const realAround = advisorFacts.buildAroundYou;
+  mlPredictor.predictBusyness = async (_venue, _weather, ts) => {
+    const d = new Date(ts);
+    const h = d.getUTCHours();
+    const night = new Date(d);
+    if (h < 6) night.setUTCDate(night.getUTCDate() - 1);
+    const off = h >= 18 ? Math.abs(21 - h) : (h < 6 ? 3 + h : 10);
+    return { score: CARD[SHORT[night.getUTCDay()]] - off, label: 'Moderate', predictionMethod: 'ml', modelVersion: 'test' };
+  };
+  advisorFacts.buildAroundYou = async () => [];
+  try {
+    return await onUtc(fn);
+  } finally {
+    mlPredictor.predictBusyness = realPredict;
+    advisorFacts.buildAroundYou = realAround;
+  }
+}
+
+test('today is ranked with the week only when the question puts it in, left out when it leaves it out, and otherwise said beside the ranking: the bar on its Saturday', async () => {
+  // Today is the card's high (74) on its Saturday. Until 2026-11-06 "How
+  // does the rest of the week look after today?" led with today.
+  const kind = 'In Flock\'s forecast for places like yours, ';
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6TodayCueSat0000000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'How does the rest of the week look after today?' });
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Friday, `), r.body.text);
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-13');
+    assert.ok(!r.body.sources.some((s) => s.id === 'typical_peak_2026-11-07'), JSON.stringify(r.body.sources));
+    r = await call('/api/venue/advisor/question', { question: 'Which day is busiest this week, including today?' });
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Saturday, `), r.body.text);
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-07');
+    // Neither: the card's week ranked, today's line said beside it.
+    r = await call('/api/venue/advisor/question', { question: 'Will tomorrow be busier than tonight?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      `${kind}the busiest day this week is Friday, with its peak around 9 PM at 66 on our 0 to 100 index.`,
+      '• Saturday peaks around 9 PM at 74 on our 0 to 100 index.',
+      '• Thursday is close behind, around 9 PM at 64.',
+      '• Sunday is the quietest, around 9 PM at 45.',
+      `• ${peakMove()}`,
+    ]);
+  });
+  // With crowd history, its own week holds today and leaves it out.
+  await withNightCurve('ChIJr6BesidesTonightOwn0', () => pinnedAt('2026-11-07T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Besides tonight, which day is busiest this week?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this week is Friday, '), r.body.text);
+    assert.ok(!r.body.sources.some((s) => s.id === 'peak_2026-11-07'), JSON.stringify(r.body.sources));
+  }));
 });

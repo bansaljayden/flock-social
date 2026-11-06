@@ -428,14 +428,18 @@ async function noHistoryBlock(v, intentId, question = '') {
   };
   // A typed question is read for the day it asks about, against the card's
   // today, and one about today gets today's entry alone, as the bridge does.
-  const { entries, askedFor } = await advisorRoute.__forQuestion(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b, question);
+  // Its day words are read before the plan, as the bridge reads them: the
+  // weekend the plan reads, and two days answered with both.
+  const reading = question ? await advisorRoute.__readingFor(b, question, intentId) : {};
+  b.weekendScope = reading.weekendScope;
+  const { entries, askedFor, askedDays, intent } = await advisorRoute.__forQuestion(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b, question, reading);
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
-  const asked = askedFor !== undefined ? { askedDay: askedFor } : {};
+  const asked = { ...(askedFor !== undefined ? { askedDay: askedFor } : {}), ...(askedDays ? { askedDays } : {}) };
   // Nothing on the card for it: the corpus refusal, as the bridge gives.
   return facts.length
-    ? { intent: intentId, facts, refusals: [], ...asked }
-    : { intent: intentId, facts: [], refusals: refusals.length ? refusals : [refusalText(gate)], ...asked };
+    ? { intent: intent || intentId, facts, refusals: [], ...asked }
+    : { intent: intent || intentId, facts: [], refusals: refusals.length ? refusals : [refusalText(gate)], ...asked };
 }
 
 // The block a chip gets, carrying what the real fact bridge adds beside the

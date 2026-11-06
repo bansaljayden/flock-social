@@ -614,7 +614,7 @@ function venueBaseDate(utcOffsetMinutes, now) {
  * The venue's own today as its week ahead dates it (buildWeekAhead's first
  * day): { date, weekday }, or null for a venue with no corpus row to read its
  * clock from. A field read and arithmetic, no forecast: the route reads a
- * question's day against it (routes/advisor.js askedDayFor).
+ * question's day against it (routes/advisor.js readingFor).
  */
 function venueToday(ctx, { now = new Date() } = {}) {
   const venue = ctx && ctx.mlVenue ? venueForScoring(ctx, now) : null;
@@ -1246,6 +1246,19 @@ const NEXT_WEEKEND_NOTE = 'This day is in next weekend, not this one.';
 /** A day of next weekend, as a block carries it. */
 function nextWeekendDay(fact) {
   return { ...fact, note: [fact.note, NEXT_WEEKEND_NOTE].filter(Boolean).join(' ') };
+}
+
+// A DAY SET BESIDE THE ANSWER (2026-11-06): the other side of a
+// question that names two ("Will this weekend be busier than Thursday?",
+// "How does this weekend compare to next weekend?"). Said as its own line,
+// never ranked with the days the answer is about (routes/advisor.js
+// bothAnswer, advisorPhrasing shapeWeek).
+const BESIDE_ANSWER_NOTE = 'The question sets this day beside the days it asks about; it is not ranked with them.';
+function besideAnswer(fact) {
+  return { ...fact, note: [fact.note, BESIDE_ANSWER_NOTE].filter(Boolean).join(' ') };
+}
+function isBesideAnswer(fact) {
+  return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(BESIDE_ANSWER_NOTE);
 }
 
 /** True for a day marked as next weekend's (nextWeekendDay). */
@@ -2147,6 +2160,8 @@ module.exports = {
   NEXT_WEEKEND_NOTE,
   nextWeekendDay,
   isNextWeekendDay,
+  besideAnswer,
+  isBesideAnswer,
   weekendClosedFact,
   todayClosedFact,
   pastForecastFact,

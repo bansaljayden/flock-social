@@ -1197,6 +1197,29 @@ function weekVoice(days) {
 const weekendMarks = () => require('./advisorFacts');
 
 function shapeWeek(which) {
+  // TWO DAYS ASKED (2026-11-06; routes/advisor.js bothAnswer): the
+  // answer the days the question is about would get, ranked as ever, then a
+  // line for each day the question names that the answer does not already
+  // say, and for each day set beside it (advisorFacts.besideAnswer), first
+  // among the points so the four the answer holds keep them.
+  const withBoth = (facts, { named = null, both = null } = {}) => {
+    const besides = facts.filter((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f));
+    const base = shape(facts.filter((f) => !besides.includes(f)), { named });
+    if (!base) return null;
+    const said = new Set(base.used);
+    const lines = [];
+    const facts2 = [];
+    for (const w of both || []) {
+      const f = facts.find((x) => isPeakFact(x) && !besides.includes(x) && x.value.weekday === w);
+      if (f && !said.has(f) && !facts2.includes(f)) { lines.push(dayPeak(f)); facts2.push(f); }
+    }
+    for (const f of besides) {
+      lines.push(weekendMarks().isNextWeekendDay(f) ? `next ${dayPeak(f)}` : dayPeak(f));
+      facts2.push(f);
+    }
+    if (!lines.length) return base;
+    return { lead: base.lead, points: [...lines.map(sentenceCase), ...base.points], used: [base.used[0], ...facts2, ...base.used.slice(1)] };
+  };
   const shape = (facts, { named = null } = {}) => {
     // A WEEKEND WITH NOTHING OPEN (2026-11-06): its plain line first, from the
     // listing's hours or the venue's own curve, then next weekend's days as any
@@ -1348,7 +1371,7 @@ function shapeWeek(which) {
       used: [...used, ...rest],
     };
   };
-  return shape;
+  return (facts, opts = {}) => ((opts.both && opts.both.length) || facts.some((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f)) ? withBoth(facts, opts) : shape(facts, opts));
 }
 
 const READING_DAY = (date) => {
@@ -1489,12 +1512,13 @@ function renderTemplate(block, question = '') {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
   const shaper = TEMPLATE_SHAPERS[block?.intent];
   // The day the question asks about, as the route read it against the
-  // venue's own today (routes/advisor.js askedDayFor: "tonight" is today's
+  // venue's own today (routes/advisor.js readingFor: "tonight" is today's
   // weekday, "next Monday" on a Monday is none); else the day it names.
   const named = block && Object.prototype.hasOwnProperty.call(block, 'askedDay')
     ? block.askedDay
     : roostPlaybook.namedWeekday(question);
-  const shaped = shaper ? shaper(facts, { named }) : null;
+  const both = block && Array.isArray(block.askedDays) ? block.askedDays : null;
+  const shaped = shaper ? shaper(facts, { named, both }) : null;
   let lead;
   let points;
   let used;
