@@ -303,7 +303,7 @@ describe('every way to a map goes through the sheet', () => {
   });
 
   test("a plan's Details hands the venue card the plan's coordinates, so Apple Maps has the pin before the details load", () => {
-    // One seed for the header photo and Details alike (openPlanVenue).
+    // One seed for the venue photo and Details alike (openPlanVenue).
     expect(flockDetail).toContain('rating: flock.venueRating, lat: flock.venueLat, lng: flock.venueLng });');
     expect(flockDetail).toMatch(/const openPlanVenue = \(\) => openVenueDetail\(flock\.venueId, \{/);
     expect((flockDetail.match(/onClick=\{openPlanVenue\}/g) || []).length).toBe(2);

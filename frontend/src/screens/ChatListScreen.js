@@ -426,7 +426,8 @@ export default function ChatListScreen({
                       {/* Tile — the flock's venue photo if it has picked one,
                           otherwise its initial on a colour keyed to its id.
                           The photo only with the venue's place id, which is
-                          what lets the plan's header credit it. */}
+                          what lets the plan screen's photo open the venue's
+                          credited sheet. */}
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         {(() => {
                           const swatch = flockTileSwatch(f.id);
@@ -499,8 +500,8 @@ export default function ChatListScreen({
                   Google map, so the list ends on Google's attribution
                   (components/ui/GoogleCredit.js), as the Explore list does.
                   A 46px tile is a thumbnail: it opens the chat, and from
-                  there "Open the plan" reaches the plan's header photo, which
-                  is credited. */}
+                  there "Open the plan" reaches the plan screen's venue photo,
+                  whose tap opens the venue's credited sheet. */}
               {filteredFlocks.some((f) => f.venueId && ((f.venue && f.venue !== 'TBD') || f.venuePhoto)) && (
                 <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
                   <GoogleMapsMark />

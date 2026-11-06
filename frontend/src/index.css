@@ -461,12 +461,14 @@ body::after {
   border-radius: 4px;
 }
 
-/* The plan screen's venue photo (FlockDetail.js) is a button that fills a card
-   with overflow: hidden, so the ring above, drawn 2px outside it, was clipped
-   on three sides and showed only as a line under the photo. It draws the same
-   ring 3px inside the photo instead. */
+/* The plan screen's venue photo (FlockDetail.js) is a 72px button that clips
+   its picture to rounded corners. Its ring straddles that edge: the outline
+   2px inside, on the photo, and a shadow ring of the same colour 2px outside,
+   on the card, where it keeps the contrast measured above whatever the photo
+   shows. */
 .plan-venue-photo:focus-visible {
-  outline-offset: -3px;
+  outline-offset: -2px;
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 /* The plan screen's header is navy in both themes, and in light mode the

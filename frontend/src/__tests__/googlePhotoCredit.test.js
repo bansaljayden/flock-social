@@ -13,8 +13,9 @@
  *     draws a seed photo only with its credit (2026-11-06);
  *   - each Happening-here card credits the photo it is drawn over, and a card
  *     on the drawn art or over a failed photo credits nobody;
- *   - the plan screen's header photo is a thumbnail, drawn at once as a
- *     button to the venue sheet; with no place id it draws the map;
+ *   - the plan screen's venue photo is a 72px thumbnail beside the venue's
+ *     name, drawn at once as a button to the venue sheet, under a map that
+ *     heads the card; with no place id there is no photo (2026-11-06);
  *   - every thumbnail reaches the credited sheet: chat and DM venue cards,
  *     the pinned venue, the Create screen's pick, and a vote or share row's
  *     photo through a button of its own (ThumbToSheet);
@@ -493,7 +494,7 @@ describe('every Places photo drawn large carries its credit', () => {
     [['components', 'overlays', 'VenueEventsSection.js']],
     [['website', 'LiveDemo.js']],
     // 2026-11-06: the venue dashboard's cover and logo picker. The plan
-    // screen's header photo is a thumbnail (below).
+    // screen's venue photo is a thumbnail (below).
     [['screens', 'VenueDashboard.js']],
   ])('%j', (rel) => {
     expect(readSrc(...rel)).toMatch(/<(PhotoCredit|CreditedPhoto)\b/);
@@ -586,11 +587,12 @@ describe('every thumbnail reaches the credited sheet', () => {
   });
 });
 
-describe('the plan screen\'s header photo is a thumbnail whose tap opens the credited sheet', () => {
+describe('the plan screen\'s venue photo is a small thumbnail whose tap opens the credited sheet', () => {
   // Google renames a photo on every answer, so the plan's stored photo cannot
   // carry its own credit (components/ui/GoogleCredit.js). It is drawn as it
-  // was stored, on the first paint, and a tap opens the venue's sheet, which
-  // draws Google's current photos credited.
+  // was stored, on the first paint, at thumbnail size beside the venue's
+  // name, and a tap opens the venue's sheet, which draws Google's current
+  // photos credited. Until 2026-11-06 it was the card's 375x170 header.
   const FLOCK_SRC = readSrc('screens', 'FlockDetail.js');
   const PARAMS = (() => {
     const from = FLOCK_SRC.indexOf('export default function FlockDetail({');
@@ -621,20 +623,31 @@ describe('the plan screen\'s header photo is a thumbnail whose tap opens the cre
   beforeEach(() => { process.env.REACT_APP_MAPTILER_KEY = 'k'; });
   afterEach(() => { delete process.env.REACT_APP_MAPTILER_KEY; });
 
-  test('the stored photo is on the first paint, as a button to the venue sheet, and the map sits under the address', () => {
+  test('the stored photo is on the first paint, small beside the name, as a button to the venue sheet, under the map', () => {
     const p = planProps(plan());
     const { container } = render(React.createElement(FlockDetail, p));
     const photo = container.querySelector(`img[src="${PHOTO_A}"]`);
     expect(photo).not.toBeNull();
-    expect(photo.getAttribute('height')).toBe('170');
     const door = photo.closest('button');
     expect(door.getAttribute('aria-label')).toBe('Open Copper Finch');
-    // The card opens on the photo; the one map is under the address.
-    const card = door.parentElement;
-    expect(card.firstElementChild).toBe(door);
+    // Thumbnail size: inside 64 to 88px, never the old 375x170 header, and
+    // still at least the 44px a finger needs.
+    for (const side of [photo.getAttribute('width'), photo.getAttribute('height'), door.style.width, door.style.height]) {
+      const px = parseInt(side, 10);
+      expect(px).toBeGreaterThanOrEqual(64);
+      expect(px).toBeLessThanOrEqual(88);
+    }
+    // Beside the name, in one row with it.
+    const name = screen.getByRole('heading', { level: 3, name: 'Copper Finch' });
+    expect(door.parentElement.contains(name)).toBe(true);
+    expect(door.contains(name)).toBe(false);
+    // The card opens on the map, its one map, and the photo is not in it.
+    const card = container.querySelector('[data-static-map]').parentElement;
     const maps = card.querySelectorAll('[data-static-map]');
     expect(maps).toHaveLength(1);
-    expect(door.contains(maps[0])).toBe(false);
+    expect(card.firstElementChild).toBe(maps[0]);
+    expect(card.contains(door)).toBe(true);
+    expect(maps[0].contains(door)).toBe(false);
     // A thumbnail carries no credit of its own; the sheet credits.
     expect(screen.queryByTestId('photo-credit')).toBeNull();
     fireEvent.click(door);
@@ -652,29 +665,60 @@ describe('the plan screen\'s header photo is a thumbnail whose tap opens the cre
     expect(seed).not.toHaveProperty('photo_attribution');
   });
 
-  test('with no place id there is no sheet to open, so no Google photo: the map takes the header', () => {
+  test('with no place id there is no sheet to open, so no Google photo and no photo button: the map alone', () => {
     const { container } = render(React.createElement(FlockDetail, planProps(plan({ venueId: null }))));
     expect(container.querySelector(`img[src="${PHOTO_A}"]`)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Open Copper Finch' })).toBeNull();
     const maps = container.querySelectorAll('[data-static-map]');
     expect(maps).toHaveLength(1);
     expect(maps[0].parentElement.firstElementChild).toBe(maps[0]);
+    expect(container.querySelector('.plan-venue-photo')).toBeNull();
+    // The name keeps its row, with nothing in the photo's place.
+    expect(screen.getByRole('heading', { level: 3, name: 'Copper Finch' })).toBeTruthy();
     expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
   });
 
-  test('the photo button draws its keyboard ring inside the photo, where the card cannot clip it', () => {
+  test('until the photo arrives its box is the skeleton ground at its final size', () => {
+    const { container } = render(React.createElement(FlockDetail, planProps(plan())));
+    const door = container.querySelector('.plan-venue-photo');
+    // jsdom drops a var() colour, so the source carries the pin: the box is
+    // the skeleton token, which both themes define.
+    expect(FLOCK_SRC).toMatch(/className="plan-venue-photo"[^>]*backgroundColor: 'var\(--skeleton-bg\)'/);
+    expect((readSrc('index.css').match(/--skeleton-bg: #[0-9a-f]{6};/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(door.style.flexShrink).toBe('0');
+    expect(door.style.width).toBe(door.style.height);
+    const photo = door.querySelector('img');
+    expect([photo.getAttribute('width'), photo.getAttribute('height')]).toEqual([door.style.width.replace('px', ''), door.style.height.replace('px', '')]);
+  });
+
+  test('no Google photo on the plan screen is drawn at header size', () => {
+    // Every <img> of the plan's stored photo in the screen's source carries
+    // thumbnail dimensions; the 375x170 header is gone.
+    const imgs = FLOCK_SRC.match(/<img src=\{flock\.venuePhoto\}[^>]*>/g) || [];
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]).toMatch(/width="72" height="72"/);
+    expect(FLOCK_SRC).not.toMatch(/height="170"/);
+  });
+
+  test('the photo button draws its keyboard ring on both sides of its rounded edge', () => {
     const { container } = render(React.createElement(FlockDetail, planProps(plan())));
     const door = container.querySelector(`img[src="${PHOTO_A}"]`).closest('button');
     expect(door.classList.contains('plan-venue-photo')).toBe(true);
-    // The card is overflow: hidden, so the global ring (2px OUTSIDE) is cut on
-    // three sides; jsdom has no :focus-visible, so the rule itself is pinned.
+    // The button clips its photo to rounded corners. jsdom has no
+    // :focus-visible, so the rule itself is pinned: the outline 2px inside,
+    // on the photo, and a ring of the same colour 2px outside, on the card,
+    // where its contrast does not depend on the photo.
+    expect(door.style.borderRadius).toBe('12px');
+    expect(door.style.overflow).toBe('hidden');
     const css = readSrc('index.css');
-    expect(css).toMatch(/\.plan-venue-photo:focus-visible\s*\{\s*outline-offset:\s*-3px;\s*\}/);
+    expect(css).toMatch(/\.plan-venue-photo:focus-visible\s*\{\s*outline-offset:\s*-2px;\s*box-shadow:\s*0 0 0 2px var\(--focus-ring\);\s*\}/);
   });
 
-  test('the policy puts the plan header under the thumbnail rule, and says why', () => {
+  test('the policy puts the plan screen\'s photo under the thumbnail rule, and says why it is small', () => {
     const policy = readSrc('components', 'ui', 'GoogleCredit.js');
-    expect(policy).toMatch(/the plan screen's header photo \(screens\/FlockDetail\.js\), which is a\s*\n\s*\*\s*button to the sheet/);
+    expect(policy).toMatch(/the plan screen's venue photo \(screens\/FlockDetail\.js\), a 72px button\s*\n\s*\*\s*beside the venue's name that opens the sheet/);
+    expect(policy).toMatch(/A THUMBNAIL IS SMALL\./);
+    expect(policy).not.toMatch(/header photo \(screens\/FlockDetail/);
     expect(policy).toMatch(/new resource name on every answer/);
     expect(policy).toMatch(/\(checked\s*\n\s*\*\s*2026-11-06: 0 of 10 names repeated across two lookups, for each of two\s*\n\s*\*\s*places\)/);
     // The shared photo-and-credit piece went back to the sheet, its one user.

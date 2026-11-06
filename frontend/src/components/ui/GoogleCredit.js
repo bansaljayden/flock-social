@@ -22,10 +22,14 @@
  * an Explore row, a Birdie card and the map's venue card all open the venue
  * sheet, whose header photo is credited. So do a venue card in a flock chat or
  * a DM, the pinned venue over either, the picked venue on the Create screen,
- * and the plan screen's header photo (screens/FlockDetail.js), which is a
- * button to the sheet as its Details button is. Where a thumbnail cannot reach
- * a sheet it draws no Google photo: a chat card or a plan with no place id
- * shows the placeholder or the map instead.
+ * and the plan screen's venue photo (screens/FlockDetail.js), a 72px button
+ * beside the venue's name that opens the sheet as its Details button does.
+ * Where a thumbnail cannot reach a sheet it draws no Google photo: a chat card
+ * or a plan with no place id shows the placeholder or the map instead.
+ *
+ * A THUMBNAIL IS SMALL. The plan screen's photo was the card's full-width
+ * 375x170 header until 2026-11-06, which is a photo drawn large with nobody
+ * credited. It is the small photo above now, and the map heads the card.
  *
  * WHY A STORED PHOTO CANNOT CARRY ITS OWN CREDIT. Rows keep a photo's proxy
  * URL (a plan's venue photo, a venue card in a chat, a pinned venue), and
@@ -41,7 +45,7 @@
  *     its own, ThumbToSheet below, which opens the sheet;
  *   - the chat list's 46px plan tile opens the chat, and from there the route
  *     is the chat, then "Open the plan" (the chat header), then the plan
- *     screen's header photo, whose tap opens the sheet.
+ *     screen's venue photo, whose tap opens the sheet.
  *
  * A SEED PHOTO WITH NO CREDIT IN HAND IS NOT DRAWN LARGE. The venue sheet
  * opened on a photo that came without its credit draws the block the venue is

@@ -337,15 +337,18 @@ describe("a plan's venue card", () => {
     expect(container.querySelectorAll('[data-static-map]')).toHaveLength(1);
   });
 
-  test('with a photo the photo stays on top and the map sits under the address', () => {
+  test('with a photo the map still heads the card, and the photo sits small beside the name', () => {
     const { container } = render(React.createElement(FlockDetail, props(plan({ venuePhoto: 'https://api.test/photo?ref=1' }))));
-    const imgs = [...container.querySelectorAll('img')];
-    expect(imgs[0].getAttribute('src')).toBe('https://api.test/photo?ref=1');
-    const map = container.querySelector('[data-static-map]');
-    expect(map).toBeTruthy();
+    const maps = container.querySelectorAll('[data-static-map]');
+    expect(maps).toHaveLength(1);
+    expect(maps[0].parentElement.firstChild).toBe(maps[0]);
+    const photo = container.querySelector('img[src="https://api.test/photo?ref=1"]');
+    expect(photo.getAttribute('height')).toBe('72');
     const address = screen.getByText('125 E 3rd St');
     // eslint-disable-next-line no-bitwise
-    expect(address.compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(maps[0].compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // eslint-disable-next-line no-bitwise
+    expect(maps[0].compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   test('the map follows the theme in the palette the screen is handed', () => {

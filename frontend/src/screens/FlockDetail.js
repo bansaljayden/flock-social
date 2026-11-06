@@ -256,13 +256,20 @@ export default function FlockDetail({
     // The venue map follows the app theme. colors is the theme-aware palette
     // App.js hands every screen, so it already says which theme is on screen.
     const venueMapDark = paletteIsDark(colors);
-    // The venue's own sheet, from the header photo and from Details alike. The
-    // seed carries no photo: the plan keeps no credit for its stored one, so
-    // the sheet shows its map until Place Details answers with Google's
-    // current photos, credited (components/ui/GoogleCredit.js).
+    // The venue's own sheet, from the photo beside the name and from Details
+    // alike. The seed carries no photo: the plan keeps no credit for its
+    // stored one, so the sheet shows its map until Place Details answers with
+    // Google's current photos, credited (components/ui/GoogleCredit.js).
     const openPlanVenue = () => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, lat: flock.venueLat, lng: flock.venueLng });
     // A Google photo is drawn only where a tap reaches that sheet, which takes
-    // the place id; with none the card keeps its map.
+    // the place id; with none the card has its map and no photo.
+    //
+    // SMALL, BESIDE THE NAME (2026-11-06). The stored photo cannot carry its
+    // author's credit, because Google renames every photo on every answer,
+    // so it is drawn the one way Google lets a photo go uncredited: as a
+    // thumbnail, with the larger credited version a tap away. It used to be
+    // the card's full-width 375x170 header, which is not a thumbnail. It is
+    // 72px beside the venue's name now, and the map took the header.
     const showVenuePhoto = !!(flock.venuePhoto && flock.venueId);
     // EACH FACT ONCE (2026-11-06). The host was printed twice ("Hosted by" up
     // top, "Created by" in Details), the time three times (a pill, "Time set"
@@ -466,50 +473,45 @@ export default function FlockDetail({
         {/* ── Scrollable content ── */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '84px' }}>
 
-          {/* Venue Card. No fade overlay on the photo: the old one faded to
-              white, which in dark mode painted a white fog over the card. A
-              clean photo edge is right in both themes. */}
+          {/* Venue Card. The block the venue is on heads it, full width,
+              photo or not, and a tap on it opens the same maps chooser as
+              Directions. StaticVenueMap draws nothing without a key or
+              coordinates, or when the image fails, and the card then opens
+              on the name. */}
           {hasVenue ? (
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
-              {/* The photo is a thumbnail under Google's rule
-                  (components/ui/GoogleCredit.js): a tap opens the venue's
-                  sheet, which draws Google's current photos credited. It is
-                  a button of its own for that, as Details is. With no place
-                  id there is no sheet, so no Google photo is drawn. */}
-              {showVenuePhoto && (
-                <button type="button" className="plan-venue-photo" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', width: '100%', padding: 0, margin: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
-                  <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
-                </button>
-              )}
-              {/* No photo: the block the venue is on takes the photo's place,
-                  full width. With a photo the map sits under the address
-                  instead (below). StaticVenueMap draws nothing without a key
-                  or coordinates, or when the image fails. */}
-              {!showVenuePhoto && (
-                <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
-              )}
+              <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
               <div style={{ padding: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
-                  <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', flex: 1 }}>{flock.venue}</h3>
-                  {flock.venueRating && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', flexShrink: 0 }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                  {/* The photo is a thumbnail under Google's rule
+                      (components/ui/GoogleCredit.js): a tap opens the venue's
+                      sheet, which draws Google's current photos credited. It
+                      is a button of its own for that, as Details is. Until the
+                      picture arrives its box is the skeleton's ground at its
+                      final size, so nothing beside or under it moves. */}
+                  {showVenuePhoto && (
+                    <button type="button" className="plan-venue-photo" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', flexShrink: 0, width: '72px', height: '72px', padding: 0, margin: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', backgroundColor: 'var(--skeleton-bg)', cursor: 'pointer' }}>
+                      <img src={flock.venuePhoto} alt="" width="72" height="72" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
+                    </button>
                   )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                      <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{flock.venue}</h3>
+                      {flock.venueRating && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', flexShrink: 0 }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
+                      )}
+                    </div>
+                    {flock.venueAddress && (
+                      <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '6px 0 0', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
+                        {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
+                      </p>
+                    )}
+                  </div>
                 </div>
-                {flock.venueAddress && (
-                  <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '0 0 12px', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
-                    {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
-                  </p>
-                )}
                 {/* Tables, when the venue's Flux sensor watches them. Nothing
                     at all for the venues it does not, which is most. */}
                 {tableSummary && (
                   <TableAvailability summary={tableSummary} party={tableParty} style={{ marginBottom: '12px' }} />
-                )}
-                {/* Under the address, because this is where a guest works out
-                    how to get there. A tap opens the same maps chooser as
-                    Directions. */}
-                {showVenuePhoto && (
-                  <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} style={{ borderRadius: '10px', marginBottom: '12px' }} />
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {flock.venueId && (

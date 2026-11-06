@@ -228,7 +228,10 @@ describe('theme parity and copy hygiene', () => {
   });
 
   it('the venue photo reserves its box before it loads', () => {
-    expect(R).toMatch(/<img src=\{flock\.venuePhoto\}[^>]*width="375" height="170"/);
+    // A 72px thumbnail beside the name since 2026-11-06 (googlePhotoCredit
+    // .test.js says why); the button holds the same box.
+    expect(R).toMatch(/<img src=\{flock\.venuePhoto\}[^>]*width="72" height="72"/);
+    expect(R).toMatch(/className="plan-venue-photo"[^>]*width: '72px', height: '72px'/);
   });
 
   it('vote selection survives dark mode and announces itself', () => {
