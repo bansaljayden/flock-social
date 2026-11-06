@@ -109,6 +109,9 @@ function cardQuietDay(facts) {
   let low = null;
   for (const f of Array.isArray(facts) ? facts : []) {
     if (!isKindForecast(f) || !f.value || typeof f.value.weekday !== 'string') continue;
+    // Today beside the week, away from its quiet end, is no quiet day
+    // (besideWeek below).
+    if (f.quietEnd === false) continue;
     const score = Number(f.value.peakScore);
     if (!Number.isFinite(score)) continue;
     if (!low || score < low.score) low = { score, weekday: f.value.weekday };
@@ -142,9 +145,19 @@ function besideCard(text, facts) {
 // days after it, because today is part of the weekend it asks about.
 const BESIDE_WEEK_NOTE = 'This is today. The other days are the week ahead, which starts tomorrow, so today is not ranked against them.';
 
-/** Today's entry on the card, as a block carries it beside the card's week. */
-function besideWeek(fact) {
-  return { ...fact, note: [fact.note, BESIDE_WEEK_NOTE].filter(Boolean).join(' ') };
+/**
+ * Today's entry on the card, as a block carries it beside the card's week.
+ * `quietEnd` says whether today sits at the quiet end of that week, within the
+ * ordering floor of its quietest day (routes/advisor.js withNamedToday): the
+ * move under an answer about today fills it only then (roostPlaybook.moveFor,
+ * review 2026-11-06). It is never a value, so no answer can say it.
+ */
+function besideWeek(fact, { quietEnd = null } = {}) {
+  return {
+    ...fact,
+    note: [fact.note, BESIDE_WEEK_NOTE].filter(Boolean).join(' '),
+    ...(typeof quietEnd === 'boolean' ? { quietEnd } : {}),
+  };
 }
 
 /** True for today's entry handed over beside the card's week (besideWeek). */
@@ -156,27 +169,38 @@ function isBesideWeek(fact) {
 // today alone for a question about today, and was once handed the week beside
 // it and wrote "Flock's forecast for places like yours has Sunday as the
 // quietest day this week" while the money move said Monday. So a draft built
-// on today's entry goes to the template if any sentence puts a word that ranks
-// a day (a superlative or a comparative, best or worst, "the peak night") in
-// a sentence that names today: its weekday, "today" or "tonight", or a
-// placeholder of today's fact. A sentence about a day's place in its week
-// ("the quietest day this week") is one whichever day it names, since today
-// is the only day such an answer was given. Blunt on purpose, like the rules
-// above: a false alarm costs wording, and the template is today's true line.
-const RANKS_A_DAY = /\b(?:quiet(?:er|est)|slow(?:er|est)|busi(?:er|est)|bigg(?:er|est)|small(?:er|est)|low(?:er|est)|high(?:er|est)|strong(?:er|est)|weak(?:er|est)|dead(?:er|est)|empt(?:ier|iest)|full(?:er|est)|best|better|worst|worse|least|most|top|peak\s+(?:day|night|evening)s?)\b/i;
-const DAY_IN_ITS_WEEK = /\b(?:day|night|evening)s?\s+(?:this\s+week|of\s+the\s+week|in\s+the\s+week|all\s+week)\b/i;
-const TODAY_WORD = /\b(?:today|tonight)\b/i;
+// on today's entry goes to the template if any sentence ranks a DAY against
+// other days. Blunt on purpose, like the rules above: a false alarm costs
+// wording, and the template is today's true line.
+//
+// THE DAY, NOT THE NIGHT'S OWN HOURS (second review, 2026-11-06). The first
+// version read any superlative or comparative in a sentence that named
+// today, so ordinary answers about the night itself went to the template:
+// "The busiest stretch tonight is the hour before that", "Put your best
+// bartender on before 9 PM", "Most guests tonight will arrive after 8 PM",
+// "Keep the menu to your top sellers tonight". A sentence ranks a day when it
+//   * puts a ranking word on a day: "the quietest day", "the busiest night",
+//     "a slower evening", "the peak night", "this week's quietest";
+//   * puts a superlative over the week: "the slowest of the week", "the
+//     busiest stretch this week";
+//   * compares with other days: "busier than Friday", "lower than the
+//     weekend", "quieter than usual";
+//   * or lets a superlative stand for the day: "Monday is the quietest."
+const SUPERLATIVE = '(?:quietest|slowest|busiest|biggest|smallest|lowest|highest|strongest|weakest|deadest|emptiest|fullest|best|worst)';
+const COMPARATIVE = '(?:quieter|slower|busier|bigger|smaller|lower|higher|stronger|weaker|deader|emptier|fuller|better|worse)';
+const RANK_WORD = `(?:${SUPERLATIVE}|${COMPARATIVE}|top|peak|(?:most|least)\\s+(?:busy|crowded|packed|quiet|full|popular))`;
+const DAY_NOUN = '(?:day|night|evening|weekday|weeknight)s?';
+const WEEKDAY_NAME = '(?:mon|tues|wednes|thurs|fri|satur|sun)days?';
+const RANKED_DAY = new RegExp(`\\b${RANK_WORD}\\s+(?:[a-z']+\\s+){0,2}?${DAY_NOUN}\\b`, 'i');
+const WEEKS_RANK = new RegExp(`\\bweek'?s\\s+(?:[a-z']+\\s+)?${RANK_WORD}\\b`, 'i');
+const OVER_THE_WEEK = new RegExp(`\\b${SUPERLATIVE}\\b[^.!?]*?\\b(?:(?:of|in)\\s+the\\s+week|(?:this|all)\\s+week)\\b`, 'i');
+const THAN_OTHER_DAYS = new RegExp(`\\b${COMPARATIVE}\\s+than\\s+(?:[a-z']+\\s+){0,3}?(?:${WEEKDAY_NAME}|${DAY_NOUN}|usual|normal|average|typical|rest|others?|most|any|week|weekend|yesterday|tomorrow|today|tonight)\\b`, 'i');
+const STANDS_FOR_DAY = new RegExp(`\\bthe\\s+(?:[a-z']+\\s+)?${SUPERLATIVE}(?=\\s*(?:[.,;:!?)]|$))`, 'i');
 
-/**
- * True when `sentence` ranks today against other days: a ranking word beside
- * today's weekday (`day`), "today" or "tonight", or a placeholder of today's
- * fact (`citesToday`), or beside a day's place in its week.
- */
-function ranksToday(sentence, day = null, citesToday = () => false) {
+/** True when `sentence` ranks a day against other days (above). */
+function ranksToday(sentence) {
   const s = String(sentence === null || sentence === undefined ? '' : sentence);
-  if (!RANKS_A_DAY.test(s)) return false;
-  if (DAY_IN_ITS_WEEK.test(s) || TODAY_WORD.test(s) || citesToday(s)) return true;
-  return typeof day === 'string' && /^[A-Za-z]+$/.test(day) && new RegExp(`\\b${day}s?\\b`, 'i').test(s);
+  return [RANKED_DAY, WEEKS_RANK, OVER_THE_WEEK, THAN_OTHER_DAYS, STANDS_FOR_DAY].some((re) => re.test(s));
 }
 
 module.exports = {

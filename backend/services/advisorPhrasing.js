@@ -1167,6 +1167,13 @@ const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 // and the whole answer when a block holds one day of the card.
 const dayPeak = (f) => `${dayName(f)} peaks ${peakAt(f)} on our 0 to 100 index.`;
 
+// The span of a level week's peaks: "between 66 and 74", or "at 74" when the
+// days peak alike ("every day peaks between 74 and 74" in a review's run,
+// 2026-11-06).
+const peakRange = (low, top) => (Number(low.value.peakScore) === Number(top.value.peakScore)
+  ? `at ${Number(top.value.peakScore)}`
+  : `between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}`);
+
 // WHOSE WEEK IT IS (2026-11-03). A venue with no crowd history of its own is
 // answered from its dashboard's Week Ahead, Flock's forecast for places like
 // it (advisorFacts.buildWeekProjection, services/kindForecast.js). Its lines
@@ -1234,14 +1241,19 @@ function shapeWeek(which) {
     // today (routes/advisor.js weekendWindow), and it is one day on a Sunday,
     // or on a Saturday before a shut Sunday.
     // A lone day of next weekend is said as next weekend's ("next Friday
-    // peaks ..."), for a venue with crowd history too (2026-11-06).
-    const nextDay = days.length === 1 && weekendMarks().isNextWeekendDay(days[0]);
-    if (days.length === 1 && (isKindForecast(days[0]) || nextDay)) {
-      const said = nextDay ? `next ${dayPeak(days[0])}` : dayPeak(days[0]);
+    // peaks ..."), for a venue with crowd history too (2026-11-06), and a lone
+    // day of the coming weekend asked about as next weekend says which
+    // weekend it is ("Saturday of the coming weekend, Nov 13 to 15, peaks").
+    const lone = days.length === 1 ? days[0] : null;
+    const nextDay = Boolean(lone) && weekendMarks().isNextWeekendDay(lone);
+    const comingDay = Boolean(lone) && weekendMarks().isComingWeekendDay(lone);
+    if (lone && (isKindForecast(lone) || nextDay || comingDay)) {
+      let said = nextDay ? `next ${dayPeak(lone)}` : dayPeak(lone);
+      if (comingDay) said = `${dayName(lone)} of the coming weekend, ${lone.comingWeekend}, peaks ${peakAt(lone)} on our 0 to 100 index.`;
       return {
-        lead: isKindForecast(days[0]) ? weekVoice(days).open(said) : sentenceCase(said),
+        lead: isKindForecast(lone) ? weekVoice(days).open(said) : sentenceCase(said),
         points: rest.map(templateLine),
-        used: [days[0], ...rest],
+        used: [lone, ...rest],
       };
     }
     if (days.length < 2) return null;
@@ -1277,7 +1289,7 @@ function shapeWeek(which) {
       const points = [];
       const used = [asked];
       if (level) {
-        points.push(`No day stands out this week: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}.`);
+        points.push(`No day stands out this week: every day peaks ${peakRange(low, top)}.`);
         used.push(top, low);
       } else {
         if (top !== asked) { points.push(`${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
@@ -1306,17 +1318,20 @@ function shapeWeek(which) {
         used: [first, second, ...rest],
       };
     }
-    // Next weekend's days, each marked so, are said as next weekend's.
+    // Next weekend's days, each marked so, are said as next weekend's, and
+    // the coming weekend asked about as next weekend says which one it is.
     const scope = which === 'weekend'
       ? (days.every((f) => weekendMarks().isNextWeekendDay(f)) ? 'next weekend' : 'this weekend')
       : 'this week';
+    const coming = which === 'weekend' && days.every((f) => weekendMarks().isComingWeekendDay(f)) ? days[0].comingWeekend : null;
     // A LEVEL WEEK HAS NO BUSIEST DAY. Below the measured ordering floor the
     // gap is noise, and naming a winner inside it reads as advice to staff it.
     if (Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
       return {
-        lead: v.open(`No day stands out ${scope}: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
+        lead: v.open(`No day stands out ${coming ? `over the coming weekend, ${coming}` : scope}: every day peaks ${peakRange(low, top)} on our 0 to 100 index.`),
         points: rest.map(templateLine),
-        used: [top, low, ...rest],
+        // Days that peak alike are each the range's end, so each is a source.
+        used: [...(Number(low.value.peakScore) === Number(top.value.peakScore) ? days : [top, low]), ...rest],
       };
     }
     const second = days[1];
@@ -1328,7 +1343,7 @@ function shapeWeek(which) {
       used.push(low);
     }
     return {
-      lead: v.open(`${v.Your} busiest day ${scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`),
+      lead: v.open(`${v.Your} busiest day ${coming ? `of the coming weekend, ${coming},` : scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`),
       points: [...points, ...rest.map(templateLine)],
       used: [...used, ...rest],
     };
@@ -1434,7 +1449,7 @@ function shapeMoneyMove(facts) {
   const v = weekVoice(days);
   if (days.length < 2 || Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
     return {
-      lead: v.open(`No day stands out this week, so the money is in each check rather than in one day: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
+      lead: v.open(`No day stands out this week, so the money is in each check rather than in one day: every day peaks ${peakRange(low, top)} on our 0 to 100 index.`),
       points: rest.map(templateLine),
       used: [...new Set([low, top]), ...rest],
     };
@@ -1970,6 +1985,11 @@ function valveReject(reason) {
   return null;
 }
 
+// A sentence as checkAnswer compares it with a fact's own: case, spacing,
+// curly quotes and the closing stop set aside.
+const sayKey = (s) => String(s === null || s === undefined ? '' : s).normalize('NFKC')
+  .replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '').toLowerCase();
+
 /**
  * The answer check, for both kinds of answer (2026-10-28).
  *
@@ -2060,6 +2080,23 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     return reject('no sentence used a fact');
   }
 
+  // THE LISTING'S CLOSED LINE MAY GO FIRST (review, 2026-11-06). A weekend
+  // with nothing open at a venue answered from the card opens on the line its
+  // Google listing gives ("Your Google listing has you closed for the rest of
+  // this weekend."), and next weekend's days follow. Every draft for it was
+  // discarded, because its first sentence is not about the forecast. When the
+  // block opens on a fact from the listing, a draft may open on that fact's
+  // own sentence, word for word, and the first sentence after it is the
+  // opening the forecast rule below reads. The line names the listing as its
+  // source.
+  const sentences = kept.flatMap((unit) => advisorAnswer.splitSentences(unit));
+  const listingLines = list[0] && list[0].source === 'google_listing'
+    ? new Map(list.filter((f) => f.source === 'google_listing' && typeof f.label === 'string')
+      .map((f) => [sayKey(f.label), f]))
+    : new Map();
+  let opens = 0;
+  while (opens < sentences.length && listingLines.has(sayKey(sentences[opens]))) opens += 1;
+  const listingUsed = sentences.slice(0, opens).map((s) => listingLines.get(sayKey(s)));
   // FLOCK'S FORECAST FOR PLACES LIKE THIS ONE IS NEVER GIVEN AS THE VENUE'S
   // OWN (2026-11-03). A venue with no crowd history is answered from its
   // dashboard's Week Ahead, what is typical for its kind of place
@@ -2069,30 +2106,23 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
   // days or a forecast. Anything else goes whole, and the template, which
   // opens with "In Flock's forecast for places like yours", answers instead.
   if (holdsCard(list)) {
-    const [opening] = advisorAnswer.splitSentences(kept[0] || '');
-    if (!saysWhose(opening)) return reject('a forecast for places like this one that does not open on whose it is');
-    for (const unit of kept) {
-      for (const s of advisorAnswer.splitSentences(unit)) {
-        if (ownsCard(s)) return reject('a forecast for places like this one, given as the venue\'s own');
-      }
+    if (opens < sentences.length && !saysWhose(sentences[opens])) {
+      return reject('a forecast for places like this one that does not open on whose it is');
+    }
+    for (const s of sentences) {
+      if (ownsCard(s)) return reject('a forecast for places like this one, given as the venue\'s own');
     }
   }
   // TODAY, HANDED OVER BESIDE THE CARD'S WEEK, IS NEVER RANKED (review,
-  // 2026-11-06; services/kindForecast.js ranksToday). Its parts carry the note
-  // that marks it, and the weekday part names the day.
-  const todayParts = list.filter(isBesideWeek);
-  if (todayParts.length) {
-    const day = todayParts.map((f) => f.value).find((v) => typeof v === 'string' && /^(?:Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)day$/.test(v)) || null;
-    const ids = new Set(todayParts.map((f) => String(f.id)));
-    const citesToday = (s) => [...String(s).matchAll(PLACEHOLDER)].some((m) => ids.has(m[1]));
-    for (const unit of kept) {
-      for (const s of advisorAnswer.splitSentences(unit)) {
-        if (ranksToday(s, day, citesToday)) return reject('today, ranked against the days of the week');
-      }
+  // 2026-11-06; services/kindForecast.js ranksToday): no sentence of a draft
+  // built on it ranks a day against other days.
+  if (list.some(isBesideWeek)) {
+    for (const s of sentences) {
+      if (ranksToday(s)) return reject('today, ranked against the days of the week');
     }
   }
 
-  const used = new Set();
+  const used = new Set(listingUsed.map((f) => String(f.id)));
   const resolve = (id) => {
     const f = byId.get(id);
     if (!f) return null;
@@ -2285,6 +2315,13 @@ function roomWords(venue, serviceStyle) {
   return { ...(kind ? { kind } : {}), ...(service ? { service } : {}) };
 }
 
+// The facts whose whole meaning is their own sentence: the venue shut by its
+// listing or its own curve, today or for a weekend, and next weekend's days
+// past the forecast (advisorFacts, 2026-11-06). Their values are dates, so the
+// model is handed the sentence as `says`, and a draft may open on it word for
+// word (checkAnswer).
+const SAYS_IDS = () => new Set([weekendMarks().WEEKEND_CLOSED_ID, weekendMarks().TODAY_CLOSED_ID, weekendMarks().PAST_FORECAST_ID]);
+
 // WHAT A PLACEHOLDER WILL SAY, SHOWN BESIDE IT (2026-11-03). The model wrote
 // sentences around values it could not see: "a {{fact:..._turnMinutes}} turn"
 // came out "a about 74 minutes turn", a stored hour of 20 became "before 20",
@@ -2299,6 +2336,7 @@ function payloadFact(f) {
   } catch {
     reads = null;
   }
+  const says = typeof f.label === 'string' && SAYS_IDS().has(String(f.sourceId || f.id)) ? f.label : null;
   return {
     id: f.id,
     value: f.value,
@@ -2307,6 +2345,7 @@ function payloadFact(f) {
     source: f.source,
     asOf: f.asOf,
     note: f.note,
+    ...(says ? { says } : {}),
   };
 }
 

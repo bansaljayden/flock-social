@@ -2232,6 +2232,14 @@ async function buildIntelligence(placeId, userId, clockKey) {
       window: scanWindow(own.length ? own : todayScan),
     };
   }
+  // LAST NIGHT, STILL RUNNING ON THE LISTING (review, 2026-11-06). At 1 AM on
+  // a Sunday a bar listed until 2 AM on Saturday nights is open, and today
+  // here is Sunday, which its listing may have shut. Roost reads this so it
+  // says the venue is shut after tonight, never "closed today" while it is
+  // open (advisorFacts.todayClosedFact). The tile does not read it.
+  if (fit.listed && advisorFacts.nightTailHours(fit.listed, localDay).includes(localHour)) {
+    today = { ...today, nightInProgress: true };
+  }
   // The words the card and the Biggest tile use: 'evening' when every day
   // ahead is read on evening hours, 'day' when any is not.
   const scanned = scans.filter((s) => s.length);

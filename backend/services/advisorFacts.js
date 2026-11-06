@@ -1208,19 +1208,24 @@ function cardClosedDates(intel) {
 
 /**
  * The week and today off one read of the card: { week, today, date, closed,
- * asOf }, each list [] when there is none; `date` the venue's own today on the
- * card (null with no card), which "this weekend" is counted from; `closed` the
- * dates its listed hours have the venue shut; `asOf` when the card was built.
+ * nightInProgress, asOf }, each list [] when there is none; `date` the venue's
+ * own today on the card (null with no card), which "this weekend" is counted
+ * from; `closed` the dates its listed hours have the venue shut;
+ * `nightInProgress` when its listing has last night still running at the hour
+ * the card was built (venueDashboard, today.nightInProgress); `asOf` when the
+ * card was built.
  */
 async function buildCardProjection(ctx, { userId } = {}) {
   const card = await readCard(ctx, userId);
-  if (!card) return { week: [], today: [], date: null, closed: [], asOf: null };
+  if (!card) return { week: [], today: [], date: null, closed: [], nightInProgress: false, asOf: null };
+  const readable = readableCard(card.intel);
   return {
     week: projectionFacts(card.intel, { hourOf: card.hourOf }),
     today: todayProjectionFacts(card.intel, { hourOf: card.hourOf }),
     date: cardTodayDate(card.intel),
-    closed: readableCard(card.intel) ? cardClosedDates(card.intel) : [],
-    asOf: readableCard(card.intel) ? card.intel.generatedAt : null,
+    closed: readable ? cardClosedDates(card.intel) : [],
+    nightInProgress: Boolean(readable && card.intel.today && card.intel.today.nightInProgress === true),
+    asOf: readable ? card.intel.generatedAt : null,
   };
 }
 
@@ -1248,6 +1253,38 @@ function isNextWeekendDay(fact) {
   return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(NEXT_WEEKEND_NOTE);
 }
 
+// "NEXT WEEKEND" FROM MONDAY TO THURSDAY IS THE COMING ONE (review,
+// 2026-11-06). An owner asking on a weekday means the weekend ahead of them,
+// and the one after it is past the seven days the forecast covers, so the
+// question was refused four days a week. It is answered about the coming
+// weekend, and says which one: "the coming weekend, Nov 13 to 15". Its days
+// carry those dates in `comingWeekend`, and in a note the phrasing model reads
+// (routes/advisor.js weekend_outlook).
+const MONTH_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A weekend's first and last dates in words: "Nov 13 to 15", or "Oct 30 to Nov 1". */
+function weekendRangeWords(from, through) {
+  const [fy, fm, fd] = String(from).split('-').map(Number);
+  const [ty, tm, td] = String(through).split('-').map(Number);
+  return fy === ty && fm === tm
+    ? `${MONTH_SHORT[fm - 1]} ${fd} to ${td}`
+    : `${MONTH_SHORT[fm - 1]} ${fd} to ${MONTH_SHORT[tm - 1]} ${td}`;
+}
+
+/** A day of the coming weekend (`range`, weekendRangeWords), asked about as next weekend. */
+function comingWeekendDay(fact, range) {
+  return {
+    ...fact,
+    note: [fact.note, `This day is in the coming weekend, ${range}, the weekend the question calls next weekend.`].filter(Boolean).join(' '),
+    comingWeekend: range,
+  };
+}
+
+/** True for a day marked as the coming weekend's (comingWeekendDay). */
+function isComingWeekendDay(fact) {
+  return Boolean(fact) && typeof fact.comingWeekend === 'string' && fact.comingWeekend.length > 0;
+}
+
 const joinDays = (days) => (days.length < 3 ? days.join(' and ') : `${days.slice(0, -1).join(', ')} and ${days[days.length - 1]}`);
 
 // Who says the venue is shut, in its own words: the listing's hours on the
@@ -1257,13 +1294,18 @@ const shutWho = (listing) => (listing ? 'Your Google listing has you closed' : "
 /**
  * The fact that a weekend has nothing open. `listing` when the card's listed
  * hours say so, else the venue's own curve; `scope` 'this' (with `todayIn`
- * when today is part of it) or 'next', which names the `weekdays` the
- * forecast holds of it; `from` and `through` its first and last dates.
+ * when today is part of it), 'coming' (the coming weekend asked about as next
+ * weekend, its dates in words as `range`) or 'next', which names the
+ * `weekdays` the forecast holds of it; `from` and `through` its first and last
+ * dates. `afterTonight`: last night is still running on the listing, so the
+ * venue is open now and shut once it ends (venueDashboard's
+ * today.nightInProgress, review 2026-11-06).
  */
-function weekendClosedFact({ listing, scope, todayIn = false, weekdays = [], from, through, asOf }) {
-  const when = scope === 'next'
-    ? `on ${joinDays(weekdays)} next weekend`
-    : (todayIn ? 'for the rest of this weekend' : 'this weekend');
+function weekendClosedFact({ listing, scope, todayIn = false, afterTonight = false, weekdays = [], range = null, from, through, asOf }) {
+  let when = 'this weekend';
+  if (scope === 'next') when = `on ${joinDays(weekdays)} next weekend`;
+  else if (scope === 'coming') when = range ? `over the coming weekend, ${range}` : 'over the coming weekend';
+  else if (todayIn) when = afterTonight ? 'for the rest of this weekend after tonight' : 'for the rest of this weekend';
   return makeFact({
     id: WEEKEND_CLOSED_ID,
     value: { fromDate: from, throughDate: through },
@@ -1280,14 +1322,19 @@ function weekendClosedFact({ listing, scope, todayIn = false, weekdays = [], fro
 // only that. It says so plainly now, from the same record as a shut weekend.
 const TODAY_CLOSED_ID = 'today_closed';
 
-/** The fact that the venue is shut today, on `date`, by its listing or its own curve. */
-function todayClosedFact({ listing, date, asOf }) {
+/**
+ * The fact that the venue is shut today, on `date`, by its listing or its own
+ * curve. `afterTonight` when last night is still running on the listing: the
+ * venue is open now, in its small hours, and shut once that night ends, so
+ * "closed today" at 1 AM would be false (review, 2026-11-06).
+ */
+function todayClosedFact({ listing, date, asOf, afterTonight = false }) {
   return makeFact({
     id: TODAY_CLOSED_ID,
     value: { date },
     source: listing ? 'google_listing' : 'google_baseline',
     asOf,
-    label: `${shutWho(listing)} today.`,
+    label: `${shutWho(listing)} ${afterTonight ? 'after tonight' : 'today'}.`,
   });
 }
 
@@ -1307,6 +1354,23 @@ function pastForecastFact({ card, weekdays, from, through, asOf }) {
     source: card ? KIND_FORECAST_SOURCE : 'model_holdout',
     asOf,
     label: `Next ${joinDays(weekdays)} ${weekdays.length > 1 ? 'are' : 'is'} past the seven days the forecast covers.`,
+  });
+}
+
+// A DAY PAST THE WEEK AHEAD IS SAID TO BE (review, 2026-11-06). "How busy will
+// next Monday be?" asked on a Monday, "Friday next week" asked on a Monday and
+// "the Friday after next" ask about a day the seven days of the forecast do
+// not hold. The week's answer used to stand in for it, with the week's day of
+// that name taken out, which could leave "the busiest day this week" naming
+// the wrong day. The answer now says the day is past the forecast and when it
+// comes into it, as the refusal for a next weekend it holds none of does.
+// `day` names it as the question did ("Next Monday", "Friday next week");
+// `comesIn` is when it comes into the seven days ("tomorrow", "on Saturday").
+function dayPastForecastRefusal({ day, comesIn = null }) {
+  return makeRefusal({
+    id: 'refuse_day_past_forecast',
+    reason: `${day} is past the seven days the forecast covers.`,
+    whatWouldUnlock: comesIn ? `It comes into them ${comesIn}.` : 'It comes into them six days before it.',
   });
 }
 
@@ -2086,6 +2150,10 @@ module.exports = {
   weekendClosedFact,
   todayClosedFact,
   pastForecastFact,
+  weekendRangeWords,
+  comingWeekendDay,
+  isComingWeekendDay,
+  dayPastForecastRefusal,
   // a venue with no crowd history: the dashboard's Week Ahead, as facts
   buildWeekProjection,
   buildTodayProjection,

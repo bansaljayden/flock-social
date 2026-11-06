@@ -18,6 +18,7 @@
 
 const { ADVISOR_INTENTS, isKnownIntent } = require('./advisorPhrasing');
 const { restates } = require('./roostPlaybook');
+const { isBesideWeek } = require('./kindForecast');
 
 // The money question each chip's answer leads to, and the chip that pairs
 // with it. Questions are owner voice, short enough for a chip on a phone.
@@ -63,9 +64,13 @@ const TOPIC_INTENT = Object.freeze({
 
 const WEEKDAY = /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/;
 
-// The quiet-days answer names the day, so the question can too.
+// The quiet-days answer names the day, so the question can too. A busy today,
+// asked about on the quiet-days chip, is not one to fill: its answer ends on
+// the busy-day move (roostPlaybook.moveFor), and the question after it is the
+// peaks chip's (review, 2026-11-06).
 function quietDayQuestion(block) {
   const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  if (facts.some((f) => isBesideWeek(f) && f.quietEnd === false)) return NEXT.peak_hours.question;
   const day = facts.map((f) => f && f.value && f.value.weekday).find((d) => typeof d === 'string' && WEEKDAY.test(d));
   return day ? `How do I fill ${day}s?` : 'How do I fill a quiet day?';
 }

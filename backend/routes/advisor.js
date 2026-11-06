@@ -256,10 +256,14 @@ function inWeekend(date, today, scope = 'this') {
   return date >= from && date <= to;
 }
 // Which weekend a question asks about. "The coming weekend" is this one.
+// "Next weekend" is 'next_words': from Monday to Thursday an owner means the
+// coming weekend by it (weekend_outlook below); "the following weekend" and
+// "the weekend after this" are always the one after this one.
 function weekendAsked(question) {
   const q = String(question || '');
   if (/\bweekend\s+after\s+next\b/i.test(q)) return 'after_next';
-  if (/\b(?:next|following)\s+weekend\b|\bweekend\s+after\s+this(?:\s+one)?\b/i.test(q)) return 'next';
+  if (/\bnext\s+weekend\b/i.test(q)) return 'next_words';
+  if (/\bfollowing\s+weekend\b|\bweekend\s+after\s+this(?:\s+one)?\b/i.test(q)) return 'next';
   return 'this';
 }
 
@@ -272,13 +276,25 @@ function weekendAsked(question) {
 // the date all come off the block's one read of the card (b.card(),
 // advisorFacts.buildCardProjection), never off two. `card` says which of the
 // two kinds of week it was.
+//
+// TODAY IS THE NIGHT STILL RUNNING (review, 2026-11-06). At 12:30 AM on a
+// Sunday, with Saturday night still going, the today chip answered Saturday
+// night and the weekend said the venue's curve showed no activity for the
+// rest of it. A venue's own week is read from the night in progress
+// (b.tonight, buildWeekAhead's nightInProgress), the week the today chip
+// reads, so its today is that night. The card dates today by the calendar,
+// and says when its listing has last night still running (`nightInProgress`),
+// so a shut today is said as shut after tonight (advisorFacts
+// .todayClosedFact).
 const gatedVenue = (b) => Boolean(b.ctx && b.ctx.profile && advisorFacts.corpusGate(b.ctx.profile));
 // The days from today on the card, the dates its listed hours have the venue
-// shut, and when the card was built.
+// shut, whether last night is still running on them, and when the card was
+// built.
 const fromCard = (card, week) => ({
   days: [...card.today, ...week],
   today: card.date,
   closed: Array.isArray(card.closed) ? card.closed : [],
+  nightInProgress: card.nightInProgress === true,
   asOf: card.asOf || null,
   card: true,
 });
@@ -289,7 +305,9 @@ async function daysFromToday(b) {
     // No card to read: the venue's own week, which is the corpus refusal.
     return { days: typeof b.ownWeek === 'function' ? await b.ownWeek() : [], today: null, closed: [], asOf: null, card: false };
   }
-  const week = await b.week();
+  // A venue with crowd history: its own week from the night in progress.
+  const own = Boolean(b.ctx) && typeof b.tonight === 'function';
+  const week = await (own ? b.tonight() : b.week());
   if (week.some(isKindForecast)) {
     // A builder handed the card's week with no venue on it (a plan driven
     // directly): today and its date off the read it hands over. One that
@@ -301,14 +319,18 @@ async function daysFromToday(b) {
 }
 
 // Today's shut-day fact, or null: the card's listed hours have the venue shut
-// on its today (off the block's one read of the card), or the night ahead in
-// the venue's own week is a day its curve shows no hours of its own on.
+// on its today (off the block's one read of the card), said as shut after
+// tonight while last night is still running on them, or the night ahead in
+// the venue's own week, from the night in progress, is a day its curve shows
+// no hours of its own on.
 async function shutToday(b, tonight) {
   const asOf = (b.now || new Date()).toISOString();
   if (gatedVenue(b) && typeof b.card === 'function') {
     const card = await b.card();
     if (!ISO_DATE.test(String(card.date)) || !(card.closed || []).includes(card.date)) return null;
-    return advisorFacts.todayClosedFact({ listing: true, date: card.date, asOf: card.asOf || asOf });
+    return advisorFacts.todayClosedFact({
+      listing: true, date: card.date, asOf: card.asOf || asOf, afterTonight: card.nightInProgress === true,
+    });
   }
   const night = tonight[0];
   if (!advisorFacts.isShutDay(night)) return null;
@@ -368,6 +390,11 @@ const INTENT_PLANS = {
   // does next weekend look like?" is next weekend: the days of it the seven
   // days of the forecast hold, each marked as next weekend's
   // (advisorFacts.nextWeekendDay), or a plain refusal when they hold none.
+  // From Monday to Thursday an owner means the coming weekend by it, and the
+  // one after is past the forecast, so it is answered about the coming
+  // weekend, each day marked with its dates (advisorFacts.comingWeekendDay):
+  // "the coming weekend, Nov 13 to 15". "The following weekend" and "the
+  // weekend after this" are the one after this one on any day.
   // When every day left of this weekend is shut, by the listing's hours on
   // the card or the venue's own curve, the answer says so
   // (advisorFacts.weekendClosedFact) and goes on to next weekend if the
@@ -375,7 +402,7 @@ const INTENT_PLANS = {
   // answers with its own refusals: street facts alone are not a weekend's
   // forecast, and one weather line used to hide every refusal under it.
   weekend_outlook: async (b) => {
-    const { days, today, card, closed, asOf } = await daysFromToday(b);
+    const { days, today, card, closed, nightInProgress, asOf } = await daysFromToday(b);
     const keep = (scope) => (e) => {
       const d = entryDate(e);
       if (d === null) return advisorFacts.isRefusal(e);
@@ -394,7 +421,10 @@ const INTENT_PLANS = {
     const asNext = (entries) => entries.map((e) => (advisorFacts.isRefusal(e) || entryDate(e) === null ? e : advisorFacts.nextWeekendDay(e)));
     // A card with no today to count from, or no card: its refusals, as before.
     if (!today) return days.filter(keep('this'));
-    const scope = weekendAsked(b.question);
+    const midweek = [1, 2, 3, 4].includes(weekdayOf(today));
+    const asked = weekendAsked(b.question);
+    let scope = asked;
+    if (asked === 'next_words') scope = midweek ? 'coming' : 'next';
     // The weekend's dates that the seven days from today hold, and whether
     // the venue is shut on every one of them.
     const held = (s) => {
@@ -407,8 +437,17 @@ const INTENT_PLANS = {
     const shut = (date) => closed.includes(date) || days.some((e) => entryDate(e) === date && advisorFacts.isShutDay(e));
     const stamp = asOf || (b.now || new Date()).toISOString();
     const named = (dates) => dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]);
-    const shutFact = (s, dates) => advisorFacts.weekendClosedFact({
-      listing: card, scope: s, todayIn: dates.includes(today), weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp,
+    const shutFact = (s, dates, range = null) => advisorFacts.weekendClosedFact({
+      listing: card,
+      scope: s,
+      todayIn: dates.includes(today),
+      // Last night still running on the listing: open now, shut after it.
+      afterTonight: nightInProgress === true && dates.includes(today),
+      weekdays: named(dates),
+      range,
+      from: dates[0],
+      through: dates[dates.length - 1],
+      asOf: stamp,
     });
     // Next weekend's days the seven days do not reach, said after an answer
     // about next weekend ("Next Saturday and Sunday are past the seven days the
@@ -425,10 +464,13 @@ const INTENT_PLANS = {
     // A street line on a day the venue is shut says nothing about its weekend.
     const streetOpen = async (s) => (await street(s)).filter((e) => entryDate(e) === null || !shut(entryDate(e)));
     if (scope === 'after_next' || (scope === 'next' && !held('next').length)) {
+      // From Monday to Thursday "the weekend after next" is the one after the
+      // coming weekend, whose Friday comes into the seven days this Saturday.
+      const soon = scope === 'next' || midweek;
       return [advisorFacts.makeRefusal({
         id: 'refuse_weekend_past_forecast',
         reason: `${scope === 'next' ? 'Next weekend' : 'The weekend after next'} is past the seven days the forecast covers.`,
-        whatWouldUnlock: scope === 'next' ? 'Its Friday comes into them on Saturday.' : 'Its Friday comes into them the Saturday before it.',
+        whatWouldUnlock: soon ? 'Its Friday comes into them on Saturday.' : 'Its Friday comes into them the Saturday before it.',
       })];
     }
     if (scope === 'next') {
@@ -437,10 +479,21 @@ const INTENT_PLANS = {
       return held('next').every(shut) ? [shutFact('next', held('next')), ...pastNext()] : next;
     }
     let week = days.filter(keep('this'));
-    if (open(week).length) return [...week, ...(await streetOpen('this'))];
-    if (held('this').length && held('this').every(shut)) {
-      const next = open(days.filter(keep('next')));
-      return [shutFact('this', held('this')), ...(next.length ? [...asNext(next), ...pastNext(), ...asNext(await streetOpen('next'))] : [])];
+    if (scope === 'coming') {
+      // The coming weekend, asked about as next weekend: this weekend's days,
+      // each marked with the weekend's dates. The weekend after it is past
+      // the forecast from Monday to Thursday, so a shut one ends there.
+      const { from, to } = weekendWindow(today, 'this');
+      const range = advisorFacts.weekendRangeWords(from, to);
+      const asComing = (entries) => entries.map((e) => (advisorFacts.isRefusal(e) || entryDate(e) === null ? e : advisorFacts.comingWeekendDay(e, range)));
+      if (open(week).length) return [...asComing(week), ...(await streetOpen('this'))];
+      if (held('this').length && held('this').every(shut)) return [shutFact('coming', held('this'), range)];
+    } else {
+      if (open(week).length) return [...week, ...(await streetOpen('this'))];
+      if (held('this').length && held('this').every(shut)) {
+        const next = open(days.filter(keep('next')));
+        return [shutFact('this', held('this')), ...(next.length ? [...asNext(next), ...pastNext(), ...asNext(await streetOpen('next'))] : [])];
+      }
     }
     // No day of this weekend to read for another reason: a card's says why
     // through the venue's own week, as today's chip does (tonightFor).
@@ -753,48 +806,110 @@ const isDayEntry = (e) => Boolean(e && e.value && typeof e.value.weekday === 'st
 // ahead), or undefined when the question names no day, or names today on a
 // venue whose today cannot be read. Only for the questions about the week's
 // days, whose plans have read the card already.
+//
+// TODAY'S WORDS ONLY WHERE THE QUESTION IS ABOUT A DAY (second review,
+// 2026-11-06). "Today", "tonight" and "this morning" set the day only for the
+// questions about a day's crowd: the peaks, the quiet days and today's own
+// outlook. "My bartender quit this morning" and "Got a 1 star review today"
+// are not asking how busy today is, and opened on today's forecast. Tonight
+// is the night the today chip answers: in the small hours, the night still
+// running (tonightOf). And a day more than six days off is past the week
+// ahead however it is said: "next Monday" on a Monday, "Friday next week" on
+// a Monday, "the Friday after next".
 const DAY_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
+const TODAY_WORD_INTENTS = new Set(['peak_hours', 'quiet_nights', 'tonight_outlook']);
+// The words of a question about a day's crowd, which an advice question
+// needs before "today" or "tonight" in it sets the day (the advice path).
+const CROWD_ASKED = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|quietest|dead|packed|full|empty|fill|filling|crowds?|crowded|covers?|guests?|people|customers?|traffic|turnout|rush|staff|staffed|staffing|expect|expecting|looks?|looking|peaks?|demand|walk[\s-]?ins?)\b/i;
 const WEEKDAY_NAMES_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-async function venueWeekday(b) {
+// The venue's own today by the calendar ('YYYY-MM-DD'), or null: the card's,
+// or its own week's clock.
+async function todayOf(b) {
   if (gatedVenue(b) && typeof b.card === 'function') {
     const card = await b.card();
-    return ISO_DATE.test(String(card.date)) ? WEEKDAY_NAMES_LONG[weekdayOf(card.date)] : null;
+    return ISO_DATE.test(String(card.date)) ? card.date : null;
   }
   const today = b.ctx ? advisorFacts.venueToday(b.ctx, { now: b.now }) : null;
-  return today ? today.weekday : null;
+  return today ? today.date : null;
 }
-async function askedDayFor(b, question) {
+// Tonight: in the small hours, the night still running, the night the today
+// chip answers (tonight_outlook reads b.tonight). The card dates it by the
+// calendar, as its own today chip does.
+async function tonightOf(b) {
+  if (b.ctx && !gatedVenue(b) && typeof b.tonight === 'function') {
+    const date = (await b.tonight()).map(entryDate).find(Boolean);
+    if (date) return date;
+  }
+  return todayOf(b);
+}
+// How many days from `today` the day asked about is (roostPlaybook.askedDay).
+function daysAhead(asked, today) {
+  const t = weekdayOf(today);
+  const w = WEEKDAY_NAMES_LONG.indexOf(asked.weekday);
+  const coming = (w - t + 7) % 7;
+  if (asked.afterNext) return (coming || 7) + 7;
+  // The week after this one runs from the coming Monday.
+  if (asked.nextWeek) return ((8 - t) % 7 || 7) + ((w + 6) % 7);
+  if (asked.next) return coming || 7;
+  return coming;
+}
+async function askedDayFor(b, question, intentId) {
   const asked = roostPlaybook.askedDay(question);
   if (!asked) return undefined;
-  const today = await venueWeekday(b);
-  if (asked.today) return today || undefined;
-  if (asked.next && asked.weekday === today) return null;
-  return asked.weekday;
+  if (asked.today) {
+    if (!TODAY_WORD_INTENTS.has(intentId)) return undefined;
+    const tonight = await tonightOf(b);
+    return tonight ? WEEKDAY_NAMES_LONG[weekdayOf(tonight)] : undefined;
+  }
+  const today = await todayOf(b);
+  if (!today) return (asked.nextWeek || asked.afterNext) ? null : asked.weekday;
+  return daysAhead(asked, today) <= 6 ? asked.weekday : null;
+}
+// What a question about a day past the week ahead is answered with: that the
+// day is past it, named as the question named it, and when it comes into it
+// (advisorFacts.dayPastForecastRefusal).
+async function pastDayRefusal(b, question) {
+  const asked = roostPlaybook.askedDay(question);
+  let day = `Next ${asked.weekday}`;
+  if (asked.nextWeek) day = `${asked.weekday} next week`;
+  if (asked.afterNext) day = `The ${asked.weekday} after next`;
+  const today = await todayOf(b);
+  let comesIn = null;
+  if (today) {
+    const enters = daysAhead(asked, today) - 6;
+    const name = WEEKDAY_NAMES_LONG[weekdayOf(addDaysTo(today, enters))];
+    if (enters === 1) comesIn = 'tomorrow';
+    else comesIn = enters >= 7 ? `on ${name} next week` : `on ${name}`;
+  }
+  return advisorFacts.dayPastForecastRefusal({ day, comesIn });
 }
 async function withNamedToday(entries, intentId, b, named) {
   if (!named || !NAMED_TODAY_INTENTS.has(intentId) || typeof b.card !== 'function') return entries;
   if (!entries.some(isKindForecast) && !gatedVenue(b)) return entries;
-  const { today } = await b.card();
+  const { today, week } = await b.card();
   const day = today.find((f) => f.value && f.value.weekday === named);
   if (!day) return entries;
-  return [besideWeek(day), ...entries.filter((e) => !advisorFacts.isRefusal(e) && !isDayEntry(e))];
+  // Where today sits in the week ahead, for the move under the answer
+  // (kindForecast.besideWeek, roostPlaybook.moveFor): at its quiet end when
+  // within the ordering floor of the week's quietest day.
+  const scores = (Array.isArray(week) ? week : []).map((f) => Number(f && f.value && f.value.peakScore)).filter(Number.isFinite);
+  const quietEnd = scores.length ? Number(day.value.peakScore) - Math.min(...scores) < HOUR_ORDERING_MIN_GAP : null;
+  return [besideWeek(day, { quietEnd }), ...entries.filter((e) => !advisorFacts.isRefusal(e) && !isDayEntry(e))];
 }
 
 // The bridge's step after a plan, for a typed question: the day it asks
-// about (askedDayFor); a day a week out ("next Monday" on a Monday) taken out
-// of a week that holds today under the same weekday, so no answer gives
-// today's number for it, and the week's answer stands with no date claimed;
+// about (askedDayFor); a day past the week ahead ("next Monday" on a Monday)
+// answered with that, since the week holds no day that can stand for it and
+// its answer, with that weekday taken out, could name the wrong busiest day;
 // and today on its own for a question about today (withNamedToday). A chip
 // asks about no day and passes through untouched.
 async function forQuestion(entries, intentId, b, question) {
   if (!question || !DAY_INTENTS.has(intentId)) return { entries, askedFor: undefined };
-  const askedFor = await askedDayFor(b, question);
-  let out = entries;
+  const askedFor = await askedDayFor(b, question, intentId);
   if (askedFor === null && NAMED_TODAY_INTENTS.has(intentId)) {
-    const { weekday } = roostPlaybook.askedDay(question);
-    out = out.filter((e) => !(isDayEntry(e) && e.value.weekday === weekday));
+    return { entries: [await pastDayRefusal(b, question)], askedFor };
   }
-  return { entries: await withNamedToday(out, intentId, b, askedFor), askedFor };
+  return { entries: await withNamedToday(entries, intentId, b, askedFor), askedFor };
 }
 
 // `question`, when there is one, is what the owner asked: a question that
@@ -814,6 +929,12 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
 
   const opts = { now: new Date(), userId };
   const memo = {};
+  // "How busy will we be tonight?" about a venue's own week reads it from the
+  // night in progress, the week the today chip reads, so in the small hours
+  // tonight is the night still running and is in the week it is answered
+  // from (review, 2026-11-06; askedDayFor above).
+  const asked = question ? roostPlaybook.askedDay(question) : null;
+  const fromTonight = Boolean(asked && asked.today) && NAMED_TODAY_INTENTS.has(intentId) && !advisorFacts.corpusGate(ctx.profile);
   const b = {
     ctx,
     now: opts.now,
@@ -824,7 +945,7 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
     // The week a question about the week ahead reads (weekFor above).
-    week: () => (memo.week = memo.week || weekFor(ctx, b.ownWeek, b.card)),
+    week: () => (memo.week = memo.week || (fromTonight ? b.tonight() : weekFor(ctx, b.ownWeek, b.card))),
     // The same week, started from last night's evening while that night is
     // still running: what "tonight" means at 12:30 AM. For a venue with no
     // crowd history, today off its dashboard card (tonightFor above).
@@ -1553,12 +1674,21 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // card's today for a venue with no crowd history (withNamedToday).
     //
     // The day is the one a block read against the venue's own today
-    // (askedDayFor, 2026-11-06): "tonight" is today's weekday, and "next
-    // Monday" on a Monday is no day held, so nothing stands for it and no
-    // lead names it. A question about a day its route did not read ("How do
-    // I fill a slow night tonight?" routed to no week at all) reads the
-    // week's peaks, which read the day as well.
-    const asksDay = roostPlaybook.askedDay(asked) !== null;
+    // (askedDayFor, 2026-11-06): "tonight" is the night the today chip
+    // answers, and "next Monday" on a Monday is no day held, so nothing
+    // stands for it and no lead names it. A question naming a day its route
+    // did not read ("How do I fill Thursdays?" routed to no week at all)
+    // reads the week's peaks, which read the day as well.
+    // "Today", "tonight" and "this morning" ask about a day in advice only
+    // when the question is routed to a day (the peaks, the quiet days,
+    // today's outlook) and asks about the day's crowd (second review,
+    // 2026-11-06): "My bartender quit this morning, what do I do?" opened on
+    // today's forecast, and "Got a 1 star review today, how should I
+    // respond?" paid for a second read of the week to do it, while "How do I
+    // fill tonight?" is about tonight.
+    const reading = roostPlaybook.askedDay(asked);
+    const asksDay = Boolean(reading)
+      && (!reading.today || (TODAY_WORD_INTENTS.has(route.intentId) && CROWD_ASKED.test(asked)));
     const readDay = (blk) => Boolean(blk) && Object.prototype.hasOwnProperty.call(blk, 'askedDay');
     let named = readDay(block) ? block.askedDay : roostPlaybook.namedWeekday(asked);
     if (asksDay && !(block && block.cardRead === false)

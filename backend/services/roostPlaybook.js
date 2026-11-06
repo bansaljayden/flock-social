@@ -809,46 +809,90 @@ function moneyLine(tactic, spend) {
 // is the last: "Saturdays are packed, how do I fill Tuesdays" asks about
 // Tuesday, and the first one named is the setup (2026-10-28 second review).
 //
-// THE SHORT FORMS COUNT TOO (review, 2026-11-06): "How busy will Sat be?",
-// "Fri night", "Tues". Four of them are English words as well ("we sat
-// down", "the sun is out", "they wed", "c'mon"), so those four count only
-// when written the way a day is: capitalised ("Sat", "SUN"), or before a part
-// of the day ("sat night", "sun brunch"). A sentence that opens on "Sun's
-// out" still reads as Sunday; the cost is one answer about Sunday.
+// THE SHORT FORMS COUNT ONLY WHERE A DAY IS WRITTEN (reviews, 2026-11-06):
+// "How busy will Sat be?", "Fri night", "is Tues slow", "open on Sun". Four
+// of them are English words as well ("we sat down", "the sun is out", "they
+// wed", "c'mon"), "SAT" is a test, and a capitalised one before another
+// capitalised word is a name ("Sun Devils", "Sun Valley", "Mon Ami"), so a
+// short form counts as a day only where a day is written:
+//   * before a part of the day, a date or another day ("sat night", "sun
+//     brunch", "the Wed crowd", "Mon-Fri", "Fri and Sat");
+//   * after on, this, next, last, every or each, or after another day and a
+//     word that joins them ("on Sun", "last Sat", "Fri and Sat");
+//   * opening a sentence, only as the whole sentence ("Sat?"): "Sat through
+//     another slow night" and "Sun's out" are not days;
+//   * anywhere else, written the way a day is: "Tues", "fri" and the others
+//     that are no English word, and the four that are, capitalised and not
+//     after "the" or "a" ("How busy will Sat be?", not "the Sun newspaper").
+// "SAT" in capitals from an owner who writes in lower case too is never a day.
 const SHORT_DAYS = Object.freeze({
   mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday', weds: 'Wednesday', thu: 'Thursday',
   thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
 });
 const WORDS_TOO = new Set(['mon', 'wed', 'sat', 'sun']);
+const DAY_FORMS = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
 const DAY_TOKEN = /\b(?:(mon|tues|wednes|thurs|fri|satur|sun)days?|(mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun))\b\.?/gi;
-const PART_OF_DAY_NEXT = /^\s*(?:night|morning|afternoon|evening|brunch|lunch|dinner|service|shift)s?\b/i;
+// A part of the day or a date after it: "Sat night", "sun brunch", "Wed
+// crowd", "Fri PM", "Sat Nov 14", "Sun 15th".
+const DAY_NEXT = /^\s*(?:-\s*)?(?:(?:night|nite|morning|afternoon|evening|brunch|lunch|dinner|breakfast|service|shift|crowd|rush)s?\b|(?:am|pm)\b|[ap]\.m\.|\d{1,2}(?:st|nd|rd|th)?\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d)/i;
+// Another day joined on: "Mon-Fri", "Fri and Sat", "Fri/Sat", "Mon through Wed".
+const JOINS = '(?:-|\\u2013|\\/|&|\\+|to|through|thru|and|or|n)';
+const RANGE_NEXT = new RegExp(`^\\s*${JOINS}\\s*${DAY_FORMS}\\b`, 'i');
+const RANGE_BEFORE = new RegExp(`\\b${DAY_FORMS}\\.?\\s*${JOINS}\\s*$`, 'i');
+const DAY_BEFORE = /\b(?:on|this|next|last|every|each|coming)\s+$/i;
+const NAME_NEXT = /^\s+[A-Z][a-z]/;
+const ARTICLE_BEFORE = /\b(?:the|a|an)\s+$/i;
+const SENTENCE_START = /(?:^|[.!?]\s+|\n\s*)$/;
+const SENTENCE_END = /^\s*(?:[.!?]+\s*)?$|^\s*[.!?]+\s/;
+// The week after this one, said beside the day: "Friday next week", "Friday
+// of next week", "Monday be next week", "next week's Friday"; and two out:
+// "the Friday after next". Not "Friday compared to next week".
+const NEXT_WEEK_AFTER = /^\s*,?\s*(?:(?:be|look|looks|seem|run)\s+(?:like\s+)?)?(?:of\s+)?next\s+week\b/i;
+const NEXT_WEEK_BEFORE = /\bnext\s+week'?s\s+$/i;
+const AFTER_NEXT = /^\s+after\s+next\b/i;
 const TODAY_ASKED = /\b(?:today|tonight|this\s+(?:evening|afternoon|morning))\b/i;
+
+/** True when the short form `short`, between `before` and `after`, is written as a day. */
+function shortFormIsDay(short, before, after, shouting) {
+  const capital = !shouting && /^[A-Z]/.test(short);
+  if (!shouting && short === 'SAT') return false;
+  if (DAY_NEXT.test(after) || RANGE_NEXT.test(after)) return true;
+  if (capital && NAME_NEXT.test(after)) return false;
+  if (DAY_BEFORE.test(before) || RANGE_BEFORE.test(before)) return true;
+  if (SENTENCE_START.test(before)) return SENTENCE_END.test(after);
+  if (!WORDS_TOO.has(short.toLowerCase())) return true;
+  return capital && !ARTICLE_BEFORE.test(before);
+}
 
 /**
  * The day a question asks about: { weekday, next } for a weekday it names
- * (the last one named; `next` when it says "next Monday"), { today: true } for
- * today or tonight with no weekday named, or null. Which date that is depends
- * on the venue's own today, which the route reads (routes/advisor.js
- * askedDayFor): "next Monday" asked on a Monday is a week away, not today.
+ * (the last one named; `next` when it says "next Monday", `nextWeek` when it
+ * says "Monday next week", `afterNext` when it says "the Monday after next"),
+ * { today: true } for today or tonight with no weekday named, or null. Which
+ * date that is depends on the venue's own today, which the route reads
+ * (routes/advisor.js askedDayFor): "next Monday" asked on a Monday is a week
+ * away, not today, and "Friday next week" asked on a Monday is past the week
+ * ahead. "Next week" belongs to the day beside it only: "How busy will Friday
+ * be compared to next week?" asks about this Friday.
  */
 function askedDay(question) {
   // The owner's spelling put right as normalizeOwnerText does ("wensday",
   // "saterday"), with the case left as typed for the short forms above.
   const text = String(question || '').normalize('NFKC').replace(/[‘’]/g, "'")
     .replace(/[A-Za-z]+/g, (w) => (Object.hasOwn(SPELLING, w.toLowerCase()) ? SPELLING[w.toLowerCase()] : w));
+  // A question in capitals throughout says nothing by its case.
+  const shouting = !/[a-z]/.test(text);
   let found = null;
   for (const m of text.matchAll(DAY_TOKEN)) {
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
     let weekday = null;
-    if (m[1]) {
-      weekday = `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()}day`;
-    } else {
-      const short = m[2].toLowerCase();
-      const asDay = !WORDS_TOO.has(short) || /^[A-Z]/.test(m[2])
-        || PART_OF_DAY_NEXT.test(text.slice(m.index + m[0].length));
-      if (asDay) weekday = SHORT_DAYS[short];
-    }
-    // "next Monday", or "Monday next week".
-    if (weekday) found = { weekday, next: /\bnext\s+$/i.test(text.slice(0, m.index)) || /\bnext\s+week\b/i.test(text) };
+    if (m[1]) weekday = `${m[1][0].toUpperCase()}${m[1].slice(1).toLowerCase()}day`;
+    else if (shortFormIsDay(m[2], before, after, shouting)) weekday = SHORT_DAYS[m[2].toLowerCase()];
+    if (!weekday) continue;
+    found = { weekday, next: /\bnext\s+$/i.test(before) };
+    if (NEXT_WEEK_AFTER.test(after) || NEXT_WEEK_BEFORE.test(before)) found.nextWeek = true;
+    if (AFTER_NEXT.test(after)) found.afterNext = true;
   }
   if (found) return found;
   return TODAY_ASKED.test(normalizeOwnerText(text)) ? { today: true } : null;
@@ -870,6 +914,10 @@ const {
 // for a day no fact can stand for ("next Monday" asked on a Monday); left out,
 // the question's own named day is read.
 function groundedLead(intentId, facts, question = '', askedFor = undefined) {
+  // A day past the week ahead has no line here. "How do I fill next Monday?"
+  // on a Monday used to open on the week's quietest day, Sunday, an answer
+  // about a day the owner did not ask about (review, 2026-11-06).
+  if (askedFor === null) return null;
   const peaks = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
     && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
   if (!peaks.length) return null;
@@ -1193,6 +1241,15 @@ function isLevelWeek(block) {
 function moveFor(intentId, block, venue = null) {
   if (!MOVE_INTENTS.has(intentId)) return null;
   const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  // NO FILL MOVE FOR A BUSY TODAY (review, 2026-11-06). A question about
+  // today on the quiet-days chip is answered from today's entry alone
+  // (routes/advisor.js withNamedToday), and on a Saturday at 74, the week's
+  // high, it ended on "Give Saturday one recurring reason to visit". Today is
+  // filled only from the quiet end of its week (kindForecast.besideWeek); any
+  // other today gets the busy-day move the peaks chip ends on.
+  if (intentId === 'quiet_nights' && facts.some((f) => isBesideWeek(f) && f.quietEnd === false)) {
+    return moveFor('peak_hours', block, venue);
+  }
   if (intentId === 'last_night_verdict') {
     const verdict = facts.find((f) => f && /^last_day_verdict_/.test(String(f.id)));
     if (!verdict || !verdict.value || verdict.value.verdict !== 'below') return null;
