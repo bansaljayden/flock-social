@@ -2483,7 +2483,7 @@ test('"next weekend" from Monday to Thursday is the coming weekend, said with it
   });
 });
 
-test('in the small hours a bar listed until 2 AM is never told it is closed while it is open, and a venue with crowd history reads its weekend and "tonight" from the night still running', async () => {
+test('in the small hours a bar with no crowd history, listed until 2 AM, is never told it is closed while it is open', async () => {
   // No crowd history, listed Tuesday to Saturday, 8 PM to 2 AM: at 1 AM on
   // Sunday, Saturday night is still running. It was told "Your Google listing
   // has you closed today." and "closed for the rest of this weekend" until
@@ -2509,7 +2509,9 @@ test('in the small hours a bar listed until 2 AM is never told it is closed whil
     assert.strictEqual((await call('/api/venue/advisor/ask', { intentId: 'tonight_outlook' })).body.text, 'Your Google listing has you closed today.');
     assert.ok((await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' })).body.text.startsWith('Your Google listing has you closed for the rest of this weekend. '));
   });
+});
 
+test('in the small hours a venue with crowd history reads its weekend and "tonight" from the night still running, as its today chip does', async () => {
   // A venue with crowd history open to 1 AM, its Sunday evening shut, so
   // Sunday has only Saturday night's small hours. At 12:30 AM on Sunday its
   // weekend said "Your Google profile's curve shows no activity for the rest
