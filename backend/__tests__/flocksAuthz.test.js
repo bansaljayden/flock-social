@@ -1791,50 +1791,6 @@ test('roster: a departed member loses it on the next request', async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 12b. GET /api/flocks/:id/venue-photo — the plan's photo and Google's credit
-// ═══════════════════════════════════════════════════════════════════════════
-// What the credit is worked out from, and what it costs, is
-// __tests__/planPhotoCredit.test.js. This file holds the door.
-
-const STORED_PHOTO = '/api/venues/photo?ref=places%2FChIJsecretplaceid00000%2Fphotos%2FSECRETREF&maxwidth=400';
-
-test('venue photo: closed to outsiders, invitees and declined members, before the plan row is read', async () => {
-  flocks.get(10).venue_photo_url = STORED_PHOTO;
-  for (const who of ['mallory', 'carol', 'dave']) {
-    queries = [];
-    const res = await call('GET', '/api/flocks/10/venue-photo', who);
-    assert.strictEqual(res.status, 404, `${who} read the plan's photo`);
-    const text = await res.text();
-    assert.ok(!text.includes('SECRETREF') && !text.includes('ChIJsecretplaceid'), `${who} was handed the stored photo`);
-    assert.ok(!queries.some((q) => q.sql.includes('FROM flocks')), `${who}'s request read the plan row`);
-  }
-  assertQueriesUnderstood();
-});
-
-test('venue photo: the 404 an outsider gets is the 404 a fabricated id gets', async () => {
-  const real = await call('GET', '/api/flocks/10/venue-photo', 'mallory');
-  const fake = await call('GET', `/api/flocks/${MISSING_ID}/venue-photo`, 'mallory');
-  assert.strictEqual(real.status, fake.status);
-  assert.deepStrictEqual(await real.json(), await fake.json());
-});
-
-test('venue photo: an accepted member is answered, no-store, and a plan with no photo answers two nulls', async () => {
-  const res = await call('GET', '/api/flocks/10/venue-photo', 'bob');
-  assert.strictEqual(res.status, 200);
-  assert.match(res.headers.get('cache-control') || '', /no-store/);
-  assert.deepStrictEqual(await res.json(), { photo_url: null, photo_attribution: null });
-  assert.deepStrictEqual(writes, [], 'a read wrote');
-  assertQueriesUnderstood();
-});
-
-test('venue photo: a departed member loses it on the next request', async () => {
-  assert.strictEqual((await call('GET', '/api/flocks/10/venue-photo', 'erin')).status, 200);
-  await call('POST', '/api/flocks/10/leave', 'erin');
-  assert.strictEqual((await call('GET', '/api/flocks/10/venue-photo', 'erin')).status, 404);
-  assertQueriesUnderstood();
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
 // 13. POST /api/flocks/:id/attendance — creator only, completed flocks only
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2302,7 +2258,7 @@ test('inventory: every route in flocks.js is one this sweep actually covers', as
     'GET /', 'POST /', 'GET /activity', 'GET /history', 'GET /:id', 'PUT /:id',
     'DELETE /:id', 'POST /:id/invite-link', 'POST /:id/join', 'POST /:id/invite',
     'POST /:id/rerun', 'POST /:id/decline', 'POST /:id/leave', 'GET /:id/members',
-    'POST /:id/attendance', 'POST /:id/reconfirm', 'GET /:id/venue-photo',
+    'POST /:id/attendance', 'POST /:id/reconfirm',
   ].sort();
   assert.deepStrictEqual(found, audited,
     'routes/flocks.js gained or lost a route — audit it and update this list');
@@ -2318,7 +2274,6 @@ test('id confusion: a bounded-integer id is settled on every route before any qu
     ['PUT', '/api/flocks/%s'],
     ['DELETE', '/api/flocks/%s'],
     ['GET', '/api/flocks/%s/members'],
-    ['GET', '/api/flocks/%s/venue-photo'],
     ['POST', '/api/flocks/%s/join'],
     ['POST', '/api/flocks/%s/decline'],
     ['POST', '/api/flocks/%s/leave'],
