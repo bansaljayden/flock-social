@@ -87,6 +87,7 @@ import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
 import { poiUnderTap, POI_TAP_MIN_ZOOM, TAPPABLE_POI_LAYER_IDS } from './poiTap';
 import { resolveMapPlace, userMessage } from '../../services/api';
+import { GoogleMapsMark } from '../ui/GoogleCredit';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -2198,6 +2199,20 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
            tiers only decide whether labels show. */
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
+
+      {/* GOOGLE'S ATTRIBUTION FOR THE PINS. This map is MapLibre over
+          MapTiler, not a Google map, and its pins draw Places data: names,
+          ratings and photos. So while they show, one "Google Maps" mark sits
+          in the bottom left corner (components/ui/GoogleCredit.js), stacked
+          just above the basemap's own credit, which is MapLibre's control
+          (attributionControl is off in the constructor and added compact).
+          On a light plate in both themes, as that credit is, so #5E5E5E
+          clears 4.5:1 over any tile underneath. It takes no taps. */}
+      {mapReady && !mapFailed && !keyRefused && Array.isArray(venues) && venues.length > 0 && (
+        <div style={{ position: 'absolute', left: '10px', bottom: '40px', zIndex: 2, pointerEvents: 'none', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.88)', lineHeight: 0 }}>
+          <GoogleMapsMark dark={false} />
+        </div>
+      )}
 
       {/* My Location button. Hidden when the map is not following the
           viewer (venue dashboard): with no tracked position it could only
