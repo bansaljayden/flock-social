@@ -277,11 +277,11 @@ const RATES = {
   // verify until the reset. The money hub reads live usage from Resend's
   // /usage API (services/resendUsage.js) and warns at 80% of either cap.
   //
-  // The next plan up, as resend.com/pricing listed it on 2026-10-08: Pro at
-  // $20 a month for 50,000 emails with no daily limit, then $0.90 per 1,000
-  // past that (a 100,000 tier is $35 a month).
+  // The next plan up, as resend.com/pricing listed it on 2026-10-08 and again
+  // on 2026-11-06: Pro at $20 a month for 50,000 emails with no daily limit,
+  // then $0.90 per 1,000 past that (a 100,000 tier is $35 a month).
   resend: {
-    checked: '2026-10-08',
+    checked: '2026-11-06',
     source: 'https://resend.com/pricing',
     freePerMonth: 3000,
     freePerDay: 100,
@@ -304,7 +304,7 @@ const RATES = {
   // row ($30.00 plus $1.80 Pennsylvania tax), so no code line carries it: a
   // second copy would count the same $30 twice next to that row.
   maptiler: {
-    checked: '2026-10-07',
+    checked: '2026-11-06',
     source: 'https://www.maptiler.com/cloud/pricing/',
     plan: 'Flex',
     baseUsd: 30.00,
@@ -312,7 +312,7 @@ const RATES = {
     includedSearchSessionsPerMonth: 3000,
     included3dSessionsPerMonth: 10000, // GeoSplats only; fill-extrusion buildings are an ordinary map session
     includedApiRequestsPerMonth: 500000,
-    includedCustomStyles: 20,
+    includedCustomStyles: 1000, // 20 when read 2026-10-07, 1,000 on 2026-11-06
     includedStorageGb: 10,
     overSessionPer1kUsd: 2.50,
     overSearchSessionPer1kUsd: 2.50,

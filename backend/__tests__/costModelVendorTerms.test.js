@@ -33,18 +33,19 @@ test('Railway volume and point-in-time recovery are priced the way Railway bills
 });
 
 test('MapTiler is on Flex, with the allowances, the overage rates and the spending limit as MapTiler states them', () => {
-  // Bought 2026-10-07 (maptiler.com/cloud/pricing read that day). The Free
+  // Bought 2026-10-07 (maptiler.com/cloud/pricing read that day, and again on
+  // 2026-11-06, when Flex's custom styles had gone from 20 to 1,000). The Free
   // plan was non-commercial and paused the map; Flex is licensed for
   // commercial use and bills extra use instead.
   const r = cm.RATES.maptiler;
   assert.strictEqual(r.plan, 'Flex');
-  assert.strictEqual(r.checked, '2026-10-07');
+  assert.strictEqual(r.checked, '2026-11-06');
   assert.strictEqual(r.baseUsd, 30);
   assert.strictEqual(r.includedSessionsPerMonth, 25000);
   assert.strictEqual(r.includedSearchSessionsPerMonth, 3000);
   assert.strictEqual(r.included3dSessionsPerMonth, 10000);
   assert.strictEqual(r.includedApiRequestsPerMonth, 500000);
-  assert.strictEqual(r.includedCustomStyles, 20);
+  assert.strictEqual(r.includedCustomStyles, 1000);
   assert.strictEqual(r.overSessionPer1kUsd, 2.5);
   assert.strictEqual(r.overSearchSessionPer1kUsd, 2.5);
   assert.strictEqual(r.over3dSessionPer1kUsd, 6);
