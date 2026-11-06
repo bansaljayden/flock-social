@@ -368,11 +368,47 @@ tableHistory.publicSummaries = async (ids) => {
 
 const crowdEngine = require(path.join(B, 'services', 'crowdEngine'));
 const mlPredictor = require(path.join(B, 'services', 'mlPredictor'));
-const nowcastOn = () => process.env.CROWD_NOWCAST_ENABLED === 'true';
-const switchesOn = () => process.env.CROWD_SERVE_MODE === 'curve_offset' || nowcastOn() || mlPredictor.noCurveFallbackEnabled();
+// The serving switches, read by the serving code's own readers (mlPredictor
+// serveMode, nowcastEnabled, switchedArithmeticOn, hourlyAttributionOn) and
+// never restated here: a CROWD_SERVE_MODE value serving knows (SERVE_MODES,
+// model_when_fresh among them) is one this eval knows, and a value it does not
+// know is 'model' here as it is there.
+const serving = mlPredictor._internals;
+const nowcastOn = () => serving.nowcastEnabled();
+const switchesOn = () => serving.hourlyAttributionOn();
 const methodOf = (v) => (v && v.corpus ? 'ml' : (mlPredictor.noCurveFallbackEnabled() ? crowdEngine.NO_CURVE_FALLBACK_METHOD : 'rule_engine'));
 const hourLabel = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
 const MEASURED = (pct) => ({ status: 'measured', means: 'measured_accuracy', metric: 'within_15', population: 'realtime_served', populationRows: 4120, measuredPercent: pct, weatherPenalty: 0 });
+
+// A fixture's live reading is an hour old (`live` in birdieEvalCases.js).
+// Whether that is fresh is serving's own test (isFreshReading), asked about
+// the bucket an hour-old reading is picked in.
+const HOUR_OLD = { lagHours: 1, bucket: serving.nowcastBucket(1) };
+// Whether the curve_offset side answers a model-path number: every one under
+// curve_offset, and under model_when_fresh every one without a fresh reading,
+// the choice predictBusyness makes per number. The rule engine and the
+// category table answer before any serve mode is read.
+const curveSide = (method, reading) => {
+  if (method !== 'ml') return false;
+  const mode = serving.serveMode();
+  return mode === 'curve_offset' || (mode === 'model_when_fresh' && !(reading && serving.isFreshReading(HOUR_OLD)));
+};
+// The curve_offset side's own account of its number, as predictBusyness gives
+// it: the venue's curve, with an hour-old reading carried at that table's
+// weight while the nowcast is on. The fixture keeps no trailing offset, so
+// nothing else of a live reading reaches it.
+function curveAnswer(reading) {
+  const weight = serving.NOWCAST_WEIGHTS.curve_offset[HOUR_OLD.bucket];
+  const nowcast = reading && nowcastOn() && weight > 0 ? { weight, lagHours: HOUR_OLD.lagHours } : null;
+  return {
+    predictionMethod: 'ml',
+    serveMode: 'curve_offset',
+    nowcast,
+    dataSourcesUsed: nowcast ? ['venue_data', 'recent_live_readings'] : ['venue_data'],
+    modelVersion: serving.servedModelVersion('2.6.0-starling', true, nowcast),
+    usedLiveReadings: Boolean(nowcast),
+  };
+}
 
 mlPredictor.predictBusyness = async (venue, _weather, ts) => {
   const v = cases.byId.get(venue && venue.place_id);
@@ -389,13 +425,22 @@ mlPredictor.predictBusyness = async (venue, _weather, ts) => {
   };
   if (method === 'ml') out.confidenceMeasurement = MEASURED(37.4);
   else if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) out.confidenceMeasurement = MEASURED(41.2);
-  const live = v && v.corpus && v.live && cases.openAt(v, day, hour, 30);
-  if (live && nowcastOn()) {
+  const live = Boolean(v && v.corpus && v.live && cases.openAt(v, day, hour, 30));
+  const curve = curveSide(method, live);
+  if (curve) {
+    Object.assign(out, curveAnswer(live));
+  } else if (live && nowcastOn()) {
     out.nowcast = { weight: v.live === '1h' ? 1 : 0.55, lagHours: 1 };
     out.usedLiveReadings = true;
     out.dataSourcesUsed.push('recent_live_readings');
   } else if (switchesOn()) {
     out.usedLiveReadings = false;
+  }
+  if (method === 'ml' && !curve && serving.switchedArithmeticOn()) out.serveMode = 'model';
+  // Under model_when_fresh, which side answered and the age of the reading
+  // that decided it, as predictBusyness says (freshMix).
+  if (method === 'ml' && serving.serveMode() === 'model_when_fresh') {
+    out.freshMix = { answered: curve ? 'curve_offset' : 'model', readingLagHours: live ? HOUR_OLD.lagHours : null };
   }
   return out;
 };
@@ -412,13 +457,20 @@ mlPredictor.predictHourlyForecast = async (venue, _weather, startHour, count, ba
     const day = ts.getDay();
     const hour = ts.getHours();
     const score = v ? cases.levelAt(v, day, hour) : 50;
-    const live = Boolean(v && v.corpus && v.live && i <= 1 && cases.openAt(v, day, hour, 30) && nowcastOn());
+    const reading = Boolean(v && v.corpus && v.live && i <= 1 && cases.openAt(v, day, hour, 30));
+    // Each hour takes its own side, as the strip's hours do under
+    // model_when_fresh: only the hours with an hour-old reading run the model.
+    const curve = curveSide(method, reading) ? curveAnswer(reading) : null;
+    const live = curve ? curve.usedLiveReadings : reading && nowcastOn();
     const entry = {
       hour: hourLabel(hour), score, label: crowdEngine.getLabel(score), predictionMethod: method,
       baselineScore: method === 'ml' ? score : null, eventsObserved: true, eventsUnavailableReason: null,
     };
     if (attributed) {
-      const source = method === crowdEngine.NO_CURVE_FALLBACK_METHOD ? 'category_typical' : (live && i === 1 ? 'model_live' : null);
+      let source = null;
+      if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) source = 'category_typical';
+      else if (curve) source = crowdEngine.describeServedArithmetic(curve);
+      else if (live && i === 1) source = 'model_live';
       if (source) entry.numberSource = source;
       entry.liveReadings = live;
     }
@@ -910,7 +962,9 @@ async function previewFixtures() {
         includeForecast: !access.locked, salesOff: persona.client !== 'web', searchedPlaces: new Map(),
         timeZone: zoned ? cases.ZONE : null, ...(zoned ? { localHour: w.hour, localDay: w.day } : {}),
       }));
-      const strip = (r.hourly_forecast || []).slice(0, 6).map((h) => `${h.hour}=${h.score}`).join(' ');
+      // Each hour's own attribution while a switch is on: /crowd_method, and
+      // +live or -live for its live_readings yes or no.
+      const strip = (r.hourly_forecast || []).slice(0, 6).map((h) => `${h.hour}=${h.score}${h.crowd_method ? `/${h.crowd_method}` : ''}${typeof h.live_readings === 'boolean' ? (h.live_readings ? '+live' : '-live') : ''}`).join(' ');
       console.log(`${v.key.padEnd(10)} open=${openNow(v) ? 'y' : 'n'} ${r.error ? `ERROR ${r.error}` : `score=${r.crowd_score} "${r.crowd_label}" src=${r.crowd_source}${r.crowd_method ? `/${r.crowd_method}` : ''} best="${r.best_time}" peak="${r.peak_hours}"${r.forecast_locked ? ' LOCKED' : ''}${r.clock ? ` clock=${r.clock}` : ''}${r.game_night ? ' game' : ''}`}`);
       if (strip) console.log(`           ${strip}`);
     }
