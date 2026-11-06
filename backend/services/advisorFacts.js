@@ -59,6 +59,9 @@ const FACT_SOURCES = new Set([
   // advisor extensions
   'intake', 'owner_report', 'votes', 'events', 'weather',
   'served_prediction', 'google_baseline', 'arithmetic',
+  // The opening hours on the venue's Google listing, as the dashboard's card
+  // reads them: a day the listing has the venue shut (2026-11-06).
+  'google_listing',
   // Cohort differencing (services/advisorCohort.js). 'corpus' is the FROZEN
   // BestTime/Google corpus quoted as a distribution rather than as a curve for
   // one venue, and every fact carrying it also carries CORPUS_AS_OF.
@@ -984,6 +987,17 @@ async function buildWeekAhead(ctx, { now = new Date(), userId, nightInProgress =
   return out;
 }
 
+// A day of the week above that the venue's own curve has no hours of its own
+// on: no activity at all, or only the small hours of the night before. Read
+// off the two sentences buildWeekAhead writes for it, here beside them, so
+// the weekend can say the venue is shut rather than read the refusal as
+// missing data (routes/advisor.js weekend_outlook, 2026-11-06). Not a model
+// that returned nothing, and not a day scored by category rules.
+const SHUT_DAY_REASON = /^Your Google profile's curve shows (?:no activity on [A-Z][a-z]+day|[A-Z][a-z]+day only as the small hours of [A-Z][a-z]+day night), so there is no /;
+function isShutDay(entry) {
+  return isRefusal(entry) && /^refuse_peak_\d{4}-\d{2}-\d{2}$/.test(entry.id) && SHUT_DAY_REASON.test(entry.reason);
+}
+
 // ─── The week ahead for a venue with no crowd history of its own ─────────────
 //
 // THE DASHBOARD HAD A WEEK AND ROOST DID NOT (2026-11-03). Filming the demo on
@@ -1184,19 +1198,76 @@ function cardTodayDate(intel) {
   return typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
 }
 
+/** The dates the card's listed hours have the venue closed, today's first. */
+function cardClosedDates(intel) {
+  if (!intel || typeof intel !== 'object') return [];
+  return [intel.today, ...(Array.isArray(intel.week) ? intel.week : [])]
+    .filter((d) => d && d.closed === true && typeof d.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.date))
+    .map((d) => d.date);
+}
+
 /**
- * The week and today off one read of the card: { week, today, date }, each
- * list [] when there is none, and `date` the venue's own today on the card
- * (null with no card), which "this weekend" is counted from.
+ * The week and today off one read of the card: { week, today, date, closed,
+ * asOf }, each list [] when there is none; `date` the venue's own today on the
+ * card (null with no card), which "this weekend" is counted from; `closed` the
+ * dates its listed hours have the venue shut; `asOf` when the card was built.
  */
 async function buildCardProjection(ctx, { userId } = {}) {
   const card = await readCard(ctx, userId);
-  if (!card) return { week: [], today: [], date: null };
+  if (!card) return { week: [], today: [], date: null, closed: [], asOf: null };
   return {
     week: projectionFacts(card.intel, { hourOf: card.hourOf }),
     today: todayProjectionFacts(card.intel, { hourOf: card.hourOf }),
     date: cardTodayDate(card.intel),
+    closed: readableCard(card.intel) ? cardClosedDates(card.intel) : [],
+    asOf: readableCard(card.intel) ? card.intel.generatedAt : null,
   };
+}
+
+// ─── A weekend with nothing open, and next weekend (2026-11-06) ──────────────
+//
+// "What does the weekend look like?" asked when nothing was open for the rest
+// of it answered with the weather alone for a venue with crowd history (one
+// weather fact kept the week's refusals out), and with "We have no crowd
+// history for this venue" for one without: the wrong reason (review). It is
+// said plainly now, from the record that says so (the listing's hours on the
+// card, or the venue's own curve), and next weekend's days follow when the
+// forecast holds any, each marked so the template and the phrasing model say
+// "next weekend" of it. The same mark serves "What does next weekend look
+// like?" (routes/advisor.js weekend_outlook).
+const WEEKEND_CLOSED_ID = 'weekend_closed';
+const NEXT_WEEKEND_NOTE = 'This day is in next weekend, not this one.';
+
+/** A day of next weekend, as a block carries it. */
+function nextWeekendDay(fact) {
+  return { ...fact, note: [fact.note, NEXT_WEEKEND_NOTE].filter(Boolean).join(' ') };
+}
+
+/** True for a day marked as next weekend's (nextWeekendDay). */
+function isNextWeekendDay(fact) {
+  return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(NEXT_WEEKEND_NOTE);
+}
+
+const joinDays = (days) => (days.length < 3 ? days.join(' and ') : `${days.slice(0, -1).join(', ')} and ${days[days.length - 1]}`);
+
+/**
+ * The fact that a weekend has nothing open. `listing` when the card's listed
+ * hours say so, else the venue's own curve; `scope` 'this' (with `todayIn`
+ * when today is part of it) or 'next', which names the `weekdays` the
+ * forecast holds of it; `from` and `through` its first and last dates.
+ */
+function weekendClosedFact({ listing, scope, todayIn = false, weekdays = [], from, through, asOf }) {
+  const who = listing ? 'Your Google listing has you closed' : "Your Google profile's curve shows no activity";
+  const when = scope === 'next'
+    ? `on ${joinDays(weekdays)} next weekend`
+    : (todayIn ? 'for the rest of this weekend' : 'this weekend');
+  return makeFact({
+    id: WEEKEND_CLOSED_ID,
+    value: { fromDate: from, throughDate: through },
+    source: listing ? 'google_listing' : 'google_baseline',
+    asOf,
+    label: `${who} ${when}.`,
+  });
 }
 
 // ─── The street the OWNER says they are on ───────────────────────────────────
@@ -1963,7 +2034,14 @@ module.exports = {
   // context + cards
   getVenueContext,
   buildWeekAhead,
+  isShutDay,
   venueToday,
+  // a weekend with nothing open, and next weekend
+  WEEKEND_CLOSED_ID,
+  NEXT_WEEKEND_NOTE,
+  nextWeekendDay,
+  isNextWeekendDay,
+  weekendClosedFact,
   // a venue with no crowd history: the dashboard's Week Ahead, as facts
   buildWeekProjection,
   buildTodayProjection,

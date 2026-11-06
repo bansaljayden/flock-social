@@ -615,6 +615,9 @@ const SOURCE_PHRASES = Object.assign(Object.create(null), {
   events: 'from Ticketmaster listings',
   weather: 'from the weather service',
   google_baseline: "your Google profile's own pattern",
+  // The opening hours on the venue's Google listing (advisorFacts
+  // weekendClosedFact).
+  google_listing: 'your Google listing',
   corpus: 'spring 2026 corpus',
   corpus_covariation: 'spring 2026 corpus',
   // Other venues' own readings, never one venue's and never a named one: a
@@ -1181,8 +1184,30 @@ function weekVoice(days) {
   };
 }
 
+// advisorFacts' weekend marks (a weekend with nothing open, next weekend's
+// days), required lazily like advisorFactsShortDate below.
+// eslint-disable-next-line global-require
+const weekendMarks = () => require('./advisorFacts');
+
 function shapeWeek(which) {
-  return (facts, { named = null } = {}) => {
+  const shape = (facts, { named = null } = {}) => {
+    // A WEEKEND WITH NOTHING OPEN (2026-11-06): its plain line first, from the
+    // listing's hours or the venue's own curve, then next weekend's days as any
+    // weekend's are said, when the forecast holds any of it; else that line
+    // alone (routes/advisor.js weekend_outlook).
+    if (which === 'weekend') {
+      const shut = facts.find((f) => f && f.id === weekendMarks().WEEKEND_CLOSED_ID);
+      if (shut) {
+        const after = facts.filter((f) => f !== shut);
+        const next = after.length ? shape(after, {}) : null;
+        const lines = after.map(templateLine);
+        return {
+          lead: [templateLine(shut), next ? next.lead : lines[0]].filter(Boolean).join(' '),
+          points: next ? next.points : lines.slice(1),
+          used: [shut, ...(next ? next.used : after)],
+        };
+      }
+    }
     const peaks = facts.filter(isPeakFact);
     // TODAY, ASKED BY NAME BESIDE THE CARD'S WEEK (2026-11-06). The card's
     // week starts tomorrow, so a question about today's weekday is handed
@@ -1273,7 +1298,10 @@ function shapeWeek(which) {
         used: [first, second, ...rest],
       };
     }
-    const scope = which === 'weekend' ? 'this weekend' : 'this week';
+    // Next weekend's days, each marked so, are said as next weekend's.
+    const scope = which === 'weekend'
+      ? (days.every((f) => weekendMarks().isNextWeekendDay(f)) ? 'next weekend' : 'this weekend')
+      : 'this week';
     // A LEVEL WEEK HAS NO BUSIEST DAY. Below the measured ordering floor the
     // gap is noise, and naming a winner inside it reads as advice to staff it.
     if (Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
@@ -1297,6 +1325,7 @@ function shapeWeek(which) {
       used: [...used, ...rest],
     };
   };
+  return shape;
 }
 
 const READING_DAY = (date) => {

@@ -420,9 +420,10 @@ async function noHistoryBlock(v, intentId, question = '') {
   // the weekend counts from the card's today.
   const b = {
     ctx: v.ctx,
+    question,
     week: async () => card,
     tonight: async () => today,
-    card: async () => ({ week: card, today, date: v.card.today.date }),
+    card: async () => ({ week: card, today, date: v.card.today.date, closed: [], asOf: v.card.generatedAt }),
     around: async () => [],
   };
   // A typed question is read for the day it asks about, against the card's

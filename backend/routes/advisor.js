@@ -237,13 +237,30 @@ function entryDate(entry) {
 // own today (daysFromToday below), and both are its own dates.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const weekdayOf = (date) => new Date(`${date}T12:00:00Z`).getUTCDay();
-function inThisWeekend(date, today) {
+const addDaysTo = (date, n) => {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+// A weekend's first and last dates, counted from the venue's `today`: this
+// one ('this'), or the one after it ('next', 2026-11-06: "What does next
+// weekend look like?" answered about this one).
+function weekendWindow(today, scope = 'this') {
+  const sunday = addDaysTo(today, (7 - weekdayOf(today)) % 7);
+  if (scope === 'next') return { from: addDaysTo(sunday, 5), to: addDaysTo(sunday, 7) };
+  return { from: [5, 6, 0].includes(weekdayOf(today)) ? today : addDaysTo(sunday, -2), to: sunday };
+}
+function inWeekend(date, today, scope = 'this') {
   if (!ISO_DATE.test(String(date)) || !ISO_DATE.test(String(today))) return false;
-  const dow = weekdayOf(date);
-  if (dow !== 5 && dow !== 6 && dow !== 0) return false;
-  const sunday = new Date(`${today}T12:00:00Z`);
-  sunday.setUTCDate(sunday.getUTCDate() + ((7 - weekdayOf(today)) % 7));
-  return date >= today && date <= sunday.toISOString().slice(0, 10);
+  const { from, to } = weekendWindow(today, scope);
+  return date >= from && date <= to;
+}
+// Which weekend a question asks about. "The coming weekend" is this one.
+function weekendAsked(question) {
+  const q = String(question || '');
+  if (/\bweekend\s+after\s+next\b/i.test(q)) return 'after_next';
+  if (/\b(?:next|following)\s+weekend\b|\bweekend\s+after\s+this(?:\s+one)?\b/i.test(q)) return 'next';
+  return 'this';
 }
 
 // THE DAYS FROM TODAY, AND WHICH DAY TODAY IS. The venue's own week walks
@@ -256,12 +273,21 @@ function inThisWeekend(date, today) {
 // advisorFacts.buildCardProjection), never off two. `card` says which of the
 // two kinds of week it was.
 const gatedVenue = (b) => Boolean(b.ctx && b.ctx.profile && advisorFacts.corpusGate(b.ctx.profile));
+// The days from today on the card, the dates its listed hours have the venue
+// shut, and when the card was built.
+const fromCard = (card, week) => ({
+  days: [...card.today, ...week],
+  today: card.date,
+  closed: Array.isArray(card.closed) ? card.closed : [],
+  asOf: card.asOf || null,
+  card: true,
+});
 async function daysFromToday(b) {
   if (gatedVenue(b) && typeof b.card === 'function') {
     const card = await b.card();
-    if (card.week.length) return { days: [...card.today, ...card.week], today: card.date, card: true };
+    if (card.week.length) return fromCard(card, card.week);
     // No card to read: the venue's own week, which is the corpus refusal.
-    return { days: typeof b.ownWeek === 'function' ? await b.ownWeek() : [], today: null, card: false };
+    return { days: typeof b.ownWeek === 'function' ? await b.ownWeek() : [], today: null, closed: [], asOf: null, card: false };
   }
   const week = await b.week();
   if (week.some(isKindForecast)) {
@@ -269,10 +295,9 @@ async function daysFromToday(b) {
     // directly): today and its date off the read it hands over. One that
     // cannot read the card's today has no today to count the weekend from,
     // and the weekend then holds nothing rather than a guess.
-    const card = typeof b.card === 'function' ? await b.card() : { today: [], date: null };
-    return { days: [...card.today, ...week], today: card.date, card: true };
+    return fromCard(typeof b.card === 'function' ? await b.card() : { today: [], date: null }, week);
   }
-  return { days: week, today: week.map(entryDate).find(Boolean) || null, card: false };
+  return { days: week, today: week.map(entryDate).find(Boolean) || null, closed: [], asOf: null, card: false };
 }
 
 // One plan per chip: which builder outputs, filtered how. Filtering and
@@ -312,32 +337,84 @@ const INTENT_PLANS = {
   // corpus gate's refusal has no day attached, so this filter dropped it and
   // the block arrived empty. Undated entries are kept when they are refusals,
   // which is the only kind of undated entry the week builder emits.
-  // The weekend is this one (inThisWeekend above), read from today: for a
+  // The weekend is this one (inWeekend above), read from today: for a
   // venue with no crowd history, today's entry on its card first when today
   // is a Friday, Saturday or Sunday, then the card's days, so the template
   // and the phrasing model are handed the same days and neither can name
   // next week's Friday.
+  //
+  // NEXT WEEKEND, AND A WEEKEND WITH NOTHING OPEN (review, 2026-11-06). "What
+  // does next weekend look like?" is next weekend: the days of it the seven
+  // days of the forecast hold, each marked as next weekend's
+  // (advisorFacts.nextWeekendDay), or a plain refusal when they hold none.
+  // When every day left of this weekend is shut, by the listing's hours on
+  // the card or the venue's own curve, the answer says so
+  // (advisorFacts.weekendClosedFact) and goes on to next weekend if the
+  // forecast holds any of it. A weekend with no open day for another reason
+  // answers with its own refusals: street facts alone are not a weekend's
+  // forecast, and one weather line used to hide every refusal under it.
   weekend_outlook: async (b) => {
-    const { days, today, card } = await daysFromToday(b);
-    const thisWeekend = (e) => {
+    const { days, today, card, closed, asOf } = await daysFromToday(b);
+    const keep = (scope) => (e) => {
       const d = entryDate(e);
       if (d === null) return advisorFacts.isRefusal(e);
-      return inThisWeekend(d, today);
+      return inWeekend(d, today, scope);
     };
-    let week = days.filter(thisWeekend);
-    // A card with no open day left this weekend (a bakery shut on Sundays,
-    // asked on its Sunday) has nothing to say about it, and the venue's own
-    // week says why, as today's chip does on a day its listing has it shut
-    // (tonightFor).
-    if (card && !week.length && typeof b.ownWeek === 'function') week = (await b.ownWeek()).filter(thisWeekend);
     // Around-you weather facts are Fridays to Sundays already; keep dated
-    // street entries that fall on this weekend, plus the no-events line if
-    // present.
-    const street = (await b.around()).filter((e) => {
+    // street entries that fall on the weekend asked about, plus the
+    // no-events line if present.
+    const street = async (scope) => (await b.around()).filter((e) => {
       const d = entryDate(e);
-      return (d !== null && inThisWeekend(d, today)) || e.id === 'no_listed_events';
+      return (d !== null && inWeekend(d, today, scope)) || e.id === 'no_listed_events';
     });
-    return [...week, ...street];
+    const open = (entries) => entries.filter((e) => !advisorFacts.isRefusal(e));
+    // Next weekend's dated entries, marked as next weekend's; an undated line
+    // ("no listed events") is about the whole week and keeps its words.
+    const asNext = (entries) => entries.map((e) => (advisorFacts.isRefusal(e) || entryDate(e) === null ? e : advisorFacts.nextWeekendDay(e)));
+    // A card with no today to count from, or no card: its refusals, as before.
+    if (!today) return days.filter(keep('this'));
+    const scope = weekendAsked(b.question);
+    // The weekend's dates that the seven days from today hold, and whether
+    // the venue is shut on every one of them.
+    const held = (s) => {
+      const { from, to } = weekendWindow(today, s);
+      const last = addDaysTo(today, 6);
+      const out = [];
+      for (let d = from; d <= to && d <= last; d = addDaysTo(d, 1)) out.push(d);
+      return out;
+    };
+    const shut = (date) => closed.includes(date) || days.some((e) => entryDate(e) === date && advisorFacts.isShutDay(e));
+    const shutFact = (s, dates) => advisorFacts.weekendClosedFact({
+      listing: card,
+      scope: s,
+      todayIn: dates.includes(today),
+      weekdays: dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]),
+      from: dates[0],
+      through: dates[dates.length - 1],
+      asOf: asOf || (b.now || new Date()).toISOString(),
+    });
+    if (scope === 'after_next' || (scope === 'next' && !held('next').length)) {
+      return [advisorFacts.makeRefusal({
+        id: 'refuse_weekend_past_forecast',
+        reason: `${scope === 'next' ? 'Next weekend' : 'The weekend after next'} is past the seven days the forecast covers.`,
+        whatWouldUnlock: scope === 'next' ? 'Its Friday comes into them on Saturday.' : 'Its Friday comes into them the Saturday before it.',
+      })];
+    }
+    if (scope === 'next') {
+      const next = days.filter(keep('next'));
+      if (open(next).length) return [...asNext(next), ...asNext(await street('next'))];
+      return held('next').every(shut) ? [shutFact('next', held('next'))] : next;
+    }
+    let week = days.filter(keep('this'));
+    if (open(week).length) return [...week, ...(await street('this'))];
+    if (held('this').length && held('this').every(shut)) {
+      const next = open(days.filter(keep('next')));
+      return [shutFact('this', held('this')), ...asNext(next), ...(next.length ? asNext(await street('next')) : [])];
+    }
+    // No day of this weekend to read for another reason: a card's says why
+    // through the venue's own week, as today's chip does (tonightFor).
+    if (card && typeof b.ownWeek === 'function') week = (await b.ownWeek()).filter(keep('this'));
+    return week;
   },
   // The two quietest projected evenings: an ordering of existing peak facts,
   // lowest first. Refused days cannot be ranked and are left out unless
@@ -709,6 +786,9 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
   const b = {
     ctx,
     now: opts.now,
+    // The owner's typed question, for the plan that reads which weekend it
+    // asks about (weekend_outlook); empty for a chip.
+    question: question || '',
     // The venue's own week: its corpus forecast, or the corpus refusal, which
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),

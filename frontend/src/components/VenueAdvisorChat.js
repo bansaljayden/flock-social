@@ -137,6 +137,9 @@ const SOURCE_LABELS = {
   weather: 'weather service',
   served_prediction: 'what Flock served',
   google_baseline: "your Google profile's pattern",
+  // The opening hours on the venue's Google listing: a weekend it has the
+  // venue shut (backend services/advisorFacts.js weekendClosedFact).
+  google_listing: 'your Google listing',
   arithmetic: 'arithmetic on your numbers',
   // What is typical for this kind of place: for a venue with no crowd history
   // of its own, the dashboard's Week Ahead that Roost answers from (backend
