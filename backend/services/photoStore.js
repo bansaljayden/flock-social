@@ -106,9 +106,11 @@ const PHOTO_SKU = RATES.places.skus.photos;
 // AND THE REASON THIS IS NOT IN TENSION WITH "PHOTOS ALWAYS SHOW": the ledger
 // counts photos BOUGHT, not photos SHOWN. A cache hit, in memory or from
 // places_photo_cache, never reaches this ledger, and after the change the
-// cache no longer forgets everything on deploy, so the spend scales with
-// DISTINCT VENUES PHOTOGRAPHED PER MONTH and not with users, sessions or page
-// views. 4,571 distinct venues a month is far more than this product touches.
+// cache no longer forgets everything on deploy. A hit needs the same photo
+// NAME, though, and Google mints a new name for a photo on every Places
+// answer (measured 2026-11-06, routes/venueSearch.js), so the spend scales
+// with the distinct search and details ANSWERS whose photos are looked at,
+// not with distinct venues. The daily brake above is what bounds it.
 const PHOTO_BUDGET_USD_PER_YEAR = (() => {
   const raw = Number(process.env.PHOTO_BUDGET_USD_PER_YEAR);
   // A misconfigured env var must not silently become a bigger bill or a dark

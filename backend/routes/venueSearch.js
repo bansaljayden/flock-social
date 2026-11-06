@@ -166,12 +166,19 @@ function prunePhotoIpHits(now, keepIp) {
 // database instead of out of Google.
 //
 // THE BYTES CANNOT GO STALE. A photo resource name (`places/{p}/photos/{q}`) is
-// a handle for one specific immutable photo; Google mints a new name when the
-// photo changes rather than swapping the bytes behind an old one. And what is
-// cached is the BYTES, not the short-lived signed `photoUri` the metadata call
-// returns, so an entry does not rot when that URL expires either. The TTL is
-// therefore a TERMS decision and not a freshness one, which is why it lives in
-// photoStore.js next to the clauses it was chosen against.
+// a handle for one specific photo, and Google never swaps the bytes behind it.
+// And what is cached is the BYTES, not the short-lived signed `photoUri` the
+// metadata call returns, so an entry does not rot when that URL expires
+// either. The TTL is therefore a TERMS decision and not a freshness one, which
+// is why it lives in photoStore.js next to the clauses it was chosen against.
+//
+// A NAME IS MINTED PER ANSWER, NOT PER PHOTO. Google gives the same photo a
+// new resource name on every Places answer (measured 2026-11-06: two id,photos
+// lookups of one place 3 s apart shared 0 of 10 names, for each of two
+// places). So an entry is hit only by requests for names out of one answer: a
+// search or details payload while it is cached, and the URLs stored on rows
+// (flocks, messages), which is also why those stored names expire. A later
+// answer about the same venue buys its photos again.
 const PHOTO_CACHE_TTL = PHOTO_CACHE_TTL_MS;
 // ---------------------------------------------------------------------------
 // The cap is in BYTES now, because the entry count never bounded anything.

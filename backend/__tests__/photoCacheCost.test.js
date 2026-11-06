@@ -6,9 +6,10 @@
 // numbers in it were wrong in ways no test could see:
 //
 //   * a ONE HOUR TTL on bytes that are immutable by construction. A photo
-//     resource name is a handle for one specific photo; Google mints a new name
-//     rather than swapping the bytes behind an old one. An hour meant a venue
-//     card on screen across a day was re-bought roughly 24 times.
+//     resource name is a handle for one specific photo; Google never swaps the
+//     bytes behind a name (it mints a new name on every answer instead, which
+//     routes/venueSearch.js records). An hour meant a venue card on screen
+//     across a day was re-bought roughly 24 times.
 //   * an entry cap (500) with no byte accounting, so the memory this map could
 //     hold was 500 times whatever the upstream happened to return.
 //
