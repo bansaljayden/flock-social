@@ -795,6 +795,10 @@ describe('crowd data: what BestTime says, beside the plan the code records', () 
     const cap = hubRow('Admission cap');
     expect(within(cap).getByText('100 a month')).toBeInTheDocument();
     expect(within(cap).getByText('Stated')).toBeInTheDocument();
+    // BestTime's pricing page words the allowance as different venues a month,
+    // so the row does not state the code's reading as settled.
+    expect(cap.textContent).toMatch(/says the package covers up to 100 different venues a month\. Whether that applies to this plan is not confirmed\./);
+    expect(cap.textContent).not.toMatch(/do not count against it/);
     expect(within(hubRow('Admissions left')).getByText('Not reported')).toBeInTheDocument();
     expect(hubRow('Admissions left').textContent).toMatch(/Nothing is subtracted from a count nobody read\./);
     const cycle = hubRow('Cycle ends');

@@ -2449,7 +2449,7 @@ function HubCrowdData({ h, colors }) {
             label="Admission cap"
             tag={HUB_STATED_TAG}
             value={`${hubCount(plan.newVenuesPerMonth)} a month`}
-            note="New venues the plan admits each calendar month, as the code records it. Live and by-id calls on venues already admitted do not count against it."
+            note={`New venues the plan admits each calendar month, as the code records it, with live and by-id calls on venues already admitted not counted. BestTime's pricing page, read November 6, 2026, says the package covers up to ${hubCount(plan.newVenuesPerMonth)} different venues a month. Whether that applies to this plan is not confirmed.`}
           />
           <HubRow
             navy={navy}
