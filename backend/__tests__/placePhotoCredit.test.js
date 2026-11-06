@@ -227,3 +227,23 @@ test('details send one credit per photo, aligned with photos, null where Google 
   assert.strictEqual(venue.photo_url, venue.photos[0]);
   assert.deepStrictEqual(venue.photo_attribution, venue.photo_attributions[0]);
 });
+
+// --- the public demo's covered card --------------------------------------------
+
+test('a covered demo card keeps the credit for the photo it still shows', () => {
+  // With PAYWALL_ENABLED on, a card past the free reveals is covered: the
+  // reading goes and the facts about the place stay, photo included. The
+  // credit is the photo's, so it stays with it (website/LiveDemo.js draws
+  // the two together).
+  const { coverDemoCard } = require('../routes/publicCrowd').__testables;
+  const credit = { name: 'Dana Reyes', uri: 'https://maps.google.com/maps/contrib/111', maps_uri: 'https://www.google.com/maps/place//data=A' };
+  const photoUrl = '/api/venues/photo?ref=places%2FPLACE_C%2Fphotos%2FREF_A&maxwidth=400';
+  const covered = coverDemoCard({
+    place_id: 'PLACE_C', name: 'The Copper Finch', photo_url: photoUrl, photo_attribution: credit,
+    address: '214 Main St', rating: 4.6, score: 72, label: 'Busy',
+  });
+  assert.strictEqual(covered.photo_url, photoUrl);
+  assert.deepStrictEqual(covered.photo_attribution, credit);
+  assert.strictEqual(covered.score, null, 'the reading is still covered');
+  assert.strictEqual(covered.label, null);
+});

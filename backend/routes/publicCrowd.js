@@ -657,9 +657,12 @@ function mayShowCrowd(req, placeId) {
 // What a covered card or pin keeps: facts about the place, never a reading. An
 // allowlist for the reason routes/crowd.js LOCKED_CARD_KEEP gives: a field
 // added to the card later stays off a covered response by default instead of
-// shipping by default.
+// shipping by default. A covered card still shows its photo, so it keeps the
+// credit that goes with it: the photo without photo_attribution is a Places
+// photo drawn with nobody's name on it (website/LiveDemo.js draws the two
+// together).
 const DEMO_CARD_KEEP = Object.freeze([
-  'place_id', 'name', 'photo_url', 'address', 'rating', 'reviews', 'price_level', 'is_open', 'as_of', 'age_ms',
+  'place_id', 'name', 'photo_url', 'photo_attribution', 'address', 'rating', 'reviews', 'price_level', 'is_open', 'as_of', 'age_ms',
 ]);
 const DEMO_PIN_KEEP = Object.freeze([
   'place_id', 'name', 'address', 'rating', 'price_level', 'lat', 'lng', 'is_open', 'photo_url',
