@@ -13207,7 +13207,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           return {
             ...f,
             memberCount: (f.memberCount || 0) + 1,
-            members: alreadyMember ? f.members : [...(f.members || []), { id: data.userId, name: data.userName, image: data.userImage || null, status: 'accepted' }],
+            // The plan screen's loader keeps an invited member's row, so the
+            // joiner can be here already, as 'invited'. Left that way, their
+            // face stayed off the Going row, and the count with it, until the
+            // next read.
+            members: alreadyMember
+              ? f.members.map(m => (m.id === data.userId ? { ...m, status: 'accepted' } : m))
+              : [...(f.members || []), { id: data.userId, name: data.userName, image: data.userImage || null, status: 'accepted' }],
             // The card draws memberPreviews when it has them (lifecycle audit,
             // 2026-09-05): a joiner's face appears, a leaver's goes.
             memberPreviews: Array.isArray(f.memberPreviews) && !f.memberPreviews.some(m => m.id === data.userId)

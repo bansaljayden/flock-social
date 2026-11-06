@@ -81,6 +81,43 @@ describe('the count', () => {
   });
 });
 
+// The accept event, lifted from App.js and run against a plan as the plan
+// screen's loader leaves it: Priya's row is already there, as 'invited'.
+describe('a member who accepts live, on the plan screen', () => {
+  const start = app.indexOf('    const unsubResponse = onFlockInviteResponded((data) => {');
+  const end = app.indexOf('    return () => { unsubInvite(); unsubResponse(); };', start);
+  const src = app.slice(start, end);
+
+  const accept = (flocks, data) => {
+    let state = flocks;
+    let handler = null;
+    const setFlocks = (next) => { state = typeof next === 'function' ? next(state) : next; };
+    // eslint-disable-next-line no-new-func
+    new Function('onFlockInviteResponded', 'setFlocks', `${src}\nreturn unsubResponse;`)(
+      (fn) => { handler = fn; return () => {}; }, setFlocks,
+    );
+    handler(data);
+    return state;
+  };
+
+  test('turns their invited row accepted, so their face and the count come up', () => {
+    const plan = { id: 41, ...detailShape(), memberCount: 3 };
+    const [after] = accept([plan], { flockId: 41, userId: 13, userName: 'Priya Shah', action: 'accepted' });
+    expect(after.members.find((m) => m.id === 13).status).toBe('accepted');
+    expect(after.members.filter((m) => m.status === 'accepted')).toHaveLength(4);
+    expect(after.members).toHaveLength(5);
+    expect(askedCount(after)).toBe(5);
+    expect(after.memberCount).toBe(4);
+  });
+
+  test('appends them where the chat\'s loader left the accepted only', () => {
+    const plan = { id: 41, ...refreshShape(), memberCount: 3 };
+    const [after] = accept([plan], { flockId: 41, userId: 13, userName: 'Priya Shah', action: 'accepted' });
+    expect(after.members.map((m) => m.id)).toEqual([9, 11, 12, 13]);
+    expect(askedCount(after)).toBe(5);
+  });
+});
+
 describe('App.js keeps askedIds', () => {
   test('both roster loaders store it from the server\'s members and the block list', () => {
     expect(app).toMatch(/import \{ askedMemberIds \} from '\.\/lib\/planAsked';/);
