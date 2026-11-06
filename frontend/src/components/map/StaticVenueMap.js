@@ -1,6 +1,8 @@
-// A still map of the block a venue is on, under a plan's address or in place
-// of a missing venue photo. lib/staticMapUrl.js builds the URL and explains the
-// rules it keeps (venues only, no proxy, the device cache and nothing else).
+// A still map of the block a venue is on. It heads a plan's venue card, with a
+// venue photo or without one, and it takes the photo's place in the venue
+// sheet when there is no photo. lib/staticMapUrl.js builds the URL and
+// explains the rules it keeps (venues only, no proxy, the device cache and
+// nothing else).
 //
 // WHAT THIS ADDS TO THE URL:
 //
@@ -60,7 +62,9 @@ export default function StaticVenueMap({
   onOpen,
   fallback = null,
   creditCorner = 'bottomright',
-  style,
+  // For a caller's own rules, such as a keyboard ring drawn to suit where the
+  // map sits (the plan card's .plan-venue-map in index.css).
+  className,
 }) {
   // The URL that failed, not a flag: a venue or theme change is a new URL and
   // deserves its own try.
@@ -78,7 +82,6 @@ export default function StaticVenueMap({
     height: `${height || bucket.height}px`,
     overflow: 'hidden',
     backgroundColor: GROUND[theme],
-    ...style,
   };
 
   const content = (
@@ -125,6 +128,7 @@ export default function StaticVenueMap({
     return (
       <button
         type="button"
+        className={className}
         data-static-map={size}
         aria-label={`Map of ${place}. Open it in a maps app`}
         onClick={onOpen}
@@ -134,5 +138,5 @@ export default function StaticVenueMap({
       </button>
     );
   }
-  return <div data-static-map={size} style={box}>{content}</div>;
+  return <div className={className} data-static-map={size} style={box}>{content}</div>;
 }

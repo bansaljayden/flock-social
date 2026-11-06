@@ -471,6 +471,18 @@ body::after {
   box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
+/* The map that heads the same card is flush with the card's top and sides,
+   and the card has overflow: hidden, so the :focus-visible ring, drawn 2px
+   outside it, was cut on three sides and showed only as a line under the map. It
+   draws the ring 3px inside the map instead, on the map's own pale or dark
+   ground. The corners match the card's inner curve (its 18px radius less its
+   1px border, App.js styles.card) so the ring is not cut at the top corners
+   either. */
+.plan-venue-map:focus-visible {
+  outline-offset: -3px;
+  border-radius: 17px 17px 0 0;
+}
+
 /* The plan screen's header is navy in both themes, and in light mode the
    steel ring above measures 1.9:1 on it, under the 3:1 WCAG 1.4.11 asks
    for. Its two controls (the back arrow and the host's time pill) draw the

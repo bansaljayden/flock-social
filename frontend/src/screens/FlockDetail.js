@@ -477,10 +477,12 @@ export default function FlockDetail({
               photo or not, and a tap on it opens the same maps chooser as
               Directions. StaticVenueMap draws nothing without a key or
               coordinates, or when the image fails, and the card then opens
-              on the name. */}
+              on the name. The map is flush with the card's top and sides,
+              and the card clips, so its keyboard ring is drawn inside it
+              (.plan-venue-map in index.css). */}
           {hasVenue ? (
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
-              <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
+              <StaticVenueMap className="plan-venue-map" lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
               <div style={{ padding: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
                   {/* The photo is a thumbnail under Google's rule

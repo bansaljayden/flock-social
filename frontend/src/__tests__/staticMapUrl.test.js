@@ -21,8 +21,12 @@
 //   what the API requires of a custom marker.
 //
 //   THE SCREENS USE IT WHERE THE PLAN SAYS: the plan card always when it has
-//   coordinates (under the address with a photo, in its place without), and
-//   the venue sheet only when there is no photo.
+//   coordinates, heading the card with a venue photo or without one (the
+//   photo is a 72px thumbnail beside the name since 2026-11-06), and the
+//   venue sheet only when there is no photo.
+//
+//   ITS KEYBOARD RING CAN BE SEEN. The plan card clips, and the map is flush
+//   with its top and sides, so the map draws its ring inside itself.
 //
 // HOW TO RUN
 //   cd frontend && CI=true npx react-scripts test staticMapUrl --watchAll=false
@@ -230,6 +234,18 @@ describe('StaticVenueMap', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  test("a caller's className reaches the map, as a button or not, and nothing else of the caller's styles it", () => {
+    const asButton = render(<StaticVenueMap {...AT} name="Lucky's" onOpen={() => {}} className="plan-venue-map" />);
+    expect(asButton.container.querySelector('[data-static-map]').className).toBe('plan-venue-map');
+    asButton.unmount();
+    const still = render(<StaticVenueMap {...AT} name="Lucky's" className="plan-venue-map" />);
+    expect(still.container.querySelector('[data-static-map]').className).toBe('plan-venue-map');
+    still.unmount();
+    // The style prop went with the second plan map, its last caller
+    // (2026-11-06); a caller's look goes through its class.
+    expect(readSrc('components', 'map', 'StaticVenueMap.js')).not.toMatch(/\.\.\.style\b/);
+  });
+
   test('no key or no coordinates draws the fallback, and so does an image that fails', () => {
     const fallback = <p>plain box</p>;
     delete process.env.REACT_APP_MAPTILER_KEY;
@@ -349,6 +365,36 @@ describe("a plan's venue card", () => {
     expect(maps[0].compareDocumentPosition(photo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // eslint-disable-next-line no-bitwise
     expect(maps[0].compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test("the map draws its keyboard ring inside itself, along the card's curve, where the card cannot clip it", () => {
+    for (const venuePhoto of [undefined, 'https://api.test/photo?ref=1']) {
+      const { container, unmount } = render(React.createElement(FlockDetail, props(plan({ venuePhoto }))));
+      const map = container.querySelector('[data-static-map]');
+      const card = map.parentElement;
+      // Flush with the card's top and sides, in a card that clips: the global
+      // ring, 2px outside, would show only along the map's bottom edge.
+      expect(card.firstElementChild).toBe(map);
+      expect(card.style.overflow).toBe('hidden');
+      expect(card.style.padding).toBe('0px');
+      expect(map.classList.contains('plan-venue-map')).toBe(true);
+      unmount();
+    }
+    // jsdom has no :focus-visible, so the rule itself is pinned: the ring 3px
+    // inside, and top corners on the card's inner curve (its radius less its
+    // 1px border) so the corners of the ring are not cut either.
+    const css = readSrc('index.css');
+    const rule = css.match(/\.plan-venue-map:focus-visible\s*\{([^}]*)\}/);
+    expect(rule).not.toBeNull();
+    expect(rule[1]).toMatch(/outline-offset:\s*-3px;/);
+    const radius = rule[1].match(/border-radius:\s*(\d+)px (\d+)px 0 0;/);
+    expect(radius).not.toBeNull();
+    const app = readSrc('App.js');
+    const cardRadius = app.match(/\n {2}card: \{\n[^}]*?borderRadius: '(\d+)px'/);
+    expect(cardRadius).not.toBeNull();
+    expect((css.match(/--card-border: 1px solid /g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(Number(radius[1])).toBe(Number(cardRadius[1]) - 1);
+    expect(Number(radius[2])).toBe(Number(cardRadius[1]) - 1);
   });
 
   test('the map follows the theme in the palette the screen is handed', () => {
