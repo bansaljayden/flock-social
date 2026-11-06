@@ -1,6 +1,6 @@
 // @capacitor-community/apple-sign-in@7.x declares capacitor-swift-pm
 // `from: "7.0.0"` (which SwiftPM reads as >=7 <8), while this app pins
-// exact 8.4.0 — an unresolvable graph that makes `xcodebuild` fail before
+// exact 8.4.3 — an unresolvable graph that makes `xcodebuild` fail before
 // it can even show build settings (Codemagic step 7, exit 74). No plugin
 // release targets Capacitor 8 yet; its source is API-compatible, so we
 // relax the requirement after every npm install (runs on CI too via
