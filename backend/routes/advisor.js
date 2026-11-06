@@ -359,6 +359,60 @@ async function namedShut(b, dates) {
   });
 }
 
+// THE SMALL HOURS, midnight to 5 AM on the venue's own clock: off the card
+// for a venue answered from it (its today's `smallHours`), off its own clock
+// otherwise (advisorFacts.venueToday). False when neither can be read.
+const SMALL_HOURS_END = 5;
+async function inSmallHours(b) {
+  if (gatedVenue(b) && typeof b.card === 'function') return (await b.card()).smallHours === true;
+  const t = b.ctx ? advisorFacts.venueToday(b.ctx, { now: b.now }) : null;
+  return Boolean(t) && Number.isInteger(t.hour) && t.hour < SMALL_HOURS_END;
+}
+
+// A DAY ASKED THAT THE VENUE IS SHUT ON IS SAID TO BE, AND THE NEXT OPEN DAY
+// GIVEN (recheck, 2026-11-06). At 12:30 AM on a Saturday, "How busy will
+// tomorrow be?" of a bar shut on Sundays and Mondays was answered with the
+// week's ranking, leaving out both today and Sunday and saying nothing of the
+// closure, where main had said today's peak; "How busy will Sunday be?" on
+// the peaks' route was the same ranking. The shut day is said plainly, with
+// the shut days straight after it ("Your Google listing has you closed on
+// Sunday and Monday."), then the next day the venue opens. In the small
+// hours "tomorrow" may mean the coming daytime, the calendar's today, as
+// "the day after tomorrow" may mean the calendar's tomorrow: when the day
+// read is shut and that one is open, it is the day given after the shut line,
+// the day main answered. Entries for the plan to answer with, or null when
+// the day is not shut.
+async function shutDayAnswer(b, target) {
+  if (!target || !target.date) return null;
+  const { days, closed } = await daysFromToday(b);
+  const shutOn = (d) => closed.includes(d) || days.some((e) => entryDate(e) === d && advisorFacts.isShutDay(e));
+  if (!shutOn(target.date)) return null;
+  const openOn = (d) => (closed.includes(d) ? null
+    : days.find((e) => entryDate(e) === d && isDayEntry(e) && !advisorFacts.isRefusal(e)) || null);
+  const w = target.word || {};
+  let open = null;
+  const run = [target.date];
+  if (TODAY_WORDS_AHEAD[w.kind] > 0) {
+    const calendar = await todayOf(b);
+    if (calendar && daysBetween(calendar, target.date) >= 1 && await inSmallHours(b)) {
+      // The coming daytime: given when open, said with the shut line when not.
+      const daytime = addDaysTo(target.date, -1);
+      open = openOn(daytime);
+      if (!open && shutOn(daytime)) run.unshift(daytime);
+    }
+  }
+  if (!open) {
+    const last = days.map(entryDate).filter(Boolean).sort().pop();
+    for (let d = addDaysTo(target.date, 1); last && d <= last; d = addDaysTo(d, 1)) {
+      open = openOn(d);
+      if (open || !shutOn(d)) break;
+      run.push(d);
+    }
+  }
+  const shut = await namedShut(b, run);
+  return shut ? [shut, ...(open ? [open] : [])] : null;
+}
+
 // One plan per chip: which builder outputs, filtered how. Filtering and
 // ordering existing facts is composition; no plan computes a number the fact
 // engine did not already construct. Builders are memoised per request because
@@ -872,6 +926,9 @@ const isDayEntry = (e) => Boolean(e && e.value && typeof e.value.weekday === 'st
 // a Monday, "the Friday after next".
 const DAY_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
 const TODAY_WORD_INTENTS = new Set(['peak_hours', 'quiet_nights', 'tonight_outlook']);
+// The routes on which a day asked that the venue is shut on is said to be,
+// with the next day it opens (shutDayAnswer).
+const SHUT_DAY_INTENTS = TODAY_WORD_INTENTS;
 // The words of a question about a day's crowd, which an advice question
 // needs before "today" or "tonight" in it sets the day (the advice path).
 const CROWD_ASKED = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|quietest|dead|packed|full|empty|fill|filling|crowds?|crowded|covers?|guests?|people|customers?|traffic|turnout|rush|staff|staffed|staffing|expect|expecting|looks?|looking|peaks?|demand|walk[\s-]?ins?)\b/i;
@@ -976,7 +1033,12 @@ async function targetsFor(b, question, intentId) {
       }
       if (inside) placedIn = placedIn || inside;
       const ahead = daysBetween(today, date);
-      out.push(ahead <= 6 ? { kind: 'day', date, weekday: w.weekday, word: w } : { kind: 'past', date, ahead, weekday: w.weekday, word: w, ofWeekend: Boolean(inside) });
+      // `weekendWord`: the question set the day in a weekend ("Sunday Funday
+      // is this weekend", "this weekend, especially Sunday"), so it asks about
+      // that weekend as well (forQuestion).
+      out.push(ahead <= 6
+        ? { kind: 'day', date, weekday: w.weekday, word: w, ...(inside ? { weekendWord: true } : {}) }
+        : { kind: 'past', date, ahead, weekday: w.weekday, word: w, ofWeekend: Boolean(inside) });
     } else if (w.kind === 'weekend') {
       out.push({ kind: 'weekend', scope: scopeOf(w), raw: raw(w), word: w });
     } else {
@@ -1202,6 +1264,18 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
     const holds = entries.some((e) => !advisorFacts.isRefusal(e) && entryDate(e) === target.date);
     if (today && !holds && !entries.some((e) => e.id === advisorFacts.WEEKEND_CLOSED_ID)) {
       const shut = await namedShut(b, [target.date]);
+      // A WEEKEND QUESTION THAT NAMES ONE DAY THE VENUE IS SHUT ON (recheck,
+      // 2026-11-06). "Sunday Funday is this weekend, how busy will it be?"
+      // and "How busy is this weekend, especially Sunday?" were answered with
+      // the shut line alone, and the weekend's open days were lost. Asked
+      // with the weekend, the answer is that weekend: every day of it the
+      // venue is shut on said in one line ("closed on Saturday and Sunday"),
+      // then its open days, as two days named are answered (bothAnswer). A
+      // day asked on its own ("how busy will sunday be") is its shut line.
+      if (shut && target.weekendWord) {
+        const reach = weekendDates(today, 'this').filter((d) => d <= addDaysTo(today, 6));
+        return { entries: [(await namedShut(b, reach)) || shut, ...entries], askedFor };
+      }
       if (shut) return { entries: [shut], askedFor };
     }
   }
@@ -1210,6 +1284,15 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
     if (NAMED_TODAY_INTENTS.has(intentId) && target.date === todayDate) {
       const shut = await shutToday(b, await b.week());
       if (shut) return { entries: [shut], askedFor };
+    }
+    // A day other than the route's own today that the venue is shut on is
+    // said to be, with the next day it opens (shutDayAnswer), and said with
+    // the peaks template on today's route, which would call its first line
+    // today.
+    const own = intentId === 'tonight_outlook' ? await tonightOf(b) : todayDate;
+    if (SHUT_DAY_INTENTS.has(intentId) && target.date !== todayDate && target.date !== own) {
+      const said = await shutDayAnswer(b, target);
+      if (said) return { entries: said, askedFor, ...(intentId === 'tonight_outlook' ? { intent: 'peak_hours' } : {}) };
     }
     const holds = (list) => list.some((e) => entryDate(e) === target.date && !advisorFacts.isRefusal(e));
     let away = false;

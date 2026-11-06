@@ -2240,6 +2240,13 @@ async function buildIntelligence(placeId, userId, clockKey) {
   if (fit.listed && advisorFacts.nightTailHours(fit.listed, localDay).includes(localHour)) {
     today = { ...today, nightInProgress: true };
   }
+  // THE SMALL HOURS, midnight to 5 AM on the venue's clock (recheck,
+  // 2026-11-06). Roost reads this so "tomorrow" asked then may be the coming
+  // daytime, when the calendar's tomorrow is a day the venue is shut on
+  // (routes/advisor.js shutDayAnswer). The tile does not read it. A half-hour
+  // offset can hold it up to thirty minutes past 5 AM, the life of this
+  // hour's entry (THE CLOCK IN THE KEY above cacheClock).
+  if (localHour < 5) today = { ...today, smallHours: true };
   // The words the card and the Biggest tile use: 'evening' when every day
   // ahead is read on evening hours, 'day' when any is not.
   const scanned = scans.filter((s) => s.length);

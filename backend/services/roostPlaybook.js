@@ -906,7 +906,13 @@ function groundedLead(intentId, facts, question = '', askedFor = undefined) {
     const night = day.value.afterMidnight === true ? ' night' : '';
     return { text: open(`${named}${night} projects busiest${when}, at ${Number(day.value.peakScore)} on our 0 to 100 index.`), fact: day };
   }
-  if (!days.length) return null;
+  // The busiest or quietest day this week is a claim about a week: one day
+  // is none (recheck, 2026-11-06). A day asked that the venue is shut on is
+  // answered with its shut line and the next day it opens
+  // (routes/advisor.js shutDayAnswer), and "how many croissants for
+  // tomorrow" on a Sunday, Monday shut, opened "Tuesday projects as the
+  // busiest day this week".
+  if (days.length < 2) return null;
   if (intentId === 'money_move') {
     // A level week has no quiet day to name (the plan's note says so).
     if (days.some((f) => /projects level/.test(String(f.note || '')))) return null;

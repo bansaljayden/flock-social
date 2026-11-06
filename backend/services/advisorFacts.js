@@ -612,15 +612,18 @@ function venueBaseDate(utcOffsetMinutes, now) {
 
 /**
  * The venue's own today as its week ahead dates it (buildWeekAhead's first
- * day): { date, weekday }, or null for a venue with no corpus row to read its
- * clock from. A field read and arithmetic, no forecast: the route reads a
- * question's day against it (routes/advisor.js readingFor).
+ * day): { date, weekday, hour }, or null for a venue with no corpus row to
+ * read its clock from. A field read and arithmetic, no forecast: the route
+ * reads a question's day against it (routes/advisor.js readingFor).
  */
 function venueToday(ctx, { now = new Date() } = {}) {
   const venue = ctx && ctx.mlVenue ? venueForScoring(ctx, now) : null;
   if (!venue) return null;
   const base = venueBaseDate(venue.utcOffsetMinutes, now);
-  return { date: base.toISOString().slice(0, 10), weekday: WEEKDAY_NAMES[base.getDay()] };
+  // The hour on the venue's clock too, for the small hours (routes/advisor.js
+  // inSmallHours), on the same fallback venueBaseDate reads.
+  const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+  return { date: base.toISOString().slice(0, 10), weekday: WEEKDAY_NAMES[base.getDay()], hour: clock ? clock.hour : now.getHours() };
 }
 
 const intakeAsOf = (profile) =>
@@ -1212,12 +1215,13 @@ function cardClosedDates(intel) {
  * own today on the card (null with no card), which "this weekend" is counted
  * from; `closed` the dates its listed hours have the venue shut;
  * `nightInProgress` when its listing has last night still running at the hour
- * the card was built (venueDashboard, today.nightInProgress); `asOf` when the
- * card was built.
+ * the card was built (venueDashboard, today.nightInProgress); `smallHours`
+ * when that hour was midnight to 5 AM on the venue's clock (today.smallHours);
+ * `asOf` when the card was built.
  */
 async function buildCardProjection(ctx, { userId } = {}) {
   const card = await readCard(ctx, userId);
-  if (!card) return { week: [], today: [], date: null, closed: [], nightInProgress: false, asOf: null };
+  if (!card) return { week: [], today: [], date: null, closed: [], nightInProgress: false, smallHours: false, asOf: null };
   const readable = readableCard(card.intel);
   return {
     week: projectionFacts(card.intel, { hourOf: card.hourOf }),
@@ -1225,6 +1229,7 @@ async function buildCardProjection(ctx, { userId } = {}) {
     date: cardTodayDate(card.intel),
     closed: readable ? cardClosedDates(card.intel) : [],
     nightInProgress: Boolean(readable && card.intel.today && card.intel.today.nightInProgress === true),
+    smallHours: Boolean(card.intel.today && card.intel.today.smallHours === true),
     asOf: readable ? card.intel.generatedAt : null,
   };
 }
