@@ -93,6 +93,7 @@ const DETAILS = `${V1}places/`;
 const CDN = 'https://cdn.example/';
 const calls = [];
 const expired = new Set(); // names the /media leg answers 400 INVALID_ARGUMENT
+const failing = new Set(); // names the /media leg answers 503, a Google fault
 const places = new Map(); // placeId -> Places (New) payload
 let holdDetails = null;
 
@@ -111,6 +112,7 @@ global.fetch = async (url, opts = {}) => {
     const name = u.slice(V1.length, u.indexOf('/media?'));
     calls.push({ kind: 'media', name });
     if (expired.has(name)) return { ok: false, status: 400, text: async () => INVALID_NAME };
+    if (failing.has(name)) return { ok: false, status: 503, text: async () => 'unavailable' };
     return { ok: true, status: 200, json: async () => ({ photoUri: CDN + encodeURIComponent(name) }) };
   }
   if (u.startsWith(DETAILS)) {
@@ -216,6 +218,7 @@ test.beforeEach(() => {
   db.members.clear();
   calls.length = 0;
   expired.clear();
+  failing.clear();
   places.clear();
   holdDetails = null;
   unknown.length = 0;
@@ -381,6 +384,24 @@ test('a stored name Google no longer lists, of a place the heal holds with no ph
   planWithPhoto(proxyUrl(EXPIRED));
   assert.deepEqual((await askCredit()).body, NOTHING);
   assert.equal((await photo(proxyUrl(EXPIRED))).status, 404);
+});
+
+test('a remembered photo the heal still owes a purchase of is a place with nothing to show: the bird, and the map, for nothing', async () => {
+  placeWithPhotos(P, [PHOTO_FIRST, PHOTO_SECOND]);
+  expired.add(EXPIRED);
+  failing.add(FIRST);
+  planWithPhoto(proxyUrl(EXPIRED));
+  // The tile heals to FIRST, Google faults on FIRST's purchase, and the place
+  // is held with FIRST's keys and no bytes (086535f5).
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404);
+  assert.ok(vs.healedPlaces.get(P).keys, 'the heal keeps the photo it owes a purchase of');
+  const asked = calls.length;
+  const spent = placesBudgetStatus().globalUsed;
+
+  assert.deepEqual((await askCredit()).body, NOTHING);
+  assert.equal(calls.length, asked, 'nothing asked of Google');
+  assert.equal(placesBudgetStatus().globalUsed, spent, 'and nothing charged');
+  assert.equal((await photo(proxyUrl(EXPIRED))).status, 404, 'the tile still shows the bird');
 });
 
 test('a warm venue card makes the lookup free: the heal picks again, and so does the credit', async () => {

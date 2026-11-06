@@ -2074,13 +2074,14 @@ module.exports.warmPhoto = (photoRef, maxWidth, req) =>
 // draws, and for a name Google has expired the proxy shows what healDeadPhoto
 // decides for the place, from its memory of the day (healedPlaces). So the
 // credit follows that memory, which it reads and never adds to or changes:
-//   - the heal remembers a photo for the place: the credit is that photo's,
-//     found in the current list by its cache-key hash, or nothing when Google
-//     no longer lists it;
-//   - the heal holds the place with no photo (the photo it healed to read dead
-//     too, or the place had none) and would not look it up again today: the
-//     tile shows the bird, and the plan draws its map; when the stored name is
-//     already known dead, nothing is spent learning that;
+//   - the heal remembers a photo for the place and holds its bytes where they
+//     cost nothing: the credit is that photo's, found in the current list by
+//     its cache-key hash, or nothing when Google no longer lists it;
+//   - the heal holds the place with no photo to show (the photo it healed to
+//     read dead too, its purchase is held off by a refusal or a fault, or the
+//     place had none) and would not look it up again yet: the tile shows the
+//     bird, and the plan draws its map; when the stored name is already known
+//     dead, nothing is spent learning that;
 //   - otherwise the heal would pick firstCurrentPhoto, and so does the credit.
 // The stored photo itself comes first in every case while Google still lists
 // it and has not refused it, because the proxy serves a live name as it is.
@@ -2190,19 +2191,29 @@ async function currentPhotoCredit(storedUrl, placeId, req) {
     // answers nothing, and no Google call is made about either place.
     if (!storedRef || !isPlaceIdShaped(placeId) || placeIdOfPhotoRef(storedRef) !== placeId) return NOTHING_TO_DRAW;
     const hold = healHoldFor(placeId, storedRef);
+    // The heal serves a remembered photo only from a tier that costs nothing,
+    // and heldHealedPhoto is the heal's own read of them. A remembered photo
+    // whose purchase is still owed (a refusal of ours or a Google fault holds
+    // the place with its keys and no bytes) is a place held with nothing to
+    // show, and the proxy draws the bird for it. The read may copy the photo
+    // from Postgres into memory, as the tile's own request would; it asks
+    // Google nothing and charges nothing.
+    const serves = hold.keys ? !!(await heldHealedPhoto(hold.keys, HEAL_WIDTH)) : false;
+    const shown = { held: hold.held, keys: serves ? hold.keys : null };
     // NO `await` FROM THE QUESTION TO THE CALL (photosLookupWillCost is only
     // true for this tick). Free answers skip both gates.
     const looksAgain = !photosLookupWillCost(placeId);
     if (!looksAgain) {
       // A stored name Google has refused, of a place the heal holds with no
-      // photo and would not look up again today: the proxy draws the bird for
-      // it, so the plan draws its map, and nothing is spent learning that.
-      if (hold.held && !hold.keys && isDeadPhotoRef(storedRef)) return NOTHING_TO_DRAW;
+      // photo to show and would not look up again yet: the proxy draws the
+      // bird for it, so the plan draws its map, and nothing is spent learning
+      // that.
+      if (shown.held && !shown.keys && isDeadPhotoRef(storedRef)) return NOTHING_TO_DRAW;
       if (!allowPhotoFetch(req) || !allowGlobalPlacesCall(1, { photo: true })) return NOTHING_TO_DRAW;
     }
     const out = await fetchPlacePhotos(placeId);
     if (!out.ok) return NOTHING_TO_DRAW;
-    const photo = currentPhotoFor(out.photos, storedRef, { ...hold, looksAgain });
+    const photo = currentPhotoFor(out.photos, storedRef, { ...shown, looksAgain });
     const credit = photo ? photoCredit(photo) : null;
     // Drawn with its credit or not drawn at all.
     if (!credit) return NOTHING_TO_DRAW;
