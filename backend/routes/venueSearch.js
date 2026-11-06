@@ -446,10 +446,15 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 // A HOLD HOLDS WHEN THE NAMES ARE FREE TOO. A place's current photo names can
 // come at no cost (a venue card's payload cached in the last ten minutes, or a
 // details call in flight), and then no lookup is charged for the hold to stop.
-// So the hold is checked again right before buying: a place held for the very
-// photo the pick chose is not bought again until the hold ends. A different
-// photo, such as the next one after a forget, still goes ahead, and bytes some
-// other request has bought meanwhile are served whatever the hold says.
+// So the hold is checked again right before buying, and while it names a
+// photo, no photo of the place is bought until it ends. It holds the place and
+// not that one photo because Google names the same photo anew in every answer
+// (see "A NAME IS MINTED PER ANSWER" above): matched by hash, a card reopened
+// every ten minutes brought a name the hold had never seen each time, and a
+// day-long 503 was a purchase every ten minutes, its fault streak climbing to
+// a day's hold within the hour. After a forget (keys back to null) the next
+// photo still goes ahead, and bytes some other request has bought meanwhile
+// are served whatever the hold says.
 //
 // NO HEAL EVER WAITS ON A FLIGHT THAT IS HEALING (healingKeys). A heal runs
 // inside the flight of the name it heals, and the photo it remembers or picks
@@ -1217,8 +1222,9 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
     const keys = { 160: photoCacheKey(current, 160), 400: photoCacheKey(current, 400) };
     const mem = readPhotoMemory(keys[maxWidth]) || readPhotoMemory(keys[HEAL_WIDTH]);
     // The hold, checked again now that only buying is left: names that came
-    // free never license buying the photo a hold is about before it ends.
-    if (!mem && healed && healed.keys && healed.keys[HEAL_WIDTH] === keys[HEAL_WIDTH]) return PHOTO_GONE;
+    // free never license a purchase before it ends. It holds the place, not
+    // the photo its hashes name, because a free answer names that photo anew.
+    if (!mem && healed && healed.keys) return PHOTO_GONE;
     // Bytes some other request bought end the place's fault streak.
     rememberHealedPlace(placeId, keys, HEALED_PLACE_TTL_MS, mem ? 0 : faultStreak(placeId));
     if (mem) return healedAnswer(mem);

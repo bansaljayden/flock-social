@@ -100,7 +100,11 @@ const calls = []; // everything that reached "Google", in order
 const expired = new Set(); // names the /media leg answers 400 INVALID_ARGUMENT
 const failing = new Set(); // names the /media leg answers 503
 const noImage = new Set(); // names the /media leg answers with no photoUri
-const places = new Map(); // placeId -> { status, body } | { throws }
+// The same two answers for a renamed place's photo k, whatever name it carries.
+const failingPhotos = new Set();
+const noImagePhotos = new Set();
+const places = new Map(); // placeId -> { status, body } | { throws } | { renamed }
+let answers = 0; // details answers for renamed places so far
 let holdDetails = null; // a promise every details answer waits on
 const holdMedia = new Map(); // 'name' or 'name|width' -> a promise that /media answer waits on
 
@@ -126,8 +130,8 @@ global.fetch = async (url, opts = {}) => {
     const hold = holdMedia.get(`${name}|${width}`) || holdMedia.get(name);
     if (hold) await hold;
     if (expired.has(name)) return { ok: false, status: 400, text: async () => INVALID_NAME };
-    if (failing.has(name)) return { ok: false, status: 503, text: async () => 'unavailable' };
-    if (noImage.has(name)) return { ok: true, status: 200, json: async () => ({}) };
+    if (failing.has(name) || failingPhotos.has(photoOf(name))) return { ok: false, status: 503, text: async () => 'unavailable' };
+    if (noImage.has(name) || noImagePhotos.has(photoOf(name))) return { ok: true, status: 200, json: async () => ({}) };
     return { ok: true, status: 200, json: async () => ({ photoUri: CDN + encodeURIComponent(name) }) };
   }
   if (u.startsWith(DETAILS)) {
@@ -136,6 +140,13 @@ global.fetch = async (url, opts = {}) => {
     if (holdDetails) await holdDetails;
     const answer = places.get(placeId) || NOT_FOUND;
     if (answer.throws) throw new Error(answer.throws);
+    if (answer.renamed) {
+      answers += 1;
+      const photos = Array.from({ length: answer.renamed }, (_, k) => ({
+        name: `places/${placeId}/photos/AU_answer${answers}_photo${k}`, widthPx: 1200, heightPx: 800,
+      }));
+      return { ok: true, status: 200, json: async () => ({ id: placeId, photos }) };
+    }
     return { ok: answer.status >= 200 && answer.status < 300, status: answer.status, json: async () => answer.body };
   }
   if (u.startsWith(CDN)) {
@@ -160,6 +171,22 @@ function placeWithPhotos(placeId, names) {
     status: 200,
     body: { id: placeId, photos: names.map((name) => ({ name, widthPx: 1200, heightPx: 800 })) },
   });
+}
+
+// A place whose `count` photos Google lists in the same order on every answer
+// but under NEW names each time, as it does: on 2026-11-06 two lookups of one
+// place 3 s apart shared none of ten names. Photo k of answer n is
+// `places/{placeId}/photos/AU_answer{n}_photo{k}`. placeWithPhotos above hands
+// back the same names on every answer, which is how the hold and skip tests
+// first passed with a pick keyed by name.
+function placeWithRenamedPhotos(placeId, count) {
+  places.set(placeId, { renamed: count });
+}
+
+// Which photo of its place a renamed name is, or null for any other name.
+function photoOf(name) {
+  const m = /\/photos\/AU_answer\d+_photo(\d+)$/.exec(String(name));
+  return m ? Number(m[1]) : null;
 }
 
 // --- the real route and the real ledger ---------------------------------------
@@ -199,7 +226,10 @@ test.beforeEach(() => {
   expired.clear();
   failing.clear();
   noImage.clear();
+  failingPhotos.clear();
+  noImagePhotos.clear();
   places.clear();
+  answers = 0;
   holdDetails = null;
   holdMedia.clear();
 });
@@ -262,6 +292,8 @@ const lookups = () => calls.filter((c) => c.kind === 'details').length;
 // The heal's own lookups, apart from a venue card's full Place Details call.
 const healLookups = () => calls.filter((c) => c.kind === 'details' && c.mask === 'id,photos').length;
 const triesOf = (name) => calls.filter((c) => c.kind === 'media' && c.name === name).length;
+// The same for photo k of a renamed place, under every name it was given.
+const triesOfPhoto = (k) => calls.filter((c) => c.kind === 'media' && photoOf(c.name) === k).length;
 
 // Exactly what a dead name answered before the heal, and still answers when
 // the heal cannot finish: a 404 the browser keeps for an hour, which the app
@@ -892,6 +924,74 @@ test('a refusal hold holds when the names come free: a spent budget with a card 
   assert.equal(placesBudgetStatus(null).unauthUsed, 2,
     'the dead name and the one refused purchase; every viewer spent a unit before (11)');
   assert.equal(db.charges, 1);
+});
+
+// The three above, with Google naming every photo anew on each answer: the card
+// reopened every ten minutes hands the heal names the hold has never seen.
+
+test('renamed on every answer: a busy venue through a day-long 503 still tries at 0, 1, 3, 7 and 15 hours only', async () => {
+  placeWithRenamedPhotos(P, 3);
+  expired.add(OLD);
+  failingPhotos.add(0);
+  const triedAt = [];
+  for (let i = 0; i < 6 * 24; i++) {
+    if (i) passTime(10 * MINUTE);
+    await placeDetailsCache.fetchPlaceDetails(P); // the card, reopened: a new answer, new names
+    const before = triesOfPhoto(0);
+    assertBird(await get(OLD));
+    if (triesOfPhoto(0) > before) triedAt.push(i / 6);
+  }
+  assert.deepEqual(triedAt, [0, 1, 3, 7, 15], 'each new answer bought the photo again inside its hold');
+  assert.equal(db.charges, 6, 'the dead name and five tries');
+  assert.equal(vs.healedPlaces.get(P).faults, 5, 'the fault streak climbed more than once a hold');
+  assert.equal(triesOfPhoto(1) + triesOfPhoto(2), 0, 'the hold let another photo of the place be bought');
+  assert.equal(healLookups(), 0);
+});
+
+test('renamed on every answer: an hour-long 503 with the card open costs one try, and the tile heals when the hour is up', async () => {
+  placeWithRenamedPhotos(P, 3);
+  expired.add(OLD);
+  failingPhotos.add(0);
+  for (let m = 0; m < 60; m += 10) {
+    if (m) passTime(10 * MINUTE);
+    await placeDetailsCache.fetchPlaceDetails(P);
+    assertBird(await get(OLD));
+  }
+  assert.equal(triesOfPhoto(0), 1, 'each new answer bought the photo again inside the hour');
+  const entry = vs.healedPlaces.get(P);
+  assert.equal(entry.faults, 1, 'one fault was counted once per answer');
+  const left = entry.until - Date.now();
+  assert.ok(left > 9 * MINUTE && left <= 10 * MINUTE, `the first fault's hour has ${left / MINUTE} minutes left`);
+
+  // Google recovers and nobody opens the card again: the next viewer after the
+  // hour gets the photo, not the bird until tomorrow.
+  failingPhotos.clear();
+  passTime(10 * MINUTE);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(photoOf(res.text.replace('pixels of ', '')), 0);
+  assert.equal(vs.healedPlaces.get(P).faults, 0);
+});
+
+test('renamed on every answer: a spent budget with the card reopened until midnight spends nothing more', async () => {
+  placeWithRenamedPhotos(P, 3);
+  expired.add(OLD);
+  db.brake = 1; // the ask that finds OLD dead is the last photo the budget buys today
+  for (let i = 0; i < 6 * 11; i++) { // noon to 22:50
+    if (i) passTime(10 * MINUTE);
+    await placeDetailsCache.fetchPlaceDetails(P);
+    assertBird(await get(OLD));
+  }
+  assert.equal(placesBudgetStatus(null).unauthUsed, 2,
+    'the dead name and the one refused purchase; each new answer spent a unit past the hold');
+  assert.equal(db.charges, 1);
+
+  // Past midnight the budget has a new day, and the next viewer gets the photo.
+  db.brake = Infinity;
+  passTime(80 * MINUTE);
+  const res = await get(OLD);
+  assert.equal(res.status, 200);
+  assert.equal(photoOf(res.text.replace('pixels of ', '')), 0);
 });
 
 test('a photo that comes back by another door ends the place\'s fault streak', async () => {
