@@ -1312,12 +1312,20 @@ const shutWho = (listing) => (listing ? 'Your Google listing has you closed' : "
  * `weekdays` the forecast holds of it; `from` and `through` its first and last
  * dates. `afterTonight`: last night is still running on the listing, so the
  * venue is open now and shut once it ends (venueDashboard's
- * today.nightInProgress, review 2026-11-06).
+ * today.nightInProgress, review 2026-11-06). 'days' (acceptance, 2026-11-06)
+ * is the days of this weekend a question names, `weekdays`, that the venue is
+ * shut on while it is open on others: "Which is busier, Saturday or Sunday?"
+ * asked of a cafe shut on Sundays, or "how busy will sunday be" of one open
+ * Monday to Friday, used to be answered with another day of the weekend.
  */
 function weekendClosedFact({ listing, scope, todayIn = false, afterTonight = false, weekdays = [], range = null, from, through, asOf }) {
   let when = 'this weekend';
   if (scope === 'next') when = `on ${joinDays(weekdays)} next weekend`;
   else if (scope === 'coming') when = range ? `over the coming weekend, ${range}` : 'over the coming weekend';
+  else if (scope === 'days') {
+    when = [todayIn ? (afterTonight ? 'after tonight' : 'today') : null, weekdays.length ? `on ${joinDays(weekdays)}` : null]
+      .filter(Boolean).join(' and ');
+  }
   else if (todayIn) when = afterTonight ? 'for the rest of this weekend after tonight' : 'for the rest of this weekend';
   return makeFact({
     id: WEEKEND_CLOSED_ID,

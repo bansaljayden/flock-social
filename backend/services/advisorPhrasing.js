@@ -1224,19 +1224,21 @@ function shapeWeek(which) {
     // A WEEKEND WITH NOTHING OPEN (2026-11-06): its plain line first, from the
     // listing's hours or the venue's own curve, then next weekend's days as any
     // weekend's are said, when the forecast holds any of it; else that line
-    // alone (routes/advisor.js weekend_outlook).
-    if (which === 'weekend') {
-      const shut = facts.find((f) => f && f.id === weekendMarks().WEEKEND_CLOSED_ID);
-      if (shut) {
-        const after = facts.filter((f) => f !== shut);
-        const next = after.length ? shape(after, {}) : null;
-        const lines = after.map(templateLine);
-        return {
-          lead: [templateLine(shut), next ? next.lead : lines[0]].filter(Boolean).join(' '),
-          points: next ? next.points : lines.slice(1),
-          used: [shut, ...(next ? next.used : after)],
-        };
-      }
+    // alone (routes/advisor.js weekend_outlook). The days a question names
+    // that the venue is shut on lead the same way, on the weekend's route and
+    // the week's (routes/advisor.js namedShut, acceptance 2026-11-06): "Your
+    // Google listing has you closed on Sunday." before Saturday's line.
+    const marks = weekendMarks();
+    const shut = facts.find((f, i) => f && (f.id === marks.WEEKEND_CLOSED_ID || (i === 0 && f.id === marks.TODAY_CLOSED_ID)));
+    if (shut) {
+      const after = facts.filter((f) => f !== shut);
+      const next = after.length ? shape(after, {}) : null;
+      const lines = after.map(templateLine);
+      return {
+        lead: [templateLine(shut), next ? next.lead : lines[0]].filter(Boolean).join(' '),
+        points: next ? next.points : lines.slice(1),
+        used: [shut, ...(next ? next.used : after)],
+      };
     }
     const peaks = facts.filter(isPeakFact);
     // TODAY, ASKED BY NAME BESIDE THE CARD'S WEEK (2026-11-06). The card's

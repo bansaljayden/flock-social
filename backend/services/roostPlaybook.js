@@ -803,13 +803,15 @@ function moneyLine(tactic, spend) {
 }
 
 // THE DAY A QUESTION ASKS ABOUT (2026-11-06): roostDayReader
-// reads the day words where the question asks, by a small grammar, with no
-// short forms ("Sat", "Fri", "Tues", "Sun"). One word is { weekday, next,
-// nextWeek?, afterNext? }, { today }, { tomorrow } or { dayAfterTomorrow };
-// two or more are { several } (the route reads them against the venue's own
-// today and answers both, routes/advisor.js bothAnswer); a weekend or the week
-// alone, or none, is null. "Saturdays are packed, how do I fill Tuesdays?"
-// asks in its own clause, about Tuesday (2026-10-28 second review).
+// reads the day words where the question asks, by a small grammar, and a
+// short form ("Fri night", "next sat", "Sun?") only where it is written as a
+// day, never where it is the word ("we sat 40 covers"). One word is
+// { weekday, next, nextWeek?, afterNext? }, { today }, { tomorrow } or
+// { dayAfterTomorrow }; two or more are { several } (the route reads them
+// against the venue's own today and answers both, routes/advisor.js
+// bothAnswer); a weekend or the week alone, or none, is null. "Saturdays are
+// packed, how do I fill Tuesdays?" asks in its own clause, about Tuesday
+// (2026-10-28 second review).
 function askedDay(question) {
   const words = dayWords(question);
   if (words.length > 1) return { several: words };
@@ -858,6 +860,28 @@ function groundedLead(intentId, facts, question = '', askedFor = undefined) {
   const kind = peaks.some(isKindForecast);
   const open = (s) => (kind ? `In ${KIND_FORECAST}, ${s}` : s);
   const your = kind ? 'the' : 'your';
+  // TWO DAYS OR MORE, EACH SAID, NONE PICKED (acceptance, 2026-11-06). The
+  // route hands the days a question names (routes/advisor.js, the advice
+  // path): "how many bartenders for fri and sat" opens on each day's own
+  // peak, in the order asked. One with no forecast is left out; one left is
+  // said as a single named day is.
+  if (Array.isArray(askedFor)) {
+    const said = [];
+    for (const w of askedFor) {
+      const f = peaks.find((p) => p.value.weekday === w);
+      if (f && !said.includes(f)) said.push(f);
+    }
+    if (said.length < 2) return said.length ? groundedLead(intentId, facts, question, said[0].value.weekday) : null;
+    const at = (f, i) => {
+      const hour = Number(f.value.peakHour);
+      const when = Number.isInteger(hour) && hour >= 0 && hour < 24 ? ` around ${clockHour(hour)}` : '';
+      const night = f.value.afterMidnight === true ? ' night' : '';
+      return `${f.value.weekday}${night}${i ? '' : ' projects busiest'}${when}, at ${Number(f.value.peakScore)}`;
+    };
+    const parts = said.map(at);
+    const list = `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+    return { text: open(`${list}, on our 0 to 100 index.`), fact: said[0], facts: said };
+  }
   // A question about a named day is answered about that day. "How do I fill
   // Thursdays" used to open on whichever day was quietest (2026-10-28), an
   // answer to a different question. With no forecast for the named day there
@@ -1034,7 +1058,12 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   // Under a lead that names a day of Flock's forecast for places like this
   // venue, the move names that day, never "your slowest day"
   // (services/kindForecast.js unownDays).
-  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, lead.fact.value.weekday) : (s) => s;
+  // With two days or more led, the quieter of them is the day a fill move
+  // names, as the one day led is.
+  const quiet = lead && lead.facts
+    ? lead.facts.reduce((a, f) => (Number(f.value.peakScore) < Number(a.value.peakScore) ? f : a))
+    : (lead && lead.fact);
+  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, quiet.value.weekday) : (s) => s;
 
   const points = [say(first.why)];
   const money = moneyLine(first, spend);
@@ -1056,7 +1085,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       asOf: p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set',
     });
   }
-  if (lead) sources.push(factSource(lead.fact));
+  if (lead) sources.push(...(lead.facts || [lead.fact]).map(factSource));
 
   return {
     mode: 'advice',

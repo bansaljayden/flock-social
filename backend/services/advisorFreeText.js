@@ -1322,8 +1322,9 @@ const PLAYS_IN_PAYLOAD = 3;
  * `tactics` in the result is the moves this answer drew on, which the chat
  * sends back with the owner's next question. `askedFor` is the weekday the
  * question asks about as the route read it against the venue's own today
- * ("tonight" is today's weekday, "next Monday" on a Monday is none), passed to
- * the playbook's lead (roostPlaybook.groundedLead).
+ * ("tonight" is today's weekday, "next Monday" on a Monday is none), or the
+ * weekdays when it names two or more, passed to the playbook's lead
+ * (roostPlaybook.groundedLead).
  *
  * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null, tactics: string[]}>}
  */

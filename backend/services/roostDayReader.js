@@ -10,14 +10,15 @@
 //   * a weekday written out ("Friday", "fridays", "Friday's"), with "next",
 //     "next week", "of next week", "next week's" and "after next" beside it;
 //     not after "last", and not in a holiday's name ("Black Friday", "Cyber
-//     Monday", "Easter Sunday"): that day is a date, not the coming weekday;
+//     Monday", "Easter Sunday", "Good Friday" written as one): that day is a
+//     date, not the coming weekday;
 //   * a short form ("Fri night", "next sat", "Sun?") only where it is written
 //     as a day (shortIsDay below), never where it is the word ("we sat 40
-//     covers", "the sun rush");
+//     covers", "the sun rush", "with this sun");
 //   * today, tonight, this morning, this afternoon, this evening;
 //   * tomorrow, and the day after tomorrow;
-//   * this weekend (any "weekend"), next weekend, the following weekend, the
-//     weekend after next;
+//   * this weekend (any "weekend", never "last weekend"), next weekend, the
+//     following weekend, the weekend after next, and "weekends", the habit;
 //   * the week: this week, the week, our week, the whole week, the coming
 //     week, the week ahead, and which or what day or night.
 //
@@ -25,15 +26,20 @@
 // another day is answered with both, never picked over it.
 //
 // WHERE: the question sentence. A question asks in its sentences that end on a
-// question mark, or with none, in its last sentence; a comma before a question
-// word starts the question's own sentence ("Saturdays are packed, how do I fill
-// Tuesdays?", "It's Friday, how's the weekend looking?"). Only when those name
+// question mark ("?!" too), or with none, in those that hold a question word,
+// failing which in its last sentence; a comma before a question word starts
+// the question's own sentence ("Saturdays are packed, how do I fill
+// Tuesdays?", "It's Friday, how's the weekend looking?"), and so does a
+// question word after a day in a run-on (RUN_ON below). Only when those name
 // no day is the whole question read ("Sunday Funday is this weekend, how busy
-// will it be?"), and then a weekday in the plural is a habit, not a day asked
-// ("we are closed mondays, what's our slowest open day?").
+// will it be?"), and then a weekday in the plural is the day asked ("Our
+// Wednesdays are slow, any ideas?") unless it is a habit, the days the venue
+// is shut ("we are closed mondays, what's our slowest open day?") or when
+// something happens ("We do trivia on Tuesdays. Any tips?").
 //
 // A day word in the possessive ("tomorrow's game", "after tonight's rush")
-// says what something belongs to, and counts only when no other day word does.
+// says what something belongs to, and counts only when no other day word does,
+// a weekend or the week beside two or more of them aside.
 // So does a day given as the reason, after since or because ("How busy will
 // tonight be since tomorrow is a holiday?"), and a day said in the past
 // ("Tonight was dead so I'm wondering if tomorrow will pick up"): the question
@@ -48,6 +54,31 @@ const { SPELLING } = require('./ownerWords');
 const ASKS = "(?:how|how's|hows|what|what's|whats|which|when|where|why|who|will|would|won't|is|isn't|are|aren't|was|were|should|shall|could|can|do|does|did|any)";
 const SENTENCES = /(?<=[!?]|(?<!\bvs)\.)\s+|\n+/;
 const SPLICE = new RegExp(`[,;:]\\s+(?=(?:(?:so|and|but|then|ok|okay|well|also|anyway)\\s+)*${ASKS}\\b)`, 'i');
+// A RUN-ON STARTS ITS QUESTION WITHOUT A COMMA (acceptance, 2026-11-06). "we
+// did 300 covers saturday what should i expect sunday", "Since we're closed
+// monday will tuesday be busy?", "saturday got rained out so how busy will
+// sunday be" and "friday we had a private party what about saturday" ask in
+// their last clause, as a comma would have said. A clause starts at a
+// question word straight after a day word; at "will", "should", "can" and
+// the like after a day word when a subject follows ("monday will tuesday
+// be", never "tomorrow will be busy"); at "so how" or "then what"; and at
+// "what about" or "how about" anywhere. Not "is" after a day ("Friday is
+// payday"), and not "when" ("tonight when the Eagles play").
+const RUN_DAY = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|today|tonight|tomorrow|weekends?)';
+const RUN_WH = "(?:how|how's|hows|what|what's|whats|which)";
+const RUN_MODAL = '(?:will|would|should|could|can|do|does)';
+const RUN_ON = new RegExp([
+  `(?<=\\b${RUN_DAY}'?s?)\\s+(?=${RUN_WH}\\b|${RUN_MODAL}\\s+(?:we|i|you|it|they|there|${RUN_DAY})\\b)`,
+  `\\s+(?=(?:so|then)\\s+(?:${RUN_WH}|${RUN_MODAL})\\b)`,
+  '\\s+(?=(?:what|how)\\s+about\\b)',
+].join('|'), 'i');
+// A sentence asks when it ends on a question mark, "?!" and "?!!" too.
+const MARKED = /\?[!?.]*\s*$/;
+// With no question mark anywhere, the parts that hold a question word ask
+// ("how busy will tonight be. tomorrow is a holiday"), and failing those the
+// last part does ("Slow tonight. Not sure if tomorrow will be any better.").
+// "What a dead night tonight." asks nothing.
+const HOLDS_ASK = /^(?:(?:so|and|but|then|ok|okay|well|also|anyway)\s+)*(?:when|when's|whens)\b|\b(?:how|how's|hows|what's|whats|which|whether)\b|\bwhat\b(?!\s+an?\b)/i;
 
 const TOKEN = new RegExp([
   "\\b(?<dat>(?:the\\s+)?day\\s+after\\s+tomorrow)\\b",
@@ -102,7 +133,10 @@ function shortIsDay(short, before, after, shouting) {
   const partOrDate = PART_NEXT.test(after) || DATE_NEXT.test(after);
   if (!word) return !(capital && NAME_NEXT.test(after) && !partOrDate);
   if (!shouting && short === short.toUpperCase()) return false;
-  if (MARK_BEFORE.test(before) || SET_NEXT.test(after) || SET_BEFORE.test(before)) return true;
+  // "this sun" in lower case is the weather ("How busy will the patio be
+  // with this sun?"), not the day (acceptance, 2026-11-06).
+  const marked = MARK_BEFORE.test(before) && !(short === 'sun' && /\bthis\s+$/i.test(before));
+  if (marked || SET_NEXT.test(after) || SET_BEFORE.test(before)) return true;
   if (SENTENCE_START.test(before) && SENTENCE_END.test(after)) return true;
   if (capital && partOrDate) return true;
   if (!capital || ARTICLE_BEFORE.test(before)) return false;
@@ -116,7 +150,13 @@ const NEXT_WEEK_AFTER = /^\s*,?\s*(?:(?:be|look|looks|seem|run)\s+(?:like\s+)?)?
 const NEXT_WEEK_BEFORE = /\bnext\s+week'?s\s+$/i;
 const AFTER_NEXT = /^\s+after\s+next\b/i;
 // Holidays named for a weekday: a date, not the coming weekday.
-const HOLIDAY_BEFORE = /\b(?:black|cyber|good|easter|palm|ash|holy|maundy|giving|super(?:\s+bowl)?|small\s+business)\s+$/i;
+const HOLIDAY_BEFORE = /\b(?:black|cyber|easter|palm|ash|holy|maundy|super\s+bowl|small\s+business)\s+$/i;
+// "Good", "super" and "giving" are ordinary words before a day too ("Is this
+// a good Friday to run a promo?", "Gonna be a super Sunday?", "We're giving
+// Tuesday another shot"), so they name a holiday only written as one, with
+// capitals: "Good Friday", "Giving Tuesday" (acceptance, 2026-11-06).
+const NAME_HOLIDAY_BEFORE = /\b(?:Good|Super|Giving)\s+$/;
+const holidayBefore = (before, day) => HOLIDAY_BEFORE.test(before) || (/^[A-Z]/.test(day) && NAME_HOLIDAY_BEFORE.test(before));
 
 // The reason a question gives, after since or because in its own sentence.
 const GIVEN_BEFORE = /\b(?:since|because|cause|cuz|coz)\b/i;
@@ -132,10 +172,37 @@ function normalize(question) {
 
 /** The parts of `text` a question asks in, and every part. */
 function parts(text) {
-  const pieces = text.split(SENTENCES).flatMap((s) => s.split(SPLICE)).map((s) => s.trim()).filter(Boolean);
-  const marked = pieces.filter((p) => /\?\s*$/.test(p));
-  return { asking: marked.length ? marked : pieces.slice(-1), all: pieces };
+  const asking = [];
+  const all = [];
+  for (const sentence of text.split(SENTENCES).map((s) => s.trim()).filter(Boolean)) {
+    const pieces = sentence.split(SPLICE).flatMap((p) => p.split(RUN_ON)).map((p) => p.trim()).filter(Boolean);
+    all.push(...pieces);
+    // The last part of a sentence that ends on a question mark asks.
+    if (pieces.length && MARKED.test(sentence)) asking.push(pieces[pieces.length - 1]);
+  }
+  if (!asking.length) {
+    const holding = all.filter((p) => HOLDS_ASK.test(p));
+    asking.push(...(holding.length ? holding : all.slice(-1)));
+  }
+  return { asking, all };
 }
+
+// A WEEKEND GONE BY IS NO WEEKEND ASKED (acceptance, 2026-11-06): "last
+// weekend", "the past weekend" and "the weekend before" are said beside next
+// weekend as the other side of a comparison, and were read as this weekend.
+const GONE_BEFORE = /\b(?:last|past|previous)\s+$/i;
+const GONE_AFTER = /^\s+before\b/i;
+
+// A WEEKDAY IN THE PLURAL, WHERE NOTHING ELSE IS ASKED (acceptance, 2026-11-06).
+// "Our Wednesdays are slow, any ideas?", "Mondays are killing us. What should
+// we do?" and "We're always slow on Mondays" ask about that day, as they always
+// were read. Two kinds of plural are a habit and no day asked: one the venue
+// is shut on ("we are closed mondays, what's our slowest open day?"), and one
+// that only says when something happens ("We do trivia on Tuesdays. Any tips
+// for a slow night?"), where its sentence says nothing of how busy it is.
+const SHUT_SAID = /\b(?:closed|shut|close|off)\b/i;
+const HABIT_BEFORE = /\b(?:on|every|most|some)\s+$/i;
+const CROWD_SAID = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|quietest|dead|deadest|packed|slammed|empty|full|crowded|crowds?|rush)\b/i;
 
 function tokensIn(piece, shouting = false) {
   const out = [];
@@ -155,18 +222,52 @@ function tokensIn(piece, shouting = false) {
     if (g.dat) out.push({ kind: 'dayAfterTomorrow' });
     else if (g.after) out.push({ kind: 'weekend', scope: /after\s+next/i.test(g.after) ? 'after_next' : 'next' });
     else if (g.nextWeekend) out.push({ kind: 'weekend', scope: 'next_words', weak: Boolean(g.nwPoss) });
-    else if (g.weekend) out.push({ kind: 'weekend', scope: 'this', weak: Boolean(g.wePoss), plural: /s$/i.test(g.weekend) });
-    else if (g.week) out.push({ kind: 'week' });
+    else if (g.weekend) {
+      if (GONE_BEFORE.test(before) || GONE_AFTER.test(after)) continue;
+      // "Weekends" is a habit, the weekends the week ahead holds, read as the
+      // week ahead's Friday, Saturday and Sunday ("Are weekends busier than
+      // weekdays for us?" on a Sunday is no question about that Sunday alone).
+      out.push({ kind: 'weekend', scope: /s$/i.test(g.weekend) ? 'habit' : 'this', weak: Boolean(g.wePoss) });
+    } else if (g.week) out.push({ kind: 'week' });
     else if (g.tomorrow) out.push({ kind: 'tomorrow', weak: Boolean(g.tmPoss) });
-    else if (g.today) out.push({ kind: 'today', weak: Boolean(g.tdPoss) });
+    else if (g.today) {
+      // Which part of today: the night ("tonight", "this evening"), the day
+      // ("this morning", "this afternoon"), or today itself, which in the
+      // small hours is either (routes/advisor.js targetsFor).
+      let part = 'today';
+      if (/night|evening/i.test(g.today)) part = 'tonight';
+      else if (/morning|afternoon/i.test(g.today)) part = 'day';
+      out.push({ kind: 'today', part, weak: Boolean(g.tdPoss) });
+    }
     else if (g.day) {
-      if (/\blast\s+$/i.test(before) || HOLIDAY_BEFORE.test(before)) continue;
-      const tok = { kind: 'weekday', weekday: WEEKDAY(g.day), next: /\bnext\s+$/i.test(before), weak: Boolean(g.dayPoss), plural: Boolean(g.plural) };
+      if (/\blast\s+$/i.test(before) || holidayBefore(before, m[0])) continue;
+      const tok = { kind: 'weekday', weekday: WEEKDAY(g.day), next: /\bnext\s+$/i.test(before), weak: Boolean(g.dayPoss), possessive: Boolean(g.dayPoss), plural: Boolean(g.plural) };
+      if (tok.plural) tok.habit = SHUT_SAID.test(piece) || (HABIT_BEFORE.test(before) && !CROWD_SAID.test(piece));
       if (NEXT_WEEK_AFTER.test(after) || NEXT_WEEK_BEFORE.test(before)) tok.nextWeek = true;
       if (AFTER_NEXT.test(after)) tok.afterNext = true;
       out.push(tok);
     }
-    if (given && out.length > at) out[at].weak = true;
+    if (given && out.length > at) Object.assign(out[at], { weak: true, possessive: false });
+  }
+  return out;
+}
+
+// THE WEEKDAYS AN OWNER SAYS THE VENUE IS SHUT ON (acceptance, 2026-11-06):
+// "We're closed Sundays. How does this weekend look?" asked on a Sunday is
+// about the coming weekend, and was answered with that Sunday. Read from the
+// owner's own words, "closed" or "shut" beside the weekdays, either way round
+// ("closed on Mondays and Tuesdays", "Sundays we're closed"); the weekend's
+// route leaves those days out (routes/advisor.js weekend_outlook).
+const DAY_NAME = '(?:mon|tues|wednes|thurs|fri|satur|sun)days?';
+const DAY_LIST = `${DAY_NAME}(?:\\s*(?:,|and|&|\\/|or)\\s*${DAY_NAME})*`;
+const SHUT_ON = new RegExp(`\\b(?:closed|shut)\\s+(?:on\\s+|all\\s+day\\s+)?(${DAY_LIST})|\\b(${DAY_LIST})\\s*,?\\s+(?:we're|we\\s+are|we|i'm|i\\s+am)\\s+(?:always\\s+)?(?:closed|shut)\\b`, 'gi');
+function saidShut(question) {
+  const out = [];
+  for (const m of normalize(question).matchAll(SHUT_ON)) {
+    for (const d of (m[1] || m[2]).match(new RegExp(DAY_NAME, 'gi')) || []) {
+      const day = WEEKDAY(d.replace(/s$/i, ''));
+      if (!out.includes(day)) out.push(day);
+    }
   }
   return out;
 }
@@ -177,9 +278,10 @@ const same = (a, b) => a.kind === b.kind && a.weekday === b.weekday && a.scope =
 /**
  * The day words a question says where it asks (above), in the order said, each
  * once: { kind: 'weekday', weekday, next, nextWeek?, afterNext? } | { kind:
- * 'today' } | { kind: 'tomorrow' } | { kind: 'dayAfterTomorrow' } | { kind:
- * 'weekend', scope: 'this' | 'next_words' | 'next' | 'after_next' } | { kind:
- * 'week' }. Empty when it says none.
+ * 'today', part: 'tonight' | 'day' | 'today' } | { kind: 'tomorrow' } | {
+ * kind: 'dayAfterTomorrow' } | { kind: 'weekend', scope: 'this' | 'next_words'
+ * | 'next' | 'after_next' | 'habit' } | { kind: 'week' }. Empty when it says
+ * none.
  */
 function dayWords(question) {
   const text = normalize(question);
@@ -187,14 +289,24 @@ function dayWords(question) {
   // A question in capitals throughout says nothing by its case.
   const shouting = !/[a-z]/.test(text);
   let found = asking.flatMap((p) => tokensIn(p, shouting));
-  if (!found.length) found = all.flatMap((p) => tokensIn(p, shouting)).filter((t) => !t.plural);
+  if (!found.length) found = all.flatMap((p) => tokensIn(p, shouting)).filter((t) => !t.habit);
   const strong = found.filter((t) => !t.weak);
   let kept = strong.length ? strong : found;
+  // Two weekdays or more in the possessive beside only a weekend or the week
+  // are the days asked, and the weekend or the week says which ones ("How will
+  // Friday's crowd compare to Saturday's this weekend?", acceptance,
+  // 2026-11-06); one alone is what something belongs to ("How's the rest of
+  // the weekend after Saturday's rush?").
+  const owned = found.filter((t) => t.possessive && t.kind === 'weekday');
+  if (strong.length && strong.every((t) => t.kind === 'weekend' || t.kind === 'week')
+      && new Set(owned.map((t) => t.weekday)).size > 1) {
+    kept = found.filter((t) => !t.weak || owned.includes(t));
+  }
   // The week beside a weekday only says which one ("Monday this week").
   if (kept.some((t) => t.kind === 'weekday')) kept = kept.filter((t) => t.kind !== 'week');
   const out = [];
   for (const t of kept) {
-    const { weak, plural, ...tok } = t;
+    const { weak, plural, habit, possessive, ...tok } = t;
     if (!out.some((o) => same(o, tok))) out.push(tok);
   }
   return out;
@@ -207,7 +319,9 @@ function dayWords(question) {
 // today", "the rest of the week after today" leave it out. Neither picks a
 // day, and with neither the week is ranked as the plan ranks it.
 const TODAY_W = "(?:today|tonight|this\\s+(?:evening|afternoon|morning))\\b(?!')";
-const LEAVE_OUT = '(?:besides|other\\s+than|except(?:\\s+for)?|apart\\s+from|aside\\s+from|excluding|not\\s+counting)';
+// "Not including tonight" leaves today out, and is read before the
+// "including" inside it (acceptance, 2026-11-06).
+const LEAVE_OUT = '(?:besides|other\\s+than|except(?:\\s+for)?|apart\\s+from|aside\\s+from|excluding|not\\s+counting|not\\s+including)';
 const TODAY_LEFT_OUT = new RegExp(`\\b(?:${LEAVE_OUT}\\s+${TODAY_W}|after\\s+(?:today|tonight|this\\s+evening)\\b(?!'))`, 'i');
 const TODAY_IN = new RegExp([
   `\\b(?:including|incl\\.?|starting(?:\\s+(?:from|with))?|counting|from)\\s+${TODAY_W}`,
@@ -224,4 +338,4 @@ function todayInRanking(question) {
   return TODAY_IN.test(text) ? 'in' : null;
 }
 
-module.exports = { dayWords, todayInRanking, __parts: (q) => parts(normalize(q)) };
+module.exports = { dayWords, todayInRanking, saidShut, __parts: (q) => parts(normalize(q)) };

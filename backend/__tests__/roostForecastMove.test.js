@@ -3132,3 +3132,338 @@ test('a short form is a day only where it is written as one, and never where it 
     assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-11');
   });
 });
+
+// ── THE ACCEPTANCE ROUND (2026-11-06) ────────────────────────────────────────
+// Each test below is one finding of the acceptance review of the day reader,
+// read on the demo's bar (CARD) unless it says otherwise, on a pinned clock.
+const sourceIds = (r) => r.body.sources.map((s) => s.id);
+const KIND_OPEN = 'In Flock\'s forecast for places like yours, ';
+
+test('two days named on the weekend\'s route are both answered on a Sunday, possessive or not, and never as that Sunday alone', async () => {
+  for (const [q, want] of [
+    // Two days in the possessive beside a weekend are the days asked; one
+    // alone is what something belongs to.
+    ['How will Friday\'s crowd compare to Saturday\'s this weekend?', 'Friday, Saturday, weekend:this'],
+    ['How\'s the rest of the weekend after Saturday\'s rush?', 'weekend:this'],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // Until 2026-11-06 each was "Sunday peaks around 9 PM at 45", a day the
+  // owner never named: on a Sunday this weekend is that Sunday.
+  await pinnedAt('2026-11-08T20:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7TwoDaysSunday00000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How will Friday\'s crowd compare to Saturday\'s this weekend?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the busiest day this week is Saturday, `), r.body.text);
+    for (const id of ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
+    assert.ok(!sourceIds(r).includes('typical_peak_2026-11-08'), JSON.stringify(sourceIds(r)));
+    r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 2), [
+      `${KIND_OPEN}the busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
+      '• Sunday peaks around 9 PM at 45 on our 0 to 100 index.',
+    ]);
+    for (const id of ['typical_peak_2026-11-14', 'typical_peak_2026-11-08']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
+  });
+  // On a Friday both days are this weekend's, and the weekend's answer says
+  // the two asked, never Friday mixed in.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7TwoDaysFriday00000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      `${KIND_OPEN}the busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
+      '• Sunday is next, around 9 PM at 45.',
+    ]);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-07', 'typical_peak_2026-11-08']);
+  });
+});
+
+test('"weekends" is a habit, read from every Friday, Saturday and Sunday of the week ahead, so on a Sunday it is never that Sunday alone', async () => {
+  assert.strictEqual(saidDays('Are weekends busier than weekdays for us?'), 'weekend:habit');
+  await pinnedAt('2026-11-08T20:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7WeekendsHabitSun00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Are weekends busier than weekdays for us?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      `${KIND_OPEN}the busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
+      '• Friday is close behind, around 9 PM at 66.',
+      '• Sunday is the quietest, around 9 PM at 45.',
+    ]);
+    // "This weekend" on a Sunday is still that Sunday.
+    const t = await call('/api/venue/advisor/question', { question: 'How busy will this weekend be?' });
+    assert.deepStrictEqual(sourceIds(t), ['typical_peak_2026-11-08']);
+  });
+  // With crowd history, the same three days of its own week.
+  await withNightCurve('ChIJr7WeekendsHabitOwn00', () => pinnedAt('2026-11-08T20:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Are weekends busier than weekdays for us?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this weekend is Saturday, '), r.body.text);
+    assert.deepStrictEqual(sourceIds(r).sort(), ['peak_2026-11-08', 'peak_2026-11-13', 'peak_2026-11-14']);
+  }));
+});
+
+test('the days the owner says the venue is shut on are no day of its weekend: on its Sunday, the weekend asked about is the next one', async () => {
+  const { saidShut } = require('../services/roostDayReader');
+  for (const [q, want] of [
+    ['We\'re closed Sundays. How does this weekend look?', ['Sunday']],
+    ['we are closed on mondays and tuesdays, how busy will friday be', ['Monday', 'Tuesday']],
+    ['Sundays we\'re closed, so how does Saturday look?', ['Sunday']],
+    ['How busy will Sunday be?', []],
+    ['Close to the stadium, how does Sunday look?', []],
+  ]) {
+    assert.deepStrictEqual(saidShut(q), want, q);
+  }
+  // Until 2026-11-06, on a Sunday: "Sunday peaks around 9 PM at 45".
+  await pinnedAt('2026-11-08T20:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7ClosedSundaysSun00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'We\'re closed Sundays. How does this weekend look?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
+  });
+  // On a Friday, this weekend without its Sunday.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7ClosedSundaysFri00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'We\'re closed Sundays. How does this weekend look?' });
+    assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-06', 'typical_peak_2026-11-07']);
+  });
+});
+
+test('a day of the weekend a question names that the listing has the venue shut on is said to be, never answered with another day', async () => {
+  // The office cafe, open Monday to Friday, on its Friday: each of these was
+  // "Friday peaks around 8 AM at 66" until 2026-11-06.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr7OfficeFriday000000', [1, 2, 3, 4, 5]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'how busy will sunday be' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed on Sunday.');
+    assert.deepStrictEqual(sourceIds(r), ['weekend_closed']);
+    r = await call('/api/venue/advisor/question', { question: 'Sunday Funday is this weekend, how busy will it be?' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed on Sunday.');
+    r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
+    assert.strictEqual(r.body.text, 'Your Google listing has you closed on Saturday and Sunday.');
+  });
+  // The cafe shut on Sundays: Saturday's line, after Sunday shut, and no
+  // Friday mixed in ("no day stands out this weekend: every day peaks
+  // between 66 and 74" until 2026-11-06).
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr7CafeShutSunFri0000', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
+    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday. ${KIND_OPEN}Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-07']);
+  });
+  // On its Sunday, Saturday is next week's: the week ahead, after today shut.
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr7CafeShutSunSun0000', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
+    assert.ok(r.body.text.startsWith(`Your Google listing has you closed today. ${KIND_OPEN}the busiest day this week is Saturday, `), r.body.text);
+    assert.strictEqual(sourceIds(r)[0], 'today_closed');
+  });
+});
+
+test('advice on two days named opens on each day\'s own peak, picking none', () => {
+  const card = [
+    ['2026-11-12', 'Thursday', 64], ['2026-11-13', 'Friday', 66], ['2026-11-14', 'Saturday', 74], ['2026-11-15', 'Sunday', 45],
+  ].map(([date, weekday, score]) => ({ id: `typical_peak_${date}`, value: { weekday, peakHour: 21, peakScore: score }, source: 'category_pattern', asOf: '2026-11-11T16:00:00Z' }));
+  let lead = roostPlaybook.groundedLead('peak_hours', card, '', ['Friday', 'Saturday']);
+  assert.strictEqual(lead.text, `${KIND_OPEN}Friday projects busiest around 9 PM, at 66, and Saturday around 9 PM, at 74, on our 0 to 100 index.`);
+  assert.deepStrictEqual(lead.facts.map((f) => f.id), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
+  // One of them with no forecast: the other said as a single day is.
+  lead = roostPlaybook.groundedLead('peak_hours', card, '', ['Monday', 'Thursday']);
+  assert.strictEqual(lead.text, `${KIND_OPEN}Thursday projects busiest around 9 PM, at 64 on our 0 to 100 index.`);
+  assert.strictEqual(roostPlaybook.groundedLead('peak_hours', card, '', ['Monday', 'Tuesday']), null);
+});
+
+test('advice on two days named leads with both through the route, the fill move names the quieter, and advice over the week leads with its ranking: the bar on the demo Friday', async () => {
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7AdviceTwoDays00000', phrasing: true });
+    draftFor = () => null;
+    // Until 2026-11-06 each opened on the playbook alone, no day named.
+    route = { mode: 'advice', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'how many bartenders for fri and sat' });
+    assert.strictEqual(r.body.mode, 'advice', r.body.text);
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Friday projects busiest around 9 PM, at 66, and Saturday around 9 PM, at 74, on our 0 to 100 index. `), r.body.text);
+    for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-07']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
+    r = await call('/api/venue/advisor/question', { question: 'should i do live music on thursday or friday' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Thursday projects busiest around 9 PM, at 64, and Friday around 9 PM, at 66, on our 0 to 100 index. Host a weekly music, comedy or open mic night on Thursday`), r.body.text);
+    // Over the week, from tonight: the week's quietest, as before.
+    route = { mode: 'advice', intentId: 'quiet_nights' };
+    r = await call('/api/venue/advisor/question', { question: 'How do I fill the slow nights this week, starting tonight?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Sunday projects as the quietest day this week. Give Sunday one recurring reason`), r.body.text);
+    // Today beside another day is the setup: no lead, as before.
+    route = { mode: 'advice', intentId: 'tonight_outlook' };
+    r = await call('/api/venue/advisor/question', { question: 'We\'re dead tonight, trying to figure out if tomorrow is worth opening early' });
+    assert.ok(!/projects (?:busiest|as)/.test(r.body.text.split('\n')[0]), r.body.text);
+  });
+});
+
+test('today left out of the week, today the only day said or "not including" it, ranks the rest of the week without today', async () => {
+  const { todayInRanking } = require('../services/roostDayReader');
+  for (const q of ['Not including tonight, which day is busiest this week?', 'not including today what night is biggest', 'Apart from tonight, when will we be busiest?']) {
+    assert.strictEqual(todayInRanking(q), 'out', q);
+  }
+  // The card's Friday, the demo's: until 2026-11-06 "Friday peaks around 9 PM
+  // at 66", today, the day left out.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7ApartFromTonight00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    for (const question of ['Apart from tonight, when will we be busiest?', 'Other than tonight, what\'s our busiest night?']) {
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.ok(r.body.text.startsWith(`${KIND_OPEN}the busiest day this week is Saturday, `), `${question}: ${r.body.text}`);
+      assert.ok(!sourceIds(r).includes('typical_peak_2026-11-06'), JSON.stringify(sourceIds(r)));
+    }
+    route = { mode: 'grounded', intentId: 'quiet_nights' };
+    const r = await call('/api/venue/advisor/question', { question: 'Other than tonight, when will it be quiet?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the quietest day this week is Sunday, `), r.body.text);
+  });
+  // The card's Saturday, today its high: "Saturday" (today) led until
+  // 2026-11-06.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7NotIncludingSat000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Not including tonight, which day is busiest this week?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the busiest day this week is Friday, `), r.body.text);
+    assert.strictEqual(sourceIds(r)[0], 'typical_peak_2026-11-13');
+  });
+  // With crowd history, its own week without today.
+  await withNightCurve('ChIJr7ExcludingTonightOwn', () => pinnedAt('2026-11-11T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Excluding tonight, when do we peak?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this week is Saturday, '), r.body.text);
+    assert.ok(!sourceIds(r).includes('peak_2026-11-11'), JSON.stringify(sourceIds(r)));
+  }));
+});
+
+test('the sentence that asks, with no question mark or with "?!", and the clause a run-on asks in', async () => {
+  for (const [q, want] of [
+    // No question mark: the sentence that holds a question word asks.
+    ['how busy will tonight be. tomorrow is a holiday', 'today'],
+    ['need to know how busy tonight will be. friday is payday', 'today'],
+    ['How busy will we be tonight! Saturday we have a wedding', 'today'],
+    ['how slow is monday gonna be. sunday we close early', 'Monday'],
+    // An exclamation asks nothing; with no question word, the last sentence.
+    ['What a dead night tonight. Tomorrow gonna be any better', 'tomorrow'],
+    ['Slow tonight. Not sure if tomorrow will be any better.', 'tomorrow'],
+    ['Is it me or is this week dead. tonight gonna be any better', 'today'],
+    // "?!" ends a question.
+    ['Is Saturday gonna be busy?! Tonight was dead.', 'Saturday'],
+    // A run-on asks in its last clause.
+    ['saturday got rained out so how busy will sunday be', 'Sunday'],
+    ['we did 300 covers saturday what should i expect sunday', 'Sunday'],
+    ['How did Saturday go and what about Sunday?', 'Sunday'],
+    ['Since we\'re closed monday will tuesday be busy?', 'Tuesday'],
+    ['friday we had a private party what about saturday', 'Saturday'],
+    // Not where the day is what the clause is about.
+    ['Not sure if tomorrow will be busy, tonight was dead', 'tomorrow'],
+    ['Friday is payday will it be busy', 'Friday'],
+    ['How busy will we be tonight when the Eagles play Sunday?', 'today, Sunday'],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // Through the route, the bar on its Wednesday: until 2026-11-06 the first
+  // was Thursday's line and the second led with the week's busiest day.
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7AskingSentenceWed0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'how busy will tonight be. tomorrow is a holiday' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}today peaks around 9 PM at 48 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-11']);
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    r = await call('/api/venue/advisor/question', { question: 'we did 300 covers saturday what should i expect sunday' });
+    assert.strictEqual(r.body.text.split('\n')[0], `${KIND_OPEN}Sunday peaks around 9 PM at 45 on our 0 to 100 index.`);
+    assert.strictEqual(sourceIds(r)[0], 'typical_peak_2026-11-15');
+  });
+});
+
+test('a weekday in the plural is the day asked about unless it says when something happens or that the venue is shut', async () => {
+  for (const [q, want] of [
+    ['Our Wednesdays are slow, any ideas?', 'Wednesday'],
+    ['Tuesdays are dead. Any ideas?', 'Tuesday'],
+    ['Mondays are killing us. What should we do?', 'Monday'],
+    ['We\'re always slow on Mondays. What should I try?', 'Monday'],
+    ['Fridays are packed. How should I staff?', 'Friday'],
+    ['Tuesdays kill us, how do we bring people in?', 'Tuesday'],
+    // A habit, and a day the venue is shut: no day asked.
+    ['We do trivia on Tuesdays. Any tips for a slow night?', ''],
+    ['we are closed mondays, what\'s our slowest open day?', ''],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // Until 2026-11-06: "Sunday projects as the quietest day this week. Give
+  // Sunday one recurring reason to visit".
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7PluralWednesdays00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'advice', intentId: 'quiet_nights' };
+    const r = await call('/api/venue/advisor/question', { question: 'Our Wednesdays are slow, any ideas?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Wednesday projects busiest around 9 PM, at 48 on our 0 to 100 index. Give Wednesday one recurring reason`), r.body.text);
+  });
+});
+
+test('"good", "super" and "giving" before a day, and "this sun", are ordinary words, and a weekend gone by is no weekend asked', async () => {
+  for (const [q, want] of [
+    ['Is this a good Friday to run a promo?', 'Friday'],
+    ['Will it be a good Sunday for brunch?', 'Sunday'],
+    ['Gonna be a super Sunday?', 'Sunday'],
+    ['We\'re giving Tuesday another shot with trivia, how busy will it be?', 'Tuesday'],
+    // The holidays, written as names.
+    ['Is Good Friday going to be busy?', ''],
+    ['Is Giving Tuesday worth a promo?', ''],
+    ['how busy is super bowl sunday', ''],
+    // The weather, not the day.
+    ['How busy will the patio be with this sun?', ''],
+    ['how busy will the patio get in this sun', ''],
+    ['How busy will this Sun be?', 'Sunday'],
+    // Last weekend, and the weekend before.
+    ['Is next weekend going to beat last weekend', 'weekend:next_words'],
+    ['Is next weekend going to be bigger than the weekend before?', 'weekend:next_words'],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // On a Sunday: until 2026-11-06 it opened on "Sunday peaks around 9 PM at
+  // 45", today, and then next Friday and Saturday.
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr7LastWeekendSun000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'Is next weekend going to beat last weekend' });
+    assert.deepStrictEqual(sourceIds(r).sort(), ['next_weekend_past_forecast', 'typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
+    // "a good Friday" is the coming Friday.
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    r = await call('/api/venue/advisor/question', { question: 'Is this a good Friday to run a promo?' });
+    assert.strictEqual(r.body.text.split('\n')[0], `${KIND_OPEN}Friday peaks around 9 PM at 66 on our 0 to 100 index.`);
+  });
+});
+
+test('in the small hours of a night still running, this morning and this afternoon are the day ahead, and tonight and today the night still running', async () => {
+  // A venue with crowd history open to 3 AM, at 12:30 AM on a Saturday with
+  // Friday night still running: until 2026-11-06 a morning or an afternoon
+  // was answered with Friday night, a peak already past.
+  await withNightCurve('ChIJr7SmallHoursDayParts', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will this afternoon be?' });
+    assert.strictEqual(r.body.text.split('\n')[0], 'Saturday peaks around 9 PM at 74 on our 0 to 100 index.');
+    assert.strictEqual(sourceIds(r)[0], 'peak_2026-11-07');
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    r = await call('/api/venue/advisor/question', { question: 'How busy will we be this morning?' });
+    assert.strictEqual(sourceIds(r)[0], 'peak_2026-11-07');
+    // Tonight, and today, are the night still running, as the today chip
+    // answers them.
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    for (const question of ['How busy will tonight be?', 'How does today look?']) {
+      r = await call('/api/venue/advisor/question', { question });
+      assert.deepStrictEqual(sourceIds(r), ['peak_2026-11-06'], question);
+    }
+  }));
+});
