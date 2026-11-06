@@ -1904,13 +1904,17 @@ const CORPUS_ROW = Object.freeze({
   price_level: 2, rating: 4.4, review_count: 320, timezone: 'UTC',
 });
 
-test('the day a question asks about, read off its words: whole day words only, today and tonight, tomorrow, and "next"', () => {
+test('the day a question asks about, read off its words: whole day words, short forms written as days, today and tonight, tomorrow, and "next"', () => {
   const read = (q) => roostPlaybook.askedDay(q);
-  // No short form is a day (2026-11-06): each rule that told one from the
-  // English word met an owner's sentence it misread.
-  for (const q of ['How busy will Sat be?', 'How\'s Fri looking?', 'thurs night', 'is Tues slow', 'Wed night', 'sun brunch any good']) {
-    assert.strictEqual(read(q), null, q);
+  // A short form is a day where it is written as one (2026-11-06); a
+  // lower-case "sun" or "sat" is the word, whatever follows it.
+  for (const [q, weekday] of [
+    ['How busy will Sat be?', 'Saturday'], ['How\'s Fri looking?', 'Friday'], ['thurs night', 'Thursday'],
+    ['is Tues slow', 'Tuesday'], ['Wed night', 'Wednesday'],
+  ]) {
+    assert.deepStrictEqual(read(q), { weekday, next: false }, q);
   }
+  assert.strictEqual(read('sun brunch any good'), null);
   assert.deepStrictEqual(read('How busy will next Monday be?'), { weekday: 'Monday', next: true });
   // "Next week" belongs to the day beside it (second review, 2026-11-06).
   assert.deepStrictEqual(read('How busy will Monday be next week?'), { weekday: 'Monday', next: false, nextWeek: true });
@@ -1928,9 +1932,10 @@ test('the day a question asks about, read off its words: whole day words only, t
     assert.strictEqual(roostPlaybook.namedWeekday(q), null, q);
   }
   assert.strictEqual(roostPlaybook.namedWeekday('How busy will Saturday be?'), 'Saturday');
+  assert.strictEqual(roostPlaybook.namedWeekday('How busy will Sat be?'), 'Saturday');
 });
 
-test('the second review\'s misreadings: a name, a test, any short form, and "next week" away from the day are no days', () => {
+test('the second review\'s misreadings: a name, a test, a short form written as the word, and "next week" away from the day are no days', () => {
   // Each read as a day until 2026-11-06 (the review's askedDayProbe).
   const read = (q) => roostPlaybook.askedDay(q);
   for (const q of [
@@ -1952,14 +1957,19 @@ test('the second review\'s misreadings: a name, a test, any short form, and "nex
   assert.deepStrictEqual(read('Sat through another slow night, how do I fill tonight?'), { today: true });
   assert.deepStrictEqual(read('Sun\'s out, should we open the patio tonight?'), { today: true });
   assert.deepStrictEqual(read('Sat down with my manager, how do I fill Tuesdays?'), { weekday: 'Tuesday', next: false });
-  // No short form is a day, wherever it is written (2026-11-06).
-  for (const [q] of [['Sat?'], ['MON'],
-    ['Is it worth opening on Sun?', 'Sunday'], ['how busy will sat night be', 'Saturday'], ['sun brunch ideas?', 'Sunday'],
-    ['Can I get the Wed crowd back?', 'Wednesday'], ['C\'mon, give me something for Thurs', 'Thursday'],
-    ['Thu night is dead, ideas?', 'Thursday'], ['How busy were we last Sat?', 'Saturday'], ['Thanks! See you Fri.', 'Friday'],
-    ['How busy will Sat be?', 'Saturday'], ['is Tues slow', 'Tuesday'], ['How\'s Fri looking?', 'Friday'],
-    ['We are open Fri and Sat, how do I fill them?', 'Saturday'], ['How busy will Sat Nov 14 be?', 'Saturday'],
+  // Written where a day is written, a short form is that day (2026-11-06).
+  for (const [q, weekday] of [['Sat?', 'Saturday'], ['MON', 'Monday'],
+    ['Is it worth opening on Sun?', 'Sunday'], ['Can I get the Wed crowd back?', 'Wednesday'],
+    ['C\'mon, give me something for Thurs', 'Thursday'], ['Thu night is dead, ideas?', 'Thursday'],
+    ['Thanks! See you Fri.', 'Friday'], ['How busy will Sat be?', 'Saturday'], ['is Tues slow', 'Tuesday'],
+    ['How\'s Fri looking?', 'Friday'], ['How busy will Sat Nov 14 be?', 'Saturday'],
   ]) {
+    assert.deepStrictEqual(read(q), { weekday, next: false }, q);
+  }
+  // Two of them are two days, both answered.
+  assert.deepStrictEqual(read('We are open Fri and Sat, how do I fill them?').several.map((w) => w.weekday), ['Friday', 'Saturday']);
+  // In lower case "sat" and "sun" are the words, and "last Sat" is gone.
+  for (const q of ['how busy will sat night be', 'sun brunch ideas?', 'How busy were we last Sat?']) {
     assert.strictEqual(read(q), null, q);
   }
   // "Next week" is the day beside it, and only that day.
@@ -2784,9 +2794,10 @@ test('after an answer that opens on the venue being shut, today or for a weekend
 });
 
 // THE DAY WORDS, READ BY A SMALL GRAMMAR (2026-11-06). Every
-// phrasing four review rounds found misread, read by roostDayReader: no short
-// form, the clause that asks, a possessive only alone, and two days both kept.
-test('the day words of a question are read where it asks, whole words only, two days both kept', () => {
+// phrasing four review rounds found misread, read by roostDayReader: a short
+// form only where written as a day, the clause that asks, a possessive only
+// alone, and two days both kept.
+test('the day words of a question are read where it asks, a short form only where written as a day, two days both kept', () => {
   const { dayWords } = require('../services/roostDayReader');
   const said = (q) => dayWords(q).map((w) => (w.kind === 'weekday'
     ? `${w.next ? 'next ' : ''}${w.weekday}${w.nextWeek ? ' next week' : ''}${w.afterNext ? ' after next' : ''}`
@@ -2800,7 +2811,7 @@ test('the day words of a question are read where it asks, whole words only, two 
     ['sat 1st turn by 6:30, how busy will tonight be?', 'today'],
     ['We got sun 10 minutes ago, how busy will the patio be tonight?', 'today'],
     ['we only sat 9 tables, which nights are quiet this week?', 'week'],
-    ['How busy will Sat be?', ''],
+    ['How busy will Sat be?', 'Saturday'],
     // The sentence that asks, and the clause after a comma that asks.
     ['Happy Friday! How busy will this weekend be?', 'weekend:this'],
     ['It\'s Friday, how\'s the weekend looking?', 'weekend:this'],
@@ -3086,5 +3097,38 @@ test('a day given as the reason or said in the past counts only alone, so the qu
     r = await call('/api/venue/advisor/question', { question: 'Tonight was dead so I\'m wondering if tomorrow will pick up' });
     assert.strictEqual(r.body.text.split('\n')[0], `${kind}Thursday peaks around 9 PM at 64 on our 0 to 100 index.`);
     assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-12');
+  });
+});
+
+test('a short form is a day only where it is written as one, and never where it is the word: the bar on its Wednesday', async () => {
+  for (const [q, want] of [
+    // Written as a day.
+    ['Fri night busy?', 'Friday'],
+    ['next sat?', 'next Saturday'],
+    ['Sun?', 'Sunday'],
+    ['fri or sat?', 'Friday, Saturday'],
+    // The word, or a test: the day the question does name.
+    ['Sat at the bar for 2 hours last night, how busy will tonight be?', 'today'],
+    ['Sun\'s out, should we open the patio tonight?', 'today'],
+    ['Got a SAT prep group coming tonight, how busy will it be?', 'today'],
+    // A range is the hours, not a day asked about.
+    ['We\'re open Mon-Fri, how busy will Wed be?', 'Wednesday'],
+    // The clause that asks: Monday, with Sunday said before it.
+    ['we sat 40 on Sun, how do I fill Mon?', 'Monday'],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // Through the route: "Fri night" is Friday's line, and "we sat 40 covers"
+  // is no Saturday.
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6ShortFormsWed00000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'Fri night busy?' });
+    assert.strictEqual(r.body.text.split('\n')[0], 'In Flock\'s forecast for places like yours, Friday peaks around 9 PM at 66 on our 0 to 100 index.');
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-13');
+    r = await call('/api/venue/advisor/question', { question: 'we sat 40 covers last night, how do I get more tonight?' });
+    assert.ok(!r.body.sources.some((s) => s.id === 'typical_peak_2026-11-14'), JSON.stringify(r.body.sources));
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-11');
   });
 });

@@ -5,12 +5,15 @@
 // Four rounds of review each found a new wrong day in a reader that guessed
 // from short forms and their neighbours ("we sat 40 covers" was Saturday,
 // "the sun rush" was Sunday, "if tomorrow will pick up" was today). This one
-// reads only words that say a day and nothing else:
+// reads words that say a day:
 //
 //   * a weekday written out ("Friday", "fridays", "Friday's"), with "next",
 //     "next week", "of next week", "next week's" and "after next" beside it;
 //     not after "last", and not in a holiday's name ("Black Friday", "Cyber
 //     Monday", "Easter Sunday"): that day is a date, not the coming weekday;
+//   * a short form ("Fri night", "next sat", "Sun?") only where it is written
+//     as a day (shortIsDay below), never where it is the word ("we sat 40
+//     covers", "the sun rush");
 //   * today, tonight, this morning, this afternoon, this evening;
 //   * tomorrow, and the day after tomorrow;
 //   * this weekend (any "weekend"), next weekend, the following weekend, the
@@ -18,9 +21,8 @@
 //   * the week: this week, the week, our week, the whole week, the coming
 //     week, the week ahead, and which or what day or night.
 //
-// No short form is read ("Sat", "Fri", "Tues", "Sun"): four of them are
-// English words, and every rule that told the day from the word ran into an
-// owner's sentence it misread.
+// A short form counts only where it is written as a day; one read beside
+// another day is answered with both, never picked over it.
 //
 // WHERE: the question sentence. A question asks in its sentences that end on a
 // question mark, or with none, in its last sentence; a comma before a question
@@ -56,7 +58,56 @@ const TOKEN = new RegExp([
   "\\b(?<tomorrow>tomorrow)\\b(?<tmPoss>')?",
   "\\b(?<today>today|tonight|this\\s+(?:evening|afternoon|morning))\\b(?<tdPoss>')?",
   "\\b(?<day>(?:mon|tues|wednes|thurs|fri|satur|sun)day)(?<plural>s)?\\b(?<dayPoss>')?",
+  "\\b(?<short>mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)\\b\\.?",
 ].join('|'), 'gi');
+
+// THE SHORT FORMS, ONLY WHERE THEY ARE WRITTEN AS A DAY (2026-11-06). "Tues",
+// "Thurs", "Fri" and "Weds" are no English word and count anywhere but in a
+// range ("Mon-Fri" is the hours or a habit) or a word made on them
+// ("Fri-yay"). "Mon", "Wed", "Sat" and "Sun" are words too ("we sat 40
+// covers", "the sun rush", "c'mon"), so they count only after on, this, next,
+// every or coming ("on Sun", "next sat"); joined to another day ("Fri or
+// Sat", "Sat/Sun"); as the whole sentence ("Sun?"); capitalised before a part
+// of the day or a date ("Sun brunch", "Sat 14th"); or capitalised inside a
+// sentence and not after "the" or "a" nor before a name ("How busy will Sat
+// be?", not "the Sun Devils"). "SAT" in capitals from an owner who writes in
+// lower case too is a test. One read beside another day is answered with
+// both (routes/advisor.js bothAnswer), never picked over it.
+const SHORT_DAYS = Object.freeze({
+  mon: 'Monday', tue: 'Tuesday', tues: 'Tuesday', wed: 'Wednesday', weds: 'Wednesday', thu: 'Thursday',
+  thur: 'Thursday', thurs: 'Thursday', fri: 'Friday', sat: 'Saturday', sun: 'Sunday',
+});
+const WORDS_TOO = new Set(['mon', 'wed', 'sat', 'sun']);
+const DAY_FORMS = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
+const PART_NEXT = /^\s*(?:-\s*)?(?:(?:night|nite|morning|afternoon|evening|brunch|lunch|dinner|breakfast|service|shift|crowd|rush)s?\b|(?:am|pm)\b|[ap]\.m\.)/i;
+const DATE_NEXT = /^\s*(?:\d{1,2}(?:st|nd|rd|th)\b|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d)/i;
+const RANGE_JOIN = '(?:-|\\u2013|through|thru|to|till|til|until)';
+const SET_JOIN = '(?:\\/|&|\\+|and|or|n|vs\\.?|versus)';
+const RANGE_NEXT = new RegExp(`^\\s*${RANGE_JOIN}\\s*${DAY_FORMS}\\b`, 'i');
+const RANGE_BEFORE = new RegExp(`\\b${DAY_FORMS}\\.?\\s*${RANGE_JOIN}\\s*$`, 'i');
+const SET_NEXT = new RegExp(`^\\s*${SET_JOIN}\\s*${DAY_FORMS}\\b`, 'i');
+const SET_BEFORE = new RegExp(`\\b${DAY_FORMS}\\.?\\s*${SET_JOIN}\\s*$`, 'i');
+const MARK_BEFORE = /\b(?:on|this|next|every|each|coming|upcoming)\s+$/i;
+const NAME_NEXT = /^\s+[A-Z][a-z]/;
+const ARTICLE_BEFORE = /\b(?:the|a|an)\s+$/i;
+const SENTENCE_START = /(?:^|[.!?]\s+|\n\s*)$/;
+const SENTENCE_END = /^\s*(?:[.!?]+\s*)?$|^\s*[.!?]+\s/;
+
+/** True when the short form `short`, between `before` and `after`, is written as a day. */
+function shortIsDay(short, before, after, shouting) {
+  if (RANGE_NEXT.test(after) || RANGE_BEFORE.test(before)) return false;
+  if (/^-[a-z]/i.test(after)) return false;
+  const word = WORDS_TOO.has(short.toLowerCase());
+  const capital = !shouting && /^[A-Z]/.test(short);
+  const partOrDate = PART_NEXT.test(after) || DATE_NEXT.test(after);
+  if (!word) return !(capital && NAME_NEXT.test(after) && !partOrDate);
+  if (!shouting && short === short.toUpperCase()) return false;
+  if (MARK_BEFORE.test(before) || SET_NEXT.test(after) || SET_BEFORE.test(before)) return true;
+  if (SENTENCE_START.test(before) && SENTENCE_END.test(after)) return true;
+  if (capital && partOrDate) return true;
+  if (!capital || ARTICLE_BEFORE.test(before)) return false;
+  return !NAME_NEXT.test(after) && !SENTENCE_START.test(before);
+}
 
 // The week after this one, said beside the day ("Friday next week", "Friday of
 // next week", "Monday be next week", "next week's Friday"); and two out ("the
@@ -86,12 +137,16 @@ function parts(text) {
   return { asking: marked.length ? marked : pieces.slice(-1), all: pieces };
 }
 
-function tokensIn(piece) {
+function tokensIn(piece, shouting = false) {
   const out = [];
   for (const m of piece.matchAll(TOKEN)) {
-    const g = m.groups;
+    const g = { ...m.groups };
     const before = piece.slice(0, m.index);
     const after = piece.slice(m.index + m[0].length);
+    if (g.short) {
+      if (!shortIsDay(g.short, before, after, shouting)) continue;
+      g.day = SHORT_DAYS[g.short.toLowerCase()];
+    }
     // A day given as the reason ("How busy will tonight be since tomorrow is a
     // holiday?") or said as the past counts only when no other day is said, as
     // a possessive does.
@@ -129,8 +184,10 @@ const same = (a, b) => a.kind === b.kind && a.weekday === b.weekday && a.scope =
 function dayWords(question) {
   const text = normalize(question);
   const { asking, all } = parts(text);
-  let found = asking.flatMap((p) => tokensIn(p));
-  if (!found.length) found = all.flatMap((p) => tokensIn(p)).filter((t) => !t.plural);
+  // A question in capitals throughout says nothing by its case.
+  const shouting = !/[a-z]/.test(text);
+  let found = asking.flatMap((p) => tokensIn(p, shouting));
+  if (!found.length) found = all.flatMap((p) => tokensIn(p, shouting)).filter((t) => !t.plural);
   const strong = found.filter((t) => !t.weak);
   let kept = strong.length ? strong : found;
   // The week beside a weekday only says which one ("Monday this week").
