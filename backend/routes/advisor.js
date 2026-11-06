@@ -1417,3 +1417,7 @@ module.exports = router;
 // slow day) are the ones worth driving directly: reaching them through the
 // endpoint would mean standing up a whole database fixture to test a sort.
 module.exports.__INTENT_PLANS = INTENT_PLANS;
+// The bridge's step after a plan, for the live eval's stand-in bridge
+// (scripts/roost/roostEval.js): a question naming today's weekday gets
+// today's entry on the card beside the week.
+module.exports.__withNamedToday = withNamedToday;

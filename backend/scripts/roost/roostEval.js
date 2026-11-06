@@ -405,26 +405,31 @@ function cardWeek(byDay, window) {
 }
 
 // A no-history venue's blocks, built the way the real fact bridge builds them
-// (routes/advisor.js weekFor and tonightFor): the card through
+// (routes/advisor.js weekFor, tonightFor and withNamedToday): the card through
 // advisorFacts.projectionFacts and todayProjectionFacts and the route's own
 // plans, and the corpus refusal for everything the card does not carry.
 const CARD_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
-async function noHistoryBlock(v, intentId) {
+async function noHistoryBlock(v, intentId, question = '') {
   const refusalText = (r) => [r.reason, r.whatWouldUnlock].filter(Boolean).join(' ');
   const gate = advisorFacts.corpusGate(v.ctx.profile);
   if (!CARD_INTENTS.has(intentId)) return { intent: intentId, facts: [], refusals: [refusalText(gate)] };
   const card = advisorFacts.projectionFacts(v.card);
   const today = advisorFacts.todayProjectionFacts(v.card);
-  const plans = require(path.join(B, 'routes', 'advisor')).__INTENT_PLANS;
+  const advisorRoute = require(path.join(B, 'routes', 'advisor'));
+  const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
   // `card` is the bridge's one read of the card (advisorFacts.buildCardProjection):
   // the weekend counts from the card's today.
-  const entries = await plans[intentId]({
+  const b = {
     ctx: v.ctx,
     week: async () => card,
     tonight: async () => today,
     card: async () => ({ week: card, today, date: v.card.today.date }),
     around: async () => [],
-  });
+  };
+  // A typed question that names today's weekday gets today's entry beside
+  // the week, as the bridge gives it.
+  const entries = await advisorRoute.__withNamedToday(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b,
+    roostPlaybook.namedWeekday(question));
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
   // Nothing on the card for it: the corpus refusal, as the bridge gives.
@@ -435,12 +440,13 @@ async function noHistoryBlock(v, intentId) {
 
 // The block a chip gets, carrying what the real fact bridge adds beside the
 // facts (routes/advisor.js bridgeFactBlock): the venue's kind, its service
-// style and its spend per head.
-async function blockFor(venue, intentId) {
+// style and its spend per head. `question` is the typed question, when the
+// route hands one over.
+async function blockFor(venue, intentId, { question = '' } = {}) {
   const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
   const { ctx } = VENUES[venue];
   return {
-    ...(await rawBlockFor(venue, intentId)),
+    ...(await rawBlockFor(venue, intentId, question)),
     venue: roostPlaybook.venueOf(ctx),
     serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
@@ -448,9 +454,9 @@ async function blockFor(venue, intentId) {
   };
 }
 
-function rawBlockFor(venue, intentId) {
+function rawBlockFor(venue, intentId, question = '') {
   const v = VENUES[venue];
-  if (v.noHistory) return noHistoryBlock(v, intentId);
+  if (v.noHistory) return noHistoryBlock(v, intentId, question);
   const sorted = [...v.week].sort((a, z) => a.value.peakScore - z.value.peakScore);
   switch (intentId) {
     case 'peak_hours': return { intent: intentId, facts: v.week, refusals: [] };
@@ -479,7 +485,7 @@ const express = require('express');
 const http = require('http');
 const advisorRouter = require(path.join(B, 'routes', 'advisor'));
 
-advisorRouter.__setFactsForTests(async (_userId, intentId) => blockFor(currentVenue, intentId));
+advisorRouter.__setFactsForTests(async (_userId, intentId, opts) => blockFor(currentVenue, intentId, opts));
 const app = express();
 app.use(express.json());
 app.use('/api/venue/advisor', advisorRouter);
