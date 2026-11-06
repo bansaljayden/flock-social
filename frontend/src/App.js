@@ -162,6 +162,7 @@ import { owedOn } from './lib/billShares';
 // answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
 import { mergeBudgetUpdate } from './lib/budgetStatus';
 import { isNightOver } from './lib/planNight';
+import { askedMemberIds } from './lib/planAsked';
 import { tablePartyForFlockId } from './lib/tableSummaries';
 import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks';
 // The create screen, the one the Nest points a brand new account at, left
@@ -7786,6 +7787,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             momentum: old.momentum !== undefined ? old.momentum : f.momentum,
             reconfirm: old.reconfirm !== undefined ? old.reconfirm : f.reconfirm,
             hiddenAccepted: old.hiddenAccepted !== undefined ? old.hiddenAccepted : f.hiddenAccepted,
+            askedIds: old.askedIds !== undefined ? old.askedIds : f.askedIds,
           };
         }));
         // An invite to a night that already happened is not an invitation,
@@ -11567,6 +11569,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ...f,
             members,
             guests,
+            // Everyone the server listed, whatever they answered, for the plan
+            // screen's "Going (3 of 5)". `members` above keeps the accepted
+            // only and the plan screen's loader keeps them all, so the count
+            // is read from this, which both store the same way
+            // (lib/planAsked.js).
+            askedIds: askedMemberIds(data.members, blockedIdsRef.current),
             memberCount: Math.max(0, (data.momentum?.accepted ?? accepted.length) - hidden),
             // Kept on the flock the way the plan screen's loader keeps it, so
             // a guest answering live (onGuestRsvp) subtracts the same blocked
@@ -12430,7 +12438,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           const eventTime = data.flock?.event_time || null;
           // hiddenAccepted rides on the flock so a live going count (a guest
           // answering, below) can subtract the same blocked members this does.
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, reconfirm: data.reconfirm || null, eventTime: eventTime || f.eventTime || null } : f));
+          // askedIds is stored as refreshFlockRoster stores it, so the Going
+          // row's "of 5" is one number whichever of the two ran last.
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), askedIds: askedMemberIds(data.members, blockedIdsRef.current), momentum: data.momentum || null, reconfirm: data.reconfirm || null, eventTime: eventTime || f.eventTime || null } : f));
           // A plan opened from a notification before the list has it: this
           // answer had no row to land in, and is read again once there is one
           // (READS THAT BEAT THE LIST).
@@ -13842,6 +13852,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return {
           ...f,
           members: (f.members || []).filter(m => m.id !== data.userId),
+          // Leaving deletes the membership row, so they were asked and are
+          // not any more: the plan screen's "of 5" drops with their face.
+          askedIds: Array.isArray(f.askedIds) ? f.askedIds.filter(a => a !== String(data.userId)) : f.askedIds,
           memberPreviews: Array.isArray(f.memberPreviews) ? f.memberPreviews.filter(m => m.id !== data.userId) : f.memberPreviews,
           // Their receipts go with their seat. The server's roster stops
           // counting a member who left, so "Opened by" here should too; and a
@@ -15378,6 +15391,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           })
         : null;
       const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
+      // Off the asked count too, as the next roster read leaves them off it.
+      const askedIds = Array.isArray(f.askedIds) ? f.askedIds.filter(a => a !== id) : null;
       const pins = Array.isArray(f.pins)
         ? f.pins.filter(p => !theirs.has(String(p.messageId != null ? p.messageId : p.id)) && !saidByAny(p.senderId, them))
         : null;
@@ -15387,9 +15402,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const msgChanged = messages && (messages.length !== f.messages.length
         || messages.some((m, i) => m !== f.messages[i]));
       const memChanged = members && members.length !== f.members.length;
+      const askedChanged = askedIds && askedIds.length !== f.askedIds.length;
       const pinChanged = pins && pins.length !== f.pins.length;
-      if (!msgChanged && !memChanged && !pinChanged) return f;
-      return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}), ...(pinChanged ? { pins } : {}) };
+      if (!msgChanged && !memChanged && !askedChanged && !pinChanged) return f;
+      return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}), ...(askedChanged ? { askedIds } : {}), ...(pinChanged ? { pins } : {}) };
     }));
     // The reply bar too, if it was quoting them.
     setFlockReplyingTo(cur => (cur && String(cur.senderId) === id ? null : cur));

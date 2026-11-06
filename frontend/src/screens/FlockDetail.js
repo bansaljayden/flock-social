@@ -58,6 +58,7 @@ import { FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES } from '../components/ui/FormBits
 import { submitVenueFeedback } from '../services/api';
 import { lsGet } from '../lib/storage';
 import { isNightOver } from '../lib/planNight';
+import { askedCount } from '../lib/planAsked';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import { RosterSkeleton } from '../components/ui/Skeleton';
@@ -295,13 +296,13 @@ export default function FlockDetail({
       }
       setShowTimeEditor(true);
     };
-    // Everyone asked, whatever they answered: the roster as it is on screen
-    // (members of every status and every guest, the people this reader
-    // blocked already left out by the server), so the count and the faces
-    // can never disagree. The server's momentum.totalMembers counts the same
-    // way over the unfiltered roster, and is read once per visit where these
-    // arrays move live.
-    const askedCount = (flock.members || []).length + (flock.guests || []).length;
+    // Everyone asked, whatever they answered: members of every status and
+    // every guest, less the people this reader blocked. Not flock.members
+    // alone, which one App.js loader keeps whole and the other cuts to the
+    // accepted, so the same plan read "3 of 5" or "3" by which ran last. Both
+    // keep askedIds from one server answer, and lib/planAsked.js joins it to
+    // the live roster.
+    const asked = askedCount(flock);
 
     return (
       <div key="flock-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -727,10 +728,10 @@ export default function FlockDetail({
           <div style={{ padding: '10px 0 12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
               {/* The head count, once, beside the faces it counts, and out
-                  of everyone asked when some have not said yes (askedCount
+                  of everyone asked when some have not said yes (`asked`
                   above). */}
               <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>
-                Going ({askedCount > goingCount ? `${goingCount} of ${askedCount}` : goingCount})
+                Going ({asked > goingCount ? `${goingCount} of ${asked}` : goingCount})
               </h4>
               {/* Gated like the venue action and the time editor: an invite,
                   by name or by link, is refused on an ended plan, so the

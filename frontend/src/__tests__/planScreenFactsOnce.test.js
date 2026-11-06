@@ -241,6 +241,30 @@ describe('everyone else', () => {
     render(React.createElement(FlockDetail, props(flock, member)));
     expect(screen.getByRole('heading', { name: 'Going (4 of 7)' })).toBeInTheDocument();
   });
+
+  // refreshFlockRoster leaves accepted members only in flock.members, and it
+  // runs while this screen is open (a block, the night-of window, a host
+  // handoff) and fills the roster when the plan is opened from its chat. Both
+  // loaders keep askedIds (lib/planAsked.js), so the count does not move.
+  test('the count is the same whichever App.js loader filled the roster', () => {
+    const full = plan();
+    const askedIds = full.members.map((m) => String(m.id));
+    const acceptedOnly = full.members.filter((m) => m.status === 'accepted');
+    const { unmount } = render(React.createElement(FlockDetail, props(plan({ askedIds }), member)));
+    expect(screen.getByRole('heading', { name: 'Going (3 of 5)' })).toBeInTheDocument();
+    unmount();
+    const r = render(React.createElement(FlockDetail, props(plan({ members: acceptedOnly, askedIds }), member)));
+    expect(screen.getByRole('heading', { name: 'Going (3 of 5)' })).toBeInTheDocument();
+    r.unmount();
+    const out = [{ id: 'g-2', guestId: 2, name: 'Riley', status: 'declined', isGuest: true }];
+    render(React.createElement(FlockDetail, props(plan({ members: acceptedOnly, askedIds, guests: out }), member)));
+    expect(screen.getByRole('heading', { name: 'Going (3 of 6)' })).toBeInTheDocument();
+  });
+
+  test('a member who said no was asked, so the host reads one of two', () => {
+    render(React.createElement(FlockDetail, props(plan({ members: [HOST, { id: 11, name: 'Bea Cole', status: 'declined' }] }))));
+    expect(screen.getByRole('heading', { name: 'Going (1 of 2)' })).toBeInTheDocument();
+  });
 });
 
 describe('a plan that has ended', () => {

@@ -30,6 +30,7 @@ const fs = require('fs');
 const path = require('path');
 const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const { liftReaders } = require('../services/flockReaders');
+const { askedMemberIds, askedCount } = require('../lib/planAsked');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -166,6 +167,7 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     getFlock: hold('roster'),
     blockedIdsRef: { current: new Set() },
     guestRsvpId: H.guestRsvpId,
+    askedMemberIds,
     setFlocks,
   });
   const loadFlockVotes = run(`${callback('loadFlockVotes')}\nreturn loadFlockVotes;`, {
@@ -237,6 +239,7 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
           getFlock: hold('roster'),
           blockedIdsRef: { current: new Set() },
           guestRsvpId: H.guestRsvpId,
+          askedMemberIds,
           setFlocks,
           noteRowlessRead,
           loadFlockVotes,
@@ -430,6 +433,36 @@ describe('a row that lands after the person has moved on', () => {
     answerAll(a.requests, 1);
     await settle();
     expect(a.state.spinner).toEqual([true, false, true, false]);
+  });
+});
+
+// The plan screen's "Going (3 of 5)" counts everyone asked (lib/planAsked.js).
+// The chat's loader, refreshFlockRoster, keeps the accepted members only, and
+// the plan screen's own read keeps every status. Each keeps askedIds from the
+// same answer, so the count is one number whichever ran last; counted off
+// flock.members it was 3 after the chat's read and 5 after the plan's.
+describe('both roster loaders, one answer', () => {
+  const ASKED = {
+    ...ROSTER,
+    members: [...ROSTER.members, { id: 8, name: 'Priya', status: 'invited' }, { id: 9, name: 'Leo', status: 'declined' }],
+    guests: [{ id: 'guest:4', guest_id: 4, name: 'Riley', status: 'declined' }],
+  };
+
+  test('leave the plan screen the same count of everyone asked', async () => {
+    const chat = app({ flocks: [listRow()] });
+    chat.open();
+    chat.requests.roster[0].resolve(ASKED);
+    await settle();
+    expect(chat.row().members.map((m) => m.name)).toEqual(['Jo', 'Sam']);
+
+    const plan = app({ flocks: [listRow()], screen: 'detail' });
+    plan.open();
+    plan.requests.roster[0].resolve(ASKED);
+    await settle();
+    expect(plan.row().members.map((m) => m.name)).toEqual(['Jo', 'Sam', 'Priya', 'Leo']);
+
+    expect(askedCount(chat.row())).toBe(5);
+    expect(askedCount(plan.row())).toBe(5);
   });
 });
 
