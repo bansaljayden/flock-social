@@ -7,12 +7,19 @@
  *      result (finalist, winner, award) and never a prize, fee or deadline; the
  *      date behind a status says the same month as the words, and none is in
  *      the future; only the Conrad and DECA entries are the maintainer's with Asad;
+ *      only DECA's season-long team event may show as in progress, and its
+ *      line says who is preparing it, never "Entered by";
  *   2. the page renders every entry as a row of the Competitions ledger on the
- *      navy band, between the milestones and where things stand;
+ *      navy band, between the milestones (or the honors) and where things
+ *      stand, under a lead that names what is being prepared while any entry
+ *      is in progress;
  *   3. the Honors section is there only when HONORS has an entry. Empty, the
  *      page says nothing about honors at all (no heading, no "coming soon");
  *      with one, it is the dated log on the stone band before the
- *      competitions, and no two neighbouring sections share a band.
+ *      competitions, and no two neighbouring sections share a band;
+ *   4. the DECA result the site has claimed since August is an honor, not a
+ *      milestone labelled "Award", and the JSON-LD `award` says it in the
+ *      same words as the Honors entry.
  *
  * Both Honors states render the real AboutPage with competitions.js mocked
  * inside jest.isolateModules, to static markup from that fresh registry.
@@ -25,6 +32,8 @@
  *   cd frontend && CI=true npx react-scripts test --watchAll=false aboutCompetitions
  */
 
+const fs = require('fs');
+const path = require('path');
 const React = require('react');
 const { render } = require('@testing-library/react');
 
@@ -131,8 +140,24 @@ describe('competitions.js keeps to its rules', () => {
     const withAsad = COMPETITIONS.filter((c) => /Asad Ali/.test(c.team)).map((c) => c.name);
     expect(withAsad).toEqual(['Conrad Challenge', 'Start-Up Business Plan']);
     for (const c of COMPETITIONS) {
-      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^Entered by Jayden Bansal( and Asad Ali)?$/)]);
+      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^(Entered|Being prepared) by Jayden Bansal( and Asad Ali)?$/)]);
     }
+  });
+
+  test('an entry in progress has not been entered: its line says who is preparing it', () => {
+    for (const c of COMPETITIONS) {
+      const verb = c.status === 'In progress' ? 'Being prepared by ' : 'Entered by ';
+      expect([c.name, c.team.startsWith(verb)]).toEqual([c.name, true]);
+    }
+  });
+
+  test('only DECA\'s season-long team event shows while in progress; an application goes in when it is submitted', () => {
+    // An application still being written (the Jacobson summary was, on
+    // 2026-11-06) is added the day it is submitted, as Submitted.
+    for (const c of COMPETITIONS.filter((x) => x.status === 'In progress')) {
+      expect([c.name, c.organizer]).toEqual(['Start-Up Business Plan', 'DECA']);
+    }
+    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Jacobson/);
   });
 
   test('the science-fair project is not Flock, and no team member\'s school is named', () => {
@@ -147,7 +172,7 @@ describe('competitions.js keeps to its rules', () => {
     expect(all).not.toMatch(/[A-Za-z]'[A-Za-z]/);
   });
 
-  test('each honor, if there is one, is a dated plain sentence', () => {
+  test('each honor is a dated plain sentence, or names its year while the month is unconfirmed', () => {
     expect(Array.isArray(HONORS)).toBe(true);
     const now = Date.now();
     for (const h of HONORS) {
@@ -158,8 +183,26 @@ describe('competitions.js keeps to its rules', () => {
         expect(h.date).toMatch(/^\d{4}-\d{2}(-\d{2})?$/);
         expect(h.when).toBe(spoken(h.date));
         expect(startOf(h.date) <= now).toBe(true);
+      } else {
+        // Never a bare label such as "Award": the year, and not a future one.
+        expect([h.what, h.when]).toEqual([h.what, expect.stringMatching(/^\d{4}$/)]);
+        expect(new Date(Number(h.when), 0, 1).getTime() <= now).toBe(true);
       }
     }
+  });
+
+  test('the DECA result is an honor, and the JSON-LD award says it in the same words', () => {
+    const deca = HONORS.filter((h) => /DECA States/.test(h.what));
+    expect(deca).toEqual([{ when: '2026', what: '1st place in Innovation Plan at Pennsylvania DECA States.' }]);
+    // The Organization's one credibility claim, in both copies of the JSON-LD
+    // (public/index.html for people, api/marketing-page.js for crawlers).
+    const read = (rel) => fs.readFileSync(path.join(__dirname, '..', '..', rel), 'utf8');
+    const awards = [
+      ...read('public/index.html').matchAll(/"award":\s*"([^"]+)"/g),
+      ...read('api/marketing-page.js').matchAll(/\baward:\s*'([^']+)'/g),
+    ].map((m) => m[1]);
+    const words = deca[0].what.replace(/\.$/, '');
+    expect(awards).toEqual([words, words]);
   });
 });
 
@@ -186,6 +229,20 @@ describe('/about shows the competitions', () => {
     unmount();
   });
 
+  test('the lead names what is being prepared exactly while an entry is in progress', () => {
+    const lead = (container) => flat(container.querySelector('section[aria-labelledby="ab-h-comps"] .lp-lead').textContent);
+    const { container, unmount } = render(React.createElement(AboutPage));
+    expect(COMPETITIONS.some((c) => c.status === 'In progress')).toBe(true);
+    expect(lead(container)).toBe('Where Flock has been entered, and what is being prepared.');
+    unmount();
+
+    // The day DECA's plan is entered, the lead says only that.
+    const entered = COMPETITIONS.map((c) => (c.status === 'In progress'
+      ? { ...c, status: 'Submitted December 2026', date: '2026-12', team: c.team.replace(/^Being prepared by/, 'Entered by') }
+      : c));
+    expect(lead(renderWith({ COMPETITIONS: entered, HONORS }).container)).toBe('Where Flock has been entered.');
+  });
+
   test('the ledger sits on the navy band between the milestones and where things stand', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
     const sections = sectionsOf(container);
@@ -210,6 +267,27 @@ describe('Honors appear only when there is one', () => {
   test('the live page matches HONORS: a section exactly when it has an entry', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
     expect(container.querySelector('#ab-h-honors') !== null).toBe(HONORS.length > 0);
+    unmount();
+  });
+
+  test('today the Honors section holds the DECA result, and the milestones no longer do', () => {
+    const { container, unmount } = render(React.createElement(AboutPage));
+    const section = container.querySelector('section[aria-labelledby="ab-h-honors"]');
+    expect(section).not.toBeNull();
+    expect(bandOf(section)).toBe('lp-sec-sand');
+    const items = Array.from(section.querySelectorAll('.ab-honors li'));
+    expect(items.map((li) => flat(li.textContent))).toEqual(['2026 1st place in Innovation Plan at Pennsylvania DECA States.']);
+    // A year alone gets no machine-readable date.
+    expect(items[0].querySelector('time')).toBeNull();
+    expect(flat(items[0].querySelector('.ab-when').textContent)).toBe('2026');
+
+    const milestones = Array.from(container.querySelectorAll('.ab-milestones li')).map((li) => flat(li.textContent));
+    expect(milestones.join(' | ')).not.toMatch(/DECA|\bAward\b/);
+    // Said once on the page, in the Honors section.
+    expect(container.textContent.match(/DECA States/g)).toHaveLength(1);
+
+    const bands = sectionsOf(container).map(bandOf);
+    for (let i = 1; i < bands.length; i += 1) expect([i, bands[i]]).not.toEqual([i, bands[i - 1]]);
     unmount();
   });
 
@@ -253,12 +331,12 @@ describe('Honors appear only when there is one', () => {
     unmount();
   });
 
-  test('an entry without a date still renders, its label as plain text', () => {
-    const honor = { when: 'Award', what: 'A test honor with no date.' };
+  test('an entry without a month still renders, its year as plain text', () => {
+    const honor = { when: '2025', what: 'A test honor with no month.' };
     const { container, unmount } = renderWith({ COMPETITIONS, HONORS: [honor] });
     const li = container.querySelector('.ab-honors li');
     expect(li.querySelector('time')).toBeNull();
-    expect(flat(li.querySelector('.ab-when').textContent)).toBe('Award');
+    expect(flat(li.querySelector('.ab-when').textContent)).toBe('2025');
     unmount();
   });
 });

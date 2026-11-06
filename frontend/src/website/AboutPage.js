@@ -23,9 +23,9 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   Jayden Bansal, solo technical founder and CEO, an 11th grader in      the pitch video's own description, and the company's own title for the role
 //     Pennsylvania who builds all of it, from the app to the Flux sensor  the company's IP assignment: nobody else has contributed code, design or art
 //   Asad Ali, growth and competitions lead since late August 2026         Asad Ali's own description of the role, Oct 2026
-//   1st place at PA DECA States                                           the landing page, since August
+//   1st place in Innovation Plan at Pennsylvania DECA States, 2026        on the site since August; its sources are with HONORS in competitions.js
 //   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
-//   the competitions, their statuses, and honors once there are any       competitions.js, which names its sources
+//   the competitions and their statuses, and the honors                   competitions.js, which names its sources
 // No team member's school is named anywhere on the page (a Diamond Challenge
 // rule). The competitions' organizers are named, and some are universities;
 // none is that school.
@@ -59,12 +59,17 @@ const HOLDS = [
 // (AppStoreListing.js); Apple's badge is in "Where things stand" below.
 const MILESTONES = [
   { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
-  { when: 'Award', what: '1st place at PA DECA States.' },
   { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
   { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
   { when: 'October 2026', what: 'iPhone app submitted to the App Store.' },
   { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
 ];
+
+// The competitions ledger's lead. An entry in progress has not been entered,
+// so while there is one the lead names it too.
+const COMPETITIONS_LEAD = COMPETITIONS.some((c) => c.status === 'In progress')
+  ? 'Where Flock has been entered, and what is being prepared.'
+  : 'Where Flock has been entered.';
 
 // An entry's words with one phrase in them made a link.
 function withLink(what, { words, href }) {
@@ -205,9 +210,11 @@ export default function AboutPage() {
           </div>
         </section>
 
-        {/* Honors: nothing at all until competitions.js has one, so the live
-            page never shows an empty heading or a "coming soon". On the stone
-            band, between the milestones' paper and the competitions' navy. */}
+        {/* Honors, from competitions.js, on the stone band between the
+            milestones' paper and the competitions' navy. The DECA result that
+            was a milestone labelled "Award" lives here. If HONORS were empty
+            the section would render nothing, never an empty heading or a
+            "coming soon". */}
         {HONORS.length > 0 && (
           <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-honors">
             <div className="lp-wrap">
@@ -228,11 +235,12 @@ export default function AboutPage() {
 
         {/* Competitions: a ledger on the navy, one entry to a row, from
             competitions.js. Each says who runs it, what went in, who entered
-            it and where it stands. */}
+            it (or, for one in progress, who is preparing it) and where it
+            stands. */}
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
           <div className="lp-wrap">
             <h2 id="ab-h-comps">Competitions</h2>
-            <p className="lp-lead">Where Flock has been entered.</p>
+            <p className="lp-lead">{COMPETITIONS_LEAD}</p>
             <div className="ab-comps">
               {COMPETITIONS.map((c) => (
                 <div key={c.name} className="ab-comp">

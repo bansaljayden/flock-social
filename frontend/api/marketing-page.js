@@ -90,8 +90,8 @@
 //      is pinned to the source pages.
 //   4. No fabricated popularity. No ratings, counts, reviews, or invented
 //      third-party mentions, in the copy or in the JSON-LD (DESIGN-STANDARD
-//      section M). The only credibility claim is the DECA award, which is on
-//      the human-visible page in the same words.
+//      section M). The only credibility claim is the DECA award, which /about
+//      shows under Honors in the same words (aboutCompetitions.test.js).
 //
 // TO REGENERATE PAGE_BLOCKS after a copy change in src/website:
 //   cd frontend && CI=true npx react-scripts test --watchAll=false \
@@ -229,14 +229,15 @@ const PAGE_BLOCKS = {
     ["p", "If the site describes a feature, the app does it today."],
     ["h2", "Milestones so far"],
     ["li", "September 2026 Flock Social LLC formed in Pennsylvania."],
-    ["li", "Award 1st place at PA DECA States."],
     ["li", "October 2026 Research paper on forecasting crowds and counting people, published on this site."],
     ["li", "October 2026 Two-minute pitch video entered in a high school entrepreneurship and AI video competition."],
     ["li", "October 2026 iPhone app submitted to the App Store."],
     ["li", "November 4, 2026 Flock is on the App Store."],
     ["p", "Photos and the story behind each one are coming soon."],
+    ["h2", "Honors"],
+    ["li", "2026 1st place in Innovation Plan at Pennsylvania DECA States."],
     ["h2", "Competitions"],
-    ["p", "Where Flock has been entered."],
+    ["p", "Where Flock has been entered, and what is being prepared."],
     ["h3", "LionCage"],
     ["p", "Penn State Great Valley LaunchBox"],
     ["p", "A five-minute live pitch with slides, then questions from the judges."],
@@ -275,7 +276,7 @@ const PAGE_BLOCKS = {
     ["h3", "Start-Up Business Plan"],
     ["p", "DECA"],
     ["p", "A business plan and a live pitch for Flock."],
-    ["p", "Entered by Jayden Bansal and Asad Ali"],
+    ["p", "Being prepared by Jayden Bansal and Asad Ali"],
     ["p", "In progress"],
     ["h2", "Where things stand"],
     ["p", "Flock is on the App Store for iPhone, and the web app is live at flockcorp.com."],
@@ -848,7 +849,7 @@ const SITE_GRAPH = [
       'https://www.youtube.com/@flock-social2026',
       'https://github.com/bansaljayden/flock-social',
     ],
-    award: '1st place, PA DECA States',
+    award: '1st place in Innovation Plan at Pennsylvania DECA States',
   },
   {
     '@type': 'Person',

@@ -146,8 +146,8 @@ nearby groups. Neither exists.
 ## Pages
 
 - [About](https://www.flockcorp.com/about): Who makes Flock, what it holds to,
-  milestones so far, the competitions Flock has been entered in, where things
-  stand, and how to reach the people behind it.
+  milestones so far, its honors, the competitions Flock has been entered in,
+  where things stand, and how to reach the people behind it.
 - [How it works](https://www.flockcorp.com/how-it-works): A plan step by step,
   the four AIs, the venue tools, and the pitch video.
 - [How the AI works](https://www.flockcorp.com/ai): The four models, what each
@@ -178,7 +178,7 @@ student in Bethlehem, Pennsylvania, is the Solo Technical Founder & CEO: the
 only founder, and the person who builds all of Flock, from the app to the Flux
 sensor. Asad Ali is the Growth & Competitions Lead, on Flock since late August
 2026.
-Flock took 1st place at PA DECA States.
+Flock took 1st place in Innovation Plan at Pennsylvania DECA States in 2026.
 
 Contact: social@flockcorp.com
 Video: https://www.youtube.com/@flock-social2026
