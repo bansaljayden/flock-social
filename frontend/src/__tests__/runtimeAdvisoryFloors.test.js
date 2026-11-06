@@ -51,6 +51,14 @@ const ADVISORIES = [
     // which matters for the move to 8.5 that the UIScene migration needs.
     affected: [['8.0.0', '8.4.3'], ['8.5.0', '8.5.1']],
   },
+  {
+    id: 'GHSA-cg2g-xh64-v4q7 and GHSA-mrv2-3pqr-j5jr',
+    // Critical and high. Only posthog-js pulls it in, for its product tours,
+    // and Flock never calls DOMPurify itself, so this one keeps the audit
+    // honest rather than closing a reachable hole.
+    name: 'dompurify',
+    affected: [['0.0.0', '3.4.17']],
+  },
 ];
 
 describe.each(ADVISORIES)('$name stays outside $id', ({ name, affected }) => {
