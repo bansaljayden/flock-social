@@ -93,8 +93,9 @@ test('a venue\'s own reading wears neither LIVE nor ESTIMATED', () => {
   expect(card).toMatch(/const ownerNumber = !!cd && \(cd\.predictionMethod === 'owner_report' \|\| cd\.ownerReport\?\.applied === true\);/);
   expect(card).toMatch(/if \(!cd\?\.lastUpdated \|\| ownerNumber\) return false;/);
   // The branch before it is the chip's loading shape (venueCardTapFeedback
-  // .test.js), and the owner's number still drops the chip after it.
-  expect(card).toMatch(/<div aria-hidden="true" className="skeleton" style=\{\{ width: '56px', height: '12px', borderRadius: '6px' \}\} \/>\s*<\/>\s*\) : ownerNumber \? null : \(/);
+  // .test.js), and the owner's number still drops the chip after it, as does
+  // a read with no number in it (venueSheetCrowdForecast.test.js).
+  expect(card).toMatch(/<div aria-hidden="true" className="skeleton" style=\{\{ width: '56px', height: '12px', borderRadius: '6px' \}\} \/>\s*<\/>\s*\) : \(ownerNumber \|\| \(!cd && noEstimate\)\) \? null : \(/);
 });
 
 test('the Now bar and the trend arrow copy every reading the dial draws, 0 included', () => {

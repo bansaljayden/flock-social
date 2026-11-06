@@ -76,6 +76,11 @@
  *
  * m comes from framer-motion and needs the LazyMotion features provider
  * App.js wraps the app in. This card is always inside that tree.
+ *
+ * THE FORECAST BLOCK IS SHARED. Its body is CrowdForecastPanel, exported from
+ * here, and the venue sheet (components/overlays/VenueDetailSheet.js) draws
+ * the same one, so a search row or Birdie's Details shows the forecast on the
+ * first tap. That sheet is App.js's too, inside the same LazyMotion tree.
  */
 import React, { useState } from 'react';
 import { m } from 'framer-motion';
@@ -92,7 +97,8 @@ import TableAvailability from './TableAvailability';
 // withholds is stated as a limit, with nothing offered and no Pro wording.
 // lib/purchasesBuild.js has the rules.
 
-// Animated crowd dial — fills from 0 to target score with counting number.
+// Animated crowd dial — fills from 0 to target score with counting number,
+// or shows the reading at once under Reduce Motion.
 // Perf notes: caches getComputedStyle (was called every frame), pre-renders the
 // static track to an offscreen canvas, and keeps the parent drop-shadow filter
 // on a SIBLING glow div so the canvas itself isn't re-rasterized 60×/sec.
@@ -112,7 +118,14 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
     canvas.width = size;
     canvas.height = size;
 
+    const finalText = `${Math.round(score)}%`;
+    // A WebView can refuse a 2D context (memory pressure does it). The figure
+    // is the reading; the ring is decoration, so the figure stays.
     const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      if (textRef.current) textRef.current.textContent = finalText;
+      return undefined;
+    }
 
     // Cache the track color ONCE (was a getComputedStyle call per frame — expensive style recalc)
     const trackColor = getComputedStyle(document.documentElement).getPropertyValue('--border-default').trim() || '#334155';
@@ -122,11 +135,13 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
     trackCanvas.width = size;
     trackCanvas.height = size;
     const tctx = trackCanvas.getContext('2d');
-    tctx.beginPath();
-    tctx.arc(center, center, radius, 0, Math.PI * 2);
-    tctx.strokeStyle = trackColor;
-    tctx.lineWidth = lineWidth;
-    tctx.stroke();
+    if (tctx) {
+      tctx.beginPath();
+      tctx.arc(center, center, radius, 0, Math.PI * 2);
+      tctx.strokeStyle = trackColor;
+      tctx.lineWidth = lineWidth;
+      tctx.stroke();
+    }
 
     let raf;
     const start = performance.now();
@@ -152,6 +167,18 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
       if (textRef.current) textRef.current.textContent = `${Math.round(val)}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
+
+    // Reduce Motion: the ring and the figure at the reading, at once. A count
+    // up driven by requestAnimationFrame is out of reach of both the global
+    // prefers-reduced-motion rule (CSS) and MotionConfig (framer), so the dial
+    // has to ask for itself.
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      draw(score);
+      if (textRef.current) textRef.current.textContent = finalText;
+      return undefined;
+    }
 
     draw(0);
     if (textRef.current) textRef.current.textContent = '0%';
@@ -456,141 +483,52 @@ function getGroupAdmission(crowdScore, partySize, venue, clock) {
   return { text: 'Reservation needed', color: '#EF4444', icon: 'alert' };
 }
 
-  // ONE venue card for every map surface. This is the card a tapped pin
-  // opens on Discover, extracted so the venue dashboard's Map tab can render
-  // the exact same thing: same data, same copy, same attribution labels.
-  // With venueOwnerView the informational card is identical; only
-  // consumer ACTIONS are left out (start a flock, check in, the crowd reality
-  // check, nearby navigation), because a venue account acting on those would
-  // either dead-end into consumer-only screens or write user-shaped crowd
-  // signals a venue must never write.
-export default function ConsumerVenueCard({
-  // Module-level helpers and constants App.js declares once and shares with
-  // other surfaces, so they stay declared there and arrive here. Named exactly
-  // as they are named there, which is what keeps the body below a verbatim
-  // copy of the deleted lines.
+// THE CROWD FORECAST, AS ONE PIECE, FOR THE TWO PLACES A VENUE IS OPENED.
+//
+// This was an inline block inside the card below, so only a map pin's card
+// could draw it. The venue sheet (components/overlays/VenueDetailSheet.js) is
+// what a search row, a chat card and Birdie's Details open first, and it had
+// no forecast at all: from a search the dial appeared only after closing the
+// sheet with X, and from Birdie never. Both draw this now, so the chip, the
+// dial and its words, where the number came from, the reality check, the group
+// verdict, the hourly bars and the two tiles follow one set of rules
+// wherever they appear: the paywall cover and REACT_APP_PURCHASES, whose clock
+// the hours are on, LIVE only for the model's own fresh number, the owner's
+// number said as theirs, a closed room, and a read that did not come back.
+//
+// The body is the block it was, line for line and at its old indentation, so
+// the move is checkable against the deleted lines. `venue` arrives under the
+// name the body always read it by. Two things in it belong to the map card:
+// the less crowded places nearby, which re-centre the map, and the way back
+// to the venue before, which restores a map pin. Each draws only from data
+// the card passes (crowdAlternatives, allVenues, venueDetailHistory), which
+// default to empty here, so the sheet, which passes none of them and has its
+// own Back and Close, never shows either.
+export function CrowdForecastPanel({
+  venue: activeVenue,
   CROWD_FRESH_MS,
   HOUR_ORDERING_MIN_GAP,
   crowdColorFor,
   crowdInkFor,
-  resolveVenuePhoto,
-  // Declared in FlockAppInner. All forty are const, so none of them can be
-  // reassigned later in the same render and read stale through the props
-  // object the call site builds.
-  activeVenue,
-  allVenues,
-  checkinJustSaved,
-  checkinSaving,
   colors,
-  confirmClick,
-  crowdAlternatives,
   crowdData,
   crowdFetchFailed,
   crowdLoading,
-  handleCheckIn,
-  lastCheckinAt,
-  openVenueDetail,
   partySize,
-  pickingVenueForCreate,
-  pickingVenueForDm,
-  pickingVenueForFlockId,
-  pinDmVenueNow,
-  selectedDmId,
-  sensorData,
-  sensorHistory,
+  setPartySize,
+  setPaywallTrigger,
+  venueOwnerView = false,
+  // The map card's own navigation, below.
+  allVenues = [],
+  crowdAlternatives = [],
+  openVenueDetail,
   setActiveVenue,
   setCrowdAlternatives,
   setCrowdData,
-  setCurrentScreen,
-  setCurrentTab,
-  setPartySize,
-  setPaywallTrigger,
-  setPickingVenueForCreate,
-  setPickingVenueForDm,
-  setPickingVenueForFlockId,
-  setSelectedDmId,
-  setSelectedFlockId,
-  setSelectedVenueForCreate,
   setVenueDetailHistory,
-  setVenueDetailReturnTo,
   skipCrowdFetchRef,
-  // The party Discover is browsing for (App.js's tableParty): the flock a
-  // venue is being picked for, else two.
-  tableParty,
-  updateFlockVenue,
-  venueDetailHistory,
-  venueDetailReturnTo,
-  // The card's own option, default unchanged from the old parameter list: the
-  // consumer card is what you get when nobody asks for the owner variant.
-  venueOwnerView = false,
+  venueDetailHistory = [],
 }) {
-    // THE TABLE SUMMARY, read before the guard because a hook has to run on
-    // every render. The party is the flock's when a venue is being picked for
-    // one, else the number the person set with the Group chips, else two: a
-    // card reading "Group: 5" over "Table for 2" would be the card arguing
-    // with itself.
-    const tableLineParty = pickingVenueForFlockId ? tableParty : (partySize || tableParty);
-    const tableSummary = useTableSummary(activeVenue?.place_id || null, tableLineParty);
-    if (!activeVenue) return null;
-    return (
-          <m.div
-            key={activeVenue.id || activeVenue.place_id}
-            initial={{ y: 60, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 40, opacity: 0 }}
-            transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-            {/* THE CARD THAT HAD THE PHOTO AND NEVER SHOWED IT. This is the
-                primary consumer venue card, the one the map opens on a pin tap
-                and the one the venue dashboard's map tab reuses, and until
-                2026-08-20 it rendered the name, the type, the stars, the
-                address, the crowd forecast and the actions with no image
-                anywhere in it. The photo was already in hand the whole time:
-                venuesToMapPins puts photo_url on every pin, and this card only
-                ever read that field to pass it somewhere else. */}
-            {activeVenue.photo_url && (
-              <img
-                src={resolveVenuePhoto(activeVenue.photo_url)}
-                alt={activeVenue.name || ''}
-                style={{ width: '100%', height: '104px', objectFit: 'cover', display: 'block' }}
-                /* Fall back to the shared placeholder rather than vanishing. A
-                   failed load used to be the one case where the layout silently
-                   changed shape under the reader. */
-                onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
-              />
-            )}
-            <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
-              <button aria-label="Close" className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
-              <m.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
-                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.name}</h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{(() => {
-                    const types = activeVenue.types || [];
-                    if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                    return activeVenue.type || 'Place';
-                  })()}{activeVenue.price ? ` • ${activeVenue.price}` : ''}</span>
-                  {/* Google returns no rating for plenty of places. Unguarded,
-                      this printed the literal word "undefined" next to a star. */}
-                  {activeVenue.stars != null && (
-                    /* A star rating drawn with the party-popper glyph: every
-                       other rating chip in the app pairs the number with
-                       starFilled, and a popper next to "4.6" says nothing. */
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                      {Icons.starFilled('#fbbf24', 12)}
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
-                    </div>
-                  )}
-                </div>
-              </m.div>
-              {activeVenue.addr && (
-                <m.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                  {Icons.mapPin(colors.textSecondary, 12)}
-                  <span className="selectable">{activeVenue.addr}</span>
-                </m.div>
-              )}
-
-              {/* AI Crowd Forecast Widget */}
-              {(() => {
                 // Only this venue's read. The detail modal writes the same
                 // state for whichever place it has open, and an untagged read
                 // put venue A's score and chart on venue B's card.
@@ -943,6 +881,11 @@ export default function ConsumerVenueCard({
                     </span>
                   ) : <span />}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                    {/* No chip over no number. When the read did not come
+                        back, or came back without a score, the card draws the
+                        "---" dial and the no-read line, and an ESTIMATED chip
+                        above them claimed an estimate it did not have. An
+                        owner's number gets no chip either (ownerNumber). */}
                     {crowdLoading ? (
                       // The chip's own shape, a dot and a word, while the read
                       // is out, so the row does not change size when it lands.
@@ -951,7 +894,7 @@ export default function ConsumerVenueCard({
                         <div aria-hidden="true" className="skeleton" style={{ width: '6px', height: '6px', borderRadius: '3px' }} />
                         <div aria-hidden="true" className="skeleton" style={{ width: '56px', height: '12px', borderRadius: '6px' }} />
                       </>
-                    ) : ownerNumber ? null : (
+                    ) : (ownerNumber || (!cd && noEstimate)) ? null : (
                       <>
                         {/* The dot is decorative so it keeps the vivid hue; the LABEL
                             has to be readable on the pale card. #22C55E measured
@@ -1361,7 +1304,167 @@ export default function ConsumerVenueCard({
                 )}
               </m.div>
                 );
-              })()}
+}
+
+  // ONE venue card for every map surface. This is the card a tapped pin
+  // opens on Discover, extracted so the venue dashboard's Map tab can render
+  // the exact same thing: same data, same copy, same attribution labels.
+  // With venueOwnerView the informational card is identical; only
+  // consumer ACTIONS are left out (start a flock, check in, the crowd reality
+  // check, nearby navigation), because a venue account acting on those would
+  // either dead-end into consumer-only screens or write user-shaped crowd
+  // signals a venue must never write.
+export default function ConsumerVenueCard({
+  // Module-level helpers and constants App.js declares once and shares with
+  // other surfaces, so they stay declared there and arrive here. Named exactly
+  // as they are named there, which is what keeps the body below a verbatim
+  // copy of the deleted lines.
+  CROWD_FRESH_MS,
+  HOUR_ORDERING_MIN_GAP,
+  crowdColorFor,
+  crowdInkFor,
+  resolveVenuePhoto,
+  // Declared in FlockAppInner. All forty are const, so none of them can be
+  // reassigned later in the same render and read stale through the props
+  // object the call site builds.
+  activeVenue,
+  allVenues,
+  checkinJustSaved,
+  checkinSaving,
+  colors,
+  confirmClick,
+  crowdAlternatives,
+  crowdData,
+  crowdFetchFailed,
+  crowdLoading,
+  handleCheckIn,
+  lastCheckinAt,
+  openVenueDetail,
+  partySize,
+  pickingVenueForCreate,
+  pickingVenueForDm,
+  pickingVenueForFlockId,
+  pinDmVenueNow,
+  selectedDmId,
+  sensorData,
+  sensorHistory,
+  setActiveVenue,
+  setCrowdAlternatives,
+  setCrowdData,
+  setCurrentScreen,
+  setCurrentTab,
+  setPartySize,
+  setPaywallTrigger,
+  setPickingVenueForCreate,
+  setPickingVenueForDm,
+  setPickingVenueForFlockId,
+  setSelectedDmId,
+  setSelectedFlockId,
+  setSelectedVenueForCreate,
+  setVenueDetailHistory,
+  setVenueDetailReturnTo,
+  skipCrowdFetchRef,
+  // The party Discover is browsing for (App.js's tableParty): the flock a
+  // venue is being picked for, else two.
+  tableParty,
+  updateFlockVenue,
+  venueDetailHistory,
+  venueDetailReturnTo,
+  // The card's own option, default unchanged from the old parameter list: the
+  // consumer card is what you get when nobody asks for the owner variant.
+  venueOwnerView = false,
+}) {
+    // THE TABLE SUMMARY, read before the guard because a hook has to run on
+    // every render. The party is the flock's when a venue is being picked for
+    // one, else the number the person set with the Group chips, else two: a
+    // card reading "Group: 5" over "Table for 2" would be the card arguing
+    // with itself.
+    const tableLineParty = pickingVenueForFlockId ? tableParty : (partySize || tableParty);
+    const tableSummary = useTableSummary(activeVenue?.place_id || null, tableLineParty);
+    if (!activeVenue) return null;
+    return (
+          <m.div
+            key={activeVenue.id || activeVenue.place_id}
+            initial={{ y: 60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 40, opacity: 0 }}
+            transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
+            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            {/* THE CARD THAT HAD THE PHOTO AND NEVER SHOWED IT. This is the
+                primary consumer venue card, the one the map opens on a pin tap
+                and the one the venue dashboard's map tab reuses, and until
+                2026-08-20 it rendered the name, the type, the stars, the
+                address, the crowd forecast and the actions with no image
+                anywhere in it. The photo was already in hand the whole time:
+                venuesToMapPins puts photo_url on every pin, and this card only
+                ever read that field to pass it somewhere else. */}
+            {activeVenue.photo_url && (
+              <img
+                src={resolveVenuePhoto(activeVenue.photo_url)}
+                alt={activeVenue.name || ''}
+                style={{ width: '100%', height: '104px', objectFit: 'cover', display: 'block' }}
+                /* Fall back to the shared placeholder rather than vanishing. A
+                   failed load used to be the one case where the layout silently
+                   changed shape under the reader. */
+                onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+              />
+            )}
+            <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
+              <button aria-label="Close" className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
+              <m.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.name}</h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{(() => {
+                    const types = activeVenue.types || [];
+                    if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    return activeVenue.type || 'Place';
+                  })()}{activeVenue.price ? ` • ${activeVenue.price}` : ''}</span>
+                  {/* Google returns no rating for plenty of places. Unguarded,
+                      this printed the literal word "undefined" next to a star. */}
+                  {activeVenue.stars != null && (
+                    /* A star rating drawn with the party-popper glyph: every
+                       other rating chip in the app pairs the number with
+                       starFilled, and a popper next to "4.6" says nothing. */
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                      {Icons.starFilled('#fbbf24', 12)}
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{activeVenue.stars}</span>
+                    </div>
+                  )}
+                </div>
+              </m.div>
+              {activeVenue.addr && (
+                <m.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14, type: 'spring', damping: 18, stiffness: 280 }} style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                  {Icons.mapPin(colors.textSecondary, 12)}
+                  <span className="selectable">{activeVenue.addr}</span>
+                </m.div>
+              )}
+
+              {/* AI Crowd Forecast Widget: CrowdForecastPanel, above, which
+                  the venue sheet draws too. */}
+              <CrowdForecastPanel
+                venue={activeVenue}
+                CROWD_FRESH_MS={CROWD_FRESH_MS}
+                HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
+                crowdColorFor={crowdColorFor}
+                crowdInkFor={crowdInkFor}
+                colors={colors}
+                crowdData={crowdData}
+                crowdFetchFailed={crowdFetchFailed}
+                crowdLoading={crowdLoading}
+                partySize={partySize}
+                setPartySize={setPartySize}
+                setPaywallTrigger={setPaywallTrigger}
+                venueOwnerView={venueOwnerView}
+                allVenues={allVenues}
+                crowdAlternatives={crowdAlternatives}
+                openVenueDetail={openVenueDetail}
+                setActiveVenue={setActiveVenue}
+                setCrowdAlternatives={setCrowdAlternatives}
+                setCrowdData={setCrowdData}
+                setVenueDetailHistory={setVenueDetailHistory}
+                skipCrowdFetchRef={skipCrowdFetchRef}
+                venueDetailHistory={venueDetailHistory}
+              />
 
               {/* Tables, for a venue whose Flux sensor watches them. Its own
                   card above Live Occupancy rather than a row inside it: that

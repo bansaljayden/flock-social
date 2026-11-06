@@ -221,6 +221,10 @@ describe('the venue sheet', () => {
       flocksRef: { current: [] },
       meRef: { current: null },
       crowdData: null,
+      // The forecast the sheet draws: no read of this place, none on the way.
+      crowdLoading: false,
+      crowdFetchFailed: false,
+      partySize: null,
     }, over);
   };
 

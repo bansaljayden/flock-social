@@ -70,7 +70,9 @@ describe('the LIVE chip while the crowd read is out', () => {
   test('is the chip\'s own shape in grey, not the word Loading', () => {
     const at = CARD.indexOf('{crowdLoading ? (');
     expect(at).toBeGreaterThan(-1);
-    const branch = CARD.slice(at, CARD.indexOf(') : ownerNumber ? null : (', at));
+    const end = CARD.indexOf(') : (ownerNumber || (!cd && noEstimate)) ? null : (', at);
+    expect(end).toBeGreaterThan(at);
+    const branch = CARD.slice(at, end);
     expect(branch).not.toMatch(/Loading\.\.\./);
     expect(branch).toContain("className=\"skeleton\" style={{ width: '6px', height: '6px', borderRadius: '3px' }}");
     expect(branch).toContain("className=\"skeleton\" style={{ width: '56px', height: '12px', borderRadius: '6px' }}");

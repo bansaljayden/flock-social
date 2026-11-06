@@ -60,6 +60,9 @@ import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
 import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
 import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
+// The map card's own forecast, so the two cannot disagree (sheetCrowdRead,
+// below, has why the sheet draws it).
+import { CrowdForecastPanel } from '../venue/ConsumerVenueCard';
 
 // The header photo and Google's credit for it, as one piece, keyed by photo
 // so each photo starts clean. A photo that fails to load becomes the
@@ -137,8 +140,21 @@ const VenueDetailSheet = ({
   flocks,
   flocksRef,
   meRef,
-  // Carried onto the plan the footer creates.
+  // Carried onto the plan the footer creates, and drawn as the forecast.
   crowdData,
+  // The forecast, drawn by the map card's own CrowdForecastPanel with the same
+  // names the card is handed: the read's state, the Group chips' party, the
+  // paywall opener that takes a place, and the four App.js helpers the panel
+  // shares with the card rather than re-deriving.
+  crowdFetchFailed,
+  crowdLoading,
+  partySize,
+  setPartySize,
+  setPaywallTrigger,
+  CROWD_FRESH_MS,
+  HOUR_ORDERING_MIN_GAP,
+  crowdColorFor,
+  crowdInkFor,
   // Shared behaviour.
   confirmClick,
   showToast,
@@ -219,6 +235,21 @@ const VenueDetailSheet = ({
         // the venue is on until Place Details answers with credited photos.
         // The same goes for the events drawn over it.
         const seedCredit = venueDetailModal.photo_url ? usableCredit(venueDetailModal.photo_attribution) : null;
+        // THE CROWD FORECAST ON THE FIRST TAP. A search row, a chat card and
+        // Birdie's Details all open this sheet first, and the forecast used to
+        // live only on the map card underneath it: from a search it appeared
+        // after closing the sheet with X, from Birdie never. The sheet draws
+        // the card's own panel now, from the read openVenueDetail already
+        // makes beside Place Details (so no request of its own), and only when
+        // that read is this venue's: `crowdData` is shared with the map card
+        // and tagged with the place it describes. With no read of this place
+        // in hand and none on the way, the panel is told the read failed, so
+        // it says there is none instead of pulsing skeletons for ever.
+        const sheetCrowdRead = !!crowdData && !!venueDetailModal.place_id && crowdData.forPlaceId === venueDetailModal.place_id;
+        // The paywall sheet is drawn inside the app frame, under this
+        // full-screen sheet, so a See Pro tap here closes the sheet first.
+        // The place still rides along, for the trip back from checkout.
+        const openPaywallFromSheet = (trigger, place) => { closeVenueDetail(); setPaywallTrigger(trigger, place); };
         // Get Directions and a tap on the header map both open the chooser.
         // The Google link needs a url or a place id; a card holding neither
         // (a seed the header map can still draw from coordinates) offers
@@ -333,10 +364,11 @@ const VenueDetailSheet = ({
             <div style={{ padding: '10px 16px 16px' }}>
               {venueDetailModal.loading ? (
                 /* THE CARD THAT IS COMING, in the shapes of the blocks below:
-                   the three stat tiles, Hours, Contact with its two rows, View
-                   Menu and the type tags. Empty shapes, never a rating or a
-                   price, because nothing has been read yet. A ring and
-                   "Loading details..." used to stand in for all of it. */
+                   the three stat tiles, the crowd forecast, Hours, Contact
+                   with its two rows, View Menu and the type tags. Empty
+                   shapes, never a rating or a price, because nothing has been
+                   read yet. A ring and "Loading details..." used to stand in
+                   for all of it. */
                 <SkeletonStatus label="Loading details">
                   <div aria-hidden="true" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                     {[0, 1, 2].map((i) => (
@@ -345,6 +377,25 @@ const VenueDetailSheet = ({
                         <SkeletonBar width={52} height={10} />
                       </div>
                     ))}
+                  </div>
+                  {/* The crowd forecast that lands with the details: the
+                      dial, its lines and the hourly bars. */}
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                      <SkeletonCircle size={60} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <SkeletonBar width="55%" height={14} />
+                        <SkeletonBar width="40%" height={10} style={{ marginTop: '8px' }} />
+                        <SkeletonBar width="70%" height={10} style={{ marginTop: '8px' }} />
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
+                      {[34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 30].map((h, i) => (
+                        <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
+                          <SkeletonBar width="100%" height={h} radius={3} />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                   <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
                     <SkeletonBar width={72} height={18} radius={5} style={{ margin: '2px 0 10px' }} />
@@ -394,6 +445,34 @@ const VenueDetailSheet = ({
                       </div>
                     )}
                   </div>
+
+                  {/* The crowd forecast, the map card's own panel (see
+                      sheetCrowdRead above), high on the sheet so the first tap
+                      shows it. Every rule the card keeps comes with it: the
+                      paywall cover, LIVE only for the model's fresh number,
+                      the owner's number, a closed room, a read that failed.
+                      The card's nearby list and its way back stay on the card
+                      (it alone passes their data): they move the map, and
+                      this sheet has its own way out. */}
+                  {venueDetailModal.place_id && (
+                    <div style={{ marginBottom: '8px' }}>
+                      <CrowdForecastPanel
+                        key={venueDetailModal.place_id}
+                        venue={venueDetailModal}
+                        CROWD_FRESH_MS={CROWD_FRESH_MS}
+                        HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
+                        crowdColorFor={crowdColorFor}
+                        crowdInkFor={crowdInkFor}
+                        colors={colors}
+                        crowdData={crowdData}
+                        crowdFetchFailed={crowdFetchFailed || (!crowdLoading && !sheetCrowdRead)}
+                        crowdLoading={crowdLoading}
+                        partySize={partySize}
+                        setPartySize={setPartySize}
+                        setPaywallTrigger={openPaywallFromSheet}
+                      />
+                    </div>
+                  )}
 
                   {/* Happening here: the venue's own upcoming events, high on
                       the card because a dated event is the most time-bound

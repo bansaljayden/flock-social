@@ -21982,6 +21982,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             flocksRef={flocksRef}
             meRef={meRef}
             crowdData={crowdData}
+            crowdFetchFailed={crowdFetchFailed}
+            crowdLoading={crowdLoading}
+            partySize={partySize}
+            setPartySize={setPartySize}
+            setPaywallTrigger={openPaywall}
+            CROWD_FRESH_MS={CROWD_FRESH_MS}
+            HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
+            crowdColorFor={crowdColorFor}
+            crowdInkFor={crowdInkFor}
             confirmClick={confirmClick}
             showToast={showToast}
             setModerationTarget={setModerationTarget}
