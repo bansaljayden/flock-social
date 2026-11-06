@@ -264,6 +264,26 @@ describe('Sign in with Apple revocation is described as it currently behaves', (
   });
 });
 
+describe("the website's Sign in with Apple script is described as it loads", () => {
+  const button = read('frontend', 'src', 'components', 'auth', 'AppleSignInButton.js');
+
+  test('the policy names the host the script comes from', () => {
+    const src = button.match(/APPLE_JS_SRC = '([^']+)'/);
+    expect(src).not.toBeNull();
+    expect(privacy).toContain(new URL(src[1]).hostname);
+  });
+
+  test('the script loads when the button is drawn, before any tap, and the policy says so', () => {
+    // The button's own effect fetches it on flockcorp.com, so a screen that
+    // shows the button reaches Apple whether or not anyone taps it. If that
+    // effect goes (the script fetched on the tap only), the sentence below
+    // stops being true and the page should say "when you tap it" instead.
+    expect(button).toMatch(/useEffect\(\(\) => \{\s*if \(onWebsite\) loadAppleJs\(\)/);
+    expect(privacy).toMatch(/On flockcorp\.com, a screen that shows the Continue with Apple button loads Apple's sign-in script/);
+    expect(privacy).toMatch(/even if you never tap the button/);
+  });
+});
+
 describe('deletion copy matches the deletion path', () => {
   const users = read('backend', 'routes', 'users.js');
 
