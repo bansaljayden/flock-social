@@ -246,7 +246,9 @@ export default function PinStrip({
         <span className="cs-strip-name">{name}</span>
         <span className="cs-strip-caption" aria-live={isVenue ? undefined : 'polite'}>
           {caption}
-          {isVenue && model.placeId ? <GoogleMapsMark style={{ marginLeft: '6px' }} /> : null}
+          {/* The space is a real one, so the strip's accessible name reads
+              "Pinned Google Maps" rather than "PinnedGoogle Maps". */}
+          {isVenue && model.placeId ? <>{' '}<GoogleMapsMark style={{ marginLeft: '3px' }} /></> : null}
         </span>
         <span className="cs-strip-chev" aria-hidden="true">{Icons.chevronRight('currentColor', 14)}</span>
       </button>

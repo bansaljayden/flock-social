@@ -515,7 +515,9 @@ describe('every thumbnail reaches the credited sheet', () => {
     const { unmount } = render(React.createElement(PinStrip, { model: { kind: 'venue', name: 'Kome', thumbUrl: PHOTO_A, caption: 'Pinned', placeId: 'ChIJkome000001' }, onOpen: jest.fn() }));
     const mark = screen.getByTestId('google-maps-attribution');
     expect(mark.parentElement.className).toBe('cs-strip-caption');
-    expect(mark.parentElement.textContent).toBe('PinnedGoogle Maps');
+    expect(mark.parentElement.textContent).toBe('Pinned Google Maps');
+    // The strip's accessible name reads as words.
+    expect(screen.getByRole('button', { name: /Kome Pinned Google Maps/ })).toBeTruthy();
     unmount();
     const vote = render(React.createElement(PinStrip, { model: { kind: 'vote', votedCount: 1, memberCount: 4 }, onOpen: jest.fn() }));
     expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
