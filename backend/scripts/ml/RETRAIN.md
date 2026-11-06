@@ -185,12 +185,19 @@ November export.**
   artifact does not matter: with v2.6.0-starling loaded and the nowcast on, the
   mix serves rule (b)'s numbers and confidence figures, because v2.6.0's
   model-table nowcast carries an hour-old reading at full weight as rule (b)
-  does (every row of the band fixture, quantile map on and off). Two surfaces
-  do not name the mix yet: the admin Overview's "Made by" row knows only
-  `model` and `curve_offset` (`services/moneyHub.js` readServing and the
-  revenue screen), and a model number from an artifact that reads the live
-  features says `usedLiveReadings: false` although its inputs include the
-  hour-old reading.
+  does (every row of the band fixture, quantile map on and off). The admin
+  Overview's "Made by" row names the mix (`services/moneyHub.js` readServing
+  and the revenue screen). The Birdie eval reads `CROWD_SERVE_MODE` through
+  the serving code's readers, so under the mix its fixture answers take the
+  model where a venue has an hour-old reading and the curve elsewhere
+  (`scripts/birdie/birdieEval.js`, pinned by
+  `__tests__/birdieEvalServeModes.test.js`). A model number from an artifact
+  that reads the live features says `usedLiveReadings: true` when the hour-old
+  reading or the trailing offset was one of its inputs
+  (`liveFeaturesUsedReadings` in `services/mlPredictor.js`, pinned by
+  `__tests__/mlFeatureFamiliesServe.test.js`); until 2026-11-06 it said
+  false there, because such a model takes no offset after it and a retrained
+  version gets no model-table nowcast.
 
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
