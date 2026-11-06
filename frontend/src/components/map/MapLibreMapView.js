@@ -68,7 +68,7 @@
  * and every reader either had was inside these lines, so leaving them behind
  * would have left boot weight for a surface that had gone.
  */
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
@@ -670,6 +670,14 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
      reaches the current opener through this ref. The notice is the one line the
      map says while a lookup runs, or why it did not open. */
   const [poiNotice, setPoiNotice] = useState(null);
+  // The notice's height while it shows, so the pins' Google mark can stand
+  // above it: the notice is centred at the bottom and, on a 320px phone,
+  // reaches into the left corner the mark holds. Measured before paint.
+  const poiNoticeRef = useRef(null);
+  const [poiNoticeHeight, setPoiNoticeHeight] = useState(0);
+  useLayoutEffect(() => {
+    setPoiNoticeHeight(poiNotice && poiNoticeRef.current ? poiNoticeRef.current.offsetHeight : 0);
+  }, [poiNotice]);
   const poiBusyRef = useRef(false);
   const poiNoticeTimerRef = useRef(0);
   const openPoiRef = useRef(null);
@@ -2011,7 +2019,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       {poiNotice && (
         // Centred low on the map and kept 64px clear of each side, so it never
         // sits over the my-location button or the map credit at the right edge.
-        <p role="status" aria-live="polite" style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', width: 'max-content', maxWidth: 'calc(100% - 128px)', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', textAlign: 'center' }}>{poiNotice}</p>
+        <p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', width: 'max-content', maxWidth: 'calc(100% - 128px)', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', textAlign: 'center' }}>{poiNotice}</p>
       )}
       {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
         <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
@@ -2207,9 +2215,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           just above the basemap's own credit, which is MapLibre's control
           (attributionControl is off in the constructor and added compact).
           On a light plate in both themes, as that credit is, so #5E5E5E
-          clears 4.5:1 over any tile underneath. It takes no taps. */}
-      {mapReady && !mapFailed && !keyRefused && Array.isArray(venues) && venues.length > 0 && (
-        <div style={{ position: 'absolute', left: '10px', bottom: '40px', zIndex: 2, pointerEvents: 'none', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.88)', lineHeight: 0 }}>
+          clears 4.5:1 over any tile underneath. It takes no taps, and while
+          a POI notice shows it stands above that notice rather than under
+          it. */}
+      {mapReady && !mapFailed && !keyRefused && Array.isArray(venues) && venues.some((v) => v && v.place_id) && (
+        <div style={{ position: 'absolute', left: '10px', bottom: poiNoticeHeight ? `${24 + poiNoticeHeight + 8}px` : '40px', zIndex: 2, pointerEvents: 'none', padding: '1px 6px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.88)', lineHeight: 0 }}>
           <GoogleMapsMark dark={false} />
         </div>
       )}

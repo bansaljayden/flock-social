@@ -402,10 +402,15 @@ describe('every container of Places data off a Google map carries the mark', () 
     }
   });
 
-  test('the map carries one mark, only while Places pins are on it', () => {
+  test('the map carries one mark, only while Google places are pinned, and above the POI notice while it shows', () => {
     const map = readSrc('components', 'map', 'MapLibreMapView.js');
     expect((map.match(/<GoogleMapsMark\b/g) || []).length).toBe(1);
-    expect(map).toMatch(/\{mapReady && !mapFailed && !keyRefused && Array\.isArray\(venues\) && venues\.length > 0 && \(\s*<div[^>]*>\s*<GoogleMapsMark dark=\{false\} \/>/);
+    expect(map).toMatch(/\{mapReady && !mapFailed && !keyRefused && Array\.isArray\(venues\) && venues\.some\(\(v\) => v && v\.place_id\) && \(\s*<div[^>]*>\s*<GoogleMapsMark dark=\{false\} \/>/);
+    // The notice is centred at the bottom, 24px up, and at 320px wide it
+    // reaches the mark's corner: the mark stands 8px above its measured top.
+    expect(map).toContain('<p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: \'absolute\', bottom: \'24px\'');
+    expect(map).toContain("setPoiNoticeHeight(poiNotice && poiNoticeRef.current ? poiNoticeRef.current.offsetHeight : 0);");
+    expect(map).toContain("bottom: poiNoticeHeight ? `${24 + poiNoticeHeight + 8}px` : '40px'");
   });
 
   test('the guest invite page themes the mark itself, in both of its schemes', () => {
