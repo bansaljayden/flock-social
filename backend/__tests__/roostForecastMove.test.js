@@ -2820,10 +2820,11 @@ test('the day words of a question are read where it asks, whole words only, two 
     ['After tonight\'s rush, will it stay busy?', 'today'],
     ['Should I staff up tonight ahead of tomorrow\'s game?', 'today'],
     ['How\'s the rest of the weekend after Saturday\'s rush?', 'weekend:this'],
+    // So does a day given as the reason or said in the past.
+    ['Tonight was dead so I\'m wondering if tomorrow will pick up', 'tomorrow'],
+    ['How busy will tonight be since tomorrow is a holiday?', 'today'],
     // Two days, both kept: the route answers both.
     ['Will tomorrow be busier than tonight?', 'tomorrow, today'],
-    ['Tonight was dead so I\'m wondering if tomorrow will pick up', 'today, tomorrow'],
-    ['How busy will tonight be since tomorrow is a holiday?', 'today, tomorrow'],
     ['Is Saturday busier than Friday?', 'Saturday, Friday'],
     ['Which day is busiest this week, starting today?', 'week, today'],
     ['how does this weekend compare to next weekend?', 'weekend:this, weekend:next_words'],
@@ -2846,15 +2847,21 @@ test('two days asked are both answered, never one picked from them: the bar on t
     setUp({ placeId: 'ChIJr5BothDaysBar00000', phrasing: true });
     draftFor = () => null;
     route = { mode: 'grounded', intentId: 'peak_hours' };
-    // The week from today, today in it, with each day it names said.
+    // The card's week ranked, with each day the question names said, today's
+    // beside the ranking.
     let r = await call('/api/venue/advisor/question', { question: 'Is Thursday busier than Friday?' });
     assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Saturday, `), r.body.text);
     for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-12']) {
       assert.ok(r.body.sources.some((s) => s.id === id), `${id}: ${JSON.stringify(r.body.sources)}`);
     }
+    // A day said in the past is the setup, and the question is about the
+    // other day: tomorrow, Saturday.
     r = await call('/api/venue/advisor/question', { question: 'Tonight was dead so I\'m wondering if tomorrow will pick up' });
-    assert.ok(r.body.text.startsWith(`${kind}the busiest day this week is Saturday, `), r.body.text);
-    assert.ok(r.body.sources.some((s) => s.id === 'typical_peak_2026-11-06'), JSON.stringify(r.body.sources));
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 2), [
+      `${kind}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
+      '• That makes it the busiest day this week.',
+    ]);
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-07');
     // This weekend beside next weekend on a Friday: this weekend, and next
     // weekend said to be past the seven days, never refused outright.
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
@@ -3054,4 +3061,30 @@ test('a Sunday night still running ends the weekend: at 12:30 AM on a Monday thi
     ]);
     assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['peak_2026-11-07', 'peak_2026-11-08']);
   }));
+});
+
+test('a day given as the reason or said in the past counts only alone, so the question is about the other day it names: the bar on its Wednesday', async () => {
+  for (const [q, want] of [
+    ['How busy will tonight be since tomorrow is a holiday?', 'today'],
+    ['How do I fill tomorrow since tonight was dead?', 'tomorrow'],
+    ['Since tomorrow is a holiday, will it be busy?', 'tomorrow'],
+    ['Saturday was packed, will Sunday be too?', 'Sunday'],
+    // "If" can mean "whether": both days, never one picked.
+    ['How busy will tonight be if it rains tomorrow?', 'today, tomorrow'],
+  ]) {
+    assert.strictEqual(saidDays(q), want, q);
+  }
+  // Until 2026-11-06 each was answered with both days, today's first.
+  const kind = 'In Flock\'s forecast for places like yours, ';
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6GivenDayWed0000000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will tonight be since tomorrow is a holiday?' });
+    assert.strictEqual(r.body.text, `${kind}today peaks around 9 PM at 48 on our 0 to 100 index.`);
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['typical_peak_2026-11-11']);
+    r = await call('/api/venue/advisor/question', { question: 'Tonight was dead so I\'m wondering if tomorrow will pick up' });
+    assert.strictEqual(r.body.text.split('\n')[0], `${kind}Thursday peaks around 9 PM at 64 on our 0 to 100 index.`);
+    assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-12');
+  });
 });

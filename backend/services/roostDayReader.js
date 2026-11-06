@@ -32,6 +32,10 @@
 //
 // A day word in the possessive ("tomorrow's game", "after tonight's rush")
 // says what something belongs to, and counts only when no other day word does.
+// So does a day given as the reason, after since or because ("How busy will
+// tonight be since tomorrow is a holiday?"), and a day said in the past
+// ("Tonight was dead so I'm wondering if tomorrow will pick up"): the question
+// is about the other day it names.
 //
 // The route reads what this returns against the venue's own today
 // (routes/advisor.js readingFor): two words that name different days are
@@ -63,6 +67,11 @@ const AFTER_NEXT = /^\s+after\s+next\b/i;
 // Holidays named for a weekday: a date, not the coming weekday.
 const HOLIDAY_BEFORE = /\b(?:black|cyber|good|easter|palm|ash|holy|maundy|giving|super(?:\s+bowl)?|small\s+business)\s+$/i;
 
+// The reason a question gives, after since or because in its own sentence.
+const GIVEN_BEFORE = /\b(?:since|because|cause|cuz|coz)\b/i;
+// A day said as the past ("Tonight was dead", "Saturday was packed") is no
+// forecast's day, so it too counts only when no other day is said.
+const PAST_AFTER = /^\s+(?:was|were|had)\b/i;
 const WEEKDAY = (stem) => `${stem[0].toUpperCase()}${stem.slice(1).toLowerCase()}`;
 
 function normalize(question) {
@@ -83,6 +92,11 @@ function tokensIn(piece) {
     const g = m.groups;
     const before = piece.slice(0, m.index);
     const after = piece.slice(m.index + m[0].length);
+    // A day given as the reason ("How busy will tonight be since tomorrow is a
+    // holiday?") or said as the past counts only when no other day is said, as
+    // a possessive does.
+    const given = GIVEN_BEFORE.test(before) || PAST_AFTER.test(after);
+    const at = out.length;
     if (g.dat) out.push({ kind: 'dayAfterTomorrow' });
     else if (g.after) out.push({ kind: 'weekend', scope: /after\s+next/i.test(g.after) ? 'after_next' : 'next' });
     else if (g.nextWeekend) out.push({ kind: 'weekend', scope: 'next_words', weak: Boolean(g.nwPoss) });
@@ -97,6 +111,7 @@ function tokensIn(piece) {
       if (AFTER_NEXT.test(after)) tok.afterNext = true;
       out.push(tok);
     }
+    if (given && out.length > at) out[at].weak = true;
   }
   return out;
 }

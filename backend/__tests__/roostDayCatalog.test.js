@@ -623,9 +623,6 @@ const OPEN = {
   '505/model': 'F', '506/model': 'F', '507/model': 'F', '508/model': 'F',
   // Tomorrow after "if", which can mean "whether", is answered with both days.
   '802/model': 'S', '810/model': 'S',
-  // A day given as the reason, or said in the past, is answered with both.
-  '801/model': 'S', '801/offline': 'S', '803/model': 'S', '808/model': 'S', '808/offline': 'S',
-  '809/model': 'S', '811/model': 'S', '812/model': 'S', '819/model': 'S',
   // No short form is read as a day: the week is ranked.
   '306/model': 'S', '1019/offline': 'S', '1020/model': 'S', '1021/model': 'S', '1023/model': 'S',
   '1024/model': 'S', '1025/model': 'S', '1111/model': 'S',
