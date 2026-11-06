@@ -2722,3 +2722,37 @@ test('a weekday the weekend\'s route is asked about that this weekend does not h
     }
   });
 });
+
+test('a block of facts that are their own sentence alone costs no model call and no charge: today shut, and a weekend shut with nothing after it', async () => {
+  // Each went to the model until the final review (2026-11-06), charged to
+  // the venue's daily allowance, and the draft the prompt asks for, that
+  // sentence word for word, was refused as citing no fact, so the template
+  // served the same sentence. A shut weekend with next weekend's days after
+  // it still goes to the model (the listing's-own-line test above).
+  const realQuery = pool.query;
+  let charges = 0;
+  pool.query = async (sql, params) => {
+    if (/INSERT INTO advisor_(?:venue_)?spend/.test(String(sql))) charges += 1;
+    return realQuery(sql, params);
+  };
+  try {
+    for (const [iso, placeId, hours, intentId, text] of [
+      ['2026-11-08T15:00:00Z', 'ChIJr5SaysOnlyToday000000', null, 'tonight_outlook', 'Your Google listing has you closed today.'],
+      ['2026-11-09T15:00:00Z', 'ChIJr5SaysOnlyWeekend0000', { 1: [6, 14], 2: [6, 14], 3: [6, 14], 4: [6, 14] }, 'weekend_outlook', 'Your Google listing has you closed this weekend.'],
+    ]) {
+      await pinnedAt(iso, async () => {
+        bakeryAt({ placeId, shut: 0 });
+        if (hours) placePeriods = periodsOf(hours);
+        process.env.ADVISOR_PHRASING_ENABLED = 'true';
+        draftFor = () => ({ answer: text, points: [] });
+        charges = 0;
+        const r = await call('/api/venue/advisor/ask', { intentId });
+        assert.deepStrictEqual([r.body.mode, r.body.text], ['template', text], intentId);
+        assert.strictEqual(modelCalls.filter((c) => c.role === 'phrasing').length, 0, `${intentId}: a phrasing call was made`);
+        assert.strictEqual(charges, 0, `${intentId}: the venue was charged`);
+      });
+    }
+  } finally {
+    pool.query = realQuery;
+  }
+});

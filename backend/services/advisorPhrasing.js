@@ -2495,6 +2495,12 @@ async function phrase(block, { venueUserId, question } = {}) {
   // so the call would be spent to produce something the valve rejects. The
   // twin prints the owner's words verbatim, which is the right answer anyway.
   if (substitutable.length === 0) return template;
+  // Nor is a block of facts whose whole meaning is their own sentence (SAYS_IDS
+  // above): today shut, a weekend shut, next weekend's days past the forecast.
+  // A draft that opens on that sentence word for word, as the prompt asks,
+  // cites no fact and is refused, so each tap paid for an answer and served
+  // the twin's same sentence (final review, 2026-11-06).
+  if (substitutable.every((f) => SAYS_IDS().has(String(f.sourceId || f.id)))) return template;
 
   // Digit-free ids, scalar values: the shape the placeholder contract needs.
   const llmFacts = aliasFacts(flattenFacts(substitutable));
