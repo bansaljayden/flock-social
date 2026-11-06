@@ -942,23 +942,33 @@ const warmScreenChunks = () => {
        needed to wait through. */
     import('./components/SearchResultsOverlay').catch(() => {});
     /* AND THE VENUE SHEET, after every screen and both sheets above it and
-       deliberately that late. It is the most
-       tapped overlay in the product, which argues for warming it early, and at
-       38 KB it is also the biggest chunk in this list, which decides it: the
-       numbers above were measured with chat and the DM thread winning the
-       connection, and a request this size issued alongside them takes
-       bandwidth share from the two that were measured. Warmed at all because
-       openVenueDetail puts a loading card in state in the tap's own commit, so
-       an unwarmed chunk replaces that card with a bare scrim for the length of
-       a round trip on the busiest control in Discover. */
+       deliberately that late. It is the most tapped overlay in the product,
+       which argues for warming it early, and it is the biggest download in
+       this list but the map's, which decides it: the numbers above were
+       measured with chat and the DM thread winning the connection, and a
+       request this size issued alongside them takes bandwidth share from the
+       two that were measured. Since 2026-11-06 the sheet draws the map card's
+       crowd forecast (CrowdForecastPanel, exported from the card's module),
+       so this import fetches the card's chunk, framer-motion's and
+       lib/crowd's with the sheet's own: about 100 KB minified where the sheet
+       alone was 31 KB (measured on that day's build: sheet 32.7, card 50.3,
+       framer-motion 11.6, lib/crowd 6.0). A sheet opened before this warm-up
+       has run (the return from checkout at boot, a deep link, a notification
+       tap) waits for all four on the web; the iPhone app reads them from its
+       own bundle. Warmed at all because openVenueDetail puts a loading card in
+       state in the tap's own commit, so an unwarmed chunk replaces that card
+       with a bare scrim for the length of a round trip on the busiest control
+       in Discover. */
     import('./components/overlays/VenueDetailSheet').catch(() => {});
-    /* AND THE VENUE CARD, straight after the sheet that opens from it, because a
-       pin tap is the most common interaction on Discover and this is the chunk
-       that tap needs. Lazy without warming buys boot bytes by charging a round
-       trip at the exact moment the card is supposed to appear, and its Suspense
-       fallback is null, so an unwarmed tap shows nothing at all until the chunk
-       lands. Ahead of Birdie below because nothing on the core loop waits on
-       him, and this is the core loop. */
+    /* AND THE VENUE CARD, the chunk a pin tap needs, the most common
+       interaction on Discover. The sheet's import above already asks for it,
+       so this line costs nothing more; it stays so the card is warmed in its
+       own right should the sheet ever stop importing from it. Lazy without
+       warming buys boot bytes by charging a round trip at the exact moment the
+       card is supposed to appear, and its Suspense fallback is null, so an
+       unwarmed tap shows nothing at all until the chunk lands. Ahead of Birdie
+       below because nothing on the core loop waits on him, and this is the
+       core loop. */
     import('./components/venue/ConsumerVenueCard').catch(() => {});
     /* AND THE DISCOVER MAP, the last surface on the core loop and ahead of
        Birdie only. It is the biggest chunk in this list, which is why it goes

@@ -9,7 +9,10 @@
  * path. Nobody sees it until they tap a venue, a map pin, a venue card in a
  * chat or a venue deep link, so it has no business being fetched on the way to
  * first paint. It is its own chunk now, pulled the first time
- * `venueDetailModal` turns truthy.
+ * `venueDetailModal` turns truthy. Since 2026-11-06 it imports the crowd
+ * forecast from components/venue/ConsumerVenueCard.js, so loading it loads
+ * the card's chunk and framer-motion's with it, about 100 KB minified where
+ * this chunk alone is about 33 KB; App.js warmScreenChunks has the numbers.
  *
  * Everything it reads arrives as a prop, which is what AttendanceModal,
  * NewDmModal and the nine extracted screens already do. Four of those props
