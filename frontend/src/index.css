@@ -461,6 +461,14 @@ body::after {
   border-radius: 4px;
 }
 
+/* The plan screen's venue photo (FlockDetail.js) is a button that fills a card
+   with overflow: hidden, so the ring above, drawn 2px outside it, was clipped
+   on three sides and showed only as a line under the photo. It draws the same
+   ring 3px inside the photo instead. */
+.plan-venue-photo:focus-visible {
+  outline-offset: -3px;
+}
+
 /* Roost's composer (VenueAdvisorChat.js) draws its focus treatment on the BOX
    around the field: the border lights up and takes a one pixel ring, the way
    Birdie's does. App.js carries an app-wide `input:focus, textarea:focus` rule

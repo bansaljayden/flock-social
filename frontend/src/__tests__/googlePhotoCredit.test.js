@@ -654,6 +654,16 @@ describe('the plan screen\'s header photo is a thumbnail whose tap opens the cre
     expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
   });
 
+  test('the photo button draws its keyboard ring inside the photo, where the card cannot clip it', () => {
+    const { container } = render(React.createElement(FlockDetail, planProps(plan())));
+    const door = container.querySelector(`img[src="${PHOTO_A}"]`).closest('button');
+    expect(door.classList.contains('plan-venue-photo')).toBe(true);
+    // The card is overflow: hidden, so the global ring (2px OUTSIDE) is cut on
+    // three sides; jsdom has no :focus-visible, so the rule itself is pinned.
+    const css = readSrc('index.css');
+    expect(css).toMatch(/\.plan-venue-photo:focus-visible\s*\{\s*outline-offset:\s*-3px;\s*\}/);
+  });
+
   test('the policy puts the plan header under the thumbnail rule, and says why', () => {
     const policy = readSrc('components', 'ui', 'GoogleCredit.js');
     expect(policy).toMatch(/the plan screen's header photo \(screens\/FlockDetail\.js\), which is a\s*\n\s*\*\s*button to the sheet/);

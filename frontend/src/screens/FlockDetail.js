@@ -467,7 +467,7 @@ export default function FlockDetail({
                   a button of its own for that, as Details is. With no place
                   id there is no sheet, so no Google photo is drawn. */}
               {showVenuePhoto && (
-                <button type="button" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', width: '100%', padding: 0, margin: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
+                <button type="button" className="plan-venue-photo" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', width: '100%', padding: 0, margin: 0, border: 'none', background: 'none', cursor: 'pointer' }}>
                   <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                 </button>
               )}
