@@ -6,6 +6,7 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 import AppStoreBadge from './AppStoreBadge';
 import { LISTING_ID } from './AppStoreListing';
 import { shareThisPage } from './shareCard';
+import { COMPETITIONS, HONORS } from './competitions';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
@@ -13,7 +14,8 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 // /about, rebuilt on the landing page's system (.lp tokens, SiteNav) on
 // 2026-10-21, in the order the best company About pages use: who and what,
 // the story, the people, what the company holds to, milestones, where things
-// stand, how to reach it.
+// stand, how to reach it. Honors and competitions (2026-11-06) follow the
+// milestones.
 //
 // THE RULE FOR THIS PAGE: every fact is real and on the record, and anything
 // not yet written is a placeholder that says it is coming, never invented copy.
@@ -23,7 +25,10 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   Asad Ali, growth and competitions lead since late August 2026         Asad Ali's own description of the role, Oct 2026
 //   1st place at PA DECA States                                           the landing page, since August
 //   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
-// No school is named anywhere on the page (a Diamond Challenge rule).
+//   the competitions, their statuses, and honors once there are any       competitions.js, which names its sources
+// No team member's school is named anywhere on the page (a Diamond Challenge
+// rule). The competitions' organizers are named, and some are universities;
+// none is that school.
 //   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
 //   no venue charged; Flock Pro not on public sale
 // The photos, the bios, the full story and the milestone details are
@@ -197,6 +202,54 @@ export default function AboutPage() {
               ))}
             </ol>
             <p className="ab-coming">Photos and the story behind each one are coming soon.</p>
+          </div>
+        </section>
+
+        {/* Honors: nothing at all until competitions.js has one, so the live
+            page never shows an empty heading or a "coming soon". On the stone
+            band, between the milestones' paper and the competitions' navy. */}
+        {HONORS.length > 0 && (
+          <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-honors">
+            <div className="lp-wrap">
+              <h2 id="ab-h-honors">Honors</h2>
+              <ol className="ab-honors">
+                {HONORS.map((h) => (
+                  <li key={h.what}>
+                    {h.date
+                      ? <time className="ab-when" dateTime={h.date}>{h.when}</time>
+                      : <span className="ab-when">{h.when}</span>}{' '}
+                    <span className="ab-what">{h.what}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+        )}
+
+        {/* Competitions: a ledger on the navy, one entry to a row, from
+            competitions.js. Each says who runs it, what went in, who entered
+            it and where it stands. */}
+        <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
+          <div className="lp-wrap">
+            <h2 id="ab-h-comps">Competitions</h2>
+            <p className="lp-lead">Where Flock has been entered.</p>
+            <div className="ab-comps">
+              {COMPETITIONS.map((c) => (
+                <div key={c.name} className="ab-comp">
+                  <div>
+                    <h3>{c.name}</h3>
+                    <p className="ab-comp-by">{c.organizer}</p>
+                  </div>
+                  <div>
+                    <p className="ab-comp-what">{c.entered}</p>
+                    <p className="ab-comp-team">{c.team}</p>
+                  </div>
+                  <p className="ab-comp-status">
+                    {c.date ? <time dateTime={c.date}>{c.status}</time> : c.status}
+                  </p>
+                </div>
+              ))}
+            </div>
           </div>
         </section>
 

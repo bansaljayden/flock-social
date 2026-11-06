@@ -1,7 +1,8 @@
 /* /about, on the landing page's stylesheet (.lp tokens, Literata display,
    Hanken body); the bar and the menu come from SiteNav.js. This file adds the
-   people, the commitments, the milestones and the placeholder notes. No icon
-   cards, no gradients, nothing on scroll, no colour outside the .lp tokens. */
+   people, the commitments, the milestones, the honors and competitions, and
+   the placeholder notes. No icon cards, no gradients, nothing on scroll, no
+   colour outside the .lp tokens. */
 
 .ab { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
 .ab main:focus { outline: none; }
@@ -56,10 +57,14 @@
 }
 .ab-holds p { margin: 0; font-size: 16.5px; line-height: 1.6; color: var(--cream-2); max-width: 44ch; }
 
-/* Milestones: a dated log, the date in a margin column of its own. */
-.ab-milestones { list-style: none; margin: clamp(16px, 3vw, 24px) 0 20px; padding: 0; display: grid; gap: 16px; max-width: 46rem; }
-.ab-milestones li { display: grid; gap: 2px; font-size: 16.5px; line-height: 1.5; color: var(--ink-2); }
-@media (min-width: 640px) { .ab-milestones li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; } }
+/* Milestones: a dated log, the date in a margin column of its own. Honors,
+   once there are any, are the same log on the stone band. */
+.ab-milestones, .ab-honors { list-style: none; margin: clamp(16px, 3vw, 24px) 0 20px; padding: 0; display: grid; gap: 16px; max-width: 46rem; }
+.ab-honors { margin-bottom: 0; }
+.ab-milestones li, .ab-honors li { display: grid; gap: 2px; font-size: 16.5px; line-height: 1.5; color: var(--ink-2); }
+@media (min-width: 640px) {
+  .ab-milestones li, .ab-honors li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; }
+}
 .ab-when {
   font-size: 14.5px;
   font-weight: 600;
@@ -88,6 +93,41 @@
    face, so the underline is sized in em to keep its weight at every size. */
 .ab-what a { color: inherit; text-decoration: underline; text-decoration-thickness: 0.06em; text-underline-offset: 0.14em; }
 .ab-what a:hover { color: var(--steel); }
+
+/* Competitions: a ledger on the navy, one entry to a row between hairlines.
+   The name in the display face with who runs it under it, then what went in
+   and who entered it, then where it stands in the accent. Three columns from
+   900px, stacked below that; type and rules only, like the rest of the page. */
+.ab-comps {
+  margin: clamp(24px, 4vw, 36px) 0 0;
+  max-width: 66rem;
+  border-bottom: 1px solid var(--rule-cream);
+}
+.ab-comp {
+  display: grid;
+  gap: 8px;
+  padding: clamp(18px, 2.4vw, 24px) 0;
+  border-top: 1px solid var(--rule-cream);
+}
+@media (min-width: 900px) {
+  .ab-comp {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.25fr) minmax(0, 0.8fr);
+    column-gap: clamp(28px, 3vw, 44px);
+    align-items: baseline;
+  }
+}
+.ab-comp h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(20px, 1rem + 0.5vw, 24px);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+  color: var(--cream);
+}
+.ab-comp-by { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--cream-3); }
+.ab-comp-what { font-size: 16px; line-height: 1.55; color: var(--cream-2); max-width: 46ch; }
+.ab-comp-team { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--cream-3); }
+.ab-comp-status { font-size: 14.5px; font-weight: 600; line-height: 1.45; color: var(--steel-lift); text-wrap: balance; }
 
 /* Apple's badge under the line that says Flock is on the App Store. It is
    48px, so Apple's clear space is 12px; 22px either side keeps the copy well

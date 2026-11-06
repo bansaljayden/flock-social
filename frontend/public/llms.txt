@@ -146,7 +146,8 @@ nearby groups. Neither exists.
 ## Pages
 
 - [About](https://www.flockcorp.com/about): Who makes Flock, what it holds to,
-  milestones so far, where things stand, and how to reach the people behind it.
+  milestones so far, the competitions Flock has been entered in, where things
+  stand, and how to reach the people behind it.
 - [How it works](https://www.flockcorp.com/how-it-works): A plan step by step,
   the four AIs, the venue tools, and the pitch video.
 - [How the AI works](https://www.flockcorp.com/ai): The four models, what each
