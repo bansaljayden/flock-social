@@ -192,6 +192,9 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+// Google's attribution for the venue lists and the plan's venue, and the
+// button that takes a list row's photo to the venue sheet that credits it.
+import { GoogleMapsMark, ThumbToSheet } from '../components/ui/GoogleCredit';
 import { isEstimateBill, isQuarantinedBill, owedOn, shellEstimate } from '../lib/billShares';
 import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
@@ -1782,7 +1785,10 @@ export default function ChatDetail({
        nothing at all, which is the rule the header is built on. */
     const pinModel = (() => {
       if (flock.venue && flock.venue !== 'TBD') {
-        return { kind: 'venue', name: flock.venue, thumbUrl: flock.venuePhoto || undefined, caption: 'Pinned' };
+        // A Google photo only where the strip's tap reaches the venue's
+        // sheet, which credits it; the place id is also what puts Google's
+        // attribution beside "Pinned".
+        return { kind: 'venue', name: flock.venue, thumbUrl: (flock.venueId && flock.venuePhoto) || undefined, caption: 'Pinned', placeId: flock.venueId || null };
       }
       const openVotes = flock.votes || [];
       // "Vote open" on a plan that has ended is a ballot the server will not
@@ -1800,11 +1806,18 @@ export default function ChatDetail({
     })();
 
     /* A tap on the strip goes to whatever the strip is about. On a place that
-       is the venue's page on the map, which is where the banner's "Map" button
-       went and it pans exactly as that button did. On an open vote it is the
-       panel, because the thing a member wants when they read "Vote open, 3 of
-       8" is the ballot. The vote branch does not leave the screen, so it does
-       not clear the composer; the venue branch does both. */
+       is the venue's sheet over the map, opened the way a venue card in this
+       chat opens it, panning onto the place once the details answer. It used
+       to hand the map the place's coordinates alone, and the map opened its
+       card for whichever loaded pin stood within 100 m, which could be a
+       different venue; the sheet is always this one, and it is what credits
+       the photo the strip shows as a thumbnail (components/ui/GoogleCredit.js).
+       The seed carries no photo, because the plan keeps no credit for it. A
+       place with coordinates and no Google id has no sheet, so the map still
+       just pans to it. On an open vote it is the panel, because the thing a
+       member wants when they read "Vote open, 3 of 8" is the ballot. The vote
+       branch does not leave the screen, so it does not clear the composer;
+       the venue branch does both. */
     const openPinStrip = (model) => {
       if (model && model.kind === 'vote') {
         setShowVotePanel(true);
@@ -1815,13 +1828,34 @@ export default function ChatDetail({
       setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
       setCurrentTab('explore');
       setCurrentScreen('main');
-      if (flock.venueId || flock.venueLat) {
+      if (flock.venueId) {
+        setTimeout(() => {
+          openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, lat: flock.venueLat, lng: flock.venueLng }, { panMap: true });
+        }, 500);
+      } else if (flock.venueLat) {
         setTimeout(() => {
           if (window.__flockPanToVenue) {
-            window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng, name: flock.venue, address: flock.venueAddress, rating: flock.venueRating, photo_url: flock.venuePhoto });
+            window.__flockPanToVenue({ lat: flock.venueLat, lng: flock.venueLng, name: flock.venue, address: flock.venueAddress, rating: flock.venueRating });
           }
         }, 300);
       }
+    };
+
+    /* A photo in the vote panel or the share list. Those rows vote or share
+       when tapped, so the photo is a button of its own (ThumbToSheet in
+       components/ui/GoogleCredit.js) and lands here: the same trip as a venue
+       card in this chat, to the venue's sheet, which credits the photo in
+       full. The seed hands the sheet the row's photo with its own credit. */
+    const openListVenue = (venue) => {
+      leaveChatScreen();
+      setShowVotePanel(false);
+      setShowVenueShareModal(false);
+      setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
+      setCurrentTab('explore');
+      setCurrentScreen('main');
+      setTimeout(() => {
+        openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr || venue.formatted_address, place_id: venue.place_id, rating: venue.stars ?? venue.rating ?? null, photo_url: resolveVenuePhoto(venue.photo_url), photo_attribution: venue.photo_attribution || null, lat: venue.location?.latitude, lng: venue.location?.longitude }, { panMap: true });
+      }, 500);
     };
 
     /* The banner's "Change" button, which is PUT /api/flocks/:id and therefore
@@ -2729,8 +2763,12 @@ export default function ChatDetail({
               setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
               setCurrentTab('explore');
               setCurrentScreen('main');
+              // No photo in the seed: a card keeps no credit for its photo,
+              // and the sheet draws a Places photo with its credit or not at
+              // all, so it shows its map until the details answer with
+              // credited photos.
               setTimeout(() => {
-                openVenueDetail(vc.place_id, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: vc.place_id, rating: vc.stars || vc.rating, photo_url: vc.photo_url }, { panMap: true });
+                openVenueDetail(vc.place_id, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: vc.place_id, rating: vc.stars || vc.rating }, { panMap: true });
               }, 500);
             } : undefined}
             /* No Vote on a plan that has ended; the count stays as the record.
@@ -4863,24 +4901,41 @@ export default function ChatDetail({
                         when a real coordinate produced this list. */}
                     <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venuesFromLabel ? `Popular in ${venuesFromLabel}` : 'Popular Chains Nearby'}</p>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {suggestedVenues.map(venue => (
-                        <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
-                          {venue.photo_url ? (
-                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
-                          ) : (
-                            <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                              {Icons.mapPin('white', 14)}
-                            </div>
-                          )}
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                      {suggestedVenues.map(venue => {
+                        /* The row's tap votes, so the photo has its own button
+                           to the venue's sheet, laid over it (ThumbToSheet: 12
+                           of padding and 1 of border in from the row's edge). A
+                           venue with no place id has no sheet and shows the
+                           tile instead of a Google photo. */
+                        const showPhoto = !!(venue.photo_url && venue.place_id);
+                        return (
+                          <div key={venue.id || venue.name} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                            <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                              {showPhoto ? (
+                                <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                              ) : (
+                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {Icons.mapPin('white', 14)}
+                                </div>
+                              )}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              </div>
+                              <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
+                                {Icons.vote(colors.navy, 12)} Vote
+                              </div>
+                            </button>
+                            {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="8px" />}
                           </div>
-                          <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
-                            {Icons.vote(colors.navy, 12)} Vote
-                          </div>
-                        </button>
-                      ))}
+                        );
+                      })}
+                    </div>
+                    {/* Places data off a Google map, so the list ends on
+                        Google's attribution (components/ui/GoogleCredit.js),
+                        as the Explore list does. */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
+                      <GoogleMapsMark />
                     </div>
                   </>
                 )}
@@ -4915,6 +4970,10 @@ export default function ChatDetail({
                     <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
                     {flock.venueAddress && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
+                    {/* A Google place's name and address are Google Maps data,
+                        so the block carries Google's attribution
+                        (components/ui/GoogleCredit.js). */}
+                    {flock.venueId && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
                   </div>
                   <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, price_level: flock.venuePriceLevel || null, price: flock.venuePriceLevel ? '$'.repeat(flock.venuePriceLevel) : null, crowd: (typeof crowdPredictions[flock.venueId]?.score === 'number' ? crowdPredictions[flock.venueId].score : null) }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
                 </div>
@@ -4947,82 +5006,96 @@ export default function ChatDetail({
                     <button className="hit44 glass-btn glass-secondary" onClick={() => setShowVenueShareModal(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                   </div>
                 ) : budgetFilteredVenues.map(venue => (
-                  <button className="hit44"
-                    key={venue.id}
-                    onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      padding: '12px',
-                      borderRadius: '14px',
-                      border: '1px solid var(--border-default)',
-                      backgroundColor: 'var(--bg-card-solid)',
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      transition: 'opacity 0.2s ease',
-                      position: 'relative',
-                      overflow: 'hidden'
-                    }}
-                  >
-                    {/* Same defect as the DM share list: shareVenueToChat sends
-                        this venue's photo_url onward, and the row drew a
-                        category gradient rather than the picture it was
-                        holding. Icon tile kept as the no-photo fallback. */}
-                    {venue.photo_url ? (
-                      <img
-                        src={resolveVenuePhoto(venue.photo_url)}
-                        alt=""
-                        style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
-                        onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
-                      />
-                    ) : (
-                      <div style={{
-                        width: '44px',
-                        height: '44px',
-                        borderRadius: '12px',
-                        background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+                  /* The row's tap shares, so the photo has its own button to
+                     the venue's sheet, laid over it (ThumbToSheet: 12 of
+                     padding and 1 of border in from the row's edge). A venue
+                     with no place id has no sheet and shows the tile instead
+                     of a Google photo. */
+                  <div key={venue.id} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                    <button className="hit44"
+                      onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}
+                      style={{
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
-                      }}>
-                        {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                        gap: '12px',
+                        padding: '12px',
+                        borderRadius: '14px',
+                        border: '1px solid var(--border-default)',
+                        backgroundColor: 'var(--bg-card-solid)',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        transition: 'opacity 0.2s ease',
+                        position: 'relative',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      {/* Same defect as the DM share list: shareVenueToChat sends
+                          this venue's photo_url onward, and the row drew a
+                          category gradient rather than the picture it was
+                          holding. Icon tile kept as the no-photo fallback. */}
+                      {venue.photo_url && venue.place_id ? (
+                        <img
+                          src={resolveVenuePhoto(venue.photo_url)}
+                          alt=""
+                          style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                          onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: '44px',
+                          height: '44px',
+                          borderRadius: '12px',
+                          background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                        </div>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
+                        {/* `price` is null for every venue Google gives no
+                            price_level for, and the separator was printed
+                            unconditionally — so most rows in this list read
+                            "Bar • " with nothing after the bullet. Every other
+                            venue row in the file already guards it this way. */}
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
                       </div>
-                    )}
-                    <div style={{ flex: 1 }}>
-                      <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                      {/* `price` is null for every venue Google gives no
-                          price_level for, and the separator was printed
-                          unconditionally — so most rows in this list read
-                          "Bar • " with nothing after the bullet. Every other
-                          venue row in the file already guards it this way. */}
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
-                    </div>
-                    {(() => {
-                      /* The plan's own hour first. venue.crowd is the map's
-                         "right now" number, and a vote for Saturday 9 PM was
-                         being argued with Thursday afternoon's crowd. The
-                         event-hour score arrives per flock (App.js
-                         requestEventCrowdScores) and carries its hour, so the
-                         number says which question it is answering. */
-                      const ev = eventCrowd ? eventCrowd[venue.place_id] : undefined;
-                      const score = typeof ev === 'number' ? ev : (typeof venue.crowd === 'number' ? venue.crowd : null);
-                      if (score === null) return null;
-                      return <div style={{
-                        padding: '4px 10px',
-                        borderRadius: '12px',
-                        backgroundColor: score > 84 ? '#FEE2E2' : score > 39 ? '#FEF3C7' : '#D1FAE5',
-                        color: crowdColorFor(score, colors),
-                        fontSize: 'var(--t-meta)',
-                        fontWeight: '500',
-                        whiteSpace: 'nowrap'
-                      }}>
-                        {score}%{typeof ev === 'number' && eventCrowdLabel ? ` ${eventCrowdLabel}` : ''}
-                      </div>;
-                    })()}
-                  </button>
+                      {(() => {
+                        /* The plan's own hour first. venue.crowd is the map's
+                           "right now" number, and a vote for Saturday 9 PM was
+                           being argued with Thursday afternoon's crowd. The
+                           event-hour score arrives per flock (App.js
+                           requestEventCrowdScores) and carries its hour, so the
+                           number says which question it is answering. */
+                        const ev = eventCrowd ? eventCrowd[venue.place_id] : undefined;
+                        const score = typeof ev === 'number' ? ev : (typeof venue.crowd === 'number' ? venue.crowd : null);
+                        if (score === null) return null;
+                        return <div style={{
+                          padding: '4px 10px',
+                          borderRadius: '12px',
+                          backgroundColor: score > 84 ? '#FEE2E2' : score > 39 ? '#FEF3C7' : '#D1FAE5',
+                          color: crowdColorFor(score, colors),
+                          fontSize: 'var(--t-meta)',
+                          fontWeight: '500',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          {score}%{typeof ev === 'number' && eventCrowdLabel ? ` ${eventCrowdLabel}` : ''}
+                        </div>;
+                      })()}
+                    </button>
+                    {venue.photo_url && venue.place_id && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="12px" />}
+                  </div>
                 ))}
               </div>
+              {/* Places data off a Google map, so the list ends on Google's
+                  attribution (components/ui/GoogleCredit.js). */}
+              {budgetFilteredVenues.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
+                  <GoogleMapsMark />
+                </div>
+              )}
             </div>
           </div>
         )}

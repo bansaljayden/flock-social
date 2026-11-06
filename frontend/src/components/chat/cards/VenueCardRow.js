@@ -71,6 +71,7 @@ import { crowdLabelFor, crowdArcFor } from '../../../lib/crowd';
    The summary rides on the row like the vote does (`tables`, stamped by the
    screen's dressing pass); this file draws it and asks nothing. */
 import TableAvailability, { tableCompactText } from '../../venue/TableAvailability';
+import { GoogleMapsMark } from '../../ui/GoogleCredit';
 import './cards.css';
 
 /* An explicit prop wins over the field on the shared row, and either can be
@@ -178,7 +179,11 @@ export default function VenueCardRow({
   const isDm = surface === 'dm';
   const address = venue.addr || venue.formatted_address || null;
 
-  const rawPhoto = venue.photo_url || null;
+  /* A Google photo goes uncredited here only because a tap on the card
+     reaches the venue sheet, which credits it in full
+     (components/ui/GoogleCredit.js). A card with no place_id has no sheet
+     behind it, so it draws no Google photo: the placeholder, or the pin. */
+  const rawPhoto = venue.place_id ? (venue.photo_url || null) : null;
   const resolved = rawPhoto && typeof resolvePhoto === 'function' ? resolvePhoto(rawPhoto) : rawPhoto;
   const photo = photoBroken ? placeholder : (resolved || placeholder);
 
@@ -319,6 +324,13 @@ export default function VenueCardRow({
             style={{ fontSize: '12px', lineHeight: '16px', marginTop: '2px' }}
           />
         )}
+
+        {/* The name, the facts and the photo are Google Maps data off a
+            Google map, so the card carries Google's attribution as a 16px
+            line of its own (components/ui/GoogleCredit.js). Four lines at
+            most still sit inside the 88pt row. A card with no place_id did
+            not come from Google and carries none. */}
+        {venue.place_id && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
       </div>
 
       {typeof onAction === 'function' && (

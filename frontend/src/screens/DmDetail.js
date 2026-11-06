@@ -95,6 +95,9 @@ import VenueDealLine, { dealOf } from '../components/venue/VenueDealLine';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 // The photo viewer's wait, the same one ChatDetail's viewer draws.
 import { SkeletonBlock } from '../components/ui/Skeleton';
+// Google's attribution for the venue lists and the pinned venue, and the
+// button that takes a list row's photo to the venue sheet that credits it.
+import { GoogleMapsMark, ThumbToSheet } from '../components/ui/GoogleCredit';
 
 /* THE STREAM IS THE CHAT MODULE'S NOW, and this is the first screen wired to
    it. `components/chat` is imported as one door, never file by file, so the
@@ -328,23 +331,44 @@ export default function DmDetail({
      looks empty. Leaving also ends a live location share, which for a long
      time only the back arrow did. */
 
-  // The strip's tap, which is what the banner's "Map" button did, unchanged.
-  // Hand the Discover tab a return address, go there, then pan onto the place.
-  // The wait is not a guess at network time: window.__flockPanToVenue is
-  // installed by the Discover screen itself, so it does not exist until that
-  // screen has mounted, and calling it in the same tick did nothing at all.
+  // The strip's tap: the pinned venue's sheet, opened the way a venue card in
+  // this thread opens it. Hand the Discover tab a return address, go there,
+  // then open the sheet with panMap, which pans onto the place once the
+  // details answer. It used to hand the map the pin alone, with no
+  // coordinates, so unless the place was already a marker on the map the tap
+  // opened nothing, and the strip's thumbnail never reached the sheet that
+  // credits the photo (components/ui/GoogleCredit.js). The seed carries no
+  // photo: a pin keeps no credit, so the sheet draws its map until the
+  // details answer with credited photos. The wait is the cards' wait, for
+  // Discover to mount.
   const openPinnedVenueOnMap = () => {
     leaveDmScreen();
     setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
     setCurrentTab('explore');
     setCurrentScreen('main');
-    if (dmPinnedVenue?.place_id) {
+    const pinned = dmPinnedVenue;
+    if (pinned?.place_id) {
       setTimeout(() => {
-        if (window.__flockPanToVenue) {
-          window.__flockPanToVenue({ place_id: dmPinnedVenue.place_id, name: dmPinnedVenue.name, address: dmPinnedVenue.addr, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url });
-        }
-      }, 300);
+        openVenueDetail(pinned.place_id, { name: pinned.name, formatted_address: pinned.addr, place_id: pinned.place_id, rating: pinned.rating }, { panMap: true });
+      }, 500);
     }
+  };
+
+  // A photo in the vote panel or the share list. Those rows vote or share
+  // when tapped, so the photo is a button of its own (ThumbToSheet in
+  // components/ui/GoogleCredit.js) and lands here: the same trip as a card in
+  // this thread, to the venue's sheet, which credits the photo in full. The
+  // seed hands the sheet the row's photo with its own credit.
+  const openListVenue = (venue) => {
+    leaveDmScreen();
+    setShowDmVotePanel(false);
+    setShowDmVenueSearch(false);
+    setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
+    setCurrentTab('explore');
+    setCurrentScreen('main');
+    setTimeout(() => {
+      openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr || venue.formatted_address, place_id: venue.place_id, rating: venue.stars ?? venue.rating ?? null, photo_url: resolveVenuePhoto(venue.photo_url), photo_attribution: venue.photo_attribution || null, lat: venue.location?.latitude, lng: venue.location?.longitude }, { panMap: true });
+    }, 500);
   };
 
   // "Change place" on the strip's menu, and the only door to a FIRST pin now
@@ -643,8 +667,11 @@ export default function DmDetail({
           setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
           setCurrentTab('explore');
           setCurrentScreen('main');
+          // No photo in the seed: a card keeps no credit for its photo, and
+          // the sheet draws a Places photo with its credit or not at all, so
+          // it shows its map until the details answer with credited photos.
           setTimeout(() => {
-            openVenueDetail(vd.place_id, { name: vd.name, formatted_address: vd.addr, place_id: vd.place_id, rating: vd.stars || vd.rating, photo_url: vd.photo_url }, { panMap: true });
+            openVenueDetail(vd.place_id, { name: vd.name, formatted_address: vd.addr, place_id: vd.place_id, rating: vd.stars || vd.rating }, { panMap: true });
           }, 500);
         } : undefined}
         onAction={() => {
@@ -1065,7 +1092,11 @@ export default function DmDetail({
         model={dmPinnedVenue ? {
           kind: 'venue',
           name: dmPinnedVenue.name,
-          thumbUrl: resolveVenuePhoto(dmPinnedVenue.photo_url),
+          // A Google photo only where the strip's tap reaches the venue's
+          // sheet, which credits it; the place id is also what puts Google's
+          // attribution beside "Pinned".
+          thumbUrl: dmPinnedVenue.place_id ? resolveVenuePhoto(dmPinnedVenue.photo_url) : null,
+          placeId: dmPinnedVenue.place_id || null,
         } : null}
         onOpen={openPinnedVenueOnMap}
         onChangePlace={pickAPlaceForThisDm}
@@ -1265,24 +1296,41 @@ export default function DmDetail({
                       coordinate produced the list. */}
                   <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{venuesFromLabel ? `Popular in ${venuesFromLabel}` : 'Popular Chains Nearby'}</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {suggestedVenues.map(venue => (
-                      <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
-                        {venue.photo_url ? (
-                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
-                        ) : (
-                          <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            {Icons.mapPin('white', 14)}
-                          </div>
-                        )}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                    {suggestedVenues.map(venue => {
+                      /* The row's tap votes, so the photo has its own button
+                         to the venue's sheet, laid over it (ThumbToSheet: 12
+                         of padding and 1 of border in from the row's edge). A
+                         venue with no place id has no sheet and shows the
+                         tile instead of a Google photo. */
+                      const showPhoto = !!(venue.photo_url && venue.place_id);
+                      return (
+                        <div key={venue.id || venue.name} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                          <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                            {showPhoto ? (
+                              <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                            ) : (
+                              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {Icons.mapPin('white', 14)}
+                              </div>
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                            </div>
+                            <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
+                              {Icons.vote(colors.navy, 12)} Vote
+                            </div>
+                          </button>
+                          {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="8px" />}
                         </div>
-                        <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
-                          {Icons.vote(colors.navy, 12)} Vote
-                        </div>
-                      </button>
-                    ))}
+                      );
+                    })}
+                  </div>
+                  {/* Places data off a Google map, so the list ends on Google's
+                      attribution (components/ui/GoogleCredit.js), as the
+                      Explore list does. */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
+                    <GoogleMapsMark />
                   </div>
                 </>
               )}
@@ -1317,6 +1365,10 @@ export default function DmDetail({
                   <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pinned Venue</p>
                   <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</p>
                   {dmPinnedVenue.addr && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
+                  {/* A Google place's name and address are Google Maps data,
+                      so the block carries Google's attribution
+                      (components/ui/GoogleCredit.js). */}
+                  {dmPinnedVenue.place_id && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
                 </div>
                 <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
@@ -1359,45 +1411,61 @@ export default function DmDetail({
                     : "No venues to show yet, because Flock doesn't have your location. Turn it on from the Discover tab and this list fills in."}</p>
                   <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                 </div>
-              ) : allVenues.map(venue => (
-                <button className="hit44"
-                  key={venue.id}
-                  onClick={(e) => {
-                    confirmClick(e);
-                    sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd }, noReply: true });
-                    setShowDmVenueSearch(false);
-                  }}
-                  style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
-                >
-                  {/* The row is about to SEND this venue's photo_url to the
-                      other person, and it was drawing a category gradient
-                      instead of showing it. The "Popular Chains Nearby" rows
-                      thirty lines up already render a 36px photo, so the
-                      gradient here was the outlier, not the standard. The icon
-                      tile stays as the fallback for a venue Google has no photo
-                      of, which is the only reason to show none. */}
-                  {venue.photo_url ? (
-                    <img
-                      src={resolveVenuePhoto(venue.photo_url)}
-                      alt=""
-                      style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
-                      onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
-                    />
-                  ) : (
-                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
-                    </div>
-                  )}
-                  <div style={{ flex: 1 }}>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
+              ) : allVenues.map(venue => {
+                /* The row's tap shares, so the photo has its own button to the
+                   venue's sheet, laid over it (ThumbToSheet: 12 of padding and
+                   1 of border in from the row's edge). A venue with no place id
+                   has no sheet and shows the tile instead of a Google photo. */
+                const showPhoto = !!(venue.photo_url && venue.place_id);
+                return (
+                  <div key={venue.id} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                    <button className="hit44"
+                      onClick={(e) => {
+                        confirmClick(e);
+                        sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd }, noReply: true });
+                        setShowDmVenueSearch(false);
+                      }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
+                    >
+                      {/* The row is about to SEND this venue's photo_url to the
+                          other person, and it was drawing a category gradient
+                          instead of showing it. The "Popular Chains Nearby" rows
+                          thirty lines up already render a 36px photo, so the
+                          gradient here was the outlier, not the standard. The icon
+                          tile stays as the fallback for a venue Google has no photo
+                          of, which is the only reason to show none. */}
+                      {showPhoto ? (
+                        <img
+                          src={resolveVenuePhoto(venue.photo_url)}
+                          alt=""
+                          style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                          onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                        />
+                      ) : (
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                        </div>
+                      )}
+                      <div style={{ flex: 1 }}>
+                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
+                      </div>
+                      {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                        {venue.crowd}%
+                      </div>}
+                    </button>
+                    {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="12px" />}
                   </div>
-                  {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                    {venue.crowd}%
-                  </div>}
-                </button>
-              ))}
+                );
+              })}
             </div>
+            {/* Places data off a Google map, so the list ends on Google's
+                attribution (components/ui/GoogleCredit.js). */}
+            {allVenues.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 2px 0' }}>
+                <GoogleMapsMark />
+              </div>
+            )}
           </div>
         </div>
       )}

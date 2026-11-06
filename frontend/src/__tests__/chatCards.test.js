@@ -1286,10 +1286,11 @@ describe('VenueCardRow', () => {
   });
 
   test('and none of the three when the data does not carry them', () => {
-    // Nothing but the name: no rating, no price, no category, no crowd, no
-    // vote count, and no address line any more.
+    // Nothing but the name and Google's attribution for it: no rating, no
+    // price, no category, no crowd, no vote count, and no address line any
+    // more.
     const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
-    expect(textOf(container)).toBe('Kome');
+    expect(textOf(container)).toBe('KomeGoogle Maps');
   });
 
   test('a table line is drawn under the facts and said in the card\'s name', () => {

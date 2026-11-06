@@ -18,9 +18,16 @@
  * unlikely.
  *
  *   model = null                                   nothing renders at all
- *   { kind: 'venue', name, thumbUrl, caption }     a DM's pinned venue, or a
- *                                                  flock's locked one
+ *   { kind: 'venue', name, thumbUrl, caption,      a DM's pinned venue, or a
+ *     placeId }                                    flock's locked one
  *   { kind: 'vote', votedCount, memberCount }      "Vote open, 5 of 8"
+ *
+ * GOOGLE'S ATTRIBUTION. A venue model with a placeId is a Google place: its
+ * name and its thumbnail are Google Maps data off a Google map, so the strip
+ * carries the "Google Maps" mark beside its caption
+ * (components/ui/GoogleCredit.js). The 20px thumbnail goes uncredited because
+ * a tap on the strip opens the venue sheet, which credits the photo in full;
+ * the parent draws no thumbnail for a venue with no place id.
  *
  * MEASUREMENTS
  *   Strip 36 tall, hairline underneath. Thumbnail 20 square, radius 5, at the
@@ -46,6 +53,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import Icons from '../../ui/Icons';
+import { GoogleMapsMark } from '../../ui/GoogleCredit';
 import './sheets.css';
 
 const LONG_PRESS_MS = 500;
@@ -236,7 +244,10 @@ export default function PinStrip({
             : (isVenue ? Icons.mapPin('currentColor', 14) : Icons.vote('currentColor', 14))}
         </span>
         <span className="cs-strip-name">{name}</span>
-        <span className="cs-strip-caption" aria-live={isVenue ? undefined : 'polite'}>{caption}</span>
+        <span className="cs-strip-caption" aria-live={isVenue ? undefined : 'polite'}>
+          {caption}
+          {isVenue && model.placeId ? <GoogleMapsMark style={{ marginLeft: '6px' }} /> : null}
+        </span>
         <span className="cs-strip-chev" aria-hidden="true">{Icons.chevronRight('currentColor', 14)}</span>
       </button>
 
