@@ -427,9 +427,13 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 //   * Google refusing the photo as a dead name is its final word on that
 //     name: the photo is forgotten (keys back to null) and the place keeps its
 //     day. So is "Photo not found" (an answer with no image), but only for the
-//     heal: the name goes on the entry's `skips`, which the heal's pick passes
-//     over for a day, and not into the shared dead-name memory, because a
-//     plain request for that name treats the same answer as one to retry.
+//     heal: the photo's position in the place's list goes on the entry's
+//     `skips`, which the heal's pick passes over for a day, and not into the
+//     shared dead-name memory, because a plain request for that name treats
+//     the same answer as one to retry. A position and not a name, because
+//     Google lists a place's photos in the same order on every answer but
+//     names them anew each time: a skipped name never came round again, and
+//     each reopened card bought the same image-less photo under its new name.
 //   * A refusal of ours (one address's hourly gate, the shared ledger, the
 //     photo budget) says when it lifts, so the place is held for that long,
 //     never less than HEAL_RETRY_TTL_MS and never more than a day: one
@@ -471,8 +475,8 @@ const PHOTO_GONE = { status: 404, gone: true, error: 'That photo is no longer av
 // brake (PHOTO_FETCH_BURST_PER_DAY, 451) whoever is asking; MAX_HEALED_PLACES
 // sits well above a day of that. Oldest out first, cleared on restart. An
 // entry lives at most a day past its last write and holds two hashes, a fault
-// count, two times and at most MAX_HEAL_SKIPS skipped names (hashes, each for
-// a day). healingKeys holds a key only for as long as that flight heals.
+// count, two times and at most MAX_HEAL_SKIPS skipped positions (numbers, each
+// for a day). healingKeys holds a key only for as long as that flight heals.
 //
 // A HEAL THAT CANNOT FINISH (no photos, a refusal, an error) answers PHOTO_GONE,
 // the same 404 a dead name got before, and the app draws the bird as it did.
@@ -482,9 +486,10 @@ const MAX_HEALED_PLACES = 5000;
 // Places (New) lists at most ten photos for a place, so ten skips cover them all.
 const MAX_HEAL_SKIPS = 10;
 // placeId -> { keys: { 160, 400 } | null, until, faults, skips, keepUntil }.
-// `until` ends the hold; `skips` are [{ hash, until }] of names that answered
-// "Photo not found"; `keepUntil` ends the entry, and is later than `until` only
-// while a fault streak or a skip has to be remembered.
+// `until` ends the hold; `skips` are [{ index, until }], the positions in the
+// place's photo list whose photo answered "Photo not found"; `keepUntil` ends
+// the entry, and is later than `until` only while a fault streak or a skip has
+// to be remembered.
 const healedPlaces = new Map();
 const healingKeys = new Set(); // cache keys of the flights healing right now
 
@@ -539,26 +544,20 @@ function liveSkips(entry, now = Date.now()) {
   return entry && entry.skips ? entry.skips.filter((skip) => now < skip.until) : [];
 }
 
-// Google answered "Photo not found" for a name this heal bought: the heal's
-// pick passes over it for a day. Kept on the entry, by hash, never shared.
-function skipForADay(entry, photoRef) {
+// Google answered "Photo not found" for the photo at `index` in the place's
+// list, which this heal bought: the heal's pick passes over that position for a
+// day, whatever the photo is named in later answers. Kept on the entry, never
+// shared.
+function skipForADay(entry, index) {
   const now = Date.now();
-  const hash = photoCacheKey(photoRef, 0);
-  entry.skips = [...liveSkips(entry, now).filter((skip) => skip.hash !== hash), { hash, until: now + HEALED_PLACE_TTL_MS }]
+  entry.skips = [...liveSkips(entry, now).filter((skip) => skip.index !== index), { index, until: now + HEALED_PLACE_TTL_MS }]
     .slice(-MAX_HEAL_SKIPS);
   entry.keepUntil = keepUntilFor(entry.until, entry.faults, entry.skips, now);
 }
 
-// A photos answer without the names the place's entry skips. A new object: the
-// list may be a cached payload's own array, or a flight's shared answer.
-function withoutSkipped(placeId, out) {
-  const skips = liveSkips(healedEntry(placeId));
-  if (!out.ok || skips.length === 0) return out;
-  const skipped = new Set(skips.map((skip) => skip.hash));
-  return {
-    ok: true,
-    photos: out.photos.filter((photo) => !(photo && typeof photo.name === 'string' && skipped.has(photoCacheKey(photo.name, 0)))),
-  };
+// The positions in a place's photo list its entry skips today.
+function skippedPositions(placeId) {
+  return new Set(liveSkips(healedEntry(placeId)).map((skip) => skip.index));
 }
 
 function faultStreak(placeId) {
@@ -1206,15 +1205,21 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
       if (!allowPhotoFetch(req) || !allowGlobalPlacesCall(1, { photo: true })) return PHOTO_GONE;
       rememberHealedPlace(placeId, null);
     }
-    const out = withoutSkipped(placeId, await fetchPlacePhotos(placeId));
+    const out = await fetchPlacePhotos(placeId);
     if (!out.ok) return PHOTO_GONE;
 
     // The first current photo, skipping the refused name itself and any name
-    // already known dead, so a heal can never loop back into one.
-    const current = out.photos
-      .map((photo) => photo && photo.name)
-      .find((name) => isPhotoRefShaped(name) && name !== deadRef && !isDeadPhotoRef(name));
-    if (!current) return PHOTO_GONE;
+    // already known dead, so a heal can never loop back into one, and any
+    // position whose photo answered "Photo not found" today. Read without
+    // changing the list, which may be a cached payload's own array, or a
+    // flight's shared answer.
+    const skipped = skippedPositions(placeId);
+    const index = out.photos.findIndex((photo, i) => {
+      const name = photo && photo.name;
+      return !skipped.has(i) && isPhotoRefShaped(name) && name !== deadRef && !isDeadPhotoRef(name);
+    });
+    if (index < 0) return PHOTO_GONE;
+    const current = out.photos[index].name;
 
     // Hashes, never the name (see healedPlaces). Written before the bytes are
     // fetched, and in the same tick as the flight below, so a request for
@@ -1253,7 +1258,7 @@ async function healDeadPhoto(deadRef, maxWidth, req) {
         // Google refused the photo just chosen: forget it, keep the day.
         mine.keys = null;
         // "Photo not found" is final for the heal only (see healedPlaces).
-        if (fresh.noImage) skipForADay(mine, current);
+        if (fresh.noImage) skipForADay(mine, index);
       } else if (Number.isFinite(fresh.retryMs)) {
         // A gate, the ledger or the budget refused it, and said when to come back.
         rememberHealedPlace(placeId, keys, refusalHoldMs(fresh.retryMs));

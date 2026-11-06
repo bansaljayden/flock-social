@@ -806,6 +806,42 @@ test('two photos with no image: neither is bought twice in the day', async () =>
   assert.equal(vs.healedPlaces.get(P).skips.length, 2);
 });
 
+test('renamed on every answer: a photo with no image is passed over by its place in the list, and the next photo is bought', async () => {
+  placeWithRenamedPhotos(P, 3);
+  expired.add(OLD);
+  noImagePhotos.add(0);
+  await placeDetailsCache.fetchPlaceDetails(P);
+  assertBird(await get(OLD));
+  assert.equal(triesOfPhoto(0), 1);
+
+  // Ten minutes on the card is opened again, and every name in it is new.
+  passTime(10 * MINUTE);
+  await placeDetailsCache.fetchPlaceDetails(P);
+  const next = await get(OLD);
+  assert.equal(next.status, 200);
+  assert.equal(photoOf(next.text.replace('pixels of ', '')), 1, 'the heal did not move on to the next photo');
+  assert.equal(triesOfPhoto(0), 1, 'a photo Google has no image for was bought again under its new name');
+});
+
+test('renamed on every answer: two photos with no image are each bought once, and the third heals the tile', async () => {
+  placeWithRenamedPhotos(P, 3);
+  expired.add(OLD);
+  noImagePhotos.add(0);
+  noImagePhotos.add(1);
+  const statuses = [];
+  for (let i = 0; i < 4; i++) {
+    if (i) passTime(10 * MINUTE);
+    await placeDetailsCache.fetchPlaceDetails(P);
+    statuses.push((await get(OLD)).status);
+  }
+  assert.deepEqual(statuses, [404, 404, 200, 200]);
+  assert.equal(triesOfPhoto(0), 1);
+  assert.equal(triesOfPhoto(1), 1);
+  assert.equal(triesOfPhoto(2), 1, 'the healed photo was bought again');
+  assert.deepEqual(vs.healedPlaces.get(P).skips.map((skip) => skip.index), [0, 1]);
+  assert.ok(!JSON.stringify([...vs.healedPlaces]).includes('/photos/'), 'a skip kept a photo name');
+});
+
 test('the skip filter leaves the venue card\'s cached photo list as it was', async () => {
   // The pick reads a venue card's cached payload for free. Skipping a name
   // must make a new list, not cut the card's own.
