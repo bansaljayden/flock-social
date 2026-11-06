@@ -484,7 +484,7 @@ export default function FlockDetail({
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
               <StaticVenueMap className="plan-venue-map" lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
               <div style={{ padding: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' }}>
                   {/* The photo is a thumbnail under Google's rule
                       (components/ui/GoogleCredit.js): a tap opens the venue's
                       sheet, which draws Google's current photos credited. It
@@ -496,13 +496,18 @@ export default function FlockDetail({
                       <img src={flock.venuePhoto} alt="" width="72" height="72" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                     </button>
                   )}
+                  {/* The name has the column to itself and the rating sits
+                      under it. Beside the photo on a 320px phone the column
+                      is 178px. With the rating in the name's row the name had
+                      120px, and "Mediterranean" broke after its twelfth
+                      letter; 178px holds a word that long. */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-                      <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}>{flock.venue}</h3>
-                      {flock.venueRating && (
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', flexShrink: 0 }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
-                      )}
-                    </div>
+                    <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', overflowWrap: 'break-word' }}>{flock.venue}</h3>
+                    {flock.venueRating && (
+                      <div style={{ display: 'flex', marginTop: '6px' }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)' }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
+                      </div>
+                    )}
                     {flock.venueAddress && (
                       <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '6px 0 0', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
                         {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>

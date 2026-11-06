@@ -678,6 +678,31 @@ describe('the plan screen\'s venue photo is a small thumbnail whose tap opens th
     expect(screen.queryByTestId('google-maps-attribution')).toBeNull();
   });
 
+  test('beside the photo the name has its column to itself and the rating sits under it', () => {
+    // On a 320px phone the column beside the photo is 178px. With the rating
+    // in the name's row the name had 120px, and "Mediterranean" broke after
+    // its twelfth letter (rig measurement, 2026-11-06). jsdom has no layout,
+    // so the structure is pinned: nothing shares the name's line.
+    const { container } = render(React.createElement(FlockDetail, planProps(plan())));
+    const door = container.querySelector('.plan-venue-photo');
+    const name = screen.getByRole('heading', { level: 3, name: 'Copper Finch' });
+    const column = name.parentElement;
+    expect(column.parentElement).toBe(door.parentElement);
+    expect(column.firstElementChild).toBe(name);
+    expect(column.style.display).toBe('');
+    expect(name.style.flex).toBe('');
+    expect(name.style.overflowWrap).toBe('break-word');
+    const rating = screen.getByText('4.6');
+    expect(name.contains(rating)).toBe(false);
+    const ratingRow = rating.parentElement;
+    expect(ratingRow.parentElement).toBe(column);
+    expect([...column.children].indexOf(ratingRow)).toBe(1);
+    // The address follows the rating.
+    const address = screen.getByText('125 E 3rd St');
+    // eslint-disable-next-line no-bitwise
+    expect(ratingRow.compareDocumentPosition(address) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   test('until the photo arrives its box is the skeleton ground at its final size', () => {
     const { container } = render(React.createElement(FlockDetail, planProps(plan())));
     const door = container.querySelector('.plan-venue-photo');
