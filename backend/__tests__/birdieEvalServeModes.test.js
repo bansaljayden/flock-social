@@ -11,8 +11,17 @@
 //
 // This drives the eval's --fixtures preview, which needs no model key and
 // makes no network call, at the eval's own pinned clocks, under each setting,
-// and compares what the crowd tool tells Birdie: each venue's headline source
-// and each forecast hour's source and live-readings yes or no.
+// and compares what the crowd tool tells Birdie: each venue's headline source,
+// its confidence figure and each forecast hour's source and live-readings yes
+// or no.
+//
+// The model side answers as an artifact, read from its metadata through the
+// serving code's readers: by default the one serving loads, or --artifact=F.
+// So the shape the November retrain serves under the mix (no crowd_method,
+// live readings yes: its hour-old reading is a model input, and no nowcast
+// or offset follows the graph) is put in front of Birdie before it ships, and
+// every number carries the confidence figure serving publishes for the
+// arithmetic that made it, never the model's figure on a curve's number.
 //
 // Run: node --test  (from backend/)
 // ---------------------------------------------------------------------------
@@ -23,35 +32,78 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { spawnSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const BACKEND = path.join(__dirname, '..');
 const EVAL = path.join(BACKEND, 'scripts', 'birdie', 'birdieEval.js');
 const cases = require('../scripts/birdie/birdieEvalCases');
+const serving = require('../services/mlPredictor')._internals;
+
+// The artifacts the previews answer as, written once outside the repo from
+// the metadata serving loads. `starling` is v2.6.0-starling as served today:
+// the version the quantile map and the model-table nowcast were fitted on,
+// reading no live features. `retrained` is the November ship's shape: the
+// live features among its inputs and a version neither table was fitted on.
+// Every preview answers as starling unless it names another, so these tests
+// describe the same artifacts after the ship changes the file serving loads.
+const artifacts = new Map();
+function artifactFile(name) {
+  if (artifacts.has(name)) return artifacts.get(name);
+  const meta = JSON.parse(fs.readFileSync(serving.META_PATH, 'utf8'));
+  const own = meta.feature_names.filter((n) => !serving.LIVE_FEATURE_NAMES.includes(n));
+  if (name === 'starling') {
+    meta.model_version = serving.QMAP_FITTED_ON;
+    meta.feature_names = own;
+  } else {
+    meta.model_version = '2.8.0-retrained';
+    meta.feature_names = [...own, ...serving.LIVE_FEATURE_NAMES];
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `birdie-eval-${name}-`));
+  const file = path.join(dir, 'model_metadata.json');
+  fs.writeFileSync(file, JSON.stringify(meta));
+  process.on('exit', () => fs.rmSync(dir, { recursive: true, force: true }));
+  artifacts.set(name, { file, meta, dir });
+  return artifacts.get(name);
+}
+const STARLING = () => [`--artifact=${artifactFile('starling').file}`];
 
 // One preview per setting, read once. The child gets only what a process
 // needs to start, the eval's zone and the switches: no key of any kind.
+// `extra` is the rest of the eval's arguments: the starling artifact unless
+// a test names another (--artifact=F, --replay=F), or [] for the artifact
+// serving loads.
 const previews = new Map();
-function preview(switches) {
-  const key = JSON.stringify(switches);
+const artifactOf = new Map();
+function preview(switches, extra = STARLING()) {
+  const key = JSON.stringify([switches, extra]);
   if (previews.has(key)) return previews.get(key);
   const env = { TZ: cases.ZONE };
   for (const k of ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'HOME', 'USERPROFILE']) {
     if (process.env[k] !== undefined) env[k] = process.env[k];
   }
   Object.assign(env, switches);
-  const r = spawnSync(process.execPath, [EVAL, '--fixtures'], { cwd: BACKEND, env, encoding: 'utf8', timeout: 120000 });
+  const r = spawnSync(process.execPath, [EVAL, '--fixtures', ...extra], { cwd: BACKEND, env, encoding: 'utf8', timeout: 120000 });
   assert.equal(r.status, 0, `the preview failed under ${key}: ${r.stderr || r.stdout}`);
   const parsed = parsePreview(r.stdout);
   assert.ok(parsed.length > 40, `the preview printed only ${parsed.length} venue lines under ${key}`);
+  const named = r.stdout.match(/^artifact (\S+) \(/m);
+  artifactOf.set(key, named ? named[1] : null);
   previews.set(key, parsed);
   return parsed;
 }
+const artifactUnder = (switches, extra = STARLING()) => {
+  preview(switches, extra);
+  return artifactOf.get(JSON.stringify([switches, extra]));
+};
 
 // The preview's venue lines, one record per clock and venue:
 //   head   the line after `open=`
 //   score, label  the headline number and its word (null on an error line)
 //   source crowd_source, method crowd_method (null when none was sent)
+//   conf   { published, percent, metric }: confidence, and the measured
+//          percent and metric confidence_measurement gives (both null when
+//          it is unmeasured); null when the result carries neither
 //   hours  [{ hour, score, method, live }], live true, false or undefined
 function parsePreview(stdout) {
   const lines = stdout.split(/\r?\n/);
@@ -64,6 +116,7 @@ function parsePreview(stdout) {
     if (!m || !clock || !cases.byKey.has(m[1])) continue;
     const src = m[3].match(/\bsrc=([a-z_]+)(?:\/([a-z0-9_]+))?/);
     const num = m[3].match(/^score=(\d+) "([^"]+)"/);
+    const cf = m[3].match(/ conf=(\d+)\((?:([\d.]+) ([a-z0-9_]+)|[a-z_]+)\)$/);
     const next = lines[i + 1] || '';
     const hours = /^\s{11}\d/.test(next)
       ? [...next.matchAll(/(\d{1,2} [AP]M)=(\d+)(?:\/([a-z0-9_]+))?([+-]live)?/g)].map((h) => ({
@@ -73,7 +126,9 @@ function parsePreview(stdout) {
     out.push({
       clock, key: m[1], open: m[2] === 'y', head: m[3],
       score: num ? Number(num[1]) : null, label: num ? num[2] : null,
-      source: src ? src[1] : null, method: src && src[2] ? src[2] : null, hours,
+      source: src ? src[1] : null, method: src && src[2] ? src[2] : null,
+      conf: cf ? { published: Number(cf[1]), percent: cf[2] ? Number(cf[2]) : null, metric: cf[3] || null } : null,
+      hours,
     });
   }
   return out;
@@ -178,6 +233,102 @@ test('under curve_offset every model-path number is the venue\'s curve or its ho
   assert.ok(n >= 15, `too few model-path venues (${n})`);
 });
 
+test('every model-path answer carries the confidence figure serving publishes for the arithmetic that made it', () => {
+  // servedConfidence's figures, per arithmetic: the curve and offset, their
+  // nowcast at an hour, the model's number with an hour-old reading blended
+  // in (the quantile map is on and starling is the artifact it and the
+  // model-table nowcast were fitted on, so the model_qmap table), and the
+  // quantile map's figure for the model's number alone. Every fixture city
+  // has a weather reading, so nothing is taken off the published integer for
+  // its absence.
+  const { SERVE_MEASURED, QMAP_MEASURED } = serving;
+  const nowcastModel = ['within_15_nowcast_model_qmap_lag1', SERVE_MEASURED.nowcast.model_qmap[1].within15];
+  const figure = {
+    venue_pattern: ['within_15_curve_offset', SERVE_MEASURED.curveOffset.within15],
+    curve_live_reading_1h: ['within_15_nowcast_curve_offset_lag1', SERVE_MEASURED.nowcast.curve_offset[1].within15],
+    model_live: nowcastModel,
+    model_live_reading_1h: nowcastModel,
+    model: ['within_15_score_qmap', QMAP_MEASURED.within15],
+  };
+  const settings = [
+    [{}, 'model'], [NOW, 'model'], [MIX, 'mix'], [{ CROWD_SERVE_MODE: 'model_when_fresh' }, 'mix'],
+    [{ CROWD_SERVE_MODE: 'curve_offset', ...NOW }, 'curve_offset'], [{ CROWD_SERVE_MODE: 'curve_offset' }, 'curve_offset'],
+  ];
+  const seen = new Set();
+  for (const [switches, mode] of settings) {
+    for (const r of preview(switches)) {
+      if (r.source !== 'model_holdout' || !r.conf) continue;
+      const where = `${JSON.stringify(switches)} ${r.clock} ${r.key}`;
+      let side = 'model';
+      if (r.method === 'venue_pattern') side = 'venue_pattern';
+      else if (r.method === 'live_reading_1h') side = mode === 'curve_offset' ? 'curve_live_reading_1h' : 'model_live_reading_1h';
+      else if (r.method === 'model_live') side = 'model_live';
+      else assert.equal(r.method, null, where);
+      const [metric, percent] = figure[side];
+      assert.deepEqual(r.conf, { published: Math.round(percent), percent, metric }, `${where}: ${side}`);
+      seen.add(side);
+    }
+  }
+  assert.deepEqual([...seen].sort(), Object.keys(figure).sort(), 'every arithmetic must be exercised');
+});
+
+test('as an artifact that reads the live features, a venue with an hour-old reading under the mix gets the model\'s number with no crowd_method and live readings yes', () => {
+  // The November retrain's shape: its version takes neither the quantile map
+  // nor the model-table nowcast, and it takes no offset after the graph, so
+  // the hour-old reading reaches the number only as one of the graph's
+  // inputs. The confidence figure is the artifact's own measured one.
+  const { file, meta } = artifactFile('retrained');
+  const art = [`--artifact=${file}`];
+  const own = meta.training_metrics_by_population.realtime_served.within_15;
+  // Which venues the mix answers from the model is the reading's age alone,
+  // whatever the artifact: the ones starling's nowcast carried.
+  const fresh = new Set(preview(MIX).filter((r) => MODEL_SIDE.test(r.method || '')).map((r) => `${r.clock} ${r.key}`));
+  assert.ok(fresh.size >= 5, `too few venues with an hour-old reading (${fresh.size})`);
+  for (const switches of [MIX, { CROWD_SERVE_MODE: 'model_when_fresh' }]) {
+    assert.equal(artifactUnder(switches, art), meta.model_version);
+    for (const [now, was] of paired(preview(switches, art), preview(switches))) {
+      const where = `${JSON.stringify(switches)} ${now.clock} ${now.key}`;
+      if (fresh.has(`${now.clock} ${now.key}`)) {
+        assert.deepEqual(
+          { score: now.score, label: now.label, source: now.source, method: now.method, conf: now.conf },
+          { score: was.score, label: was.label, source: 'model_holdout', method: null, conf: { published: Math.round(own), percent: own, metric: 'within_15' } },
+          where,
+        );
+        assert.equal(now.hours[0].live, true, `${where}: the headline says it used live readings`);
+      } else {
+        // The curve side, the owner's reading, the category table and the
+        // errors read nothing of the artifact that reaches Birdie.
+        assert.deepEqual({ ...now, hours: null }, { ...was, hours: null }, where);
+      }
+      assert.equal(now.hours.length, was.hours.length, where);
+      now.hours.forEach((h, k) => {
+        const w = was.hours[k];
+        // Under the mix a venue's curve-side hour is its pattern alone, and
+        // every other attributed hour of a venue with a curve is the model's,
+        // with the reading in it.
+        if (w.live === undefined || w.method === 'venue_pattern' || !corpus(now.key)) assert.deepEqual(h, w, `${where} ${h.hour}`);
+        else assert.deepEqual(h, { ...w, method: null, live: true }, `${where} ${h.hour}: the model read the reading`);
+      });
+    }
+  }
+});
+
+test('a replay answers as the artifact its recorded run named, under the switches it recorded', () => {
+  const { file, dir, meta } = artifactFile('retrained');
+  const run = path.join(dir, 'recorded-run.json');
+  fs.writeFileSync(run, JSON.stringify({ meta: { switches: MIX, artifact: { file: path.relative(BACKEND, file), modelVersion: meta.model_version } }, items: [] }));
+  assert.equal(artifactUnder({}, [`--replay=${run}`]), meta.model_version);
+  assert.deepEqual(preview({}, [`--replay=${run}`]), preview(MIX, [`--artifact=${file}`]));
+});
+
+test('with no --artifact the eval answers as the artifact serving loads', () => {
+  const served = JSON.parse(fs.readFileSync(serving.META_PATH, 'utf8')).model_version;
+  assert.equal(artifactUnder(MIX, []), served);
+  // While that is v2.6.0-starling, the starling fixture these tests pin is
+  // the same artifact, so every answer matches it.
+  if (served === serving.QMAP_FITTED_ON) assert.deepEqual(preview(MIX, []), preview(MIX));
+});
+
 test('the eval restates no switch: every one is read through the serving code\'s readers', () => {
   const src = fs.readFileSync(EVAL, 'utf8');
   assert.doesNotMatch(src, /process\.env\.CROWD_SERVE_MODE\s*[!=]==/);
@@ -185,6 +336,12 @@ test('the eval restates no switch: every one is read through the serving code\'s
   for (const reader of ['serveMode', 'nowcastEnabled', 'hourlyAttributionOn', 'isFreshReading']) {
     assert.match(src, new RegExp(`serving\\.${reader}\\(`), reader);
   }
+  // Nor the artifact: its version, its inputs and its figures are read off
+  // its metadata by serving's readers, never written in.
+  for (const reader of ['readServedAccuracy', 'qmapEnabled', 'nowcastBaseKey', 'artifactReadsLiveFeatures', 'liveFeaturesUsedReadings', 'servedConfidence', 'servedModelVersion']) {
+    assert.match(src, new RegExp(`serving\\.${reader}\\(`), reader);
+  }
+  assert.doesNotMatch(src, /'2\.6\.0-starling'/, 'a version written into the eval answers as that artifact whatever serving loads');
   // Every mode serving knows runs the eval. A mode added to serving fails here
   // until birdieEval.js curveSide says which side of it a number takes.
   const { SERVE_MODES } = require('../services/mlPredictor')._internals;

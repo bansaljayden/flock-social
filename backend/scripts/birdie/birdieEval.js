@@ -11,7 +11,8 @@
 //   Google Places    text search answered by a fixture fetch; place details
 //                    by a fixture fetchPlaceDetails
 //   the predictor    each venue's fixture curve, shaped the way the serving
-//                    switches in force shape a real answer
+//                    switches in force and the artifact serving loads (or
+//                    --artifact) shape a real answer, confidence figure too
 //   weather, game    fixtures; the owner's reading and table counts too
 //   the database     no connection is ever opened (the PG variables are
 //                    removed before anything loads); every query is answered
@@ -36,6 +37,11 @@
 //   ... --model=NAME           a measurement: Birdie runs on this Gemini model
 //                               in this process only (BIRDIE_MODEL is never
 //                               changed anywhere else), with the same settings
+//   ... --artifact=F            the crowd model answers as the artifact whose
+//                               metadata is F (a retrain's model_metadata.json)
+//                               instead of the one serving loads, so its
+//                               answers reach Birdie before it ships; works
+//                               with --fixtures too (THE ARTIFACT, below)
 //   ... --retry-probe=MS        a measurement: a model call still running at
 //                               MS gets one identical request sent beside it,
 //                               and how long that took, what it cost and
@@ -58,7 +64,8 @@
 // in order, with no key and no network, so a change to the checks, the tool
 // code or the post-processing is scored on what the real model wrote. A call
 // the recorded run never made (the route changed since) fails, and that item
-// says so. The serving switches the recorded run saw are restored from F.
+// says so. The serving switches the recorded run saw are restored from F, and
+// so is its --artifact when it named one.
 //   node scripts/birdie/birdieEval.js --replay=F [--out=G] [--gemini-deadline=MS]
 // A call F lost to the deadline is lost again, and the route's retry of it is
 // answered from F: by F's own retry when F has one (a run since 2026-11-03),
@@ -98,10 +105,11 @@ const RESCORE = args.rescore ? JSON.parse(fs.readFileSync(path.resolve(String(ar
 // ── The environment: the model key and the serving switches, nothing else ──
 //
 // `railway run` hands this process every variable the service has. The eval
-// keeps the Gemini key, the model name and the crowd serving switches (they
-// change what Birdie is told), and removes every other credential and every
-// way to a database before a single application module loads.
-const KEEP = new Set(['GEMINI_API_KEY', 'BIRDIE_MODEL', 'CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK']);
+// keeps the Gemini key, the model name, the crowd serving switches and the
+// quantile map's (they change what Birdie is told, the confidence figure
+// included), and removes every other credential and every way to a database
+// before a single application module loads.
+const KEEP = new Set(['GEMINI_API_KEY', 'BIRDIE_MODEL', 'CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'CROWD_QMAP_ENABLED']);
 const SENSITIVE = /(KEY|SECRET|TOKEN|PASSWORD|PASSWD|DATABASE|^PG|URL|DSN|PRIVATE|CREDENTIAL|WEBHOOK|RAILWAY|SENTRY|POSTHOG|RESEND|STRIPE|FIREBASE|APPLE|REVENUECAT|TICKETMASTER|WEATHER|VISION|PLACES|GOOGLE|BESTTIME|ADMIN|NFC|SMTP|TWILIO|AWS|CLOUDFLARE|PAYWALL|BIRDIE|CROWD|NODE_ENV)/i;
 const kept = {};
 for (const k of KEEP) if (process.env[k] !== undefined) kept[k] = process.env[k];
@@ -112,7 +120,7 @@ if (args.model && !REPLAY && !RESCORE) process.env.BIRDIE_MODEL = String(args.mo
 if (REPLAY) {
   // The recorded run's switches, so the prompt and the tool results are the
   // ones its replies were written against.
-  for (const k of ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'BIRDIE_MODEL']) {
+  for (const k of ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'CROWD_QMAP_ENABLED', 'BIRDIE_MODEL']) {
     const v = REPLAY.meta && REPLAY.meta.switches ? REPLAY.meta.switches[k] : undefined;
     if (v == null) delete process.env[k]; else process.env[k] = v;
   }
@@ -380,6 +388,26 @@ const methodOf = (v) => (v && v.corpus ? 'ml' : (mlPredictor.noCurveFallbackEnab
 const hourLabel = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
 const MEASURED = (pct) => ({ status: 'measured', means: 'measured_accuracy', metric: 'within_15', population: 'realtime_served', populationRows: 4120, measuredPercent: pct, weatherPenalty: 0 });
 
+// THE ARTIFACT THE MODEL SIDE ANSWERS AS. The fixture curve stands in for the
+// graph's output, and everything predictBusyness decides from the artifact
+// itself is decided here from its metadata, by the serving code's readers:
+// its version (the quantile map and the model-table nowcast were fitted on
+// one, QMAP_FITTED_ON and nowcastBaseKey), whether it reads the live features
+// (liveFeaturesUsedReadings) and its measured accuracy (readServedAccuracy).
+// By default the file serving loads (META_PATH), so once the November retrain
+// lands there the eval answers as it; --artifact=F names another, a candidate
+// before it ships. A replay answers as the artifact its run named.
+const recordedArtifact = REPLAY && REPLAY.meta && REPLAY.meta.artifact ? REPLAY.meta.artifact.file : null;
+const ARTIFACT_FILE = args.artifact ? path.resolve(String(args.artifact))
+  : (recordedArtifact ? path.resolve(B, recordedArtifact) : serving.META_PATH);
+const ARTIFACT = JSON.parse(fs.readFileSync(ARTIFACT_FILE, 'utf8'));
+const VERSION = ARTIFACT.model_version || '2.1.0';
+const ACCURACY = serving.readServedAccuracy(ARTIFACT);
+if (ACCURACY.status === 'malformed') {
+  console.error(`${ARTIFACT_FILE}: serving refuses this artifact (${ACCURACY.reason}).`);
+  process.exit(1);
+}
+
 // A fixture's live reading is an hour old (`live` in birdieEvalCases.js).
 // Whether that is fresh is serving's own test (isFreshReading), asked about
 // the bucket an hour-old reading is picked in.
@@ -395,22 +423,65 @@ const curveSide = (method, reading) => {
 };
 // The curve_offset side's own account of its number, as predictBusyness gives
 // it: the venue's curve, with an hour-old reading carried at that table's
-// weight while the nowcast is on. The fixture keeps no trailing offset, so
-// nothing else of a live reading reaches it.
-function curveAnswer(reading) {
+// weight while the nowcast is on, and the confidence figure servedConfidence
+// publishes for that arithmetic (measured on the curve and offset, or on
+// their nowcast at that lag), never the model's. The fixture keeps no
+// trailing offset, so nothing else of a live reading reaches it.
+function curveAnswer(reading, weather, ladder) {
   const weight = serving.NOWCAST_WEIGHTS.curve_offset[HOUR_OLD.bucket];
-  const nowcast = reading && nowcastOn() && weight > 0 ? { weight, lagHours: HOUR_OLD.lagHours } : null;
+  const nowcast = reading && nowcastOn() && weight > 0
+    ? { base: 'curve_offset', bucket: HOUR_OLD.bucket, lagHours: HOUR_OLD.lagHours, weight }
+    : null;
   return {
     predictionMethod: 'ml',
     serveMode: 'curve_offset',
     nowcast,
     dataSourcesUsed: nowcast ? ['venue_data', 'recent_live_readings'] : ['venue_data'],
-    modelVersion: serving.servedModelVersion('2.6.0-starling', true, nowcast),
+    modelVersion: serving.servedModelVersion(VERSION, true, nowcast),
     usedLiveReadings: Boolean(nowcast),
+    ...serving.servedConfidence({
+      accuracy: ACCURACY, qmapApplied: false, hasWeather: serving.hasTempReading(weather), curveOffset: true, nowcast, ladder,
+    }),
   };
 }
 
-mlPredictor.predictBusyness = async (venue, _weather, ts) => {
+// The model side's own account of its number, as predictBusyness gives it
+// for the artifact above. The quantile map and the model-table nowcast run
+// only on the version they were fitted on, so for a retrained artifact the
+// hour-old reading moves nothing after the graph: it is one of the graph's
+// inputs when the artifact reads the live features, and the number then says
+// it used live readings with no crowd_method of its own, the shape a fresh
+// venue carries under the mix once the November retrain ships. The nowcast's
+// weight is the fixture's (`live` in birdieEvalCases.js), and the confidence
+// figure is the one servedConfidence publishes for the arithmetic that ran.
+function modelAnswer(v, reading, weather, ladder) {
+  const qmapApplied = serving.qmapEnabled() && VERSION === serving.QMAP_FITTED_ON;
+  const base = serving.nowcastBaseKey(false, qmapApplied, VERSION);
+  const nowcast = reading && nowcastOn() && base
+    ? { base, bucket: HOUR_OLD.bucket, lagHours: HOUR_OLD.lagHours, weight: v.live === '1h' ? 1 : 0.55 }
+    : null;
+  const inputs = serving.artifactReadsLiveFeatures(ARTIFACT)
+    ? serving.liveFeaturesUsedReadings(reading ? { ...serving.LIVE_FEATURE_DEFAULTS, last_live_age_h: HOUR_OLD.lagHours } : serving.LIVE_FEATURE_DEFAULTS, ARTIFACT)
+    : null;
+  const out = {
+    modelVersion: serving.servedModelVersion(VERSION, false, nowcast),
+    ...serving.servedConfidence({
+      accuracy: ACCURACY, qmapApplied, hasWeather: serving.hasTempReading(weather), curveOffset: false, nowcast, ladder,
+    }),
+  };
+  if (nowcast) out.dataSourcesUsed = ['ml_model', 'baseline', 'recent_live_readings'];
+  if (inputs !== null) out.liveFeaturesUsedReadings = inputs;
+  // The switches' own account, only while one is on, as predictBusyness
+  // gives it.
+  if (serving.switchedArithmeticOn()) {
+    out.serveMode = 'model';
+    out.nowcast = nowcast;
+    out.usedLiveReadings = Boolean(nowcast || inputs);
+  }
+  return out;
+}
+
+mlPredictor.predictBusyness = async (venue, weather, ts) => {
   const v = cases.byId.get(venue && venue.place_id);
   const at = new Date(ts);
   const day = at.getDay();
@@ -418,25 +489,18 @@ mlPredictor.predictBusyness = async (venue, _weather, ts) => {
   const score = v ? cases.levelAt(v, day, hour) : 50;
   const method = methodOf(v);
   const out = {
-    score, label: crowdEngine.getLabel(score), confidence: method === 'ml' ? 37 : 41, factors: {},
+    score, label: crowdEngine.getLabel(score), confidence: 41, factors: {},
     dataSourcesUsed: method === 'ml' ? ['ml_model', 'baseline'] : ['category_table'],
-    predictionMethod: method, modelVersion: '2.6.0-starling', baselineScore: method === 'ml' ? score : null,
+    predictionMethod: method, modelVersion: method === 'ml' ? VERSION : null, baselineScore: method === 'ml' ? score : null,
     eventsObserved: true,
   };
-  if (method === 'ml') out.confidenceMeasurement = MEASURED(37.4);
-  else if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) out.confidenceMeasurement = MEASURED(41.2);
+  if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) out.confidenceMeasurement = MEASURED(41.2);
   const live = Boolean(v && v.corpus && v.live && cases.openAt(v, day, hour, 30));
+  const ladder = () => crowdEngine.calculateCrowdScore(venue, weather, ts).confidence;
   const curve = curveSide(method, live);
-  if (curve) {
-    Object.assign(out, curveAnswer(live));
-  } else if (live && nowcastOn()) {
-    out.nowcast = { weight: v.live === '1h' ? 1 : 0.55, lagHours: 1 };
-    out.usedLiveReadings = true;
-    out.dataSourcesUsed.push('recent_live_readings');
-  } else if (switchesOn()) {
-    out.usedLiveReadings = false;
-  }
-  if (method === 'ml' && !curve && serving.switchedArithmeticOn()) out.serveMode = 'model';
+  if (curve) Object.assign(out, curveAnswer(live, weather, ladder));
+  else if (method === 'ml') Object.assign(out, modelAnswer(v, live, weather, ladder));
+  else if (switchesOn()) out.usedLiveReadings = false;
   // Under model_when_fresh, which side answered and the age of the reading
   // that decided it, as predictBusyness says (freshMix).
   if (method === 'ml' && serving.serveMode() === 'model_when_fresh') {
@@ -445,7 +509,7 @@ mlPredictor.predictBusyness = async (venue, _weather, ts) => {
   return out;
 };
 
-mlPredictor.predictHourlyForecast = async (venue, _weather, startHour, count, baseTimestamp) => {
+mlPredictor.predictHourlyForecast = async (venue, weather, startHour, count, baseTimestamp) => {
   const v = cases.byId.get(venue && venue.place_id);
   const base = new Date(baseTimestamp || Date.now());
   base.setHours(startHour, 0, 0, 0);
@@ -460,8 +524,12 @@ mlPredictor.predictHourlyForecast = async (venue, _weather, startHour, count, ba
     const reading = Boolean(v && v.corpus && v.live && i <= 1 && cases.openAt(v, day, hour, 30));
     // Each hour takes its own side, as the strip's hours do under
     // model_when_fresh: only the hours with an hour-old reading run the model.
-    const curve = curveSide(method, reading) ? curveAnswer(reading) : null;
-    const live = curve ? curve.usedLiveReadings : reading && nowcastOn();
+    // Whether a live reading reached the hour is read off that side's answer
+    // the way serving reads it for the strip (liveReadingsReached).
+    const ladder = () => crowdEngine.calculateCrowdScore(venue, weather, ts).confidence;
+    const curve = curveSide(method, reading) ? curveAnswer(reading, weather, ladder) : null;
+    const model = method === 'ml' && !curve ? modelAnswer(v, reading, weather, ladder) : null;
+    const live = curve || model ? mlPredictor.liveReadingsReached(curve || model) : false;
     const entry = {
       hour: hourLabel(hour), score, label: crowdEngine.getLabel(score), predictionMethod: method,
       baselineScore: method === 'ml' ? score : null, eventsObserved: true, eventsUnavailableReason: null,
@@ -470,7 +538,7 @@ mlPredictor.predictHourlyForecast = async (venue, _weather, startHour, count, ba
       let source = null;
       if (method === crowdEngine.NO_CURVE_FALLBACK_METHOD) source = 'category_typical';
       else if (curve) source = crowdEngine.describeServedArithmetic(curve);
-      else if (live && i === 1) source = 'model_live';
+      else if (model && model.nowcast && i === 1) source = 'model_live';
       if (source) entry.numberSource = source;
       entry.liveReadings = live;
     }
@@ -928,7 +996,7 @@ function summarize(results, meta) {
     unexpectedSql: [...unexpectedSql],
   };
   console.log('\n── Summary');
-  console.log(`model ${meta.model} (${meta.mode}), switches ${JSON.stringify(meta.switches)}`);
+  console.log(`model ${meta.model} (${meta.mode}), switches ${JSON.stringify(meta.switches)}${meta.artifact ? `, artifact ${meta.artifact.modelVersion}${meta.artifact.file ? ` (${meta.artifact.file})` : ''}` : ''}`);
   console.log(`items ${summary.items} (${summary.skipped} skipped), answers ${summary.turns}: passing ${summary.passing} (clean ${summary.clean}), failing ${summary.failing}`);
   console.log(`problems by check: ${JSON.stringify(byCheck)}`);
   console.log(`warnings by check: ${JSON.stringify(warnByCheck)}`);
@@ -952,6 +1020,7 @@ async function previewFixtures() {
   const { executeTool } = aiRouter.__testables;
   const persona = cases.PERSONAS[String(args.as || 'marcus_22')];
   const zoned = persona.client !== 'ios_legacy';
+  console.log(`artifact ${VERSION} (${path.relative(B, ARTIFACT_FILE)})`);
   for (const [name, iso] of Object.entries(cases.CLOCKS)) {
     setClock(iso);
     const w = wallNow();
@@ -965,7 +1034,11 @@ async function previewFixtures() {
       // Each hour's own attribution while a switch is on: /crowd_method, and
       // +live or -live for its live_readings yes or no.
       const strip = (r.hourly_forecast || []).slice(0, 6).map((h) => `${h.hour}=${h.score}${h.crowd_method ? `/${h.crowd_method}` : ''}${typeof h.live_readings === 'boolean' ? (h.live_readings ? '+live' : '-live') : ''}`).join(' ');
-      console.log(`${v.key.padEnd(10)} open=${openNow(v) ? 'y' : 'n'} ${r.error ? `ERROR ${r.error}` : `score=${r.crowd_score} "${r.crowd_label}" src=${r.crowd_source}${r.crowd_method ? `/${r.crowd_method}` : ''} best="${r.best_time}" peak="${r.peak_hours}"${r.forecast_locked ? ' LOCKED' : ''}${r.clock ? ` clock=${r.clock}` : ''}${r.game_night ? ' game' : ''}`}`);
+      // The confidence figure Birdie is handed, and what confidence_measurement
+      // says it is: the measured percent and its metric, or its status.
+      const cm = r.confidence_measurement;
+      const conf = cm ? ` conf=${r.confidence}(${cm.status === 'measured' ? `${cm.measuredPercent} ${cm.metric}` : cm.status})` : '';
+      console.log(`${v.key.padEnd(10)} open=${openNow(v) ? 'y' : 'n'} ${r.error ? `ERROR ${r.error}` : `score=${r.crowd_score} "${r.crowd_label}" src=${r.crowd_source}${r.crowd_method ? `/${r.crowd_method}` : ''} best="${r.best_time}" peak="${r.peak_hours}"${r.forecast_locked ? ' LOCKED' : ''}${r.clock ? ` clock=${r.clock}` : ''}${r.game_night ? ' game' : ''}${conf}`}`);
       if (strip) console.log(`           ${strip}`);
     }
   }
@@ -993,7 +1066,10 @@ async function previewFixtures() {
     mode: REPLAY ? `replay of ${path.basename(String(args.replay))}` : 'live',
     startedAt: new RealDate().toISOString(),
     clocks: cases.CLOCKS,
-    switches: Object.fromEntries(['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'BIRDIE_MODEL'].map((k) => [k, process.env[k] ?? null])),
+    switches: Object.fromEntries(['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_NO_CURVE_FALLBACK', 'CROWD_QMAP_ENABLED', 'BIRDIE_MODEL'].map((k) => [k, process.env[k] ?? null])),
+    // The artifact the crowd tool answered as; `file` only when --artifact
+    // named one (THE ARTIFACT), so a replay answers as it again.
+    artifact: { file: args.artifact ? path.relative(B, ARTIFACT_FILE) : recordedArtifact, modelVersion: VERSION },
     concurrency: Number(args.concurrency || 4),
   };
   delete meta.summary;

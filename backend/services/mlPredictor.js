@@ -5932,6 +5932,9 @@ module.exports = {
     },
     getMetadata: () => metadata,
     getSession: () => session,
+    // The metadata file init() loads, so scripts/birdie/birdieEval.js answers
+    // as the artifact serving loads without restating where it lives.
+    META_PATH,
     // The serve-time constants scripts/ml/train/bandEval.js replays, exported
     // so the offline evaluation reads the numbers production uses instead of
     // restating them (a restated copy is how the gate and the card drift
