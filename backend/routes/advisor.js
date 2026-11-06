@@ -297,7 +297,16 @@ async function daysFromToday(b) {
   }
   // A venue with crowd history: its own week from the night in progress.
   const own = Boolean(b.ctx) && typeof b.tonight === 'function';
-  const week = await (own ? b.tonight() : b.week());
+  let week = await (own ? b.tonight() : b.week());
+  // A SUNDAY NIGHT STILL RUNNING ENDS THE WEEKEND (2026-11-06). At 12:30 AM
+  // on a Monday, "this weekend" is the coming one, read from the calendar's
+  // week as it was before the night still running counted; a Friday or
+  // Saturday night still running stays in its own weekend.
+  if (own && typeof b.week === 'function') {
+    const first = week.map(entryDate).find(Boolean);
+    const calendar = advisorFacts.venueToday(b.ctx, { now: b.now });
+    if (first && weekdayOf(first) === 0 && calendar && calendar.date > first) week = await b.week();
+  }
   if (week.some(isKindForecast)) {
     // A builder handed the card's week with no venue on it (a plan driven
     // directly): today and its date off the read it hands over. One that

@@ -3029,3 +3029,29 @@ test('today is ranked with the week only when the question puts it in, left out 
     assert.ok(!r.body.sources.some((s) => s.id === 'peak_2026-11-07'), JSON.stringify(r.body.sources));
   }));
 });
+
+test('a Sunday night still running ends the weekend: at 12:30 AM on a Monday this weekend is the coming one, and tonight is still Sunday night', async () => {
+  // A venue with crowd history open to 3 AM. Its Sunday night runs on past
+  // midnight, and at 12:30 AM on Monday "How busy will this weekend be?" was
+  // answered with that Sunday night alone until 2026-11-06.
+  await withNightCurve('ChIJr6MondaySmallHours00', () => pinnedAt('2026-11-09T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will this weekend be?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this weekend is Saturday, '), r.body.text);
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id).sort(), ['peak_2026-11-13', 'peak_2026-11-14', 'peak_2026-11-15']);
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    r = await call('/api/venue/advisor/question', { question: 'How busy will tonight be?' });
+    assert.strictEqual(r.body.text, 'Sunday projects busiest around 9 PM, at 45 on our 0 to 100 index.');
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['peak_2026-11-08']);
+  }));
+  // A Saturday night still running stays in its weekend.
+  await withNightCurve('ChIJr6SundaySmallHours00', () => pinnedAt('2026-11-08T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will this weekend be?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      'Your busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.',
+      '• Sunday is next, around 9 PM at 45.',
+    ]);
+    assert.deepStrictEqual(r.body.sources.map((s) => s.id), ['peak_2026-11-07', 'peak_2026-11-08']);
+  }));
+});

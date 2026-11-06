@@ -629,8 +629,6 @@ const OPEN = {
   // No short form is read as a day: the week is ranked.
   '306/model': 'S', '1019/offline': 'S', '1020/model': 'S', '1021/model': 'S', '1023/model': 'S',
   '1024/model': 'S', '1025/model': 'S', '1111/model': 'S',
-  // At 12:30 AM on a Monday, this weekend is the Sunday night still running.
-  '214/model': 'F',
 };
 
 const ROWS = CASES.map(([id, q, route, clock, venue, expect, extra = {}]) => ({
