@@ -503,7 +503,19 @@ function googleSaysNameIsBad(status, text) {
 // routes/ai.js and routes/publicCrowd.js all build the same URL — and the repo
 // has never called the legacy Places API, so there is no older `photoreference`
 // shape to grandfather.
-const PHOTO_REF_RE = /^places\/[^/?#]{1,128}\/photos\/[^/?#]{1,2048}$/;
+//
+// THREE MORE WAYS TO WALK, closed. The /media URL goes through the WHATWG URL
+// parser inside fetch, which on an https URL reads `\` as `/`, reads `%2e` and
+// `%2e%2e` (any case) as the dot-segments `.` and `..`, and drops tabs and
+// newlines before it parses. So `places/ChIJabcdef/photos/a\..\..\..\x` reached
+// /v1/places/x/media, and `%2e%2e` and `.\t.` walked the same way: still
+// Google's host, never ours, but a path we did not mean to ask for, on our key.
+// A segment may therefore hold no backslash, no `%`, and no control or space
+// character. Google's names do not use any of them: they are letters, digits,
+// `_` and `-` (every fixture under __tests__, and the six expired names logged
+// on 2026-11-05).
+// eslint-disable-next-line no-control-regex
+const PHOTO_REF_RE = /^places\/[^/?#\\%\s\x00-\x1f\x7f]{1,128}\/photos\/[^/?#\\%\s\x00-\x1f\x7f]{1,2048}$/;
 function isPhotoRefShaped(ref) {
   if (typeof ref !== 'string' || !PHOTO_REF_RE.test(ref)) return false;
   const segments = ref.split('/');

@@ -462,20 +462,43 @@ test('a 4000px ask is snapped: at most two sizes per ref ever reach Google', asy
 });
 
 test('the photo proxy cannot be steered at a non-Google URL', async () => {
+  const BS = String.fromCharCode(92);
   const PROBES = [
     'https://evil.example/steal',
     '//evil.example/x',
     'places/PLACE_A/photos/ok?photoUri=https://evil.example',
     'places/../../v1/anything',
     'places/PLACE_A/photos/a/../b',
+    // The WHATWG URL parser fetch uses reads `\` as `/` on an https URL, reads
+    // %2e as a dot, and drops tabs and newlines before parsing, so each of
+    // these walked the /media path on Google's host with our key on it.
+    `places/ChIJabcdef/photos/a${BS}..${BS}..${BS}..${BS}x`,
+    'places/%2e%2e/photos/%2e%2e',
+    'places/ChIJabcdef/photos/%2E%2e',
+    'places/ChIJabcdef/photos/a%2Fb',
+    'places/ChIJabcdef/photos/.\t.',
+    'places/ChIJabcdef/photos/.\n.',
+    'places/ChIJabcdef/photos/ok x',
   ];
   for (const probe of PROBES) {
     const res = await get(`/api/venues/photo?ref=${encodeURIComponent(probe)}`);
-    assert.strictEqual(res.status, 400, `${probe}: ${res.text}`);
+    assert.strictEqual(res.status, 400, `${JSON.stringify(probe)}: ${res.text}`);
   }
   assert.strictEqual(googleCalls.length, 0, 'a probe reached the network');
   assert.strictEqual(placesBudgetStatus(1).globalUsed, 0);
   // The catch-all upstream assertion in test.after() covers the whole file.
+});
+
+test('a real Google photo name, long and in Google\'s own alphabet, is still accepted', async () => {
+  // Letters, digits, `_` and `-`, at the 476 characters of the longest name
+  // the proxy logged on 2026-11-05. The narrower ref shape must not cost a
+  // single real card its photo.
+  const token = `AU_${'ZVEEsAn9k7B-03U7_'.repeat(30)}`.slice(0, 476 - 'places/ChIJsynthetic_Place-01/photos/'.length);
+  const raw = `places/ChIJsynthetic_Place-01/photos/${token}`;
+  assert.strictEqual(raw.length, 476);
+  const res = await get(`/api/venues/photo?ref=${encodeURIComponent(raw)}&maxwidth=400`);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(mediaCalls().length, 1);
 });
 
 test('photo responses carry cache headers so clients and CDNs stop re-asking', async () => {
