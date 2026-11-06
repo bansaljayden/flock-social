@@ -573,17 +573,17 @@ test('accepting puts the guest on the roster and the headcount agrees everywhere
   await expect.soft(card.getByText(mate.firstName[0], { exact: true }),
     'the person who accepted is one of the faces on the home card').toBeVisible();
 
-  // 3. The detail screen: the header line and the roster heading.
+  // 3. The detail screen: the roster heading, the one place it says the
+  //    count. Both asked are going, so it is the count alone.
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect.soft(host.page.getByText(/2 going/i)).toBeVisible({ timeout: 20_000 });
-  await expect.soft(host.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible();
+  await expect.soft(host.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible({ timeout: 20_000 });
   // And the roster names the person, not just a count.
   await expect.soft(host.page.getByText(mate.firstName, { exact: true }).first()).toBeVisible();
 
   // Bea reads the same two.
   await goTab(mate.page, 'Nest');
   await mate.page.getByRole('heading', { name, exact: true }).click();
-  await expect(mate.page.getByText(/2 going/i)).toBeVisible({ timeout: 20_000 });
+  await expect(mate.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible({ timeout: 20_000 });
 
   expect(host.errors).toEqual([]);
   expect(mate.errors).toEqual([]);
@@ -614,7 +614,10 @@ test('declining is honoured and the host roster does not grow', async ({ browser
   await host.page.reload();
   await goTab(host.page, 'Nest');
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect(host.page.getByRole('heading', { name: /going \(1\)/i })).toBeVisible({ timeout: 25_000 });
+  // Bea was asked and said no: one going of the two asked, and her name is
+  // not among the faces.
+  await expect(host.page.getByRole('heading', { name: /going \(1 of 2\)/i })).toBeVisible({ timeout: 25_000 });
+  await expect(host.page.getByText(mate.firstName, { exact: true })).toHaveCount(0);
 
   expect(host.errors).toEqual([]);
   expect(mate.errors).toEqual([]);
@@ -766,7 +769,7 @@ test('a stranger who is not signed in can open the share link and answer', async
   await host.page.reload();
   await goTab(host.page, 'Nest');
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect(host.page.getByText(/2 going/i)).toBeVisible({ timeout: 30_000 });
+  await expect(host.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible({ timeout: 30_000 });
   await expect(host.page.getByText('Maya', { exact: true })).toBeVisible();
   await expect(host.page.getByText('GUEST')).toBeVisible();
 
@@ -776,7 +779,8 @@ test('a stranger who is not signed in can open the share link and answer', async
   await host.page.reload();
   await goTab(host.page, 'Nest');
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect(host.page.getByText(/1 going/i)).toBeVisible({ timeout: 30_000 });
+  // Out, and still asked: a guest row is there because she answered.
+  await expect(host.page.getByRole('heading', { name: /going \(1 of 2\)/i })).toBeVisible({ timeout: 30_000 });
 
   expect(strangerErrors).toEqual([]);
   expect(host.errors).toEqual([]);
@@ -814,7 +818,7 @@ test('the share link opened by a different signed-in account puts them in the fl
   await host.page.reload();
   await goTab(host.page, 'Nest');
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect(host.page.getByText(/2 going/i)).toBeVisible({ timeout: 25_000 });
+  await expect(host.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible({ timeout: 25_000 });
 
   expect(host.errors).toEqual([]);
   expect(other.errors).toEqual([]);

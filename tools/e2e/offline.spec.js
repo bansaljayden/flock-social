@@ -773,7 +773,7 @@ test('a guest RSVP that never reached Flock is not reported back as done', async
   await host.page.reload();
   await goTab(host.page, 'Nest');
   await host.page.getByRole('heading', { name, exact: true }).click();
-  await expect(host.page.getByText(/1 going/i)).toBeVisible({ timeout: 30_000 });
+  await expect(host.page.getByRole('heading', { name: /going \(1\)/i })).toBeVisible({ timeout: 30_000 });
   await expect(host.page.getByText('Maya', { exact: true })).toHaveCount(0);
 
   expect(strangerErrors).toEqual([]);
