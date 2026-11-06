@@ -3,8 +3,8 @@
 // Thermal sets: every set the paper scored or trained Owl on. Count sources:
 // each one's attribution line as its licence asks, duplicates merged.
 // Left out on purpose: sets never scored (held out whole, withdrawn, dropped,
-// not yet received or not downloaded), Flock's own recording, LTDv2 until it
-// is scored, and Wellington until its council has seen the results.
+// not yet received or not downloaded), Flock's own recording and LTDv2 until it
+// is scored.
 // Academic-only sets (research_owl_sources_academic_only) stay off this site,
 // with one exception: VIPER, the site edition's sixteenth sealed test, whose
 // evaluation results KU Leuven allowed on this site on 2026-10-30, provided
@@ -72,6 +72,7 @@ export const COUNT_SOURCES = [
   "Source: Comune di Bologna, opendata.comune.bologna.it, BolognaWifi Affollamento (CC BY 4.0).",
   "Source: Saga City (佐賀市), Saga City Library (佐賀市立図書館), BODIK open data (CC BY 4.0).",
   "Pedestrian count data: Heart of the City, Auckland (hotcity.co.nz), CC BY 4.0.",
+  "Source: Wellington City Council, Transport Sensors (VivaCity countlines), used with the Council's permission.",
   "Tekler, Z.D., Ono, E., Peng, Y., Zhan, S., Lasternas, B. and Chong, A. ROBOD, room-level occupancy and building operation dataset. Building Simulation (2022). Data: figshare, https://doi.org/10.6084/m9.figshare.19234530, CC BY 4.0.",
   "Source: Boryeong City (충청남도 보령시), Public Data Portal (data.go.kr), dataset 15134612.",
   "Space and Time User Distribution in a University Campus, Universitat Politecnica de Catalunya. Mendeley Data, V1, https://doi.org/10.17632/55vx86j8wf.1, CC BY 4.0.",
