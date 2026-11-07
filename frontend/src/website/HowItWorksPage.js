@@ -26,6 +26,11 @@ import { shareThisPage } from './shareCard';
 // The app's three-minute video (2:57), the Congressional App Challenge entry.
 const VIDEO_ID = 'zpujGx88coU';
 const VIDEO_TITLE = 'Flock: Nurturing friendship, one flock at a time';
+// The video, and its poster below (a frame of it, this page's first image),
+// show the app on real places' Google Maps photos. The site's captures no
+// longer do, so the footer every page shares stopped crediting Google, and
+// this page credits its video in its own footer, where that line used to be.
+const VIDEO_PHOTO_CREDIT = 'Venue photos in the video: Google Maps and its contributors.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // The video's own chapter list, from its YouTube description; each button
@@ -385,6 +390,7 @@ export default function HowItWorksPage() {
         <SiteFooter
           variant="landing"
           className="lp-footer"
+          photoCredit={VIDEO_PHOTO_CREDIT}
           brand={(
             <a className="lp-brand" href="/">
               <img src="/marks/logo-64.png?v=2" width="24" height="24" alt="" aria-hidden="true" loading="lazy" style={{ borderRadius: '50%', display: 'block' }} />

@@ -59,6 +59,9 @@ export default function SiteFooter({
   className,
   linkStyle,
   brand,
+  // A page's own credit for photos it shows that are not Flock's (landing
+  // variant). /how-it-works passes one for its video (see below).
+  photoCredit,
   children,
   ...rest
 }) {
@@ -97,12 +100,16 @@ export default function SiteFooter({
           </ul>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Social LLC.</span>
-            {/* No photo credit: the app screenshots on these pages show
-                invented places, and every venue picture in them is a
-                drawing of Flock's own (public/screenshots/WIRING.md). No
-                crowd-data credit either: BestTime's terms ask for none; the
-                line that was here was only their optional link-for-credits
-                offer. */}
+            {/* No photo credit on every page any more: the app screenshots
+                on these pages show invented places, and every venue picture
+                in them is a drawing of Flock's own
+                (public/screenshots/WIRING.md). One picture is not: the How
+                it works video and its poster show the app on real places'
+                Google Maps photos, so that page passes its own credit, here
+                where the credit for every page used to be. No crowd-data
+                credit either: BestTime's terms ask for none; the line that
+                was here was only their optional link-for-credits offer. */}
+            {photoCredit ? <span>{photoCredit}</span> : null}
             {/* Apple's credit lines, which its marketing guidelines ask for
                 once, where a site gives its legal notices, whenever the App
                 Store badge is used (AppStoreBadge.js). The pages also name

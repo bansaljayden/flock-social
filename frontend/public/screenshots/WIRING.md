@@ -64,6 +64,11 @@ name carries `-v3`: the site's CDN keeps a same-named file for a day.
 
 - Steps: `create-dark-v3`, `vote-dark-v3`, `budget-dark-v3`, `sos-dark-v3`,
   `bill-split-dark-v3`. Venues: `venue-card-events-dark-v3`.
+- Not one of these captures: the poster of the app's video at the top of the
+  page (`public/how/video-poster-*`), a frame of the video. It and the video
+  show the app's older screens on Google Maps photos of real places, so that
+  page's footer credits them ("Venue photos in the video: Google Maps and its
+  contributors."). The footer the other pages share carries no photo credit.
 
 ## public/manifest.json (PWA screenshots)
 

@@ -129,12 +129,51 @@ describe('the contract every footer carries', () => {
 
   test.each(PAGES)('%s: no credit for photos the app screenshots do not show', (name) => {
     // The screenshots carried Google Maps photos of real places until
-    // 2026-11-07, and the footer credited them. They show invented places
-    // with drawn pictures now (public/screenshots/WIRING.md), so a credit
-    // would claim photos that are not there.
+    // 2026-11-07, and the footer credited them on every page. They show
+    // invented places with drawn pictures now (public/screenshots/WIRING.md),
+    // so a credit here would claim photos that are not there. The one page
+    // that still shows Google Maps photos, /how-it-works (its video and the
+    // video's poster), credits them in its own footer (below).
     const { footer, unmount } = mountFooter(name);
     expect(footer.textContent).not.toMatch(/Google Maps and its contributors/);
     expect(footer.textContent).not.toMatch(/Venue photos in the app screenshots/);
+    unmount();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('a page that shows photos Flock does not own credits them', () => {
+  // /how-it-works opens on the app's video, poster first: a frame of the
+  // video (public/how/video-poster-*, the page's first image) with the app's
+  // old Discover map, its Places photo pins and a real bar's photo on a
+  // Birdie card. The video shows the same. The footer every page shares
+  // stopped crediting Google with the -v3 captures, so this page carries the
+  // credit itself, once, in its footer, where the shared line was.
+  test('/how-it-works: the poster is on the page, and its footer credits the video\'s photos', () => {
+    const { container, footer, unmount } = mountFooter('HowItWorksPage');
+    const poster = container.querySelector('.hw-poster source[srcset*="/how/video-poster-"]');
+    expect(poster).not.toBeNull();
+    const credit = 'Venue photos in the video: Google Maps and its contributors.';
+    expect(footer.textContent.split(credit)).toHaveLength(2);
+    // Nowhere else on the page, and not the old line about the screenshots.
+    expect(container.textContent.split(credit)).toHaveLength(2);
+    expect(footer.textContent).not.toMatch(/Venue photos in the app screenshots/);
+    unmount();
+  });
+
+  // The site story can shoot Discover's map with the map's key
+  // (scripts/capture-screenshots.mjs, map-crowd), and none of the shipped
+  // captures shows it today. A capture of a map credits MapTiler and
+  // OpenStreetMap in a corner at a size nobody reads, so a map frame ships
+  // with the footer's own line for it, and the line goes when the frame does.
+  test('the footer credits the map exactly when a capture of the map is wired on the site', () => {
+    const PUBLIC = path.join(__dirname, '..', '..', 'public');
+    const wiredMap = ['reelShots.js', 'HeroReel.js', 'landingAnnotations.js', 'HowItWorksPage.js']
+      .some((f) => /map-crowd-dark/.test(read(f)))
+      || /map-crowd-dark/.test(fs.readFileSync(path.join(PUBLIC, 'manifest.json'), 'utf8'));
+    const { footer, unmount } = mountFooter('LandingPage');
+    const creditsMap = /MapTiler/.test(footer.textContent) && /OpenStreetMap contributors/.test(footer.textContent);
+    expect({ wiredMap, creditsMap }).toEqual({ wiredMap, creditsMap: wiredMap });
     unmount();
   });
 });
