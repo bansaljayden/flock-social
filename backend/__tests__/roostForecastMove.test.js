@@ -2703,7 +2703,6 @@ test('a weekday the weekend\'s route is asked about that this weekend does not h
     ['2026-11-07T16:00:00Z', 'How busy will Friday be?', `${kind}Friday peaks around 9 PM at 66 on our 0 to 100 index.`, 'typical_peak_2026-11-13'],
     ['2026-11-08T16:00:00Z', 'How busy will Friday be this weekend?', `${kind}Friday peaks around 9 PM at 66 on our 0 to 100 index.`, 'typical_peak_2026-11-13'],
     ['2026-11-08T16:00:00Z', 'How busy will Saturday be?', `${kind}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`, 'typical_peak_2026-11-14'],
-    ['2026-11-09T16:00:00Z', 'How busy will Tuesday be?', `${kind}Tuesday peaks around 9 PM at 48 on our 0 to 100 index.`, 'typical_peak_2026-11-10'],
     // A day this weekend holds is still answered from the weekend.
     ['2026-11-07T16:00:00Z', 'How busy will Sunday be?', `${kind}Sunday peaks around 9 PM at 45 on our 0 to 100 index.`, 'typical_peak_2026-11-08'],
     ['2026-11-09T16:00:00Z', 'How busy will Saturday be?', `${kind}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`, 'typical_peak_2026-11-14'],
@@ -2718,6 +2717,16 @@ test('a weekday the weekend\'s route is asked about that this weekend does not h
       assert.strictEqual(r.body.sources[0].id, source, `${iso}: ${question}`);
     });
   }
+  // A weekday outside Friday to Sunday takes main's path (eighth recheck,
+  // 2026-11-07): the weekend's answer, never that weekday said inside it.
+  await pinnedAt('2026-11-09T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr5WeekendNamedDayTue00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will Tuesday be?' });
+    assert.ok(r.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), r.body.text);
+    assert.ok(!/Tuesday/.test(r.body.text), r.body.text);
+  });
   await pinnedAt('2026-11-07T16:00:00Z', async () => {
     setUp({ placeId: 'ChIJr5WeekendNextSatBar00', phrasing: true });
     draftFor = () => null;
@@ -4737,6 +4746,30 @@ test('advice never reads the week a second time where main does not: a weekday w
       assert.strictEqual(reads.reads(), 1, r.body.text);
     } finally {
       reads.restore();
+    }
+  });
+});
+
+test('a weekday outside Friday to Sunday, or a day the venue is shut on, asked on the weekend\'s route takes main\'s path: no weekday is said inside the weekend', async () => {
+  // "When does the rush start on Sat?" of a cafe open Monday to Friday, and
+  // "How busy is Monday looking?", given the weekend's route, were answered
+  // from the peaks' plan under the weekend's template: "the busiest day this
+  // weekend is Friday ... Thursday is close behind ... Monday is the quietest"
+  // (eighth recheck, 2026-11-07).
+  const insideWeekend = (text) => /\b(?:this|the coming|next) weekend\b/.test(text) && /\b(?:Monday|Tuesday|Wednesday|Thursday)\b/.test(text);
+  await pinnedAt('2026-11-22T18:00:00Z', async () => {
+    cafeOpenOn('ChIJr11WeekendShutSat000', [1, 2, 3, 4, 5]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'when does the rush start on sat' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
+  });
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr11WeekendMonday0000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    for (const question of ['how busy is monday looking', 'how slow will tuesday be']) {
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.ok(!insideWeekend(r.body.text), `${question}: ${r.body.text}`);
     }
   });
 });

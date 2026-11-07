@@ -1744,6 +1744,12 @@ async function dayGate(b, question, intentId) {
   if (intentId === 'weekend_outlook') {
     const read = new Set(roostDayReader.dayWords(question).filter((w) => w.kind === 'weekday').map((w) => w.weekday));
     if (roostDayReader.weekdaysNamed(question).some((d) => !read.has(d))) return null;
+    // A WEEKDAY OUTSIDE FRIDAY TO SUNDAY ON THE WEEKEND'S ROUTE TAKES MAIN'S
+    // PATH (eighth recheck, 2026-11-07). "How busy will Monday be?" given the
+    // weekend's route was answered from the peaks' plan under the weekend's
+    // template, which put weekdays inside "this weekend" ("Tuesday is the
+    // quietest"). Main never says that.
+    if ([...read].some((d) => !['Friday', 'Saturday', 'Sunday'].includes(d))) return null;
   }
   // A day counted on from tonight is looked for among the words the question
   // says, before any two that name one date are read as one day: "Is Sunday
@@ -1753,6 +1759,14 @@ async function dayGate(b, question, intentId) {
   if (onward && await inSmallHours(b)) return null;
   const reading = await readingFor(b, question, intentId);
   if (await smallHoursTwoWays(b, question)) return null;
+  // So does one day of Friday to Sunday that this weekend does not hold ("When
+  // does the rush start on Sat?" on a Sunday, of a cafe open Monday to
+  // Friday): it was answered from the peaks' plan under the weekend's
+  // template too (forQuestion).
+  if (intentId === 'weekend_outlook' && reading.target && reading.target.kind === 'day' && reading.target.date) {
+    const { today } = await daysFromToday(b);
+    if (today && !inWeekend(reading.target.date, today, 'this')) return null;
+  }
   // TODAY PUT IN THE WEEK RANKED WHILE LAST NIGHT IS STILL RUNNING READS TWO
   // WAYS (seventh recheck, 2026-11-07): from that night, or from the
   // calendar's today. At 12:30 AM on a Wednesday "Counting tonight, which
