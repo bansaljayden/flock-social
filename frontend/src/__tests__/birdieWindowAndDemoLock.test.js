@@ -925,10 +925,12 @@ describe('the memory marker in the transcript', () => {
     expect(header).toContain("gap: '10px', minWidth: 0, flex: 1 }}");
     expect(header).toContain("whiteSpace: 'nowrap'");
     expect(header).toContain("textOverflow: 'ellipsis'");
-    // The avatar and the button row are the two that must NOT shrink.
+    // The avatar and the button row are the two that must NOT shrink. The
+    // avatar lost its wrapper with the green online dot (2026-11-06), so it
+    // holds flexShrink itself, and the buttons sit 8px apart.
     expect(header.match(/flexShrink: 0/g) || []).toHaveLength(2);
-    expect(header).toContain("<div style={{ position: 'relative', flexShrink: 0 }}>");
-    expect(header).toContain("<div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>");
+    expect(header).toMatch(/<div style=\{\{ width: isAiPanel \? '34px' : '40px', [^}]*flexShrink: 0 \}\}>/);
+    expect(header).toContain("<div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>");
   });
 
   test('it sits inside the transcript, so the messages above it are still there', () => {
