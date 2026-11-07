@@ -1457,7 +1457,9 @@ const USUAL_DAY_NONE_NOTE = 'There is no crowd level or forecast for that day ye
 // weekday's name are read here, on the venue's own calendar: tomorrow is the
 // day after the venue's today, and a weekday is the next one from it, today's
 // own name being today.
-const ASKED_DAY_WORDS = new Map([['today', 0], ['tonight', 0], ['tomorrow', 1]]);
+// A frozen table, not a Map: it is a constant, not a cache (cacheKeyInventory).
+const ASKED_DAY_WORDS = Object.freeze({ today: 0, tonight: 0, tomorrow: 1 });
+const dayWordAhead = (word) => (Object.prototype.hasOwnProperty.call(ASKED_DAY_WORDS, word) ? ASKED_DAY_WORDS[word] : null);
 const ASKED_DATE_UNSURE = 'Nothing here knows the date at this venue, so that day cannot be told apart from today and there is no crowd answer for it. Say you can\'t see that day\'s crowd yet, with no number, level or hour. If they meant right now, look it up again without date.';
 
 // What `date` asks for, against the venue's own date (`wall`): { later: false }
@@ -1475,8 +1477,8 @@ function readAskedDay(value, wall, onServerClock) {
   let year;
   let month;
   let day;
-  if (ASKED_DAY_WORDS.has(word) || weekdayAsked !== -1) {
-    const ahead = ASKED_DAY_WORDS.has(word) ? ASKED_DAY_WORDS.get(word) : (weekdayAsked - wall.weekday + 7) % 7;
+  if (dayWordAhead(word) !== null || weekdayAsked !== -1) {
+    const ahead = dayWordAhead(word) !== null ? dayWordAhead(word) : (weekdayAsked - wall.weekday + 7) % 7;
     if (ahead === 0) return { later: false };
     const at = new Date(Date.UTC(wall.year, wall.month - 1, wall.day + ahead));
     [year, month, day] = [at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate()];

@@ -288,6 +288,8 @@ test('a past day, a word, an impossible date and a day years off are errors the 
   await at(t, THURSDAY_AFTERNOON, async () => {
     assert.deepStrictEqual(await lookup({ date: '2026-11-04' }), { error: 'That day has already passed there.' });
     assert.match((await lookup({ date: 'next week' })).error, /YYYY-MM-DD, like 2026-11-13, or tomorrow or the weekday's name/);
+    // Nothing off Object.prototype is a day word.
+    assert.match((await lookup({ date: 'constructor' })).error, /YYYY-MM-DD/);
     assert.match((await lookup({ date: '2026-02-30' })).error, /YYYY-MM-DD/);
     assert.match((await lookup({ date: '2028-11-13' })).error, /more than a year away/);
     assert.strictEqual(modelRuns, 0);
