@@ -1226,7 +1226,7 @@ function shapeWeek(which) {
     return out;
   };
   const withBoth = (facts, {
-    named = null, both = null, comparing = false, bothDates = null,
+    named = null, both = null, comparing = false, bothDates = null, quietAsked = false,
   } = {}) => {
     const besides = facts.filter((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f));
     // ONE DAY OF THE SEVEN AGAINST A DAY PAST THEM (second recheck,
@@ -1243,7 +1243,7 @@ function shapeWeek(which) {
       const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide), bothDates);
       if (compared) return compared;
     }
-    const base = shape(facts.filter((f) => !besides.includes(f)), { named });
+    const base = shape(facts.filter((f) => !besides.includes(f)), { named, quietAsked });
     if (!base) return null;
     const said = new Set(base.used);
     // On the weekend's route a day named is said by its own line unless the
@@ -1344,7 +1344,7 @@ function shapeWeek(which) {
       used: [...(shut ? [shut] : []), ordered[0], ...points.map((p) => p.fact)],
     };
   };
-  const shape = (facts, { named = null } = {}) => {
+  const shape = (facts, { named = null, quietAsked = false } = {}) => {
     // A WEEKEND WITH NOTHING OPEN (2026-11-06): its plain line first, from the
     // listing's hours or the venue's own curve, then next weekend's days as any
     // weekend's are said, when the forecast holds any of it; else that line
@@ -1393,10 +1393,17 @@ function shapeWeek(which) {
     // peaks ..."), for a venue with crowd history too (2026-11-06), and a lone
     // day of the coming weekend asked about as next weekend says which
     // weekend it is ("Saturday of the coming weekend, Nov 13 to 15, peaks").
+    // A LONE DAY OF THE VENUE'S OWN WEEKEND, ASKED FOR ITS QUIETEST, IS SAID
+    // AS THAT DAY (seventh recheck, 2026-11-07). On a Sunday this weekend is
+    // that Sunday, and "What is the quietest day of this weekend?" was
+    // answered with the day's label, "Sunday projects busiest around 9 PM, at
+    // 45": a busiest word for a question about the quietest. A question about
+    // the quiet end (`quietAsked`) has the one day said by its peak, as a lone
+    // day of the card is.
     const lone = days.length === 1 ? days[0] : null;
     const nextDay = Boolean(lone) && weekendMarks().isNextWeekendDay(lone);
     const comingDay = Boolean(lone) && weekendMarks().isComingWeekendDay(lone);
-    if (lone && (isKindForecast(lone) || nextDay || comingDay)) {
+    if (lone && (isKindForecast(lone) || nextDay || comingDay || (which === 'weekend' && quietAsked))) {
       let said = nextDay ? `next ${dayPeak(lone)}` : dayPeak(lone);
       if (comingDay) said = `${DayName(lone)} of the coming weekend, ${lone.comingWeekend}, peaks ${peakAt(lone)} on our 0 to 100 index.`;
       return {
@@ -1502,6 +1509,8 @@ function shapeWeek(which) {
 
 // A question that compares the days it names (shapeWeek's `comparing`).
 const COMPARES = /\b(?:busier|quieter|slower|deader|livelier|bigger|better|worse|more|less|compar\w*|versus|vs|than|which|or)\b/i;
+// A question about the quiet end of the days it asks about (shapeWeek's `quietAsked`).
+const QUIET_ASKED = /\b(?:quiet|quieter|quietest|slow|slower|slowest|dead|deader|deadest|empty|emptier|emptiest)\b/i;
 
 const READING_DAY = (date) => {
   const m = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -1762,8 +1771,9 @@ function renderTemplate(block, question = '') {
   const both = block && Array.isArray(block.askedDays) ? block.askedDays : null;
   const bothDates = block && Array.isArray(block.askedDates) ? block.askedDates : null;
   const comparing = COMPARES.test(String(question || ''));
+  const quietAsked = QUIET_ASKED.test(String(question || ''));
   const shaped = shaper ? shaper(facts, onMain ? { named } : {
-    named, both, comparing, bothDates,
+    named, both, comparing, bothDates, quietAsked,
   }) : null;
   let lead;
   let points;

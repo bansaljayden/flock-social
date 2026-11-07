@@ -1179,6 +1179,12 @@ async function readingFor(b, question, intentId) {
     const tonight = await tonightOf(b);
     if (tonight) targets = [{ kind: 'day', date: tonight, weekday: WEEKDAY_NAMES_LONG[weekdayOf(tonight)], word: { kind: 'today' }, fromTonight: true }, ...targets];
   }
+  // Today put in the week ranked by a plain form that says so ("Counting
+  // today, which day is slowest?", roostDayReader.plainFormOf) is one of the
+  // days ranked, not a day asked about (bothAnswer). "Is tonight the busiest
+  // night this week?" asks about tonight.
+  const form = todayCue === 'in' ? roostDayReader.plainFormOf(question) : null;
+  if (form && form.cue === 'in') targets = targets.map((t) => (t.word && t.word.kind === 'today' ? { ...t, inRanking: true } : t));
   const fromTonight = targets.some((t) => t.fromTonight);
   if (targets.length > 1) return { targets, fromTonight, todayCue };
   // Today left out when today is the only day said ("Apart from tonight, when
@@ -1196,12 +1202,16 @@ async function readingFor(b, question, intentId) {
 // What a question about a day past the week ahead is answered with: that the
 // day is past it, named as the question named it, and when it comes into it
 // (advisorFacts.dayPastForecastRefusal).
-async function pastDayRefusal(b, target) {
+function pastDayName(target) {
   const w = target.word || {};
   let day = `Next ${target.weekday}`;
   if (target.ofWeekend) day = `${target.weekday} of next weekend`;
   if (w.nextWeek) day = `${target.weekday} next week`;
   if (w.afterNext) day = `The ${target.weekday} after next`;
+  return day;
+}
+async function pastDayRefusal(b, target) {
+  const day = pastDayName(target);
   const today = await todayOf(b);
   let comesIn = null;
   if (today && target.date) {
@@ -1246,9 +1256,20 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
   } = await daysFromToday(b);
   const stamp = asOf || (b.now || new Date()).toISOString();
   const named = (dates) => dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]);
-  const past = (dates) => advisorFacts.pastForecastFact({ card, weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp });
+  const past = (dates, day = null) => advisorFacts.pastForecastFact({
+    card, weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp, ...(day ? { day } : {}),
+  });
   const dayOf = (date) => fromToday.find((e) => entryDate(e) === date && !advisorFacts.isRefusal(e)) || null;
-  const pasts = targets.filter((t) => t.kind === 'past' && t.date).map((t) => past([t.date]));
+  // A DAY PAST THE SEVEN DAYS IS SAID AS THE QUESTION NAMED IT (seventh
+  // recheck, 2026-11-07). "Is the Saturday after next busier than next
+  // Saturday?" on a Saturday said "Next Saturday is past the seven days the
+  // forecast covers." twice, once for each, calling the Saturday after next
+  // "Next Saturday". Each day past them is said once, in the question's own
+  // words for it (pastDayName, as a single day past them is).
+  const pasts = [];
+  for (const t of targets.filter((x) => x.kind === 'past' && x.date)) {
+    if (!pasts.some((p) => p.value.fromDate === t.date)) pasts.push(past([t.date], pastDayName(t)));
+  }
   if (intentId === 'weekend_outlook') {
     const weekends = targets.filter((t) => t.kind === 'weekend');
     // DAYS NAMED ON THE WEEKEND'S ROUTE, WITH NO WEEKEND BESIDE THEM
@@ -1364,8 +1385,14 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
   const ranked = await plan({ ...b, week: async () => week });
   const have = new Set(ranked.map((e) => e && e.id));
   const inWeek = (date) => week.find((e) => entryDate(e) === date && !advisorFacts.isRefusal(e)) || null;
-  const mentioned = days.map((t) => inWeek(t.date)).filter((e) => e && !have.has(e.id));
-  const asked = days.filter((t) => !(todayCue === 'out' && todayT && t.date === todayT.date));
+  // TODAY PUT IN THE WEEK RANKED IS RANKED, NOT ASKED (seventh recheck,
+  // 2026-11-07). "Counting today, which day is slowest?" said today's own
+  // line among the week's quietest days, before the second of them, though
+  // the question asks only which day is slowest with today counted. Today put
+  // in a ranking in so many words (`inRanking`, readingFor) is one of the days
+  // ranked, and is said only where the ranking names it.
+  const asked = days.filter((t) => !t.inRanking && !(todayCue === 'out' && todayT && t.date === todayT.date));
+  const mentioned = asked.map((t) => inWeek(t.date)).filter((e) => e && !have.has(e.id));
   // A day compared that the venue is shut on is said to be, first ("Will
   // tomorrow be busier than tonight?" of a cafe shut on Saturdays, asked on
   // its Friday, recheck 2026-11-06), as on the weekend's route. The money

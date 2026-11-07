@@ -1408,14 +1408,18 @@ function todayClosedFact({ listing, date, asOf, afterTonight = false }) {
 // forecast whose reach it states.
 const PAST_FORECAST_ID = 'next_weekend_past_forecast';
 
-/** The days of next weekend (`weekdays`, `from` to `through`) past the seven days the forecast covers. */
-function pastForecastFact({ card, weekdays, from, through, asOf }) {
+/**
+ * The days of next weekend (`weekdays`, `from` to `through`) past the seven
+ * days the forecast covers; `day`, when given, names one day as the question
+ * named it ("The Saturday after next", "Friday next week").
+ */
+function pastForecastFact({ card, weekdays, from, through, asOf, day = null }) {
   return makeFact({
     id: PAST_FORECAST_ID,
     value: { fromDate: from, throughDate: through },
     source: card ? KIND_FORECAST_SOURCE : 'model_holdout',
     asOf,
-    label: `Next ${joinDays(weekdays)} ${weekdays.length > 1 ? 'are' : 'is'} past the seven days the forecast covers.`,
+    label: `${day || `Next ${joinDays(weekdays)}`} ${weekdays.length > 1 ? 'are' : 'is'} past the seven days the forecast covers.`,
   });
 }
 

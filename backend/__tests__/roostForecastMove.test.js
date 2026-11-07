@@ -4483,3 +4483,72 @@ test('in the small hours a day said from today that reads two ways is answered a
     assert.strictEqual(r.body.text, 'We can\'t answer that yet. Friday next week is past the seven days the forecast covers. It comes into them on Saturday.');
   }));
 });
+
+test('two days past the seven days are each said once, in the question\'s words: the Saturday after next, and next Saturday', async () => {
+  // It said "Next Saturday is past the seven days the forecast covers." twice,
+  // and called the Saturday after next "Next Saturday".
+  const ask = async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is the Saturday after next busier than next Saturday?' });
+    const lines = r.body.text.split('\n').map((l) => l.replace(/^• /, ''));
+    assert.strictEqual(lines.filter((l) => l === 'The Saturday after next is past the seven days the forecast covers.').length, 1, r.body.text);
+    assert.strictEqual(lines.filter((l) => l === 'Next Saturday is past the seven days the forecast covers.').length, 1, r.body.text);
+    assert.strictEqual(new Set(lines).size, lines.length, r.body.text);
+  };
+  await withNightCurve('ChIJr9TwoPastDaysOwn0000', () => pinnedAt('2026-11-07T16:00:00Z', ask));
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9TwoPastDaysCard000', phrasing: true });
+    draftFor = () => null;
+    await ask();
+  });
+  // A day past them asked beside one the forecast holds keeps the words it
+  // was asked in: "Sunday next week".
+  await withNightCurve('ChIJr9SundayNextWeek0000', () => pinnedAt('2026-11-08T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Sunday next week vs this Sunday' });
+    assert.ok(r.body.text.includes('• Sunday next week is past the seven days the forecast covers.'), r.body.text);
+  }));
+});
+
+test('the quietest day of a weekend that has one day left is said as that day, never as its busiest', async () => {
+  // On a Sunday this weekend is that Sunday, and "What is the quietest day of
+  // this weekend?" read "Sunday projects busiest around 9 PM, at 45".
+  await withNightCurve('ChIJr9QuietestDayWknd000', () => pinnedAt('2026-11-08T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'What is the quietest day of this weekend?' });
+    assert.strictEqual(r.body.text, 'Sunday peaks around 9 PM at 45 on our 0 to 100 index.');
+    assert.deepStrictEqual(sourceIds(r), ['peak_2026-11-08']);
+    // A weekend asked plainly keeps the day's own label, as the chip does.
+    const p = await call('/api/venue/advisor/question', { question: 'How busy is this weekend looking?' });
+    assert.strictEqual(p.body.text, 'Sunday projects busiest around 9 PM, at 45 on our 0 to 100 index.');
+  }));
+});
+
+test('today put in the week ranked is ranked with it, never said as a line of its own before the ranking\'s days', async () => {
+  // "Counting today, which day is slowest?" said today's line between the
+  // quietest day and the next: "Friday peaks around 9 PM at 66" on a Friday,
+  // "Saturday peaks around 9 PM at 74", the week's high, on the card's Saturday.
+  await withNightCurve('ChIJr9CountingTodayOwn00', () => pinnedAt('2026-11-06T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'quiet_nights' };
+    const r = await call('/api/venue/advisor/question', { question: 'Counting today, which day is slowest?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      'Your quietest day this week is Sunday, with its peak around 9 PM at 45 on our 0 to 100 index.',
+      '• Monday is next, around 9 PM at 48.',
+      `• ${quietMove()}`,
+    ]);
+  }));
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9CountingTodayCard0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'quiet_nights' };
+    const r = await call('/api/venue/advisor/question', { question: 'Counting today, which day is slowest?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the quietest day this week is Sunday, `), r.body.text);
+    assert.ok(!/Saturday peaks|busiest/.test(r.body.text), r.body.text);
+    // Today asked about against the week is the day asked: "Is tonight the
+    // busiest night this week?" names today's Saturday as the busiest.
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const t = await call('/api/venue/advisor/question', { question: 'Is tonight the busiest night this week?' });
+    assert.ok(t.body.text.startsWith(`${KIND_OPEN}the busiest day this week is Saturday, `), t.body.text);
+    assert.strictEqual(sourceIds(t)[0], 'typical_peak_2026-11-07');
+  });
+});

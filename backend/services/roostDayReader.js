@@ -944,12 +944,15 @@ function formRead(a, form) {
 
 /**
  * The plain form `question` is, for the route to weigh against the route it
- * was given (routes/advisor.js formOnRoute): { form, days, words }, its name,
- * how many day references it holds and their day words; or null.
+ * was given (routes/advisor.js formOnRoute): { form, days, words, cue }, its
+ * name, how many day references it holds, their day words, and 'in' or 'out'
+ * for today put in or left out of the week ranked (null for neither); or null.
  */
 function plainFormOf(question) {
   const form = formOf(question);
-  return form ? { form: form.form, days: form.refs.length, words: form.refs.map((r) => ({ ...r.word })) } : null;
+  return form ? {
+    form: form.form, days: form.refs.length, words: form.refs.map((r) => ({ ...r.word })), cue: form.cue,
+  } : null;
 }
 
 /**
