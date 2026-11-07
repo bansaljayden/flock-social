@@ -1015,6 +1015,71 @@ function calculatorAnswer(book, { question, ctx, venue, intentId, exclude = [] }
   };
 }
 
+// A SLOW-DAY MOVE IS NEVER ADVICE FOR A BUSY DAY (second recheck,
+// 2026-11-06). "How do I fill tomorrow?" asked on a Friday answered
+// "Saturday projects busiest around 9 PM, at 74. Give Saturday one recurring
+// reason to visit", and "How do I fill Saturday?" did the same on main: a
+// day that is the week's busiest, or above its median, has no seats to fill.
+// A slow-day move is one written for the venue's slow day ("Give your
+// slowest day one recurring reason to visit", "Host a weekly ... night on
+// your slow day"), which an answer about a day of Flock's forecast for
+// places like this one says of the day it leads with
+// (kindForecast.unownDays). When every day asked is busy, the move names the
+// week's quiet day the facts hold instead ("should i do live music on
+// thursday or friday": "Host a weekly music, comedy or open mic night on
+// Sunday"); with no quiet day to name, the slow-day moves are left out and
+// the advice is the busy day's (the peaks' topics). A question about a quiet
+// day, or about no day, is answered as before.
+const SLOW_DAY_MOVE = /\byour\s+(?:own\s+)?(?:quietest|slowest|quiet|slow|weakest|deadest|emptiest)\s+(?:day|night|evening)s?\b/i;
+const isSlowDayMove = (t) => Boolean(t) && SLOW_DAY_MOVE.test(String(t.move || ''));
+const peakScoreOf = (f) => (f && f.value && typeof f.value.weekday === 'string' ? Number(f.value.peakScore) : NaN);
+const peaksIn = (facts) => (Array.isArray(facts) ? facts : []).filter((f) => Number.isFinite(peakScoreOf(f)));
+const namesAsked = (question, askedFor) => (Array.isArray(askedFor) ? askedFor : [askedFor !== undefined ? askedFor : namedWeekday(question)]).filter(Boolean);
+
+/**
+ * True when every day the advice is about (`askedFor`, or else the weekday the
+ * question names) is, in `facts`, away from the quiet end of its week: as the
+ * route marks it against the seven days from today (`quietEnd`,
+ * routes/advisor.js quietEnds), or, unmarked, the busiest of three days or
+ * more in `facts`, or above their median.
+ */
+function busyAsked(facts, question = '', askedFor = undefined) {
+  if (askedFor === null) return false;
+  const peaks = peaksIn(facts);
+  const names = namesAsked(question, askedFor);
+  if (!peaks.length || !names.length) return false;
+  const asked = names.map((w) => peaks.find((f) => f.value.weekday === w));
+  if (asked.some((f) => !f)) return false;
+  const scores = peaks.map(peakScoreOf).sort((a, z) => a - z);
+  const half = Math.floor(scores.length / 2);
+  const median = scores.length % 2 ? scores[half] : (scores[half - 1] + scores[half]) / 2;
+  const top = scores[scores.length - 1];
+  return asked.every((f) => (typeof f.quietEnd === 'boolean'
+    ? f.quietEnd === false
+    : scores.length >= 3 && (peakScoreOf(f) >= top || peakScoreOf(f) > median)));
+}
+
+/** The week's quiet day in `facts` beside busy days asked: the lowest day not asked and not itself busy, or null. */
+function quietDayBeside(facts, question = '', askedFor = undefined) {
+  const peaks = peaksIn(facts);
+  const names = namesAsked(question, askedFor);
+  const others = peaks.filter((f) => !names.includes(f.value.weekday) && f.quietEnd !== false);
+  if (!others.length) return null;
+  const low = others.reduce((a, f) => (peakScoreOf(f) < peakScoreOf(a) ? f : a));
+  return busyAsked(peaks, '', low.value.weekday) ? null : low.value.weekday;
+}
+
+/** The playbook's ranking for advice about the days asked: busy days with no quiet day beside them get no slow-day move (busyAsked). */
+function rankedForDays(book, question, { intentId = null, venue = null, limit = 3, exclude = [], groundedFacts = [], askedFor = undefined } = {}) {
+  const ranking = book.ranked(question, { intentId, venue, limit, exclude });
+  if (!ranking.some((x) => isSlowDayMove(x.t)) || !busyAsked(groundedFacts, question, askedFor)
+      || quietDayBeside(groundedFacts, question, askedFor)) return ranking;
+  const without = (r) => r.filter((x) => !isSlowDayMove(x.t));
+  const kept = without(book.ranked(question, { intentId, venue, limit: limit + 4, exclude }));
+  if (kept.length) return kept.slice(0, limit);
+  return without(book.ranked(question, { intentId: 'peak_hours', venue, limit: limit + 4, exclude })).slice(0, limit);
+}
+
 /**
  * Answer one money question from the playbook, with no model call.
  * Returns null when no tactic clears the floor.
@@ -1042,7 +1107,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       followUp: calc.move ? followUpFor([calc.move], venue, question) : null,
     };
   }
-  const ranking = book.ranked(question, { intentId, venue, limit: 3, exclude });
+  const ranking = rankedForDays(book, question, { intentId, venue, limit: 3, exclude, groundedFacts, askedFor });
   if (!ranking.length) return null;
   const [top] = ranking;
   // "ANOTHER OPTION" EARNS ITS LINE: the owner's own words found it, or failing
@@ -1069,7 +1134,10 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const quiet = lead && lead.facts
     ? lead.facts.reduce((a, f) => (Number(f.value.peakScore) < Number(a.value.peakScore) ? f : a))
     : (lead && lead.fact);
-  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, quiet.value.weekday) : (s) => s;
+  // Busy days led name the week's quiet day beside them (rankedForDays).
+  const quietName = (lead && busyAsked(groundedFacts, question, askedFor) && quietDayBeside(groundedFacts, question, askedFor))
+    || (quiet && quiet.value.weekday);
+  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, quietName) : (s) => s;
 
   const points = [say(first.why)];
   const money = moneyLine(first, spend);
@@ -1193,6 +1261,12 @@ function isLevelWeek(block) {
   return scores.length < 2 || Math.max(...scores) - Math.min(...scores) < HOUR_ORDERING_MIN_GAP;
 }
 
+/** True when the block's projected days are all marked away from the quiet end of their week (`quietEnd: false`). */
+function busyDaysOnly(facts) {
+  const days = facts.filter((f) => f && f.value && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
+  return days.length > 0 && days.every((f) => f.quietEnd === false);
+}
+
 /**
  * The move a chip's answer ends on, or null. Yesterday's verdict raises one
  * only when the venue's own numbers call it a quiet day, and the money move
@@ -1207,7 +1281,17 @@ function moveFor(intentId, block, venue = null) {
   // high, it ended on "Give Saturday one recurring reason to visit". Today is
   // filled only from the quiet end of its week (kindForecast.besideWeek); any
   // other today gets the busy-day move the peaks chip ends on.
-  if (intentId === 'quiet_nights' && facts.some((f) => isBesideWeek(f) && f.quietEnd === false)) {
+  // Nor for a busy day the quiet days' route hands over in place of its two
+  // quietest (second recheck, 2026-11-06): "Is tomorrow a write-off?" at
+  // 12:15 AM on a Saturday, of a cafe shut on Sundays, said Saturday at 74
+  // after the shut Sunday and ended on "Give Saturday one recurring reason
+  // to visit". A day the route marks as away from the quiet end of its week
+  // (routes/advisor.js quietEnds: the week's busiest, or above its median;
+  // withNamedToday's today) is never filled; when every day the answer says
+  // is such a day, the move is the busy day's. A quiet day beside it ("Is
+  // tomorrow going to be slower than today?", the week's quietest under the
+  // two) is the one the fill move names (kindForecast.cardQuietDay).
+  if (intentId === 'quiet_nights' && busyDaysOnly(facts)) {
     return moveFor('peak_hours', block, venue);
   }
   if (intentId === 'last_night_verdict') {
@@ -1258,6 +1342,11 @@ function find(question, opts) {
   return BOOK.find(question, opts);
 }
 
+/** find(), for advice about the days asked: a busy day is never handed a slow-day move (rankedForDays). */
+function findForDays(question, opts) {
+  return rankedForDays(BOOK, question, opts).map(({ t }) => t);
+}
+
 function ranked(question, opts) {
   return BOOK.ranked(question, opts);
 }
@@ -1287,6 +1376,9 @@ module.exports = {
   SPEND_NUDGE,
   tactics: BOOK.tactics,
   find,
+  findForDays,
+  busyAsked,
+  quietDayBeside,
   ranked,
   answer,
   answerFrom,

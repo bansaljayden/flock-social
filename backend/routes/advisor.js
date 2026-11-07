@@ -1362,6 +1362,43 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
   return intentId === 'weekend_outlook' ? weekendShutSaid(answered, b, question, target ? [target] : []) : answered;
 }
 
+// A SLOW-DAY MOVE IS NEVER GIVEN FOR A BUSY DAY (second recheck, 2026-11-06).
+// "Is tomorrow a write-off?" on the quiet days' route, asked at 12:15 AM on a
+// Saturday of a cafe shut on Sundays, said the shut Sunday, then Saturday at
+// 74, the week's high, and ended on "Give Saturday one recurring reason to
+// visit". Every day a block of the week's routes hands over (the peaks, the
+// quiet days, the money move, which read the week already) says whether it
+// is at the quiet end of the seven days from today: `quietEnd: false` when
+// it is their busiest or above their median, today beside the card's week
+// included (withNamedToday marks today against the week's quietest; this
+// holds it to both), `true` otherwise. A move written for the slow day is
+// never given for a day marked false: under the quiet days' chip the move is
+// the busy day's (roostPlaybook.moveFor) and the question after it the
+// peaks chip's (advisorFollowUps), and advice names the week's quiet day or
+// leaves the move out (roostPlaybook.busyAsked). It is never a value, so no
+// answer can say it.
+const QUIET_END_INTENTS = new Set(['quiet_nights', 'peak_hours', 'money_move']);
+async function quietEnds(b, entries) {
+  // The week the plan read (memoised, so no second read), and today with the
+  // card's week.
+  let days = await b.week();
+  if (gatedVenue(b) && typeof b.card === 'function') {
+    const card = await b.card();
+    if (card.week.length) days = [...(card.today || []), ...card.week];
+  }
+  const score = (e) => (isDayEntry(e) && !advisorFacts.isRefusal(e) ? Number(e.value.peakScore) : NaN);
+  const scores = days.map(score).filter(Number.isFinite).sort((a, z) => a - z);
+  if (!scores.length) return entries;
+  const top = scores[scores.length - 1];
+  const half = Math.floor(scores.length / 2);
+  const median = scores.length % 2 ? scores[half] : (scores[half - 1] + scores[half]) / 2;
+  return entries.map((e) => {
+    const s = score(e);
+    if (!Number.isFinite(s)) return e;
+    return { ...e, quietEnd: e.quietEnd !== false && s < top && s <= median };
+  });
+}
+
 // `question`, when there is one, is what the owner asked: a question that
 // names today's weekday is answered from today (withNamedToday above).
 async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
@@ -1426,7 +1463,9 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
   fromTonight = Boolean(reading.fromTonight) && NAMED_TODAY_INTENTS.has(intentId) && !advisorFacts.corpusGate(ctx.profile);
   b.weekendScope = reading.weekendScope;
   const plan = INTENT_PLANS[intentId];
-  const { entries, askedFor, askedDays, intent } = await forQuestion(plan ? await plan(b) : [], intentId, b, question, reading);
+  const answered = await forQuestion(plan ? await plan(b) : [], intentId, b, question, reading);
+  const { askedFor, askedDays, intent } = answered;
+  const entries = QUIET_END_INTENTS.has(intent || intentId) ? await quietEnds(b, answered.entries) : answered.entries;
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
