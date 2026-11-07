@@ -117,8 +117,9 @@ describe('the banned tile pair is gone', () => {
     expect(cta).toContain("minHeight: '44px', padding: '0 20px'");
     expect(cta).toContain("display: 'inline-flex'");
     expect(codeOnly(cta)).not.toContain("width: '100%'");
-    // The scroll area keeps the pill's height clear under the last row.
-    expect(R).toContain("paddingBottom: '84px'");
+    // The pill is a footer in the column, so nothing scrolls under it.
+    expect(cta).toContain('flexShrink: 0');
+    expect(codeOnly(cta)).not.toContain("position: 'absolute'");
   });
 });
 

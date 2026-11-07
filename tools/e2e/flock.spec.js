@@ -777,7 +777,7 @@ test('a stranger who is not signed in can open the share link and answer', async
   await host.page.getByRole('heading', { name, exact: true }).click();
   await expect(host.page.getByRole('heading', { name: /going \(2\)/i })).toBeVisible({ timeout: 30_000 });
   await expect(host.page.getByText('Maya', { exact: true })).toBeVisible();
-  await expect(host.page.getByText('GUEST')).toBeVisible();
+  await expect(host.page.getByText('Guest', { exact: true })).toBeVisible();
 
   // Changing their mind, from the same page.
   await stranger.getByRole('button', { name: /can.t make it/i }).click();

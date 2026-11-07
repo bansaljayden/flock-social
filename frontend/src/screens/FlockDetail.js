@@ -478,7 +478,7 @@ export default function FlockDetail({
         )}
 
         {/* ── Scrollable content ── */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '84px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px', paddingBottom: '14px' }}>
 
           {/* Venue Card. The block the venue is on heads it, full width,
               photo or not, and a tap on it opens the same maps chooser as
@@ -565,7 +565,10 @@ export default function FlockDetail({
                     attribution (components/ui/GoogleCredit.js), as the
                     Explore list does. A venue with no place id did not come
                     from Google and carries none. */}
-                {flock.venueId && (
+                {/* Once per screen: when the vote list below names Google
+                    places it ends on the same credit, so this card leaves it
+                    to the list. */}
+                {flock.venueId && !(flock.votes || []).some((v) => v.place_id) && (
                   <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
                     <GoogleMapsMark />
                   </div>
@@ -822,15 +825,19 @@ export default function FlockDetail({
                         <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: bgColors[i % bgColors.length], display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', border: '2px solid var(--bg-card-solid)', boxShadow: '0 2px 6px rgba(0,0,0,0.1)' }}>{initial}</div>
                       )}
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textAlign: 'center', maxWidth: '56px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: '500' }}>{mName.split(' ')[0]}</span>
-                      {isGuest && <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', letterSpacing: '0.3px' }}>GUEST</span>}
                       {/* A word, never a tint: a face that has not answered
                           says nothing, rather than something a colour-blind
-                          reader cannot tell from "has". */}
-                      {flock.reconfirm?.open && typeof member === 'object' && member.reconfirmed && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', letterSpacing: '0.3px' }}>
-                          {Icons.check('currentColor', 12)} STILL IN
+                          reader cannot tell from "has". One line per face:
+                          Still in when the night-of answer is in, else Guest
+                          for a guest, where the two stacked in caps and the
+                          faces under them stood uneven. */}
+                      {flock.reconfirm?.open && typeof member === 'object' && member.reconfirmed ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                          {Icons.check('currentColor', 12)} Still in
                         </span>
-                      )}
+                      ) : isGuest ? (
+                        <span style={{ fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-tertiary)' }}>Guest</span>
+                      ) : null}
                     </>
                   );
                   const rowKey = typeof member === 'object' && member.id != null ? String(member.id) : i;
@@ -933,7 +940,7 @@ export default function FlockDetail({
                   <VoteRow key={v.venue} {...voteRowProps} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: vi < flock.votes.length - 1 ? '1px solid var(--border-subtle)' : 'none', padding: '10px 0', cursor: isCompleted ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '5px' }}>{isMyVote && Icons.check(colors.steel, 12)}{v.venue}</span>
-                      {v.type && <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</span>}
+                      {v.type && !/^venue$/i.test(String(v.type).trim()) && <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{v.type}</span>}
                       {/* The venue's deal, not once the plan is over: the
                           same rule as the table line (tablesOver above). */}
                       {!tablesOver && v.deal && <VenueDealLine deal={v.deal} iconColor={colors.steel} style={{ margin: '2px 0 0' }} />}
@@ -1065,10 +1072,11 @@ export default function FlockDetail({
 
         {/* ── Bottom CTA ── A pill, not the full-width bar it was, which was
             the heaviest thing on the screen. It is still the one Open Chat
-            here, centred and 44pt tall, so it reads as the next step without
-            covering the sheet's last row; the scroll area keeps 84px clear
-            under that row for it. */}
-        <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', display: 'flex', justifyContent: 'center', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
+            here, centred and 44pt tall, so it reads as the next step. It
+            sits in the column under the scroll area, not over it: as an
+            overlay with a fade it covered the Lock it in row on first view,
+            and the scroll area's 84px of padding only helped once scrolled. */}
+        <div style={{ flexShrink: 0, padding: '8px 14px 14px', display: 'flex', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)' }}>
           <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ minHeight: '44px', padding: '0 20px', background: colors.navyBg, border: 'none', borderRadius: '22px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.16)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '7px', pointerEvents: 'auto' }}>
             {Icons.chat('white', 16)} Open chat
           </button>
