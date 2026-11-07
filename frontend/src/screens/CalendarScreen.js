@@ -58,6 +58,7 @@
 import React from 'react';
 import { BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { BAND_HEAD } from '../components/nest/nestBand';
 import { localeDate, localeTime } from '../lib/localeFormat';
 
 export default function CalendarScreen({
@@ -228,7 +229,7 @@ export default function CalendarScreen({
             const weatherColor = isSnowy ? '#93c5fd' : isRainy ? '#60a5fa' : isCloudy ? '#94a3b8' : isCold ? '#64748b' : isHot ? '#ef4444' : '#F59E0B';
             const conditionText = w.conditions ? w.conditions.charAt(0).toUpperCase() + w.conditions.slice(1) : 'Clear';
             return (
-              <div style={{ ...styles.card, marginBottom: '12px', padding: 0, overflow: 'hidden', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
+              <div style={{ ...styles.card, marginBottom: '12px', padding: 0, overflow: 'hidden' }}>
                 <div style={{ padding: '14px 16px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     {weatherIcon(weatherColor, 36)}
@@ -245,17 +246,17 @@ export default function CalendarScreen({
                         forecast for a day ahead. */}
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Feels like</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', borderTop: '1px solid var(--nest-edge)', backgroundColor: 'var(--nest-edge)' }}>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Feels like</p>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
                   </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Humidity</p>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Humidity</p>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{w.humidity}%</p>
                   </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: isDark ? 'rgba(30,58,92,0.5)' : 'rgba(219,234,254,0.5)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Wind</p>
+                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Wind</p>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}> mph</span></p>
                   </div>
                 </div>
@@ -269,19 +270,14 @@ export default function CalendarScreen({
                 )}
               </div>
             );
-          })() : (
-          <div style={{ ...styles.card, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', padding: '14px', background: isDark ? 'linear-gradient(135deg, #1e3a5c, #1a3a5c)' : 'linear-gradient(135deg, #dbeafe, #e0f2fe)' }}>
-            <div style={{ textAlign: 'center' }}>
-              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{localeDate(selectedDate, 'en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-            </div>
-          </div>
-          )}
+          })() : null}
+          {/* With no weather there is no band: it was a light-blue slab
+              holding only the date, and the heading below names the day. */}
 
           {/* Selected date events header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.calendar(colors.navy, 14)}
-              {isToday(selectedDateStr) ? 'Today' : localeDate(selectedDate, 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            <h2 style={{ ...BAND_HEAD, margin: 0 }}>
+              {isToday(selectedDateStr) ? `Today · ${localeDate(selectedDate, 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : localeDate(selectedDate, 'en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
             </h2>
             <button className="hit44 glass-btn glass-navy" onClick={() => setShowAddEvent(true)} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
               {Icons.plus('white', 12)} Add
@@ -291,8 +287,8 @@ export default function CalendarScreen({
           {/* Events list */}
           {eventsOnSelected.length > 0 ? eventsOnSelected.map(event => (
             <div key={event.id} style={{ ...styles.card, display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{ width: '44px', height: '44px', borderRadius: '10px', background: `linear-gradient(135deg, ${event.color}, ${event.color}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {Icons.party('white', 20)}
+              <div style={{ width: '44px', height: '44px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                {Icons.plans(colors.navy, 20)}
               </div>
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{event.title}</p>
@@ -366,7 +362,7 @@ export default function CalendarScreen({
           {/* Upcoming events preview */}
           {!showAddEvent && getUpcomingEvents().length > 0 && (
             <div style={{ marginTop: '16px' }}>
-              <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.trendingUp(colors.navy, 12)} Coming up</h4>
+              <h4 style={BAND_HEAD}>Coming up</h4>
               {getUpcomingEvents().map((event, i) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <div style={{ width: '4px', height: '32px', borderRadius: '2px', backgroundColor: event.color }} />
