@@ -152,8 +152,10 @@ function shortIsDay(short, before, after, shouting) {
 const NEXT_WEEK_AFTER = /^\s*,?\s*(?:(?:be|look|looks|seem|run)\s+(?:like\s+)?)?(?:of\s+)?next\s+week\b/i;
 const NEXT_WEEK_BEFORE = /\bnext\s+week'?s\s+$/i;
 const AFTER_NEXT = /^\s+after\s+next\b/i;
-// Holidays named for a weekday: a date, not the coming weekday.
-const HOLIDAY_BEFORE = /\b(?:black|cyber|easter|palm|ash|holy|maundy|super\s+bowl|small\s+business)\s+$/i;
+// Holidays named for a weekday: a date, not the coming weekday. And names
+// that hold one ("the TGI Fridays crowd", "Ruby Tuesday next door"), no day
+// at all (fourth repair, 2026-11-06).
+const HOLIDAY_BEFORE = /\b(?:black|cyber|easter|palm|ash|holy|maundy|super\s+bowl|small\s+business|tgi|t\.g\.i\.?|ruby)\s+$/i;
 // "Good", "super" and "giving" are ordinary words before a day too ("Is this
 // a good Friday to run a promo?", "Gonna be a super Sunday?", "We're giving
 // Tuesday another shot"), so they name a holiday only written as one, with
@@ -480,8 +482,22 @@ const AFTER_TOMORROW = new RegExp([
   '\\bnext\\s+(?:two|2|three|3|four|4|few|couple(?:\\s+of)?)\\s+(?:days|nights)\\b',
 ].join('|'), 'i');
 // A day said from another one: "the day after" (that, the game, or
-// tomorrow's), "the day before", "the next day".
-const DAY_FROM_DAY = /\bthe\s+day\s+after\b(?!\s+tomorrow\b)|\bday\s+before\b|\b(?:the\s+)?(?:next|following|previous)\s+(?:day|night|evening)\b/i;
+// tomorrow's), "the day before", "the next day", "the night before
+// Saturday", "the eve of".
+const DAY_FROM_DAY = /\bthe\s+day\s+after\b(?!\s+tomorrow\b)|\bday\s+before\b|\b(?:the\s+)?(?:next|following|previous)\s+(?:day|night|evening)\b|\b(?:night|evening|morning|afternoon)\s+(?:before|after)\b|\beve\s+of\b/i;
+// A week counted on from a day ("a week from Friday", "the following
+// Saturday", "the Friday after this one", "two Fridays from now"): the
+// grammar reads the weekday as this week's.
+const WEEK_ON = new RegExp([
+  '\\b(?:a|one|two|2|three|3|four|4)\\s+weeks?\\s+(?:from|after|out|later|on)\\b',
+  '\\bweeks?\\s+from\\b',
+  '\\bfrom\\s+now\\b',
+  '\\bfortnight\\b',
+  '\\bevery\\s+other\\b',
+  '\\b(?:the\\s+)?following\\s+(?:mon|tues|wednes|thurs|fri|satur|sun)days?\\b',
+  '\\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?\\s+after\\s+(?!next\\b)(?:this|that|the|it|tomorrow|tonight)\\b',
+  '\\b(?:two|2|three|3|four|4)\\s+(?:mon|tues|wednes|thurs|fri|satur|sun)days\\b',
+].join('|'), 'i');
 const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b\\.?';
 // "the 2nd seating" and "1st turn" are no dates.
 const NOT_DATE_AFTER = '(?!\\s+(?:seating|sitting|turn|time|round|shift|floor|course|table|service|wave|half|place|week|weekend|month|year|of\\s+(?:the|our|my)\\b))';
@@ -517,7 +533,7 @@ const NOT_A_DAY = new Set(['today', 'tonight', 'tomorrow', 'weekend', 'weekends'
   'weakened', 'tomato', 'tomatoes', 'tonights', 'tomorrows']);
 const MAYBE_WEEKEND = /^(?:w\/e|w\/end|wkd|wkds|wknd|wknds|wkend|wkends|wk-end|wk-ends|week-end|week-ends)$/;
 const MAYBE_TOMORROW = /^(?:tmr|tmw|tmmrw|tmrrw|tmrow|tomoz|tomo|2moro|2morro|2morrow|2morow|2mrw|2mro)$/;
-const MAYBE_TODAY = /^(?:2nite|2night|2nyt|tnite|2day|tday|tdy)$/;
+const MAYBE_TODAY = /^(?:2nite|2night|2nyt|tnite|tn|2day|tday|tdy)$/;
 function nearDay(w) {
   if (NOT_A_DAY.has(w) || DAY_NAMES.includes(w) || DAY_NAMES.includes(w.replace(/s$/, ''))) return false;
   if (MAYBE_WEEKEND.test(w) || MAYBE_TOMORROW.test(w) || MAYBE_TODAY.test(w)) return true;
@@ -529,7 +545,8 @@ const SHORT_WORD = /\b(mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)\b\.?/gi;
 // "We sat dinner at 6", "the sun rush", "with this sun", "C'mon": the word.
 const WORD_BEFORE = /(?:\b(?:we|i|they|you|he|she|it|who|people|guests|everyone|everybody|the|a|an|this|that|in|with|of|under|our|their)\s+|c')$/i;
 const MAYBE_BEFORE = /(?:\b(?:about|abt|for|by|till|til|until|and|or|n|vs|versus|esp|especially|mostly|mainly|particularly)\.?\s+|[&+/]\s*)$/i;
-const MAYBE_AFTER = /^\s*(?:[?!.]+\s*)?$|^\s*(?:[&+/]|and\b|or\b|n\b|vs\b)|^\s+(?:in\s+particular|esp(?:ecially)?\b|mostly|mainly|only|too|also)\b/i;
+// Nothing but marks to the end, an emoji included ("fri 🍻 sat 🍻?").
+const MAYBE_AFTER = /^[^A-Za-z0-9]*$|^\s*(?:[&+/]|and\b|or\b|n\b|vs\b)|^\s+(?:in\s+particular|esp(?:ecially)?\b|mostly|mainly|only|too|also)\b/i;
 // "sat 1st turn by 6:30": a count, not a date.
 const COUNT_NEXT = /^\s*\d{1,2}(?:st|nd|rd|th)?\s+(?:seating|sitting|turn|time|round|shift|table|tables|covers?|people|guests?|wave)\b/i;
 function maybeShortForms(piece, shouting) {
@@ -546,6 +563,9 @@ function maybeShortForms(piece, shouting) {
 }
 
 const DAY_KINDS = new Set(['weekday', 'today', 'tomorrow', 'dayAfterTomorrow']);
+// A question that asks which day: "which other day is quietest?", "what's our
+// busiest night?".
+const CHOICE_ASKED = /\b(?:which|what)\b[^.?!]{0,40}?\b(?:day|night|evening)s?\b/i;
 
 /**
  * How sure the reading of `question` is (above): { sure: true } for the
@@ -559,6 +579,7 @@ function dayConfidence(question) {
   }
   if (HOLIDAY_SAID.test(text) || HOLIDAY_NAMED.test(text)) return unsure('a holiday');
   if (AFTER_TOMORROW.test(text)) return unsure('a day counted on from tomorrow');
+  if (WEEK_ON.test(text)) return unsure('a week counted on from a day');
   if (DAY_FROM_DAY.test(text)) return unsure('a day said from another day');
   if (DATE_SAID.test(text) || SHORT_DATE.test(text)) return unsure('a date');
   const words = dayWords(question);
@@ -571,6 +592,14 @@ function dayConfidence(question) {
   if (new Set(weekends.map((t) => t.scope)).size >= 2) return unsure('two weekends');
   if (weekends.some((t) => t.scope === 'habit')) return unsure('weekends as a habit');
   if (weekends.length && (days.length || weekdaysNamed(question).length)) return unsure('a day beside a weekend');
+  // A day read from outside the sentence that asks, when that sentence asks
+  // which day ("We might shut Wednesday, which other day is quietest?"): the
+  // day is the setup, and may be the one the owner sets aside.
+  const { asking } = parts(text);
+  if (days.length && !todayInRanking(question) && asking.some((p) => CHOICE_ASKED.test(p))
+      && !asking.some((p) => tokensIn(p, shouting).some((t) => DAY_KINDS.has(t.kind)))) {
+    return unsure('a day said outside a question that asks which day');
+  }
   if (words.length) {
     const maybe = [...text.toLowerCase().matchAll(/[a-z0-9/'-]+/g)].map((m) => m[0].replace(/'s$/, '').replace(/^'+|'+$/g, '')).filter(nearDay);
     if (maybe.length || parts(text).all.some((p) => maybeShortForms(p, shouting).length)) return unsure('a word that may be a day');

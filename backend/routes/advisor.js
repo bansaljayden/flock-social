@@ -1539,13 +1539,23 @@ async function quietEnds(b, entries) {
 // THE READING IS USED ONLY WHERE IT IS SURE (third recheck, 2026-11-06). A
 // typed question on a route about the week's days is read for its days
 // (readingFor) only when the reader is sure of its words
-// (roostDayReader.dayConfidence), and only when, in the small hours, it does
-// not count a day on from tonight ("tomorrow", "the day after tomorrow"),
-// which an owner still at work may mean of the coming daytime or of the
-// calendar's next day. Anything else is answered on main's path, exactly as
-// main answers it (MAIN_PLANS above). The reading, or null for main's path.
+// (roostDayReader.dayConfidence); on the weekend's route only when the
+// reading holds every weekday the question names; and only when, in the
+// small hours, it does not count a day on from tonight ("tomorrow", "the
+// day after tomorrow"), which an owner still at work may mean of the coming
+// daytime or of the calendar's next day. Anything else is answered on main's
+// path, exactly as main answers it (MAIN_PLANS above). The reading, or null
+// for main's path.
 async function dayGate(b, question, intentId) {
   if (!roostDayReader.dayConfidence(question).sure) return null;
+  // The weekend's answer says the weekdays a question names anywhere in it
+  // (weekendShutSaid), so a weekday written outside the reading ("Skip
+  // Sunday, how does Saturday look?") is one more reading of it than the
+  // reader made: main's path.
+  if (intentId === 'weekend_outlook') {
+    const read = new Set(roostDayReader.dayWords(question).filter((w) => w.kind === 'weekday').map((w) => w.weekday));
+    if (roostDayReader.weekdaysNamed(question).some((d) => !read.has(d))) return null;
+  }
   const reading = await readingFor(b, question, intentId);
   const targets = reading.targets || (reading.target ? [reading.target] : []);
   const onward = targets.some((t) => t.word && (t.word.kind === 'tomorrow' || t.word.kind === 'dayAfterTomorrow'));

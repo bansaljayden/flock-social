@@ -3991,9 +3991,27 @@ test('the reader says how sure it is: sure of a day, two days, a weekend or the 
     ['is tonight busier than sat night?', 'a word that may be a day'],
     ['Is tomorrow busier than satday?', 'a word that may be a day'],
     ['how busy this wknd esp sunday', 'a word that may be a day'],
+    // The fourth repair's own adversarial questions (2026-11-06): a week
+    // counted on from a day, a night said from a day, a second day written
+    // in a way the grammar does not read, and a day set aside before a
+    // question that asks which day.
+    ['How busy will it be a week from Friday?', 'a week counted on from a day'],
+    ['What about the following Saturday?', 'a week counted on from a day'],
+    ['How busy will the Friday after this one be?', 'a week counted on from a day'],
+    ['two Fridays from now, busy?', 'a week counted on from a day'],
+    ['Is the night before Saturday busy?', 'a day said from another day'],
+    ['fri 🍻 sat 🍻?', 'a word that may be a day'],
+    ['tn vs tmrw?', 'a word that may be a day'],
+    ['We might shut Wednesday, which other day is quietest?', 'a day said outside a question that asks which day'],
   ]) {
     assert.deepStrictEqual(dayConfidence(q), { sure: false, why }, q);
   }
+  // Sure: today set aside before a question that asks which night is a
+  // ranking cue (todayInRanking), and a weekday inside a name is no day.
+  for (const q of ['Other than tonight, what\'s our busiest night?', 'Is the TGI Fridays crowd coming our way tonight?', 'How busy will the Friday after next be?']) {
+    assert.deepStrictEqual(dayConfidence(q), { sure: true }, q);
+  }
+  assert.strictEqual(saidDays('Is the TGI Fridays crowd coming our way tonight?'), 'today');
 });
 
 test('a reading the reader is not sure of is answered exactly as main answers it: a range, a holiday, after tomorrow, the day after that, a date', async () => {
@@ -4042,6 +4060,20 @@ test('a reading the reader is not sure of is answered exactly as main answers it
     const r = await call('/api/venue/advisor/question', { question: 'Thanksgiving weekend, how busy?' });
     assert.strictEqual(r.body.text, `${KIND_OPEN}the busiest day this weekend is Friday, with its peak around 9 PM at 66 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.`);
     assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-27', 'typical_peak_2026-11-22']);
+  });
+});
+
+test('on the weekend\'s route a weekday written outside the reading is answered as main answers it', async () => {
+  // "Skip Sunday, how does Saturday look?" of a cafe shut on Sundays: the
+  // weekend's answer says every weekday a question names anywhere, and said
+  // the shut Sunday and the weekend's range, never Saturday's own line,
+  // where main said Saturday (fourth repair, 2026-11-06).
+  await pinnedAt('2026-11-11T15:00:00Z', async () => {
+    cafeOpenOn('ChIJrASkipSundayCafeWed00', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Skip Sunday, how does Saturday look?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-14']);
   });
 });
 
