@@ -98,6 +98,12 @@ import TableAvailability from '../components/venue/TableAvailability';
 import { SkeletonRow, SkeletonStatus, EventCardSkeleton } from '../components/ui/Skeleton';
 import { getEventDetails } from '../services/api';
 
+// The count words, singular and plural: "1 result" / "All 12 results" on the
+// chip on the map, "See 1 result" / "See all 12" on the button in the list. They read
+// "All 1 results" and "See All Results (1)".
+export const resultsChipLabel = (n) => (n === 1 ? '1 result' : `All ${n} results`);
+export const seeAllLabel = (n) => (n === 1 ? 'See 1 result' : `See all ${n}`);
+
 export default function ExploreScreen({
   // Declared at App.js module scope and shared with surfaces other than this
   // screen, so they stay declared there and arrive here.
@@ -256,6 +262,9 @@ export default function ExploreScreen({
   // skeleton is only for a list with no rows yet. Still tappable: a row is a
   // real place whichever query found it.
   const rowsStale = venueResults.length > 0 && (venueSearching || venueResultsFor !== venueQuery.trim());
+  // Whether the results list under the box is on screen: the one test the
+  // list and the count chip on the map both read.
+  const searchListOpen = showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0));
 
   // THE BOX TAPPED AGAIN BRINGS ITS LIST BACK. With a query in it and the
   // list closed (a row was tapped, or the map), a tap raised the keyboard over
@@ -368,7 +377,7 @@ export default function ExploreScreen({
       )}
 
       {/* Search Results Overlay */}
-      {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
+      {searchListOpen && (
         <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
           {/* The search under way, over rows that answer an older query:
               a 2px line pinned to the top of the list (rowsStale above). */}
@@ -394,7 +403,9 @@ export default function ExploreScreen({
                 style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
               >
                 {Icons.filter('white', 13)}
-                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>See All Results ({venueResults.length})</span>
+                {/* "See all 12", or "See 1 result": it read "See All
+                    Results (1)". */}
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>{seeAllLabel(venueResults.length)}</span>
                 {Icons.arrowRight('white', 14)}
               </button>
               {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
@@ -539,13 +550,19 @@ export default function ExploreScreen({
             eleven, and the overlay only explains itself at exactly zero. Both
             ends read the one list now, so the promise and the screen cannot
             drift apart again. */}
-        {(budgetFilteredVenues || []).length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
+        {/* TOP LEFT, AND NOT WHILE THE LIST IS OPEN. With the list and the
+            keyboard up the map is a short strip, and the zoom stack, which
+            stands 184px above the bottom edge of the map, rose into the top right
+            corner: "All 12 re..." was cut off under the + button. The list
+            carries its own "See all" while it is open, and the left edge has
+            no controls to collide with. */}
+        {(budgetFilteredVenues || []).length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && !searchListOpen && (
           <button
             className="hit44 glass-btn"
             onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
+            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', left: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
-            All {(budgetFilteredVenues || []).length} results
+            {resultsChipLabel((budgetFilteredVenues || []).length)}
           </button>
         )}
 
