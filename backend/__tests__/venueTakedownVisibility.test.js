@@ -155,8 +155,8 @@ function listBody(anchor) {
   assert.ok(end > start, `no tab follows the list at ${anchor}`);
   return appCode.slice(start, end);
 }
-const promoListBody = listBody('Your Promotions ({promotions.length})');
-const eventListBody = listBody('Your Events ({venueEventsList.length})');
+const promoListBody = listBody('Your promotions ({promotions.length})');
+const eventListBody = listBody('Your events ({venueEventsList.length})');
 
 test('the Edit control does not render on a taken-down promotion or event', () => {
   // PUT /promotions/:id and PUT /events/:id both answer 409 on a hidden row, so
