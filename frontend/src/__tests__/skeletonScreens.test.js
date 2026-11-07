@@ -21,6 +21,7 @@ import {
   SkeletonStatus,
   FlockCardSkeleton,
   FlockListSkeleton,
+  NestHeroSkeleton,
   RosterSkeleton,
   EventCardSkeleton,
   NestSkeleton,
@@ -124,19 +125,38 @@ describe('the parts', () => {
 });
 
 describe('the flock card, on the Nest and on Past flocks', () => {
-  test('the Nest card: radius 14, 14 by 16 padding, name and venue lines, the 76x20 pill, three overlapping 24px faces and the 64x20 time pill', () => {
+  test('the Nest card (Coming up): radius 12, 14 by 16 padding, flat, the name and its chip, the when-and-where line, three overlapping 28px faces and the going words', () => {
+    // components/nest/NestComingUp.js since 2026-11-06: no border, no shadow,
+    // no venue pin and no time pill.
     const { container } = render(<FlockCardSkeleton />);
     const card = container.firstChild;
-    expect(card.style.borderRadius).toBe('14px');
+    expect(card.style.borderRadius).toBe('12px');
     expect(card.style.padding).toBe('14px 16px');
+    expect(card.style.border).toBe('');
+    expect(card.style.boxShadow).toBe('');
     const bars = Array.from(card.querySelectorAll('.skeleton'));
     expect(bars.map((b) => `${b.style.width}x${b.style.height}`)).toEqual([
-      '55%x18px', '40%x12px', '76pxx20px', '24pxx24px', '24pxx24px', '24pxx24px', '64pxx20px',
+      '55%x19px', '72pxx24px', '50%x13px', '28pxx28px', '28pxx28px', '28pxx28px', '52pxx13px',
     ]);
     const faces = bars.filter((b) => b.style.borderRadius === '50%');
-    expect(faces.map((f) => f.style.marginLeft)).toEqual(['0px', '-6px', '-6px']);
+    expect(faces.map((f) => f.style.marginLeft)).toEqual(['0px', '-8px', '-8px']);
     // No thumbnail: nothing square and big, which is what ListSkeleton drew.
     expect(bars.some((b) => b.style.width === '46px')).toBe(false);
+  });
+
+  test('the Nest\'s top while the list is read: the hero\'s 196px block at radius 16 and a two-row group, under one status', () => {
+    const { container } = render(<NestHeroSkeleton label="Loading your flocks" />);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
+    expect(screen.getByRole('status').textContent).toBe('Loading your flocks');
+    const bars = Array.from(container.querySelectorAll('.skeleton'));
+    expect(bars[0].style.height).toBe('196px');
+    expect(bars[0].style.borderRadius).toBe('16px');
+    // Two rows, each an 18px icon over a title and its line.
+    expect(bars.filter((b) => b.style.width === '18px' && b.style.height === '18px')).toHaveLength(2);
+    // No count of anything: no flock cards to count.
+    expect(bars.some((b) => b.style.width === '76px')).toBe(false);
+    expectShapesHidden(container);
+    expectBusyOnShapesOnly(container);
   });
 
   test('the Past flocks row swaps the time pill for the date pill and the Do it again button', () => {
@@ -222,16 +242,20 @@ describe('the Nest, before anything is known', () => {
     expect(frameSrc).toContain("<div style={{ height: 'var(--safe-top)', backgroundColor: top, flexShrink: 0 }} />");
   });
 
-  test('it draws HomeScreen\'s pieces: the 36px avatar, the 56px Tonight control, the 52px Start a flock, three flock cards and five tabs', () => {
+  test('it draws HomeScreen\'s pieces: the header with the 36px avatar, the 196px hero, the two-row group, a Coming up card and five tabs', () => {
     phone();
     const { container } = render(<NestSkeleton />);
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars.some((b) => b.style.width === '36px' && b.style.borderRadius === '50%')).toBe(true);
-    expect(bars.some((b) => b.style.height === '56px' && b.style.borderRadius === '14px')).toBe(true);
-    expect(bars.some((b) => b.style.height === '52px' && b.style.borderRadius === '14px')).toBe(true);
-    // Three cards' status pills, and the five 24px tab icons the bar draws
+    expect(bars.some((b) => b.style.height === '196px' && b.style.borderRadius === '16px')).toBe(true);
+    expect(bars.filter((b) => b.style.width === '18px' && b.style.height === '18px')).toHaveLength(2);
+    // No Tonight control and no Start a flock slab up top any more, and no
+    // count: the stat line's bar is gone with it.
+    expect(bars.some((b) => b.style.height === '56px')).toBe(false);
+    expect(bars.some((b) => b.style.height === '52px')).toBe(false);
+    // One Coming up card's chip, and the five 24px tab icons the bar draws
     // since it took the app's own icon set (App.js NavIcon).
-    expect(bars.filter((b) => b.style.width === '76px' && b.style.height === '20px')).toHaveLength(3);
+    expect(bars.filter((b) => b.style.width === '72px' && b.style.height === '24px')).toHaveLength(1);
     expect(bars.filter((b) => b.style.width === '24px' && b.style.height === '24px' && b.style.borderRadius === '6px')).toHaveLength(5);
     expectShapesHidden(container);
     expectNoSpinnerOrLoadingText(container);
@@ -369,7 +393,7 @@ describe('the boot paints, index.js then App.js', () => {
     expect(block).not.toMatch(/Loading\.\.\./);
     expect(block).not.toMatch(/linear-gradient/);
     // The dashboard's shapes live with the Nest's now, for index.js to reach.
-    expect(app).toContain("import { SessionBootSkeleton, VenueDashboardSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';");
+    expect(app).toContain("import { SessionBootSkeleton, VenueDashboardSkeleton, NestHeroSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';");
     expect(app).not.toMatch(/const VenueDashboardSkeleton = /);
   });
 
@@ -520,9 +544,9 @@ describe('one home for the skeleton\'s rules', () => {
 });
 
 describe('the Nest list and Past flocks', () => {
-  test('the Nest waits with flock cards, not ListSkeleton\'s thumbnail rows', () => {
+  test('the Nest waits with the hero\'s own shape, not ListSkeleton\'s thumbnail rows', () => {
     const app = codeOnly(read('App.js'));
-    expect(app).toContain('{flocksLoading && flocks.length === 0 && <FlockListSkeleton label="Loading your flocks" />}');
+    expect(app).toContain('{flocksLoading && flocks.length === 0 && <NestHeroSkeleton label="Loading your flocks" />}');
     expect(app).not.toContain('<ListSkeleton label="Loading your flocks"');
   });
 

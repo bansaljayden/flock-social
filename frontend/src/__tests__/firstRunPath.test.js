@@ -243,7 +243,9 @@ describe('a failed list read is not an empty account', () => {
   });
 
   it('the Nest empty state waits for an answer that was not a failure', () => {
-    const nest = codeOnly(region(APP, "<FlockListSkeleton label=\"Loading your flocks\" />", "'No flocks yet'}</h3>"));
+    // The loading shape, the failure and the empty state all stand in the
+    // hero slot since 2026-11-06, in that order.
+    const nest = codeOnly(region(APP, "<NestHeroSkeleton label=\"Loading your flocks\" />", "'No flocks yet'}</h2>"));
     expect(nest).toMatch(/!flocksLoading && flocksError &&/);
     // liveFlocks: the same array the list draws, finished plans excluded.
     expect(nest).toMatch(/!flocksLoading && !flocksError && liveFlocks\.length === 0/);

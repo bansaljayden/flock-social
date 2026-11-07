@@ -108,6 +108,7 @@ describe('the EmptyMark <picture> still serves both densities', () => {
   });
 
   test('the crowd empty state is one of the marks this covers', () => {
-    expect(APP).toContain('<EmptyMark name="crowd" />');
+    // At 100px since 2026-11-06, its cut edges faded into the ground.
+    expect(APP).toMatch(/<EmptyMark name="crowd" height=\{100\} style=\{\{ maskImage: 'linear-gradient\(90deg, transparent 0, #000 9%, #000 91%, transparent\)', WebkitMaskImage: /);
   });
 });

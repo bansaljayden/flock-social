@@ -140,15 +140,40 @@ export function SkeletonStatus({ label = 'Loading', children, style }) {
 }
 
 /**
- * One flock card on the Nest (App.js HomeScreen, the liveFlocks map), or with
- * `past` one row of Past flocks (screens/PastFlocksScreen.js). The card's 14px
- * by 16px padding, radius 14, border and shadow; the name line at --t-title and
- * the venue line under it; the status pill top right; three overlapping 24px
- * faces; and on the Nest the time pill, on Past flocks the date pill and the
- * Do it again button. Three faces is the shape of the stack, not a headcount:
- * a card shows one to four faces and a count, and three reads as neither.
+ * One plan card on the Nest's Coming up list (components/nest/NestComingUp.js),
+ * or with `past` one row of Past flocks (screens/PastFlocksScreen.js).
+ *
+ * The Nest card since 2026-11-06: flat white, radius 12, 14px by 16px, no
+ * border and no shadow; the name at --t-title with the chip top right; the
+ * time and place line under it; three overlapping 28px faces and the "N
+ * going" words. The Past flocks row keeps its own card: radius 14, border and
+ * shadow, the venue line, the status pill, three 24px faces, the date pill and
+ * the Do it again button. Three faces is the shape of the stack, not a
+ * headcount: a card shows one to four faces and a count, and three reads as
+ * neither.
  */
 export function FlockCardSkeleton({ past = false }) {
+  if (!past) {
+    return (
+      <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxSizing: 'border-box' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+          {/* The name, a --t-title line in the display face. */}
+          <SkeletonBar width="55%" height={19} radius={5} style={{ margin: '2px 0' }} />
+          <SkeletonBar width={72} height={24} radius={12} />
+        </div>
+        {/* When and where, a --t-label line. */}
+        <SkeletonBar width="50%" height={13} style={{ margin: '6px 0 0' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '14px' }}>
+          <div style={{ display: 'flex', flexShrink: 0 }}>
+            {[0, 1, 2].map((j) => (
+              <SkeletonCircle key={j} size={28} style={{ boxShadow: '0 0 0 2px var(--bg-card-solid)', marginLeft: j > 0 ? '-8px' : 0 }} />
+            ))}
+          </div>
+          <SkeletonBar width={52} height={13} />
+        </div>
+      </div>
+    );
+  }
   return (
     <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
@@ -158,7 +183,7 @@ export function FlockCardSkeleton({ past = false }) {
           {/* The venue, a --t-meta line 3px under it. */}
           <SkeletonBar width="40%" height={12} style={{ margin: '5px 0 2px' }} />
         </div>
-        <SkeletonBar width={past ? 84 : 76} height={20} radius={10} />
+        <SkeletonBar width={84} height={20} radius={10} />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
@@ -167,11 +192,43 @@ export function FlockCardSkeleton({ past = false }) {
               <SkeletonCircle key={j} size={24} style={{ border: '2px solid var(--bg-card-solid)', marginLeft: j > 0 ? '-6px' : 0 }} />
             ))}
           </div>
-          {past ? <SkeletonBar width={52} height={20} radius={10} /> : null}
+          <SkeletonBar width={52} height={20} radius={10} />
         </div>
-        {past ? <SkeletonBar width={92} height={32} radius={10} /> : <SkeletonBar width={64} height={20} radius={10} />}
+        <SkeletonBar width={92} height={32} radius={10} />
       </div>
     </div>
+  );
+}
+
+/**
+ * The Nest's top, while the list is being read: the hero card's 196px block
+ * at radius 16, then a group of two rows the shape of Needs you (an 18px icon,
+ * a title and its line, 60px a row). It stands where the hero will, so the
+ * page does not jump when the plans land, and it says nothing about how many
+ * plans there are: "0 flocks" while loading was a claim the app could not
+ * make.
+ */
+function NestRowSkeleton({ first }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minHeight: '60px', padding: '0 14px 0 16px', boxSizing: 'border-box', boxShadow: first ? 'none' : 'inset 46px 1px 0 var(--bg-card-solid), inset 0 1px 0 var(--divider)' }}>
+      <SkeletonBar width={18} height={18} radius={5} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <SkeletonBar width="62%" height={15} />
+        <SkeletonBar width="38%" height={12} style={{ marginTop: '6px' }} />
+      </div>
+    </div>
+  );
+}
+
+export function NestHeroSkeleton({ label = 'Loading your flocks' }) {
+  return (
+    <SkeletonStatus label={label} style={{ marginBottom: '28px' }}>
+      <SkeletonBlock height={196} radius={16} />
+      <div aria-hidden="true" style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+        <NestRowSkeleton first />
+        <NestRowSkeleton />
+      </div>
+    </SkeletonStatus>
   );
 }
 
@@ -305,48 +362,36 @@ function BootFrame({ mark, label, top, children }) {
 
 /**
  * THE NEST, BEFORE ANYTHING IS KNOWN. HomeScreen's own layout (App.js, the
- * home-screen-container): the greeting and the "Hey, name" heading, the 36px
- * avatar, the stat line, the 56px Tonight control and its caption, the 52px
- * Start a flock button, the Your Flocks heading with its two small buttons,
- * three flock cards, and the five tabs. It follows the theme through the CSS
- * tokens, which index.js has written onto <html> before the first paint. It
- * sits in BootFrame, which says how it fills a phone and a wide browser.
+ * home-screen-container), as the page reads since 2026-11-06: the day line and
+ * the "Hey, name" title with Start a flock and the 36px avatar beside them,
+ * the hero card's 196px block, a two-row group the shape of Needs you, the
+ * Coming up heading and a card, then the five tabs. No count anywhere. It
+ * follows the theme through the CSS tokens, which index.js has written onto
+ * <html> before the first paint. It sits in BootFrame, which says how it fills
+ * a phone and a wide browser.
  */
 export function NestSkeleton({ label = 'Loading Flock.' }) {
   return (
     <BootFrame mark="nest" label={label} top="var(--bg-primary)">
-      <div aria-hidden="true" style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
-        <div style={{ padding: '14px 16px 12px', flexShrink: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <div>
-              {/* The cycling greeting's 12px line, then the heading at
-                  --t-display on a 1.1 line, 4px under it. */}
-              <SkeletonBar width={96} height={12} />
-              <SkeletonBar width={150} height={26} radius={6} style={{ margin: '5px 0 2px' }} />
-            </div>
+      <div aria-hidden="true" style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)', padding: '0 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 0 18px', flexShrink: 0 }}>
+          <div>
+            {/* The day line at --t-label, then the title at --t-title. */}
+            <SkeletonBar width={104} height={13} style={{ margin: '2px 0' }} />
+            <SkeletonBar width={128} height={19} radius={5} style={{ marginTop: '6px' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            <SkeletonBar width={92} height={13} />
             <SkeletonCircle size={36} />
           </div>
-          {/* The flocks and friends line, 12px over the control. */}
-          <SkeletonBar width={112} height={13} style={{ margin: '2px 0 14px' }} />
-          <SkeletonBlock height={56} radius={14} />
-          {/* "Friends see your answer until it clears at 4 AM.", right aligned. */}
-          <SkeletonBar width={230} height={10} style={{ margin: '8px 4px 2px auto', maxWidth: '80%' }} />
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '4px 16px 16px' }}>
-          <SkeletonBlock height={52} radius={14} style={{ marginBottom: '18px' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
-            <SkeletonBar width={84} height={14} />
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <SkeletonBar width={60} height={26} radius={8} />
-              <SkeletonBar width={102} height={26} radius={8} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <FlockCardSkeleton />
-            <FlockCardSkeleton />
-            <FlockCardSkeleton />
-          </div>
+        <SkeletonBlock height={196} radius={16} />
+        <div style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+          <NestRowSkeleton first />
+          <NestRowSkeleton />
         </div>
+        <SkeletonBar width={84} height={15} style={{ margin: '28px 0 10px' }} />
+        <FlockCardSkeleton />
       </div>
       {/* The tab bar: styles.bottomNav's padding and inset, and each tab's
           24px icon over its label, with no dot under it (App.js BottomNav). */}

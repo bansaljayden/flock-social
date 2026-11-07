@@ -147,7 +147,7 @@ import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components
 // paints as well, so the two hand over without a change of colour, and
 // VenueDashboardSkeleton is the dashboard's shapes, which a cold start into a
 // saved venue mode paints too.
-import { SessionBootSkeleton, VenueDashboardSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';
+import { SessionBootSkeleton, VenueDashboardSkeleton, NestHeroSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -18214,6 +18214,58 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             own margin sits under it, so it needs only a little here. */}
         {emailConfirmLine && <div style={{ marginBottom: '8px' }}>{emailConfirmLine}</div>}
 
+        {/* THE HERO SLOT, BEFORE THE LIST HAS ANSWERED. The hero's own shape
+            and a two-row group stand where the hero and Needs you will, so
+            nothing jumps when the plans land (the old ask card pushed Start
+            a flock down 77px under a thumb reaching for it), and nothing
+            says how many plans there are: "0 flocks" while loading was a
+            claim the app could not make. A read that failed says so here,
+            in the same words: nothing has been cancelled. */}
+        {flocksLoading && flocks.length === 0 && <NestHeroSkeleton label="Loading your flocks" />}
+        {!flocksLoading && flocksError && (
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '16px 18px', marginBottom: '28px' }}>
+            <BirdNote
+              layout="row"
+              size={48}
+              bird={WARM_BIRD}
+              role="alert"
+              title={flocksError}
+              body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
+              action={<button className="hit44" onClick={loadFlocks} style={{ padding: '0 16px', minHeight: '40px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+            />
+          </div>
+        )}
+
+        {/* NOTHING ON YET. "No flocks yet" is a statement about the account,
+            so it waits until the read has answered, and answered without a
+            failure. It starts right under the header with both of its
+            actions in the top half of the screen, where it used to sit in
+            the middle of a box the height of the screen, with a band of
+            empty cream above it. The guest-link sentence answers the worry
+            a first plan has: nobody else needs the app. */}
+        {!flocksLoading && !flocksError && liveFlocks.length === 0 && (
+          <div data-nest-band="empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '4px 0 0', marginBottom: '28px' }}>
+            {/* The painted crowd, its cut edges faded into the ground. */}
+            <EmptyMark name="crowd" height={100} style={{ maskImage: 'linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent)', WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent)' }} />
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.01em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h2>
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45 }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
+            <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              {Icons.plus('var(--btn-primary-fg)', 16)} Start a flock
+            </button>
+            <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              {Icons.userPlus('var(--text-primary)', 16)} Add friends
+            </button>
+            {/* Only when there is something past to see: on a brand-new
+                account it opened an empty list. An active list can be empty
+                while the history is not, and then this is the way to it. */}
+            {flocks.length > 0 && (
+              <button className="hit44" onClick={() => setCurrentScreen('pastFlocks')} style={{ marginTop: '14px', padding: '0 12px', minHeight: '44px', border: 'none', background: 'transparent', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                {Icons.clock('var(--accent-purple-text)', 14)} Past flocks
+              </button>
+            )}
+          </div>
+        )}
+
         {heroFlock && (
           <NestHero
             flock={heroFlock}
@@ -18301,57 +18353,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
         </>)}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
-          {/* "No flocks yet" is a statement about the user's account, so it
-              waits until the fetch has actually answered, AND until the answer
-              was not a failure. A read that never landed says nothing about
-              whether this account has plans in it, and this is the screen where
-              claiming otherwise costs the most. The cards it waits with are
-              the card below, not ListSkeleton's thumbnail row: a flock card
-              has no thumbnail. */}
-          {flocksLoading && flocks.length === 0 && <FlockListSkeleton label="Loading your flocks" />}
-          {!flocksLoading && flocksError && (
-            <div style={{ ...styles.card, marginBottom: '10px' }}>
-              <BirdNote
-                layout="row"
-                size={48}
-                bird={WARM_BIRD}
-                role="alert"
-                title={flocksError}
-                body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
-                action={<button className="hit44 glass-btn glass-navy" onClick={loadFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
-              />
-            </div>
-          )}
-          {!flocksLoading && !flocksError && liveFlocks.length === 0 && (
-            <div style={{
-              /* Full bleed back out of the feed's 16px gutter, and tall enough
-                 to reach the tab bar. This used to be a small dashed card with
-                 ~290px of dead canvas under it. */
-              margin: '0 -16px',
-              padding: '4px 20px 24px',
-              minHeight: 'calc(100vh - 260px)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              textAlign: 'center',
-            }}>
-              <EmptyMark name="crowd" />
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
-              <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', maxWidth: '300px', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', letterSpacing: '-0.1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}>
-                {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
-              </button>
-              <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', maxWidth: '300px', height: '48px', marginTop: '10px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.userPlus('var(--text-primary)', 16)} Add friends
-              </button>
-              {/* An active list can be empty while the history is not; without
-                  this, finished flocks would be unreachable from here. */}
-              <button className="hit44" onClick={() => setCurrentScreen('pastFlocks')} style={{ marginTop: '14px', padding: '8px 12px', borderRadius: '8px', border: 'none', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                {Icons.clock('var(--text-secondary)', 12)} Past flocks
-              </button>
-            </div>
-          )}
           {/* COMING UP. Completed and cancelled plans leave Home: they are
               served by Past and stay reachable from Messages, and without that
               filter the morning after put yesterday's night next to tonight's
