@@ -20,8 +20,21 @@ export const versionLine = ({ native = false, version = null, build = null, buil
 // What to print before iOS has answered, and on the web for good.
 export const initialVersionLine = (native = isNativeShell()) => (native ? 'Flock' : versionLine({ buildId: WEB_BUILD_ID }));
 
-export async function readVersionLine({ native = isNativeShell(), loadApp = () => import('@capacitor/app') } = {}) {
+// Whether the page really sits on Capacitor's native bridge, the one iOS and
+// Android inject before any script runs. A page that only carries a
+// window.Capacitor object (a test, a web preview) has no plugin to answer, and
+// importing @capacitor/app there would rebuild that object as the web's.
+const hasNativeBridge = () => {
+  try {
+    return typeof window !== 'undefined' && !!((window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) || window.androidBridge);
+  } catch {
+    return false;
+  }
+};
+
+export async function readVersionLine({ native = isNativeShell(), bridge = hasNativeBridge(), loadApp = () => import('@capacitor/app') } = {}) {
   if (!native) return versionLine({ buildId: WEB_BUILD_ID });
+  if (!bridge) return 'Flock';
   try {
     const { App } = await loadApp();
     const info = await App.getInfo();

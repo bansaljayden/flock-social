@@ -109,8 +109,12 @@ describe('the words', () => {
   });
   test('iOS is asked through @capacitor/app, and a failed ask says only "Flock"', async () => {
     const loadApp = () => Promise.resolve({ App: { getInfo: () => Promise.resolve({ version: '1.0.1', build: '50', name: 'Flock', id: 'x' }) } });
-    await expect(readVersionLine({ native: true, loadApp })).resolves.toBe('Flock 1.0.1 (50)');
-    await expect(readVersionLine({ native: true, loadApp: () => Promise.reject(new Error('no plugin')) })).resolves.toBe('Flock');
+    await expect(readVersionLine({ native: true, bridge: true, loadApp })).resolves.toBe('Flock 1.0.1 (50)');
+    await expect(readVersionLine({ native: true, bridge: true, loadApp: () => Promise.reject(new Error('no plugin')) })).resolves.toBe('Flock');
+    // A window.Capacitor with no native bridge under it is not asked.
+    const neverLoad = jest.fn(loadApp);
+    await expect(readVersionLine({ native: true, bridge: false, loadApp: neverLoad })).resolves.toBe('Flock');
+    expect(neverLoad).not.toHaveBeenCalled();
   });
 });
 
