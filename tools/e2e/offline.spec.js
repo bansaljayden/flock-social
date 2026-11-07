@@ -823,11 +823,14 @@ test('a flock list that failed to load heals itself once the server is back', as
     status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'Bad gateway' }),
   }));
   await ada.page.reload();
-  await expect(ada.page.getByText(/failing to load/i).first()).toBeVisible({ timeout: 30_000 });
+  // The Nest's note says the fact once ("Your plans are still there.") where
+  // it said what the screen was not ("This is the list failing to load, not
+  // the list being empty."); the note is the same card with the same Try again.
+  await expect(ada.page.getByText(/your plans are still there/i).first()).toBeVisible({ timeout: 30_000 });
 
   await ada.page.unroute('**/api/flocks');
 
   // No clicks. The card leaves on its own or this stays red.
-  await expect(ada.page.getByText(/failing to load/i)).toHaveCount(0, { timeout: 45_000 });
+  await expect(ada.page.getByText(/your plans are still there/i)).toHaveCount(0, { timeout: 45_000 });
   await ada.context.close();
 });

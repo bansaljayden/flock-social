@@ -521,12 +521,16 @@ export default function BirdiePanel({
             )}
 
             {/* Empty state: Birdie, then the greeting, then the chips — one
-                stack in normal flow so nothing overlaps him. */}
+                stack in normal flow so nothing overlaps him. The greeting is
+                in the app's own sentence case and says what to ask about in
+                one plain line; it was "hey, it's Birdie." over "where's
+                good tonight and how packed it gets. ask away.", lower case on
+                a page that is not, ending on a chatbot's sign-off. */}
             {!isInline && aiMessages.length === 0 && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
                 <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
-                <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
-                <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight and how packed it gets. ask away.</p>
+                <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>Hi, I'm Birdie.</p>
+                <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>Ask where to go and how busy it gets.</p>
                 {/* THE AI DISCLOSURE, IN THE PRODUCT.
                     Terms sec.7 and the privacy policy both name Google's Gemini
                     and say Birdie's answers are generated and can be wrong, but
@@ -888,9 +892,12 @@ export default function BirdiePanel({
                   <span style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
                     {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
-                ) : (
+                ) : aiMessages.length > 0 ? (
+                  /* Once there is an answer. Before one, the empty state's
+                     own sentence says it in the Terms' words, and this line
+                     under it said it a second time on one screen. */
                   <span data-birdie-disclosure="" style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-label)', color: 'var(--text-secondary)', fontWeight: '500' }}>Answers are generated and can be wrong.</span>
-                )}
+                ) : null}
               </div>
               )}
             </div>

@@ -266,7 +266,7 @@ describe('the section at rest (NestBirdieSection)', () => {
     expect(standfirst.style.opacity).toBe('');
     // jsdom keeps no var() colour, so the ink is read off the source.
     const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestBirdieSection.js'), 'utf8');
-    expect(src).toMatch(/<p data-birdie-standfirst="" style=\{\{[^}]*fontSize: 'var\(--t-label\)', fontWeight: '500'[^}]*color: 'var\(--text-secondary\)' \}\}>\{BIRDIE_STANDFIRST\}<\/p>/);
+    expect(src).toMatch(/<p data-birdie-standfirst="" style=\{\{[^}]*fontSize: 'var\(--t-label\)', fontWeight: '500'[^}]*color: 'var\(--text-secondary\)' \}\}>\{inline \? BIRDIE_GEMINI_LINE : BIRDIE_STANDFIRST\}<\/p>/);
   });
 
   test('the field: Ask Birdie, what to ask about, Send on the keyboard; focus and Enter go to App.js', () => {

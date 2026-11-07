@@ -152,9 +152,26 @@ test('the box says what to ask about, and the keyboard offers Send', () => {
   expect(box).toHaveAttribute('enterkeyhint', 'send');
 });
 
-test('the empty state line is two things, not a list of three', () => {
-  expect(PANEL).toContain("where's good tonight and how packed it gets. ask away.");
+test('the empty state line is two things, not a list of three, in the app\'s sentence case', () => {
+  // It was "hey, it's Birdie." over "where's good tonight and how packed it
+  // gets. ask away.": lower case on a page that is not, ending on a chatbot's
+  // sign-off.
+  expect(PANEL).toContain(">Hi, I'm Birdie.</p>");
+  expect(PANEL).toContain('>Ask where to go and how busy it gets.</p>');
   expect(PANEL).not.toContain('what your flock is up to');
+  // The words on the screen, not the comment that remembers the old ones.
+  const code = PANEL.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  expect(code).not.toMatch(/ask away|hey, it's Birdie/);
+});
+
+test('one statement per view: before an answer the empty state says it, and the line under the box waits for one', () => {
+  // Both said "can be wrong" on the full chat's empty screen.
+  for (const mode of [{ isAiPanel: true, isAiFullscreen: false }, { isAiPanel: false, isAiFullscreen: true }]) {
+    const { container, unmount } = render(<BirdiePanel {...birdiePanelProps({ ...mode })} />);
+    expect(screen.getAllByText(/can be wrong/)).toHaveLength(1);
+    expect(container.querySelector('[data-birdie-disclosure]')).toBeNull();
+    unmount();
+  }
 });
 
 describe('on the Nest\'s page (inline, 2026-11-06)', () => {
@@ -162,6 +179,17 @@ describe('on the Nest\'s page (inline, 2026-11-06)', () => {
     const { BIRDIE_STANDFIRST } = require('../components/nest/NestBirdieSection');
     expect(BIRDIE_STANDFIRST).toBe(GEMINI);
     expect(PANEL).toContain(`>${GEMINI}</p>`);
+  });
+
+  test('once the consent question or a thread shows, the section keeps the Gemini sentence and leaves "can be wrong" to them', () => {
+    // The consent card ends on "Answers are generated and can be wrong." and
+    // the line under every answer says it too: with the full standfirst over
+    // them the page said it two and three times in one view.
+    const { BIRDIE_STANDFIRST: FULL, BIRDIE_GEMINI_LINE } = require('../components/nest/NestBirdieSection');
+    expect(BIRDIE_GEMINI_LINE).toBe("Birdie is an assistant built on Google's Gemini.");
+    expect(FULL.startsWith(BIRDIE_GEMINI_LINE)).toBe(true);
+    const SECTION = fs.readFileSync(path.join(__dirname, '..', 'components', 'nest', 'NestBirdieSection.js'), 'utf8');
+    expect(SECTION).toContain('{inline ? BIRDIE_GEMINI_LINE : BIRDIE_STANDFIRST}');
   });
 
   test('under the answer, the same line at full strength', () => {

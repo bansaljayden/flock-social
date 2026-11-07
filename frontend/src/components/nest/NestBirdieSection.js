@@ -26,6 +26,12 @@ import { liftNestField, dropNestField } from '../../lib/nestKeyboard';
 // The Terms' own words (BirdiePanel.js's empty state carries the same
 // sentence; birdieDisclosurePinned.test.js holds the two to it).
 export const BIRDIE_STANDFIRST = "Birdie is an assistant built on Google's Gemini. Its answers are generated and can be wrong.";
+// Its first sentence alone, for while the section shows something that says
+// the second itself: the consent question ends on "Answers are generated and
+// can be wrong.", and so does the line under every answer. Said twice on one
+// screen (three times with the consent card) it read as boilerplate pasted
+// in, not something meant.
+export const BIRDIE_GEMINI_LINE = "Birdie is an assistant built on Google's Gemini.";
 
 const textLink = {
   minHeight: '44px',
@@ -66,7 +72,7 @@ export default function NestBirdieSection({
           <button type="button" className="hit44" onClick={onNewChat} disabled={newChatDisabled} style={{ ...textLink, minHeight: '32px', opacity: newChatDisabled ? 0.5 : 1 }}>New chat</button>
         )}
       </div>
-      <p data-birdie-standfirst="" style={{ margin: '4px 0 10px', fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.45, color: 'var(--text-secondary)' }}>{BIRDIE_STANDFIRST}</p>
+      <p data-birdie-standfirst="" style={{ margin: '4px 0 10px', fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.45, color: 'var(--text-secondary)' }}>{inline ? BIRDIE_GEMINI_LINE : BIRDIE_STANDFIRST}</p>
 
       {inline || (
         <>

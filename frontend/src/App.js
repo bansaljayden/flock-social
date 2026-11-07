@@ -176,7 +176,7 @@ import NestPulse from './components/nest/NestPulse';
 import NestComingUp from './components/nest/NestComingUp';
 import NestBirdieSection from './components/nest/NestBirdieSection';
 import NestDock, { NEST_DOCK_EXTRA, contentBelow } from './components/nest/NestDock';
-import { birdieChips } from './lib/birdieChips';
+import { birdieChips, fullChatChips, BUSY_NOW, SPOT_TONIGHT, HEAD_OUT, BILL } from './lib/birdieChips';
 import { pickHero, whenLine, shortWhen, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
@@ -3938,6 +3938,10 @@ const Toggle = ({ on, onChange, label, pendingOn }) => {
 // icons (components/ui/Icons.js) at 24. The bar had its own stroked set, the
 // stock Feather shapes, so it and every screen above it drew in two icon
 // geometries.
+// The glyph beside each of the full chat's suggestions (lib/birdieChips.js
+// fullChatChips), by its words.
+const FULL_CHAT_CHIP_ICON = { [BUSY_NOW]: Icons.activity, [SPOT_TONIGHT]: Icons.mapPin, [HEAD_OUT]: Icons.clock, [BILL]: Icons.dollar };
+
 const NAV_ICONS = { home: Icons.home, explore: Icons.map, calendar: Icons.calendar, chat: Icons.chat, profile: Icons.user };
 const NavIcon = ({ id }) => {
   const color = 'currentColor';
@@ -17726,13 +17730,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // one of the values it reads; everything the screen reads is handed to it as a
   // prop, and the dmDetailProps object in renderScreen below is where.
 
-  // AI Assistant Modal - Data
-  const aiSuggestedQuestions = [
-    { text: "Where's poppin rn?", icon: Icons.activity },
-    { text: "Pick a spot for tonight", icon: Icons.mapPin },
-    { text: "When should we head out?", icon: Icons.clock },
-    { text: "How do I split a bill?", icon: Icons.dollar },
-  ];
+  // AI Assistant Modal - Data. The full chat's suggestions, one tap from the
+  // Nest (Open the full chat, Earlier in this chat), keep the Nest's hour
+  // rule: from midnight to 4 AM only the bill question, never a push to go
+  // out (lib/birdieChips.js fullChatChips). They offered "Pick a spot for
+  // tonight" at 1 AM one tap past a Nest that had gone quiet.
+  const aiSuggestedQuestions = fullChatChips(new Date()).map((text) => ({ text, icon: FULL_CHAT_CHIP_ICON[text] || Icons.search }));
 
 
   // AI Assistant — Expandable Chat (panel / fullscreen)
@@ -18220,7 +18223,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             a flock down 77px under a thumb reaching for it), and nothing
             says how many plans there are: "0 flocks" while loading was a
             claim the app could not make. A read that failed says so here,
-            in the same words: nothing has been cancelled. */}
+            once: the title is the read's own sentence (why, when it is
+            known), and the body is the one fact a person fears, said as a
+            fact. It used to spend three clauses on what the screen was not
+            ("This is the list failing to load, not the list being empty"). */}
         {flocksLoading && flocks.length === 0 && <NestHeroSkeleton label="Loading your flocks" />}
         {!flocksLoading && flocksError && (
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '16px 18px', marginBottom: '28px' }}>
@@ -18230,7 +18236,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               bird={WARM_BIRD}
               role="alert"
               title={flocksError}
-              body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
+              body="Your plans are still there."
               action={<button className="hit44" onClick={loadFlocks} style={{ padding: '0 16px', minHeight: '40px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
             />
           </div>
@@ -18255,7 +18261,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </div>
             </div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.01em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h2>
-            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45 }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45 }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'A flock is a plan with your friends. Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
             <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.plus('var(--btn-primary-fg)', 16)} Start a flock
             </button>
