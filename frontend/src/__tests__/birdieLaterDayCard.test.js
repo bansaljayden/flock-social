@@ -143,7 +143,7 @@ describe('the card', () => {
     expect(strip).toBeTruthy();
     expect(strip.textContent).toBe('Usually busiest 7-9 PM Fri');
     expect(screen.getByRole('img', { name: 'Usually busiest 7-9 PM on Fridays. Not a forecast for that night.' })).toBe(strip);
-    const bars = strip.querySelectorAll('span[aria-hidden="true"] > span');
+    const bars = strip.querySelectorAll('svg[data-usual-bars] rect');
     expect(bars.length).toBe(5);
     expect(strip.querySelectorAll('[data-busiest]').length).toBe(2);
     // No live row, and no number anywhere on the card.
@@ -155,6 +155,85 @@ describe('the card', () => {
     const { container } = render(<BirdiePanel {...panelProps(answer([venue({ crowd: 62, crowd_label: 'Steady', usual: USUAL })]))} />);
     expect(container.querySelector('[data-usual-night]')).toBeNull();
     expect(screen.getByText('62%')).toBeTruthy();
+    expect(screen.getByText('Steady')).toBeTruthy();
+  });
+
+  // The server sends a card about another day with no number for now (THE
+  // CARDS OF A LATER DAY, backend). Should one ever carry it, the row says
+  // whose hour the number is, so under an answer about the 13th "Steady 62%"
+  // cannot read as the 13th's crowd.
+  test('a number for now on a card about another day says it is right now', () => {
+    jest.useFakeTimers().setSystemTime(new Date(2026, 10, 5, 15, 44));
+    try {
+      render(<BirdiePanel {...panelProps(answer([venue({ is_open: null, for_date: '2026-11-13', crowd: 62, crowd_label: 'Steady' })]))} />);
+      expect(screen.getByText('Right now · Steady')).toBeTruthy();
+      expect(screen.getByText('62%')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  // At 320 wide the card leaves the row 159px, and at 390-430 it leaves 209px
+  // (measured in a browser, review 2026-11-06). The words wrap instead of
+  // losing the day or the hours to an ellipsis, and the bars hold one width
+  // however long the venue is open.
+  test('the words wrap and are never cut; the bars are a sparkline of at most 48px', () => {
+    const allNight = {
+      ...USUAL, source: 'category_typical', busiest: { start: 21, end: 22 },
+      hours: Array.from({ length: 24 }, (_, i) => ({ h: (6 + i) % 24, v: 10 + i })),
+    };
+    const { container } = render(<BirdiePanel {...panelProps(answer([venue({ usual: allNight })]))} />);
+    const strip = container.querySelector('[data-usual-night]');
+    expect(strip.textContent).toBe('Places like this: busiest around 9 PM Fri');
+    const words = strip.querySelector(':scope > span');
+    expect(words.style.whiteSpace).not.toBe('nowrap');
+    expect(words.style.textOverflow).not.toBe('ellipsis');
+    expect(words.style.overflow).not.toBe('hidden');
+    const svg = strip.querySelector('svg[data-usual-bars]');
+    expect(Number(svg.getAttribute('width'))).toBe(48);
+    expect(svg.querySelectorAll('rect').length).toBe(24);
+    // A short night keeps 3px bars and 1px gaps: five hours, 20px.
+    const short = render(<BirdiePanel {...panelProps(answer([venue({ usual: USUAL })]))} />);
+    expect(Number(short.container.querySelector('svg[data-usual-bars]').getAttribute('width'))).toBe(20);
+  });
+
+  // jsdom resolves no var() and reads no stylesheet, so the two fills are read
+  // off the card and resolved against index.css's own light and dark blocks.
+  // The busiest bars took --accent-steel's fallback #2d5a87, which is what
+  // --border-mid (the other bars) is in dark: every bar was the same blue.
+  test('the busiest bars and the rest are different colours in light and in dark', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const css = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8');
+    const tokens = (selector) => {
+      const out = {};
+      let at = css.indexOf(`${selector} {`);
+      while (at !== -1) {
+        const body = css.slice(at, css.indexOf('}', at));
+        for (const m of body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+        at = css.indexOf(`${selector} {`, at + 1);
+      }
+      return out;
+    };
+    const light = tokens(':root');
+    const dark = { ...light, ...tokens('[data-theme="dark"]') };
+    const { container } = render(<BirdiePanel {...panelProps(answer([venue({ usual: USUAL })]))} />);
+    const fills = [...container.querySelectorAll('svg[data-usual-bars] rect')]
+      .map((r) => ({ busiest: r.hasAttribute('data-busiest'), fill: r.style.fill }));
+    const busiest = fills.find((f) => f.busiest).fill;
+    const other = fills.find((f) => !f.busiest).fill;
+    const resolve = (value, theme) => {
+      const m = /^var\((--[a-z0-9-]+)\)$/.exec(value);
+      expect(m).toBeTruthy();
+      expect(theme[m[1]]).toBeTruthy();
+      return theme[m[1]].toLowerCase();
+    };
+    for (const theme of [light, dark]) {
+      expect(resolve(busiest, theme)).not.toBe(resolve(other, theme));
+    }
+    expect(resolve(busiest, dark)).toBe('#a9c7e4');
+    expect(resolve(other, dark)).toBe('#2d5a87');
+    expect(resolve(busiest, light)).toBe('#2d5a87');
   });
 
   test('a card about now, with no usual night, is the card it was', () => {

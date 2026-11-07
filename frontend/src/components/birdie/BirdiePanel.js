@@ -104,6 +104,7 @@ import VenueDealLine from '../venue/VenueDealLine';
 import UsualNightStrip from '../venue/UsualNightStrip';
 // What the card's open pill says: right now, later today, or that day.
 import { cardOpenPill } from '../../lib/cardOpenPill';
+import { isLaterDay } from '../../lib/usualNight';
 
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
@@ -634,7 +635,11 @@ export default function BirdiePanel({
                             {crowd != null && (
                               <div style={{ marginTop: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{v.crowd_label || 'Crowd right now'}</span>
+                                  {/* Whose hour the number is, on a card about another
+                                      day (the server sends none there, THE CARDS OF A
+                                      LATER DAY): "Steady" under an answer about the
+                                      13th would read as the 13th's crowd. */}
+                                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{isLaterDay(v.for_date) ? (v.crowd_label ? `Right now · ${v.crowd_label}` : 'Crowd right now') : (v.crowd_label || 'Crowd right now')}</span>
                                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{crowd}%</span>
                                 </div>
                                 <div style={{ width: '100%', height: '4px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '2px', overflow: 'hidden' }}>
