@@ -31,10 +31,15 @@ const path = require('path');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
 const APP = read('App.js');
+// The whole of HomeScreen. It used to end at the scroll box, because the
+// header sat above it; the header scrolls with the page now (2026-11-06), so
+// the slice runs to the end of the screen.
 const HOME = (() => {
   const at = APP.indexOf('const HomeScreen = () => {');
   expect(at).toBeGreaterThan(-1);
-  return APP.slice(at, APP.indexOf('{/* Scrollable Content */}', at));
+  const end = APP.indexOf('// The past flocks screen was declared here', at);
+  expect(end).toBeGreaterThan(at);
+  return APP.slice(at, end);
 })();
 const LINES = HOME.split('\n');
 // Source with its comments taken out, for the checks that a name is not USED:
@@ -167,5 +172,33 @@ describe('nothing the Nest draws overshoots', () => {
     const css = read('index.css');
     expect(css).toMatch(/@media \(hover: hover\) and \(pointer: fine\) \{\s*\.fab-press:hover \{\s*transform: scale\(1\.08\);/);
     expect(css.replace(/@media \(hover: hover\) and \(pointer: fine\) \{\s*\.fab-press:hover/, '')).not.toMatch(/\.fab-press:hover/);
+  });
+});
+
+describe('the header scrolls with the page', () => {
+  test('it is the first thing inside the Nest\'s scroll box', () => {
+    const box = HOME.indexOf('<div ref={feedScroll.home.ref} onScroll={handleScroll}');
+    expect(box).toBeGreaterThan(-1);
+    const after = code(HOME.slice(box));
+    const firstTag = after.slice(after.indexOf('>') + 1).match(/<([a-zA-Z]+)[\s>]/);
+    expect(firstTag[1]).toBe('header');
+    expect(after).toMatch(/<header data-nest-band="header"/);
+  });
+
+  test('"Start a flock" sits in the header, in words, on the gate the old slab had', () => {
+    const header = HOME.slice(HOME.indexOf('<header data-nest-band="header"'), HOME.indexOf('</header>'));
+    expect(header).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(\s*<button type="button" className="hit44" onClick=\{\(\) => setCurrentScreen\('create'\)\}/);
+    expect(header).toMatch(/\{Icons\.plus\('var\(--accent-purple-text\)', 15\)\} Start a flock/);
+    // The full-width navy slab is gone; its class went with it.
+    expect(HOME).not.toMatch(/neo-btn-primary/);
+  });
+
+  test('the top edge draws its hairline only while something is scrolled under it', () => {
+    expect(HOME).toMatch(/<div ref=\{headerRef\} aria-hidden="true" style=\{\{ height: '1px'[^}]*opacity: \(TAB_SCROLL\.get\('home'\) \|\| 0\) > 0 \? 1 : 0, transition: 'opacity 120ms ease' \}\} \/>/);
+    const handler = APP.slice(APP.indexOf('const handleScroll = useCallback((e) => {'), APP.indexOf('}, [feedScroll]);'));
+    expect(handler).toContain('feedScroll.home.onScroll(e);');
+    // A DOM write, made only when the scroll crosses 0: no state, no render.
+    expect(handler).toContain("if ((line.style.opacity === '1') !== under) line.style.opacity = under ? '1' : '0';");
+    expect(handler).not.toMatch(/set[A-Z]\w*\(/);
   });
 });

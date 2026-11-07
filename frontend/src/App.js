@@ -7598,7 +7598,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The tab icon's bounce (a scale to 1.04 and back on every tap) is gone
   // (2026-11-06): the tab bar is tapped more than anything else in the app,
   // and motion on a control used that often stops reading as feedback.
-  // scrollY removed — parallax now uses direct DOM manipulation via headerRef
+  // The hairline under the top of the Nest: the edge content scrolls under.
+  // It shows only while the page is scrolled (handleScroll below), the way an
+  // iOS bar draws its line only when something is beneath it.
   const headerRef = useRef(null);
   /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
      outlives the unmount every navigation causes, and keyed by tab so the Nest,
@@ -7622,7 +7624,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // on each pass, and the restore would fight the user's own scrolling.
     return { home: make('home'), calendar: make('calendar'), chat: make('chat') };
   }, []);
-  const handleScroll = feedScroll.home.onScroll;
+  // The Nest's scroll: remember where it was left, and show the hairline at
+  // the top only while something is under it. A DOM write, and only when the
+  // scroll crosses 0, so a scroll never re-renders the app.
+  const handleScroll = useCallback((e) => {
+    feedScroll.home.onScroll(e);
+    const line = headerRef.current;
+    if (!line) return;
+    const under = e.currentTarget.scrollTop > 0;
+    if ((line.style.opacity === '1') !== under) line.style.opacity = under ? '1' : '0';
+  }, [feedScroll]);
 
   // FLOCK REPLY, PLUMBED FOR REAL on 2026-09-05.
   //
@@ -18068,27 +18079,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-      {/* Compact header */}
-      <div ref={headerRef} style={{
-        padding: '14px 16px 12px',
-        flexShrink: 0,
-        transformOrigin: 'top center',
-      }}>
+      {/* The edge the page scrolls under. A 1px line that shows only while
+          something is beneath it (handleScroll). The header itself scrolls
+          with the page: pinned, it held 197px of a 320x693 screen, 28% of
+          it, on every scroll position. */}
+      <div ref={headerRef} aria-hidden="true" style={{ height: '1px', marginBottom: '-1px', flexShrink: 0, position: 'relative', zIndex: 1, backgroundColor: 'var(--divider)', opacity: (TAB_SCROLL.get('home') || 0) > 0 ? 1 : 0, transition: 'opacity 120ms ease' }} />
+
+      {/* Scrollable Content */}
+      {/* THE LAST PLAN SCROLLS CLEAR OF THE DOCKED BUTTONS (2026-11-03).
+          Birdie and SOS dock 12px above the tab bar, and this list ended 30px
+          above it, so once it scrolled (a fourth plan at 390x844, or three on
+          a shorter phone) the last card's faces sat under Birdie and its time
+          chip under SOS, or under Birdie moved to that corner. The bottom
+          padding is the docked row's height; the list's own 14px margin is the
+          gap above it. */}
+      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `0 16px ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+
         {/* The day, then the name. The name is a title, not the page's
             biggest words: those belong to the plan the person is about to
             go to. Auto night mode says itself in the palette; the NIGHT chip
             that also said it is gone, and the theme setting is under You. */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-          <div>
+        <header data-nest-band="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 0 18px' }}>
+          <div style={{ minWidth: 0 }}>
             <NestDayLine />
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', margin: '2px 0 0', color: 'var(--text-primary)', letterSpacing: '-0.01em', lineHeight: 1.2 }}>Hey, {profileName.split(' ')[0]}</h1>
           </div>
-          <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-              {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
-            </div>
-          </button>
-        </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+            {/* NEW, TOP RIGHT, IN WORDS. Where people look for "make a new
+                one", and labelled, because a bare + is a guess on a first
+                read. It replaced the full-width navy slab that was the
+                heaviest thing on a screen where three plans waited on the
+                reader. Same gate the slab had: while the list loads or once
+                there are plans. With none, the empty state carries its own
+                filled button. */}
+            {(flocksLoading || liveFlocks.length > 0) && (
+              <button type="button" className="hit44" onClick={() => setCurrentScreen('create')} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '0 2px', minHeight: '36px', border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                {Icons.plus('var(--accent-purple-text)', 15)} Start a flock
+              </button>
+            )}
+            <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
+              </div>
+            </button>
+          </div>
+        </header>
 
         {/* NO COUNT ON THE NEST (2026-11-06). "4 flocks · 4 friends" stood
             here. A friend count on the first screen is a popularity number
@@ -18156,17 +18191,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             server's own default expiry (routes/availability.js). */}
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 4px 0', textAlign: 'right' }}>Friends see your answer until it clears at 4 AM.</p>
         </>)}
-      </div>
 
-      {/* Scrollable Content */}
-      {/* THE LAST PLAN SCROLLS CLEAR OF THE DOCKED BUTTONS (2026-11-03).
-          Birdie and SOS dock 12px above the tab bar, and this list ended 30px
-          above it, so once it scrolled (a fourth plan at 390x844, or three on
-          a shorter phone) the last card's faces sat under Birdie and its time
-          chip under SOS, or under Birdie moved to that corner. The bottom
-          padding is the docked row's height; the list's own 14px margin is the
-          gap above it. */}
-      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `4px 16px ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* An unconfirmed address, said before either button below is
             tapped. See checkEmailConfirmed for the rest. The empty state's
@@ -18249,32 +18274,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </button>
         )}
         {(flocksLoading || liveFlocks.length > 0) && (<>
-        {/* Primary action — one full-width hero CTA (login-language: navy on light, cream on dark) */}
-        <button
-          onClick={() => setCurrentScreen('create')}
-          className="hit44 neo-btn-primary"
-          style={{
-            width: '100%',
-            padding: '16px',
-            borderRadius: '14px',
-            border: 'none',
-            background: isDark ? '#f1ede0' : '#1e293b',
-            color: isDark ? '#1e293b' : '#ffffff',
-            fontWeight: '600',
-            fontSize: 'var(--t-body)',
-            cursor: 'pointer',
-            boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
-            letterSpacing: '-0.1px',
-            marginBottom: '18px',
-          }}
-        >
-          {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
-        </button>
-
         {/* Flocks — header row with quiet Past + Add-friends ghosts */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
           <h2 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Your Flocks</h2>
