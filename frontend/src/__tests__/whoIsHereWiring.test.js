@@ -38,7 +38,8 @@ describe('the distance question is asked once, with a number', () => {
        how two surfaces come to disagree about what "near" means, so the
        formatter is now built on the number rather than beside it. */
     expect(appSrc).toMatch(/const distanceKm = useCallback\(/);
-    expect(appSrc).toMatch(/const d = distanceKm\(lat1, lng1, lat2, lng2\);/);
+    // Printed through lib/distance.js formatDistance since 2026-11-06.
+    expect(appSrc).toMatch(/formatDistance\(distanceKm\(lat1, lng1, lat2, lng2\)\)/);
     const haversines = appSrc.match(/Math\.atan2\(Math\.sqrt\(a\), Math\.sqrt\(1 - a\)\)/g) || [];
     expect(haversines).toHaveLength(1);
   });
