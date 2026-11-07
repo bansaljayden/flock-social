@@ -3298,7 +3298,7 @@ function resolvePhotoUrl(url) {
 }
 
 // Venues
-export async function searchVenues(query, location) {
+export async function searchVenues(query, location, { signal } = {}) {
   let endpoint = `/api/venues/search?query=${encodeURIComponent(query)}`;
   if (location) endpoint += `&location=${encodeURIComponent(location)}`;
   // retry: false. This is a GET, but every call bills a paid Google Places
@@ -3306,7 +3306,8 @@ export async function searchVenues(query, location) {
   // 502/503/504 retry would spend two more paid searches on one flaky tap. A
   // failed search surfaces its error once and the user decides whether to try
   // again, the same reason exportMyData and the NFC check-in opt out.
-  const data = await request(endpoint, { retry: false });
+  // `signal` lets the Discover search abort a request a newer one replaced.
+  const data = await request(endpoint, signal ? { retry: false, signal } : { retry: false });
   if (data.venues) {
     data.venues = data.venues.map(v => ({ ...v, photo_url: resolvePhotoUrl(v.photo_url) }));
   }

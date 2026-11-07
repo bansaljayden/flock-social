@@ -198,7 +198,11 @@ export default function ExploreScreen({
   venueLoadError,
   venueQuery,
   venueResults,
+  // The query the rows on screen answer (App.js venueResultsFor), and the
+  // cancel for a search still waiting to go when a row is tapped.
+  venueResultsFor = '',
   venueSearching,
+  cancelPendingVenueSearch,
 }) {
   // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
   // it, open another's, and the first answer used to merge into the second
@@ -243,6 +247,15 @@ export default function ExploreScreen({
   // One ask for every place Discover is showing, the pins and the dropdown
   // rows together. Parked behind another tab it asks nothing, the same gate
   // the map's own marker work keeps.
+  // ROWS FOR AN OLDER QUERY STAY ON SCREEN, DIMMED, WHILE THE NEW ONE IS
+  // ASKED. The dropdown used to swap them for a three-row skeleton the moment
+  // a search went out and back again when it landed, a blink on every pause
+  // in the typing. Now the rows stay, at half strength under a thin progress
+  // line, from the first key until the new answer replaces them, and the
+  // skeleton is only for a list with no rows yet. Still tappable: a row is a
+  // real place whichever query found it.
+  const rowsStale = venueResults.length > 0 && (venueSearching || venueResultsFor !== venueQuery.trim());
+
   const tableSummaries = useTableSummaries(
     [...allVenues.map((v) => v.place_id), ...venueResults.map((v) => v.place_id)],
     tableParty,
@@ -341,15 +354,23 @@ export default function ExploreScreen({
       {/* Search Results Overlay */}
       {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
         <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
+          {/* The search under way, over rows that answer an older query:
+              a 2px line pinned to the top of the list (rowsStale above). */}
+          {rowsStale && (
+            <div className="search-progress" role="status" data-search-progress="true">
+              <span className="sr-only">Searching venues</span>
+            </div>
+          )}
           {/* A list is loading, so it gets the list skeleton — the bare spinner
-              that used to sit here told you nothing about what was coming. */}
-          {venueSearching && (
+              that used to sit here told you nothing about what was coming.
+              Only when there are no rows to keep (rowsStale has why). */}
+          {venueSearching && venueResults.length === 0 && (
             <div style={{ padding: '8px 12px 4px' }}>
               <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
             </div>
           )}
-          {!venueSearching && venueResults.length > 0 && (
-            <div style={{ padding: '4px 12px 8px' }}>
+          {venueResults.length > 0 && (
+            <div aria-busy={rowsStale || undefined} style={{ padding: '4px 12px 8px', opacity: rowsStale ? 0.5 : 1, transition: 'opacity 0.15s ease' }}>
               {/* View All — first thing you see */}
               <button
                 className="hit44 glass-btn glass-navy"
@@ -370,6 +391,9 @@ export default function ExploreScreen({
                     // crowd card when the sheet closed (App.js restoreFocusTo).
                     const box = document.getElementById('search-input');
                     if (box && typeof box.blur === 'function') box.blur();
+                    // A search still waiting to go would reopen this list
+                    // under the sheet; the tap is the answer.
+                    if (typeof cancelPendingVenueSearch === 'function') cancelPendingVenueSearch();
                     setShowSearchDropdown(false);
                     // Pan map to this venue if it's in our markers
                     if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);

@@ -215,6 +215,7 @@ import { withSupportAddress } from './components/ui/SupportAddress';
 import { useStableFn } from './components/chat/useStableFn';
 import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
+import { nextKeyGaps, searchWaitMs } from './lib/searchCadence';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -5671,6 +5672,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const venueQueryRef = useRef('');
   const venueSearchSeqRef = useRef(0);
   useEffect(() => { venueQueryRef.current = venueQuery; }, [venueQuery]);
+  // WHICH QUERY THE ROWS ON SCREEN ANSWER. While the box says something else
+  // (typed since, or a search out for it) the dropdown keeps those rows, dimmed
+  // under a thin progress line, instead of swapping them for a skeleton and
+  // back: that swap was the blink. The skeleton is only for a list that has no
+  // rows yet.
+  const [venueResultsFor, setVenueResultsFor] = useState('');
+  // The rhythm the search box is being typed at (lib/searchCadence.js) and the
+  // request the newest search has out, so a newer one can abort it.
+  const searchKeyGapsRef = useRef([]);
+  const searchLastKeyAtRef = useRef(null);
+  const venueSearchAbortRef = useRef(null);
   // Null until a read lands, so the events screen can tell "nothing is on near
   // you" apart from "we could not ask". See fetchFeaturedEvents.
   const [featuredEvents, setFeaturedEvents] = useState(null);
@@ -6299,10 +6311,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (venueQueryRef.current !== q) return;
     const seq = ++venueSearchSeqRef.current;
     const current = () => seq === venueSearchSeqRef.current && venueQueryRef.current === q;
+    // A search that is no longer the newest is not waited for: its request is
+    // aborted, so its answer neither lands nor holds a connection. The answer
+    // was already ignored (current(), below); this stops waiting on it.
+    if (venueSearchAbortRef.current) { venueSearchAbortRef.current.abort(); venueSearchAbortRef.current = null; }
     // The spinner belongs to the newest search, so an older one still out
     // does not switch it off under this one, and this one switches it off
     // however it ends.
-    if (!q.trim() || q.trim().length < 2) { setVenueResults([]); setVenueSearching(false); return; }
+    if (!q.trim() || q.trim().length < 2) { setVenueResults([]); setVenueResultsFor(''); setVenueSearching(false); return; }
     const enhanced = enhanceQuery(q);
     const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
     const cacheKey = `${enhanced}|${loc || ''}`;
@@ -6313,6 +6329,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const venues = cached.data;
       setVenueSearching(false);
       setVenueResults(venues);
+      setVenueResultsFor(q.trim());
       if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); requestCrowdScores(venues); }
       setShowSearchDropdown(true);
       return;
@@ -6320,14 +6337,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
     setVenueSearching(true);
     setShowSearchDropdown(true);
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    venueSearchAbortRef.current = controller;
     try {
-      const data = await searchVenues(enhanced, loc);
+      const data = await searchVenues(enhanced, loc, controller ? { signal: controller.signal } : undefined);
       const venues = data.venues || [];
       // Cached either way: the answer is right for its query even when that
       // query is no longer the one on screen.
       searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
       if (!current()) return;
       setVenueResults(venues);
+      setVenueResultsFor(q.trim());
       setVenueLoadError('');
       if (venues.length > 0) {
         setAllVenues(venuesToMapPins(venues));
@@ -6342,8 +6362,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setActiveVenue(null);
       }
     } catch (err) {
-      console.error('Venue search error:', err);
+      // An aborted search was replaced by a newer one, which says what it
+      // needs to; so does any search that is no longer the newest.
       if (!current()) return;
+      console.error('Venue search error:', err);
       // Same for a search that failed: the banner says why, the map is not
       // still showing somewhere else.
       setAllVenues([]);
@@ -6355,11 +6377,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // toast stays because it is the one case where the app also wants to
       // interrupt: it is asking the user to stop typing.
       setVenueResults([]);
+      setVenueResultsFor(q.trim());
       setVenueLoadError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
         showToast('Slow down! Try again in a few seconds', 'error');
       }
     } finally {
+      if (venueSearchAbortRef.current === controller) venueSearchAbortRef.current = null;
       // Still the newest search even when the box was cleared under it, and
       // then nothing newer is coming to let go of the spinner.
       if (seq === venueSearchSeqRef.current) setVenueSearching(false);
@@ -6484,8 +6508,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (typeof val === 'string' && val.trim()) setVenueDetailReturnTo(null);
     if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(() => doVenueSearch(val), 800);
+    // The wait follows the typing: three times this person's own gap between
+    // keys, 300 ms at the quickest and the old 800 at the slowest
+    // (lib/searchCadence.js has the measurement behind it). Every search is a
+    // paid Places call, so a pause that is only a slow typist between two
+    // letters must not fire one.
+    const now = Date.now();
+    searchKeyGapsRef.current = nextKeyGaps(searchKeyGapsRef.current, searchLastKeyAtRef.current, now);
+    searchLastKeyAtRef.current = now;
+    searchTimerRef.current = setTimeout(() => doVenueSearch(val), searchWaitMs(searchKeyGapsRef.current));
   }, [doVenueSearch, showSearchResults]);
+
+  // A row tapped while a search was still waiting to go: the tap is the
+  // answer, so the search is not sent. It used to fire after the tap and
+  // reopen the dropdown under the venue sheet, so closing the sheet showed
+  // the list again instead of the map.
+  const cancelPendingVenueSearch = useCallback(() => {
+    if (searchTimerRef.current) { clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+  }, []);
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
@@ -21546,7 +21586,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueLoadError,
     venueQuery,
     venueResults,
+    venueResultsFor,
     venueSearching,
+    cancelPendingVenueSearch,
   };
 
   return (

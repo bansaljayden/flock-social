@@ -37,7 +37,7 @@ test('a failed crowd read ends the skeleton and says so', () => {
 });
 
 test('a search that found nothing or failed clears the last city\'s pins', () => {
-  const start = app.indexOf('const data = await searchVenues(enhanced, loc);');
+  const start = app.indexOf('const data = await searchVenues(enhanced, loc, controller ? { signal: controller.signal } : undefined);');
   const end = app.indexOf('setVenueLoadError(userMessage(err, \'Search is not responding', start);
   expect(end).toBeGreaterThan(start);
   const fn = app.slice(start, end);
