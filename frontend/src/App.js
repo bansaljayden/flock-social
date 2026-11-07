@@ -18095,8 +18095,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // "Locked in" until the sweep completed it the next day; then, from an
     // hour in, the hero asked "How was {venue}?" of a night the reader was
     // most likely still at. Now the Nest asks the morning after, from the
-    // 4 AM roll, and the tap opens the plan screen, where the "How was
-    // {venue}?" card is. No venue, nothing to rate, so no ask.
+    // 4 AM roll until the answer stops counting (noon for an evening plan),
+    // and the tap opens the plan screen, where the "How was {venue}?" card
+    // is. No venue, nothing to rate, so no ask.
     const liveFlocks = flocks
       .filter(f => f.status !== 'completed' && f.status !== 'cancelled')
       .map(f => ({
@@ -18160,7 +18161,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // Last night's plans to rate, read from `flocks` as the money is: the
     // sweep completes a plan 12 hours after its time and the live list lets
     // it go then, so a row read from live plans would have lasted from the
-    // 4 AM roll to about 8 AM. Asked all of the morning-after day.
+    // 4 AM roll to about 8 AM. Asked from the 4 AM roll until the answer
+    // stops counting, noon for an evening plan (lib/planNight.js).
     const nestRateList = flocks.filter((f) => nestAsksHowItWas(f, nestNow) && !submittedFeedback.has(f.id)).map((f) => ({ ...f, askHowItWas: true }));
     // Every other open loop, as rows: the invites, every ask but the one the
     // hero's button carries (its plan's other asks and the asks of the plans

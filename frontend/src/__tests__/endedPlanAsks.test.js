@@ -21,7 +21,7 @@
 //   function), because it is the screen every open lands on. Since 2026-11-06
 //   the answer of a member who had said yes by an hour after the plan began
 //   counts until noon the day after the plan, venue time, and the thanks after
-//   the window says when it shut.
+//   the window says when it shut; the Nest stops asking at that same moment.
 //
 // The screen is rendered for real, from its own parameter list, so a prop
 // added to it arrives here as a function and cannot quietly take a falsy
@@ -327,9 +327,15 @@ describe('the Nest reads the same hour', () => {
   // button asked "How was The Copper Finch?" of a night the reader was most
   // likely still at. A night is judged by its peak and its end, so the Nest
   // leaves the peak alone and asks once the night has rolled over at 4 AM,
-  // for the whole of the next day: lib/planNight.js nestAsksHowItWas, which
+  // until the answer stops counting: lib/planNight.js nestAsksHowItWas, which
   // reads finished plans too, because the sweep completes a plan 12 hours
   // after its time and the live list lets it go at that moment.
+  //
+  // UNTIL NOON, NOT THE NEXT 4 AM (2026-11-07). The server counts a member's
+  // answer until noon the day after the plan's night, or 12 hours after its
+  // start when that is later (backend utils/planReportWindow.js). The Nest
+  // asked until the following 4 AM, so for an 8:33 PM plan its row stood for
+  // 16 hours over an answer the plan screen could only thank as "noted".
   const { nestAsksHowItWas } = require('../lib/planNight');
   const at = (day, h, m = 0) => new Date(2026, 10, day, h, m);
   const trivia = (over = {}) => ({ id: 1, status: 'confirmed', venue: 'The Copper Finch', venueId: 'p1', eventTime: at(6, 20, 33).toISOString(), ...over });
@@ -339,7 +345,9 @@ describe('the Nest reads the same hour', () => {
     ['at 12:40 AM, the same night', at(7, 0, 40), false],
     ['at 3:59 AM', at(7, 3, 59), false],
     ['at 4 AM, the morning after', at(7, 4, 0), true],
-    ['the afternoon after', at(7, 15, 0), true],
+    ['at 11:59 AM, the last minute the answer counts', at(7, 11, 59), true],
+    ['at noon, when the answer stops counting', at(7, 12, 0), false],
+    ['the afternoon after', at(7, 15, 0), false],
     ['the next night after 4 AM', at(8, 4, 0), false],
   ])('a locked-in plan, %s: %s', (_, now, want) => {
     expect(nestAsksHowItWas(trivia(), now)).toBe(want);
@@ -347,6 +355,25 @@ describe('the Nest reads the same hour', () => {
 
   test('a plan the sweep or the host has completed is still asked about the morning after', () => {
     expect(nestAsksHowItWas(trivia({ status: 'completed' }), at(7, 10, 0))).toBe(true);
+    expect(nestAsksHowItWas(trivia({ status: 'completed' }), at(7, 12, 0))).toBe(false);
+  });
+
+  test('a plan after midnight keeps its 12 hours: a 1 AM plan is asked about until 1 PM', () => {
+    // 1 AM Saturday is Friday's night, so its noon comes 11 hours in; the
+    // server's 12-hour floor is the later of the two, and so is the Nest's.
+    const late = trivia({ eventTime: at(7, 1, 0).toISOString() });
+    expect(nestAsksHowItWas(late, at(7, 3, 59))).toBe(false);
+    expect(nestAsksHowItWas(late, at(7, 4, 0))).toBe(true);
+    expect(nestAsksHowItWas(late, at(7, 12, 30))).toBe(true);
+    expect(nestAsksHowItWas(late, at(7, 13, 0))).toBe(false);
+  });
+
+  test('a daytime plan is asked about the next morning, until noon', () => {
+    const brunch = trivia({ eventTime: at(7, 11, 0).toISOString() });
+    expect(nestAsksHowItWas(brunch, at(7, 16, 0))).toBe(false);
+    expect(nestAsksHowItWas(brunch, at(8, 4, 0))).toBe(true);
+    expect(nestAsksHowItWas(brunch, at(8, 11, 59))).toBe(true);
+    expect(nestAsksHowItWas(brunch, at(8, 12, 0))).toBe(false);
   });
 
   test('never a cancelled plan, a plan nobody locked in, or one with no place to rate', () => {

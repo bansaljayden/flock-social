@@ -23,7 +23,7 @@
  * disagree about the hour. It lives in src/lib for the reason lib/billShares.js
  * gives: App.js can import it without pulling a screen into the boot chunk.
  */
-import { nightsBetween } from './nestTime';
+import { nightsBetween, nightKey } from './nestTime';
 
 export const NIGHT_OVER_AFTER_MS = 60 * 60 * 1000;
 
@@ -42,15 +42,41 @@ export const isNightOver = (flock, now = Date.now()) => {
 };
 
 /**
- * WHEN THE NEST ASKS "HOW WAS {VENUE}?" (2026-11-06): THE MORNING AFTER.
+ * WHEN A PLAN MEMBER'S ANSWER STOPS COUNTING, ON THIS PHONE'S CLOCK.
+ *
+ * routes/feedback.js counts a member's "How was it?" answer until noon on the
+ * day after the plan's night, or 12 hours after the plan's start when that is
+ * later (backend utils/planReportWindow.js planReportClosesAtMs, on the
+ * venue's clock). A plan between midnight and 4 AM belongs to the night
+ * before, so its noon can come before its 12 hours: a 1 AM plan counts until
+ * 1 PM. Read here on the phone's clock, which for somebody who was at the
+ * venue is the venue's. Epoch ms, or null for a time that cannot be read.
+ */
+export const HOW_WAS_IT_CLOSE_HOUR = 12;
+export const HOW_WAS_IT_FLOOR_MS = 12 * 60 * 60 * 1000;
+
+export const howWasItClosesAt = (eventTime) => {
+  const night = nightKey(eventTime);
+  if (!night) return null;
+  const [y, m, d] = night.split('-').map(Number);
+  const noonAfter = new Date(y, m - 1, d + 1, HOW_WAS_IT_CLOSE_HOUR).getTime();
+  return Math.max(noonAfter, new Date(eventTime).getTime() + HOW_WAS_IT_FLOOR_MS);
+};
+
+/**
+ * WHEN THE NEST ASKS "HOW WAS {VENUE}?" (2026-11-06): THE MORNING AFTER,
+ * UNTIL THE ANSWER STOPS COUNTING.
  *
  * The plan screen asks from an hour in (isNightOver), for whoever opens the
  * plan. The Nest is what a person sees on every open, and from an hour in
  * its biggest button asked how the night was while the reader was most
  * likely still out in it. A night is remembered by its peak and its end, so
  * the Nest leaves the peak alone and asks once the night has rolled over at
- * 4 AM (lib/nestTime.js, the hour the Tonight answer clears), all through
- * the next day, until the 4 AM after that.
+ * 4 AM (lib/nestTime.js, the hour the Tonight answer clears), and stops when
+ * the answer stops counting (howWasItClosesAt): noon for an evening plan.
+ * It used to ask until the 4 AM after that, so for a 9 PM plan the row stood
+ * for 16 hours after noon over an answer that could only be noted, the ask
+ * after the answer stopped counting that the header of this file is about.
  *
  * Finished plans count: the sweep completes a plan 12 hours after its time
  * (services/flockSweep.js), and the live list lets it go at that moment, so
@@ -63,7 +89,9 @@ export const nestAsksHowItWas = (flock, now = new Date()) => {
   const n = now instanceof Date ? now : new Date(now);
   const ended = flock.status === 'completed' || isNightOver(flock, n.getTime());
   if (!ended) return false;
-  return nightsBetween(flock.eventTime, n) === 1;
+  if (nightsBetween(flock.eventTime, n) !== 1) return false;
+  const closesAt = howWasItClosesAt(flock.eventTime);
+  return closesAt != null && n.getTime() < closesAt;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;

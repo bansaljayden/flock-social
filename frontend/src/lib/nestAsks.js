@@ -55,8 +55,9 @@ export function nestAsks(flocks, voteAsks = []) {
  *   invite  "{host's first name} invited you to {plan}", or "You're invited
  *           to {plan}" when the host's name did not come through
  *   how     "How was {venue}?" for last night's plan, not rated, from the
- *           4 AM roll through that day (lib/planNight.js nestAsksHowItWas);
- *           the hero never asks it, the night still being on
+ *           4 AM roll until the answer stops counting, noon for an evening
+ *           plan (lib/planNight.js nestAsksHowItWas); the hero never asks
+ *           it, the night still being on
  *
  * Invites first: each waits on a reply to a named friend, and behind three
  * asks an invite went fifth, under Show 2 more, at every width. Then

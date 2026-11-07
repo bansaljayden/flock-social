@@ -70,3 +70,54 @@ describe('reportWindowWords', () => {
     }
   });
 });
+
+// When a plan member's "How was it?" answer stops counting, on the phone's
+// clock: the moment the Nest stops asking (nestAsksHowItWas). The server's
+// rule is backend utils/planReportWindow.js planReportClosesAtMs: noon the day
+// after the plan's night on the venue's clock, or 12 hours after the start
+// when that is later. Built from local fields, so the words hold in any zone.
+describe('howWasItClosesAt', () => {
+  const { howWasItClosesAt, HOW_WAS_IT_CLOSE_HOUR, HOW_WAS_IT_FLOOR_MS } = require('../lib/planNight');
+  const at = (day, h, m = 0) => new Date(2026, 10, day, h, m);
+
+  test('an evening plan: noon the next day', () => {
+    expect(howWasItClosesAt(at(6, 20, 33))).toBe(at(7, 12, 0).getTime());
+    expect(howWasItClosesAt(at(6, 23, 59).toISOString())).toBe(at(7, 12, 0).getTime());
+  });
+
+  test('a plan after midnight is the night before\'s, and keeps its 12 hours', () => {
+    // 2 AM Saturday is Friday's night: its noon is Saturday's, 10 hours in,
+    // so the floor wins, as the server's does (a 2 AM plan counts until 2 PM).
+    expect(howWasItClosesAt(at(7, 2, 0))).toBe(at(7, 14, 0).getTime());
+    expect(howWasItClosesAt(at(7, 3, 59))).toBe(at(7, 15, 59).getTime());
+  });
+
+  test('a daytime plan: noon the day after its day', () => {
+    expect(howWasItClosesAt(at(7, 4, 0))).toBe(at(8, 12, 0).getTime());
+    expect(howWasItClosesAt(at(7, 11, 0))).toBe(at(8, 12, 0).getTime());
+  });
+
+  test('nothing readable is no close', () => {
+    for (const bad of [null, undefined, '', 'not a date']) expect(howWasItClosesAt(bad)).toBeNull();
+  });
+
+  test('the same moment the server stops counting, in this zone, at every half hour of three days', () => {
+    // The server reads the venue's zone; a phone at the venue is on it. Here
+    // both read the zone the suite runs in, so the two rules must agree on
+    // every start, across the 4 AM roll and both sides of midnight.
+    const { planReportClosesAtMs, REPORT_CLOSE_HOUR, PLAN_REPORT_FLOOR_MS, NIGHT_ROLL_HOUR } = require('../../../backend/utils/planReportWindow');
+    const { NIGHT_ROLL_HOUR: NEST_ROLL_HOUR } = require('../lib/nestTime');
+    expect(HOW_WAS_IT_CLOSE_HOUR).toBe(REPORT_CLOSE_HOUR);
+    expect(HOW_WAS_IT_FLOOR_MS).toBe(PLAN_REPORT_FLOOR_MS);
+    expect(NEST_ROLL_HOUR).toBe(NIGHT_ROLL_HOUR);
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(typeof zone).toBe('string');
+    const start = at(5, 0, 0).getTime();
+    let checked = 0;
+    for (let t = start; t < start + 3 * 24 * 3600 * 1000; t += 30 * 60 * 1000) {
+      expect([new Date(t).toString(), howWasItClosesAt(new Date(t).toISOString())]).toEqual([new Date(t).toString(), planReportClosesAtMs(t, zone)]);
+      checked += 1;
+    }
+    expect(checked).toBe(144);
+  });
+});
