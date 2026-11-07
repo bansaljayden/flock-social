@@ -18279,6 +18279,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             action={heroAsk}
             onOpen={() => openPlan(heroFlock.id)}
             onAction={() => heroAsk && openNestAsk(heroFlock.id, heroAsk.kind)}
+            onLockMoment={hapticSuccess}
             sameNight={heroNight.map((f) => {
               const ask = askKindFor(f);
               return {

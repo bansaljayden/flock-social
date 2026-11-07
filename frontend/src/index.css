@@ -910,6 +910,26 @@ code {
   box-shadow: 0 1px 2px rgba(30,41,59,0.05);
 }
 
+/* THE LOCK-IN MOMENT on the Nest's hero card (components/nest/NestHero.js),
+   played once per plan per device: the status fades in over 200 ms and the
+   plan's name settles from 0.6 and 4px below over 300 ms. Under Reduce Motion
+   the global rule above stops every animation, and this one fade comes back
+   on its own: a fade is not motion, and the moment keeps a trace of itself. */
+@keyframes nestLockFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes nestLockSettle {
+  from { opacity: 0.6; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.nest-lock-fade { animation: nestLockFade 200ms var(--ease-out) both; }
+.nest-lock-settle { animation: nestLockSettle 300ms var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .nest-lock-fade { animation-duration: 200ms !important; }
+  .nest-lock-settle { animation-name: nestLockFade !important; animation-duration: 200ms !important; }
+}
+
 /* Smooth fade + slide in */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }

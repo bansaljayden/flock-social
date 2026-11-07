@@ -18,10 +18,14 @@
  * Every word comes in as a prop: App.js picks the plan (lib/nestTime.js
  * pickHero) and the words (lib/nestHero.js), and owns every tap.
  */
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import Icons from '../ui/Icons';
 import { FaceRow } from './Face';
 import NestChip from './NestChip';
+import { takeLockMoment } from '../../lib/nestHero';
+import { lsGet, lsSet } from '../../lib/storage';
+
+const LOCK_STORE = { get: lsGet, set: lsSet };
 
 export default function NestHero({
   flock,
@@ -36,8 +40,19 @@ export default function NestHero({
   onOpen,
   onAction,
   sameNight = [],
-  settle = false,
+  onLockMoment,
 }) {
+  // THE ONE DESIGNED MOMENT. The first time this device shows a plan locked
+  // in, the status fades in, the name settles from a little below, and the
+  // phone gives one buzz: the peak of planning a night, marked once
+  // (lib/nestHero.js takeLockMoment). Under Reduce Motion only the fade.
+  const lockId = flock && status && status.key === 'locked' ? flock.id : null;
+  const [settle, setSettle] = useState(false);
+  useEffect(() => {
+    if (lockId == null || !takeLockMoment(lockId, LOCK_STORE)) return;
+    setSettle(true);
+    if (onLockMoment) onLockMoment();
+  }, [lockId]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!flock) return null;
   const titleId = `nest-hero-${flock.id}`;
   const spoken = [flock.name, when, place, status && status.label, `${total} going`].filter(Boolean).join(', ');

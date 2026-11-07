@@ -284,3 +284,17 @@ describe('where each verb is called', () => {
     expect(after.slice(0, buzzAt)).not.toMatch(/\}\s*catch\b/);
   });
 });
+
+describe('the Nest marks a plan locked in, once', () => {
+  // The first time this device shows a hero plan that is locked in, the card
+  // calls the success buzz once (components/nest/NestHero.js, remembered under
+  // nest.lockSeen.<id>; nestLockMoment.test.js renders it and counts).
+  test('App.js hands the hero the success buzz, and the card takes it at most once a plan', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    const hero = fs.readFileSync(path.join(__dirname, '..', 'components', 'nest', 'NestHero.js'), 'utf8');
+    expect(app).toContain('onLockMoment={hapticSuccess}');
+    expect(hero).toMatch(/if \(lockId == null \|\| !takeLockMoment\(lockId, LOCK_STORE\)\) return;\s*setSettle\(true\);\s*if \(onLockMoment\) onLockMoment\(\);/);
+  });
+});

@@ -137,3 +137,29 @@ export function planChip(flock, { needsVote = false, voted = false, ask = null }
   if (flock.status === 'confirmed' || flock.status === 'locked') return { label: 'Locked in', tone: 'neutral', icon: 'check' };
   return null;
 }
+
+/**
+ * THE LOCK-IN MOMENT, once per plan per device.
+ *
+ * The first time this device shows a hero plan that is locked in, the card
+ * gives it one designed moment (a buzz, the status fading in, the name
+ * settling; components/nest/NestHero.js). Never twice: it is remembered under
+ * nest.lockSeen.<id> in localStorage, read and written through lib/storage's
+ * guards, and in memory for the session too, so a browser that refuses
+ * storage still sees it once a session rather than on every render.
+ *
+ * Returns true exactly when the moment should play now, and records it.
+ */
+const lockSeenThisSession = new Set();
+
+export const lockSeenKey = (id) => `nest.lockSeen.${id}`;
+
+export function takeLockMoment(id, store) {
+  if (id == null) return false;
+  const k = String(id);
+  if (lockSeenThisSession.has(k)) return false;
+  lockSeenThisSession.add(k);
+  if (store.get(lockSeenKey(k))) return false;
+  store.set(lockSeenKey(k), '1');
+  return true;
+}
