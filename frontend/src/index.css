@@ -1139,6 +1139,19 @@ button:active, [role="button"]:active {
   .skeleton::after { animation: none; opacity: 0.5; transform: none; }
 }
 
+/* The venue sheet's height (components/overlays/VenueDetailSheet.js). The
+   room is the screen less the status bar, the home indicator and 16px, so the
+   photo and the close button never sit under the clock or the Dynamic Island.
+   100vh first for a WebView without dynamic viewport units; 100dvh where it
+   has them, which follows Safari's toolbar as it shows and hides. */
+.venue-sheet {
+  --venue-sheet-room: calc(100vh - var(--safe-top) - var(--safe-bottom) - 16px);
+  max-height: var(--venue-sheet-room);
+}
+@supports (height: 100dvh) {
+  .venue-sheet { --venue-sheet-room: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px); }
+}
+
 /* The Discover search's progress line: 2px at the top of the dropdown while a
    newer query is asked over rows that answer an older one (ExploreScreen
    rowsStale). Sticky, so it stays in view if the list was scrolled. Under

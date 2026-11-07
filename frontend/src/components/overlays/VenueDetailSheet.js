@@ -275,7 +275,15 @@ const VenueDetailSheet = ({
           googleUrl: httpUrl(venueDetailModal.google_maps_url) || (venueDetailModal.place_id ? `https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}` : null),
         });
         return (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        // CLEAR OF THE STATUS BAR AND THE HOME INDICATOR. The backdrop covers
+        // the whole screen, and the sheet was centred in it at up to 92vh, so
+        // on an iPhone a tall sheet's photo sat behind the clock and the
+        // battery, the close button just under the battery icon: 4% of the
+        // screen is less than the status bar and the Dynamic Island. The
+        // backdrop is padded by the safe areas (index.css --safe-top and
+        // --safe-bottom, 0px off the phone) and the sheet's height stops 16px
+        // short of what is left (index.css .venue-sheet).
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 'var(--safe-top)', paddingBottom: 'var(--safe-bottom)', boxSizing: 'border-box' }}
           onClick={(e) => { if (e.target === e.currentTarget) closeVenueDetail(); }}
         >
           {/* The busiest overlay in the product had no dialog behaviour at
@@ -283,7 +291,7 @@ const VenueDetailSheet = ({
               and Tab walked straight out of the card into the Discover map
               underneath while the card covered the screen. */}
           <DialogBehavior onClose={closeVenueDetail} label={venueDetailModal.name || 'Venue'} />
-          <div style={{ width: '100%', maxWidth: '420px', maxHeight: '92vh', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="venue-sheet" style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             {/* Photo area */}
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
               {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
