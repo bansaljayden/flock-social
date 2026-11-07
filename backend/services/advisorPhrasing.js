@@ -1281,8 +1281,12 @@ function shapeWeek(which) {
     let low = null;
     if (quiet) low = week.find((f) => /LOWEST projected day in the week/.test(String(f.note || ''))) || null;
     else if (top) low = week.find((f) => score(f) === score(week[week.length - 1]));
-    // The ranking's own lead, beaten by a day said beside it.
-    const beaten = quiet ? Boolean(low) && said.some((s) => s < score(low)) : Boolean(top) && said.some((s) => s > score(top));
+    // The ranking's own claims, beaten by a day said beside them: its busiest,
+    // and on the peaks' route its quietest too ("How busy will Saturday and
+    // Sunday be?" on the card's Sunday said "Monday is the quietest, around 9
+    // PM at 48" under today's Sunday at 45; second recheck, 2026-11-06).
+    const beaten = quiet ? Boolean(low) && said.some((s) => s < score(low))
+      : (Boolean(top) && said.some((s) => s > score(top))) || (Boolean(low) && said.some((s) => s < score(low)));
     if (!comparing && !beaten) return null;
     // Days that peak alike keep the order the question asked them, but for
     // the week's own busiest (quietest on the quiet days' route), which goes

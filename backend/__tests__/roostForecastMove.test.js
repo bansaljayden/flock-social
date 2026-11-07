@@ -3919,3 +3919,24 @@ test('next weekend with a day of it past the seven days gives the days the forec
     assert.strictEqual(r.body.mode, 'refusal');
   });
 });
+
+test('a day said beside the card\'s week never stands under a quietest day it beats', async () => {
+  // The card's Sunday, today 45 beside a week whose quietest is Monday 48:
+  // "How busy will Saturday and Sunday be?" said "the busiest day this week
+  // is Saturday ... Sunday peaks around 9 PM at 45 ... Monday is the
+  // quietest, around 9 PM at 48".
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9QuietestBeatenSun0', phrasing: true });
+    draftFor = () => null;
+    for (const intentId of ['peak_hours', 'weekend_outlook']) {
+      route = { mode: 'grounded', intentId };
+      const r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday and Sunday be?' });
+      assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
+        `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
+        '• That makes it the busiest day this week.',
+        '• Sunday peaks around 9 PM at 45.',
+      ], intentId);
+      assert.ok(!/quietest/.test(r.body.text), `${intentId}: ${r.body.text}`);
+    }
+  });
+});
