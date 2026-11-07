@@ -31,6 +31,9 @@ const SCOPE = [
   // api.js's own: a failed search is said in its words only when api.js
   // wrote them for people.
   'userMessage',
+  // Which query the rows answer, and the request a newer search aborts
+  // (discoverSearchKeepsRows.test.js).
+  'setVenueResultsFor', 'venueSearchAbortRef',
 ];
 
 function compileSearch(deps) {
@@ -66,6 +69,8 @@ function harness() {
     setVenueLoadError: (v) => { state.error = v; },
     showToast: () => {},
     userMessage: jest.requireActual('../services/api').userMessage,
+    setVenueResultsFor: (v) => { state.resultsFor = v; },
+    venueSearchAbortRef: { current: null },
   };
   return { box, state, pending, cache, doVenueSearch: compileSearch(deps) };
 }
