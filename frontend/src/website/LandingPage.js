@@ -447,7 +447,8 @@ export default function LandingPage() {
               .lp-hero-copy, not a child, on purpose: everything in there
               rises on arrival, and Apple's badge never moves. The period is
               for a screen reader and the crawler copy; on screen the line
-              break does its job. */}
+              break does its job. Now on the App Store is a blush pill, the
+              second accent, under navy words. */}
           <div className="lp-hero-store">
             <AppStoreBadge className="lp-appstore" />
             <p className="lp-hero-store-note">
@@ -677,9 +678,12 @@ export default function LandingPage() {
           <div className="lp-beat">
             <p className="lp-beat-when">Friday, 7:15 PM</p>
             <h3 id="lp-h-beat-4">“Still in?”</h3>
+            {/* The plan coming together, so its yes wears Flock's second
+                accent, blush, as the app's Locked in does: a fill under navy
+                words (LandingPage.css .lp-blush-mark). */}
             <p>
-              Before the deadline, the chat asks who’s still in. All five say
-              yes, and one last crowd check shows The Copper Finch filling up.
+              Before the deadline, the chat asks who’s still in. All five say{' '}
+              <span className="lp-blush-mark">yes</span>, and one last crowd check shows The Copper Finch filling up.
             </p>
           </div>
           {/* All five said yes, so the flock heads out together, flying off

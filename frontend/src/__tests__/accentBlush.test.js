@@ -15,6 +15,13 @@
  *      the Messages list, the guest page's tag website/GuestInvite.css
  *   6. the envelope's disc on an invite row    components/nest/NestRows.js
  *   7. Plan with them, a pill in Out tonight   components/nest/NestPulse.js
+ *   8. the home page's Now on the App Store,   website/LandingPage.css
+ *      a pill on the hero's navy
+ *   9. the home page's yes in "Still in?",     website/LandingPage.css
+ *      a highlight on that beat's navy band
+ *
+ * On the website (flockcorp.com) blush is those two and the guest page's tag,
+ * each on a navy ground, and nowhere else.
  *
  * On the cream it is 1.30:1, so it is never words or a mark on the page, and
  * it stays off every other button, the links, the tab bar, Birdie, crowd
@@ -504,6 +511,7 @@ const USES = {
     'src/screens/ChatListScreen.js': 1, // Locked in on the Messages list
     'src/screens/FlockDetail.js': 1, // the plan screen's badge
     'src/website/GuestInvite.css': 1, // Locked in on the guest page
+    'src/website/LandingPage.css': 2, // Now on the App Store, the yes in "Still in?"
   },
   onAccent: {
     'src/components/nest/NestHero.js': 2, // the pill's words and check
@@ -513,8 +521,89 @@ const USES = {
     'src/screens/ChatListScreen.js': 1,
     'src/screens/FlockDetail.js': 1,
     'src/website/GuestInvite.css': 1,
+    'src/website/LandingPage.css': 2,
   },
 };
+
+describe('8 and 9: the website, on its navy only', () => {
+  const LP_JS = read('website', 'LandingPage.js');
+  const LP_CSS = strip(read('website', 'LandingPage.css'), 'x.css');
+  const LP = (() => {
+    const at = LP_CSS.indexOf('\n.lp {');
+    const body = LP_CSS.slice(at, LP_CSS.indexOf('\n}', at));
+    return Object.fromEntries([...body.matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  })();
+  const rule = (selector) => {
+    const at = LP_CSS.indexOf(`\n${selector} {`);
+    return at === -1 ? null : LP_CSS.slice(at + 1, LP_CSS.indexOf('\n}', at) + 2);
+  };
+  // The JSX of one <section> of the home page, by a string inside it.
+  const sectionWith = (needle) => {
+    const at = LP_JS.indexOf(needle);
+    const open = LP_JS.lastIndexOf('<section ', at);
+    return { open: LP_JS.slice(open, LP_JS.indexOf('>', open) + 1), body: LP_JS.slice(open, LP_JS.indexOf('</section>', at)) };
+  };
+
+  test('8: Now on the App Store is a blush pill under navy words, its left edge on the date under it', () => {
+    expect(rule('.lp-hero-store-note strong')).toBe([
+      '.lp-hero-store-note strong {',
+      '  display: block;',
+      '  width: fit-content;',
+      '  padding: 2px 10px;',
+      '  border-radius: 999px;',
+      '  background: var(--accent-blush);',
+      '  color: var(--on-accent-blush);',
+      '  font-size: 15px;',
+      '  font-weight: 600;',
+      '}',
+    ].join('\n'));
+    expect(LP_CSS).toContain('.lp-hero-store-date { display: block; margin-top: 5px; font-size: 14px; color: var(--cream-2); }');
+    const hero = sectionWith('<strong>Now on the App Store</strong>');
+    expect(hero.open).toContain('lp-hero lp-on-navy');
+    expect(count(LP_JS, '<strong>Now on the App Store</strong>')).toBe(1);
+  });
+
+  test('9: the yes in "Still in?" is a blush highlight that gives its padding back, on a navy beat', () => {
+    expect(rule('.lp-blush-mark')).toBe([
+      '.lp-blush-mark {',
+      '  padding: 0 3px;',
+      '  margin: 0 -3px;',
+      '  border-radius: 3px;',
+      '  background: var(--accent-blush);',
+      '  color: var(--on-accent-blush);',
+      '  -webkit-box-decoration-break: clone;',
+      '  box-decoration-break: clone;',
+      '}',
+    ].join('\n'));
+    // One mark on the site, the beat's yes, and its words read as before.
+    const files = FILES.filter((f) => f.rel.startsWith('src/website/') && /lp-blush-mark/.test(fs.readFileSync(path.join(FRONTEND, f.rel), 'utf8')));
+    expect(files.map((f) => f.rel).sort()).toEqual(['src/website/LandingPage.css', 'src/website/LandingPage.js']);
+    expect(count(LP_JS, 'className="lp-blush-mark"')).toBe(1);
+    expect(LP_JS).toContain("All five say{' '}\n              <span className=\"lp-blush-mark\">yes</span>, and one last crowd check");
+    const beat = sectionWith('className="lp-blush-mark"');
+    expect(beat.open).toContain('lp-sec-navy lp-on-navy');
+    expect(beat.body).toContain('id="lp-h-beat-4"');
+  });
+
+  test('on the navy the site paints, blush and its navy words clear 9:1 and the fill stands off the ground', () => {
+    expect(LP['--navy']).toBe('#0b1a2e');
+    expect(LP['--hero-lift']).toBe('#1b2a44');
+    // The words on each fill: the token's navy on blush.
+    expect(ratio(NAVY, BLUSH)).toBeGreaterThanOrEqual(9.6);
+    // The fill against the ground around it: the beat's flat navy, and the
+    // hero's lightest stop, the worst case under the pill.
+    expect(ratio(BLUSH, LP['--navy'])).toBeGreaterThanOrEqual(11.5); // 11.51:1
+    expect(ratio(BLUSH, LP['--hero-lift'])).toBeGreaterThanOrEqual(9.4); // 9.46:1
+    // And the paper it never goes on.
+    expect(ratio(BLUSH, LP['--paper'])).toBeLessThan(1.5); // 1.43:1
+  });
+
+  test('no other website page or rule uses it', () => {
+    const site = Object.keys(USES.accent).filter((f) => f.startsWith('src/website/')).sort();
+    expect(site).toEqual(['src/website/GuestInvite.css', 'src/website/LandingPage.css']);
+    expect(Object.keys(tally(/accent-blush/g)).filter((f) => f.startsWith('src/website/')).sort()).toEqual(site);
+  });
+});
 
 describe('blush goes in those places and nowhere else', () => {
   test('the scan reads the app and the site', () => {

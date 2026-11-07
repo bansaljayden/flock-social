@@ -942,9 +942,24 @@ html:has(.lp) body { overflow-x: clip; }
   gap: 14px 16px;
   margin-top: 28px;
 }
+/* Now on the App Store wears Flock's second accent (src/index.css,
+   2026-11-07): a blush pill under the navy that goes on it, 9.63:1, as the
+   app's Locked in is. Blush is only ever a fill or a mark on the navy here:
+   on the paper it is 1.30:1. The pill's left edge lines up with the date
+   under it, so its words sit 10px in; fit-content keeps it the width of its
+   words on a line of its own. */
 .lp-hero-store-note { margin: 0; line-height: 1.35; }
-.lp-hero-store-note strong { display: block; font-size: 16px; font-weight: 600; color: var(--cream); }
-.lp-hero-store-date { display: block; margin-top: 3px; font-size: 14px; color: var(--cream-2); }
+.lp-hero-store-note strong {
+  display: block;
+  width: fit-content;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--accent-blush);
+  color: var(--on-accent-blush);
+  font-size: 15px;
+  font-weight: 600;
+}
+.lp-hero-store-date { display: block; margin-top: 5px; font-size: 14px; color: var(--cream-2); }
 
 /* ---- The reel (HeroReel.js; 2026-10-21, his ask) ----
    One strip drawn twice and moved left by exactly one strip, so the loop has
@@ -2145,6 +2160,19 @@ html:has(.lp) body { overflow-x: clip; }
    paper's ink one, or the phone's own navy would run into the band's. */
 .lp-on-navy .lp-beat-when { color: var(--steel-lift); }
 .lp-on-navy .lp-beat p { color: var(--cream-2); }
+/* "Still in?": the one yes in the beat's line is a blush highlight under
+   navy words (9.63:1), the plan coming together. The 3px each side is given
+   back, so the line breaks where it did; an inline background adds no
+   height, so the line keeps its own. */
+.lp-blush-mark {
+  padding: 0 3px;
+  margin: 0 -3px;
+  border-radius: 3px;
+  background: var(--accent-blush);
+  color: var(--on-accent-blush);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
 .lp-on-navy .lp-beat-note { color: var(--cream-3) !important; }
 .lp-on-navy .lp-fig-cap { color: var(--cream-3); }
 .lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
