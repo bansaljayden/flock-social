@@ -19,12 +19,13 @@
    is worst. components/auth/AuthShell.js already does exactly this and says
    so in its own comment. If a token changes there, change it here too. */
 
-/* The face the h1 waits in, copied from LandingPage.css along with its
-   measurement (that file says how it was matched). Fraunces itself is the
-   app's own face (@font-face in src/index.css). It loads with font-display:
-   swap, so there is a swap, and the matched fallback keeps it from reflowing
-   the headline and pushing the buttons down under the reader's thumb.
-   local() only: this costs nothing on the wire.
+/* The face the h1 waits in, the display cut's (opsz 144), copied from
+   LandingPage.css with its numbers; that file says how each cut's fallback
+   was matched, and websiteDisplayFace.test.js holds the two copies equal.
+   Fraunces itself is the app's own face (@font-face in src/index.css). It
+   loads with font-display: swap, so there is a swap, and the matched
+   fallback keeps it from reflowing the headline and pushing the buttons down
+   under the reader's thumb. local() only: this costs nothing on the wire.
 
    Deliberately NO <link rel=preload> for Fraunces on this route. The landing
    page preloads it because its LCP element is a 72px headline and the
@@ -33,11 +34,11 @@
    fully readable and dimensionally stable without it. The real face arrives
    when it arrives. */
 @font-face {
-  font-family: 'Fraunces Fallback';
+  font-family: 'Fraunces Fallback 144';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 97.77%;
-  ascent-override: 100.24%;
-  descent-override: 26.59%;
+  size-adjust: 95.05%;
+  ascent-override: 103.1%;
+  descent-override: 27.35%;
   line-gap-override: 0%;
   font-weight: 100 900;
 }
@@ -50,7 +51,7 @@
   --edge-cream: rgba(244, 239, 227, 0.30);
   --cream-hi: #fffaf0;
 
-  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display-144: 'Fraunces', 'Fraunces Fallback 144', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -105,15 +106,14 @@
   border-radius: 50%;
 }
 
-/* The display cut, opsz 144, as on the home page's h1, and the cut the
-   fallback above comes closest to: it sets this line about 3% wider, near
-   enough that both faces set the same two lines at every width. Left to
-   opsz auto (29 to 44 here) Fraunces set it 17 to 19% wider than the
-   fallback: three lines where the fallback set two at 157 of 228 widths
-   from 320 to 2560, so the headline grew 31 to 48px when the face arrived
-   and the buttons under it dropped. */
+/* The display cut, opsz 144, as on the home page's h1, waiting in the
+   fallback solved for that cut (above), which sets this line within 0.1% of
+   Fraunces. Left to opsz auto (29 to 44 here) Fraunces set it 17 to 19%
+   wider than the fallback of the time: three lines where the fallback set
+   two at 157 of 228 widths from 320 to 2560, so the headline grew 31 to 48px
+   when the face arrived and the buttons under it dropped. */
 .tap h1 {
-  font-family: var(--font-display);
+  font-family: var(--font-display-144);
   font-weight: 600;
   font-size: clamp(29px, 1.2rem + 3.2vw, 44px);
   font-variation-settings: 'opsz' 144;

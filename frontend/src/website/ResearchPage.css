@@ -38,7 +38,7 @@
   box-shadow: 0 1px 0 var(--rule-cream);
 }
 .rs-paper-kicker {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;
@@ -46,7 +46,7 @@
   margin: 0 0 8px;
 }
 .rs-paper-title {
-  font-family: var(--font-display);
+  font-family: var(--font-display-36);
   font-variation-settings: 'opsz' 36;
   font-weight: 600;
   font-size: clamp(20px, 2.4vw, 26px);
@@ -96,7 +96,7 @@
 .rs-row-label small {
   display: block;
   margin-top: 2px;
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-weight: 400;
   font-size: 13px;
@@ -111,7 +111,7 @@
 .rs-bar.us .rs-val { color: var(--ink); font-weight: 700; }
 .rs-note {
   margin-top: 14px;
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-size: 14px;
   line-height: 1.5;

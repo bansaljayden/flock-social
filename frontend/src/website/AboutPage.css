@@ -19,7 +19,7 @@
 /* A placeholder that says what is coming, in the serif's caption cut, so it
    reads as an editor's note on the page rather than an empty slot. */
 .ab-coming {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-style: italic;
   font-size: 15px !important;
@@ -42,7 +42,7 @@
 .ab-person p + p { margin-top: 8px; }
 .ab-person h3 { margin-bottom: 2px; }
 .ab-role {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-weight: 600;
   color: var(--steel) !important;
@@ -71,7 +71,7 @@
   .ab-milestones li, .ab-honors li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; }
 }
 .ab-when {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-size: 14.5px;
   font-weight: 600;

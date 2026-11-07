@@ -30,7 +30,7 @@
    are variable and self-hosted through src/index.css, the same two files the
    app uses. */
 
-/* ============ the display face, and the fallback it is waited for in ============
+/* ============ the display face, and the fallbacks it is waited for in ============
 
    Fraunces, from src/fonts/Fraunces-var.woff2 (67 KB, @font-face in
    src/index.css, weights 100 to 900, the opsz axis 9 to 144). It is the app's
@@ -40,61 +40,131 @@
 
    OPTICAL SIZE IS THE SYSTEM. The bundled subset kept `opsz` and dropped SOFT
    and WONK (setting 'opsz' 9 against 144 changes the same string from 1014px
-   to 817px; WONK and SOFT change nothing). So one family gives three voices:
+   to 817px; WONK and SOFT change nothing). So one family gives these voices:
 
      opsz 144  h1        the display cut. Thin hairlines, high contrast.
      opsz auto h2        tracks the size, lands mid-range. The reading cut.
+     opsz 36   the /research paper card's title.
      opsz 9    labels    the text cut. Sturdy, slabby, holds at 14px.
 
-   Fraunces is loaded with font-display: swap, so there is a swap, and the
-   face the headlines wait in is matched to it. Measured with canvas
-   measureText at 100px over the hero string:
+   Fraunces is loaded with font-display: swap, so a first visit paints in a
+   fallback and swaps the face in when it lands. Every line the fallback sets
+   differently moves what is under it, so each cut waits in its own local face
+   (Times New Roman, or Liberation Serif or Tinos, which share its widths),
+   scaled with size-adjust to Fraunces 600 as the page sets that cut. Measured
+   in the page, where an element can set an optical size (a canvas cannot),
+   over the site's own lines in each cut, then nudged, where a line on a
+   first screen breaks, until it breaks at the same width in both faces,
+   checked at every pixel:
 
-     Fraunces 600            2696.2px advance
-     Times New Roman 400     2757.8px   (+2.3%)
-     Georgia 600             3492.2px  (+29.5%)
-     Fraunces Fallback       2696.3px   (+0.0%)   <- this block
+     cut                     Fraunces / Times 400        face, size-adjust
+     opsz 144                93.9 to 99.3%, the          'Fraunces Fallback 144'  95.05%
+                             /research h1 94.9%
+     opsz auto, under 480px  h2s at 27 to 31px           'Fraunces Fallback Narrow'  119.5%
+     opsz auto, from 480px   110 to 124%, median 117%    'Fraunces Fallback'  115.6%
+     opsz 36                 114.1% over the title       'Fraunces Fallback 36'  114.65%
+     opsz 9 at 600           112 to 123%, median 120%,   'Fraunces Fallback 9'  118.3%
+                             the paper kicker 118.2%
+     opsz 9 at 400           112 to 118%, median 115%    'Fraunces Fallback 9'  115%
 
-   Times New Roman exists on iOS, macOS, Windows and Android; Liberation and
-   DejaVu cover Linux. Georgia is deliberately NOT in the local() list: it is
-   29.5% wider, so matching it under the same size-adjust would be worse than
-   not trying. `font-weight: 100 900` makes one local face cover the whole
-   range, so Times is used at its regular width for the 600 headings with no
-   synthetic bold, and size-adjust is solved against Times 400: 2696.2 /
-   2757.8 = 97.77%. The overrides are the face's own 0.98 / 0.26 em divided by
-   that figure, because size-adjust scales the overrides too.
+   A whole string's ratio is not each line's: a line of the paper title can
+   run 0.5% wider in Fraunces than the whole title says, so its face sits
+   above the title's own figure. The reading cut has two faces because opsz auto
+   follows the font size, and the h2 ramp runs from 27px on a phone to 46px:
+   the smaller the size, the wider Fraunces sets a line (/ai's first h2 needs
+   119.5% at 334px wide and 115.6% at 792). Below 480px --font-display names
+   the narrow one. The text cut is two faces of one family by weight, so a
+   600 label and a 400 note each get theirs. `font-weight` ranges make each
+   local face cover its whole range, so Times is used at its regular width
+   with no synthetic bold, and the overrides are the face's own 0.98 / 0.26
+   em divided by its size-adjust, because size-adjust scales the overrides
+   too. Georgia is deliberately NOT in the local() lists: it is about 30%
+   wider than Times, so no size-adjust that fits Times fits it.
 
-   A canvas cannot set an optical size, so measureText at 100px read Fraunces
-   at opsz 100, and that is the cut this constant matches. In the page the
-   fallback sets the seven h1s (opsz 144, here and on /tap) 1.4 to 3.0%
-   wider than Fraunces does (median 1.9%), and at 390px every h2 (opsz auto)
-   and label (opsz 9, the paper title 36) 14 to 21% narrower. No one
-   constant fits all of them: re-solved for opsz 144 (95.95%) it closed most
-   of the /research h1 band below but widened the paper-title and /ai h2
-   ones, so it stays. Some text therefore changes its line count when the
-   face arrives. Below the first screen that scores no CLS at load. Checked
-   every 5px, the first screen changes on two pages: /research (the paper
-   card's kicker and title, and the h1 at about 340 to 350px) and /ai (the
-   first h2). With the face held back 1.5 s that is CLS 0.17 to 0.18 on
-   /research at 340 to 350, up to 0.08 between 420 and 480 and under 0.04 at
-   the other widths, and under 0.01 on /ai. Both pages preload the face, so
-   the fallback is rarely painted at all. */
+   Before 2026-11-07 one face, 97.77%, solved with canvas measureText (which
+   reads Fraunces at opsz 100), waited in for all of them: it set the h1s 1.4
+   to 3.0% wider than Fraunces and every h2 and label 14 to 21% narrower.
+   With the face held back 1.5 s, /research's first screen jumped (layout
+   shift 0.17 at 340 to 350px, where the h1 took three lines in the fallback
+   and two in Fraunces, and 0.07 to 0.08 at 430 to 470, where the paper card's
+   kicker and title gained a line) and /ai's first h2 moved at 41 widths.
+   Checked now at every pixel from 320 to 1440 and at 1680, 1920 and 2560,
+   no box on a marketing page's first screen moves when the face arrives,
+   but on /research at 573 to 574px and 633 to 634px, where the paper title
+   sets in two lines in the fallback and three in Fraunces, its second line
+   0.5% wider in Fraunces (layout shift 0.008 and 0.009 with the face held
+   back 1.5 s, against 0.17 before; no phone, tablet or laptop is that
+   wide). A face wide enough to close them moves the break to 429px, a
+   phone's width, so they stay.
+   tools/e2e/website-face-swap.spec.js runs that comparison on the built app,
+   and websiteDisplayFace.test.js holds every rule that sets an optical size
+   to the face solved for it. The pages also preload the face (but /tap,
+   which says why), so the fallback is rarely painted at all. */
+@font-face {
+  font-family: 'Fraunces Fallback 144';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 95.05%;
+  ascent-override: 103.1%;
+  descent-override: 27.35%;
+  line-gap-override: 0%;
+  font-weight: 100 900;
+}
 @font-face {
   font-family: 'Fraunces Fallback';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 97.77%;
-  ascent-override: 100.24%;
-  descent-override: 26.59%;
+  size-adjust: 115.6%;
+  ascent-override: 84.78%;
+  descent-override: 22.49%;
   line-gap-override: 0%;
   font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Fraunces Fallback Narrow';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 119.5%;
+  ascent-override: 82.01%;
+  descent-override: 21.76%;
+  line-gap-override: 0%;
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Fraunces Fallback 36';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 114.65%;
+  ascent-override: 85.48%;
+  descent-override: 22.68%;
+  line-gap-override: 0%;
+  font-weight: 100 900;
+}
+@font-face {
+  font-family: 'Fraunces Fallback 9';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 115%;
+  ascent-override: 85.22%;
+  descent-override: 22.61%;
+  line-gap-override: 0%;
+  font-weight: 100 500;
+}
+@font-face {
+  font-family: 'Fraunces Fallback 9';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 118.3%;
+  ascent-override: 82.84%;
+  descent-override: 21.98%;
+  line-gap-override: 0%;
+  font-weight: 501 900;
 }
 
 .lp {
   /* Scoped to the website: the app's own --font-display (src/index.css) is
-     the same face without the fallback. The metric-matched face comes
-     directly after Fraunces so it is what the h1 and h2 render in for the
-     moment before the real one arrives. */
+     the same face without the fallbacks. Each chain puts the face matched to
+     its cut directly after Fraunces, so it is what that text renders in for
+     the moment before the real one arrives. --font-display is the reading
+     cut (opsz auto); a rule that fixes an optical size names its own chain. */
   --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display-144: 'Fraunces', 'Fraunces Fallback 144', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display-36: 'Fraunces', 'Fraunces Fallback 36', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display-9: 'Fraunces', 'Fraunces Fallback 9', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   --navy: #0b1a2e;
   --navy-deep: #07121f;
@@ -214,6 +284,12 @@
   text-rendering: optimizeLegibility;
   line-height: 1.6;
   overflow-x: clip;
+}
+/* The reading cut on a phone: opsz auto follows the size, and under 480px
+   the h2s are 27 to 31px, where Fraunces sets a line wider than from 480px
+   up (the note at the top of this file). */
+@media (max-width: 479.98px) {
+  .lp { --font-display: 'Fraunces', 'Fraunces Fallback Narrow', 'Iowan Old Style', Georgia, 'Times New Roman', serif; }
 }
 
 .lp *, .lp *::before, .lp *::after { box-sizing: border-box; }
@@ -353,7 +429,7 @@
    headlines run near-neutral. Weight 600, not 700: the serif brackets add their
    own mass. The h1 is the display cut (opsz 144), the h2 tracks its size, and
    the labels further down are the text cut (opsz 9); the note at the top of
-   this file has the three. */
+   this file has the cuts and the fallback each one waits in. */
 .lp h1, .lp h2 {
   font-family: var(--font-display);
   font-weight: 600;
@@ -369,6 +445,7 @@
    line had at 56, so the hero keeps its measure and its two lines. Balanced,
    so the lines come out close in length on a phone too. */
 .lp h1 {
+  font-family: var(--font-display-144);
   font-size: clamp(34px, 1.33rem + 3.96vw, 72px);
   font-variation-settings: 'opsz' 144;
   text-wrap: balance;
@@ -795,7 +872,7 @@ html:has(.lp) body { overflow-x: clip; }
    beneath it is scaffolding. The four that remain are the four the menu links
    to, so the label confirms where the jump landed. */
 .lp-kicker {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-size: 15px;
   font-weight: 600;
@@ -1830,7 +1907,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec.lp-beat-band { padding: clamp(44px, 6vw, 76px) 0; }
 .lp-beat { display: grid; justify-items: center; gap: 6px; max-width: 44rem; margin: 0 auto; text-align: center; }
 .lp-beat-when {
-  font-family: var(--font-display);
+  font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;

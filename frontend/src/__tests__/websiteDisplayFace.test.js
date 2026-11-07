@@ -3,18 +3,29 @@
  *
  * The marketing pages were set in Literata Display from 2026-10-21 to
  * 2026-11-06 and are back on Fraunces. These checks hold the pieces that have
- * to agree for that to be one face and one download:
+ * to agree for that to be one face and one download, and for the pages to
+ * hold still when it arrives:
  *
  * 1. src/index.css declares Fraunces from src/fonts/Fraunces-var.woff2, and the
  *    landing page preloads that same file, so the preload is a hit for the
  *    @font-face and not a second font.
  * 2. The Pages build's preload pattern matches the name webpack gives it.
- * 3. The website's stylesheets put Fraunces first, then the metric-matched
- *    fallback, with the same metrics in every copy, and declare no face file
- *    of their own.
- * 4. The h1, on the home page and on /tap, is the display cut, opsz 144, the
- *    cut the fallback comes closest to.
- * 5. The home hero's h1 runs its own ramp, 32px at 320, so its two lines are
+ * 3. Each optical size the site sets waits in its own metric-matched local
+ *    fallback (LandingPage.css's note has the measurements): the display cut
+ *    (opsz 144, the h1s), the reading cut (opsz auto, the h2s, with a narrow
+ *    face under 480px), the paper title's 36 and the labels' 9 (one face per
+ *    weight). Each chain puts Fraunces first and its face second, each face's
+ *    overrides are Fraunces' own 0.98 / 0.26 em over its size-adjust, /tap's
+ *    copy of the display cut's face is the landing page's, and no website
+ *    stylesheet declares a face file of its own.
+ * 4. Every rule that fixes an optical size names the chain solved for it. One
+ *    face for all of them, matched to opsz 100 by canvas, set the h1s 1.4 to
+ *    3.0% wider than Fraunces and the h2s and labels 14 to 21% narrower, and
+ *    /research's first screen jumped when the face arrived (layout shift 0.17
+ *    at 340 to 350px wide, 0.07 to 0.08 at 430 to 470). The browser check is
+ *    tools/e2e/website-face-swap.spec.js.
+ * 5. The h1, on the home page and on /tap, is the display cut, opsz 144.
+ * 6. The home hero's h1 runs its own ramp, 32px at 320, so its two lines are
  *    two lines in both faces there.
  *
  * This is a FRONTEND test (jest via react-scripts).
@@ -24,20 +35,44 @@ const fs = require('fs');
 const path = require('path');
 
 const FRONTEND = path.join(__dirname, '..', '..');
-const read = (rel) => fs.readFileSync(path.join(FRONTEND, rel), 'utf8');
+const read = (rel) => fs.readFileSync(path.join(FRONTEND, rel), 'utf8').replace(/\r\n/g, '\n');
 const build = require('../../scripts/build-cloudflare');
 
 const WEBSITE = path.join(FRONTEND, 'src', 'website');
 const websiteCss = fs.readdirSync(WEBSITE).filter((f) => f.endsWith('.css'));
+const noComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, '');
 
-const fallbackOf = (css) => {
-  const m = /@font-face\s*\{[^}]*font-family:\s*'Fraunces Fallback';([^}]*)\}/.exec(css);
-  return m && m[1].replace(/\s+/g, ' ').trim();
+// Every @font-face body for one family, comments out, whitespace folded.
+const facesOf = (css, family) => {
+  const out = [];
+  const re = /@font-face\s*\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(noComments(css)))) {
+    if (new RegExp(`font-family:\\s*'${family}';`).test(m[1])) out.push(m[1].replace(/\s+/g, ' ').trim());
+  }
+  return out;
+};
+const descriptor = (body, name) => {
+  const m = new RegExp(`(?:^|;\\s*)${name}:\\s*([^;]+);`).exec(body);
+  return m ? m[1].trim() : null;
 };
 
 // A font file in a url(): quoted either way or bare, with or without a query
 // or a fragment after the name.
 const FACE_FILE = /url\(\s*['"]?[^'")]*\.(?:woff2?|ttf|otf)(?:[?#][^'")]*)?['"]?\s*\)/i;
+
+const LOCAL_SRC = "local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos')";
+const TAIL = "'Iowan Old Style', Georgia, 'Times New Roman', serif";
+// The faces, the size-adjust each was solved at, and the weights each covers
+// (LandingPage.css, the note at the top).
+const FACES = [
+  ['Fraunces Fallback 144', '95.05%', '100 900'],
+  ['Fraunces Fallback', '115.6%', '100 900'],
+  ['Fraunces Fallback Narrow', '119.5%', '100 900'],
+  ['Fraunces Fallback 36', '114.65%', '100 900'],
+  ['Fraunces Fallback 9', '115%', '100 500'],
+  ['Fraunces Fallback 9', '118.3%', '501 900'],
+];
 
 describe('the website sets its display type in Fraunces', () => {
   test('the app declares Fraunces from Fraunces-var.woff2, and the landing page preloads that file', () => {
@@ -50,18 +85,48 @@ describe('the website sets its display type in Fraunces', () => {
     expect(build.DISPLAY_FONT.test('/static/media/HankenGrotesk-var.442fd9727f3ba8156605.woff2')).toBe(false);
   });
 
-  test('the landing page and /tap put Fraunces first, then the matched fallback', () => {
-    const chain = "'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif";
-    expect(read('src/website/LandingPage.css')).toContain(`--font-display: ${chain};`);
-    expect(read('src/website/TapPage.css')).toContain(`--font-display: ${chain};`);
+  test('each cut puts Fraunces first, then the fallback matched to it', () => {
+    const landing = read('src/website/LandingPage.css');
+    for (const [variable, family] of [
+      ['--font-display', 'Fraunces Fallback'],
+      ['--font-display-144', 'Fraunces Fallback 144'],
+      ['--font-display-36', 'Fraunces Fallback 36'],
+      ['--font-display-9', 'Fraunces Fallback 9'],
+    ]) {
+      expect(landing).toContain(`  ${variable}: 'Fraunces', '${family}', ${TAIL};\n`);
+    }
+    // The reading cut on a phone, where its h2s are 27 to 31px.
+    expect(landing).toMatch(new RegExp(`@media \\(max-width: 479\\.98px\\) \\{\\n  \\.lp \\{ --font-display: 'Fraunces', 'Fraunces Fallback Narrow', ${TAIL.replace(/[()]/g, '\\$&')}; \\}\\n\\}`));
+    expect(read('src/website/TapPage.css')).toContain(`  --font-display-144: 'Fraunces', 'Fraunces Fallback 144', ${TAIL};\n`);
   });
 
-  test('the fallback carries the same metrics in both copies', () => {
-    const landing = fallbackOf(read('src/website/LandingPage.css'));
-    expect(landing).toContain('size-adjust: 97.77%;');
-    expect(landing).toContain('ascent-override: 100.24%;');
-    expect(landing).toContain('descent-override: 26.59%;');
-    expect(fallbackOf(read('src/website/TapPage.css'))).toBe(landing);
+  test('each fallback is Times scaled to its cut, its overrides Fraunces\' own 0.98 / 0.26 em over that scale', () => {
+    const landing = read('src/website/LandingPage.css');
+    for (const [family, sizeAdjust, weight] of FACES) {
+      const body = facesOf(landing, family).find((b) => descriptor(b, 'font-weight') === weight);
+      expect(`${family} ${weight}: ${body !== undefined}`).toBe(`${family} ${weight}: true`);
+      expect(descriptor(body, 'src')).toBe(LOCAL_SRC);
+      expect(descriptor(body, 'size-adjust')).toBe(sizeAdjust);
+      const s = parseFloat(sizeAdjust) / 100;
+      const pct = (em) => `${Math.round((em / s) * 10000) / 100}%`;
+      expect(`${family}: ${descriptor(body, 'ascent-override')}`).toBe(`${family}: ${pct(0.98)}`);
+      expect(`${family}: ${descriptor(body, 'descent-override')}`).toBe(`${family}: ${pct(0.26)}`);
+      expect(descriptor(body, 'line-gap-override')).toBe('0%');
+    }
+    // One face per family, but the text cut's two weights.
+    expect(facesOf(landing, 'Fraunces Fallback 9')).toHaveLength(2);
+    for (const family of ['Fraunces Fallback', 'Fraunces Fallback 144', 'Fraunces Fallback Narrow', 'Fraunces Fallback 36']) {
+      expect(`${family}: ${facesOf(landing, family).length}`).toBe(`${family}: 1`);
+    }
+  });
+
+  test('/tap carries the display cut\'s face as the landing page has it, and no other', () => {
+    // The two stylesheets can be in one document after a client-side visit,
+    // and the later of two faces with one name wins, so they must not differ.
+    const landing = facesOf(read('src/website/LandingPage.css'), 'Fraunces Fallback 144');
+    expect(landing).toHaveLength(1);
+    expect(facesOf(read('src/website/TapPage.css'), 'Fraunces Fallback 144')).toEqual(landing);
+    expect(noComments(read('src/website/TapPage.css')).match(/@font-face/g)).toHaveLength(1);
   });
 
   test('the face-file pattern sees a url() however it is written', () => {
@@ -87,20 +152,42 @@ describe('the website sets its display type in Fraunces', () => {
 
   test('no website stylesheet declares a face file of its own', () => {
     for (const file of websiteCss) {
-      const css = fs.readFileSync(path.join(WEBSITE, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      const css = noComments(fs.readFileSync(path.join(WEBSITE, file), 'utf8'));
       expect(`${file}: ${FACE_FILE.test(css)}`).toBe(`${file}: false`);
       expect(`${file}: ${/Literata/.test(css)}`).toBe(`${file}: false`);
     }
   });
 
-  test('both h1s are the display cut, the one the fallback comes closest to', () => {
-    // The fallback sets an h1 within 3% of Fraunces at opsz 144. At opsz auto
-    // the /tap headline set 17 to 19% wider than the fallback and went from
-    // two lines to three when the face arrived.
+  test('every rule that fixes an optical size waits in the fallback solved for that size', () => {
+    // A label at opsz 9 left in the reading cut's chain waits in a face set
+    // for 30px headlines, and gains a line when Fraunces lands.
+    const seen = [];
+    for (const file of websiteCss) {
+      const css = noComments(read(`src/website/${file}`));
+      const re = /([^{}]+)\{([^{}]*font-variation-settings:\s*'opsz'\s*(\d+)[^{}]*)\}/g;
+      let m;
+      while ((m = re.exec(css))) {
+        const [, selector, body, opsz] = m;
+        const family = /font-family:\s*([^;]+);/.exec(body);
+        const where = `${file} ${selector.trim()} (opsz ${opsz})`;
+        expect(`${where}: ${family && family[1].trim()}`).toBe(`${where}: var(--font-display-${opsz})`);
+        seen.push(`${selector.trim()} ${opsz}`);
+      }
+    }
+    // The rules this is about, so a regex that stopped matching cannot pass.
+    for (const rule of ['.lp h1 144', '.tap h1 144', '.lp-kicker 9', '.lp-beat-when 9', '.ab-role 9', '.ab-when 9', '.ab-coming 9', '.rs-paper-kicker 9', '.rs-paper-title 36', '.rs-row-label small 9', '.rs-note 9']) {
+      expect(seen).toContain(rule);
+    }
+  });
+
+  test('both h1s are the display cut, in the display cut\'s chain', () => {
+    // At opsz auto the /tap headline set 17 to 19% wider than the fallback of
+    // the time and went from two lines to three when the face arrived.
     for (const [file, selector] of [['src/website/LandingPage.css', '.lp h1'], ['src/website/TapPage.css', '.tap h1']]) {
       const rule = new RegExp(`\\n${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(read(file));
       expect(`${selector}: ${rule !== null}`).toBe(`${selector}: true`);
       expect(rule[1]).toContain("font-variation-settings: 'opsz' 144;");
+      expect(rule[1]).toContain('font-family: var(--font-display-144);');
     }
   });
 
@@ -109,7 +196,7 @@ describe('the website sets its display type in Fraunces', () => {
     // Fraunces against the 280px a 320px screen leaves it, so the headline
     // took three lines once the face arrived where the fallback held two, and
     // everything under it dropped 35px.
-    const css = read('src/website/LandingPage.css').replace(/\r\n/g, '\n');
+    const css = read('src/website/LandingPage.css');
     const hero = /\n\.lp-hero-copy h1 \{([^}]*)\}/.exec(css);
     expect(hero).not.toBeNull();
     const m = /font-size: clamp\((\d+)px, ([\d.]+)rem \+ ([\d.]+)vw, (\d+)px\);/.exec(hero[1]);
