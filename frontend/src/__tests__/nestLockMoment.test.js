@@ -33,6 +33,32 @@ describe('takeLockMoment', () => {
     jest.isolateModules(() => { expect(require('../lib/nestHero').takeLockMoment(9, store)).toBe(false); });
   });
 
+  test('only while the lock is news: a plan locked days ago is marked seen without a buzz', () => {
+    // On the first launch after an update, a reinstall or a new phone, every
+    // locked hero buzzed unprompted, marking nothing new.
+    jest.isolateModules(() => {
+      const { takeLockMoment, LOCK_MOMENT_FRESH_MS, lockSeenKey } = require('../lib/nestHero');
+      const store = memoryStore();
+      const now = Date.parse('2026-11-06T19:12:00');
+      expect(LOCK_MOMENT_FRESH_MS).toBe(48 * 60 * 60 * 1000);
+      expect(takeLockMoment(21, store, { lockedAt: '2026-11-02T18:00:00', now })).toBe(false);
+      expect(store.get(lockSeenKey(21))).toBe('1');
+      expect(takeLockMoment(22, store, { lockedAt: '2026-11-06T18:40:00', now })).toBe(true);
+      expect(takeLockMoment(23, store, { lockedAt: new Date(now - LOCK_MOMENT_FRESH_MS + 60000).toISOString(), now })).toBe(true);
+      // A lock this device made, or heard by socket, has no stamp yet in the
+      // list it holds: that is the moment, and it plays.
+      expect(takeLockMoment(24, store, { lockedAt: null, now })).toBe(true);
+    });
+  });
+
+  test('the list read carries the stamp to the card', () => {
+    const APP = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+    expect(APP).toContain('confirmedAt: f.confirmed_at || null,');
+    const HERO = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestHero.js'), 'utf8');
+    expect(HERO).toContain('takeLockMoment(lockId, LOCK_STORE, { lockedAt })');
+    expect(HERO).toContain('const lockedAt = flock ? flock.confirmedAt || null : null;');
+  });
+
   test('storage that refuses every read and write still plays it only once a session', () => {
     jest.isolateModules(() => {
       const { takeLockMoment } = require('../lib/nestHero');

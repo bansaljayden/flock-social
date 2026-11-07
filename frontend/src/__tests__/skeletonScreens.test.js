@@ -151,9 +151,9 @@ describe('the flock card, on the Nest and on Past flocks', () => {
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars[0].style.height).toBe('196px');
     expect(bars[0].style.borderRadius).toBe('16px');
-    // The hero's own warm tone, not the cool #e5e7eb every other skeleton
-    // reads: in light mode a grey slab turned into the navy card on every
-    // cold load. jsdom keeps no var() in a style, so the source says it.
+    // The hero's own warm tone, a step toward the navy card it becomes: in
+    // light mode a grey slab turned into the navy card on every cold load.
+    // jsdom keeps no var() in a style, so the source says it.
     expect(SKELETON_SRC).toMatch(/<SkeletonBlock height=\{196\} radius=\{16\} style=\{NEST_HERO_SKELETON\} \/>/);
     expect(SKELETON_SRC).toContain("const NEST_HERO_SKELETON = { background: 'var(--nest-hero-skel)' };");
     // Two rows, each an 18px icon over a title and its line.
@@ -577,4 +577,13 @@ describe('the Nest list and Past flocks', () => {
     expectShapesHidden(container);
     expectNoSpinnerOrLoadingText(container);
   });
+});
+
+test('every skeleton is warm on the cream in light mode, never Tailwind\'s cool gray-200', () => {
+  // #e5e7eb measured 229,231,236 on the warm ground: a grey placeholder from
+  // another app. It is the --bg-inset step of the cream now.
+  const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8');
+  const root = css.slice(css.indexOf(':root {'), css.indexOf('[data-theme="dark"] {'));
+  expect(root).toMatch(/--skeleton-bg: #e7e2d3;/);
+  expect(root).not.toMatch(/--skeleton-bg: #e5e7eb/);
 });

@@ -137,7 +137,8 @@ describe('App.js reads the flags, and the card uses them', () => {
     expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\)\);/);
     expect(home).toMatch(/const nestAskList = nestAsks\(flocks, needsAction\);/);
     expect(home).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: nestRateList, excludeKeys: heroAsk \? \[`\$\{heroAsk\.kind\}:\$\{heroFlock\.id\}`\] : \[\] \}\)/);
-    expect(home).toMatch(/onClick: r\.kind === 'invite' \? \(\) => setCurrentTab\('chat'\) : \(\) => openNestAsk\(r\.flockId, r\.kind\),/);
+    // An invite lands on its own card in Messages (highlightedInviteId).
+    expect(home).toMatch(/onClick: r\.kind === 'invite' \? \(\) => \{ setHighlightedInviteId\(r\.flockId\); setCurrentTab\('chat'\); \} : \(\) => openNestAsk\(r\.flockId, r\.kind\),/);
     expect(home).toMatch(/<NestRows rows=\{nestOpenRows\} \/>/);
     // The hero's button goes to the same places: money to the money sheet,
     // a vote and a night to rate to the plan.

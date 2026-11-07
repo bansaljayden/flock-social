@@ -64,10 +64,16 @@ export function heroStatus(flock) {
  * change a plan's status (routes/flocks.js PUT /:id refuses anyone else).
  * Nothing when the host's name did not come through ('Unknown'), when the
  * reader is the host, or when the vote is not known to be cast.
+ *
+ * `voted` is App.js's iHaveVoted(f): the tally read this session first, then
+ * the list read's i_voted, the same rule the chip and the vote ask use. Read
+ * from the list alone, the note waited for the next list read after a vote
+ * the button had already let go of; without it, the list's own answer.
  */
-export function heroNote(flock, myId) {
+export function heroNote(flock, myId, { voted } = {}) {
   if (!flock || flock.status !== 'voting' || flock.timePassed) return null;
-  if (flock.iVoted !== true) return null;
+  const hasVoted = typeof voted === 'boolean' ? voted : flock.iVoted === true;
+  if (!hasVoted) return null;
   if (myId != null && flock.creatorId != null && String(flock.creatorId) === String(myId)) return null;
   const host = firstName(flock.host);
   if (!host || flock.host === 'Unknown') return null;
@@ -147,7 +153,7 @@ export function planChip(flock, { needsVote = false, voted = false, ask = null }
 }
 
 /**
- * THE LOCK-IN MOMENT, once per plan per device.
+ * THE LOCK-IN MOMENT, once per plan per device, and only near the lock.
  *
  * The first time this device shows a hero plan that is locked in, the card
  * gives it one designed moment (a buzz, the status fading in, the name
@@ -156,18 +162,29 @@ export function planChip(flock, { needsVote = false, voted = false, ask = null }
  * guards, and in memory for the session too, so a browser that refuses
  * storage still sees it once a session rather than on every render.
  *
+ * And only while the lock is news: within LOCK_MOMENT_FRESH_MS of the
+ * plan's confirmed_at (migration 102, sent in GET /api/flocks as part of
+ * f.*). Keyed on "this device has not shown it", the first launch after an
+ * update, a reinstall or a new phone buzzed for a plan locked days before,
+ * unprompted, marking nothing new. A stale lock is recorded as seen without
+ * playing. A lock this device made or heard about by socket has no stamp in
+ * the list it holds, and plays: that is the moment it is about.
+ *
  * Returns true exactly when the moment should play now, and records it.
  */
 const lockSeenThisSession = new Set();
 
 export const lockSeenKey = (id) => `nest.lockSeen.${id}`;
+export const LOCK_MOMENT_FRESH_MS = 48 * 60 * 60 * 1000;
 
-export function takeLockMoment(id, store) {
+export function takeLockMoment(id, store, { lockedAt = null, now = Date.now() } = {}) {
   if (id == null) return false;
   const k = String(id);
   if (lockSeenThisSession.has(k)) return false;
   lockSeenThisSession.add(k);
   if (store.get(lockSeenKey(k))) return false;
   store.set(lockSeenKey(k), '1');
+  const at = lockedAt == null ? NaN : new Date(lockedAt).getTime();
+  if (Number.isFinite(at) && now - at > LOCK_MOMENT_FRESH_MS) return false;
   return true;
 }

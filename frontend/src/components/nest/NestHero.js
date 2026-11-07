@@ -37,6 +37,7 @@ import { FaceRow } from './Face';
 import NestChip from './NestChip';
 import { takeLockMoment } from '../../lib/nestHero';
 import { lsGet, lsSet } from '../../lib/storage';
+import { HERO_GAP } from './nestBand';
 
 const LOCK_STORE = { get: lsGet, set: lsSet };
 
@@ -60,13 +61,15 @@ export default function NestHero({
   onLockMoment,
 }) {
   // THE ONE DESIGNED MOMENT. The first time this device shows a plan locked
-  // in, the status fades in, the name settles from a little below, and the
-  // phone gives one buzz: the peak of planning a night, marked once
-  // (lib/nestHero.js takeLockMoment). Under Reduce Motion only the fade.
+  // in, while the lock is news, the status fades in, the name settles from a
+  // little below, and the phone gives one buzz: the peak of planning a night,
+  // marked once (lib/nestHero.js takeLockMoment, which reads the plan's own
+  // confirmedAt). Under Reduce Motion only the fade.
   const lockId = flock && status && status.key === 'locked' ? flock.id : null;
+  const lockedAt = flock ? flock.confirmedAt || null : null;
   const [settle, setSettle] = useState(false);
   useEffect(() => {
-    if (lockId == null || !takeLockMoment(lockId, LOCK_STORE)) return;
+    if (lockId == null || !takeLockMoment(lockId, LOCK_STORE, { lockedAt })) return;
     setSettle(true);
     if (onLockMoment) onLockMoment();
   }, [lockId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -83,7 +86,7 @@ export default function NestHero({
   // What the open button says after its name, in the order the card shows it.
   const described = [ids.when, status && ids.status, ids.place, ids.names, note && ids.note].filter(Boolean).join(' ');
   return (
-    <div data-nest-band="hero" style={{ marginBottom: '28px' }}>
+    <div data-nest-band="hero" style={{ marginBottom: HERO_GAP }}>
       <section
         data-nest-plan={flock.id}
         aria-labelledby={ids.title}

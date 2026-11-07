@@ -80,13 +80,13 @@ describe('nightKey and nightsBetween', () => {
   });
 });
 
-describe('comingGroups and cardTime', () => {
-  const { comingGroups, cardTime } = require('../lib/nestTime');
+describe('comingGroups, stillOpen, showComingLabels and cardTime', () => {
+  const { comingGroups, stillOpen, showComingLabels, cardTime } = require('../lib/nestTime');
   const FRI = at(6, 19, 12);
   const f = (id, when, extra = {}) => ({ id, eventTime: when ? when.toISOString() : null, ...extra });
   const plain = (s) => String(s).replace(/[\u202f\u00a0]/g, ' ');
 
-  test('a partition of the list in its own order, empty bands left out', () => {
+  test('a partition of the list in its own order, empty bands left out; past nights are Still open, not coming up', () => {
     const list = [
       f(1, at(7, 19, 0)),
       f(2, at(8, 11, 0)),
@@ -102,10 +102,30 @@ describe('comingGroups and cardTime', () => {
       ['This week', [2, 7]],
       ['Later', [3]],
       ['No date yet', [4]],
-      ['Earlier', [5, 6]],
     ]);
-    // Every plan lands in exactly one band.
-    expect(groups.reduce((n, g) => n + g.flocks.length, 0)).toBe(list.length);
+    // "Earlier" sat under the heading "Coming up", past plans under a word
+    // for what is ahead. They are their own band after it.
+    expect(groups.map((g) => g.label)).not.toContain('Earlier');
+    expect(stillOpen(list, FRI).map((x) => x.id)).toEqual([5, 6]);
+    // Every plan lands in exactly one place.
+    expect(groups.reduce((n, g) => n + g.flocks.length, 0) + stillOpen(list, FRI).length).toBe(list.length);
+  });
+
+  test('band labels only when a band holds two or more plans, or there are four or more in all', () => {
+    // Three labels each over one card made two levels of heading for three
+    // plans.
+    const one = (label, n) => ({ label, flocks: Array.from({ length: n }, (_, i) => f(i, null)) });
+    expect(showComingLabels([one('Tomorrow', 1), one('This week', 1), one('Later', 1)])).toBe(false);
+    expect(showComingLabels([one('Tomorrow', 1)])).toBe(false);
+    expect(showComingLabels([one('This week', 2)])).toBe(true);
+    expect(showComingLabels([one('Tomorrow', 1), one('This week', 1), one('Later', 1), one('No date yet', 1)])).toBe(true);
+    expect(showComingLabels([])).toBe(false);
+  });
+
+  test('with no label over it, a card says its whole day in the rows\' own words', () => {
+    expect(plain(cardTime(at(7, 19, 0), 'Tomorrow', FRI, { labelled: false }))).toBe('Tomorrow 7:00 PM');
+    expect(plain(cardTime(at(8, 11, 0), 'This week', FRI, { labelled: false }))).toBe('Sun 11:00 AM');
+    expect(plain(cardTime(at(21, 20, 0), 'Later', FRI, { labelled: false }))).toBe('Nov 21, 8:00 PM');
   });
 
   test('a plan after midnight is still that night', () => {
@@ -119,7 +139,7 @@ describe('comingGroups and cardTime', () => {
     expect(cardTime(null, 'No date yet', FRI)).toBe('');
   });
 
-  test("under Earlier the card says which night in the rows' own words, never a weekday weeks old", () => {
+  test("a Still open card says which night in the rows' own words, never a weekday weeks old", () => {
     expect(plain(cardTime(at(5, 20, 0), 'Earlier', FRI))).toBe('Last night 8:00 PM');
     expect(plain(cardTime(at(4, 11, 0), 'Earlier', FRI))).toBe('Nov 4, 11:00 AM');
     expect(plain(cardTime(at(1, 20, 0), 'Earlier', at(20, 19, 0)))).toBe('Nov 1, 8:00 PM');

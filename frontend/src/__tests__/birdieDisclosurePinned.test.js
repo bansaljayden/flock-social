@@ -227,8 +227,13 @@ describe('on the Nest\'s page (inline, 2026-11-06)', () => {
     // 278px in a 350px column, left-aligned with a ragged right edge, read
     // as unfinished once the answer was part of the page.
     const { container, unmount } = inlineAnswer();
-    const card = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: 14px"]');
+    const card = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="max-width"]');
     expect(card.style.maxWidth).toBe('none');
+    // And flat there, the Nest's own card: no border, no shadow, radius 12.
+    // The sheets keep their raised card.
+    expect(card.style.borderRadius).toBe('12px');
+    expect(card.style.boxShadow).toBe('none');
+    expect(card.style.border === 'none' || card.style.borderStyle === 'none' || card.style.borderWidth === '').toBe(true);
     unmount();
     render(<BirdiePanel {...birdiePanelProps({ isAiPanel: true, isAiFullscreen: false, aiMessages: [{ role: 'user', text: 'where to' }, { role: 'assistant', text: 'Larkspur Tap, then Juniper Bowl.', venues }] })} />);
     const docked = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: 14px"]');

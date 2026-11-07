@@ -9,11 +9,15 @@
  *   - SOS, exactly as on every other tab: SafetyButton() is unchanged, the
  *     same red disc at the same docked height, on whichever side the person
  *     dragged it to. It rests inside the strip now instead of over a card.
- *   - "Ask Birdie", on the side opposite SOS, shown only once the whole Birdie
- *     section has scrolled above the page, so at rest the strip holds SOS
- *     alone and the section's heading is never doubled by the pill. A tap
- *     focuses the field in the tap itself (iOS raises the keyboard only for a
- *     focus inside a user gesture) and brings the section into view.
+ *   - "Ask Birdie", on the side opposite SOS, shown while no part of the
+ *     Birdie section is on screen. For a person with plans the section comes
+ *     after them, at the end of the page, so at rest the pill is the way to
+ *     Birdie from the top, and it goes the moment any of the section scrolls
+ *     into view, so the section's own "Ask Birdie" heading and the pill are
+ *     never on screen together. A tap focuses the field in the tap itself
+ *     (iOS raises the keyboard only for a focus inside a user gesture) and
+ *     brings the section into view; before the account has said yes to
+ *     Gemini it asks for that instead, without touching the field.
  *
  * The strip is always there on the Nest, at one height, so nothing jumps. A
  * hairline along its top shows only while content is scrolled beneath it.
@@ -39,41 +43,62 @@ export function contentBelow(box) {
   return el.getBoundingClientRect().bottom > box.getBoundingClientRect().bottom + 1;
 }
 
-export default function NestDock({ height, sosSide, getScroller, inputRef, isDark, watchKey, lineRef }) {
+export default function NestDock({ height, sosSide, getScroller, inputRef, isDark, band, watchKey, lineRef, consented = true, onAskConsent }) {
   const [askShown, setAskShown] = useState(false);
 
-  // Shown only once the whole Birdie section has scrolled above the page: a
-  // way back up for someone who went past it. It used to show while the
-  // section's field was under half on screen, which at rest, with the section
-  // just below the fold, put the section's own "Ask Birdie" heading about
-  // 50px over this pill. Re-armed when the section might be a different
-  // element: watchKey says when.
+  // Shown while no part of the Birdie section is on screen. Armed on the
+  // section's own element, which App.js hands in through a callback ref, so
+  // a section that is replaced (the page moves it, the Nest remounts) is
+  // watched again at once: armed on a key, a section that changed in the
+  // same commit as something else was never watched, and the pill never
+  // came for it.
   useEffect(() => {
     const root = getScroller ? getScroller() : null;
-    const band = root && root.querySelector('[data-nest-band="birdie"]');
     if (!root || !band || typeof IntersectionObserver === 'undefined') { setAskShown(false); return undefined; }
     const io = new IntersectionObserver(([entry]) => {
-      const above = !entry.isIntersecting && !!entry.rootBounds && entry.boundingClientRect.bottom <= entry.rootBounds.top;
-      setAskShown(above);
+      setAskShown(!entry.isIntersecting);
     }, { root, threshold: 0 });
     io.observe(band);
     return () => io.disconnect();
-  }, [watchKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [band]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The hairline: drawn while there is content under the strip.
+  // The hairline: drawn while there is content under the strip. The scroll
+  // handler in App.js moves it as the page scrolls; this keeps it right when
+  // the page changes height without a scroll (the list lands, a row folds, an
+  // answer arrives), from a ResizeObserver on the box and on each band in it.
+  // It used to run after every render of the app, reading the box's geometry
+  // each time.
   useEffect(() => {
     const root = getScroller ? getScroller() : null;
     const line = lineRef && lineRef.current;
-    if (!root || !line) return;
-    line.style.opacity = contentBelow(root) ? '1' : '0';
-  });
+    if (!root || !line) return undefined;
+    const update = () => { line.style.opacity = contentBelow(root) ? '1' : '0'; };
+    update();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(update);
+    const watch = () => {
+      ro.disconnect();
+      ro.observe(root);
+      Array.from(root.children).forEach((child) => ro.observe(child));
+    };
+    watch();
+    const mo = typeof MutationObserver !== 'undefined' ? new MutationObserver(watch) : null;
+    if (mo) mo.observe(root, { childList: true });
+    return () => { ro.disconnect(); if (mo) mo.disconnect(); };
+  }, [watchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const ask = () => {
-    // Focus first, inside the tap.
-    const box = inputRef && inputRef.current;
-    if (box && typeof box.focus === 'function') box.focus({ preventScroll: true });
     const root = getScroller ? getScroller() : null;
-    const section = root && root.querySelector('[data-nest-band="birdie"]');
+    const section = band || (root && root.querySelector('[data-nest-band="birdie"]'));
+    if (consented) {
+      // Focus first, inside the tap.
+      const box = inputRef && inputRef.current;
+      if (box && typeof box.focus === 'function') box.focus({ preventScroll: true });
+    } else if (onAskConsent) {
+      // The consent question takes the field's place; nothing is focused, so
+      // no keyboard starts to rise over a field that is about to go.
+      onAskConsent();
+    }
     if (section && typeof section.scrollIntoView === 'function') {
       let still = false;
       try { still = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { still = false; }

@@ -120,9 +120,16 @@ describe('where it is used, and where it is not', () => {
     expect(homeEnd).toBeGreaterThan(0);
     const body = home.slice(0, homeEnd);
     expect(body).toContain("'No flocks yet'");
-    // The empty state's button and the list's own link, and since 2026-11-06
-    // the row an account with plans but no friends gets under Out tonight?.
-    expect((body.match(/onClick=\{openAddFriendsFromNest\}/g) || []).length).toBeGreaterThanOrEqual(2);
+    // Exactly three buttons and one band link, so a door removed (or one
+    // added around the opener) is noticed:
+    //   1. the empty state's Add friends button (no plans yet);
+    //   2. the row an account with plans but no friends gets in Out
+    //      tonight?'s place;
+    //   3. the footer's link, drawn when the row is not;
+    //   and Out tonight?'s heading link, for a person known to have friends.
+    expect((body.match(/onClick=\{openAddFriendsFromNest\}/g) || []).length).toBe(3);
+    expect((body.match(/onAddFriends=\{friendCount > 0 \? openAddFriendsFromNest : undefined\}/g) || []).length).toBe(1);
+    expect((body.match(/openAddFriendsFromNest/g) || []).length).toBe(4);
     expect(body).not.toContain("setCurrentScreen('addFriends')");
   });
 

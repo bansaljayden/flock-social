@@ -117,6 +117,20 @@ import UsualNightStrip from '../venue/UsualNightStrip';
 import { cardOpenPill } from '../../lib/cardOpenPill';
 import { isLaterDay } from '../../lib/usualNight';
 
+// The consent question's two answers, drawn the same: neither is the
+// filled one (the consent block, below, says why).
+const consentChoice = {
+  flex: 1,
+  minHeight: '44px',
+  padding: '10px',
+  borderRadius: '10px',
+  border: 'none',
+  background: 'var(--bg-inset)',
+  color: 'var(--text-primary)',
+  fontSize: 'var(--t-meta)',
+  fontWeight: '600',
+};
+
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
 function chirpsBackText(aiResetsAt) {
@@ -207,6 +221,10 @@ export default function BirdiePanel({
   // left with a ragged right edge, read as unfinished. Only the width of the
   // set is decided here; what is inside a card is the venue card's own.
   const venueCardMax = isInline ? 'none' : '280px';
+  // And in the page they are flat, the Nest's own card: no border, no
+  // shadow, its 12px radius. In the chat's panel and full screen they keep
+  // the sheet's raised card.
+  const venueCardSurface = isInline ? { borderRadius: '12px', border: 'none', boxShadow: 'none' } : null;
   // Inline shows the latest exchange: the reader's last question and what
   // came after it. Older turns are a tap away in the full screen.
   let inlineFrom = 0;
@@ -220,6 +238,18 @@ export default function BirdiePanel({
   const readerAwayRef = useRef(false);
   const threadAutoTopRef = useRef(null);
   const threadModeRef = useRef(null);
+  // The consent question, inline. When it replaces what had focus (the
+  // Nest's field asked by Enter, a suggestion, the strip's pill), focus would
+  // fall to the top of the page; it lands on the question instead, without a
+  // scroll and without a keyboard (a group, not a field).
+  const consentRef = useRef(null);
+  useEffect(() => {
+    if (!isInline || birdieConsented) return;
+    const el = consentRef.current;
+    if (!el || typeof document === 'undefined') return;
+    const active = document.activeElement;
+    if (!active || active === document.body || active.isConnected === false) el.focus({ preventScroll: true });
+  }, [isInline, birdieConsented]);
 
   // Focus the input only when there is already a conversation to continue.
   //
@@ -484,7 +514,10 @@ export default function BirdiePanel({
               comes back the next time Birdie opens. */}
           {!birdieConsented ? (
             <div className={isInline ? undefined : 'birdie-bg'} style={isInline ? { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px' } : { flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
-              <div role="group" aria-labelledby="birdie-consent-title" style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', maxWidth: '320px', margin: '0 auto', padding: '4px 4px 8px', textAlign: 'center' }}>
+              {/* Inline, the question reads like the page around it: left
+                  aligned, where ten centred lines of body text were the
+                  centred-stack template. The sheets keep their centred card. */}
+              <div ref={consentRef} tabIndex={-1} role="group" aria-labelledby="birdie-consent-title" style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: isInline ? 'flex-start' : 'center', gap: '10px', maxWidth: isInline ? 'none' : '320px', margin: '0 auto', padding: '4px 4px 8px', textAlign: isInline ? 'left' : 'center', outline: 'none' }}>
                 {/* The still image, not the animated bird: a question is not
                     the place for a rAF loop, and birdBrandMoments.test.js keeps
                     the animated one to the two mounts that greet a chat. */}
@@ -496,9 +529,16 @@ export default function BirdiePanel({
                 {birdieConsentError && (
                   <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '600', margin: 0, lineHeight: 1.4 }}>{birdieConsentError}</p>
                 )}
+                {/* EQUAL WEIGHT. Allow was the filled navy button and Not now
+                    an outline, which leans a person toward sending data to a
+                    third-party AI (interface interference, Gray et al. 2018;
+                    the ICO Children's Code, standard 13, bars that nudge, and
+                    this now renders in the Nest's own page, built to the
+                    under-18 standard). Both are the same quiet button, the
+                    same size, side by side; the words did not change. */}
                 <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                  <button type="button" className="hit44" onClick={closeAiChat} disabled={birdieConsentBusy} style={{ flex: 1, minHeight: '44px', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'default' : 'pointer' }}>Not now</button>
-                  <button type="button" className="hit44" onClick={() => answerBirdieConsent(true)} disabled={birdieConsentBusy} style={{ flex: 1, minHeight: '44px', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'wait' : 'pointer', opacity: birdieConsentBusy ? 0.6 : 1 }}>{birdieConsentBusy ? 'Saving…' : 'Allow'}</button>
+                  <button type="button" className="hit44" onClick={closeAiChat} disabled={birdieConsentBusy} style={{ ...consentChoice, cursor: birdieConsentBusy ? 'default' : 'pointer' }}>Not now</button>
+                  <button type="button" className="hit44" onClick={() => answerBirdieConsent(true)} disabled={birdieConsentBusy} style={{ ...consentChoice, cursor: birdieConsentBusy ? 'wait' : 'pointer', opacity: birdieConsentBusy ? 0.6 : 1 }}>{birdieConsentBusy ? 'Saving…' : 'Allow'}</button>
                 </div>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.45 }}>You can turn this off later in You, under Safety and privacy.</p>
               </div>
@@ -594,7 +634,7 @@ export default function BirdiePanel({
                   <div className="selectable" style={isInline ? (msg.role === 'user'
                     ? { borderRadius: '16px 16px 4px 16px', padding: '10px 14px', fontSize: 'var(--t-body)', lineHeight: '22px', backgroundColor: isDark ? '#1e3a5c' : '#1e293b', color: isDark ? '#f1ede0' : '#ffffff', whiteSpace: 'pre-wrap' }
                     : { fontSize: 'var(--t-body)', fontWeight: '400', lineHeight: '22px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap' })
-                    : { borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.10)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
+                    : { borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-tertiary)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', whiteSpace: 'pre-wrap' }}>
                     {msg.text}
                   </div>
                   {/* In the page, the caveat sits right under the answer's
@@ -692,7 +732,7 @@ export default function BirdiePanel({
                         const pillBg = pill && (pill.tone === 'open' ? 'var(--accent-green-bg)' : pill.tone === 'later' ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)');
                         const pillInk = pill && (pill.tone === 'open' ? 'var(--accent-green-text)' : pill.tone === 'later' ? 'var(--accent-amber-text)' : 'var(--accent-red-text)');
                         return (
-                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: venueCardMax, animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
+                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: venueCardMax, animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both`, ...venueCardSurface }}>
                           {photoUrl && (
                             <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                           )}
@@ -817,9 +857,12 @@ export default function BirdiePanel({
           {/* Input. Full screen, this row is the bottom of a sheet that runs to
               the bottom of the phone, so it carries the home indicator strip
               (SAFE-AREA rule 1); the docked panel floats above the tab bar and
-              does not touch it. */}
+              does not touch it. In the sheets the box is one warm tint, the
+              way the bubbles are, with no border and no shadow: it carried
+              all three, in a cool grey, under a shadow that grew as you typed,
+              off the flat warm cards the Nest one tap back is made of. */}
           <div data-nest-birdie-field={isInline ? '' : undefined} style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
-            <div style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
+            <div style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-tertiary)', padding: '6px' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
                 {/* maxLength is the server's own per-message ceiling. Without

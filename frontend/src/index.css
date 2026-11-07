@@ -173,7 +173,10 @@
   --msg-received-text: #1e293b;
   --reaction-bg: #ffffff;
   --search-highlight: #fde047;
-  --skeleton-bg: #e5e7eb;
+  /* Warm, the --bg-inset step of the cream, where it was Tailwind's cool
+     gray-200 (#e5e7eb): every loading bar on the warm ground read as a grey
+     placeholder dropped in from another app (2026-11-06). */
+  --skeleton-bg: #e7e2d3;
   --locked-overlay: rgba(255,255,255,0.9);
   --star-empty: #d1d5db;
   --accent-green-text: #065f46;  /* was #047857: 4.19:1 on --bg-tertiary. Now 5.87 */
@@ -377,7 +380,7 @@
   --pulse-down-ink: #a7f3d0;
   --pulse-maybe-bg: #3d2f2e;
   --pulse-maybe-ink: #fde68a;
-  --pulse-not-bg: #232d40;
+  --pulse-not-bg: #2b3a52;   /* 1.27:1 from the track, a card now (was #232d40 on --bg-inset); ink 9.8:1 */
   --pulse-not-ink: #f1ede0;
 }
 

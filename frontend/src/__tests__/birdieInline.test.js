@@ -304,6 +304,64 @@ describe('the section at rest (NestBirdieSection)', () => {
     expect(container.querySelector('[data-nest-birdie-field]')).not.toBeNull();
   });
 
+  test('before the yes to Gemini the field never takes focus: a tap, Enter or Space asks instead', () => {
+    // Focusing it set the mode that unmounts it under the consent question:
+    // on iOS the keyboard started to rise and dropped, and a keyboard user's
+    // focus fell to the top of the page.
+    const onAskConsent = jest.fn();
+    const props = sectionProps({ consented: false, onAskConsent });
+    render(<NestBirdieSection {...props} />);
+    const box = screen.getByRole('textbox', { name: 'Ask Birdie' });
+    expect(box).toHaveAttribute('readonly');
+    const down = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+    box.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(onAskConsent).toHaveBeenCalledTimes(1);
+    fireEvent.focus(box);
+    expect(props.onFocusField).not.toHaveBeenCalled();
+    expect(onAskConsent).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(box, { key: 'Enter' });
+    fireEvent.keyDown(box, { key: ' ' });
+    expect(onAskConsent).toHaveBeenCalledTimes(3);
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
+
+  test('the consent question takes focus when it took the place of what had it', () => {
+    const { container } = render(<BirdiePanel {...panelProps({ presentation: 'inline', isAiPanel: false, getPageScroller: () => null, birdieConsented: false })} />);
+    const group = container.querySelector('[role="group"][aria-labelledby="birdie-consent-title"]');
+    expect(document.activeElement).toBe(group);
+    expect(group).toHaveAttribute('tabindex', '-1');
+  });
+
+  test('spent for the day, the field is off and says when the messages come back, with Pro where it is sold', () => {
+    // The field took a question and sent nothing, with no thread open to say so.
+    const onGetPro = jest.fn();
+    render(<NestBirdieSection {...sectionProps({ outOfChirps: true, chips: [], dailyLimit: 10, resetsAt: null, onGetPro })} />);
+    const box = screen.getByRole('textbox', { name: 'Ask Birdie' });
+    expect(box).toBeDisabled();
+    const line = screen.getByRole('status');
+    expect(line.textContent).toMatch(/^You've used today's 10 messages\. They come back .+\.Get Flock Pro$/);
+    expect(box).toHaveAttribute('aria-describedby', 'nest-birdie-spent');
+    fireEvent.click(screen.getByRole('button', { name: 'Get Flock Pro' }));
+    expect(onGetPro).toHaveBeenCalledTimes(1);
+    // Where nothing is sold, the line alone.
+    const { container } = render(<NestBirdieSection {...sectionProps({ outOfChirps: true, chips: [], onGetPro: null })} />);
+    expect(container.textContent).not.toMatch(/Get Flock Pro/);
+  });
+
+  test('an answer that lands after Done does not pull the page back to Birdie', () => {
+    // Done before the answer put the mode at rest, where aiInputRef is the
+    // Nest's own field, and the send's finally focused it: the page jumped
+    // back to the section from wherever the person had scrolled.
+    const APP = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+    expect(APP).toContain("if (aiInputRef.current && (modeNow === 'panel' || modeNow === 'fullscreen')) aiInputRef.current.focus();");
+    expect(APP).not.toContain("aiChatModeRef.current !== 'inline') aiInputRef.current.focus()");
+    // And a send from the resting field while the day is spent goes nowhere.
+    const send = APP.slice(APP.indexOf('const nestBirdieSend = () => {'), APP.indexOf('const nestBirdieChip'));
+    expect(send).toMatch(/if \(outOfChirps\) return;/);
+    expect(send.indexOf('if (outOfChirps) return;')).toBeLessThan(send.indexOf("setAiChatMode('inline')"));
+  });
+
   test('it does not pull the panel into the Nest\'s first paint', () => {
     const raw = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestBirdieSection.js'), 'utf8');
     const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

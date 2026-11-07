@@ -173,11 +173,12 @@ import NestDayLine from './components/nest/NestDayLine';
 import NestHero from './components/nest/NestHero';
 import NestRows from './components/nest/NestRows';
 import NestPulse from './components/nest/NestPulse';
-import NestComingUp from './components/nest/NestComingUp';
+import NestComingUp, { NestStillOpen } from './components/nest/NestComingUp';
 import NestBirdieSection from './components/nest/NestBirdieSection';
+import { BAND_GAP } from './components/nest/nestBand';
 import NestDock, { NEST_DOCK_EXTRA, contentBelow } from './components/nest/NestDock';
 import { birdieChips, fullChatChips, BUSY_NOW, SPOT_TONIGHT, HEAD_OUT, BILL } from './lib/birdieChips';
-import { pickHero, whenLine, shortWhen, alsoLine, comingGroups, cardTime } from './lib/nestTime';
+import { pickHero, whenLine, shortWhen, alsoLine, comingGroups, stillOpen, showComingLabels, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
@@ -624,7 +625,8 @@ const rearmVenueDetailSheet = () => {
 
 /* BIRDIE'S PANEL, the sixth lazy thing in this file that is not a screen, and
    the only one of the six that is not an overlay over a screen. It is the
-   460-line assistant surface behind the bubble on the Nest and the Ask Birdie
+   assistant surface behind the Nest's Ask Birdie section (its consent
+   question and its thread drawn in the page, 'inline') and the Ask Birdie
    tile in the chat composer: the panel and the fullscreen sheet, the
    transcript, the cards a turn can stage, the suggestion chips and the
    composer. aiChatMode starts at 'bubble' and nothing reads a stored value or
@@ -657,7 +659,7 @@ let BirdiePanel = React.lazy(loadBirdiePanel);
 
 /* RE-ARMING JUST THIS ONE, for the same reason the four overlays above have
    their own narrow helpers. The "did not load" panel's own Close calls this,
-   so the next tap on the bubble is a real second request rather than a replay
+   so the next ask of Birdie is a real second request rather than a replay
    of a resolved fallback, and it rebuilds this lazy without changing the
    element type of any live screen. rearmLazyScreens goes through here rather
    than reassigning the binding itself, because re-arming while the panel is
@@ -999,10 +1001,11 @@ const warmScreenChunks = () => {
     import(/* webpackChunkName: "maplibre-view" */ './components/map/MapLibreMapView').catch(() => {});
     /* AND BIRDIE, last in this list, because he is
        the one surface here that is not a screen and not an overlay over one:
-       nothing on the core loop waits on him. Warmed at all because the bubble
-       sits on the Nest, so a tap is reachable seconds in, and his Suspense
-       fallback is null, which makes an unwarmed chunk a tap that shows nothing
-       at all for the length of a round trip. */
+       nothing on the core loop waits on him. Warmed at all because his
+       section is on the Nest, so a suggestion is a tap reachable seconds in,
+       and the panel's Suspense fallback is null (or, in the page, a blank
+       52px), which makes an unwarmed chunk a tap that shows nothing at all
+       for the length of a round trip. */
     import('./components/birdie/BirdiePanel').catch(() => {});
   };
   // VenueOnboarding is deliberately NOT warmed: only a venue login ever
@@ -1118,7 +1121,7 @@ const rearmLazyScreens = () => {
   // a sheet somebody is writing a review in.
   rearmVenueDetailSheet();
   // And Birdie, for the same reason a fifth time: his loader RESOLVES, to the
-  // "did not load" panel, so without a re-arm the next tap on the bubble would
+  // "did not load" panel, so without a re-arm the next ask of Birdie would
   // paint that panel again without asking the network. Through his own narrow
   // helper, which is also what keeps a remount of an open panel to one findable
   // line rather than a side effect of a screen crash.
@@ -5348,7 +5351,8 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
   return (
     <div role="status" aria-live={toast && toast.type === 'error' ? 'assertive' : 'polite'}>
       {/* Called rather than mounted, so the toast is one node while it is
-          up instead of a fresh one on every render (see AIBubble). */}
+          up instead of a fresh one on every render (SafetyButton and
+          BottomNav are called the same way, at the end of HomeScreen). */}
       {Toast()}
     </div>
   );
@@ -7618,6 +7622,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // And the hairline along the top of the strip above the tabs, drawn while
   // page is scrolled beneath it.
   const nestDockLineRef = useRef(null);
+  // The Nest's Birdie section, as an element, for the strip's Ask Birdie pill
+  // to watch (components/nest/NestDock.js): a callback ref, so a section the
+  // page replaces is watched again at once.
+  const [nestBirdieBand, setNestBirdieBand] = useState(null);
   /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
      outlives the unmount every navigation causes, and keyed by tab so the Nest,
      Plans and Messages do not share one number.
@@ -7906,6 +7914,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // not say, which keeps the Nest card quiet rather than guessing.
           iBudgetOpen: typeof f.i_budget_open === 'boolean' ? f.i_budget_open : undefined,
           iOwe: typeof f.i_owe === 'boolean' ? f.i_owe : undefined,
+          // When the plan was locked in (migration 102, part of f.*), so the
+          // Nest's lock-in moment plays only while the lock is news, never
+          // for a plan locked days before a reinstall. null before that
+          // column, or for a plan never locked.
+          confirmedAt: f.confirmed_at || null,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           // going_count includes guests who RSVPed through the share link;
@@ -10365,9 +10378,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // stay here with the rest of the Birdie state.
 
 
-  // Birdie is a helper for the screen you are on, not a follower. Its bubble
-  // only lives on Home, but the OPEN panel used to stay put over every tab and
-  // every screen, covering more than half of them. Navigating puts it away.
+  // Birdie is a helper for the screen you are on, not a follower. His
+  // section lives on the Nest, but the OPEN panel used to stay put over every
+  // tab and every screen, covering more than half of them. Navigating puts it
+  // away: back to 'bubble', the resting mode's name from when the Nest drew a
+  // floating disc, which now means the section at rest.
   useEffect(() => {
     setAiChatMode('bubble');
   }, [currentTab, currentScreen]);
@@ -11424,7 +11439,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       aiSendingRef.current = false;
       setAiTyping(false);
-      if (aiInputRef.current && aiChatModeRef.current !== 'inline') aiInputRef.current.focus();
+      // Back to the box only while a sheet is open. Tapping Done (or closing
+      // the full chat) before the answer landed puts the mode at rest, where
+      // aiInputRef is the Nest's own field: focusing it scrolled the page
+      // back to Birdie from wherever the person had gone, and on iOS could
+      // raise the keyboard unasked.
+      const modeNow = aiChatModeRef.current;
+      if (aiInputRef.current && (modeNow === 'panel' || modeNow === 'fullscreen')) aiInputRef.current.focus();
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -17908,10 +17929,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the thread in the page ('inline') and lets the keyboard go.
   const nestBirdieFocus = () => {
     loadBirdiePanel().catch(() => {});
-    if (!birdieConsented) setAiChatMode('inline');
+  };
+  // Before the yes: the consent question takes the field's place, and the
+  // field never takes focus first (NestBirdieSection.js reads it read-only and
+  // asks on a tap, Enter or Space; the strip's pill asks the same way).
+  const nestBirdieAskConsent = () => {
+    loadBirdiePanel().catch(() => {});
+    setAiChatMode('inline');
   };
   const nestBirdieSend = () => {
     if (!aiInputValueRef.current.trim()) return;
+    // Spent for the day: the field is off and says so (NestBirdieSection),
+    // and a send from it would open an empty thread and return in silence.
+    if (outOfChirps) return;
     loadBirdiePanel().catch(() => {});
     setAiChatMode('inline');
     if (!birdieConsented) return;
@@ -18120,10 +18150,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // sorted again: the hero (tonight's plan, or the next one), the other
     // plans on its night, and everything else (lib/nestTime.js pickHero).
     const nestNow = new Date();
-    const { hero: heroFlock, sameNight: heroNight } = pickHero(liveFlocks, nestNow);
+    // Two nights out or more, only a plan that needs the reader takes the
+    // hero (lib/nestTime.js pickHero): the filled card goes to what is near
+    // or what needs a tap, never to a plan three weeks off with nothing to do.
+    const { hero: heroFlock, sameNight: heroNight } = pickHero(liveFlocks, nestNow, { hasAsk: (f) => !!heroAction(f, nestAskList) });
     const heroIds = new Set([heroFlock, ...heroNight].filter(Boolean).map((f) => f.id));
     const restFlocks = liveFlocks.filter((f) => !heroIds.has(f.id));
     const heroAsk = heroFlock ? heroAction(heroFlock, nestAskList) : null;
+    // Last night's plans to rate, read from `flocks` as the money is: the
+    // sweep completes a plan 12 hours after its time and the live list lets
+    // it go then, so a row read from live plans would have lasted from the
+    // 4 AM roll to about 8 AM. Asked all of the morning-after day.
+    const nestRateList = flocks.filter((f) => nestAsksHowItWas(f, nestNow) && !submittedFeedback.has(f.id)).map((f) => ({ ...f, askHowItWas: true }));
+    // Every other open loop, as rows: the invites, every ask but the one the
+    // hero's button carries (its plan's other asks and the asks of the plans
+    // beside it that night included), and last night's plans to rate. An
+    // invite row lands on its own invite card in Messages, called out and
+    // scrolled to (highlightedInviteId, the way a push for it lands), where
+    // the row named one invite and the tap showed a list.
+    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: nestRateList, excludeKeys: heroAsk ? [`${heroAsk.kind}:${heroFlock.id}`] : [] })
+      .map((r) => ({
+        ...r,
+        when: shortWhen(r.eventTime, nestNow),
+        onClick: r.kind === 'invite' ? () => { setHighlightedInviteId(r.flockId); setCurrentTab('chat'); } : () => openNestAsk(r.flockId, r.kind),
+      }));
+    // ONE PLACE PER OPEN LOOP. A plan with a Needs you row is that row and
+    // nothing else below the hero: Sam's Birthday was a "Vote on" row and
+    // again a Coming up card with an accent chip, six entries for four plans.
+    // The row carries its time and place, and once the loop closes the plan
+    // is a card again. Invites are not plans the reader is in yet.
+    const rowPlanIds = new Set(nestOpenRows.filter((r) => r.kind !== 'invite').map((r) => r.flockId));
+    const cardFlocks = restFlocks.filter((f) => !rowPlanIds.has(f.id));
     // The friends who said down or maybe tonight, from the answers already
     // held (lib/pulse.js friendsDownLine): never one who said Not, never a
     // note, and nothing from midnight to 4 AM.
@@ -18136,33 +18193,71 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // `members` the fallback for a plan whose roster this session has read.
     // The +N and the "N going" count from memberCount (accounts and link
     // guests), never from the four-face preview.
-    const nestComing = comingGroups(restFlocks, nestNow).map((g) => ({
+    const planCard = (f, time) => ({
+      id: f.id,
+      name: f.name,
+      time,
+      place: placeLine(f.venue),
+      faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || []), authUser?.id),
+      total: f.memberCount || 1,
+      chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f) }),
+      onClick: () => openPlan(f.id),
+    });
+    const comingList = comingGroups(cardFlocks, nestNow);
+    // Labels over the bands only when a band holds two or more plans or
+    // there are four or more in all; otherwise each card says its whole day.
+    const nestComingLabelled = showComingLabels(comingList);
+    const nestComing = comingList.map((g) => ({
       label: g.label,
-      cards: g.flocks.map((f) => ({
-        id: f.id,
-        name: f.name,
-        time: cardTime(f.eventTime, g.label, nestNow),
-        place: placeLine(f.venue),
-        faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || []), authUser?.id),
-        total: f.memberCount || 1,
-        chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f) }),
-        onClick: () => openPlan(f.id),
-      })),
+      cards: g.flocks.map((f) => planCard(f, cardTime(f.eventTime, g.label, nestNow, { labelled: nestComingLabelled }))),
     }));
-    // Last night's plans to rate, read from `flocks` as the money is: the
-    // sweep completes a plan 12 hours after its time and the live list lets
-    // it go then, so a row read from live plans would have lasted from the
-    // 4 AM roll to about 8 AM. Asked all of the morning-after day.
-    const nestRateList = flocks.filter((f) => nestAsksHowItWas(f, nestNow) && !submittedFeedback.has(f.id)).map((f) => ({ ...f, askHowItWas: true }));
-    // Every other open loop, as rows: the invites, every ask but the one the
-    // hero's button carries (its plan's other asks and the asks of the plans
-    // beside it that night included), and last night's plans to rate.
-    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: nestRateList, excludeKeys: heroAsk ? [`${heroAsk.kind}:${heroFlock.id}`] : [] })
-      .map((r) => ({
-        ...r,
-        when: shortWhen(r.eventTime, nestNow),
-        onClick: r.kind === 'invite' ? () => setCurrentTab('chat') : () => openNestAsk(r.flockId, r.kind),
-      }));
+    // STILL OPEN: plans whose night has gone by and that are not finished,
+    // their own band after Coming up, where they were "Earlier" under it.
+    const nestStillOpen = stillOpen(cardFlocks, nestNow).map((f) => planCard(f, shortWhen(f.eventTime, nestNow)));
+    // Birdie's place in the page. On a first run it follows the empty
+    // state's two buttons, the one thing on the page there besides them. With
+    // plans it comes after them: the person's own plans first, and a
+    // generated answer never between them (PSYCH 16, "mix generated content
+    // into the user's own list"), and the strip's pill is the way to it from
+    // the top. With the section near the end, Coming up is no longer about
+    // 1.3 screens down at 390.
+    const nestBirdieFirst = !flocksLoading && !flocksError && liveFlocks.length === 0;
+    // No friends yet, but plans: the band's place holds a row that leads to
+    // them, and the footer's own Add friends gives way to it.
+    const nestNoFriendsRow = friendCount === 0 && !myPulse && liveFlocks.length > 0;
+    // ASK BIRDIE. A section of the page, never a panel over it: the
+    // consent question, the latest question and its answer, and the venue
+    // cards all render here, so Start a flock and Add friends stay where they
+    // are and the answer gets the page's height. Placed by nestBirdieFirst.
+    const nestBirdieSection = (
+      <NestBirdieSection
+        sectionRef={setNestBirdieBand}
+        consented={birdieConsented}
+        onAskConsent={nestBirdieAskConsent}
+        outOfChirps={outOfChirps}
+        dailyLimit={Number.isFinite(entitlements?.birdie?.limit) ? entitlements.birdie.limit : null}
+        resetsAt={aiResetsAt}
+        onGetPro={process.env.REACT_APP_PURCHASES !== 'off' ? () => setPaywallTrigger('birdie') : null}
+        isDark={isDark}
+        inline={nestBirdieInline}
+        hasThread={aiMessages.length > 0}
+        showLastAnswer={aiChatMode !== 'inline' && aiMessages.length > 0}
+        onShowLastAnswer={() => setAiChatMode('inline')}
+        onNewChat={nestBirdieNewChat}
+        newChatDisabled={aiTyping}
+        chips={birdieChips({ liveFlocks, now: nestNow, outOfChirps })}
+        onChip={nestBirdieChip}
+        inputRef={aiInputRef}
+        inputValueRef={aiInputValueRef}
+        inputHasText={aiInputHasText}
+        inputHasTextRef={aiInputHasTextRef}
+        setInputHasText={setAiInputHasText}
+        maxChars={AI_CHAT_MAX_MESSAGE_CHARS}
+        onFocusField={nestBirdieFocus}
+        onSend={nestBirdieSend}
+        canSend={canSendAi}
+      />
+    );
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       {/* The edge the page scrolls under. A 1px line that shows only while
@@ -18229,7 +18324,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ("This is the list failing to load, not the list being empty"). */}
         {flocksLoading && flocks.length === 0 && <NestHeroSkeleton label="Loading your flocks" />}
         {!flocksLoading && flocksError && (
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '16px 18px', marginBottom: '28px' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '16px 18px', marginBottom: BAND_GAP }}>
             <BirdNote
               layout="row"
               size={48}
@@ -18250,7 +18345,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             empty cream above it. The guest-link sentence answers the worry
             a first plan has: nobody else needs the app. */}
         {!flocksLoading && !flocksError && liveFlocks.length === 0 && (
-          <div data-nest-band="empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '4px 0 0', marginBottom: '28px' }}>
+          <div data-nest-band="empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '4px 0 0', marginBottom: BAND_GAP }}>
             {/* The painted crowd, its cut edges faded into the ground. While
                 Birdie's thread is open in the page it folds away (200 ms, its
                 height and its opacity), so both buttons stay on the first
@@ -18261,9 +18356,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </div>
             </div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.01em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h2>
-            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45 }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'A flock is a plan with your friends. Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
-            <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              {Icons.plus('var(--btn-primary-fg)', 16)} Start a flock
+            {/* Balanced, so the centred lines end evenly instead of on an
+                orphan ("and vote." alone at 390). */}
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45, textWrap: 'balance' }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'A flock is a plan with your friends. Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
+            {/* With the address still unconfirmed, the line above says to
+                confirm it first, and this button no longer outranks it: it
+                is drawn like Add friends, quiet, so nothing filled promises
+                what the confirm line says is gated. It still opens the
+                create screen, where a plan can be drawn up and the gate is
+                met at Create, with the sheet that fixes it. */}
+            <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: emailUnconfirmed ? 'var(--bg-card-solid)' : 'var(--btn-primary-bg)', color: emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              {Icons.plus(emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', 16)} Start a flock
             </button>
             <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.userPlus('var(--text-primary)', 16)} Add friends
@@ -18288,16 +18391,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             faces={heroFaces(Array.isArray(heroFlock.memberPreviews) && heroFlock.memberPreviews.length ? heroFlock.memberPreviews : (heroFlock.members || []), authUser?.id)}
             total={heroFlock.memberCount || 1}
             names={heroNames(heroFlock.memberPreviews, heroFlock.memberCount, authUser?.id)}
-            note={heroNote(heroFlock, authUser?.id)}
+            note={heroNote(heroFlock, authUser?.id, { voted: iHaveVoted(heroFlock) })}
             action={heroAsk}
             onOpen={() => openPlan(heroFlock.id)}
             onAction={() => heroAsk && openNestAsk(heroFlock.id, heroAsk.kind)}
             onLockMoment={hapticSuccess}
             /* The other plans that night: each chip says the reader's state,
-               as a Coming up card's does, and the row opens the plan. Their
-               asks are Needs you rows below, where a vote or a share was
-               a chip on a row that opened the money sheet. */
-            sameNight={heroNight.map((f) => ({
+               as a Coming up card's does, and the row opens the plan. A plan
+               with an ask is its Needs you row instead, right below, and not
+               here as well: one place per open loop. */
+            sameNight={heroNight.filter((f) => !rowPlanIds.has(f.id)).map((f) => ({
               id: f.id,
               name: f.name,
               line: alsoLine(f.eventTime, nestNow),
@@ -18330,7 +18433,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             saving={pulseSaving}
             onSet={handleSetPulse}
             friends={nestFriendsOut}
-            onAddFriends={openAddFriendsFromNest}
+            /* Only for a person known to have friends: the band is drawn
+               while the count is still being read, and an empty Nest has its
+               own Add friends button. */
+            onAddFriends={friendCount > 0 ? openAddFriendsFromNest : undefined}
             onPlanWith={() => {
               setFlockFriends((prev) => mergePlanFriends(prev, nestFriendsOut ? nestFriendsOut.people : []));
               setCurrentScreen('create');
@@ -18339,8 +18445,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         )}
         {/* No friends yet, but plans: the way to the people who would answer.
             The Nest's other Add friends doors all go through the same opener. */}
-        {friendCount === 0 && !myPulse && liveFlocks.length > 0 && (
-          <button type="button" onClick={openAddFriendsFromNest} style={{ width: '100%', minHeight: '60px', marginBottom: '28px', padding: '11px 14px 11px 16px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer' }}>
+        {nestNoFriendsRow && (
+          <button type="button" onClick={openAddFriendsFromNest} style={{ width: '100%', minHeight: '60px', marginBottom: BAND_GAP, padding: '11px 14px 11px 16px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer' }}>
             <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.userPlus('var(--text-secondary)', 18)}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Add friends</span>
@@ -18350,30 +18456,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </button>
         )}
 
-        {/* ASK BIRDIE. A section of the page, never a panel over it: the
-            consent question, the latest question and its answer, and the
-            venue cards all render here, so Start a flock and Add friends stay
-            where they are and the answer gets the page's height. */}
-        <NestBirdieSection
-          isDark={isDark}
-          inline={nestBirdieInline}
-          hasThread={aiMessages.length > 0}
-          showLastAnswer={aiChatMode !== 'inline' && aiMessages.length > 0}
-          onShowLastAnswer={() => setAiChatMode('inline')}
-          onNewChat={nestBirdieNewChat}
-          newChatDisabled={aiTyping}
-          chips={birdieChips({ liveFlocks, now: nestNow, outOfChirps })}
-          onChip={nestBirdieChip}
-          inputRef={aiInputRef}
-          inputValueRef={aiInputValueRef}
-          inputHasText={aiInputHasText}
-          inputHasTextRef={aiInputHasTextRef}
-          setInputHasText={setAiInputHasText}
-          maxChars={AI_CHAT_MAX_MESSAGE_CHARS}
-          onFocusField={nestBirdieFocus}
-          onSend={nestBirdieSend}
-          canSend={canSendAi}
-        />
+        {nestBirdieFirst && nestBirdieSection}
 
         <div>
           {/* COMING UP. Completed and cancelled plans leave Home: they are
@@ -18384,8 +18467,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               detail screen read the same array. What is left after the hero
               and its night is grouped by when (lib/nestTime.js comingGroups),
               a partition of the one sorted list. */}
-          <NestComingUp groups={nestComing} />
+          <NestComingUp groups={nestComing} labelled={nestComingLabelled} />
         </div>
+
+        {/* STILL OPEN, after the plans to come, only while there are any. */}
+        <NestStillOpen cards={nestStillOpen} />
+
+        {!nestBirdieFirst && nestBirdieSection}
 
         {/* THE PAGE ENDS. After the plans, the two ways out that are not a
             plan, as text links painted at their real 44px target, then
@@ -18398,9 +18486,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 {Icons.clock('var(--accent-purple-text)', 14)} Past flocks
               </button>
             )}
-            <button type="button" onClick={openAddFriendsFromNest} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
-              {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
-            </button>
+            {!nestNoFriendsRow && (
+              <button type="button" onClick={openAddFriendsFromNest} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
+              </button>
+            )}
           </footer>
         )}
         {/* The plans name their venues, which is Google Maps data off a
@@ -18420,6 +18510,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         getScroller={getPageScroller}
         inputRef={aiInputRef}
         isDark={isDark}
+        band={nestBirdieBand}
+        consented={birdieConsented}
+        onAskConsent={nestBirdieAskConsent}
         watchKey={`${aiChatMode}:${aiMessages.length > 0}:${birdieConsented}:${liveFlocks.length}:${flocksLoading}`}
         lineRef={nestDockLineRef}
       />

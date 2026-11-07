@@ -295,6 +295,7 @@ describe('the Nest marks a plan locked in, once', () => {
     const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
     const hero = fs.readFileSync(path.join(__dirname, '..', 'components', 'nest', 'NestHero.js'), 'utf8');
     expect(app).toContain('onLockMoment={hapticSuccess}');
-    expect(hero).toMatch(/if \(lockId == null \|\| !takeLockMoment\(lockId, LOCK_STORE\)\) return;\s*setSettle\(true\);\s*if \(onLockMoment\) onLockMoment\(\);/);
+    // takeLockMoment also reads the plan's own lock time (nestLockMoment.test.js).
+    expect(hero).toMatch(/if \(lockId == null \|\| !takeLockMoment\(lockId, LOCK_STORE, \{ lockedAt \}\)\) return;\s*setSettle\(true\);\s*if \(onLockMoment\) onLockMoment\(\);/);
   });
 });

@@ -3,8 +3,9 @@
  *
  * At rest, Birdie's disc and the red SOS disc sat on plan names and times at
  * 320, 390 and 430. Now the page ends at a strip above the tabs that holds
- * SOS, unchanged, and an "Ask Birdie" pill on the other side, shown only once
- * the whole Birdie section has scrolled above the page.
+ * SOS, unchanged, and an "Ask Birdie" pill on the other side, shown while no
+ * part of the Birdie section is on screen: with plans the section comes after
+ * them, and the pill is the way to it from the top.
  *
  *   - HomeScreen itself draws nothing absolutely or fixed positioned; the one
  *     floating control on the Nest is SafetyButton, called as on every tab.
@@ -66,6 +67,29 @@ describe('the hairline over the strip', () => {
     expect(contentBelow(box([[0, 300], [320, 270], [618, 0]]))).toBe(false);
   });
 
+  test('measured when the page changes, not after every render of the app', () => {
+    // The effect had no dependency list: NestDock renders with every app
+    // render while the Nest is open (sockets, state), and each run read the
+    // box's geometry. Now a resize of the box or of a band in it, or a band
+    // arriving or leaving, is what re-measures, and the scroll handler moves
+    // it as the page scrolls.
+    const NestDock = require('../components/nest/NestDock').default;
+    const b = box([[0, 300], [320, 400]]);
+    let reads = 0;
+    const real = b.getBoundingClientRect;
+    b.getBoundingClientRect = () => { reads += 1; return real(); };
+    const lineRef = React.createRef();
+    const dockProps = { height: 72, sosSide: 'right', getScroller: () => b, inputRef: { current: null }, isDark: false, band: null, watchKey: 'k', lineRef };
+    const { rerender } = render(<NestDock {...dockProps} />);
+    expect(lineRef.current.style.opacity).toBe('1');
+    const after = reads;
+    for (let i = 0; i < 5; i += 1) rerender(<NestDock {...dockProps} />);
+    expect(reads).toBe(after);
+    const dock = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestDock.js'), 'utf8');
+    expect(dock).toMatch(/const ro = new ResizeObserver\(update\);/);
+    expect(dock).toMatch(/\}, \[watchKey\]\); \/\/ eslint-disable-line react-hooks\/exhaustive-deps\n\n  const ask = /);
+  });
+
   test('the strip and the scroll handler read the same rule', () => {
     const dock = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestDock.js'), 'utf8');
     expect(dock).toMatch(/line\.style\.opacity = contentBelow\(root\) \? '1' : '0';/);
@@ -105,6 +129,7 @@ describe('the Ask Birdie pill', () => {
     getScroller: () => box,
     inputRef: { current: box.querySelector('input') },
     isDark: false,
+    band: box.querySelector('section'),
     watchKey: 'k',
     lineRef: React.createRef(),
     ...over,
@@ -123,38 +148,71 @@ describe('the Ask Birdie pill', () => {
     expect(src).toContain("[left ? 'left' : 'right']: 'var(--nest-gutter)',");
   });
 
-  test('shows only once the whole Birdie section has scrolled above the page, fading, and is hidden from touch and speech otherwise', () => {
-    // It showed while the FIELD was under half on screen, which at rest,
-    // with the section just below the fold, put the section's "Ask Birdie"
-    // heading about 50px over an "Ask Birdie" pill: one label twice, read as
-    // a glitch. Now it is only a way back up for someone who scrolled past.
+  test('shows while no part of the Birdie section is on screen, fading, and is hidden from touch and speech otherwise', () => {
+    // With plans the section comes after them, near the end of the page, so
+    // at rest the pill is the way to Birdie from the top. It goes the moment
+    // any of the section is in view: it used to show while the FIELD was
+    // under half on screen, which put the section's "Ask Birdie" heading
+    // about 50px over an "Ask Birdie" pill, one label twice.
     const box = page();
     const { container } = render(<NestDock {...props(box)} />);
     expect(observed[0].el).toBe(box.querySelector('[data-nest-band="birdie"]'));
     expect(observed[0].opts.root).toBe(box);
+    expect(observed[0].opts.threshold).toBe(0);
     const pill = container.querySelector('button');
     const hidden = () => {
       expect(pill.style.opacity).toBe('0');
       expect(pill.style.pointerEvents).toBe('none');
       expect(pill.getAttribute('aria-hidden')).toBe('true');
     };
+    const shown = () => {
+      expect(pill.style.opacity).toBe('1');
+      expect(pill.getAttribute('aria-hidden')).toBeNull();
+    };
     act(() => fire('below'));
-    hidden();
+    shown();
     act(() => fire('in'));
     hidden();
     act(() => fire('above'));
-    expect(pill.style.opacity).toBe('1');
-    expect(pill.getAttribute('aria-hidden')).toBeNull();
+    shown();
     expect(pill.style.transition).toBe(`opacity ${NEST_DOCK_FADE_MS}ms ease`);
     expect(pill.textContent).toBe('Ask Birdie');
     act(() => fire('in'));
     hidden();
   });
 
+  test('watches the section the page hands it, and a new one at once when the page replaces it', () => {
+    // Armed on a key, a section that changed in the same commit as something
+    // else (a suggestion tapped while the chunk was cold) was never watched,
+    // and the pill never came for that thread.
+    const box = page();
+    const first = box.querySelector('section');
+    const { rerender } = render(<NestDock {...props(box)} />);
+    expect(observed.map((o) => o.el)).toEqual([first]);
+    const next = document.createElement('section');
+    next.setAttribute('data-nest-band', 'birdie');
+    box.replaceChild(next, first);
+    rerender(<NestDock {...props(box, { band: next })} />);
+    expect(observed.map((o) => o.el)).toEqual([first, next]);
+  });
+
+  test('before the yes to Gemini, a tap asks for it and focuses nothing', () => {
+    // A focus inside the tap raised the keyboard over a field the consent
+    // question was about to replace.
+    const box = page();
+    const onAskConsent = jest.fn();
+    const { container } = render(<NestDock {...props(box, { consented: false, onAskConsent })} />);
+    act(() => fire('below'));
+    container.querySelector('button').click();
+    expect(onAskConsent).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).not.toBe(box.querySelector('input'));
+    expect(box.querySelector('section').scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
   test('a tap focuses the field inside the tap, then brings the section into view', () => {
     const box = page();
     const { container } = render(<NestDock {...props(box)} />);
-    act(() => fire('above'));
+    act(() => fire('below'));
     container.querySelector('button').click();
     expect(document.activeElement).toBe(box.querySelector('input'));
     expect(box.querySelector('section').scrollIntoView).toHaveBeenCalledTimes(1);

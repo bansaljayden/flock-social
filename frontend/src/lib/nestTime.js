@@ -198,12 +198,23 @@ export function alsoLine(eventTime, now = new Date()) {
  * soonest. A plan holds the hero until the 4 AM after its night, so at
  * 12:40 AM Friday's plan is still the one on top, asking how it was.
  *
+ * ONLY TONIGHT, TOMORROW, OR A PLAN THAT NEEDS THE READER. The filled navy
+ * card is the one thing the eye finds first, so it is spent on what is near
+ * or what needs a tap: on a Tuesday, a plan three weeks out with nothing to
+ * do took it, above the Needs you rows that did need action. Two nights out
+ * or more, the hero is the first plan on that night that carries an ask
+ * (`hasAsk`, the caller's: a share, a budget or a vote), and with none the
+ * slot stays empty, so Needs you leads and the plan waits in Coming up. The
+ * bands keep their order; only whether the hero slot is filled changes.
+ *
  * Returns { hero, sameNight }: the hero, and the other plans on its night in
  * the list's own order. Both are taken from `liveFlocks` as given, which
  * App.js has already filtered and sorted once; nothing here re-sorts the list
  * the rest of the page reads.
  */
-export function pickHero(liveFlocks, now = new Date()) {
+export const HERO_NEAR_NIGHTS = 1;
+
+export function pickHero(liveFlocks, now = new Date(), { hasAsk } = {}) {
   const list = Array.isArray(liveFlocks) ? liveFlocks : [];
   const nowKey = nightKey(now);
   const candidates = list.filter((f) => f
@@ -215,11 +226,14 @@ export function pickHero(liveFlocks, now = new Date()) {
   const night = candidates.reduce((min, f) => (nightKey(f.eventTime) < min ? nightKey(f.eventTime) : min), nightKey(candidates[0].eventTime));
   const onNight = candidates.filter((f) => nightKey(f.eventTime) === night);
   const locked = (f) => (f.status === 'confirmed' || f.status === 'locked' ? 0 : 1);
-  const hero = onNight.reduce((best, f) => {
-    if (!best) return f;
-    if (locked(f) !== locked(best)) return locked(f) < locked(best) ? f : best;
-    return asDate(f.eventTime).getTime() < asDate(best.eventTime).getTime() ? f : best;
+  const best = (list) => list.reduce((top, f) => {
+    if (!top) return f;
+    if (locked(f) !== locked(top)) return locked(f) < locked(top) ? f : top;
+    return asDate(f.eventTime).getTime() < asDate(top.eventTime).getTime() ? f : top;
   }, null);
+  const near = nightsBetween(now, onNight[0].eventTime) <= HERO_NEAR_NIGHTS;
+  const hero = near ? best(onNight) : best(onNight.filter((f) => typeof hasAsk === 'function' && hasAsk(f)));
+  if (!hero) return { hero: null, sameNight: [] };
   return { hero, sameNight: onNight.filter((f) => f !== hero) };
 }
 
@@ -232,12 +246,13 @@ export function pickHero(liveFlocks, now = new Date()) {
  *   "This week"    two to six nights out
  *   "Later"        a week or more
  *   "No date yet"  no time set
- *   "Earlier"      past nights still open: still voting long after, or a
- *                  night over and waiting to be rated
  *
- * Empty bands are left out.
+ * Empty bands are left out. Past nights still open (still voting long after,
+ * or a night over and not yet finished) are not coming up, and were a group
+ * called Earlier under the heading Coming up: they are their own band after
+ * it, Still open (stillOpen below).
  */
-export const COMING_GROUPS = ['Tonight', 'Tomorrow', 'This week', 'Later', 'No date yet', 'Earlier'];
+export const COMING_GROUPS = ['Tonight', 'Tomorrow', 'This week', 'Later', 'No date yet'];
 
 export function comingGroupOf(f, now = new Date()) {
   if (!f) return null;
@@ -259,18 +274,38 @@ export function comingGroups(rest, now = new Date()) {
     .filter((g) => g.flocks.length > 0);
 }
 
+/** STILL OPEN: the plans whose night has gone by and that are not finished, in the list's order. */
+export function stillOpen(rest, now = new Date()) {
+  const list = Array.isArray(rest) ? rest : [];
+  return list.filter((f) => comingGroupOf(f, now) === 'Earlier');
+}
+
 /**
- * The time on a Coming up card: the clock alone under Tonight and Tomorrow,
- * where the band already says the day, and shortWhen's words everywhere
- * else, the same words a Needs you row uses for the same plan: "Sun
- * 11:00 AM" in This week, "Nov 21, 8:00 PM" under Later, and under Earlier
- * "Last night 8:00 PM" or "Nov 4, 8:00 PM", where it gave a weekday that
- * could be weeks old. '' with no time.
+ * Whether Coming up names its bands. A label over one card is scaffolding:
+ * three labels (Tomorrow, This week, Later) each over a single card made two
+ * levels of heading for three plans. The labels show when one band holds two
+ * or more plans, or when there are four or more in all; otherwise each card
+ * says its whole day itself (cardTime, unlabelled).
  */
-export function cardTime(eventTime, group, now = new Date()) {
+export function showComingLabels(groups) {
+  const list = Array.isArray(groups) ? groups : [];
+  const count = (g) => (g.flocks || g.cards || []).length;
+  return list.some((g) => count(g) >= 2) || list.reduce((n, g) => n + count(g), 0) >= 4;
+}
+
+/**
+ * The time on a plan card: the clock alone under a Tonight or Tomorrow label,
+ * where the label already says the day, and shortWhen's words everywhere
+ * else, the same words a Needs you row uses for the same plan: "Tomorrow
+ * 7:00 PM" with no label over it, "Sun 11:00 AM" in This week, "Nov 21,
+ * 8:00 PM" under Later, and for a night gone by "Last night 8:00 PM" or
+ * "Nov 4, 8:00 PM", never a weekday that could be weeks old. '' with no time.
+ * `labelled` is false when Coming up shows no band labels (showComingLabels).
+ */
+export function cardTime(eventTime, group, now = new Date(), { labelled = true } = {}) {
   const t = asDate(eventTime);
   if (!t) return '';
-  if (group === 'Tomorrow' || group === 'Tonight') return timeOf(t);
+  if (labelled && (group === 'Tomorrow' || group === 'Tonight')) return timeOf(t);
   return shortWhen(t, now);
 }
 

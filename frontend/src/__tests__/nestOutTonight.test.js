@@ -36,6 +36,10 @@ const friends = {
 const props = (over = {}) => ({ active: null, saving: false, onSet: jest.fn(), friends, onPlanWith: jest.fn(), onAddFriends: jest.fn(), ...over });
 
 describe('Add friends in the band', () => {
+  // The heading is the evening's (after midnight it states the answer).
+  beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date(2026, 10, 6, 19, 12)); });
+  afterEach(() => { jest.useRealTimers(); });
+
   test('a link at the end of the heading, one tap to the same opener the other doors use', () => {
     const p = props();
     render(<NestPulse {...p} />);
@@ -44,7 +48,14 @@ describe('Add friends in the band', () => {
     expect(add.parentElement).toBe(heading.parentElement);
     fireEvent.click(add);
     expect(p.onAddFriends).toHaveBeenCalledTimes(1);
-    expect(HOME).toMatch(/onAddFriends=\{openAddFriendsFromNest\}/);
+    // Only for a person known to have friends: while the count is read the
+    // band is drawn, and an empty Nest's own Add friends would be a second.
+    expect(HOME).toMatch(/onAddFriends=\{friendCount > 0 \? openAddFriendsFromNest : undefined\}/);
+  });
+
+  test('no Add friends link when the band is not given one', () => {
+    render(<NestPulse {...props({ onAddFriends: undefined })} />);
+    expect(screen.queryByRole('button', { name: 'Add friends' })).toBeNull();
   });
 
   test('it is there with or without friends out tonight', () => {
@@ -52,8 +63,10 @@ describe('Add friends in the band', () => {
     expect(screen.getByRole('button', { name: 'Add friends' })).toBeInTheDocument();
   });
 
-  test('the footer keeps its own Add friends too', () => {
-    expect(HOME).toMatch(/<footer data-nest-band="footer"[\s\S]*?onClick=\{openAddFriendsFromNest\}[\s\S]*?Add friends[\s\S]*?<\/footer>/);
+  test('the footer keeps its own Add friends too, except beside the no-friends row', () => {
+    expect(HOME).toMatch(/<footer data-nest-band="footer"[\s\S]*?\{!nestNoFriendsRow && \([\s\S]*?onClick=\{openAddFriendsFromNest\}[\s\S]*?Add friends[\s\S]*?<\/footer>/);
+    expect(HOME).toContain('const nestNoFriendsRow = friendCount === 0 && !myPulse && liveFlocks.length > 0;');
+    expect(HOME).toMatch(/\{nestNoFriendsRow && \(\s*<button type="button" onClick=\{openAddFriendsFromNest\}/);
   });
 });
 
@@ -94,7 +107,8 @@ describe('the chosen answer', () => {
 
   test.each([[':root'], ['[data-theme="dark"]']])('%s: each ink clears 4.5:1 on its tint, and each tint stands apart from the track', (sel) => {
     const t = block(sel);
-    const track = t['--bg-inset'] || block(':root')['--bg-inset'];
+    // The track is the white group every Nest card is (--bg-card-solid).
+    const track = t['--bg-card-solid'] || block(':root')['--bg-card-solid'];
     for (const { key } of PULSE_OPTIONS) {
       const bg = t[`--pulse-${key}-bg`];
       const ink = t[`--pulse-${key}-ink`];
@@ -106,13 +120,55 @@ describe('the chosen answer', () => {
 
   test('the segment reads its tint and ink from those tokens, never white on a solid fill', () => {
     expect(PULSE).toContain("backgroundColor: on ? `var(--pulse-${opt.key}-bg)` : 'transparent',");
-    expect(PULSE).toContain("color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-secondary)',");
+    expect(PULSE).toContain("color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-primary)',");
     expect(PULSE).not.toMatch(/#ffffff|#047857/);
+  });
+
+  test('with nothing chosen it still reads as three buttons: a white group, hairlines between, primary ink', () => {
+    // Three grey words on a well 1.1:1 from the page read as a strip of
+    // labels; an iOS segmented control always has a choice to show.
+    const { container } = render(<NestPulse {...props({ active: null })} />);
+    const track = container.querySelector('[data-nest-pulse-track]');
+    expect(PULSE).toContain("backgroundColor: 'var(--bg-card-solid)' }}>");
+    expect(track.querySelectorAll('[data-nest-pulse-rule]')).toHaveLength(2);
+    // Beside the chosen one, no hairline: the tint is the edge.
+    const { container: chosen } = render(<NestPulse {...props({ active: 'maybe' })} />);
+    expect(chosen.querySelectorAll('[data-nest-pulse-rule]')).toHaveLength(0);
+    const { container: first } = render(<NestPulse {...props({ active: 'down' })} />);
+    expect(first.querySelectorAll('[data-nest-pulse-rule]')).toHaveLength(1);
   });
 
   test('pressed state and the spoken names are unchanged', () => {
     render(<NestPulse {...props({ active: 'down' })} />);
     expect(screen.getByRole('button', { name: 'Tonight: Down' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: 'Tonight: Maybe' })).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('after midnight', () => {
+  const { pulseHeading } = require('../lib/pulse');
+  const at = (d, h, m = 0) => new Date(2026, 10, d, h, m);
+
+  test('the heading states the answer instead of asking anyone out', () => {
+    // "Out tonight?" is itself a prompt to go out, and from midnight to 4 AM
+    // the Nest prompts nobody (the friends line is not drawn then either).
+    expect(pulseHeading(at(6, 19, 12))).toBe('Out tonight?');
+    expect(pulseHeading(at(6, 23, 59))).toBe('Out tonight?');
+    for (const h of [0, 1, 3]) expect(pulseHeading(at(7, h, 30))).toBe('Your answer for tonight');
+    expect(pulseHeading(at(7, 4, 0))).toBe('Out tonight?');
+  });
+
+  test('the band reads it off the clock, and keeps the control', () => {
+    expect(PULSE).toContain('const heading = useNow(60000, pulseHeading);');
+    expect(PULSE).toContain('{heading}</h2>');
+    jest.useFakeTimers();
+    jest.setSystemTime(at(7, 1, 0));
+    try {
+      render(<NestPulse {...props({ friends: null })} />);
+      expect(screen.getByRole('heading', { name: 'Your answer for tonight' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Tonight: Down' })).toBeInTheDocument();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

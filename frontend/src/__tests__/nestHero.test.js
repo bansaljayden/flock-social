@@ -75,6 +75,28 @@ describe('pickHero', () => {
     expect(sameNight.map((f) => f.id)).toEqual([3]);
   });
 
+  test('two nights out or more, only a plan that needs the reader takes the hero', () => {
+    // On a Tuesday a plan three weeks off with nothing to do got the navy
+    // card, above the Needs you rows that did need a tap.
+    const tue = at(3, 18, 0);
+    const far = plan(1, at(24, 20, 0), { status: 'confirmed' });
+    expect(pickHero([far], tue)).toEqual({ hero: null, sameNight: [] });
+    const asks = (f) => f.id === 2;
+    const farVote = plan(2, at(24, 21, 0));
+    const { hero, sameNight } = pickHero([far, farVote], tue, { hasAsk: asks });
+    expect(hero.id).toBe(2);
+    expect(sameNight.map((f) => f.id)).toEqual([1]);
+    // Tonight and tomorrow always lead, ask or not.
+    expect(pickHero([plan(3, at(3, 20, 0), { status: 'confirmed' })], tue).hero.id).toBe(3);
+    expect(pickHero([plan(4, at(4, 20, 0), { status: 'confirmed' })], tue).hero.id).toBe(4);
+    expect(pickHero([plan(5, at(5, 20, 0), { status: 'confirmed' })], tue).hero).toBeNull();
+  });
+
+  test('the Nest hands pickHero its own asks', () => {
+    const APP = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+    expect(APP).toContain('pickHero(liveFlocks, nestNow, { hasAsk: (f) => !!heroAction(f, nestAskList) })');
+  });
+
   test('it never sorts the list it is handed', () => {
     const list = [plan(1, at(7, 19, 0)), plan(2, at(6, 20, 0))];
     const copy = list.slice();
@@ -211,6 +233,17 @@ describe('the note, the status and the place', () => {
 
   test('a voter who does not host is told who locks it in', () => {
     expect(heroNote(voted, 3)).toBe('You voted. Sam locks it in.');
+  });
+
+  test('the note follows the vote the moment it is cast: the tally first, as the chip does', () => {
+    // Read from the list alone, the note waited for the next list read after
+    // a vote the button had already let go of.
+    const f = { status: 'voting', host: 'Sam Rivera', creatorId: 2, iVoted: false };
+    expect(heroNote(f, 1)).toBeNull();
+    expect(heroNote(f, 1, { voted: true })).toBe('You voted. Sam locks it in.');
+    expect(heroNote({ ...f, iVoted: true }, 1, { voted: false })).toBeNull();
+    const APP = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+    expect(APP).toContain('note={heroNote(heroFlock, authUser?.id, { voted: iHaveVoted(heroFlock) })}');
   });
 
   test('no note when the host is Unknown, when the reader hosts, or before a vote is known', () => {

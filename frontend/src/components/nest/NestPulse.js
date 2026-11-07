@@ -1,17 +1,29 @@
 /**
  * OUT TONIGHT?: the reader's own answer, then the friends who said down.
  *
- * One segmented control, Down / Maybe / Not, on a quiet track: the most
- * tapped control in the app, so it keeps its 44px segments, its spoken names
- * ("Tonight: Down"), its pressed state, the optimistic write with a rollback
- * (handleSetPulse in App.js) and a 160 ms change. The audience is said right
- * under it, in the same words as before.
+ * One segmented control, Down / Maybe / Not: the most tapped control in the
+ * app, so it keeps its 44px segments, its spoken names ("Tonight: Down"), its
+ * pressed state, the optimistic write with a rollback (handleSetPulse in
+ * App.js) and a 160 ms change. The audience is said right under it, in the
+ * same words as before.
+ *
+ * The track is a white group like every other group on the Nest, with a
+ * hairline between two segments neither of which is chosen, and the labels
+ * in the primary ink. With nothing chosen it was three grey words on a well
+ * 1.1:1 from the page, which read as a strip of labels, not three buttons; an
+ * iOS segmented control always has a choice, so an empty one needs its own
+ * sign of being tappable.
  *
  * The chosen answer is a tint of its hue with ink of the same hue (index.css
  * --pulse-{down,maybe,not}-{bg,ink}): every ink clears 4.5:1 on its tint and
  * every tint stands apart from the track (nestOutTonight.test.js). Down used
  * to fill its segment solid green under white, the loudest block on the page
  * after the hero and SOS, for an answer that is a quiet fact about tonight.
+ *
+ * From midnight to 4 AM the heading is a statement, "Your answer for
+ * tonight", not the question "Out tonight?": the Nest asks nobody to go out
+ * after midnight (lib/pulse.js pulseHeading). The control stays, so an answer
+ * can still be changed or cleared.
  *
  * Add friends is a steel text link at the end of the heading, so a returning
  * person with friends has it on the first screen and not only in the footer:
@@ -29,6 +41,9 @@
 import React from 'react';
 import Icons from '../ui/Icons';
 import { FaceRow } from './Face';
+import { BAND_HEAD, BAND_GAP } from './nestBand';
+import { useNow } from '../../lib/nestTime';
+import { pulseHeading } from '../../lib/pulse';
 
 export const PULSE_OPTIONS = [
   { key: 'down', label: 'Down' },
@@ -52,19 +67,22 @@ const textLink = {
 };
 
 export default function NestPulse({ active, saving, onSet, friends, onPlanWith, onAddFriends }) {
+  const heading = useNow(60000, pulseHeading);
   return (
-    <div data-nest-band="out-tonight" style={{ marginBottom: '28px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 0 10px', minHeight: '20px' }}>
-        <h2 style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Out tonight?</h2>
+    <div data-nest-band="out-tonight" style={{ marginBottom: BAND_GAP }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 0 8px', minHeight: '20px' }}>
+        <h2 style={{ ...BAND_HEAD, margin: 0 }}>{heading}</h2>
         {onAddFriends && (
           <button type="button" className="hit44" onClick={onAddFriends} style={{ ...textLink, gap: '6px', minHeight: '32px', margin: '-6px 0' }}>
             {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
           </button>
         )}
       </div>
-      <div style={{ display: 'flex', gap: '2px', padding: '2px', minHeight: '48px', boxSizing: 'border-box', borderRadius: '12px', backgroundColor: 'var(--bg-inset)' }}>
-        {PULSE_OPTIONS.map((opt) => {
+      <div data-nest-pulse-track="" style={{ display: 'flex', gap: '2px', padding: '2px', minHeight: '48px', boxSizing: 'border-box', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)' }}>
+        {PULSE_OPTIONS.map((opt, i) => {
           const on = active === opt.key;
+          // A hairline between two segments neither of which is chosen.
+          const rule = i > 0 && !on && active !== PULSE_OPTIONS[i - 1].key;
           return (
             <button
               type="button"
@@ -74,6 +92,7 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
               aria-label={`Tonight: ${opt.label}`}
               aria-pressed={on}
               style={{
+                position: 'relative',
                 flex: 1,
                 // 44pt minimum tappable height (Apple HIG): the most tapped
                 // control in the app.
@@ -82,7 +101,7 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
                 border: 'none',
                 borderRadius: '10px',
                 backgroundColor: on ? `var(--pulse-${opt.key}-bg)` : 'transparent',
-                color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-secondary)',
+                color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-primary)',
                 fontSize: 'var(--t-body)',
                 fontWeight: '600',
                 cursor: saving ? 'wait' : 'pointer',
@@ -90,6 +109,7 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
                 transition: 'background-color 160ms var(--ease-out), color 160ms var(--ease-out)',
               }}
             >
+              {rule && <span aria-hidden="true" data-nest-pulse-rule="" style={{ position: 'absolute', left: '-2px', top: '12px', bottom: '12px', width: '1px', backgroundColor: 'var(--nest-edge)' }} />}
               {opt.label}
             </button>
           );

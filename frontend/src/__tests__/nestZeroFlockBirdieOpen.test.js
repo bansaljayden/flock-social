@@ -46,13 +46,33 @@ test('the painted crowd folds away, height and opacity, over 200 ms', () => {
 
 test('Birdie is a section of the page after the empty state, not a panel over it', () => {
   const empty = HOME.indexOf('{!flocksLoading && !flocksError && liveFlocks.length === 0 && (');
-  const section = HOME.indexOf('<NestBirdieSection');
+  const first = HOME.indexOf('{nestBirdieFirst && nestBirdieSection}');
   expect(empty).toBeGreaterThan(-1);
-  expect(section).toBeGreaterThan(empty);
+  expect(first).toBeGreaterThan(empty);
+  // With no plans to show, right after the empty state's two buttons.
+  expect(HOME).toContain('const nestBirdieFirst = !flocksLoading && !flocksError && liveFlocks.length === 0;');
+  expect(HOME.slice(empty, first)).not.toMatch(/<NestComingUp|<NestStillOpen/);
   // The thread renders INTO the section, through the panel's inline
   // presentation, which draws no backdrop and no sheet (birdieInline.test.js).
   expect(HOME).toMatch(/inline=\{nestBirdieInline\}/);
   expect(APP).toMatch(/const nestBirdieInline = aiChatMode === 'inline' && \(!birdieConsented \|\| aiMessages\.length > 0\) && \(/);
   // And the sheets over the page are for the panel and full screen only.
   expect(APP).toMatch(/const aiAssistantModal = \(isAiPanel \|\| isAiFullscreen\) && \(/);
+});
+
+test('with plans, Birdie comes after them: the person\'s own plans first, never an answer between them', () => {
+  // The section sat above Coming up and pushed the plans about 1.3 screens
+  // down at 390; an "Ask AI" box in the middle of a home feed above a
+  // person's own plans is the bolted-on pattern.
+  const coming = HOME.indexOf('<NestComingUp groups={nestComing}');
+  const still = HOME.indexOf('<NestStillOpen cards={nestStillOpen} />');
+  const after = HOME.indexOf('{!nestBirdieFirst && nestBirdieSection}');
+  const footer = HOME.indexOf('<footer data-nest-band="footer"');
+  expect(coming).toBeGreaterThan(-1);
+  expect(still).toBeGreaterThan(coming);
+  expect(after).toBeGreaterThan(still);
+  expect(footer).toBeGreaterThan(after);
+  // One section, placed in one of the two spots.
+  expect(HOME.match(/<NestBirdieSection/g)).toHaveLength(1);
+  expect(HOME).toMatch(/sectionRef=\{setNestBirdieBand\}/);
 });

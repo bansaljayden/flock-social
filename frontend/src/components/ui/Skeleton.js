@@ -24,9 +24,10 @@
  * paint them: index.js while the app's chunk is on the wire, and App.js while
  * GET /me answers on a cold start. They used to paint two different things, so
  * a light-mode launch went cream, then navy ("Flock / Loading..."), then cream.
- * FlockCardSkeleton is here because the Nest, that boot screen and Past flocks
- * all draw it; RosterSkeleton because the plan screen and the cold-start plan
- * opening in App.js both do.
+ * FlockCardSkeleton is here because that boot screen and Past flocks both
+ * draw it (the Nest itself draws NestHeroSkeleton while its list is read);
+ * RosterSkeleton because the plan screen and the cold-start plan opening in
+ * App.js both do.
  */
 import React from 'react';
 import { isNativeShell } from '../../lib/nativeShell';

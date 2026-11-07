@@ -2,7 +2,8 @@
  * PAST FLOCKS SCREEN
  *
  * Completed and cancelled plans, each one tap from happening again. Reached
- * from the Your Flocks header on Home and from the Nest's empty state.
+ * from the Nest's footer and from its empty state, in both only once there
+ * is history to see (a brand-new account has none).
  *
  * It was 108 lines of App.js, declared as an arrow function inside
  * FlockAppInner and CALLED rather than mounted, which is the same shape the

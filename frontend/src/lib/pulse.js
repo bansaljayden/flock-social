@@ -107,3 +107,19 @@ export function mergePlanFriends(prev, people, cap = 25) {
   }
   return out;
 }
+
+/**
+ * The heading over the Tonight control. "Out tonight?" is itself an ask to go
+ * out, and from midnight to 4 AM the Nest asks nobody to go out (the friends
+ * line is not drawn then either). The control stays, so an answer can still
+ * be set or cleared until it clears at 4 AM, and the heading says what it is:
+ * the reader's answer for the night they are in.
+ */
+export const PULSE_HEADING = 'Out tonight?';
+export const PULSE_HEADING_LATE = 'Your answer for tonight';
+
+export function pulseHeading(now = new Date()) {
+  const d = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(d.getTime())) return PULSE_HEADING;
+  return d.getHours() < 4 ? PULSE_HEADING_LATE : PULSE_HEADING;
+}

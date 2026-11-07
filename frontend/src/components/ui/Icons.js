@@ -1001,11 +1001,14 @@ const Icons = {
   ),
 
   // Ballot box, not a tray. At 9 units tall it stood barely a third the height
-  // of its neighbours, and it is called at sizes 9 and 10.
+  // of its neighbours, and it is called at sizes 9 and 10. A ballot going in
+  // at the slot, not a check in a square: a ticked box is a to-do list's sign
+  // for done, and the Nest's Needs you row that draws this is still open
+  // (2026-11-06). The box is closed; the ballot's foot is behind its lid.
   vote: make(
     <>
-      <path d="M4 7 20 7 20 20 4 20Z" />
-      <path d="M8 13 11 16 16 11" />
+      <path d="M4 12 20 12 20 20 4 20Z" />
+      <path d="M8 12 8 4 16 4 16 12" />
     </>
   ),
 

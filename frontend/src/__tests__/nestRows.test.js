@@ -105,11 +105,32 @@ describe('the Nest builds the rows', () => {
     expect(HOME).toMatch(/when: shortWhen\(r\.eventTime, nestNow\),/);
   });
 
+  test('an invite row lands on that invite, called out, as a push for it does', () => {
+    // It named one invite ("Leo invited you to Bowling Night") and the tap
+    // showed the Messages list.
+    expect(HOME).toContain("onClick: r.kind === 'invite' ? () => { setHighlightedInviteId(r.flockId); setCurrentTab('chat'); } : () => openNestAsk(r.flockId, r.kind),");
+    const LIST = require('fs').readFileSync(require('path').join(__dirname, '..', 'screens', 'ChatListScreen.js'), 'utf8');
+    expect(LIST).toContain('const tapped = highlightedInviteId === f.id;');
+  });
+
+  test('one place per open loop: a plan with a row is not a card or a same-night row too', () => {
+    // Sam's Birthday was a "Vote on" row and again a Coming up card with an
+    // accent chip: six entries for four plans.
+    expect(HOME).toContain("const rowPlanIds = new Set(nestOpenRows.filter((r) => r.kind !== 'invite').map((r) => r.flockId));");
+    expect(HOME).toContain('const cardFlocks = restFlocks.filter((f) => !rowPlanIds.has(f.id));');
+    expect(HOME).toContain('const comingList = comingGroups(cardFlocks, nestNow);');
+    expect(HOME).toContain('const nestStillOpen = stillOpen(cardFlocks, nestNow)');
+    expect(HOME).toContain('sameNight={heroNight.filter((f) => !rowPlanIds.has(f.id)).map((f) => ({');
+    // The rows are built before the cards that read them.
+    expect(HOME.indexOf('const nestOpenRows = nestRows(')).toBeLessThan(HOME.indexOf('const cardFlocks'));
+  });
+
   test('a plan beside the hero is a state and opens the plan: its asks are Needs you rows', () => {
     // It used to carry the ask on its chip and open the money sheet, so a
     // same-night vote or money ask showed only as a chip on a row titled with
     // the plan's name.
-    const block = HOME.slice(HOME.indexOf('sameNight={heroNight.map((f) => ({'), HOME.indexOf('}))}', HOME.indexOf('sameNight={heroNight.map((f) => ({')));
+    const at0 = HOME.indexOf('sameNight={heroNight.filter((f) => !rowPlanIds.has(f.id)).map((f) => ({');
+    const block = HOME.slice(at0, HOME.indexOf('}))}', at0));
     expect(block).toMatch(/chip: planChip\(f, \{ needsVote: f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\), voted: iHaveVoted\(f\) \}\),/);
     expect(block).toMatch(/onClick: \(\) => openPlan\(f\.id\),/);
     expect(block).not.toMatch(/openNestAsk|askKindFor/);
@@ -134,10 +155,28 @@ describe('NestRows', () => {
     expect(screen.getByRole('heading', { name: 'Needs you' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /^Vote on Plan/ })).toHaveLength(3);
     const more = screen.getByRole('button', { name: 'Show 2 more' });
-    expect(more).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(more);
     expect(screen.getAllByRole('button', { name: /^Vote on Plan/ })).toHaveLength(5);
     expect(screen.queryByRole('button', { name: /Show \d+ more/ })).toBeNull();
+  });
+
+  test('Show N more hands focus to the first row it revealed, never to the top of the page', () => {
+    // The button unmounts itself on the tap, and focus fell to <body>; its
+    // aria-expanded could only ever say false.
+    render(<NestRows rows={rows(5)} />);
+    const more = screen.getByRole('button', { name: 'Show 2 more' });
+    expect(more).not.toHaveAttribute('aria-expanded');
+    more.focus();
+    fireEvent.click(more);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Vote on Plan 3/ }));
+  });
+
+  test('an open vote is a ballot going into its box, never a ticked square', () => {
+    // A check in a box is a to-do list's sign for done, on a row still open.
+    const { container } = render(<NestRows rows={rows(1)} />);
+    const paths = [...container.querySelectorAll('[data-nest-row="vote"] svg path')].map((p) => p.getAttribute('d'));
+    expect(paths).toContain('M8 12 8 4 16 4 16 12');
+    expect(paths).not.toContain('M8 13 11 16 16 11');
   });
 
   test('one tap closes the loop: the row calls its own target', () => {
@@ -147,10 +186,12 @@ describe('NestRows', () => {
     expect(list[0].onClick).toHaveBeenCalledTimes(1);
   });
 
-  test('the time and the place sit on one line, each unbroken, breaking at the dot', () => {
+  test('the time and the place sit on one line, each unbroken, and the dot goes with the place', () => {
+    // At 320 the line broke after the dot: "Tomorrow at 7:00 PM ·" over
+    // "Juniper Bowl".
     const { container } = render(<NestRows rows={rows(1)} />);
     const spans = [...container.querySelectorAll('span')].filter((s) => s.style.whiteSpace === 'nowrap');
-    expect(spans.map((s) => s.textContent)).toEqual(['Sat 7:00 PM', 'Juniper Bowl']);
+    expect(spans.map((s) => s.textContent)).toEqual(['Sat 7:00 PM', '· Juniper Bowl']);
   });
 
   test('a closed loop folds away over 220 ms, then goes', () => {

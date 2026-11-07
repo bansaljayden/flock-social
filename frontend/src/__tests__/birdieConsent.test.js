@@ -392,3 +392,19 @@ describe('Settings: the answer can be taken back', () => {
     expect(api).toContain("return request('/api/ai/consent', { method: 'POST', body: JSON.stringify({ copy: BIRDIE_CONSENT_COPY }) });");
   });
 });
+
+describe('Allow and Not now weigh the same', () => {
+  // Allow was the filled navy button and Not now an outline: a nudge toward
+  // sending data to a third-party AI (Gray et al. 2018; ICO Children's Code,
+  // standard 13), now inside the Nest's page, built to the under-18 standard.
+  const PANEL_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'birdie', 'BirdiePanel.js'), 'utf8');
+
+  test('both buttons are drawn from one style, neither filled', () => {
+    expect(PANEL_SRC).toMatch(/onClick=\{closeAiChat\} disabled=\{birdieConsentBusy\} style=\{\{ \.\.\.consentChoice,/);
+    expect(PANEL_SRC).toMatch(/onClick=\{\(\) => answerBirdieConsent\(true\)\} disabled=\{birdieConsentBusy\} style=\{\{ \.\.\.consentChoice,/);
+    const choice = PANEL_SRC.slice(PANEL_SRC.indexOf('const consentChoice = {'), PANEL_SRC.indexOf('};', PANEL_SRC.indexOf('const consentChoice = {')));
+    expect(choice).toContain("background: 'var(--bg-inset)'");
+    expect(choice).toContain("border: 'none'");
+    expect(choice).not.toMatch(/#1e293b|white/);
+  });
+});

@@ -18,10 +18,25 @@
  *
  * The field writes the same refs Birdie's own box writes (aiInputValueRef and
  * aiInputHasTextRef), so a question typed here is the question sent.
+ *
+ * BEFORE THE ACCOUNT HAS SAID YES TO GEMINI the field is read-only and a tap
+ * on it (or Enter, or Space) asks for that yes in its place, without the
+ * field ever taking focus. It used to take focus and then be unmounted under
+ * the consent question by that same focus: on iOS the keyboard started to
+ * rise and dropped again, the first thing a new Birdie user saw, and a
+ * keyboard user's focus fell to the top of the page. Tabbing onto it asks
+ * nothing; Enter does.
+ *
+ * WHILE THE DAY'S MESSAGES ARE SPENT the field is off and says why, with the
+ * time they come back and Get Flock Pro where it is sold: the composer's own
+ * line (BirdiePanel.js OUT OF CHIRPS). The field used to take a question and
+ * send nothing, with no thread open to say so.
  */
 import React from 'react';
 import Icons from '../ui/Icons';
 import { liftNestField, dropNestField } from '../../lib/nestKeyboard';
+import { birdieBackText } from '../../lib/meterResets';
+import { BAND_HEAD, BAND_GAP } from './nestBand';
 
 // The Terms' own words (BirdiePanel.js's empty state carries the same
 // sentence; birdieDisclosurePinned.test.js holds the two to it).
@@ -45,6 +60,13 @@ const textLink = {
 };
 
 export default function NestBirdieSection({
+  sectionRef,
+  consented = true,
+  onAskConsent,
+  outOfChirps = false,
+  dailyLimit = null,
+  resetsAt = null,
+  onGetPro = null,
   isDark,
   inline,
   hasThread,
@@ -65,9 +87,9 @@ export default function NestBirdieSection({
   canSend,
 }) {
   return (
-    <section data-nest-band="birdie" aria-labelledby="nest-birdie-title" style={{ marginBottom: '28px' }}>
+    <section ref={sectionRef} data-nest-band="birdie" aria-labelledby="nest-birdie-title" style={{ marginBottom: BAND_GAP }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-        <h2 id="nest-birdie-title" style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Ask Birdie</h2>
+        <h2 id="nest-birdie-title" style={{ ...BAND_HEAD, margin: 0 }}>Ask Birdie</h2>
         {hasThread && (
           <button type="button" className="hit44" onClick={onNewChat} disabled={newChatDisabled} style={{ ...textLink, minHeight: '32px', opacity: newChatDisabled ? 0.5 : 1 }}>New chat</button>
         )}
@@ -94,19 +116,29 @@ export default function NestBirdieSection({
                 className="nest-birdie-input"
                 type="text"
                 aria-label="Ask Birdie"
+                aria-describedby={outOfChirps ? 'nest-birdie-spent' : undefined}
                 enterKeyHint="send"
                 placeholder="Ask about a place or a night out"
                 autoComplete="off"
                 maxLength={maxChars}
+                readOnly={!consented}
+                disabled={outOfChirps}
                 defaultValue={inputValueRef.current || ''}
-                onFocus={(e) => { liftNestField(e); onFocusField(); }}
-                onBlur={dropNestField}
+                onPointerDown={consented ? undefined : (e) => { e.preventDefault(); if (onAskConsent) onAskConsent(); }}
+                onFocus={consented ? (e) => { liftNestField(e); onFocusField(); } : undefined}
+                onBlur={consented ? dropNestField : undefined}
                 onInput={(e) => {
                   inputValueRef.current = e.target.value;
                   const has = !!e.target.value;
                   if (has !== inputHasTextRef.current) { inputHasTextRef.current = has; setInputHasText(has); }
                 }}
-                onKeyDown={(e) => { if (e.key === 'Enter') onSend(); }}
+                onKeyDown={(e) => {
+                  if (!consented) {
+                    if ((e.key === 'Enter' || e.key === ' ') && onAskConsent) { e.preventDefault(); onAskConsent(); }
+                    return;
+                  }
+                  if (e.key === 'Enter') onSend();
+                }}
                 style={{ flex: 1, minWidth: 0, height: '44px', padding: inputHasText ? '0 40px 0 0' : 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500' }}
               />
               <button
@@ -124,6 +156,17 @@ export default function NestBirdieSection({
                 </svg>
               </button>
             </div>
+            {outOfChirps && (
+              <div role="status" id="nest-birdie-spent" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 14px 12px 16px' }}>
+                <span aria-hidden="true" style={{ position: 'absolute', top: 0, left: '16px', right: 0, height: '1px', backgroundColor: 'var(--divider)' }} />
+                <p style={{ flex: 1, minWidth: 0, margin: 0, fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.4, color: 'var(--text-secondary)' }}>
+                  {Number.isFinite(dailyLimit) ? `You've used today's ${dailyLimit} messages.` : "You've used today's messages."} They come back {birdieBackText(resetsAt)}.
+                </p>
+                {onGetPro && (
+                  <button type="button" className="hit44" onClick={onGetPro} style={{ flexShrink: 0, minHeight: '36px', padding: '0 14px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Get Flock Pro</button>
+                )}
+              </div>
+            )}
             {chips.map((text) => (
               <button
                 type="button"
