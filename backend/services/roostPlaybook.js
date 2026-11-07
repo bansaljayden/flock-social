@@ -1015,71 +1015,6 @@ function calculatorAnswer(book, { question, ctx, venue, intentId, exclude = [] }
   };
 }
 
-// A SLOW-DAY MOVE IS NEVER ADVICE FOR A BUSY DAY (second recheck,
-// 2026-11-06). "How do I fill tomorrow?" asked on a Friday answered
-// "Saturday projects busiest around 9 PM, at 74. Give Saturday one recurring
-// reason to visit", and "How do I fill Saturday?" did the same on main: a
-// day that is the week's busiest, or above its median, has no seats to fill.
-// A slow-day move is one written for the venue's slow day ("Give your
-// slowest day one recurring reason to visit", "Host a weekly ... night on
-// your slow day"), which an answer about a day of Flock's forecast for
-// places like this one says of the day it leads with
-// (kindForecast.unownDays). When every day asked is busy, the move names the
-// week's quiet day the facts hold instead ("should i do live music on
-// thursday or friday": "Host a weekly music, comedy or open mic night on
-// Sunday"); with no quiet day to name, the slow-day moves are left out and
-// the advice is the busy day's (the peaks' topics). A question about a quiet
-// day, or about no day, is answered as before.
-const SLOW_DAY_MOVE = /\byour\s+(?:own\s+)?(?:quietest|slowest|quiet|slow|weakest|deadest|emptiest)\s+(?:day|night|evening)s?\b/i;
-const isSlowDayMove = (t) => Boolean(t) && SLOW_DAY_MOVE.test(String(t.move || ''));
-const peakScoreOf = (f) => (f && f.value && typeof f.value.weekday === 'string' ? Number(f.value.peakScore) : NaN);
-const peaksIn = (facts) => (Array.isArray(facts) ? facts : []).filter((f) => Number.isFinite(peakScoreOf(f)));
-const namesAsked = (question, askedFor) => (Array.isArray(askedFor) ? askedFor : [askedFor !== undefined ? askedFor : namedWeekday(question)]).filter(Boolean);
-
-/**
- * True when every day the advice is about (`askedFor`, or else the weekday the
- * question names) is, in `facts`, away from the quiet end of its week: as the
- * route marks it against the seven days from today (`quietEnd`,
- * routes/advisor.js quietEnds), or, unmarked, the busiest of three days or
- * more in `facts`, or above their median.
- */
-function busyAsked(facts, question = '', askedFor = undefined) {
-  if (askedFor === null) return false;
-  const peaks = peaksIn(facts);
-  const names = namesAsked(question, askedFor);
-  if (!peaks.length || !names.length) return false;
-  const asked = names.map((w) => peaks.find((f) => f.value.weekday === w));
-  if (asked.some((f) => !f)) return false;
-  const scores = peaks.map(peakScoreOf).sort((a, z) => a - z);
-  const half = Math.floor(scores.length / 2);
-  const median = scores.length % 2 ? scores[half] : (scores[half - 1] + scores[half]) / 2;
-  const top = scores[scores.length - 1];
-  return asked.every((f) => (typeof f.quietEnd === 'boolean'
-    ? f.quietEnd === false
-    : scores.length >= 3 && (peakScoreOf(f) >= top || peakScoreOf(f) > median)));
-}
-
-/** The week's quiet day in `facts` beside busy days asked: the lowest day not asked and not itself busy, or null. */
-function quietDayBeside(facts, question = '', askedFor = undefined) {
-  const peaks = peaksIn(facts);
-  const names = namesAsked(question, askedFor);
-  const others = peaks.filter((f) => !names.includes(f.value.weekday) && f.quietEnd !== false);
-  if (!others.length) return null;
-  const low = others.reduce((a, f) => (peakScoreOf(f) < peakScoreOf(a) ? f : a));
-  return busyAsked(peaks, '', low.value.weekday) ? null : low.value.weekday;
-}
-
-/** The playbook's ranking for advice about the days asked: busy days with no quiet day beside them get no slow-day move (busyAsked). */
-function rankedForDays(book, question, { intentId = null, venue = null, limit = 3, exclude = [], groundedFacts = [], askedFor = undefined } = {}) {
-  const ranking = book.ranked(question, { intentId, venue, limit, exclude });
-  if (!ranking.some((x) => isSlowDayMove(x.t)) || !busyAsked(groundedFacts, question, askedFor)
-      || quietDayBeside(groundedFacts, question, askedFor)) return ranking;
-  const without = (r) => r.filter((x) => !isSlowDayMove(x.t));
-  const kept = without(book.ranked(question, { intentId, venue, limit: limit + 4, exclude }));
-  if (kept.length) return kept.slice(0, limit);
-  return without(book.ranked(question, { intentId: 'peak_hours', venue, limit: limit + 4, exclude })).slice(0, limit);
-}
-
 /**
  * Answer one money question from the playbook, with no model call.
  * Returns null when no tactic clears the floor.
@@ -1107,7 +1042,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       followUp: calc.move ? followUpFor([calc.move], venue, question) : null,
     };
   }
-  const ranking = rankedForDays(book, question, { intentId, venue, limit: 3, exclude, groundedFacts, askedFor });
+  const ranking = book.ranked(question, { intentId, venue, limit: 3, exclude });
   if (!ranking.length) return null;
   const [top] = ranking;
   // "ANOTHER OPTION" EARNS ITS LINE: the owner's own words found it, or failing
@@ -1128,16 +1063,17 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const lead = groundedLead(intentId, groundedFacts, question, askedFor);
   // Under a lead that names a day of Flock's forecast for places like this
   // venue, the move names that day, never "your slowest day"
-  // (services/kindForecast.js unownDays).
-  // With two days or more led, the quieter of them is the day a fill move
-  // names, as the one day led is.
+  // (services/kindForecast.js unownDays). With two days or more led, the
+  // quieter of them is the day a fill move names, as the one day led is.
+  // THE OWNER'S DAY STAYS THE MOVE'S DAY (third recheck, 2026-11-06): a day
+  // the owner names to fill, discount or promote is the day the move and its
+  // warning name, as on main, whatever the forecast ranks it ("Our Saturdays
+  // are half empty lately", "Should I discount Friday?"). Swapping in the
+  // week's quiet day, unsaid, answered a question the owner did not ask.
   const quiet = lead && lead.facts
     ? lead.facts.reduce((a, f) => (Number(f.value.peakScore) < Number(a.value.peakScore) ? f : a))
     : (lead && lead.fact);
-  // Busy days led name the week's quiet day beside them (rankedForDays).
-  const quietName = (lead && busyAsked(groundedFacts, question, askedFor) && quietDayBeside(groundedFacts, question, askedFor))
-    || (quiet && quiet.value.weekday);
-  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, quietName) : (s) => s;
+  const say = lead && isKindForecast(lead.fact) ? (s) => unownDays(s, quiet.value.weekday) : (s) => s;
 
   const points = [say(first.why)];
   const money = moneyLine(first, spend);
@@ -1342,11 +1278,6 @@ function find(question, opts) {
   return BOOK.find(question, opts);
 }
 
-/** find(), for advice about the days asked: a busy day is never handed a slow-day move (rankedForDays). */
-function findForDays(question, opts) {
-  return rankedForDays(BOOK, question, opts).map(({ t }) => t);
-}
-
 function ranked(question, opts) {
   return BOOK.ranked(question, opts);
 }
@@ -1376,9 +1307,6 @@ module.exports = {
   SPEND_NUDGE,
   tactics: BOOK.tactics,
   find,
-  findForDays,
-  busyAsked,
-  quietDayBeside,
   ranked,
   answer,
   answerFrom,

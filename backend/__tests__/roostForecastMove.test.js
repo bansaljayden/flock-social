@@ -1541,20 +1541,15 @@ test('the bar on every day of a week, at the turn of the UTC day and at midday, 
           ], where);
           assert.deepStrictEqual(named.body.sources.map((s) => s.id), [`typical_peak_${intel.today.date}`, 'roost_playbook'], where);
           // And as advice, the model out: the playbook leads with today's
-          // number and names the day in its move, when the day is at the
-          // quiet end of its week. Thursday, Friday and Saturday are above
-          // the week's median, Saturday its busiest, and get the busy day's
-          // move, never a slow day's (second recheck, 2026-11-06).
+          // number and names the day in its move, on every day of the week:
+          // the owner calls it slow, and the day they name to fill stays the
+          // day the move names, Saturday at the week's high included (third
+          // recheck, 2026-11-06).
           route = { mode: 'advice', intentId: 'quiet_nights' };
           const advice = await call('/api/venue/advisor/question', { question: `How do I fill a slow ${day}?` });
           assert.strictEqual(advice.body.mode, 'advice', `${where}: ${advice.body.text}`);
           const lead = `In Flock's forecast for places like yours, ${day} projects busiest around 9 PM, at ${CARD[today]} on our 0 to 100 index. `;
-          if (['Thu', 'Fri', 'Sat'].includes(today)) {
-            assert.ok(advice.body.text.startsWith(lead), `${where}: ${advice.body.text}`);
-            assert.ok(!/recurring reason|Give \w+day /.test(advice.body.text), `${where}: ${advice.body.text}`);
-          } else {
-            assert.ok(advice.body.text.startsWith(`${lead}Give ${day} `), `${where}: ${advice.body.text}`);
-          }
+          assert.ok(advice.body.text.startsWith(`${lead}Give ${day} `), `${where}: ${advice.body.text}`);
           assert.ok(!/\b(?:your )?(?:quietest|slowest) day\b/i.test(advice.body.text), `${where}: ${advice.body.text}`);
           assert.ok(advice.body.sources.some((s) => s.id === `typical_peak_${intel.today.date}` && s.source === 'category_pattern'), `${where}: ${JSON.stringify(advice.body.sources)}`);
         });
@@ -3308,7 +3303,7 @@ test('advice on two days named opens on each day\'s own peak, picking none', () 
   assert.strictEqual(roostPlaybook.groundedLead('peak_hours', card, '', ['Monday', 'Tuesday']), null);
 });
 
-test('advice on two days named leads with both through the route, the fill move names the quieter or, both busy, the week\'s quiet day, and advice over the week leads with its ranking: the bar on the demo Friday', async () => {
+test('advice on two days named leads with both through the route, the fill move names the quieter, and advice over the week leads with its ranking: the bar on the demo Friday', async () => {
   await pinnedAt('2026-11-06T16:00:00Z', async () => {
     setUp({ placeId: 'ChIJr7AdviceTwoDays00000', phrasing: true });
     draftFor = () => null;
@@ -3318,11 +3313,11 @@ test('advice on two days named leads with both through the route, the fill move 
     assert.strictEqual(r.body.mode, 'advice', r.body.text);
     assert.ok(r.body.text.startsWith(`${KIND_OPEN}Friday projects busiest around 9 PM, at 66, and Saturday around 9 PM, at 74, on our 0 to 100 index. `), r.body.text);
     for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-07']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
-    // Thursday 64 and Friday 66 are both above the week's median, so the
-    // move for a slow day names the week's quiet day, Sunday, never Thursday
-    // (second recheck, 2026-11-06).
+    // The days the owner names stay the move's: the quieter of the two,
+    // Thursday, never a day the owner did not ask about (third recheck,
+    // 2026-11-06).
     r = await call('/api/venue/advisor/question', { question: 'should i do live music on thursday or friday' });
-    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Thursday projects busiest around 9 PM, at 64, and Friday around 9 PM, at 66, on our 0 to 100 index. Host a weekly music, comedy or open mic night on Sunday`), r.body.text);
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Thursday projects busiest around 9 PM, at 64, and Friday around 9 PM, at 66, on our 0 to 100 index. Host a weekly music, comedy or open mic night on Thursday`), r.body.text);
     // Over the week, from tonight: the week's quietest, as before.
     route = { mode: 'advice', intentId: 'quiet_nights' };
     r = await call('/api/venue/advisor/question', { question: 'How do I fill the slow nights this week, starting tonight?' });
@@ -3841,7 +3836,7 @@ test('one day against the same weekday past the seven days leads with the day th
   });
 });
 
-test('a slow-day move is never given for the week\'s busiest day or one above its median', async () => {
+test('under the quiet days\' chip a busy day alone gets the busy day\'s move, and advice keeps the day the owner names', async () => {
   // The cafe shut on Sundays at 12:30 AM on its Saturday: tomorrow is shut,
   // the coming daytime is Saturday at 74, the week's high, and the answer
   // ended on "Give Saturday one recurring reason to visit".
@@ -3862,32 +3857,26 @@ test('a slow-day move is never given for the week\'s busiest day or one above it
     const r = await call('/api/venue/advisor/question', { question: 'Today vs Sunday, which will be quieter?' });
     assert.ok(r.body.text.includes('Give Sunday one recurring reason to visit'), r.body.text);
   });
-  // The move itself, off the marks the route sets.
+  // The chip's move, off the marks the route sets: a busy day alone gets the
+  // busy day's move.
   const day = (weekday, score, quietEnd) => ({ id: `typical_peak_${weekday}`, value: { weekday, peakHour: 8, peakScore: score }, ...(quietEnd === false ? { quietEnd } : {}) });
   assert.notStrictEqual(roostPlaybook.moveFor('quiet_nights', { facts: [day('Saturday', 74, false)] }).topic, 'fill_slow_days');
   assert.strictEqual(roostPlaybook.moveFor('quiet_nights', { facts: [day('Saturday', 74, false), day('Monday', 48)] }).topic, 'fill_slow_days');
-  // Advice too: "How do I fill tomorrow?" on a Friday, tomorrow Saturday at
-  // 74, answered "Give Saturday one recurring reason to visit". A day the
-  // week ranks busiest or above its median is never named in a move written
-  // for the slow day: the move names the week's quiet day beside it, or is
-  // left out when the answer holds none; a quiet day is named as before.
+  // Advice keeps the day the owner names to fill, discount or promote, as
+  // main does, whatever the forecast ranks it (third recheck, 2026-11-06:
+  // "Should I discount Friday?" and "Our Saturdays are half empty lately"
+  // had the week's quiet day swapped in, unsaid).
   const week = [['Saturday', 74], ['Sunday', 45], ['Monday', 48], ['Tuesday', 48], ['Wednesday', 48], ['Thursday', 64], ['Friday', 66]]
     .map(([weekday, score]) => ({ ...day(weekday, score), source: 'category_pattern' }));
-  for (const [askedFor, busy] of [['Saturday', true], ['Friday', true], ['Thursday', true], ['Monday', false], ['Sunday', false]]) {
-    assert.strictEqual(roostPlaybook.busyAsked(week, '', askedFor), busy, askedFor);
+  for (const askedFor of ['Saturday', 'Friday', 'Thursday', 'Monday', 'Sunday']) {
     const a = roostPlaybook.answer({ question: `How do I fill ${askedFor}?`, intentId: 'quiet_nights', groundedFacts: week, askedFor });
-    if (busy) assert.ok(!a.text.includes(`Give ${askedFor} `), `${askedFor}: ${a.text}`);
-    else assert.ok(a.text.includes(`Give ${askedFor} one recurring reason`), `${askedFor}: ${a.text}`);
+    assert.ok(a.text.includes(`Give ${askedFor} one recurring reason`), `${askedFor}: ${a.text}`);
   }
-  assert.strictEqual(roostPlaybook.quietDayBeside(week, '', 'Saturday'), 'Sunday');
-  assert.strictEqual(roostPlaybook.quietDayBeside(week, '', ['Thursday', 'Friday']), 'Sunday');
-  // The route's own mark counts where the block holds one day, and with no
-  // quiet day beside it no slow-day move is given.
-  const one = [{ ...day('Saturday', 74, false), source: 'category_pattern' }];
-  assert.strictEqual(roostPlaybook.busyAsked(one, '', 'Saturday'), true);
-  assert.strictEqual(roostPlaybook.busyAsked([day('Saturday', 74)], '', 'Saturday'), false);
-  const alone = roostPlaybook.answer({ question: 'How do I fill Saturday?', intentId: 'quiet_nights', groundedFacts: one, askedFor: 'Saturday' });
-  assert.ok(!alone.tactics.includes('slow_day_recurring_reason') && !/recurring reason/.test(alone.text), alone.text);
+  const busy = [{ ...day('Saturday', 74, false), source: 'category_pattern' }];
+  const alone = roostPlaybook.answer({ question: 'How do I fill Saturday?', intentId: 'quiet_nights', groundedFacts: busy, askedFor: 'Saturday' });
+  assert.ok(alone.text.includes('Give Saturday one recurring reason'), alone.text);
+  const promo = roostPlaybook.answer({ question: 'Should I discount Friday?', intentId: null, groundedFacts: week, askedFor: 'Friday' });
+  assert.ok(!/discount (?:Sunday|Monday)\b/.test(promo.text), promo.text);
 });
 
 test('next weekend with a day of it past the seven days gives the days the forecast holds, and a day the venue is shut on is said to be', async () => {
@@ -3938,5 +3927,24 @@ test('a day said beside the card\'s week never stands under a quietest day it be
       ], intentId);
       assert.ok(!/quietest/.test(r.body.text), `${intentId}: ${r.body.text}`);
     }
+  });
+});
+
+test('advice keeps the day the owner names to fill, discount or promote, in its move and its warning, as main does', async () => {
+  // Each named another day, the week's quiet day, in the move and the
+  // discount warning, unsaid (third recheck, 2026-11-06).
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJrAOwnersDayAdvice000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'advice', intentId: 'quiet_nights' };
+    let r = await call('/api/venue/advisor/question', { question: 'Our Saturdays are half empty lately, what do we do?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Saturday projects busiest around 9 PM, at 74 on our 0 to 100 index. Give Saturday one recurring reason to visit`), r.body.text);
+    assert.ok(r.body.text.includes('before you discount Saturday'), r.body.text);
+    r = await call('/api/venue/advisor/question', { question: 'How do I fill Thursdays?' });
+    assert.ok(r.body.text.includes('Give Thursday one recurring reason to visit'), r.body.text);
+    route = { mode: 'advice', intentId: null };
+    r = await call('/api/venue/advisor/question', { question: 'Would a Saturday deal bring more people?' });
+    assert.ok(r.body.text.includes('Before you discount Saturday, count how many guests'), r.body.text);
+    assert.ok(!/discount (?:Sunday|Monday|Tuesday|Wednesday)\b/.test(r.body.text), r.body.text);
   });
 });

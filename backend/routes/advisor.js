@@ -1441,11 +1441,12 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
 // is at the quiet end of the seven days from today: `quietEnd: false` when
 // it is their busiest or above their median, today beside the card's week
 // included (withNamedToday marks today against the week's quietest; this
-// holds it to both), `true` otherwise. A move written for the slow day is
-// never given for a day marked false: under the quiet days' chip the move is
-// the busy day's (roostPlaybook.moveFor) and the question after it the
-// peaks chip's (advisorFollowUps), and advice names the week's quiet day or
-// leaves the move out (roostPlaybook.busyAsked). It is never a value, so no
+// holds it to both), `true` otherwise. Under the quiet days' chip a move
+// written for the slow day is never given when every day the answer says is
+// marked false: the move is the busy day's (roostPlaybook.moveFor) and the
+// question after it the peaks chip's (advisorFollowUps). Advice is another
+// matter: a day the owner names to fill stays the day its move names
+// (roostPlaybook.answerFrom, third recheck). It is never a value, so no
 // answer can say it.
 const QUIET_END_INTENTS = new Set(['quiet_nights', 'peak_hours', 'money_move']);
 async function quietEnds(b, entries) {

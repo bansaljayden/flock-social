@@ -1373,9 +1373,7 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
   // The first move may come from another kind of room when the owner names
   // its subject; the ones beside it are this room's own, so a club's door
   // question is not handed a coffee counter's line move as well (2026-10-28).
-  // A busy day asked about is never handed a slow-day move
-  // (roostPlaybook.findForDays), as the playbook's own answer is not.
-  const plays = roostPlaybook.findForDays(question, { intentId, venue, limit: PLAYS_IN_PAYLOAD + 2, exclude, groundedFacts, askedFor })
+  const plays = roostPlaybook.find(question, { intentId, venue, limit: PLAYS_IN_PAYLOAD + 2, exclude })
     .filter((t, i) => i === 0 || roostPlaybook.forThisKind(t, venue))
     .slice(0, PLAYS_IN_PAYLOAD);
   const payload = buildAdvicePayload(question, facts, ownerContext, plays);
