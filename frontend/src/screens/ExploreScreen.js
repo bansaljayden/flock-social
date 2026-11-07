@@ -203,6 +203,7 @@ export default function ExploreScreen({
   venueResultsFor = '',
   venueSearching,
   cancelPendingVenueSearch,
+  runVenueSearchNow,
 }) {
   // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
   // it, open another's, and the first answer used to merge into the second
@@ -256,6 +257,21 @@ export default function ExploreScreen({
   // real place whichever query found it.
   const rowsStale = venueResults.length > 0 && (venueSearching || venueResultsFor !== venueQuery.trim());
 
+  // THE BOX TAPPED AGAIN BRINGS ITS LIST BACK. With a query in it and the
+  // list closed (a row was tapped, or the map), a tap raised the keyboard over
+  // nothing, so the only way back to the results was to select the query and
+  // type it again. A tap with two or more letters reopens the list; rows that
+  // answer an older query send the search the box is owed. A tap and not a
+  // focus: on a laptop the venue sheet's close hands focus back to this box
+  // (App.js restoreFocusTo), and a focus handler would reopen the list over
+  // the crowd card the sheet was closed to show.
+  const reopenSearchList = () => {
+    const q = venueQuery.trim();
+    if (q.length < 2) return;
+    if (!showSearchDropdown) setShowSearchDropdown(true);
+    if (venueResultsFor !== q && !venueSearching && typeof runVenueSearchNow === 'function') runVenueSearchNow();
+  };
+
   const tableSummaries = useTableSummaries(
     [...allVenues.map((v) => v.place_id), ...venueResults.map((v) => v.place_id)],
     tableParty,
@@ -276,7 +292,7 @@ export default function ExploreScreen({
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} onClick={reopenSearchList} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
           {venueQuery && (
             <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>

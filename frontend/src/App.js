@@ -6527,6 +6527,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (searchTimerRef.current) { clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
   }, []);
 
+  // The search for what the box says, now, with no wait: for the box tapped
+  // again over rows that answer an older query (a row tapped before the
+  // search went, say), so the list it reopens is not left dimmed under a
+  // progress line with nothing on its way. A query searched in the last five
+  // minutes answers from the cache and costs nothing.
+  const runVenueSearchNow = useCallback(() => {
+    if (searchTimerRef.current) { clearTimeout(searchTimerRef.current); searchTimerRef.current = null; }
+    const q = venueQueryRef.current;
+    if (q && q.trim().length >= 2) doVenueSearch(q);
+  }, [doVenueSearch]);
+
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
   const inviteSeqRef = useRef(0);
@@ -21589,6 +21600,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueResultsFor,
     venueSearching,
     cancelPendingVenueSearch,
+    runVenueSearchNow,
   };
 
   return (
