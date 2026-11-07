@@ -2053,7 +2053,10 @@ const FEEDBACK_SCORE_SPAN = 80 - 20;
 //     an HMAC-signed NFC tap at the venue inside three hours, which really is
 //     physical presence. The other is accepted membership in a non-cancelled
 //     flock that met at that venue within twelve hours and has at least two
-//     accepted members — good evidence about real users, but self-assertable
+//     accepted members (or, for a member at lock-in of a locked-in plan, from
+//     its start until noon the next day at the venue: the plan window of
+//     2026-11-06, the same two-account evidence over a longer morning) — good
+//     evidence about real users, but self-assertable
 //     by two cooperating accounts, since a flock's venue_id is client-supplied.
 //     routes/feedback.js says so in as many words. So the honest statement of
 //     the floor is "three accounts, and for the flock branch at least three
