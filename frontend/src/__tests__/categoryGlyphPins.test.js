@@ -14,7 +14,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import ExploreScreen from '../screens/ExploreScreen';
-import { glyphPaths, glyphSvgGroup, categorizeVenueTypes, CategoryGlyph } from '../lib/categoryGlyph';
+import { glyphPaths, glyphSvgGroup, categorizeVenueTypes, glyphCategoryFor, CategoryGlyph } from '../lib/categoryGlyph';
 
 const fs = require('fs');
 const path = require('path');
@@ -92,4 +92,45 @@ test('a search row with no photo draws the glyph in its thumbnail; one with a ph
   // The fork and knife, Torre being a restaurant.
   const { container } = render(<CategoryGlyph category="Food" />);
   expect(torre.querySelector('svg').innerHTML).toBe(container.querySelector('svg').innerHTML);
+  // The place mark, a fireplace contractor being no kind of food.
+  const place = render(<CategoryGlyph category="Place" />);
+  expect(chimney.querySelector('svg').innerHTML).toBe(place.container.querySelector('svg').innerHTML);
+});
+
+// Review, 2026-11-06: the glyph drew the filters' category, whose fallback is
+// Food, so the places in the "tor" recording (a fireplace shop, a state park)
+// and a museum got a fork and knife, and the substring test on "bar" made a
+// barber shop a cocktail glass.
+test('the glyph is the place mark for anything that is not food, drink, music or sport', () => {
+  expect(glyphCategoryFor(['store', 'point_of_interest', 'establishment'])).toBe('Place');
+  expect(glyphCategoryFor(['park', 'tourist_attraction', 'point_of_interest'])).toBe('Place');
+  expect(glyphCategoryFor(['museum', 'point_of_interest'])).toBe('Place');
+  expect(glyphCategoryFor(['general_contractor', 'point_of_interest'])).toBe('Place');
+  expect(glyphCategoryFor([])).toBe('Place');
+  expect(glyphCategoryFor(undefined)).toBe('Place');
+  expect(glyphCategoryFor(['mexican_restaurant', 'restaurant', 'food'])).toBe('Food');
+  expect(glyphCategoryFor(['juice_shop', 'food'])).toBe('Food');
+  expect(glyphCategoryFor(['wine_bar', 'bar'])).toBe('Nightlife');
+  expect(glyphCategoryFor(['performing_arts_theater'])).toBe('Live Music');
+  expect(glyphCategoryFor(['bowling_alley'])).toBe('Sports');
+  // The filters keep their fallback: every listing has a filter to sit under.
+  expect(categorizeVenueTypes(['store', 'point_of_interest'])).toBe('Food');
+});
+
+test('bar is a type of its own, never the letters inside another', () => {
+  expect(glyphCategoryFor(['barber_shop', 'point_of_interest'])).toBe('Place');
+  expect(categorizeVenueTypes(['barber_shop'])).not.toBe('Nightlife');
+  expect(glyphCategoryFor(['barbecue_restaurant', 'restaurant'])).toBe('Food');
+  expect(categorizeVenueTypes(['barbecue_restaurant', 'restaurant'])).toBe('Food');
+  for (const types of [['bar'], ['bar', 'restaurant'], ['cocktail_bar'], ['irish_pub'], ['night_club'], ['bar_and_grill'], ['liquor_store'], ['hookah_lounge']]) {
+    expect([types, categorizeVenueTypes(types)]).toEqual([types, 'Nightlife']);
+  }
+  expect(categorizeVenueTypes(['juice_bar', 'food'])).toBe('Food');
+});
+
+test("both pin shapes and the rows draw the glyph for the listing's types, not the filter's category", () => {
+  expect(MAP_SRC).toMatch(/buildDiscSvg\(isActive, glyphCategoryFor\(venue\.types\)\)/);
+  expect(MAP_SRC).toMatch(/buildPinSvg\(isActive, glyphCategoryFor\(venue\.types\)\)/);
+  expect(MAP_SRC).not.toMatch(/build(Pin|Disc)Svg\(isActive, venue\.category\)/);
+  expect(EXPLORE_SRC).toMatch(/<CategoryGlyph category=\{glyphCategoryFor\(venue\.types\)\}/);
 });

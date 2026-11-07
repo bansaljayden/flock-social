@@ -92,7 +92,7 @@ import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib
 // Miles or kilometres by the device's region (lib/distance.js).
 import { formatDistance, haversineKm } from '../lib/distance';
 // What kind of place, drawn, in a row with no photo yet (lib/categoryGlyph.js).
-import { CategoryGlyph, categorizeVenueTypes } from '../lib/categoryGlyph';
+import { CategoryGlyph, glyphCategoryFor } from '../lib/categoryGlyph';
 // Tables at the venues on the map and in the search dropdown, for the ones
 // whose Flux sensor watches them: one POST for all of them, again each minute
 // while Discover is on screen (lib/tableSummaries.js), the words
@@ -459,7 +459,7 @@ export default function ExploreScreen({
                       while a photo is still on its way, where it used to be
                       an empty square. */}
                   <div data-row-thumb="true" style={{ position: 'relative', width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
-                    <CategoryGlyph category={categorizeVenueTypes(venue.types)} color={colors.navyMid || 'var(--text-secondary)'} size={20} />
+                    <CategoryGlyph category={glyphCategoryFor(venue.types)} color={colors.navyMid || 'var(--text-secondary)'} size={20} />
                     {venue.photo_url && (
                       <img src={venue.photo_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
                     )}

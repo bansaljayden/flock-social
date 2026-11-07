@@ -70,7 +70,7 @@
  */
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 // A pin with no photo draws its kind of place (lib/categoryGlyph.js).
-import { glyphSvgGroup } from '../../lib/categoryGlyph';
+import { glyphSvgGroup, glyphCategoryFor } from '../../lib/categoryGlyph';
 // Which results a new result set and a committed search frame.
 import { clusterPoints, framePoints, COMMITTED_FIT_RADIUS_KM } from '../../lib/fitResults';
 import { useTheme } from '../../context/ThemeContext';
@@ -932,7 +932,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       inner.style.backgroundImage = `url("${cached}")`;
       applyPhotoStyle();
     } else if (venue.photo_url) {
-      const svg = buildDiscSvg(isActive, venue.category);
+      // The glyph's own kind of place, not the filter's category, whose
+      // fallback is Food (lib/categoryGlyph.js glyphCategoryFor).
+      const svg = buildDiscSvg(isActive, glyphCategoryFor(venue.types));
       inner.innerHTML = svg;
       const svgEl = inner.querySelector('svg');
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', size); }
@@ -955,7 +957,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         }
       });
     } else {
-      const svg = buildPinSvg(isActive, venue.category);
+      const svg = buildPinSvg(isActive, glyphCategoryFor(venue.types));
       inner.innerHTML = svg;
       const svgEl = inner.querySelector('svg');
       if (svgEl) { svgEl.setAttribute('width', size); svgEl.setAttribute('height', Math.round(size * 1.32)); }
