@@ -270,9 +270,14 @@ describe('the map marker label cannot be built from a prototype property', () =>
   // pointed at App.js would now match nothing and report a clean sink.
   const map = readSrc('components', 'map', 'MapLibreMapView.js');
 
-  test('the category initial is an own-property lookup', () => {
-    // The result is interpolated into an innerHTML string, and
-    // `initialMap['constructor']` answers with the source of a native function.
-    expect(map).toMatch(/Object\.prototype\.hasOwnProperty\.call\(initialMap, category\)/);
+  test('the category glyph is an own-property lookup', () => {
+    // The pin draws a glyph for its category now, not its initial
+    // (lib/categoryGlyph.js), and the result is still interpolated into an
+    // innerHTML string, where `GLYPHS['constructor']` would answer with the
+    // source of a native function.
+    const glyphs = readSrc('lib', 'categoryGlyph.js');
+    expect(glyphs).toMatch(/Object\.prototype\.hasOwnProperty\.call\(GLYPHS, category\)/);
+    expect(map).toMatch(/glyphSvgGroup\(category, \{/);
+    expect(map).not.toMatch(/initialMap\[category\]/);
   });
 });

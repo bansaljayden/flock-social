@@ -69,6 +69,8 @@
  * would have left boot weight for a surface that had gone.
  */
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+// A pin with no photo draws its kind of place (lib/categoryGlyph.js).
+import { glyphSvgGroup } from '../../lib/categoryGlyph';
 import { useTheme } from '../../context/ThemeContext';
 import { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
@@ -782,29 +784,30 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
   // on dark tiles was a hole in the map.
+  //
+  // THE KIND OF PLACE, DRAWN, NOT ITS INITIAL. The disc carried the
+  // category's first letter, so every restaurant, cafe and bakery was a dark
+  // disc with an F in it, which read as nothing. It carries the category's
+  // glyph now (lib/categoryGlyph.js: fork and knife, glass, note, ball, a
+  // place mark for anything else). The glyph is constant path data chosen by
+  // an own-property lookup in that file, so a category that arrives as
+  // "constructor" or "__proto__" draws the place mark and nothing off
+  // Object.prototype reaches this innerHTML string.
   const buildPinSvg = useCallback((isActive, category) => {
     const body = mapIsDark
       ? (isActive ? '#6d9ac3' : '#f1ede0')
       : (isActive ? '#2d5a87' : '#1e293b');
     const edge = mapIsDark ? '#0b1220' : '#f1ede0';
     const disc = mapIsDark ? '#0f172a' : '#ffffff';
-    const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
-    // Own-property lookup only. `initialMap[category]` answers 'constructor'
-    // and '__proto__' off Object.prototype with something truthy, and the
-    // result is interpolated straight into the innerHTML string below, so a
-    // venue whose category arrived as one of those names drew a pin labelled
-    // with the source of a native function. Same rule, same reason as `own()`
-    // in website/ModerationDashboard.js.
-    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
     return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${body}" stroke="${edge}" stroke-width="2" filter="url(#s)"/>` +
       `<circle cx="16" cy="14.5" r="9" fill="${disc}"/>` +
-      `<text x="16" y="18.5" text-anchor="middle" font-size="13" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${body}">${initial}</text>` +
+      glyphSvgGroup(category, { cx: 16, cy: 14.5, size: 11, color: body, strokeWidth: 2.6 }) +
       `</svg>`;
   }, [mapIsDark]);
 
-  // The same initial on a disc, for a venue whose photo is on its way. The
+  // The same glyph on a disc, for a venue whose photo is on its way. The
   // photo that replaces it is round and the marker's anchor is the circle's
   // centre; a teardrop drawn under that anchor sat with its tip below the
   // venue until the photo arrived, then jumped up to the circle.
@@ -813,12 +816,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       ? (isActive ? '#6d9ac3' : '#f1ede0')
       : (isActive ? '#2d5a87' : '#1e293b');
     const edge = mapIsDark ? '#0b1220' : '#f1ede0';
-    const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
-    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
     return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">` +
       `<defs><filter id="d" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<circle cx="22" cy="22" r="20" fill="${body}" stroke="${edge}" stroke-width="2.5" filter="url(#d)"/>` +
-      `<text x="22" y="28" text-anchor="middle" font-size="17" font-weight="bold" font-family="Hanken Grotesk,sans-serif" fill="${edge}">${initial}</text>` +
+      glyphSvgGroup(category, { cx: 22, cy: 22, size: 20, color: edge, strokeWidth: 2.2 }) +
       `</svg>`;
   }, [mapIsDark]);
 

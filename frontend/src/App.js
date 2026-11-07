@@ -217,6 +217,7 @@ import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
 import { nextKeyGaps, searchWaitMs } from './lib/searchCadence';
 import { formatDistance } from './lib/distance';
+import { categorizeVenueTypes } from './lib/categoryGlyph';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -5650,15 +5651,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [selectedVenueForCreate, setSelectedVenueForCreate] = useState(null);
 
   // Assign a category based on Google Places types
-  const categorizeVenue = useCallback((types) => {
-    if (!types || types.length === 0) return 'Food';
-    const t = types.join(' ').toLowerCase();
-    if (t.includes('bar') || t.includes('night_club') || t.includes('liquor') || t.includes('lounge')) return 'Nightlife';
-    if (t.includes('music') || t.includes('concert') || t.includes('performing_arts')) return 'Live Music';
-    if (t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness')) return 'Sports';
-    if (t.includes('restaurant') || t.includes('cafe') || t.includes('bakery') || t.includes('food') || t.includes('pizza') || t.includes('meal') || t.includes('diner') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast')) return 'Food';
-    return 'Food'; // default for libraries, parks, museums, etc.
-  }, []);
+  // lib/categoryGlyph.js holds the rule, so the search rows' glyphs and the
+  // map's pins and filters cannot disagree about what kind of place it is.
+  const categorizeVenue = useCallback((types) => categorizeVenueTypes(types), []);
 
   // Venue search state (hoisted from CreateScreen to avoid conditional hook calls)
   const [venueQuery, setVenueQuery] = useState('');

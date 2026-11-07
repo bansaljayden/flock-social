@@ -91,6 +91,8 @@ import { onVenuePhotoError } from '../lib/venuePhoto';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 // Miles or kilometres by the device's region (lib/distance.js).
 import { formatDistance, haversineKm } from '../lib/distance';
+// What kind of place, drawn, in a row with no photo yet (lib/categoryGlyph.js).
+import { CategoryGlyph, categorizeVenueTypes } from '../lib/categoryGlyph';
 // Tables at the venues on the map and in the search dropdown, for the ones
 // whose Flux sensor watches them: one POST for all of them, again each minute
 // while Discover is on screen (lib/tableSummaries.js), the words
@@ -432,11 +434,16 @@ export default function ExploreScreen({
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
                 >
-                  {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
-                  ) : (
-                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
-                  )}
+                  {/* The kind of place, drawn, under the photo: it is what a
+                      place with no photo shows, and what the slot shows
+                      while a photo is still on its way, where it used to be
+                      an empty square. */}
+                  <div data-row-thumb="true" style={{ position: 'relative', width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                    <CategoryGlyph category={categorizeVenueTypes(venue.types)} color={colors.navyMid || 'var(--text-secondary)'} size={20} />
+                    {venue.photo_url && (
+                      <img src={venue.photo_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
+                    )}
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                     {/* The table line, under the name, for a venue whose Flux
