@@ -14,6 +14,8 @@
  *    of their own.
  * 4. The h1, on the home page and on /tap, is the display cut, opsz 144, the
  *    cut the fallback comes closest to.
+ * 5. The home hero's h1 runs its own ramp, 32px at 320, so its two lines are
+ *    two lines in both faces there.
  *
  * This is a FRONTEND test (jest via react-scripts).
  */
@@ -100,5 +102,31 @@ describe('the website sets its display type in Fraunces', () => {
       expect(`${selector}: ${rule !== null}`).toBe(`${selector}: true`);
       expect(rule[1]).toContain("font-variation-settings: 'opsz' 144;");
     }
+  });
+
+  test('the home hero h1 runs its own ramp, 32px at 320 to 72px from 1280, so it holds two lines at 320 in both faces', () => {
+    // On the shared ramp (34px at 320) "Nurturing friendship," is 283px in
+    // Fraunces against the 280px a 320px screen leaves it, so the headline
+    // took three lines once the face arrived where the fallback held two, and
+    // everything under it dropped 35px.
+    const css = read('src/website/LandingPage.css').replace(/\r\n/g, '\n');
+    const hero = /\n\.lp-hero-copy h1 \{([^}]*)\}/.exec(css);
+    expect(hero).not.toBeNull();
+    const m = /font-size: clamp\((\d+)px, ([\d.]+)rem \+ ([\d.]+)vw, (\d+)px\);/.exec(hero[1]);
+    expect(m).not.toBeNull();
+    const [lo, rem, vw, hi] = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
+    expect([lo, hi]).toEqual([32, 72]);
+    // The middle term meets the floor at 320 and the ceiling at 1280, so the
+    // ramp has no step at either end.
+    const mid = (w) => rem * 16 + (vw * w) / 100;
+    expect(mid(320)).toBeCloseTo(32, 1);
+    expect(mid(1280)).toBeCloseTo(72, 1);
+    // Scoped to the hero: the shared rule keeps its own ramp for every other
+    // page's h1, and the hero's rule comes after it at the same specificity,
+    // so it is the one that holds on the home page.
+    const shared = /\n\.lp h1 \{([^}]*)\}/.exec(css);
+    expect(shared[1]).toContain('font-size: clamp(34px, 1.33rem + 3.96vw, 72px);');
+    expect(css.indexOf('\n.lp-hero-copy h1 {')).toBeGreaterThan(css.indexOf('\n.lp h1 {'));
+    expect(css.match(/\n\s*\.lp-hero-copy >? ?h1 \{[^}]*font-size/g)).toHaveLength(1);
   });
 });
