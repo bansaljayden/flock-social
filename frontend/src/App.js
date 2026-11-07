@@ -218,6 +218,7 @@ import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
 import { nextKeyGaps, searchWaitMs } from './lib/searchCadence';
 import { formatDistance } from './lib/distance';
 import { categorizeVenueTypes } from './lib/categoryGlyph';
+import { COMMITTED_FIT_RADIUS_KM } from './lib/fitResults';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -6533,6 +6534,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const q = venueQueryRef.current;
     if (q && q.trim().length >= 2) doVenueSearch(q);
   }, [doVenueSearch]);
+
+  // A COMMITTED SEARCH FRAMES ITS RESULTS (MapLibreMapView fitRequest): the
+  // ones within 25 km of the person, or the cluster when none is that close.
+  // Return in the box commits the query typed (searched at once, with no
+  // wait) and the frame waits for its pins; See all and the count chip commit
+  // the pins already on the map. Each request is numbered so the map frames
+  // it once.
+  const [mapFitRequest, setMapFitRequest] = useState(null);
+  const mapFitSeqRef = useRef(0);
+  const requestMapFit = useCallback((waitFor = null) => {
+    mapFitSeqRef.current += 1;
+    setMapFitRequest({
+      seq: mapFitSeqRef.current,
+      waitFor: waitFor || null,
+      center: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null,
+      radiusKm: COMMITTED_FIT_RADIUS_KM,
+    });
+  }, [userLocation]);
+  const commitVenueSearch = useCallback(() => {
+    const q = (venueQueryRef.current || '').trim();
+    if (q.length < 2) return;
+    runVenueSearchNow();
+    requestMapFit(q);
+  }, [runVenueSearchNow, requestMapFit]);
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
@@ -21490,6 +21515,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueSearching,
   };
 
+  // A committed search's frame, once the map holds that search's pins
+  // (venueResultsFor names the query the pins answer).
+  const mapFitRequestReady = mapFitRequest && (!mapFitRequest.waitFor || mapFitRequest.waitFor === venueResultsFor) ? mapFitRequest : null;
+
   // THE DISCOVER TAB'S EIGHTY-FIVE. Built here rather than in renderScreen
   // because Discover is not part of the switch: its layer is mounted from this
   // component's own tree, below, and kept alive rather than rebuilt on every
@@ -21596,6 +21625,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueSearching,
     cancelPendingVenueSearch,
     runVenueSearchNow,
+    commitVenueSearch,
+    requestMapFit,
+    mapFitRequestReady,
   };
 
   return (

@@ -71,6 +71,8 @@
 import React, { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 // A pin with no photo draws its kind of place (lib/categoryGlyph.js).
 import { glyphSvgGroup } from '../../lib/categoryGlyph';
+// Which results a new result set and a committed search frame.
+import { clusterPoints, framePoints, COMMITTED_FIT_RADIUS_KM } from '../../lib/fitResults';
 import { useTheme } from '../../context/ThemeContext';
 import { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
@@ -618,7 +620,7 @@ export const googleMarkBottom = (noticeHeight, bottomLeftClear) => Math.max(
   bottomLeftClear ? bottomLeftClear + 8 : 0,
 );
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null, tableSummaries = null, tableParty = TABLE_PARTY_DEFAULT, bottomLeftClear = 0 }) => {
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null, tableSummaries = null, tableParty = TABLE_PARTY_DEFAULT, bottomLeftClear = 0, fitRequest = null }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -1744,20 +1746,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
        is a worse empty map than the one this is fixing. So fit to the CLUSTER:
        take the median point and drop anything absurdly far from it. The
        outlier keeps its pin and its place in the list; it just does not get
-       to decide the viewport. */
-    const sortedLng = points.map(p => p[0]).slice().sort((a, b) => a - b);
-    const sortedLat = points.map(p => p[1]).slice().sort((a, b) => a - b);
-    const midLng = sortedLng[sortedLng.length >> 1];
-    const midLat = sortedLat[sortedLat.length >> 1];
-    const kmFromMid = ([lng, lat]) => Math.hypot(
-      (lng - midLng) * 111 * Math.cos(midLat * Math.PI / 180),
-      (lat - midLat) * 111,
-    );
-    const sortedDist = points.map(kmFromMid).sort((a, b) => a - b);
-    const medianDist = sortedDist[sortedDist.length >> 1] || 0;
-    const limitKm = Math.max(15, medianDist * 4);
-    let core = points.filter(p => kmFromMid(p) <= limitKm);
-    if (core.length < 2) core = points;
+       to decide the viewport. The rule is lib/fitResults.js clusterPoints,
+       shared with the committed fit below. */
+    const core = clusterPoints(points);
 
     const bounds = core.reduce(
       (b, p) => b.extend(p),
@@ -1771,6 +1762,37 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
     } catch { /* container not measured yet — the next result set re-fits */ }
   }, [venues, mapReady, buildMarkerEl, ownerPlaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* A COMMITTED SEARCH FRAMES THE RESULTS NEAR YOU. Return in the search box,
+     See all, or the count chip asks for it (App.js mapFitRequest), once the
+     pins for that search are on the map. The results within 25 km of the
+     person (or of the map's centre with no location) are framed; with none
+     that close, the cluster as above. "All 20 results" over a map left zoomed
+     on one pin showed one pin; a search that found the place down the road and
+     a namesake 125 km away flew to the namesake. Declared after the marker
+     effect, so on a render that brings both new pins and the request it runs
+     second and its frame is the one that stays. */
+  const lastFitSeqRef = useRef(null);
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!fitRequest || !map || !mapReady || fitRequest.seq === lastFitSeqRef.current) return;
+    lastFitSeqRef.current = fitRequest.seq;
+    const points = (venues || [])
+      .filter(v => v.location?.latitude && v.location?.longitude)
+      .map(v => [v.location.longitude, v.location.latitude]);
+    if (points.length === 0) return;
+    const at = fitRequest.center && Number.isFinite(fitRequest.center.lat) && Number.isFinite(fitRequest.center.lng)
+      ? [fitRequest.center.lng, fitRequest.center.lat]
+      : (() => { const c = map.getCenter(); return [c.lng, c.lat]; })();
+    const framed = framePoints(points, { center: at, radiusKm: fitRequest.radiusKm || COMMITTED_FIT_RADIUS_KM });
+    if (framed.length === 0) return;
+    const ml = mapLibreRef.current;
+    if (!ml) return;
+    const bounds = framed.reduce((b, p) => b.extend(p), new ml.LngLatBounds(framed[0], framed[0]));
+    try {
+      map.fitBounds(bounds, { padding: { top: 90, bottom: 190, left: 40, right: 40 }, maxZoom: 15, duration: 600 });
+    } catch { /* container not measured yet */ }
+  }, [fitRequest, venues, mapReady]);
 
   // The answers changed (a minute passed, a venue's sensor answered, Discover
   // started picking for a different flock): rewrite the lines and repaint the

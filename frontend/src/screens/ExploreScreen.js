@@ -214,6 +214,12 @@ export default function ExploreScreen({
   venueSearching,
   cancelPendingVenueSearch,
   runVenueSearchNow,
+  // A committed search: Return in the box, and the map frame that See all and
+  // the count chip ask for (App.js requestMapFit), handed to the map once its
+  // pins are there.
+  commitVenueSearch,
+  requestMapFit,
+  mapFitRequestReady = null,
 }) {
   // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
   // it, open another's, and the first answer used to merge into the second
@@ -278,6 +284,20 @@ export default function ExploreScreen({
   // focus: on a laptop the venue sheet's close hands focus back to this box
   // (App.js restoreFocusTo), and a focus handler would reopen the list over
   // the crowd card the sheet was closed to show.
+  // RETURN SEARCHES NOW. The keyboard's Search key used to do nothing: the
+  // box waited out its pause like any keystroke. Return sends the search with
+  // no wait, frames its results on the map once they land (App.js
+  // commitVenueSearch), and takes the keyboard down so the list and the map
+  // can be seen.
+  const onSearchKeyDown = (e) => {
+    if (e.key !== 'Enter' || e.nativeEvent?.isComposing) return;
+    e.preventDefault();
+    if (venueQuery.trim().length < 2) return;
+    if (typeof commitVenueSearch === 'function') commitVenueSearch();
+    if (!showSearchDropdown) setShowSearchDropdown(true);
+    if (e.currentTarget && typeof e.currentTarget.blur === 'function') e.currentTarget.blur();
+  };
+
   const reopenSearchList = () => {
     const q = venueQuery.trim();
     if (q.length < 2) return;
@@ -305,7 +325,7 @@ export default function ExploreScreen({
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} onClick={reopenSearchList} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input aria-label="Search venues" key="search-input" id="search-input" type="text" enterKeyHint="search" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} onClick={reopenSearchList} onKeyDown={onSearchKeyDown} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
           {venueQuery && (
             <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
@@ -403,7 +423,7 @@ export default function ExploreScreen({
               {/* View All — first thing you see */}
               <button
                 className="hit44 glass-btn glass-navy"
-                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof requestMapFit === 'function') requestMapFit(); }}
                 style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
               >
                 {Icons.filter('white', 13)}
@@ -514,6 +534,7 @@ export default function ExploreScreen({
           tableSummaries={tableSummaries}
           tableParty={tableParty}
           bottomLeftClear={discoverMapLeftClear}
+          fitRequest={mapFitRequestReady}
         />
 
         {/* Location sharing indicator on the map. Words, and Stop: no
@@ -564,7 +585,7 @@ export default function ExploreScreen({
         {(budgetFilteredVenues || []).length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && !searchListOpen && (
           <button
             className="hit44 glass-btn"
-            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof requestMapFit === 'function') requestMapFit(); }}
             style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', left: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
             {resultsChipLabel((budgetFilteredVenues || []).length)}
