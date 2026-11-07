@@ -169,6 +169,42 @@ describe('on the Nest\'s page (inline, 2026-11-06)', () => {
     const line = container.querySelector('[data-birdie-disclosure-inline]');
     expect(line.textContent).toBe(UNDER);
     expect(seenOpacity(line)).toBe(1);
-    expect(PANEL).toMatch(/<p data-birdie-disclosure-inline="" style=\{\{ margin: '0 0 4px', fontSize: 'var\(--t-label\)', fontWeight: '500', color: 'var\(--text-secondary\)' \}\}>Answers are generated and can be wrong\.<\/p>/);
+    expect(PANEL).toMatch(/<p data-birdie-disclosure-inline="" style=\{\{ margin: '6px 0 0', fontSize: 'var\(--t-label\)', fontWeight: '500', color: 'var\(--text-secondary\)' \}\}>Answers are generated and can be wrong\.<\/p>/);
+  });
+
+  // The question lands at the top of the page's scroll, so the Gemini line
+  // above it is scrolled away while the answer is read, and the answer is set
+  // in the page's own body text. The caveat sat after every venue card, about
+  // 700px under the answer at 390 with two cards. It sits under the answer's
+  // words now, above the cards: next to the claim it qualifies.
+  const venues = [
+    { place_id: 'p1', name: 'Larkspur Tap', address: '1 Main St, Town' },
+    { place_id: 'p2', name: 'Juniper Bowl', address: '2 Main St, Town' },
+  ];
+  const inlineAnswer = () => render(<BirdiePanel {...birdiePanelProps({ presentation: 'inline', isAiPanel: false, getPageScroller: () => null, aiMessages: [{ role: 'user', text: 'where to' }, { role: 'assistant', text: 'Larkspur Tap, then Juniper Bowl.', venues }] })} />);
+
+  test('the line comes right after the answer\'s words and before the first venue card', () => {
+    const { container } = inlineAnswer();
+    const lines = container.querySelectorAll('[data-birdie-disclosure-inline]');
+    expect(lines).toHaveLength(1);
+    const line = lines[0];
+    const words = screen.getByText('Larkspur Tap, then Juniper Bowl.');
+    const firstCard = screen.getByRole('heading', { name: 'Larkspur Tap' });
+    expect(words.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(firstCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(words.nextElementSibling).toBe(line);
+  });
+
+  test('in the page the venue cards take the column\'s width; in the panel they keep 280px', () => {
+    // 278px in a 350px column, left-aligned with a ragged right edge, read
+    // as unfinished once the answer was part of the page.
+    const { container, unmount } = inlineAnswer();
+    const card = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: 14px"]');
+    expect(card.style.maxWidth).toBe('none');
+    unmount();
+    render(<BirdiePanel {...birdiePanelProps({ isAiPanel: true, isAiFullscreen: false, aiMessages: [{ role: 'user', text: 'where to' }, { role: 'assistant', text: 'Larkspur Tap, then Juniper Bowl.', venues }] })} />);
+    const docked = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: 14px"]');
+    expect(docked.style.maxWidth).toBe('280px');
+    expect(container).toBeTruthy();
   });
 });

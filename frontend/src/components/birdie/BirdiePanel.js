@@ -202,13 +202,17 @@ export default function BirdiePanel({
 }) {
   // Inline is a section of the Nest's page, not a sheet over it.
   const isInline = presentation === 'inline';
+  // How wide a venue card may run. In a chat bubble's column, 280px. In the
+  // page, the column's own width: 278px cards in a 350px column, aligned
+  // left with a ragged right edge, read as unfinished. Only the width of the
+  // set is decided here; what is inside a card is the venue card's own.
+  const venueCardMax = isInline ? 'none' : '280px';
   // Inline shows the latest exchange: the reader's last question and what
   // came after it. Older turns are a tap away in the full screen.
   let inlineFrom = 0;
   for (let k = aiMessages.length - 1; k >= 0; k -= 1) {
     if (aiMessages[k].role === 'user') { inlineFrom = k; break; }
   }
-  const lastTurn = aiMessages.length > 0 ? aiMessages[aiMessages.length - 1] : null;
   // The thread's scroll box, and what the landing effect below knows about
   // it: whether the reader scrolled away from the end on purpose, where it
   // last put the thread itself, and the mode it last landed in.
@@ -589,6 +593,15 @@ export default function BirdiePanel({
                     : { borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.10)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
                     {msg.text}
                   </div>
+                  {/* In the page, the caveat sits right under the answer's
+                      words, above its cards: the question lands at the top of
+                      the scroll, so the Gemini line over the section is out
+                      of view, and the answer is set in the page's own body
+                      text. After the cards it was about 700px below the claim
+                      it qualifies at 390 with two cards. */}
+                  {isInline && msg.role !== 'user' && i === aiMessages.length - 1 && (
+                    <p data-birdie-disclosure-inline="" style={{ margin: '6px 0 0', fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Answers are generated and can be wrong.</p>
+                  )}
                   {/* Venue Cards from AI */}
                   {/* Navigation button from AI */}
                   {msg.navigate && (
@@ -675,7 +688,7 @@ export default function BirdiePanel({
                         const pillBg = pill && (pill.tone === 'open' ? 'var(--accent-green-bg)' : pill.tone === 'later' ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)');
                         const pillInk = pill && (pill.tone === 'open' ? 'var(--accent-green-text)' : pill.tone === 'later' ? 'var(--accent-amber-text)' : 'var(--accent-red-text)');
                         return (
-                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: '280px', animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
+                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: venueCardMax, animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
                           {photoUrl && (
                             <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                           )}
@@ -756,7 +769,7 @@ export default function BirdiePanel({
                           photo in full. The credit is also kept out of what
                           Birdie's model reads, since a display name is anybody's
                           text. */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', maxWidth: '280px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', maxWidth: venueCardMax }}>
                         <GoogleMapsMark />
                       </div>
                     </div>
@@ -777,9 +790,6 @@ export default function BirdiePanel({
                 <BirdieStill size={40} eager />
                 <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Working on your answer</span>
               </div>
-            )}
-            {isInline && lastTurn && lastTurn.role !== 'user' && !aiTyping && (
-              <p data-birdie-disclosure-inline="" style={{ margin: '0 0 4px', fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Answers are generated and can be wrong.</p>
             )}
             <div ref={aiChatEndRef} />
           </div>
