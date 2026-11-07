@@ -29,7 +29,16 @@ test('the Nest counts, gates and lists one live, sorted array', () => {
   // prints no count"); the gates and the list still read it.
   expect(home).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(<>/);
   expect(home).toMatch(/!flocksLoading && !flocksError && liveFlocks\.length === 0 && \(/);
-  expect(home).toMatch(/\{liveFlocks\.map\(\(f, idx\) => \{/);
+  // The list reads what the hero and its night did not take: one sorted
+  // array split three ways and never sorted again (lib/nestTime.js pickHero).
+  expect(home).toMatch(/const \{ hero: heroFlock, sameNight: heroNight \} = pickHero\(liveFlocks, nestNow\);/);
+  expect(home).toMatch(/const heroIds = new Set\(\[heroFlock, \.\.\.heroNight\]\.filter\(Boolean\)\.map\(\(f\) => f\.id\)\);/);
+  expect(home).toMatch(/const restFlocks = liveFlocks\.filter\(\(f\) => !heroIds\.has\(f\.id\)\);/);
+  expect(home).toMatch(/\{restFlocks\.map\(\(f, idx\) => \{/);
+  // Nothing after the split sorts again: the hero, its night and the rest
+  // all keep the one order liveFlocks was given.
+  const afterSplit = home.slice(home.indexOf('const restFlocks'), home.indexOf('// The past flocks screen was declared here'));
+  expect(afterSplit).not.toMatch(/\.sort\(/);
   expect(home).toMatch(/\{flocks\.length > 0 \? 'Nothing coming up' : 'No flocks yet'\}/);
   expect(home).toMatch(/\{f\.timePassed \? 'Time passed' : f\.status === 'voting' \? 'Needs Votes'/);
   // The per-reader half is a named helper now, because the flock list read

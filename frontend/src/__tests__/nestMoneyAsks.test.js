@@ -128,9 +128,13 @@ describe('App.js reads the flags, and the card uses them', () => {
     const home = APP.slice(at, at + 40000);
     // The vote half is untouched, so nestCardTruth's lift still runs it.
     expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\)\);/);
-    expect(home).toMatch(/const asks = nestAsks\(flocks, needsAction\);/);
+    expect(home).toMatch(/const nestAskList = nestAsks\(flocks, needsAction\);/);
     expect(home).toMatch(/if \(asks\.length === 0\) return null;/);
     expect(home).toMatch(/if \(top\.kind === 'vote'\) \{ setCurrentScreen\('detail'\); return; \}\s+setCurrentScreen\('chatDetail'\);\s+setShowChatPool\(true\);/);
+    // The hero's button goes to the same places: money to the money sheet,
+    // a vote and a night to rate to the plan.
+    expect(home).toMatch(/const openNestAsk = \(flockId, kind\) => \{\s+setSelectedFlockId\(flockId\);\s+if \(kind === 'vote' \|\| kind === 'how'\) \{ setCurrentScreen\('detail'\); return; \}\s+setCurrentScreen\('chatDetail'\);\s+setShowChatPool\(true\);\s+\};/);
+    expect(home).toMatch(/onAction=\{\(\) => heroAsk && openNestAsk\(heroFlock\.id, heroAsk\.kind\)\}/);
     expect(home).toMatch(/\{nestAskLine\(asks\)\}/);
     expect(home).toMatch(/\{NEST_ASK_CHIP\[top\.kind\]\}/);
   });

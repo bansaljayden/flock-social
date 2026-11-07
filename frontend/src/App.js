@@ -170,6 +170,9 @@ import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks
 // mounted as JSX: HomeScreen is called, not mounted, so it cannot hold a hook,
 // and a piece that needs one (the day line's clock) keeps it to itself.
 import NestDayLine from './components/nest/NestDayLine';
+import NestHero from './components/nest/NestHero';
+import { pickHero, whenLine, alsoLine } from './lib/nestTime';
+import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -18077,6 +18080,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const bt = b.eventTime ? new Date(b.eventTime).getTime() : Infinity;
         return at - bt;
       });
+    // A flock still voting AND still waiting on this reader. The second
+    // half was missing, so the first thing on the home screen told
+    // somebody who had just voted that their vote was still needed, and
+    // kept telling them for as long as the flock stayed open. The ask is
+    // addressed to YOU, it names one flock and it opens it, so being
+    // wrong about the one fact the app certainly knows is the whole of
+    // its content being wrong.
+    // Only flocks whose votes were actually read may be accused: an
+    // unloaded [] is not evidence the person has not voted.
+    // Local tally first when there is one: it is the freshest answer and
+    // it is what changes the moment the reader votes. Otherwise the
+    // list read's own boolean. Neither present means we do not know, and
+    // the ask stays away.
+    const needsMyVote = (f) => (votesLoadedRef.current.has(f.id)
+      ? !hasCastMyVote(f)
+      : f.iVoted === false);
+    const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && needsMyVote(f));
+    // Its mirror for the chip: "Voted" only when the tally or the list read
+    // says so, never because nothing said otherwise.
+    const iHaveVoted = (f) => (votesLoadedRef.current.has(f.id) ? hasCastMyVote(f) : f.iVoted === true);
+    // And the money: a share still owed on a bill somebody else paid, or
+    // a budget still missing this reader's answer (lib/nestAsks.js has
+    // the order and why). Owing reads `flocks`, not liveFlocks, because
+    // the bill usually lands the morning after, on a plan this list has
+    // already let go.
+    const nestAskList = nestAsks(flocks, needsAction);
+    const askKindFor = (f) => (nestAskList.find((a) => a.flock.id === f.id) || {}).kind || null;
+    // Where an ask goes: the budget and the bill both live in the cash pool
+    // sheet over the chat, so that is where their tap goes; a vote, and a
+    // night to rate, open the plan, as they always have.
+    const openNestAsk = (flockId, kind) => {
+      setSelectedFlockId(flockId);
+      if (kind === 'vote' || kind === 'how') { setCurrentScreen('detail'); return; }
+      setCurrentScreen('chatDetail');
+      setShowChatPool(true);
+    };
+    const openPlan = (flockId) => { setSelectedFlockId(flockId); setCurrentScreen('detail'); };
+    // TONIGHT FIRST. The one sorted list splits three ways and is never
+    // sorted again: the hero (tonight's plan, or the next one), the other
+    // plans on its night, and everything else (lib/nestTime.js pickHero).
+    const nestNow = new Date();
+    const { hero: heroFlock, sameNight: heroNight } = pickHero(liveFlocks, nestNow);
+    const heroIds = new Set([heroFlock, ...heroNight].filter(Boolean).map((f) => f.id));
+    const restFlocks = liveFlocks.filter((f) => !heroIds.has(f.id));
+    const heroAsk = heroFlock ? heroAction(heroFlock, nestAskList) : null;
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       {/* The edge the page scrolls under. A 1px line that shows only while
@@ -18198,33 +18246,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             own margin sits under it, so it needs only a little here. */}
         {emailConfirmLine && <div style={{ marginBottom: '8px' }}>{emailConfirmLine}</div>}
 
+        {heroFlock && (
+          <NestHero
+            flock={heroFlock}
+            when={whenLine(heroFlock.eventTime, nestNow)}
+            status={heroStatus(heroFlock)}
+            place={placeLine(heroFlock.venue)}
+            faces={heroFaces(Array.isArray(heroFlock.memberPreviews) && heroFlock.memberPreviews.length ? heroFlock.memberPreviews : (heroFlock.members || []))}
+            total={heroFlock.memberCount || 1}
+            names={heroNames(heroFlock.memberPreviews, heroFlock.memberCount, authUser?.id)}
+            note={heroNote(heroFlock, authUser?.id)}
+            action={heroAsk}
+            onOpen={() => openPlan(heroFlock.id)}
+            onAction={() => heroAsk && openNestAsk(heroFlock.id, heroAsk.kind)}
+            sameNight={heroNight.map((f) => {
+              const ask = askKindFor(f);
+              return {
+                id: f.id,
+                name: f.name,
+                line: alsoLine(f.eventTime, nestNow),
+                chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f), ask }),
+                onClick: () => (ask ? openNestAsk(f.id, ask) : openPlan(f.id)),
+              };
+            })}
+          />
+        )}
+
         {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
         {(() => {
-          // A flock still voting AND still waiting on this reader. The second
-          // half was missing, so the first thing on the home screen told
-          // somebody who had just voted that their vote was still needed, and
-          // kept telling them for as long as the flock stayed open. The card
-          // is addressed to YOU, it names one flock and it opens it, so being
-          // wrong about the one fact the app certainly knows is the whole of
-          // its content being wrong.
-          // Only flocks whose votes were actually read may be accused: an
-          // unloaded [] is not evidence the person has not voted.
-          // Local tally first when there is one: it is the freshest answer and
-          // it is what changes the moment the reader votes. Otherwise the
-          // list read's own boolean. Neither present means we do not know, and
-          // the card stays away.
-          const needsMyVote = (f) => (votesLoadedRef.current.has(f.id)
-            ? !hasCastMyVote(f)
-            : f.iVoted === false);
-          const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && needsMyVote(f));
-          // And the money: a share still owed on a bill somebody else paid, or
-          // a budget still missing this reader's answer (lib/nestAsks.js has
-          // the order and why). Owing reads `flocks`, not liveFlocks, because
-          // the bill usually lands the morning after, on a plan this list has
-          // already let go. The budget and the bill both live in the cash
-          // pool sheet over the chat, so that is where their tap goes; a vote
-          // still opens the plan, as it always has.
-          const asks = nestAsks(flocks, needsAction);
+          // What the hero and the plans beside it already ask is said there.
+          const asks = nestAskList.filter((a) => !heroIds.has(a.flock.id));
           if (asks.length === 0) return null;
           const top = asks[0];
           const openTop = () => {
@@ -18352,7 +18403,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               night ever. Filtered here at the render, not at the load,
               because Messages and the completed detail screen read the same
               array. */}
-          {liveFlocks.map((f, idx) => {
+          {restFlocks.map((f, idx) => {
             // Faces come from member_previews: a name and an avatar for up to
             // four accepted members, creator first, which GET /api/flocks sends
             // and loadFlocks stores. The card never read it, so it drew from
