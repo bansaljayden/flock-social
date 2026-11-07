@@ -36,11 +36,11 @@ import Icons from '../ui/Icons';
 import { NEST_ROWS_CAP } from '../../lib/nestAsks';
 import { BAND_HEAD, BAND_GAP } from './nestBand';
 
-// A vote on the Nest is a vote on a place ("Vote on a place" is the hero's
-// words for it), so its row wears the place pin: Icons.vote is a ticked
-// square, a to-do list's sign for done, on a row that is still open, and a
-// ballot going into a box drew as a printer at 18px.
-const ICON = { owe: 'dollar', budget: 'dollar', vote: 'mapPin', invite: 'mail', how: 'star' };
+// Each row wears the glyph the rest of the app gives its kind: a vote wears
+// Icons.vote, the vote sheet's own mark, and a budget or a debt wears nestEgg,
+// the README's glyph for a flock's budget or cash pool from 16px up (the rows
+// draw at 18). A vote row wore the place pin and money rows the plain dollar.
+const ICON = { owe: 'nestEgg', budget: 'nestEgg', vote: 'vote', invite: 'mail', how: 'star' };
 // An invite is someone asking you into a plan, so its envelope sits on a
 // blush disc (index.css --accent-blush, the second accent) with the envelope
 // in navy, 9.63:1. The disc's 7px is given back by the same negative margin,

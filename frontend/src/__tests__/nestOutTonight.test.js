@@ -65,8 +65,8 @@ describe('Add friends in the band', () => {
     expect(screen.getByRole('button', { name: 'Add friends' })).toBeInTheDocument();
   });
 
-  test('the footer keeps its own Add friends too, except beside the no-friends row', () => {
-    expect(HOME).toMatch(/<footer data-nest-band="footer"[\s\S]*?\{!nestNoFriendsRow && \([\s\S]*?onClick=\{openAddFriendsFromNest\}[\s\S]*?Add friends[\s\S]*?<\/footer>/);
+  test('the footer draws Add friends only when neither the no-friends row nor the band carries it', () => {
+    expect(HOME).toMatch(/<footer data-nest-band="footer"[\s\S]*?\{!nestNoFriendsRow && !\(friendCount > 0\) && \([\s\S]*?onClick=\{openAddFriendsFromNest\}[\s\S]*?Add friends[\s\S]*?<\/footer>/);
     expect(HOME).toContain('const nestNoFriendsRow = friendCount === 0 && !myPulse && liveFlocks.length > 0;');
     expect(HOME).toMatch(/\{nestNoFriendsRow && \(\s*<button type="button" onClick=\{openAddFriendsFromNest\}/);
   });

@@ -18492,7 +18492,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 {Icons.clock('var(--accent-purple-text)', 14)} Past flocks
               </button>
             )}
-            {!nestNoFriendsRow && (
+            {/* One Add friends on the page: Out tonight?'s heading carries it
+                for a person known to have friends, so the footer draws it
+                only when that link is not there. */}
+            {!nestNoFriendsRow && !(friendCount > 0) && (
               <button type="button" onClick={openAddFriendsFromNest} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
                 {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
               </button>

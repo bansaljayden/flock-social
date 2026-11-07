@@ -191,17 +191,15 @@ describe('NestRows', () => {
     }
   });
 
-  test('an open vote wears the place pin, never a ticked square', () => {
-    // A check in a box is a to-do list's sign for done, on a row still open.
+  test('an open vote wears the vote sheet\'s mark, and money rows the nest egg', () => {
     const { container } = render(<NestRows rows={rows(1)} />);
     const rowPaths = [...container.querySelectorAll('[data-nest-row="vote"] svg path')].map((p) => p.getAttribute('d'));
-    const pin = render(<span data-pin="">{Icons.mapPin('var(--text-secondary)', 18)}</span>).container;
-    const pinPaths = [...pin.querySelectorAll('[data-pin] svg path')].map((p) => p.getAttribute('d'));
-    expect(pinPaths.length).toBeGreaterThan(0);
-    for (const d of pinPaths) expect(rowPaths).toContain(d);
-    expect(rowPaths).not.toContain('M8 13 11 16 16 11');
+    const vote = render(<span data-vote="">{Icons.vote('var(--text-secondary)', 18)}</span>).container;
+    const votePaths = [...vote.querySelectorAll('[data-vote] svg path')].map((p) => p.getAttribute('d'));
+    expect(votePaths.length).toBeGreaterThan(0);
+    for (const d of votePaths) expect(rowPaths).toContain(d);
     const SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestRows.js'), 'utf8');
-    expect(SRC).toContain("vote: 'mapPin'");
+    expect(SRC).toContain("const ICON = { owe: 'nestEgg', budget: 'nestEgg', vote: 'vote',");
   });
 
   test('one tap closes the loop: the row calls its own target', () => {

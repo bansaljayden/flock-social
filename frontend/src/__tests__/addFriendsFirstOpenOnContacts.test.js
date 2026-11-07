@@ -125,7 +125,8 @@ describe('where it is used, and where it is not', () => {
     //   1. the empty state's Add friends button (no plans yet);
     //   2. the row an account with plans but no friends gets in Out
     //      tonight?'s place;
-    //   3. the footer's link, drawn when the row is not;
+    //   3. the footer's link, drawn when neither the row nor Out tonight?'s
+    //      link is;
     //   and Out tonight?'s heading link, for a person known to have friends.
     expect((body.match(/onClick=\{openAddFriendsFromNest\}/g) || []).length).toBe(3);
     expect((body.match(/onAddFriends=\{friendCount > 0 \? openAddFriendsFromNest : undefined\}/g) || []).length).toBe(1);
