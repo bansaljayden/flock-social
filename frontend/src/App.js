@@ -18356,7 +18356,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           onShowLastAnswer={() => setAiChatMode('inline')}
           onNewChat={nestBirdieNewChat}
           newChatDisabled={aiTyping}
-          chips={birdieChips({ liveFlocks, now: nestNow, outOfChirps, firstRun: flocks.length === 0 })}
+          chips={birdieChips({ liveFlocks, now: nestNow, outOfChirps })}
           onChip={nestBirdieChip}
           inputRef={aiInputRef}
           inputValueRef={aiInputValueRef}

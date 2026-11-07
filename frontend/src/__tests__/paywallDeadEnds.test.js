@@ -33,7 +33,7 @@ describe('Birdie at the daily cap', () => {
     expect(birdie).toMatch(/\{!isInline && !aiTyping && aiMessages\.length > 0 && !outOfChirps && \(/);
     // And the Nest's own suggestions are none while the day's messages are
     // spent (lib/birdieChips.js; birdieChips.test.js runs it).
-    expect(app).toMatch(/chips=\{birdieChips\(\{ liveFlocks, now: nestNow, outOfChirps, firstRun: flocks\.length === 0 \}\)\}/);
+    expect(app).toMatch(/chips=\{birdieChips\(\{ liveFlocks, now: nestNow, outOfChirps \}\)\}/);
   });
 
   test('the panel is handed both names it now reads', () => {

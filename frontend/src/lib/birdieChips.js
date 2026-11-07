@@ -17,9 +17,18 @@
  *                                         midnight to 4 AM: the Nest does not
  *                                         suggest going out after midnight
  *
- * One for a person with plans, two on a first run (no plans at all), none
- * while the day's messages are spent: each one sends, and a send that cannot
- * go through is a dead button.
+ * Two, the first two that apply, with two rules on the second:
+ *
+ *   - after a crowd question, the second asks for a spot: the plan still
+ *     choosing its place, or "Pick a spot for tonight". With a plan tonight
+ *     the one suggestion used to be the crowd question, so asking for a spot
+ *     meant tapping the field and typing, where it had been two taps;
+ *   - never a second "Pick a spot" under a first one.
+ *
+ * Two is the most the Nest offers at once (a person with plans used to get
+ * one); only the bill question from midnight to 4 AM; none while the day's
+ * messages are spent: each one sends, and a send that cannot go through is a
+ * dead button.
  *
  * Pure: `now` and the plans come in, the words go out.
  */
@@ -33,45 +42,55 @@ const asTime = (v) => {
 };
 const hasPlace = (f) => !!f.venue && f.venue !== 'TBD';
 
-export function birdieChips({ liveFlocks = [], now = new Date(), outOfChirps = false, firstRun = false } = {}) {
+const SPOT_TONIGHT = 'Pick a spot for tonight';
+const BILL = 'How do I split a bill?';
+const isSpot = (text) => /^Pick a spot for /.test(text);
+
+export function birdieChips({ liveFlocks = [], now = new Date(), outOfChirps = false } = {}) {
   if (outOfChirps) return [];
   const n = now instanceof Date ? now : new Date(now);
   const nowMs = n.getTime();
   const hour = n.getHours();
-  const afterMidnight = hour < 4;
-  const want = firstRun ? 2 : 1;
+  // From midnight to 4 AM the Nest does not suggest going out.
+  if (hour < 4) return [BILL];
   const list = (Array.isArray(liveFlocks) ? liveFlocks : []).filter((f) => f && !f.timePassed);
   const out = [];
   const add = (text) => { if (text && !out.includes(text)) out.push(text); };
 
-  if (!afterMidnight) {
-    // 1. A crowd read Birdie can actually give: a plan at a known place,
-    //    starting within the next 12 hours.
-    const soon = list
-      .filter((f) => f.venueId && hasPlace(f))
-      .map((f) => ({ f, at: asTime(f.eventTime) }))
-      .filter(({ at }) => at != null && at > nowMs && at - nowMs <= CROWD_READ_HOURS * 3600 * 1000)
-      .sort((a, b) => a.at - b.at)[0];
-    // clockTime keeps 11:33 and PM together: the question wrapped at 390
-    // with PM alone on its second line.
-    if (soon) add(`How busy is ${soon.f.venue} at ${clockTime(new Date(soon.at))}?`);
+  // 1. A crowd read Birdie can actually give: a plan at a known place,
+  //    starting within the next 12 hours.
+  const soon = list
+    .filter((f) => f.venueId && hasPlace(f))
+    .map((f) => ({ f, at: asTime(f.eventTime) }))
+    .filter(({ at }) => at != null && at > nowMs && at - nowMs <= CROWD_READ_HOURS * 3600 * 1000)
+    .sort((a, b) => a.at - b.at)[0];
+  // clockTime keeps 11:33 and PM together: the question wrapped at 390
+  // with PM alone on its second line.
+  const crowd = soon ? `How busy is ${soon.f.venue} at ${clockTime(new Date(soon.at))}?` : null;
+  add(crowd);
 
-    // 2. A plan tonight: when to leave for it.
-    const tonight = list.some((f) => asTime(f.eventTime) != null && nightsBetween(n, f.eventTime) === 0);
-    if (tonight) add('When should we head out?');
+  // 2. A plan tonight: when to leave for it.
+  const tonight = list.some((f) => asTime(f.eventTime) != null && nightsBetween(n, f.eventTime) === 0);
+  if (tonight) add('When should we head out?');
 
-    // 3. A plan still choosing its place.
-    const placeless = list.find((f) => !hasPlace(f));
-    if (placeless) add(`Pick a spot for ${placeless.name}`);
+  // 3. A plan still choosing its place.
+  const placeless = list.find((f) => !hasPlace(f));
+  const placelessSpot = placeless ? `Pick a spot for ${placeless.name}` : null;
+  add(placelessSpot);
 
-    // 4. Nothing on tonight, and it is not past midnight.
-    if (!tonight) add('Pick a spot for tonight');
+  // 4. Nothing on tonight.
+  if (!tonight) add(SPOT_TONIGHT);
 
-    // 5. The evening's open question.
-    if (hour >= 16) add("Where's poppin rn?");
-  }
+  // 5. The evening's open question.
+  if (hour >= 16) add("Where's poppin rn?");
 
   // 6. Always a question that is not about going out.
-  add('How do I split a bill?');
-  return out.slice(0, afterMidnight ? 1 : want);
+  add(BILL);
+
+  const [first] = out;
+  // After a crowd question, a spot: picking a place stays one tap away.
+  if (first === crowd) return [first, placelessSpot || SPOT_TONIGHT];
+  // Never a second "Pick a spot" under a first one.
+  const second = out.slice(1).find((text) => !(isSpot(first) && isSpot(text)));
+  return second ? [first, second] : [first];
 }
