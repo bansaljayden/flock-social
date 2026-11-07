@@ -575,6 +575,16 @@ describe('the tab bar draws the pairs', () => {
     expect(APP).toContain('const draw = (selected ? NAV_ICONS_SELECTED : NAV_ICONS)[id];');
   });
 
+  test('the unread badge is ringed in the bar\'s colour, so it never fuses with the filled bubble', () => {
+    // Selected, messagesFilled is a solid shape under the badge's corner; with
+    // no ring the two read as one dark block. A 2 px ring in the tab's own
+    // background keeps them apart (this bar or the Nest redesign's).
+    const at = APP.indexOf("{t.id === 'chat' && messagesTabUnread > 0 && (");
+    expect(at).toBeGreaterThan(-1);
+    const badge = APP.slice(at, APP.indexOf('</div>', at));
+    expect(badge).toMatch(/boxShadow: [`']0 0 0 2px /);
+  });
+
   test('a tap never bounces a tab past full size', () => {
     // The old tab-bounce went 0.92, 1.04, 1. A tap may press the tab in and
     // let it go (tabPress, 0.94 back to 1), or draw no motion at all; any
