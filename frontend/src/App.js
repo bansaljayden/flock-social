@@ -177,7 +177,7 @@ import NestComingUp from './components/nest/NestComingUp';
 import NestBirdieSection from './components/nest/NestBirdieSection';
 import NestDock, { NEST_DOCK_EXTRA } from './components/nest/NestDock';
 import { birdieChips } from './lib/birdieChips';
-import { pickHero, whenLine, alsoLine, comingGroups, cardTime } from './lib/nestTime';
+import { pickHero, whenLine, shortWhen, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
@@ -18137,7 +18137,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       cards: g.flocks.map((f) => ({
         id: f.id,
         name: f.name,
-        time: cardTime(f.eventTime, g.label),
+        time: cardTime(f.eventTime, g.label, nestNow),
         place: placeLine(f.venue),
         faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || [])),
         total: f.memberCount || 1,
@@ -18150,7 +18150,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: [...heroIds] })
       .map((r) => ({
         ...r,
-        when: whenLine(r.eventTime, nestNow),
+        when: shortWhen(r.eventTime, nestNow),
         onClick: r.kind === 'invite' ? () => setCurrentTab('chat') : () => openNestAsk(r.flockId, r.kind),
       }));
     return (

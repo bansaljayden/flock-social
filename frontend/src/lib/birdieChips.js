@@ -23,8 +23,7 @@
  *
  * Pure: `now` and the plans come in, the words go out.
  */
-import { localeTime } from './localeFormat';
-import { nightsBetween } from './nestTime';
+import { clockTime, nightsBetween } from './nestTime';
 
 const CROWD_READ_HOURS = 12;
 const asTime = (v) => {
@@ -53,7 +52,9 @@ export function birdieChips({ liveFlocks = [], now = new Date(), outOfChirps = f
       .map((f) => ({ f, at: asTime(f.eventTime) }))
       .filter(({ at }) => at != null && at > nowMs && at - nowMs <= CROWD_READ_HOURS * 3600 * 1000)
       .sort((a, b) => a.at - b.at)[0];
-    if (soon) add(`How busy is ${soon.f.venue} at ${localeTime(new Date(soon.at), [], { hour: 'numeric', minute: '2-digit' })}?`);
+    // clockTime keeps 11:33 and PM together: the question wrapped at 390
+    // with PM alone on its second line.
+    if (soon) add(`How busy is ${soon.f.venue} at ${clockTime(new Date(soon.at))}?`);
 
     // 2. A plan tonight: when to leave for it.
     const tonight = list.some((f) => asTime(f.eventTime) != null && nightsBetween(n, f.eventTime) === 0);

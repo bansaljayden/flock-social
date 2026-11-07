@@ -64,7 +64,8 @@ export function nestAsks(flocks, voteAsks = []) {
  * read, so an unread tally is never an accusation.
  *
  * Each row carries the plan's time and place for its second line, as data;
- * the words for the time come from lib/nestTime.js whenLine.
+ * the words for the time come from lib/nestTime.js shortWhen ("Sun 11:00 AM",
+ * the Coming up cards' own words; the sentence form is the hero's alone).
  */
 // A first name reads as a friend; the full one is on the invite card itself.
 const firstName = (name) => String(name || '').trim().split(/\s+/)[0];

@@ -23,6 +23,14 @@ test('a plan at a known place within 12 hours: how busy it will be then', () => 
   ]);
 });
 
+test('the crowd question keeps its time and its PM on one line', () => {
+  // "How busy is The Copper Finch at 11:33 / PM?" broke at 390 with PM alone.
+  const late = plan(1, at(6, 23, 33), { venue: 'The Copper Finch', venueId: 'p1', status: 'confirmed' });
+  const [q] = birdieChips({ liveFlocks: [late], now: at(6, 19, 12) });
+  expect(q).toMatch(/11:33\u202fPM\?$/);
+  expect(q).not.toMatch(/[0-9] (AM|PM)/);
+});
+
 test('beyond the 12 hours a crowd read reaches, no crowd question is offered', () => {
   const sunday = plan(2, at(8, 11, 0), { venue: 'Marigold Diner', venueId: 'p2' });
   const chips = birdieChips({ liveFlocks: [sunday], now: at(6, 19, 12), firstRun: true });

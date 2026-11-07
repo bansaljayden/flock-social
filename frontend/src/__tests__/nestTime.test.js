@@ -84,7 +84,7 @@ describe('comingGroups and cardTime', () => {
   const { comingGroups, cardTime } = require('../lib/nestTime');
   const FRI = at(6, 19, 12);
   const f = (id, when, extra = {}) => ({ id, eventTime: when ? when.toISOString() : null, ...extra });
-  const plain = (s) => String(s).replace(/\u202f/g, ' ');
+  const plain = (s) => String(s).replace(/[\u202f\u00a0]/g, ' ');
 
   test('a partition of the list in its own order, empty bands left out', () => {
     const list = [
@@ -113,9 +113,70 @@ describe('comingGroups and cardTime', () => {
   });
 
   test('the card time is short where the band already says the day', () => {
-    expect(plain(cardTime(at(7, 19, 0), 'Tomorrow'))).toBe('7:00 PM');
-    expect(plain(cardTime(at(8, 11, 0), 'This week'))).toBe('Sun 11:00 AM');
-    expect(plain(cardTime(at(21, 20, 0), 'Later'))).toBe('Nov 21, 8:00 PM');
-    expect(cardTime(null, 'No date yet')).toBe('');
+    expect(plain(cardTime(at(7, 19, 0), 'Tomorrow', FRI))).toBe('7:00 PM');
+    expect(plain(cardTime(at(8, 11, 0), 'This week', FRI))).toBe('Sun 11:00 AM');
+    expect(plain(cardTime(at(21, 20, 0), 'Later', FRI))).toBe('Nov 21, 8:00 PM');
+    expect(cardTime(null, 'No date yet', FRI)).toBe('');
+  });
+
+  test("under Earlier the card says which night in the rows' own words, never a weekday weeks old", () => {
+    expect(plain(cardTime(at(5, 20, 0), 'Earlier', FRI))).toBe('Last night 8:00 PM');
+    expect(plain(cardTime(at(4, 11, 0), 'Earlier', FRI))).toBe('Nov 4, 11:00 AM');
+    expect(plain(cardTime(at(1, 20, 0), 'Earlier', at(20, 19, 0)))).toBe('Nov 1, 8:00 PM');
+  });
+});
+
+// "How busy is The Copper Finch at 11:33 / PM?": a time broke across two lines
+// at 390, its PM alone on the second. Every time the Nest writes keeps its
+// figures and its AM or PM together (a narrow no-break space, the one iOS's
+// own clock uses), and a month keeps its day (a no-break space).
+describe('a time never breaks from its AM or PM', () => {
+  const { whenLine, alsoLine, shortWhen, cardTime, clockTime } = require('../lib/nestTime');
+  const FRI = at(6, 19, 12);
+  const breakable = /[0-9] (AM|PM)|[A-Z][a-z]{2} [0-9]/;
+
+  test.each([
+    ['whenLine tonight', () => whenLine(at(6, 23, 33), FRI)],
+    ['whenLine far out', () => whenLine(at(21, 20, 0), FRI)],
+    ['alsoLine', () => alsoLine(at(6, 20, 0), FRI)],
+    ['shortWhen this week', () => shortWhen(at(8, 11, 0), FRI)],
+    ['shortWhen later', () => shortWhen(at(21, 20, 0), FRI)],
+    ['cardTime later', () => cardTime(at(21, 20, 0), 'Later', FRI)],
+    ['clockTime', () => clockTime(at(6, 23, 33))],
+  ])('%s', (_, run) => {
+    const s = run();
+    expect(s).toMatch(/[0-9]\u202f(AM|PM)/);
+    expect(s).not.toMatch(breakable);
+  });
+});
+
+// One plan, one way of saying when, below the hero: the Needs you rows and the
+// Coming up cards both say "Sun 11:00 AM", where the rows said "Sunday at
+// 11:00 AM" over a card that said "Sun 11:00 AM", and at 320 the long form
+// took every row to three or four lines. The sentence form stays in the hero.
+describe('shortWhen', () => {
+  const { shortWhen } = require('../lib/nestTime');
+  const FRI = at(6, 19, 12);
+  const plain = (s) => String(s).replace(/[\u202f\u00a0]/g, ' ');
+
+  test.each([
+    [at(6, 20, 33), 'Tonight 8:33 PM'],
+    [at(6, 19, 0), 'Started 7:00 PM'],
+    [at(7, 19, 0), 'Tomorrow 7:00 PM'],
+    [at(8, 11, 0), 'Sun 11:00 AM'],
+    [at(12, 22, 19), 'Thu 10:19 PM'],
+    [at(15, 22, 19), 'Nov 15, 10:19 PM'],
+    [at(5, 20, 0), 'Last night 8:00 PM'],
+    [at(5, 11, 0), 'Yesterday 11:00 AM'],
+  ])('%s from Friday 7:12 PM reads %s', (t, want) => {
+    expect(plain(shortWhen(t, FRI))).toBe(want);
+  });
+
+  test('a morning plan the same day is Today', () => {
+    expect(plain(shortWhen(at(6, 11, 0), at(6, 9, 0)))).toBe('Today 11:00 AM');
+  });
+
+  test('no time, no words', () => {
+    expect(shortWhen(null, FRI)).toBe('');
   });
 });

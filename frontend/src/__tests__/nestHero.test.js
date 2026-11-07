@@ -20,8 +20,10 @@ import NestHero from '../components/nest/NestHero';
 // 2026-11-06 is a Friday.
 const at = (day, h, m = 0) => new Date(2026, 10, day, h, m);
 const FRI_712 = at(6, 19, 12);
-// Intl puts a narrow no-break space before AM/PM; the words are what matter.
-const plain = (s) => String(s).replace(/\u202f/g, ' ');
+// lib/nestTime.js joins a time to its AM/PM with a narrow no-break space and a
+// month to its day with a no-break space; the words are what matter here
+// (nestTime.test.js holds the spaces).
+const plain = (s) => String(s).replace(/[\u202f\u00a0]/g, ' ');
 
 const plan = (id, when, extra = {}) => ({ id, name: `Plan ${id}`, status: 'voting', eventTime: when ? when.toISOString() : null, timePassed: false, ...extra });
 

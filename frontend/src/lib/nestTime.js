@@ -92,10 +92,26 @@ export function dayLine(now = new Date()) {
   return `${nightWeekday(d)} ${part}`;
 }
 
-const timeOf = (d) => localeTime(d, [], { hour: 'numeric', minute: '2-digit' });
-const monthDay = (d) => localeDate(d, [], { month: 'short', day: 'numeric' });
+/*
+ * A TIME NEVER BREAKS FROM ITS AM OR PM. "How busy is The Copper Finch at
+ * 11:33 / PM?" wrapped at 390 with PM alone on the second line, because
+ * Chromium's Intl writes an ordinary space there (some ICU builds write a
+ * narrow no-break one, so it depended on the engine). Every time the Nest
+ * writes joins its figures to its AM or PM with U+202F, the narrow no-break
+ * space iOS's own clock uses, and a month keeps its day with U+00A0.
+ */
+const NARROW_NBSP = '\u202f';
+const NBSP = '\u00a0';
+const timeOf = (d) => localeTime(d, [], { hour: 'numeric', minute: '2-digit' }).replace(/\s+/g, NARROW_NBSP);
+const monthDay = (d) => localeDate(d, [], { month: 'short', day: 'numeric' }).replace(/\s+/g, NBSP);
 const shortWeekday = (d) => WEEKDAYS[d.getDay()].slice(0, 3);
 const isEveningHour = (h) => h >= 17 || h < NIGHT_ROLL_HOUR;
+
+/** A clock time that does not break: "11:33 PM" with a narrow no-break space. '' for no date. */
+export function clockTime(value) {
+  const d = asDate(value);
+  return d ? timeOf(d) : '';
+}
 
 /**
  * When a plan is, in the words a person uses for it, from the night it falls
@@ -126,6 +142,39 @@ export function whenLine(eventTime, now = new Date()) {
   if (nights >= 2 && nights <= 6) return `${WEEKDAYS[t.getDay()]} at ${at}`;
   if (nights === -1) return isEveningHour(t.getHours()) ? `Last night at ${at}` : `Yesterday at ${at}`;
   return `${monthDay(t)} at ${at}`;
+}
+
+/**
+ * The same facts, short, for everything below the hero: the Needs you rows
+ * and the Coming up cards say a plan's time one way, where the rows said
+ * "Sunday at 11:00 AM" over a card that said "Sun 11:00 AM" (and at 320 the
+ * long form took every row to three or four lines). The sentence form stays
+ * in the hero, the one place a plan is read as a sentence.
+ *
+ *   same night, still ahead  "Tonight 8:33 PM" / "Today 11:00 AM"
+ *   same night, under way    "Started 8:33 PM"
+ *   the next night           "Tomorrow 7:00 PM"
+ *   two to six nights out    "Sun 11:00 AM"
+ *   further out              "Nov 15, 8:00 PM"
+ *   the night before         "Last night 8:00 PM" / "Yesterday 11:00 AM"
+ *   earlier still            "Nov 4, 8:00 PM"
+ *
+ * '' for a plan with no readable time.
+ */
+export function shortWhen(eventTime, now = new Date()) {
+  const t = asDate(eventTime);
+  const n = asDate(now);
+  if (!t || !n) return '';
+  const nights = nightsBetween(n, t);
+  const at = timeOf(t);
+  if (nights === 0) {
+    if (t.getTime() <= n.getTime()) return `Started ${at}`;
+    return isEveningHour(t.getHours()) ? `Tonight ${at}` : `Today ${at}`;
+  }
+  if (nights === 1) return `Tomorrow ${at}`;
+  if (nights >= 2 && nights <= 6) return `${shortWeekday(t)}${NBSP}${at}`;
+  if (nights === -1) return isEveningHour(t.getHours()) ? `Last night ${at}` : `Yesterday ${at}`;
+  return `${monthDay(t)}, ${at}`;
 }
 
 /**
@@ -211,16 +260,18 @@ export function comingGroups(rest, now = new Date()) {
 }
 
 /**
- * The time on a Coming up card, short because the band above it already says
- * the day: "7:00 PM" under Tomorrow, "Sun 11:00 AM" in This week and
- * Earlier, "Nov 21, 8:00 PM" under Later. '' with no time.
+ * The time on a Coming up card: the clock alone under Tonight and Tomorrow,
+ * where the band already says the day, and shortWhen's words everywhere
+ * else, the same words a Needs you row uses for the same plan: "Sun
+ * 11:00 AM" in This week, "Nov 21, 8:00 PM" under Later, and under Earlier
+ * "Last night 8:00 PM" or "Nov 4, 8:00 PM", where it gave a weekday that
+ * could be weeks old. '' with no time.
  */
-export function cardTime(eventTime, group) {
+export function cardTime(eventTime, group, now = new Date()) {
   const t = asDate(eventTime);
   if (!t) return '';
   if (group === 'Tomorrow' || group === 'Tonight') return timeOf(t);
-  if (group === 'Later') return `${monthDay(t)}, ${timeOf(t)}`;
-  return `${shortWeekday(t)} ${timeOf(t)}`;
+  return shortWhen(t, now);
 }
 
 /**
