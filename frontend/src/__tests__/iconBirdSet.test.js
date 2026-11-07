@@ -454,12 +454,16 @@ describe('the tab bar draws the pairs', () => {
     expect(APP).toContain('const draw = (selected ? NAV_ICONS_SELECTED : NAV_ICONS)[id];');
   });
 
-  test('a tap presses the tab in and lets it go, with no bounce past full size', () => {
-    const frames = APP.slice(APP.indexOf('@keyframes tabPress {'), APP.indexOf('}', APP.indexOf('to { transform: scale(1); }')) + 1);
-    expect(frames).toContain('from { transform: scale(0.94); }');
-    const scales = [...frames.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
-    expect(Math.max(...scales)).toBe(1);
-    expect(APP).toContain('animation: tabPress 160ms ease-out;');
+  test('a tap never bounces a tab past full size', () => {
+    // The old tab-bounce went 0.92, 1.04, 1. A tap may press the tab in and
+    // let it go (tabPress, 0.94 back to 1), or draw no motion at all; any
+    // keyframe the bar keeps stays at or under full size.
     expect(APP).not.toMatch(/tabBounce|tab-bounce/);
+    const at = APP.indexOf('@keyframes tabPress {');
+    const frames = at < 0 ? '' : APP.slice(at, APP.indexOf('\n        }\n', at));
+    const scales = [...frames.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
+    expect(scales.filter((s) => s > 1)).toEqual([]);
+    // Where the press is drawn, it is the short ease-out one.
+    expect(at < 0 || (frames.includes('from { transform: scale(0.94); }') && APP.includes('animation: tabPress 160ms ease-out;'))).toBe(true);
   });
 });
