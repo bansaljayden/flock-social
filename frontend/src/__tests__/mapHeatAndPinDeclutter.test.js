@@ -262,7 +262,7 @@ describe('pin size and anchor', () => {
   it('a photo pin waits behind a disc, not a teardrop, so nothing jumps when the photo lands', () => {
     const build = codeOnly(region('const buildMarkerEl = useCallback(', '\n  useEffect(() => {', MAP));
     const photoBranch = build.slice(build.indexOf('} else if (venue.photo_url) {'), build.indexOf('} else {', build.indexOf('} else if (venue.photo_url) {')));
-    expect(photoBranch).toContain('buildDiscSvg(isActive, venue.category)');
+    expect(photoBranch).toContain('buildDiscSvg(isActive, glyphCategoryFor(venue.types))');
     expect(photoBranch).not.toContain('buildPinSvg(');
   });
 });
