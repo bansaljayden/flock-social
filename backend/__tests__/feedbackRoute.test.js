@@ -61,6 +61,12 @@ function dispatch(sql, params) {
   if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(text)) return Promise.resolve({ rows: [] });
   if (/pg_advisory_xact_lock/i.test(text)) return Promise.resolve({ rows: [{}] });
 
+  // The plan window's read (PLAN_FACTS_SQL). No plan facts in this file's
+  // fixture: every case here is on the rules that predate the window, which
+  // __tests__/feedbackPlanWindow.test.js covers on pinned clocks.
+  if (/FROM flocks f JOIN flock_members fm/i.test(text)) {
+    return Promise.resolve({ rows: [] });
+  }
   if (/FROM flock_members WHERE flock_id/i.test(text)) {
     const [flockId, userId] = params;
     const hit = state.memberships.some((m) => m.flock_id === Number(flockId) && m.user_id === Number(userId));
@@ -117,6 +123,7 @@ function dispatch(sql, params) {
         day_of_week: params[11],
         hour: params[12],
         verified: params[13],
+        observed_at: params[14],
       }],
     });
   }

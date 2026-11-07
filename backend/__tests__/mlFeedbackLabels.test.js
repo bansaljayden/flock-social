@@ -505,6 +505,51 @@ test('a UTC-bucketed row is caught by the census and refuses the run', async () 
   await pool.query('DELETE FROM venue_feedback WHERE day_of_week = 5 AND hour = 1');
 });
 
+// The plan window (2026-11-06): a member's "How was it?" answer counts until
+// noon the next day and is filed under the plan's hour, so its created_at is
+// the morning and its bucket is the night. observed_at (migration 136) holds
+// the night, and the export must read it, or every such report is dated a day
+// late and refused as a UTC-clock row.
+test("a morning-after report on a plan is dated by its night, and its bucket agrees", async () => {
+  const NIGHT = '2026-05-09T01:00:00Z';   // Friday 2026-05-08, 9 PM EDT
+  const MORNING = '2026-05-09T14:30:00Z'; // Saturday, 10:30 AM EDT
+  for (const uid of userIds.slice(0, 3)) {
+    await pool.query(
+      `INSERT INTO venue_feedback
+         (user_id, venue_place_id, venue_name, crowd_level, day_of_week, hour, verified, created_at, observed_at)
+       VALUES ($1, $2, 'Feedback Bar', 3, 5, 21, true, $3, $4)`,
+      [uid, PLACE_A, MORNING, NIGHT]
+    );
+  }
+  try {
+    const census = await feedbackCensus(roPool, true, { observedAt: true });
+    assert.equal(census.observedAt, true);
+    assert.equal(Number(census.clock_disagreements), 0, 'filed under the night it describes, and read that way');
+    // Read by created_at alone, as on a database before 136, all three would
+    // look like UTC-clock rows.
+    const blind = await feedbackCensus(roPool, true);
+    assert.equal(Number(blind.clock_disagreements), 3);
+
+    const counters = newFeedbackCounters();
+    const written = [];
+    const stream = { write: (chunk) => { written.push(chunk); return true; } };
+    await exportFeedbackCity(roPool, 'philly', stream, TEST_MAP, counters, { observedAt: true });
+    assert.deepEqual(counters.corrupt, []);
+    const rows = written.join('').split('\n').filter(Boolean).map((l) => l.split(','));
+    const col = (name) => HEADER_COLUMNS.indexOf(name);
+    const night = rows.find((f) => f[col('observed_date')] === '2026-05-08');
+    assert.ok(night, 'the cell is dated Friday, the night it is about, not Saturday');
+    assert.equal(night[col('day_of_week')], '5');
+    assert.equal(night[col('hour')], '21');
+    assert.ok(!rows.some((f) => f[col('observed_date')] === '2026-05-09'), 'nothing is dated the morning after');
+    // Friday 9 PM is where the weekly corpus has its anchor, so the report
+    // meets the baseline of the hour it is about.
+    assert.notEqual(night[col('baseline_busyness')], '0');
+  } finally {
+    await pool.query('DELETE FROM venue_feedback WHERE observed_at IS NOT NULL');
+  }
+});
+
 test('runExport is dormant by default and refuses a flag without a mapping', async () => {
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-fblabel-out-'));
   try {

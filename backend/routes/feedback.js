@@ -17,7 +17,9 @@
 //     ONLY verified rows are allowed to move any number anyone else sees. The
 //     unverified rows are kept for the submitter's own UX and for later
 //     analysis; they are excluded at every read, not merely flagged.
-//   * What "evidence" means is deliberately narrow — see VERIFIED_PRESENCE_SQL.
+//   * What "evidence" means is deliberately narrow — see VERIFIED_PRESENCE_SQL,
+//     and PLAN_FACTS_SQL for the one window a plan member gets on top of it
+//     (until noon the day after the plan, venue time; 2026-11-06).
 //
 // PREDICTED_SCORE IS RESOLVED SERVER-SIDE NOW (migrations 032 and 038). The
 // server records every score it publishes — routes/crowd.js writes
@@ -57,9 +59,16 @@ const { body, param, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 const { isPlaceIdShaped } = require('../utils/places');
+const { validTimeZone } = require('../utils/venueZone');
+const { planReportStanding, planClock } = require('../utils/planReportWindow');
 
 const router = express.Router();
 router.use(authenticate);
+
+// The route's clock, one place, so a test can pin the moment a report is filed
+// (__tests__/feedbackPlanWindow.test.js runs the plan window on fixed instants
+// in New York, Los Angeles and Kolkata). Production never touches it.
+const clock = { now: () => Date.now() };
 
 // flock_id lands in an INTEGER (int4) column. `isInt()` with no ceiling let
 // 2147483648 through, and Postgres answered 22003 ("integer out of range"),
@@ -249,6 +258,46 @@ const VERIFIED_PRESENCE_SQL = `
     ) AS verified`;
 
 // ---------------------------------------------------------------------------
+// THE PLAN WINDOW: a third way a report counts (2026-11-06).
+//
+// "How was it?" is answered after a plan, the next morning included, and the
+// 12 hours above shut at 9 AM for a 9 PM plan. So a report on a plan the
+// reporter was a member of when it was locked in also counts from the plan's
+// start until noon the next day on the venue's clock, never less than those 12
+// hours (utils/planReportWindow.js has the rule and its reasons). Everything the
+// plan clause above asks is asked again, plus three things it does not:
+//   - the plan was LOCKED IN (confirmed_at, and confirmed or completed now);
+//   - this member had accepted by then (joined_at at or before confirmed_at,
+//     both UTC: joined_at is a naive TIMESTAMP holding UTC wall time);
+//   - the plan has started (planReportStanding).
+// Only a report that names the plan (flock_id) can use it, because only then
+// is the report ABOUT that plan's night, which is what lets it be filed under
+// that night's hour below. Reports from anyone else keep the rule above.
+//
+// event_ms is the true instant: event_time is a naive TIMESTAMP holding UTC
+// wall time (migrations/000_bootstrap.sql), lifted to timestamptz as UTC
+// before its epoch is read, so neither the session zone nor node-postgres's
+// local-time parsing of a naive value can move it.
+//
+// Read BEFORE the transaction, beside the timezone, because the report's
+// bucket and its served-prediction lookup both depend on the plan's hour and
+// both are settled before BEGIN. Nothing here locks the plan, inside the
+// transaction or out, so reading it here judges the same facts. A failure only
+// costs the plan window: the report is filed under the old rule.
+const PLAN_FACTS_SQL = `
+  SELECT f.venue_id,
+         EXTRACT(EPOCH FROM (f.event_time AT TIME ZONE 'UTC')) * 1000 AS event_ms,
+         (f.confirmed_at IS NOT NULL AND f.status IN ('confirmed', 'completed')) AS locked_in,
+         COALESCE((fm.joined_at AT TIME ZONE 'UTC') <= f.confirmed_at, false) AS member_at_lock,
+         fm.attendance IS DISTINCT FROM 'no_show' AS not_marked_absent,
+         (SELECT COUNT(*) FROM flock_members m
+           WHERE m.flock_id = f.id AND m.status = 'accepted')::int AS accepted_members
+    FROM flocks f
+    JOIN flock_members fm
+      ON fm.flock_id = f.id AND fm.user_id = $2 AND fm.status = 'accepted'
+   WHERE f.id = $1`;
+
+// ---------------------------------------------------------------------------
 // POST /api/feedback — Submit post-hangout venue feedback
 // ---------------------------------------------------------------------------
 router.post('/',
@@ -287,6 +336,17 @@ router.post('/',
     // Optional venue-local clock hint (see venueLocalDayHour above).
     body('local_day').optional({ values: 'null' }).isInt({ min: 0, max: 6 }).withMessage('local_day must be 0-6'),
     body('local_hour').optional({ values: 'null' }).isInt({ min: 0, max: 23 }).withMessage('local_hour must be 0-23'),
+    // The reporter's device zone (IANA name), the plan window's clock when
+    // ml_venues has no zone for the venue. Someone reporting on a night at a
+    // venue is almost always in its zone, and a wrong one cannot buy much: the
+    // window is bounded by the plan's own time, which a member already chose.
+    // A name ICU does not know is ignored rather than refused, so an odd
+    // device never loses the report; only the shape is checked here. Used for
+    // that one sum and never stored. 64 is the bound device_tokens.timezone
+    // and Birdie's zone use.
+    body('time_zone').optional({ values: 'null' })
+      .isString().withMessage('time_zone must be a zone name').bail()
+      .isLength({ min: 1, max: 64 }).withMessage('time_zone must be a zone name'),
   ],
   async (req, res) => {
     try {
@@ -305,6 +365,7 @@ router.post('/',
         flock_id,
         local_day,
         local_hour,
+        time_zone,
       } = req.body;
 
       const flockId = flock_id == null ? null : Number(flock_id);
@@ -337,8 +398,47 @@ router.post('/',
       // no ordering the transaction depends on — the tz read it uses already
       // happened, and __tests__/feedbackRoute.test.js still pins the served
       // lookup as the last statement before BEGIN.
-      const now = new Date();
-      let localClock = venueLocalDayHour(venueTimezone, now);
+      //
+      // The plan this report names, read here for the plan window
+      // (PLAN_FACTS_SQL says why outside the transaction). No row for a plan
+      // that is not this person's: the membership check inside refuses that.
+      let planFacts = null;
+      if (flockId !== null) {
+        try {
+          const pf = await pool.query(PLAN_FACTS_SQL, [flockId, req.user.id]);
+          planFacts = pf.rows[0] || null;
+        } catch (pfErr) {
+          console.error('[Feedback] Plan lookup failed, filing under the old rule:', pfErr.message);
+        }
+      }
+
+      const now = new Date(clock.now());
+      // The plan window's clock: the venue's zone from ml_venues, else the
+      // reporter's device zone. Without either, the window is the old 12 hours.
+      const windowZone = validTimeZone(venueTimezone) || validTimeZone(time_zone) || null;
+      const planStanding = planReportStanding(planFacts, {
+        venuePlaceId: venue_place_id,
+        nowMs: now.getTime(),
+        zone: windowZone,
+      });
+
+      // A REPORT ON A PLAN IS FILED UNDER THE PLAN'S HOUR. "How was it?" asks
+      // about the night, and now counts when answered the morning after. Bucketed
+      // on the moment of filing, a 9 AM answer that the bar was packed would be
+      // read by routes/crowd.js as Saturday 8-10 AM evidence ("packed" at
+      // breakfast) and paired with the morning's predicted score in the error
+      // feature mlPredictor averages. So once the plan has started, a report
+      // that names it, at its venue, takes the plan's start on the venue's
+      // clock for its bucket and stores that instant as observed_at
+      // (migration 136), which is what the training export dates it by. A plan
+      // that has not started yet, or no zone to read the plan's hour in, keeps
+      // the clock below.
+      const planHour = planStanding && planStanding.started && planStanding.sameVenue
+        ? planClock(planStanding.eventMs, windowZone)
+        : null;
+      const observedAt = planHour ? new Date(planStanding.eventMs) : null;
+
+      let localClock = planHour ? { ...planHour, source: 'plan' } : venueLocalDayHour(venueTimezone, now);
       if (!localClock && local_day != null && local_hour != null) {
         localClock = { day: Number(local_day), hour: Number(local_hour), source: 'client' };
       }
@@ -413,16 +513,29 @@ router.post('/',
         // Falling through to the client value is the existing behaviour for a
         // missing serve and is right here too: comparing against nothing is
         // better than comparing against a number the model did not produce.
+        //
+        // A report filed under its plan's hour looks for the card read in THAT
+        // hour of THAT night: the 12 hours run either side of the plan's start
+        // instead of back from now, because a morning-after report is more than
+        // 12 hours from the evening serve it should be measured against, and
+        // the bound stops the same hour of a later week from answering for a
+        // report filed days late.
+        const servedWindow = planHour
+          ? `served_at > to_timestamp($5::double precision / 1000.0) - INTERVAL '12 hours'
+              AND served_at < to_timestamp($5::double precision / 1000.0) + INTERVAL '12 hours'`
+          : `served_at > NOW() - INTERVAL '12 hours'`;
+        const servedParams = [req.user.id, venue_place_id, localClock.day, localClock.hour];
+        if (planHour) servedParams.push(planStanding.eventMs);
         const served = await pool.query(
           `SELECT id, score FROM served_predictions
             WHERE user_id = $1 AND venue_place_id = $2
-              AND served_at > NOW() - INTERVAL '12 hours'
+              AND ${servedWindow}
               AND source = 'detail'
               AND (prediction_method IS NULL OR prediction_method <> 'owner_report')
               AND local_day = $3 AND local_hour = $4
             ORDER BY served_at DESC
             LIMIT 1`,
-          [req.user.id, venue_place_id, localClock.day, localClock.hour]
+          servedParams
         );
         if (served.rows[0] && Number.isInteger(served.rows[0].score)) {
           servedScore = served.rows[0].score;
@@ -432,11 +545,22 @@ router.post('/',
         console.error('[Feedback] Served-prediction lookup failed, falling back to client value:', spErr.message);
       }
 
+      // The client's claim is the score on its screen when it filed, for the
+      // hour its own clock read (local_day/local_hour). Filed under the plan's
+      // hour, that claim is a denominator only when the two hours are the same
+      // one: the plan screen sends whatever score the venue shows now, and at
+      // 9 AM that is the breakfast forecast, not the night's. It is kept
+      // verbatim in client_predicted_score either way.
       const clientPredictedScore = predicted_score ?? null;
-      const resolvedPredictedScore = servedScore ?? clientPredictedScore;
+      const claimFitsClock = !planHour || (
+        local_day != null && local_hour != null
+        && Number(local_day) === localClock.day && Number(local_hour) === localClock.hour
+      );
+      const usableClaim = claimFitsClock ? clientPredictedScore : null;
+      const resolvedPredictedScore = servedScore ?? usableClaim;
       const predictedScoreSource = servedScore != null
         ? 'server'
-        : (clientPredictedScore != null ? 'client' : null);
+        : (usableClaim != null ? 'client' : null);
 
       // Anti-forgery (audit 2026-08-12): one report per user per venue per 2h
       // window. Unlimited reports let a single account own a venue's live
@@ -558,10 +682,22 @@ router.post('/',
           }
         }
 
+        // ONE REPORT PER MEMBER PER PLAN, under the plan window. The 2-hour
+        // dedupe alone would let a member hold a counted report from the night
+        // and another from the morning after, two votes on one night. A report
+        // that counts under the window replaces every earlier report this
+        // person filed on the same plan (newest wins, as within the 2 hours:
+        // people can correct themselves). One that comes in after the window
+        // replaces nothing by this clause, so a late correction cannot erase
+        // the report that counted. $3 is NULL otherwise, and `flock_id = NULL`
+        // matches no row.
+        const replacesPlanReports = planStanding && planStanding.counts && planHour ? flockId : null;
         await client.query(
           `DELETE FROM venue_feedback
-           WHERE user_id = $1 AND venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'`,
-          [req.user.id, venue_place_id]
+           WHERE user_id = $1
+             AND ((venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours')
+                  OR flock_id = $3::int)`,
+          [req.user.id, venue_place_id, replacesPlanReports]
         );
         const recentCount = await client.query(
           `SELECT COUNT(*)::int AS n FROM venue_feedback
@@ -574,13 +710,19 @@ router.post('/',
         }
 
         const verifiedCheck = await client.query(VERIFIED_PRESENCE_SQL, [req.user.id, venue_place_id]);
-        const verified = verifiedCheck.rows[0]?.verified === true;
+        // The plan window counts only a report filed under the plan's hour
+        // (planHour): the rule's whole reason is the night, so a report it
+        // admits must be readable as the night's. Without a zone there is no
+        // plan hour and no noon, and the old 12 hours above already cover
+        // everything the floor alone would.
+        const planCounts = Boolean(planStanding && planStanding.counts && planHour);
+        const verified = verifiedCheck.rows[0]?.verified === true || planCounts;
 
         const result = await client.query(
           `INSERT INTO venue_feedback
-            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, predicted_score_source, client_predicted_score, served_prediction_id, day_of_week, hour, verified)
+            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, predicted_score_source, client_predicted_score, served_prediction_id, day_of_week, hour, verified, observed_at)
           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
           RETURNING *`,
           [
             req.user.id,
@@ -597,6 +739,7 @@ router.post('/',
             localClock.day,
             localClock.hour,
             verified,
+            observedAt,
           ]
         );
         inserted = result.rows[0];
@@ -614,6 +757,19 @@ router.post('/',
       // `verified` is returned deliberately: the submitter is told whether
       // their report will count, rather than being thanked for something that
       // was filed and ignored.
+      //
+      // For a member the plan window is for, the answer also says when it
+      // shuts and whether it already had: then the clock is the one reason the
+      // report does not count, and the plan screen can say so in those words
+      // (screens/FlockDetail.js) instead of the sentence for a night that was
+      // never evidence.
+      if (planStanding && planStanding.eligible && planStanding.closesAtMs != null) {
+        return res.status(201).json({
+          ...inserted,
+          plan_report_closes_at: new Date(planStanding.closesAtMs).toISOString(),
+          plan_window_closed: planStanding.windowClosed,
+        });
+      }
       res.status(201).json(inserted);
     } catch (err) {
       console.error('[Feedback] Submit error:', err);
@@ -714,4 +870,4 @@ router.get('/venue/:placeId',
 );
 
 module.exports = router;
-module.exports.__testables = { venueLocalDayHour };
+module.exports.__testables = { venueLocalDayHour, clock, PLAN_FACTS_SQL };

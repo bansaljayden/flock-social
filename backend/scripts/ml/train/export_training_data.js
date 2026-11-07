@@ -804,8 +804,27 @@ function feedbackExportRequested(env = process.env) {
 // on a zone string Postgres does not know, and one typo'd row in ml_venues
 // would otherwise abort the whole query. Rows it excludes are counted by the
 // census as `no_usable_timezone` rather than disappearing.
+//
+// THE REPORT'S MOMENT (migration 136, 2026-11-06). A report that names its
+// plan, filed once the plan has started, is bucketed under the plan's start on
+// the venue's clock (routes/feedback.js, the plan window), because "How was
+// it?" is about the night and now counts when answered the morning after.
+// observed_at holds that instant and created_at still says when it was typed,
+// so the date and the bucket check read observed_at where it is set. Without
+// that, every morning-after report would be dated a day late and fail the
+// clock check as if migration 021 had not run. `observedAt` says whether the
+// column exists: naming a column the database lacks is a hard SQL error, so
+// runExport probes for it (columnsPresent) and a database before 136 reads
+// created_at alone, which is every row it can hold.
 // ---------------------------------------------------------------------------
-function feedbackCandidateQuery(city, { includeHarvested = false } = {}) {
+function feedbackMomentSql(alias, observedAt) {
+  return observedAt
+    ? `COALESCE(${alias}.observed_at, ${alias}.created_at)`
+    : `${alias}.created_at`;
+}
+
+function feedbackCandidateQuery(city, { includeHarvested = false, observedAt = false } = {}) {
+  const moment = feedbackMomentSql('f', observedAt);
   return {
     text: `
       SELECT
@@ -815,9 +834,9 @@ function feedbackCandidateQuery(city, { includeHarvested = false } = {}) {
         f.day_of_week,
         f.hour,
         f.created_at,
-        to_char(f.created_at AT TIME ZONE z.name, 'YYYY-MM-DD') AS local_date,
-        (EXTRACT(DOW  FROM (f.created_at AT TIME ZONE z.name))::int = f.day_of_week
-         AND EXTRACT(HOUR FROM (f.created_at AT TIME ZONE z.name))::int = f.hour) AS clock_agrees,
+        to_char(${moment} AT TIME ZONE z.name, 'YYYY-MM-DD') AS local_date,
+        (EXTRACT(DOW  FROM (${moment} AT TIME ZONE z.name))::int = f.day_of_week
+         AND EXTRACT(HOUR FROM (${moment} AT TIME ZONE z.name))::int = f.hour) AS clock_agrees,
         v.id           AS venue_id,
         v.city,
         v.google_place_id,
@@ -897,10 +916,10 @@ function groupFeedbackCells(rows) {
 //   CORRUPT  — the row contradicts something the schema or a migration
 //              guarantees. Stops the run; a counted skip would hide it.
 const FEEDBACK_EXCLUSION_REASONS = {
-  no_observation_date: { kind: 'absence', why: 'created_at is NULL, so the venue-local date of the report is unknowable and the row cannot be dated, holiday-stamped or joined to a moment' },
+  no_observation_date: { kind: 'absence', why: 'created_at (and observed_at) is NULL, so the venue-local date of the report is unknowable and the row cannot be dated, holiday-stamped or joined to a moment' },
   no_venue_attributes: { kind: 'absence', why: 'the venue has no ml_training_data row, so it has no venue_category — it is in none of the category-baseline cells and cannot be featurised' },
   below_reporter_floor: { kind: 'absence', why: `fewer than ${MIN_FEEDBACK_REPORTERS} distinct reporters for the venue-hour-date; one 3-point tap is a 60-point-wide opinion` },
-  clock_disagreement: { kind: 'corrupt', why: 'the stored day_of_week/hour disagree with created_at rendered in the venue timezone — migration 021 has not been applied to this database, so the bucket keys are on the UTC clock and the row would be a second clock in the hour column' },
+  clock_disagreement: { kind: 'corrupt', why: 'the stored day_of_week/hour disagree with the moment of the report (observed_at, else created_at) rendered in the venue timezone — migration 021 has not been applied to this database, so the bucket keys are on the UTC clock and the row would be a second clock in the hour column' },
   unmappable_crowd_level: { kind: 'corrupt', why: "crowd_level is outside venue_feedback's CHECK domain of 1-3, so something wrote past the constraint and no mapping covers it" },
 };
 
@@ -1010,10 +1029,12 @@ function feedbackCellToTrainingRow(cell, crowdMap) {
 // same reason the round-20 provenance census does: the number that matters is
 // the day it stops being zero, and the only way that day gets noticed is if the
 // export says so out loud every time.
-async function feedbackCensus(db, hasVerifiedColumn) {
+async function feedbackCensus(db, hasVerifiedColumn, { observedAt = false } = {}) {
   if (!hasVerifiedColumn) {
     return { available: false };
   }
+  // The report's moment, as feedbackCandidateQuery reads it (migration 136).
+  const moment = feedbackMomentSql('f', observedAt);
   const { rows: [row] } = await db.query(
     `SELECT
        COUNT(*)::bigint AS verified_rows,
@@ -1021,21 +1042,22 @@ async function feedbackCensus(db, hasVerifiedColumn) {
        COUNT(*) FILTER (WHERE z.name IS NOT NULL)::bigint AS with_usable_timezone,
        COUNT(*) FILTER (
          WHERE z.name IS NOT NULL
-           AND f.created_at IS NOT NULL
-           AND NOT (EXTRACT(DOW  FROM (f.created_at AT TIME ZONE z.name))::int = f.day_of_week
-                AND EXTRACT(HOUR FROM (f.created_at AT TIME ZONE z.name))::int = f.hour)
+           AND ${moment} IS NOT NULL
+           AND NOT (EXTRACT(DOW  FROM (${moment} AT TIME ZONE z.name))::int = f.day_of_week
+                AND EXTRACT(HOUR FROM (${moment} AT TIME ZONE z.name))::int = f.hour)
        )::bigint AS clock_disagreements
      FROM venue_feedback f
      LEFT JOIN ml_venues v         ON v.google_place_id = f.venue_place_id
      LEFT JOIN pg_timezone_names z ON z.name = v.timezone
      WHERE f.verified = true`
   );
-  return { available: true, ...row };
+  return { available: true, observedAt: Boolean(observedAt), ...row };
 }
 
 const FEEDBACK_CLOCK_REFUSAL_MESSAGE =
   'REFUSED: verified venue_feedback rows whose stored (day_of_week, hour) disagree with '
-  + 'created_at rendered in their venue timezone. Those bucket keys are on the UTC clock '
+  + 'the moment of the report (observed_at, else created_at) rendered in their venue timezone. '
+  + 'Those bucket keys are on the UTC clock '
   + '(routes/feedback.js wrote EXTRACT(DOW/HOUR FROM NOW()) before the venue-local fix), so '
   + 'exporting them would put a second clock in the hour column — the disease migration 023 '
   + 'cured for ml_training_data, and the exact risk PRE-RETRAIN-AUDIT finding 13 raised '
@@ -1044,8 +1066,8 @@ const FEEDBACK_CLOCK_REFUSAL_MESSAGE =
 
 // Export every eligible feedback cell for one city onto `stream`. Returns
 // counters; the caller aggregates and reports them.
-async function exportFeedbackCity(pool, city, stream, crowdMap, counters, { includeHarvested = false } = {}) {
-  const q = feedbackCandidateQuery(city, { includeHarvested });
+async function exportFeedbackCity(pool, city, stream, crowdMap, counters, { includeHarvested = false, observedAt = false } = {}) {
+  const q = feedbackCandidateQuery(city, { includeHarvested, observedAt });
   const client = await pool.connect();
   let rows;
   try {
@@ -1330,7 +1352,9 @@ async function preflight(db, log = console.log) {
   // codebase (routes/crowd.js, mlPredictor, the aggregate join above) filters on
   // it — so its absence disables the label path rather than widening it.
   const feedbackColumns = await columnsPresent(db, 'venue_feedback');
-  const feedback = await feedbackCensus(db, feedbackColumns.has('verified'));
+  const feedback = await feedbackCensus(db, feedbackColumns.has('verified'), {
+    observedAt: feedbackColumns.has('observed_at'),
+  });
   if (!feedback.available) {
     log('[Export] NOTE: venue_feedback has no `verified` column (migration 003). The '
       + 'feedback-label path is disabled: an unverified report must never become a '
@@ -1692,7 +1716,10 @@ async function runExport({ pool, outDir = __dirname, log = console.log, includeH
 
       if (feedbackEnabled) {
         const before = feedbackCounters.emitted;
-        await exportFeedbackCity(pool, city, stream, crowdMap, feedbackCounters, { includeHarvested });
+        await exportFeedbackCity(pool, city, stream, crowdMap, feedbackCounters, {
+          includeHarvested,
+          observedAt: pre.feedback.observedAt === true,
+        });
         const added = feedbackCounters.emitted - before;
         if (added > 0) {
           cityCounts[city] += added;
@@ -1906,6 +1933,7 @@ module.exports = {
   FEEDBACK_CROWD_MAP_ENV,
   FEEDBACK_MAP_REQUIRED_MESSAGE,
   FEEDBACK_CLOCK_REFUSAL_MESSAGE,
+  feedbackMomentSql,
   FEEDBACK_EXCLUSION_REASONS,
   MIN_FEEDBACK_REPORTERS,
   FEEDBACK_ROW_CAP,

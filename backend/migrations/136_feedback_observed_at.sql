@@ -1,0 +1,36 @@
+-- @requires column venue_feedback.observed_at
+--
+-- 136: the moment a crowd report is about, when that is not the moment it was
+-- filed.
+--
+-- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. A member of a locked-in plan may now answer "How was it?" until noon
+-- the day after the plan, venue time (routes/feedback.js, the plan window;
+-- utils/planReportWindow.js). Those answers are about the night, and they can
+-- come the morning after. day_of_week and hour are the bucket the crowd
+-- calibration reads a report under (routes/crowd.js), so routes/feedback.js
+-- files a report that names its plan under the plan's start on the venue's
+-- clock, not the hour it was typed. The training export
+-- (scripts/ml/train/export_training_data.js) dates every verified report and
+-- checks its bucket against that date, and created_at would now disagree with
+-- the bucket by the length of a night. This column is the instant the bucket
+-- was taken from, so the two agree again.
+--
+-- WHO WRITES IT. routes/feedback.js, only for a report filed under its plan's
+-- hour: the plan's event_time as an instant. NULL everywhere else, which
+-- means the report is about the moment it was filed (created_at), as every
+-- row before this file is.
+--
+-- WHO READS IT. The training export: the report's venue-local date and its
+-- bucket check use COALESCE(observed_at, created_at). Nothing else needs it:
+-- the calibration reads by bucket, and every age window (28 days, the 7-day
+-- owner counts) stays on created_at, the moment the report became known.
+--
+-- TIMESTAMPTZ, like venue_feedback.created_at.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no
+-- rewrite, no scan, every existing row reads NULL. A replay is a no-op.
+
+ALTER TABLE venue_feedback ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
