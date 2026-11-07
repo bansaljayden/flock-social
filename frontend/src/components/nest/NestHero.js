@@ -66,7 +66,7 @@ export default function NestHero({
             color: 'inherit',
             textAlign: 'left',
             cursor: 'pointer',
-            borderRadius: '8px',
+            borderRadius: '12px',
           }}
         >
           <span style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '12px' }}>

@@ -41,7 +41,7 @@ test('the Nest keeps the docked row clear under its last card', () => {
   const feed = home.slice(home.indexOf('<div ref={feedScroll.home.ref}'), home.indexOf('>', home.indexOf('<div ref={feedScroll.home.ref}')) + 1);
   // The header scrolls inside this box since 2026-11-06, so it opens at 0
   // on top; the bottom is still the docked row.
-  expect(feed).toContain('padding: `0 16px ${dockedRowHeight}px`');
+  expect(feed).toContain('padding: `0 var(--nest-gutter) ${dockedRowHeight}px`');
 });
 
 // The same sweep found the Messages list doing it with SOS: on a 390x667

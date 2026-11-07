@@ -18175,7 +18175,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           chip under SOS, or under Birdie moved to that corner. The bottom
           padding is the docked row's height; the list's own 14px margin is the
           gap above it. */}
-      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `0 16px ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `0 var(--nest-gutter) ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* The day, then the name. The name is a title, not the page's
             biggest words: those belong to the plan the person is about to
@@ -18200,7 +18200,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </button>
             )}
             <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '999px', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
               </div>
             </button>
