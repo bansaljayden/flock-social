@@ -71,6 +71,17 @@ export const formatDistance = (km, { locale } = {}) => {
   return `${Math.max(1, tenthsKm).toFixed(1)} km`;
 };
 
+// "1.3 mi away" / "400 ft away" on a phone that reads miles, "2.1 km away" /
+// "400 m away" elsewhere, for where a person is: the flock chat's who-is-here
+// line. Null for no position, never "0 ft away".
+export const formatDistanceAway = (km, options) => {
+  if (km == null || km === '') return null;
+  const d = Number(km);
+  if (!Number.isFinite(d) || d < 0) return null;
+  const said = formatDistance(d, options);
+  return said ? `${said} away` : null;
+};
+
 // The great-circle distance in kilometres between two points.
 export const haversineKm = (lat1, lng1, lat2, lng2) => {
   const R = 6371;

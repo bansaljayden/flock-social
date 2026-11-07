@@ -211,7 +211,9 @@ import VenueDealLine, { dealSpokenText } from '../components/venue/VenueDealLine
 import { isNightOver } from '../lib/planNight';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
    design; that file's header says why there is no routing call behind it. */
-import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel';
+import { MAX_SEATS, etaMinutes, formatEta } from '../lib/travel';
+// In the reader's unit, as Discover prints it.
+import { formatDistanceAway } from '../lib/distance';
 /* The keyboard lane. It is a hook and not part of the chat module's index on
    purpose: it owns DOM nodes and a native bridge rather than any markup, and
    both screens reach it the same way. See the block at its call below. */
@@ -2039,7 +2041,7 @@ export default function ChatDetail({
               seats: loc.mode === 'drive' ? loc.seats : undefined,
               distanceKm: km,
               etaLabel: formatEta(etaMinutes(km, loc.mode)),
-              distanceLabel: formatDistance(km),
+              distanceLabel: formatDistanceAway(km),
             });
           }
         }

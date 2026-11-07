@@ -9,9 +9,12 @@
  * gets a distance and no minutes, because a time with no speed is invented.
  */
 const {
-  travelFields, etaMinutes, formatEta, formatDistance,
+  travelFields, etaMinutes, formatEta,
   isTravelIntent, isTravelMode, TRAVEL_MODES, TRAVEL_INTENTS, MAX_SEATS,
 } = require('../lib/travel');
+const { formatDistanceAway: formatDistance } = require('../lib/distance');
+const fs = require('fs');
+const path = require('path');
 
 describe('what goes on the wire', () => {
   it('a plain share sends nothing extra', () => {
@@ -86,5 +89,14 @@ describe('the estimate', () => {
     expect(formatDistance(2.14, us)).toBe('1.3 mi away');
     expect(formatDistance('x')).toBeNull();
     expect(formatDistance(null)).toBeNull();
+    expect(formatDistance('')).toBeNull();
+  });
+
+  // The backend's socket suites load lib/travel.js on its own, with no
+  // bundler: an import here breaks them (clientSocketImports.js).
+  it('lib/travel.js stays import-free and no longer prints kilometres itself', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'lib', 'travel.js'), 'utf8');
+    expect(src).not.toMatch(/^import /m);
+    expect(src).not.toMatch(/export function formatDistance/);
   });
 });

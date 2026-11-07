@@ -186,11 +186,12 @@ describe('on my way', () => {
        no venue there is no distance and no time rather than a number toward
        nowhere; with no mode there is a distance and no time, because a time
        needs a speed. */
-    expect(chatDetailSrc).toMatch(/import \{ MAX_SEATS, etaMinutes, formatDistance, formatEta \} from '\.\.\/lib\/travel';/);
+    expect(chatDetailSrc).toMatch(/import \{ MAX_SEATS, etaMinutes, formatEta \} from '\.\.\/lib\/travel';/);
+    expect(chatDetailSrc).toMatch(/import \{ formatDistanceAway \} from '\.\.\/lib\/distance';/);
     expect(onTheWayBranch).toMatch(/const km = hasVenue\n\s+\? distanceKm\(Number\(loc\.lat\), Number\(loc\.lng\), Number\(flock\.venueLat\), Number\(flock\.venueLng\)\)\n\s+: null;/);
     expect(onTheWayBranch).toMatch(/distanceKm: km,/);
     expect(onTheWayBranch).toMatch(/etaLabel: formatEta\(etaMinutes\(km, loc\.mode\)\),/);
-    expect(onTheWayBranch).toMatch(/distanceLabel: formatDistance\(km\),/);
+    expect(onTheWayBranch).toMatch(/distanceLabel: formatDistanceAway\(km\),/);
   });
 
   test('the card is handed the list off the row, beside the counts', () => {
