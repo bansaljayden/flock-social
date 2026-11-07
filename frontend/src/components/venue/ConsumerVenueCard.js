@@ -1181,17 +1181,18 @@ export function CrowdForecastPanel({
                 </m.div>
                 )}
 
-                {/* Busiest Hours & Wait. Drawn with a read only. They used to
-                    be drawn without one at opacity 0, so they held an empty
-                    gap open under "No crowd read" and VoiceOver still read
-                    "Est. Wait Right Now, No wait" out of the placeholder 0. */}
+                {/* Busiest hours. Drawn with a read only. It used to be drawn
+                    without one at opacity 0, so it held an empty gap open
+                    under "No crowd read". It is one line, not a bordered tile
+                    inside the card: the wait it sat beside is said once, by
+                    the line under the dial ("Est. wait: 20-35 min"), and the
+                    tile beside this one said it a second time. */}
                 {!!cd && (
-                <m.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
+                <m.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8, duration: 0.4, ease: 'easeOut' }} style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                       {Icons.trendingUp(colors.red, 12)}
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>Busiest Hours</span>
-                    </div>
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Busiest hours</span>
+                    </span>
                     {/* `peak` is one of the fields the forecast gate withholds
                         (routes/crowd.js LOCKED_FORECAST_FIELDS), so under the
                         paywall this tile printed the words BUSIEST HOURS over
@@ -1213,17 +1214,6 @@ export function CrowdForecastPanel({
                     ) : (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{peakText}</span>
                     )}
-                  </div>
-                  <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', padding: '4px 8px', border: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '2px' }}>
-                      {Icons.zap(colors.amber, 12)}
-                      {/* "Est. Wait": "Est. Wait Right Now" wrapped to two
-                          lines in a 320 tile. The wait under it is the one the
-                          dial's line gives for now. */}
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', textTransform: 'uppercase' }}>{isClosed ? 'Status' : /^\d|^~|wait/i.test(waitText) ? 'Est. Wait' : 'Crowd Level'}</span>
-                    </div>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isClosed ? colors.red : colors.navy }}>{isClosed ? 'Closed' : waitText}</span>
-                  </div>
                 </m.div>
                 )}
 

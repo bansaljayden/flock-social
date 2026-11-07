@@ -1098,11 +1098,11 @@ describe('cardSentence speaks the boundary too', () => {
 // 7. The app-side forecast gate, which the demo is a mirror of
 // ───────────────────────────────────────────────────────────────────────────
 describe('the venue sheet under the same paywall', () => {
-  // Exactly the one tile: from its own label to the label of the tile beside it.
+  // Exactly the one line: from its own label to the end of its row.
   const peakTile = () => {
-    const start = appSource.indexOf('>Busiest Hours</span>');
+    const start = appSource.indexOf('>Busiest hours</span>');
     expect(start).toBeGreaterThan(-1);
-    const end = appSource.indexOf("'Est. Wait'", start);
+    const end = appSource.indexOf('</m.div>', start);
     expect(end).toBeGreaterThan(start);
     return appSource.slice(start, end);
   };

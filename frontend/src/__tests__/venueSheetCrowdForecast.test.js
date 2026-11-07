@@ -274,7 +274,7 @@ describe('no read, no verdict', () => {
     expect(screen.queryByText('(4)')).toBeNull();
     expect(screen.queryByText('Group:')).toBeNull();
     expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
-    expect(screen.queryByText('Busiest Hours')).toBeNull();
+    expect(screen.queryByText('Busiest hours')).toBeNull();
     expect(screen.queryByText(/Est\. Wait/)).toBeNull();
   });
 
@@ -283,7 +283,7 @@ describe('no read, no verdict', () => {
     expect(screen.getByText('Loading the crowd reading')).toBeTruthy();
     expect(screen.queryByText(VERDICT)).toBeNull();
     expect(screen.queryByText('(4)')).toBeNull();
-    expect(screen.queryByText('Busiest Hours')).toBeNull();
+    expect(screen.queryByText('Busiest hours')).toBeNull();
   });
 
   test('a closed room: closed, and no verdict for a party', () => {
@@ -308,7 +308,10 @@ describe('no read, no verdict', () => {
     render(<VenueDetailSheet {...sheetProps({ partySize: 4 })} />);
     expect(screen.getByText('Walk right in')).toBeTruthy();
     expect(screen.getByText('(4)')).toBeTruthy();
-    expect(screen.getByText('Est. Wait')).toBeTruthy();
+    // The wait is said once, on the line under the dial; the tile that
+    // said it again is gone.
+    expect(screen.queryByText('Est. Wait')).toBeNull();
+    expect(screen.getAllByText(/^Est\. wait: |^No wait expected$/)).toHaveLength(1);
   });
 });
 
