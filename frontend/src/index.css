@@ -1037,6 +1037,17 @@ code {
 .nest-on-navy:focus-visible {
   outline-color: rgba(241, 237, 224, 0.9);
 }
+/* NEEDS YOU's rows and its Show N more (components/nest/NestRows.js) draw
+   the keyboard ring inside themselves. Each row sits in a box with
+   overflow: hidden (its fold when the loop closes) inside a group that clips
+   its own corners, so the app's ring, 2px outside the button, was cut away on
+   every side and a keyboard user saw no focus at all. 3px inside, on the
+   inner curve of the group's corners, as a same-night row's is
+   (.nest-stretch--row). */
+.nest-row-btn:focus-visible {
+  outline-offset: -3px;
+  border-radius: 10px;
+}
 @media (prefers-reduced-motion: reduce) {
   .nest-lock-fade { animation-duration: 200ms !important; }
   .nest-lock-settle { animation-name: nestLockFade !important; animation-duration: 200ms !important; }

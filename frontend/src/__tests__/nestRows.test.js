@@ -172,6 +172,25 @@ describe('NestRows', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Vote on Plan 3/ }));
   });
 
+  test('the keyboard ring is drawn inside each row, where the boxes that clip around it cannot cut it away', () => {
+    // Each row's button sits in its fold's box (overflow: hidden) inside the
+    // group, which clips its own corners: the app's ring, 2px outside the
+    // button, was cut away on every side and a keyboard user saw no focus.
+    const css = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8').replace(/\r\n/g, '\n');
+    expect(css).toMatch(/\n:focus-visible \{\n  outline: 2px solid var\(--focus-ring\);\n  outline-offset: 2px;/);
+    expect(css).toMatch(/\n\.nest-row-btn:focus-visible \{\n  outline-offset: -3px;\n  border-radius: 10px;\n\}/);
+    render(<NestRows rows={rows(5)} />);
+    const buttons = [...screen.getAllByRole('button', { name: /^Vote on Plan/ }), screen.getByRole('button', { name: 'Show 2 more' })];
+    expect(buttons).toHaveLength(4);
+    for (const b of buttons) {
+      expect(b).toHaveClass('nest-row-btn');
+      // Why it has to be inside: a box between the button and the page clips.
+      let clips = 0;
+      for (let n = b.parentElement; n; n = n.parentElement) if (n.style && n.style.overflow === 'hidden') clips += 1;
+      expect(clips).toBeGreaterThan(0);
+    }
+  });
+
   test('an open vote wears the place pin, never a ticked square', () => {
     // A check in a box is a to-do list's sign for done, on a row still open.
     const { container } = render(<NestRows rows={rows(1)} />);

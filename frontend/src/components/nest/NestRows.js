@@ -12,6 +12,10 @@
  * list's checkbox would sit, so a tap on it read as ticking the row off. The
  * check is kept for what is settled (Locked in).
  *
+ * The keyboard ring is drawn inside each row (index.css .nest-row-btn): the
+ * fold's box and the group both clip, so the app's ring outside the button
+ * never showed.
+ *
  * Three rows show; a fourth or later waits behind "Show N more", which opens
  * in place and hands the keyboard and VoiceOver to the first row it revealed,
  * since the button itself goes (it used to drop focus to the top of the page,
@@ -139,6 +143,7 @@ export default function NestRows({ rows = [] }) {
             <div style={{ overflow: 'hidden', minHeight: 0 }}>
               <button
                 type="button"
+                className="nest-row-btn"
                 ref={(el) => { if (el && !out) buttons.current.set(row.key, el); else buttons.current.delete(row.key); }}
                 onClick={out ? undefined : row.onClick}
                 tabIndex={out ? -1 : undefined}
@@ -172,6 +177,7 @@ export default function NestRows({ rows = [] }) {
         {hidden > 0 && (
           <button
             type="button"
+            className="nest-row-btn"
             onClick={showMore}
             style={{
               width: '100%',
