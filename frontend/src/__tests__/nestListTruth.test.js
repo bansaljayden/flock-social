@@ -58,7 +58,11 @@ test('a waiting invite is said on the badge and on the Nest, with when, where an
   expect(app).toMatch(/const messagesTabUnread = messagesTabUnreadMessages \+ messagesTabInvites;/);
   expect(app).toMatch(/messagesTabInvites === 1 \? 'invite' : 'invites'/);
   expect(app).toMatch(/`Messages, \$\{messagesTabParts\.join\(' and '\)\}`/);
-  expect(app).toMatch(/\? '1 invite waiting' : `\$\{pendingFlockInvites\.length\} invites waiting`/);
+  // On the Nest an invite is a Needs you row that names who asked and the
+  // plan, and opens Messages, where the invite cards are (lib/nestAsks.js).
+  const asks = fs.readFileSync(path.join(__dirname, '..', 'lib', 'nestAsks.js'), 'utf8');
+  expect(asks).toMatch(/invite: \(f\) => \(f\.host && f\.host !== 'Unknown' \? `\$\{f\.host\} invited you to \$\{f\.name\}` : `You're invited to \$\{f\.name\}`\),/);
+  expect(app).toMatch(/nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites,/);
   expect(chatList).toMatch(/\{f\.time && f\.time !== 'TBD' \? f\.time : 'Time still open'\} · \{f\.venue && f\.venue !== 'TBD' \? f\.venue : 'Venue still open'\} · \{f\.memberCount \|\| 1\} going/);
   expect(app).toMatch(/time: data\.eventTime \? formatEventTime\(data\.eventTime\) : 'TBD',/);
   expect(app).toMatch(/status: invite\.status \|\| 'voting' \}\]\);/);

@@ -165,12 +165,13 @@ import { mergeBudgetUpdate } from './lib/budgetStatus';
 import { isNightOver } from './lib/planNight';
 import { askedMemberIds } from './lib/planAsked';
 import { tablePartyForFlockId } from './lib/tableSummaries';
-import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks';
+import { nestAsks, nestRows, owesOnBill } from './lib/nestAsks';
 // The Nest's own pieces (components/nest/). Module components fed by props,
 // mounted as JSX: HomeScreen is called, not mounted, so it cannot hold a hook,
 // and a piece that needs one (the day line's clock) keeps it to itself.
 import NestDayLine from './components/nest/NestDayLine';
 import NestHero from './components/nest/NestHero';
+import NestRows from './components/nest/NestRows';
 import { pickHero, whenLine, alsoLine } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
@@ -18125,6 +18126,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const heroIds = new Set([heroFlock, ...heroNight].filter(Boolean).map((f) => f.id));
     const restFlocks = liveFlocks.filter((f) => !heroIds.has(f.id));
     const heroAsk = heroFlock ? heroAction(heroFlock, nestAskList) : null;
+    // Every other open loop, as rows: the asks the hero and its night do not
+    // already carry, the invites, and last night's plans to rate.
+    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: [...heroIds] })
+      .map((r) => ({
+        ...r,
+        when: whenLine(r.eventTime, nestNow),
+        onClick: r.kind === 'invite' ? () => setCurrentTab('chat') : () => openNestAsk(r.flockId, r.kind),
+      }));
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       {/* The edge the page scrolls under. A 1px line that shows only while
@@ -18272,58 +18281,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           />
         )}
 
-        {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
-        {(() => {
-          // What the hero and the plans beside it already ask is said there.
-          const asks = nestAskList.filter((a) => !heroIds.has(a.flock.id));
-          if (asks.length === 0) return null;
-          const top = asks[0];
-          const openTop = () => {
-            setSelectedFlockId(top.flock.id);
-            if (top.kind === 'vote') { setCurrentScreen('detail'); return; }
-            setCurrentScreen('chatDetail');
-            setShowChatPool(true);
-          };
-          return (
-            <button className="hit44"
-              onClick={openTop}
-              style={{
-                width: '100%',
-                textAlign: 'left',
-                padding: '12px 14px',
-                borderRadius: '12px',
-                border: '1px solid var(--border-default)',
-                backgroundColor: 'var(--bg-card-solid)',
-                boxShadow: 'var(--card-shadow-sm)',
-                cursor: 'pointer',
-                marginBottom: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-              }}
-            >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.1px' }}>{top.flock.name}</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {nestAskLine(asks)}
-                </p>
-              </div>
-              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(45,90,135,0.12)', color: 'var(--accent-purple-text)', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
-                {top.kind === 'vote' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.dollar('var(--accent-purple-text)', 12)} {NEST_ASK_CHIP[top.kind]}
-              </span>
-            </button>
-          );
-        })()}
+        {/* NEEDS YOU. Every other open loop, one tap each (lib/nestAsks.js
+            nestRows): what the reader owes, the budget and the votes in
+            nestAsks()'s order, then invites, then nights to rate. The money
+            opens the money sheet, a vote and a rating open the plan, an
+            invite opens Messages, where the invite cards are. Drawn only
+            when something needs the reader. */}
+        <NestRows rows={nestOpenRows} />
 
-        {/* With zero flocks the hero CTA and the section header are noise: the
-            empty state below carries both actions at full size. Show them only
-            once there is (or is about to be) a list to head. */}
-        {pendingFlockInvites.length > 0 && (
-          <button className="hit44" onClick={() => setCurrentTab('chat')} style={{ width: '100%', minHeight: '44px', marginBottom: '10px', padding: '10px 14px', borderRadius: '12px', border: '1.5px solid #FDE68A', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left' }}>
-            <span style={{ display: 'flex', flexShrink: 0 }}>{Icons.mail('#F59E0B', 16)}</span>
-            {pendingFlockInvites.length === 1 ? '1 invite waiting' : `${pendingFlockInvites.length} invites waiting`}
-          </button>
-        )}
         {(flocksLoading || liveFlocks.length > 0) && (<>
         {/* Flocks — header row with quiet Past + Add-friends ghosts */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>

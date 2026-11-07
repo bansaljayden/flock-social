@@ -11,8 +11,10 @@
 //
 // What is pinned:
 //   1. lib/nestAsks.js, run: what is asked, in what order, in what words.
-//   2. The list read maps both flags and the card reads them from the whole
-//      list, finished plans included, and opens the money sheet for them.
+//      Since 2026-11-06 each ask is its own row under Needs you (nestRows),
+//      where one card named the first ask and counted the rest.
+//   2. The list read maps both flags and the rows read them from the whole
+//      list, finished plans included, and open the money sheet for them.
 //   3. The flags follow the reader's own actions between two list reads, so
 //      the card never asks for something already done.
 //
@@ -22,7 +24,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from '../lib/nestAsks';
+import { nestAsks, nestRows, NEST_ROWS_CAP, owesOnBill } from '../lib/nestAsks';
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
 const APP = read('App.js');
@@ -62,33 +64,38 @@ describe('what the Nest asks for, and in what order', () => {
   });
 });
 
-describe('the words on the card', () => {
-  test('votes alone keep the sentence they always had', () => {
-    const one = nestAsks([], [plan(1, { status: 'voting' })]);
-    const two = nestAsks([], [plan(1, { status: 'voting' }), plan(2, { status: 'voting' })]);
-    const three = nestAsks([], [plan(1), plan(2), plan(3)]);
-    expect(nestAskLine(one)).toBe('Needs your vote');
-    expect(nestAskLine(two)).toBe('1 other flock needs your vote too');
-    expect(nestAskLine(three)).toBe('2 other flocks need your vote too');
+describe('the words on each row', () => {
+  // One row per ask, worded as what to do, with no count of what else is
+  // waiting: "2 more waiting on you" was a number to feel behind on, and the
+  // second and third ask could not be tapped.
+  const titles = (asks) => nestRows({ asks }).map((r) => r.title);
+
+  test('each ask is its own row, in nestAsks order, verb first', () => {
+    const owe = plan(1, { iOwe: true, name: 'Trivia Night' });
+    const budget = plan(2, { iBudgetOpen: true, name: 'Sam\'s Birthday' });
+    const vote = plan(3, { status: 'voting', name: 'Sunday Brunch' });
+    expect(titles(nestAsks([owe, budget], [vote]))).toEqual([
+      'Pay your share for Trivia Night',
+      'Add your budget for Sam\'s Birthday',
+      'Vote on Sunday Brunch',
+    ]);
   });
 
-  test('money says what is owed without a figure, and counts what else is waiting', () => {
-    expect(nestAskLine(nestAsks([plan(1, { iOwe: true })]))).toBe('You still owe your share of the bill');
-    expect(nestAskLine(nestAsks([plan(1, { iBudgetOpen: true })]))).toBe('Add your budget');
-    expect(nestAskLine(nestAsks([plan(1, { iOwe: true }), plan(2, { iBudgetOpen: true })], [plan(3)])))
-      .toBe('You still owe your share of the bill · 2 more waiting on you');
-  });
-
-  test('the chip names the ask, and no line carries an em dash or a number of dollars', () => {
-    expect(NEST_ASK_CHIP).toEqual({ owe: 'Settle Up', budget: 'Budget', vote: 'Needs Votes' });
-    const lines = [
-      nestAskLine(nestAsks([plan(1, { iOwe: true })])),
-      nestAskLine(nestAsks([plan(1, { iBudgetOpen: true })], [plan(2)])),
-    ];
-    for (const l of lines) {
-      expect(l).not.toContain(String.fromCharCode(0x2014));
-      expect(l).not.toMatch(/\$/);
+  test('no row counts the others, and none says money in figures or with a dash', () => {
+    const rows = nestRows({ asks: nestAsks([plan(1, { iOwe: true }), plan(2, { iBudgetOpen: true })], [plan(3), plan(4), plan(5)]) });
+    expect(rows).toHaveLength(5);
+    for (const r of rows) {
+      expect(r.title).not.toMatch(/\d+ (more|other)|waiting on you/);
+      expect(r.title).not.toContain(String.fromCharCode(0x2014));
+      expect(r.title).not.toMatch(/\$/);
     }
+    // Three show; the rest wait behind Show N more (components/nest/NestRows).
+    expect(NEST_ROWS_CAP).toBe(3);
+  });
+
+  test('an ask the hero card already carries is not asked twice', () => {
+    const asks = nestAsks([plan(1, { iBudgetOpen: true }), plan(2, { iOwe: true })], []);
+    expect(nestRows({ asks, excludeIds: [1] }).map((r) => r.flockId)).toEqual([2]);
   });
 });
 
@@ -123,20 +130,19 @@ describe('App.js reads the flags, and the card uses them', () => {
     expect(APP).toMatch(/iOwe: typeof f\.i_owe === 'boolean' \? f\.i_owe : undefined,/);
   });
 
-  test('the card is built from the whole list and the vote asks, and money opens the money sheet', () => {
+  test('the rows are built from the whole list and the vote asks, and money opens the money sheet', () => {
     const at = APP.indexOf('const HomeScreen = () => {');
     const home = APP.slice(at, at + 40000);
     // The vote half is untouched, so nestCardTruth's lift still runs it.
     expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\)\);/);
     expect(home).toMatch(/const nestAskList = nestAsks\(flocks, needsAction\);/);
-    expect(home).toMatch(/if \(asks\.length === 0\) return null;/);
-    expect(home).toMatch(/if \(top\.kind === 'vote'\) \{ setCurrentScreen\('detail'\); return; \}\s+setCurrentScreen\('chatDetail'\);\s+setShowChatPool\(true\);/);
+    expect(home).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: \[\.\.\.heroIds\] \}\)/);
+    expect(home).toMatch(/onClick: r\.kind === 'invite' \? \(\) => setCurrentTab\('chat'\) : \(\) => openNestAsk\(r\.flockId, r\.kind\),/);
+    expect(home).toMatch(/<NestRows rows=\{nestOpenRows\} \/>/);
     // The hero's button goes to the same places: money to the money sheet,
     // a vote and a night to rate to the plan.
     expect(home).toMatch(/const openNestAsk = \(flockId, kind\) => \{\s+setSelectedFlockId\(flockId\);\s+if \(kind === 'vote' \|\| kind === 'how'\) \{ setCurrentScreen\('detail'\); return; \}\s+setCurrentScreen\('chatDetail'\);\s+setShowChatPool\(true\);\s+\};/);
     expect(home).toMatch(/onAction=\{\(\) => heroAsk && openNestAsk\(heroFlock\.id, heroAsk\.kind\)\}/);
-    expect(home).toMatch(/\{nestAskLine\(asks\)\}/);
-    expect(home).toMatch(/\{NEST_ASK_CHIP\[top\.kind\]\}/);
   });
 });
 
