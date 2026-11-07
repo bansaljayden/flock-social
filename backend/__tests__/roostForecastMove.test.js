@@ -4105,6 +4105,15 @@ test('the reader is sure only of a plain form whose reading holds its days: one 
     'We\'re short staffed, how busy will we be tonight?', 'How does the coming weekend look?',
     // A mark that says no, and a day said twice in a pair.
     '❌ Saturday', 'busiest night 🚫 saturday', '!Saturday?', 'Is Friday lunch busier than Friday dinner?',
+    // The sixth round's own look-alikes of the plain forms: a tail or a lead
+    // that moves or withdraws the day, a negation, marks and emoji that carry
+    // meaning, spellings the table does not hold, a day gone by, a second day
+    // beside advice, a weekday left out of the week.
+    'how busy will friday be lol jk saturday', 'is tomorrow busy or is it just me', 'how busy will tonight be at the other location',
+    'nvm, how busy is saturday', 'not friday, how busy is saturday', 'no, how busy will sunday be', 'is friday not busy?',
+    'How busy will (not Friday) Saturday be?', 'how busy will ~~friday~~ saturday be', 'Fri 🆚 Sat?', 'how busy will satuday be',
+    'how busy will the friday crowd be', 'is friday busier than saturday was', 'busiest day this week other than sunday',
+    'besides tomorrow, which day is busiest this week?', 'how should I staff friday if saturday is slow', 'should I run a promo on friday or not',
   ]) {
     assert.deepStrictEqual(dayConfidence(q), { sure: false, why: 'not one of the plain forms' }, q);
   }
@@ -4125,6 +4134,57 @@ test('the reader is sure only of a plain form whose reading holds its days: one 
     assert.deepStrictEqual(dayConfidence(q), { sure: false, why }, q);
   }
   assert.strictEqual(saidDays('Is the TGI Fridays crowd coming our way tonight?'), 'today');
+});
+
+test('a plain form is read only on the routes it is proven on: today or tomorrow against another day as advice, two days on the money move, and today or tomorrow on the weekend\'s route, are answered as main answers them', async () => {
+  // A fuzz of the plain forms on every route (sixth recheck, 2026-11-07)
+  // found the reading worse than main only off the routes the catalogs and
+  // batteries prove: there the playbook's lead named neither of two days
+  // when one was today or tomorrow, the money move said "Fill Wednesday"
+  // above a move for Monday, and the weekend's plan dropped tonight or
+  // tomorrow (routes/advisor.js formOnRoute).
+  const advisorRoute = require('../routes/advisor');
+  for (const [q, mode, intentId, want] of [
+    ['Is Thursday busier than Friday?', 'grounded', 'peak_hours', true],
+    ['Is Thursday busier than Friday?', 'advice', 'peak_hours', true],
+    ['Is tomorrow busier than Friday?', 'advice', 'peak_hours', false],
+    ['Is Thursday busier than Friday?', 'grounded', 'money_move', false],
+    ['Which is busier, Saturday or Sunday?', 'grounded', 'weekend_outlook', true],
+    ['How busy will tomorrow be?', 'grounded', 'peak_hours', true],
+    ['How busy will tomorrow be?', 'grounded', 'weekend_outlook', false],
+    ['How busy will this weekend be?', 'grounded', 'weekend_outlook', true],
+    ['How should I staff Friday?', 'advice', 'peak_hours', true],
+    ['How should I staff tonight?', 'advice', 'weekend_outlook', false],
+    ['What are our peak hours?', 'grounded', 'peak_hours', false],
+  ]) {
+    assert.strictEqual(advisorRoute.__formOnRoute(q, mode, intentId), want, `${q} on ${mode}/${intentId}`);
+  }
+  // Through the route, on the bar's card, each is main's own answer.
+  const mainLead = `${KIND_OPEN}Saturday projects busiest around 9 PM, at 74 on our 0 to 100 index. During your busiest hours, `;
+  await pinnedAt('2026-11-09T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6RouteRuleMon000000', phrasing: true });
+    draftFor = () => null;
+    for (const [question, intentId] of [['Saturday or tonight?', 'weekend_outlook'], ['Is tomorrow quieter than Saturday?', 'peak_hours']]) {
+      route = { mode: 'advice', intentId };
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.ok(r.body.text.startsWith(mainLead), `${question}: ${r.body.text}`);
+      assert.ok(sourceIds(r).includes('typical_peak_2026-11-14'), `${question}: ${sourceIds(r)}`);
+    }
+  });
+  await pinnedAt('2026-11-22T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6RouteRuleSun000000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'money_move' };
+    const r = await call('/api/venue/advisor/question', { question: 'compare Mon with Tuesday' });
+    assert.ok(r.body.text.startsWith(`Fill Monday. ${KIND_OPEN}it is the quietest day this week, with its peak around 9 PM at 48 on our 0 to 100 index, against 74 on Saturday.\n• Give Monday one recurring reason`), r.body.text);
+  });
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr6RouteRuleSat000000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Which is busier, Fri or tmrw?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}the busiest day this weekend is Friday, with its peak around 9 PM at 66 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.`);
+  });
 });
 
 test('a reading the reader is not sure of is answered exactly as main answers it: a range, a holiday, after tomorrow, the day after that, a date', async () => {

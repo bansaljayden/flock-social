@@ -941,6 +941,16 @@ function formRead(a, form) {
 }
 
 /**
+ * The plain form `question` is, for the route to weigh against the route it
+ * was given (routes/advisor.js formOnRoute): { form, days, words }, its name,
+ * how many day references it holds and their day words; or null.
+ */
+function plainFormOf(question) {
+  const form = plainForm(question);
+  return form ? { form: form.form, days: form.refs.length, words: form.refs.map((r) => ({ ...r.word })) } : null;
+}
+
+/**
  * How sure the reading of `question` is: { sure: true } for a plain form whose
  * reading holds its days and passes every check above, else { sure: false, why }.
  */
@@ -1080,5 +1090,5 @@ function analyze(question) {
 }
 
 module.exports = {
-  dayWords, todayInRanking, saidShut, weekdaysNamed, dayConfidence, __parts: (q) => parts(normalize(q)), __plainForm: plainForm,
+  dayWords, todayInRanking, saidShut, weekdaysNamed, dayConfidence, plainFormOf, __parts: (q) => parts(normalize(q)), __plainForm: plainForm,
 };

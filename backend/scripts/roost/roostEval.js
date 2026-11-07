@@ -467,10 +467,11 @@ async function rawBlockFor(venue, intentId, question = '', dayReading = null) {
   // A venue with crowd history hands its week as it stands, and says which
   // path its question takes, as the bridge does (routes/advisor.js
   // answerFor): main's for a route not about the week's days and for a
-  // question whose day words the reader is not sure of.
+  // question whose day words the reader is not sure of on this route.
   const roostDayReader = require(path.join(B, 'services', 'roostDayReader'));
+  const advisorRoute = require(path.join(B, 'routes', 'advisor'));
   const onMain = dayReading === 'main' || !CARD_INTENTS.has(intentId)
-    || (Boolean(question) && !roostDayReader.dayConfidence(question).sure);
+    || (Boolean(question) && !(roostDayReader.dayConfidence(question).sure && advisorRoute.__formOnRoute(question, 'grounded', intentId)));
   return { ...ownBlock(v, intentId), dayReading: onMain ? 'main' : 'v2' };
 }
 

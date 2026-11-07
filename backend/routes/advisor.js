@@ -1536,10 +1536,34 @@ async function quietEnds(b, entries) {
   });
 }
 
+// THE PLAIN FORMS ON THE ROUTES THEY ARE PROVEN ON (sixth recheck,
+// 2026-11-07). The reader is sure only of a plain form
+// (roostDayReader.dayConfidence), and the catalogs, batteries and sweeps prove
+// each form on the routes a router gives it. A fuzz of the plain forms on
+// every route found the reading worse than main only off those routes: two
+// days compared, one of them today or tomorrow, and routed to advice, where
+// the playbook's lead names neither day ("today beside another day is the
+// setup") and main's names the last weekday said; two days on the money move,
+// whose plan ranks the week, so "compare Mon with Tuesday" said "Fill
+// Wednesday" above a move written for Monday; and today, tonight or tomorrow
+// on the weekend's route, whose plan reads weekdays and weekends only, so "Is
+// Sun slower than tonight?" dropped tonight and "Which is busier, Fri or
+// tmrw?" dropped tomorrow. There each is answered on main's path. `mode` is
+// the route's: 'grounded' or 'advice'.
+const TODAY_WORD_KINDS = new Set(['today', 'tomorrow', 'dayAfterTomorrow']);
+function formOnRoute(question, mode, intentId) {
+  const form = roostDayReader.plainFormOf(question);
+  if (!form) return false;
+  const todayWord = form.words.some((w) => TODAY_WORD_KINDS.has(w.kind));
+  if (form.days === 2 && ((mode === 'advice' && todayWord) || intentId === 'money_move')) return false;
+  return !(intentId === 'weekend_outlook' && todayWord);
+}
+
 // THE READING IS USED ONLY WHERE IT IS SURE (third recheck, 2026-11-06). A
 // typed question on a route about the week's days is read for its days
 // (readingFor) only when the reader is sure of its words
-// (roostDayReader.dayConfidence); on the weekend's route only when the
+// (roostDayReader.dayConfidence) on a route its plain form is proven on
+// (formOnRoute above); on the weekend's route only when the
 // reading holds every weekday the question names; and only when, in the
 // small hours, it does not count a day on from tonight ("tomorrow", "the
 // day after tomorrow"), which an owner still at work may mean of the coming
@@ -1547,7 +1571,7 @@ async function quietEnds(b, entries) {
 // path, exactly as main answers it (MAIN_PLANS above). The reading, or null
 // for main's path.
 async function dayGate(b, question, intentId) {
-  if (!roostDayReader.dayConfidence(question).sure) return null;
+  if (!roostDayReader.dayConfidence(question).sure || !formOnRoute(question, 'grounded', intentId)) return null;
   // The weekend's answer says the weekdays a question names anywhere in it
   // (weekendShutSaid), so a weekday written outside the reading ("Skip
   // Sunday, how does Saturday look?") is one more reading of it than the
@@ -2358,8 +2382,12 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // lookup after both calls have already been spent.
     let groundedFacts = [];
     let block = null;
+    // Advice reads the question's days only where the reader is sure of them
+    // on this route (formOnRoute above); anywhere else the block is main's
+    // too, so the answer is main's whole.
+    const adviceSure = roostDayReader.dayConfidence(asked).sure && formOnRoute(asked, 'advice', route.intentId);
     if (route.intentId) {
-      block = await buildFactBlock(userId, route.intentId, { question: asked });
+      block = await buildFactBlock(userId, route.intentId, { question: asked, ...(adviceSure ? {} : { dayReading: 'main' }) });
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
     // `offline` and `fallback` come from an offline route: the playbook
@@ -2397,7 +2425,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       }
       return adviseOn(facts, { dayReading: 'main' });
     };
-    const onMain = !roostDayReader.dayConfidence(asked).sure
+    const onMain = !adviceSure
       || Boolean(block && DAY_INTENTS.has(route.intentId) && block.dayReading === 'main');
     // THE READING, where the reader is sure of the question's day words.
     const readAdvice = async () => {
@@ -2524,5 +2552,8 @@ module.exports.__readingFor = readingFor;
 // otherwise), for the live eval's stand-in bridge, which builds its blocks the
 // way bridgeFactBlock does.
 module.exports.__answerFor = answerFor;
+// Whether a plain form is read on the route it was given (formOnRoute), for
+// the same stand-in bridge's venues with crowd history.
+module.exports.__formOnRoute = formOnRoute;
 // Main's plans, kept whole for a question the reader is not sure of.
 module.exports.__MAIN_PLANS = MAIN_PLANS;
