@@ -1733,10 +1733,13 @@ async function dayGate(b, question, intentId) {
     const read = new Set(roostDayReader.dayWords(question).filter((w) => w.kind === 'weekday').map((w) => w.weekday));
     if (roostDayReader.weekdaysNamed(question).some((d) => !read.has(d))) return null;
   }
-  const reading = await readingFor(b, question, intentId);
-  const targets = reading.targets || (reading.target ? [reading.target] : []);
-  const onward = targets.some((t) => t.word && (t.word.kind === 'tomorrow' || t.word.kind === 'dayAfterTomorrow'));
+  // A day counted on from tonight is looked for among the words the question
+  // says, before any two that name one date are read as one day: "Is Sunday
+  // or tomorrow busier?" at 12:30 AM on a Saturday read tomorrow as Sunday
+  // and kept the reading (seventh recheck, 2026-11-07).
+  const onward = roostDayReader.dayWords(question).some((w) => w.kind === 'tomorrow' || w.kind === 'dayAfterTomorrow');
   if (onward && await inSmallHours(b)) return null;
+  const reading = await readingFor(b, question, intentId);
   if (await smallHoursTwoWays(b, question)) return null;
   // TODAY PUT IN THE WEEK RANKED WHILE LAST NIGHT IS STILL RUNNING READS TWO
   // WAYS (seventh recheck, 2026-11-07): from that night, or from the

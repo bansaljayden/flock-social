@@ -4657,3 +4657,13 @@ test('two days joined by "and" on the peaks\' route lead with the day main leads
   }));
 });
 
+test('in the small hours a day counted on from tonight takes main\'s path even where it names the date of another day the question says', async () => {
+  // "How does Sat compare to tmrw?" at 12:30 AM on a Saturday read tomorrow
+  // as Saturday, one day with the Saturday said, and kept the reading.
+  await withNightCurve('ChIJr10OnwardMergedSat00', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'How does Sat compare to tmrw?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.'), r.body.text);
+  }));
+});
+
