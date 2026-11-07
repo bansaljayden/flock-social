@@ -737,7 +737,7 @@ const INVENTORY = [
     file: 'services/roostDayReader.js', name: 'READINGS', kind: 'cache',
     key: 'the owner\'s typed question as the route hands it to the reader (sanitised, at most FREE_TEXT_MAX_CHARS = 280 characters, the previous turn included when the follow-on reads it in)',
     callerControls: 'all of it — the owner types the question',
-    protects: 'milliseconds of the only thread: the route reads one question several times (dayGate, readingFor, the weekend\'s plan, the advice path), and each read normalised and parsed it again',
+    protects: 'milliseconds of the only thread: the route reads one question several times (dayGate, readingFor, the weekend\'s plan, the advice path, and the plain form it is, for dayConfidence and formOnRoute), and each read normalised and parsed it again',
     denominator: 'n/a (a pure memo, no counter)',
     bound: 'READINGS_KEPT = 32, oldest-first',
     verdict: 'SAFE',

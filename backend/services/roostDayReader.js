@@ -946,7 +946,7 @@ function formRead(a, form) {
  * how many day references it holds and their day words; or null.
  */
 function plainFormOf(question) {
-  const form = plainForm(question);
+  const form = formOf(question);
   return form ? { form: form.form, days: form.refs.length, words: form.refs.map((r) => ({ ...r.word })) } : null;
 }
 
@@ -955,7 +955,7 @@ function plainFormOf(question) {
  * reading holds its days and passes every check above, else { sure: false, why }.
  */
 function dayConfidence(question) {
-  const form = plainForm(question);
+  const form = formOf(question);
   if (!form) return { sure: false, why: 'not one of the plain forms' };
   const a = analysisOf(question);
   if (!a.conf) a.conf = confidenceOf(a, question, form);
@@ -1015,18 +1015,31 @@ const LEFT_OUT_BEFORE = /\b(?:besides|other\s+than|except(?:\s+for)?|apart\s+fro
 // weekend's plan, the advice path), and each read normalised it, split it and
 // read every part again. The reading is made once per question and kept for
 // the last few questions, so a question costs one reading. A reading is of the
-// question's text alone, so a kept one is the one a new read would make.
+// question's text alone, so a kept one is the one a new read would make. The
+// plain form the question is (plainForm) is kept beside it (sixth recheck,
+// 2026-11-07): the route asks for it on every read (dayConfidence,
+// formOnRoute), and a question that is no plain form is never read further.
 const READINGS = new Map();
 const READINGS_KEPT = 32;
-function analysisOf(question) {
+function keptFor(question) {
   const key = String(question || '');
-  let a = READINGS.get(key);
-  if (!a) {
-    a = analyze(key);
+  let kept = READINGS.get(key);
+  if (!kept) {
+    kept = { key, form: undefined, analysis: null };
     if (READINGS.size >= READINGS_KEPT) READINGS.delete(READINGS.keys().next().value);
-    READINGS.set(key, a);
+    READINGS.set(key, kept);
   }
-  return a;
+  return kept;
+}
+function analysisOf(question) {
+  const kept = keptFor(question);
+  if (!kept.analysis) kept.analysis = analyze(kept.key);
+  return kept.analysis;
+}
+function formOf(question) {
+  const kept = keptFor(question);
+  if (kept.form === undefined) kept.form = plainForm(kept.key);
+  return kept.form;
 }
 // The reading of `question`: its text, its parts and each part's day words,
 // the day words it says where it asks (dayWords), today put in or left out of
