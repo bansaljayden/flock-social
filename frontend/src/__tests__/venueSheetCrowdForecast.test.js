@@ -2,7 +2,7 @@
  * THE CROWD FORECAST IS ON THE FIRST TAP (2026-11-06).
  *
  * Tapping a Discover search result opened the venue sheet (photo, rating,
- * hours, contact, reviews) with no forecast on it; the dial, the LIVE chip and
+ * hours, contact, reviews) with no forecast on it; the dial, its source line and
  * the hour-by-hour bars were on the map card underneath and showed only after
  * the sheet was closed with X. Birdie's Details opened the same sheet, where
  * the forecast never appeared at all. The sheet stays the first thing a tap
@@ -100,7 +100,6 @@ function sheetProps(over = {}) {
     SearchInputLocal: () => null,
     httpUrl: (u) => (typeof u === 'string' && /^https?:/.test(u) ? u : null),
     colors,
-    CROWD_FRESH_MS,
     HOUR_ORDERING_MIN_GAP,
     crowdColorFor,
     crowdInkFor,
@@ -131,7 +130,6 @@ function sheetProps(over = {}) {
 function panelProps(over = {}) {
   return {
     venue: VENUE,
-    CROWD_FRESH_MS,
     HOUR_ORDERING_MIN_GAP,
     crowdColorFor,
     crowdInkFor,
@@ -173,13 +171,23 @@ describe('the venue sheet shows the forecast on the first tap', () => {
     expect(screen.getByText('Group:')).toBeTruthy();
   });
 
-  test('LIVE only for the model\'s own fresh number', () => {
-    const { unmount } = render(<VenueDetailSheet {...sheetProps()} />);
-    expect(screen.getByText('LIVE')).toBeTruthy();
-    unmount();
-    render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ predictionMethod: 'rule_engine' })) })} />);
-    expect(screen.queryByText('LIVE')).toBeNull();
-    expect(screen.getByText('ESTIMATED')).toBeTruthy();
+  test('no LIVE or ESTIMATED label, whatever made the number: the line under the dial says what did', () => {
+    // The model's own fresh number.
+    const first = render(<VenueDetailSheet {...sheetProps()} />);
+    expect(screen.getByText('From the Flock crowd model.')).toBeTruthy();
+    expect(first.container.textContent).not.toMatch(/\bLIVE\b|ESTIMATED/);
+    first.unmount();
+    // A category estimate says it is one.
+    const second = render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ predictionMethod: 'rule_engine', confidenceBasis: 'category_pattern' })) })} />);
+    expect(screen.getByText('An estimate from typical patterns for this kind of place.')).toBeTruthy();
+    expect(second.container.textContent).not.toMatch(/\bLIVE\b|ESTIMATED/);
+    second.unmount();
+    // The case a recording caught: a fresh reply whose number is the venue's
+    // reading from an hour ago, carried forward. The chip said LIVE beside it.
+    // Now the line gives its age and does not call it live.
+    const third = render(<VenueDetailSheet {...sheetProps({ venueDetailCrowd: sheetRead(read30({ numberSource: 'live_reading_1h', confidenceBasis: 'model_holdout' })) })} />);
+    expect(screen.getByText("From this venue's reading taken an hour ago.")).toBeTruthy();
+    expect(third.container.textContent).not.toMatch(/\bLIVE\b|ESTIMATED|live reading taken/);
   });
 
   test('the owner\'s number is said as theirs, under no chip', () => {
@@ -358,8 +366,11 @@ describe('one forecast, wired once', () => {
   test('App.js hands the sheet its own read, the map card\'s helpers, and the paywall opener that takes a place', () => {
     const at = APP_SRC.indexOf('<VenueDetailSheet');
     const tag = APP_SRC.slice(at, APP_SRC.indexOf('/>', at));
+    // CROWD_FRESH_MS is not among them: only the LIVE chip read it, and the
+    // chip is gone.
+    expect(tag).not.toContain('CROWD_FRESH_MS=');
     for (const prop of [
-      'CROWD_FRESH_MS={CROWD_FRESH_MS}', 'HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}',
+      'HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}',
       'crowdColorFor={crowdColorFor}', 'crowdInkFor={crowdInkFor}', 'venueDetailCrowd={venueDetailCrowd}',
       'partySize={partySize}', 'setPartySize={setPartySize}', 'setPaywallTrigger={openPaywall}',
     ]) expect(tag).toContain(prop);

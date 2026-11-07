@@ -561,7 +561,6 @@ describe('LandingPage motion', () => {
     expect(reduced).toContain('.lp-btn:active { transform: none; }');
     // (.lp-appstore:hover had one too, until the homemade badge left the page.)
     // The demo's own block, further down the file.
-    expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*\.lpd-live-dot \{ animation: none; \}/);
     expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*\.lpd-pin:hover \.lpd-pin-photo \{ transform: none; \}/);
   });
 
@@ -646,9 +645,12 @@ describe('LandingPage motion', () => {
       }
     });
 
-    test('the live dot stops after two pulses instead of blinking forever (WCAG 2.2.2)', () => {
-      expect(css).toMatch(/\.lpd-live-dot \{[^}]*animation: lpd-live 2s ease-in-out 2;/);
-      expect(css).not.toMatch(/lpd-live 2s ease-in-out infinite/);
+    test('the demo note has no live dot to blink at all', () => {
+      // It pulsed forever, then twice per reading (WCAG 2.2.2), and went on
+      // 2026-11-06 with every other LIVE label and status dot: the note says
+      // what made the number and how old it is in words.
+      expect(css).not.toMatch(/lpd-live/);
+      expect(readJs('LiveDemo.js')).not.toMatch(/lpd-live-dot/);
     });
 
     test('hover arrows on the menu rows exist only where hover is real, and stay out of the accessible name', () => {

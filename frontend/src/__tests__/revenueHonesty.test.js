@@ -90,7 +90,7 @@ describe('revenue simulator: projections labelled as projections', () => {
   });
 
   test('demo research data is labelled demo on screen', () => {
-    expect(visible).toContain('Demo data · Tap for live');
+    expect(visible).toContain('Demo data · Tap for real data');
   });
 });
 

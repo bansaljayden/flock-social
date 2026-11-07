@@ -115,7 +115,8 @@ export const REPORTS_ADJUSTED_WORDS = 'adjusted by visitor reports from this tim
 
 // 'live_reading_1h', 'live_reading_2h', ...: the number IS the venue's live
 // reading from that many hours ago, carried forward at full weight. The
-// server's nowcast never reaches past 12 hours.
+// server's nowcast never reaches past 12 hours. Its words give the age and do
+// not call it live: an hour-old reading is a reading taken an hour ago.
 const LIVE_READING_SOURCE = /^live_reading_([1-9]|1[0-2])h$/;
 const liveReadingHours = (source) => {
   const m = typeof source === 'string' ? LIVE_READING_SOURCE.exec(source) : null;
@@ -132,7 +133,7 @@ const parseSource = (source) => {
   return { base, adjusted };
 };
 
-const readingPhrase = (hours) => `this venue's live reading taken ${hours === 1 ? 'an hour' : `${hours} hours`} ago`;
+const readingPhrase = (hours) => `this venue's reading taken ${hours === 1 ? 'an hour' : `${hours} hours`} ago`;
 
 export const numberSourcePhrase = (source) => {
   const parsed = parseSource(source);
@@ -288,8 +289,7 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
 export const hourlyTypicalOnly = (bars) => hourlySourcePhrase(bars) === CATEGORY_HOURS_WORDS;
 
 /**
- * The note under the public demo's chart, without its "updated" tail, and
- * whether it may call itself live (the demo draws its green dot only then).
+ * The note under the public demo's chart, without its "updated" tail.
  *
  * It describes the bars drawn as a crowd (closed hours left out by the
  * caller), or the headline when no chart is drawn. A named source says what
@@ -298,8 +298,13 @@ export const hourlyTypicalOnly = (bars) => hourlySourcePhrase(bars) === CATEGORY
  * the corpus, and the demo takes coordinates from anywhere) is answered by the
  * rule engine alone, a category estimate no model and no live reading
  * touched, and that case now says so in the in-app card's words for the same
- * number. Live follows the card's LIVE chip: only a model-path number, and
- * never one that is the venue's weekly pattern alone.
+ * number.
+ *
+ * No note starts with "Live" any more, and the demo draws no green dot beside
+ * it (2026-11-06, with the app's LIVE chip). The source words say what made
+ * the number and the "updated" tail says how old it is, which is everything
+ * the dot and the word claimed, without claiming it for a number that is an
+ * hour old or the venue's pattern alone.
  *
  * Null for a covered card (the demo's crowd_locked, past three venues a day):
  * it draws no bars and no dial, so there is no number to describe, and naming
@@ -317,21 +322,19 @@ export const demoNoteLead = (crowdBars, card) => {
   // whose provenance the demo sends as confidence_basis. A missing method or
   // basis is not taken to be the model's.
   const parts = bars.length
-    ? bars.map((b) => ({ model: b.predictionMethod === 'ml', source: b.numberSource }))
+    ? bars.map((b) => ({ model: b.predictionMethod === 'ml' }))
     : [{
       // A number that is what is typical for this kind of place (the no-curve
       // fallback) carries a source too, and it is no model's and no reading's.
       model: Boolean(card) && !isCategoryTypicalSource(card.number_source)
         && (parseSource(card.number_source) !== null || MODEL_BASES.includes(card.confidence_basis)),
-      source: card?.number_source,
     }];
-  const live = parts.some((p) => p.model && !isPatternOnlySource(p.source));
-  if (madeFrom) return { text: `${live ? 'Live from' : 'From'} ${madeFrom}`, live };
-  if (parts.every((p) => !p.model)) return { text: DEMO_RULE_ENGINE_NOTE, live: false };
+  if (madeFrom) return { text: `From ${madeFrom}` };
+  if (parts.every((p) => !p.model)) return { text: DEMO_RULE_ENGINE_NOTE };
   // Both switches off: the model's own hours, with the rule engine's named
   // beside them the way the captions above name them.
   const ruleHours = parts.some((p) => !p.model);
-  return { text: ruleHours ? `Live from the model inside Flock, ${RULE_HOURS_WORDS_VISITOR}` : 'Live from the model inside Flock', live: true };
+  return { text: ruleHours ? `From the model inside Flock, ${RULE_HOURS_WORDS_VISITOR}` : 'From the model inside Flock' };
 };
 
 /**

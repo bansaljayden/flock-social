@@ -1666,16 +1666,6 @@ html:has(.lp) body { overflow-x: clip; }
   display: flex; align-items: center; justify-content: center;
 }
 .lpd-dial-num { font-size: 23px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1; }
-.lpd-live-dot {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  background: var(--crowd-quiet); margin-right: 6px; vertical-align: 1px;
-  /* Twice, then still. It used to pulse forever, and anything that blinks
-     for more than five seconds beside other content needs a way to stop it
-     (WCAG 2.2.2). LiveDemo.js keys the dot on the reading's fetch time, so a
-     new reading pulses it twice again. */
-  animation: lpd-live 2s ease-in-out 2;
-}
-@keyframes lpd-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 /* The card sits on a light panel inside the navy section, so it has to opt
    out of the .lp-on-navy heading colour above. Without this the venue name
    renders cream on cream and is invisible, which is what shipped. Every other
@@ -1729,7 +1719,6 @@ html:has(.lp) body { overflow-x: clip; }
 @keyframes lpd-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .lpd-skel-dial, .lpd-skel-line, .lpd-skel-bars { animation: none; }
-  .lpd-live-dot { animation: none; }
   .lpd-pin:hover .lpd-pin-photo { transform: none; }
 }
 

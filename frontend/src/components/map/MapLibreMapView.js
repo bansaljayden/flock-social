@@ -1987,10 +1987,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           </div>
           <div style="flex:1;min-width:0">
             <div style="font-size:13px;font-weight:700;color:var(--text-primary);margin:0 0 2px">${escapeHtml(loc.name)}</div>
-            <div style="display:flex;align-items:center;gap:4px">
-              <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
-              <span style="font-size: 12px;color:var(--text-secondary);font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
-            </div>
+            <div style="font-size: 12px;color:var(--text-secondary);font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Updated ' + ageStr}</div>
           </div>
         </div>`;
 

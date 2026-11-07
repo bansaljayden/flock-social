@@ -3198,9 +3198,10 @@ const flockTileInitial = (name) => {
 //
 // Never inline another ladder. Call these.
 // ═══════════════════════════════════════════════════════════════════════════
-// A crowd reading is only 'live' for so long. Shared by the LIVE/ESTIMATED
-// chip and by the back-navigation snapshot check so they never disagree about
-// what counts as current.
+// How long a crowd read in hand counts as current. Shared by the
+// back-navigation snapshot check and the read-in-hand check
+// (lib/crowdReadInHand.js) so they never disagree about what counts as
+// current. It also decided the LIVE chip until that went on 2026-11-06.
 const CROWD_FRESH_MS = 5 * 60 * 1000;
 // A pin, heat-map or list score older than this is fetched again the next
 // time its venue is scored; without it a session open from five to nine kept
@@ -18395,7 +18396,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // exit={{ y: 40, opacity: 0 }} would never run.
     if (!activeVenue) return null;
     const consumerVenueCardProps = {
-      CROWD_FRESH_MS, HOUR_ORDERING_MIN_GAP, crowdColorFor, crowdInkFor, resolveVenuePhoto,
+      HOUR_ORDERING_MIN_GAP, crowdColorFor, crowdInkFor, resolveVenuePhoto,
       activeVenue, allVenues, checkinJustSaved, checkinSaving, colors, confirmClick,
       crowdAlternatives, crowdData, crowdFetchFailed, crowdLoading, handleCheckIn, lastCheckinAt,
       openVenueDetail, partySize, pickingVenueForCreate, pickingVenueForDm, pickingVenueForFlockId,
@@ -22062,7 +22063,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             setPartySize={setPartySize}
             setPaywallTrigger={openPaywall}
             venueOwnerView={userMode === 'venue' || currentScreen === 'venueDashboard'}
-            CROWD_FRESH_MS={CROWD_FRESH_MS}
             HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
             crowdColorFor={crowdColorFor}
             crowdInkFor={crowdInkFor}
@@ -22264,10 +22264,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           Not smooth scrolling: see the note on the blanket rule above.
       */}
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
-        }
         @keyframes bounce {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-4px); }

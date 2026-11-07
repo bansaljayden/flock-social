@@ -330,9 +330,9 @@ export default function SearchResultsOverlay({
                             {crowdLabel && (venue.photo_url || crowdScore == null) && (
                             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
                               {/* ESTIMATE FRAMING ON THE BROWSE SURFACE. The venue
-                                  DETAIL sheet carries a LIVE/ESTIMATED chip and a
-                                  four-way attribution line naming where the number
-                                  came from; the list card printed a bare label. An
+                                  DETAIL sheet carries an attribution line naming
+                                  where the number came from; the list card
+                                  printed a bare label. An
                                   app was rejected by App Review for showing model
                                   output it could not source, and a crowd forecast
                                   is exactly that shape. Owner-reported readings are

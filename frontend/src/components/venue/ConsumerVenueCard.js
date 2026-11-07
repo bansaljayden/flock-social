@@ -38,17 +38,18 @@
  * The old arrow function closed over 45 names. Forty are declared in
  * FlockAppInner: activeVenue and the crowd state around it, the sensor
  * readings, the venue-pick and back-navigation state, and the setters and
- * handlers behind the actions. Five more are module-level helpers and
+ * handlers behind the actions. Five more were module-level helpers and
  * constants App.js declares once and other surfaces share (crowdColorFor,
- * crowdInkFor, resolveVenuePhoto, CROWD_FRESH_MS, HOUR_ORDERING_MIN_GAP), so
+ * crowdInkFor, resolveVenuePhoto, HOUR_ORDERING_MIN_GAP, and CROWD_FRESH_MS
+ * until 2026-11-06, when the LIVE chip that was its only reader here went), so
  * they stay declared there and arrive here under their own names, which is
  * what lets the body below stay a character-for-character copy of the deleted
  * lines. Nothing here re-derives any of them: the crowd ladder carries the
  * instruction "Never inline another ladder. Call these." and a second copy of
  * the hour-ordering floor is exactly the drift hourOrderingFloor.test.js
- * exists to prevent. Moving those five into src/lib/crowd.js and
- * src/lib/venuePhoto.js, where crowdLabelFor already lives, would turn five
- * props into five imports and is the right follow-up.
+ * exists to prevent. Moving those four into src/lib/crowd.js and
+ * src/lib/venuePhoto.js, where crowdLabelFor already lives, would turn four
+ * props into four imports and is the right follow-up.
  *
  * The names were not read off the page. They came from a Babel scope walk of
  * the block: every referenced identifier whose binding resolves outside it,
@@ -86,7 +87,7 @@ import React, { useState } from 'react';
 import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
-import { crowdLabelFor, cardSourceLine, isPatternOnlySource, compactHourLabel } from '../../lib/crowd';
+import { crowdLabelFor, cardSourceLine, compactHourLabel } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
 // Tables at this venue, for venues whose Flux sensor watches them. The read
 // is lib/tableSummaries.js's (one GET a minute while the card is open, its
@@ -489,12 +490,14 @@ function getGroupAdmission(crowdScore, partySize, venue, clock) {
 // could draw it. The venue sheet (components/overlays/VenueDetailSheet.js) is
 // what a search row, a chat card and Birdie's Details open first, and it had
 // no forecast at all: from a search the dial appeared only after closing the
-// sheet with X, and from Birdie never. Both draw this now, so the chip, the
-// dial and its words, where the number came from, the reality check, the group
-// verdict, the hourly bars and the two tiles follow one set of rules
-// wherever they appear: the paywall cover and REACT_APP_PURCHASES, whose clock
-// the hours are on, LIVE only for the model's own fresh number, the owner's
-// number said as theirs, a closed room, and a read that did not come back.
+// sheet with X, and from Birdie never. Both draw this now, so the dial and its
+// words, where the number came from, the reality check, the group verdict, the
+// hourly bars and the two tiles follow one set of rules wherever they appear:
+// the paywall cover and REACT_APP_PURCHASES, whose clock the hours are on, the
+// owner's number said as theirs, a closed room, and a read that did not come
+// back. There is no LIVE or ESTIMATED chip (removed 2026-11-06): the line
+// under the dial says where the number came from, and how old a carried
+// reading is, in words.
 //
 // The body is the block it was, line for line and at its old indentation, so
 // the move is checkable against the deleted lines. `venue` arrives under the
@@ -506,7 +509,6 @@ function getGroupAdmission(crowdScore, partySize, venue, clock) {
 // own Back and Close, never shows either.
 export function CrowdForecastPanel({
   venue: activeVenue,
-  CROWD_FRESH_MS,
   HOUR_ORDERING_MIN_GAP,
   crowdColorFor,
   crowdInkFor,
@@ -766,48 +768,18 @@ export function CrowdForecastPanel({
                 // than guess a replacement hour.
                 const bestText = (isClosed && cd?.bestTime === 'Now is good') ? null : (cd?.bestTime || null);
 
-                // LIVE means recent, not "a weather object came back". The chip
-                // used to read `weather != null`, so a ten minute old cached
-                // response still claimed LIVE. lastUpdated is on the response
-                // and was read nowhere in this file.
-                //
-                // AND recent is not enough either. `lastUpdated` is stamped when
-                // the route BUILDS the payload, so on any uncached request it is
-                // seconds old and this was true for every venue in the product,
-                // including one with no baseline whose number came from the
-                // category curve. The card then drew a pulsing green LIVE over
-                // an attribution line eight rows below reading "An estimate from
-                // typical patterns for this kind of place". The route ships
-                // predictionMethod for exactly this question, so ask it: only a
-                // number the model actually produced may call itself live.
-                //
-                // A venue's own reading is neither. It is not model output, so
-                // it is not LIVE, and it is not a Flock estimate, so it is not
-                // ESTIMATED either: the attribution line below says whose number
-                // it is and the owner line says when it was set, and the chip
-                // stays out of it. The server marks it predictionMethod
-                // 'owner_report'; ownerReport.applied, the flag the owner line
-                // is drawn on, is read too, so a server that predates the
-                // method still gets no LIVE chip over the owner's figure.
-                const ownerNumber = !!cd && (cd.predictionMethod === 'owner_report' || cd.ownerReport?.applied === true);
-                const isLiveNow = (() => {
-                  if (!cd?.lastUpdated || ownerNumber) return false;
-                  const method = String(cd.predictionMethod || '');
-                  // Only the model path's own number, 'ml', may be LIVE. This
-                  // was "anything but rule_engine", so any new method the
-                  // server added passed it unless its name happened to start
-                  // with rule_engine. The no-curve fallback's does
-                  // ('rule_engine_category_table'), for the builds that still
-                  // read the old rule; this one does not depend on a name.
-                  if (method !== 'ml') return false;
-                  // With CROWD_SERVE_MODE=curve_offset the method stays 'ml'
-                  // for a number that is the venue's weekly pattern alone: no
-                  // model ran and no live reading reached it. The source says
-                  // so while a switch is on, and that number is not LIVE.
-                  if (isPatternOnlySource(cd.numberSource)) return false;
-                  const t = Date.parse(cd.lastUpdated);
-                  return Number.isFinite(t) && (Date.now() - t) < CROWD_FRESH_MS;
-                })();
+                // NO STATUS CHIP. A dot and the word LIVE or ESTIMATED sat in the
+                // top corner of this panel until 2026-11-06, when it went with
+                // every other LIVE label and status dot in the product
+                // (noLiveDotLabel.test.js keeps them out). It had already been
+                // wrong three ways, each fixed in turn: LIVE over a cached
+                // reply, LIVE over a category curve because lastUpdated is
+                // stamped when the route builds the payload, and LIVE beside an
+                // hour-old carried reading. The line under the dial
+                // (lib/crowd cardSourceLine) already says what made the number,
+                // a carried reading's age included, and the owner line says when
+                // the owner set theirs, so the words carry it and nothing here
+                // claims a freshness the number does not have.
 
                 // Per-bar openness computed once; the chart then runs only as
                 // long as the venue's hours do — trailing closed hours are
@@ -861,51 +833,25 @@ export function CrowdForecastPanel({
                 })();
 
                 return (
-              <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px', gap: '8px' }}>
-                  {/* Game night, sharing the row with the LIVE chip: in
-                      line with it, and the chip keeps the right corner
-                      (2026-08-30). A schedule FACT, never a crowd claim: the
-                      same-day ablation measured no lift the model could stand
-                      behind, so this states who plays and stops. The server
-                      applies the same 60km market gate the training features
-                      used and decides everything; this only prints. The empty
-                      span keeps the chip right-aligned on non-game days. */}
-                  {cd?.gameNight?.teams?.length > 0 ? (
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {cd.gameNight.homeGame && cd.gameNight.homeGame.distanceKm <= 10 && cd.gameNight.homeGame.venueName
-                        ? `${cd.gameNight.homeGame.team} home game tonight at ${cd.gameNight.homeGame.venueName}`
-                        : `${cd.gameNight.teams.length === 1
-                            ? cd.gameNight.teams[0]
-                            : cd.gameNight.teams.slice(0, -1).join(', ') + ' and ' + cd.gameNight.teams[cd.gameNight.teams.length - 1]} play tonight`}
-                    </span>
-                  ) : <span />}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                    {/* No chip over no number. When the read did not come
-                        back, or came back without a score, the card draws the
-                        "---" dial and the no-read line, and an ESTIMATED chip
-                        above them claimed an estimate it did not have. An
-                        owner's number gets no chip either (ownerNumber). */}
-                    {crowdLoading ? (
-                      // The chip's own shape, a dot and a word, while the read
-                      // is out, so the row does not change size when it lands.
-                      <>
-                        <span className="sr-only">Loading the crowd reading</span>
-                        <div aria-hidden="true" className="skeleton" style={{ width: '6px', height: '6px', borderRadius: '3px' }} />
-                        <div aria-hidden="true" className="skeleton" style={{ width: '56px', height: '12px', borderRadius: '6px' }} />
-                      </>
-                    ) : (ownerNumber || (!cd && noEstimate)) ? null : (
-                      <>
-                        {/* The dot is decorative so it keeps the vivid hue; the LABEL
-                            has to be readable on the pale card. #22C55E measured
-                            1.85:1 and colors.amber 1.64:1 on --bg-tertiary. The
-                            accent-*-text tokens are theme-aware and clear 4.5:1. */}
-                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: isLiveNow ? '#22C55E' : colors.amber, animation: isLiveNow ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                        <span style={{ fontSize: 'var(--t-meta)', color: isLiveNow ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontWeight: '500' }}>{isLiveNow ? 'LIVE' : 'ESTIMATED'}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+              <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '8px 10px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
+                {/* While the read is out the dial and the bars draw their own
+                    grey shapes; this says so in words a screen reader gets and
+                    nobody else sees. */}
+                {crowdLoading && <span className="sr-only">Loading the crowd reading</span>}
+                {/* Game night (2026-08-30). A schedule FACT, never a crowd
+                    claim: the same-day ablation measured no lift the model
+                    could stand behind, so this states who plays and stops. The
+                    server applies the same 60km market gate the training
+                    features used and decides everything; this only prints. */}
+                {cd?.gameNight?.teams?.length > 0 && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600', margin: '0 0 4px', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {cd.gameNight.homeGame && cd.gameNight.homeGame.distanceKm <= 10 && cd.gameNight.homeGame.venueName
+                      ? `${cd.gameNight.homeGame.team} home game tonight at ${cd.gameNight.homeGame.venueName}`
+                      : `${cd.gameNight.teams.length === 1
+                          ? cd.gameNight.teams[0]
+                          : cd.gameNight.teams.slice(0, -1).join(', ') + ' and ' + cd.gameNight.teams[cd.gameNight.teams.length - 1]} play tonight`}
+                  </p>
+                )}
                 {/* The venue's own number. When the published score IS the
                     owner's live reading, the user must be able to tell — "the
                     {venue-type} says" is a different claim from "we think",
@@ -1220,7 +1166,8 @@ export function CrowdForecastPanel({
                   {/* The server sent a crowd read with no hour-by-hour curve, so
                       the bars above are the client's category shape (genHourly).
                       They used to draw under the same ESTIMATED chip as a real
-                      model curve, indistinguishable from one. */}
+                      model curve, indistinguishable from one; this line is
+                      what tells them apart. */}
                   {cd && !cd.hourly && !crowdFetchFailed && (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
                       Typical for {activeVenue.category ? `a ${String(activeVenue.category).toLowerCase()}` : 'a place like this'} at these hours, not a read of this spot.
@@ -1367,7 +1314,6 @@ export default function ConsumerVenueCard({
   // other surfaces, so they stay declared there and arrive here. Named exactly
   // as they are named there, which is what keeps the body below a verbatim
   // copy of the deleted lines.
-  CROWD_FRESH_MS,
   HOUR_ORDERING_MIN_GAP,
   crowdColorFor,
   crowdInkFor,
@@ -1491,7 +1437,6 @@ export default function ConsumerVenueCard({
                   the venue sheet draws too. */}
               <CrowdForecastPanel
                 venue={activeVenue}
-                CROWD_FRESH_MS={CROWD_FRESH_MS}
                 HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
                 crowdColorFor={crowdColorFor}
                 crowdInkFor={crowdInkFor}
@@ -1515,7 +1460,7 @@ export default function ConsumerVenueCard({
               />
 
               {/* Tables, for a venue whose Flux sensor watches them. Its own
-                  card above Live Occupancy rather than a row inside it: that
+                  card above the sensor card rather than a row inside it: that
                   card needs a current room reading and this needs a table
                   summary, and a venue can have either without the other.
                   Hidden entirely, not blank, for the venues with no summary,
@@ -1531,7 +1476,7 @@ export default function ConsumerVenueCard({
                 </m.div>
               )}
 
-              {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
+              {/* The venue sensor card. Only renders when a Pi sensor exists for this venue */}
               {sensorData && !sensorData.sensor_data && sensorData.recent_checkins > 0 && (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
                   {/* NOT "by tag". routes/sensors.js counts every row in
@@ -1605,10 +1550,11 @@ export default function ConsumerVenueCard({
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                        <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-                        <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Live Occupancy</span>
-                      </div>
+                      {/* Whose count it is, and its age beside it. This was a
+                          pulsing green dot and "Live Occupancy", which said live
+                          whatever the age; the age is the honest half of that,
+                          so it is the half that stays. */}
+                      <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Venue sensor</span>
                       {ageStr && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
                     </div>
 

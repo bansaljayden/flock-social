@@ -699,10 +699,9 @@ export default function VenueDashboard({
                 ) : live ? (
                   <div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                      <span style={{ fontWeight: '700', color: colors.steel }}>Live</span>
-                      {' · users see '}
+                      {'Users see '}
                       <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>
-                      {`, labeled as your number · ${expiresMin} min left`}
+                      {` now, labeled as your number · ${expiresMin} min left`}
                     </p>
                     {/* Remaining time as a bar: state, not ornament. It only
                         depletes when the card re-renders, same clock as the
@@ -1812,7 +1811,7 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* Live Sensor — only renders if a Pi is deployed for this venue */}
+          {/* Your sensor: only renders if a Pi is deployed for this venue */}
           {/* Tag check-ins for a venue with no hardware sensor, which is
               almost every venue. The count used to render only inside the
               sensor block, so it was never shown. */}
@@ -1862,10 +1861,9 @@ export default function VenueDashboard({
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
-                    <span className="flock-pulse-dot" style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: '#10b981', display: 'inline-block' }} />
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Live Sensor</h3>
-                  </div>
+                  {/* No pulsing dot (2026-11-06). Online or Offline and the
+                      age of the last reading, beside this, are the state. */}
+                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Your sensor</h3>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
                     {/* A sensor that has never reported has no timestamp, which

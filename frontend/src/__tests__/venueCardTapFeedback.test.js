@@ -5,7 +5,9 @@
  *     changed the cursor, so on a phone nothing moved until the thank-you
  *     landed. The tapped option fills at once and the others dim.
  *   - The LIVE / ESTIMATED chip read "Loading..." in words while the crowd read
- *     was out. It is a dot and a pill of grey in the chip's own shape now.
+ *     was out, and then a grey pill in the chip's shape. The chip is gone
+ *     (2026-11-06); the dial and the bars draw their own grey shapes and a
+ *     screen reader is told in words.
  *   - A locked forecast blurred a "9 PM" that nobody measured, the same hour
  *     on every venue, closed ones included. The lines say the figure is in
  *     Flock Pro instead.
@@ -66,18 +68,13 @@ describe('how busy is it actually', () => {
   });
 });
 
-describe('the LIVE chip while the crowd read is out', () => {
-  test('is the chip\'s own shape in grey, not the word Loading', () => {
-    const at = CARD.indexOf('{crowdLoading ? (');
-    expect(at).toBeGreaterThan(-1);
-    const end = CARD.indexOf(') : (ownerNumber || (!cd && noEstimate)) ? null : (', at);
-    expect(end).toBeGreaterThan(at);
-    const branch = CARD.slice(at, end);
-    expect(branch).not.toMatch(/Loading\.\.\./);
-    expect(branch).toContain("className=\"skeleton\" style={{ width: '6px', height: '6px', borderRadius: '3px' }}");
-    expect(branch).toContain("className=\"skeleton\" style={{ width: '56px', height: '12px', borderRadius: '6px' }}");
-    // Still announced, in words a screen reader gets and nobody else sees.
-    expect(branch).toMatch(/<span className="sr-only">Loading the crowd reading<\/span>/);
+describe('while the crowd read is out', () => {
+  test('a screen reader is told in words, and no grey pill holds a corner for a label that is gone', () => {
+    // Announced in words a screen reader gets and nobody else sees.
+    expect(CARD).toMatch(/\{crowdLoading && <span className="sr-only">Loading the crowd reading<\/span>\}/);
+    // The chip's loading shape went with the chip.
+    expect(CARD).not.toContain("className=\"skeleton\" style={{ width: '56px', height: '12px', borderRadius: '6px' }}");
+    expect(CARD).not.toMatch(/>Loading\.\.\.</);
   });
 });
 

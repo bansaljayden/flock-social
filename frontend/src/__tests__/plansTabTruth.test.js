@@ -88,13 +88,15 @@ test('the add form says what it needs, and the server names its limits', () => {
   expect(calendar).toMatch(/Keep the title under 120 characters/);
 });
 
-test('the weather reading is re-read after thirty minutes and does not pulse', () => {
+test('the weather reading is re-read after thirty minutes and wears no status pill', () => {
   expect(app).toMatch(/if \(Date\.now\(\) - weatherFetchedRef\.current < 30 \* 60 \* 1000\) return;/);
-  // The LIVE badge that used to pulse is drawn by the Plans tab, so the
-  // no-pulse half is read there. Kept on App.js as well: the effect and the
-  // state are still here and the animation must not come back to either file.
-  expect(calendarScreen).toMatch(/\{isLive \? 'LIVE' : 'FORECAST'\}/);
-  expect(calendarScreen).not.toMatch(/animation: isLive \? 'pulse 2s ease-in-out infinite' : 'none'/);
+  // The weather card's dot and LIVE / FORECAST pill (it pulsed once, and was
+  // still a green dot and the word after that) went on 2026-11-06. The day and
+  // date over the reading say which day it is. Kept on App.js as well: the
+  // effect and the state are still here and the badge must not come back to
+  // either file.
+  expect(calendarScreen).not.toMatch(/'LIVE'|'FORECAST'/);
+  expect(calendarScreen).not.toMatch(/pulse 2s/);
   expect(app).not.toMatch(/animation: isLive \? 'pulse 2s ease-in-out infinite' : 'none'/);
 });
 

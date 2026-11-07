@@ -141,7 +141,6 @@ export default function CalendarScreen({
     const forecastForDate = weatherForecast.find(f => f.date === selectedDateStr);
     const weatherData = isSelectedToday ? liveWeather : forecastForDate;
     const weatherReady = !!weatherData;
-    const isLive = isSelectedToday && !!liveWeather;
 
     return (
       <div key="calendar-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -241,10 +240,9 @@ export default function CalendarScreen({
                   <div style={{ textAlign: 'right' }}>
                     <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{localeDate(selectedDate, 'en-US', { weekday: 'long' })}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{localeDate(selectedDate, 'en-US', { month: 'long', day: 'numeric' })}</p>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: isLive ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)' }}>
-                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6' }} />
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
-                    </div>
+                    {/* No LIVE / FORECAST pill (2026-11-06). The day and date
+                        above say which day this is: today's conditions, or the
+                        forecast for a day ahead. */}
                   </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>

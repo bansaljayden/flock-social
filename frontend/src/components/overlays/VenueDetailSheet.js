@@ -160,7 +160,6 @@ const VenueDetailSheet = ({
   // never write) and no See Pro. The dashboard map's basemap places open
   // this sheet, a competitor's included.
   venueOwnerView,
-  CROWD_FRESH_MS,
   HOUR_ORDERING_MIN_GAP,
   crowdColorFor,
   crowdInkFor,
@@ -461,8 +460,8 @@ const VenueDetailSheet = ({
                   {/* The crowd forecast, the map card's own panel (see
                       sheetCrowd above), high on the sheet so the first tap
                       shows it. Every rule the card keeps comes with it: the
-                      paywall cover, LIVE only for the model's fresh number,
-                      the owner's number, a closed room, a read that failed.
+                      paywall cover, where the number came from, the owner's
+                      number, a closed room, a read that failed.
                       The card's nearby list and its way back stay on the card
                       (it alone passes their data): they move the map, and
                       this sheet has its own way out. */}
@@ -471,7 +470,6 @@ const VenueDetailSheet = ({
                       <CrowdForecastPanel
                         key={venueDetailModal.place_id}
                         venue={venueDetailModal}
-                        CROWD_FRESH_MS={CROWD_FRESH_MS}
                         HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
                         crowdColorFor={crowdColorFor}
                         crowdInkFor={crowdInkFor}

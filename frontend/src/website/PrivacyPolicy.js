@@ -398,7 +398,7 @@ export default function PrivacyPolicy() {
 
               <h3>What we do with the readings</h3>
               <p>
-                They produce the "Live Occupancy" figure and the 12-hour chart on that
+                They produce the venue sensor's people count and the 12-hour chart on that
                 venue's page in the app, and the same figures in that venue owner's
                 dashboard, along with the table figures when the venue has them. We keep them as a record of how busy the venue has been over
                 time. Because they contain no identifiers, deleting your Flock account

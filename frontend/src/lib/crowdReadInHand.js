@@ -15,8 +15,8 @@
  * for a read seconds old. The effect asks this first: a read of the same
  * place, stamped less than `freshMs` ago, is used as it is.
  *
- * Fresh means the server's own `lastUpdated`, the same clock the card's LIVE
- * chip and its way back (skipCrowdFetchRef) already judge freshness by. A
+ * Fresh means the server's own `lastUpdated`, the same clock the card's way
+ * back (skipCrowdFetchRef) already judges freshness by. A
  * read without a stamp is never fresh, so it is asked for again, as before.
  *
  * Pure, and its own module, so App.js imports a few lines rather than the

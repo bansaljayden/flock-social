@@ -1433,8 +1433,8 @@ describe('the Tables tab', () => {
     expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
     expect(screen.getByText('1 of 5 free')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
-    // The tab is the tables and nothing else: Live Sensor stays on Analytics.
-    expect(screen.queryByRole('heading', { name: 'Live Sensor' })).toBeNull();
+    // The tab is the tables and nothing else: the sensor card stays on Analytics.
+    expect(screen.queryByRole('heading', { name: 'Your sensor' })).toBeNull();
     expect(screen.queryByText('Post a Deal')).toBeNull();
   });
 
@@ -1618,10 +1618,10 @@ describe('the Table alerts switch', () => {
 });
 
 describe('Analytics', () => {
-  test('keeps Live Sensor and no longer carries the board', async () => {
+  test('keeps the sensor card and no longer carries the board', async () => {
     dashboard({ venueTab: 'analytics', ownerTablesSeen: true, ownerTables: LIVE, ownerTableHours: HOURS, ownerSensorData: SENSOR });
     await settle();
-    expect(screen.getByRole('heading', { name: 'Live Sensor' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Your sensor' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
     expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
     expect(screen.queryByText('Needs a server')).toBeNull();

@@ -454,7 +454,8 @@ export default function ExploreScreen({
           bottomLeftClear={discoverMapLeftClear}
         />
 
-        {/* Live location sharing indicator on map */}
+        {/* Location sharing indicator on the map. Words, and Stop: no
+            pulsing dot and no "Live" label (2026-11-06). */}
         {sharingLocationForFlock && (
           <div style={{
             position: 'absolute', top: '8px', left: '8px', right: '8px',
@@ -463,9 +464,8 @@ export default function ExploreScreen({
             display: 'flex', alignItems: 'center', gap: '8px',
             zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
           }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
             <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
-              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
+              Sharing your location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
             </p>
             <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>

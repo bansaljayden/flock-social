@@ -17,8 +17,8 @@ const alerts = fs.readFileSync(path.join(REPO, 'backend', 'services', 'crowdAler
 // about, so the rule is read there now as well as here.
 const searchResults = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'SearchResultsOverlay.js'), 'utf8');
 // The card a map pin opens left App.js on the same day for
-// components/venue/ConsumerVenueCard.js: the dial, the LIVE chip, the nearby
-// list and the crowd reality check are all drawn there. Each assertion below
+// components/venue/ConsumerVenueCard.js: the dial, the line under it, the
+// nearby list and the crowd reality check are all drawn there. Each assertion below
 // reads whichever file holds the line it is about, and every negative reads
 // both, so nothing this file forbids became sayable by moving one file across.
 const card = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'venue', 'ConsumerVenueCard.js'), 'utf8');
@@ -66,36 +66,30 @@ test('a venue with no reading is not the quietest place nearby', () => {
   expect(appAndCard).not.toMatch(/v\.category === activeVenue\.category && v\.crowd < score/);
 });
 
-test('LIVE means the model produced the number, not that the reply is new', () => {
-  // lastUpdated is stamped when the route BUILDS the payload, so it is seconds
-  // old on every uncached request and the chip was green for every venue,
-  // including one with no baseline whose number is the category curve. The card
-  // then drew a pulsing LIVE eight rows above "An estimate from typical
-  // patterns for this kind of place".
-  expect(card).toMatch(/const method = String\(cd\.predictionMethod \|\| ''\);/);
-  // Only 'ml' may be LIVE. The test was "anything but rule_engine", which any
-  // new server method passed unless its name started with rule_engine, and a
-  // category prior under any other name would have worn LIVE again. (The
-  // no-curve fallback's method is 'rule_engine_category_table' for the builds
-  // that still carry the old test.)
-  expect(card).toMatch(/if \(method !== 'ml'\) return false;/);
-  expect(card).not.toMatch(/if \(!method \|\| method\.startsWith\('rule_engine'\)\) return false;/);
+test('no chip claims LIVE or ESTIMATED; the line under the dial says what made the number', () => {
+  // The chip in the panel's corner was wrong three ways, each fixed in turn:
+  // LIVE over a cached reply, LIVE over a category curve (lastUpdated is
+  // stamped when the route BUILDS the payload, so it was green for every
+  // venue), and LIVE beside a number that was the venue's reading from an
+  // hour ago. It went on 2026-11-06 (noLiveDotLabel.test.js keeps every such
+  // label out). What it was trying to say is said in words: the source line,
+  // chosen by lib/crowd cardSourceLine off predictionMethod and numberSource,
+  // and a carried reading's age in it.
+  expect(card).toMatch(/\{cardSourceLine\(cd\)\}/);
+  expect(card).not.toMatch(/isLiveNow/);
+  expect(card).not.toMatch(/'LIVE'|'ESTIMATED'/);
+  // Nothing in the panel reads the reply's own stamp to call a number current.
+  expect(card).not.toMatch(/Date\.parse\(cd\.lastUpdated\)/);
 });
 
-test('a venue\'s own reading wears neither LIVE nor ESTIMATED', () => {
+test('a venue\'s own reading is said as theirs, never as Flock\'s estimate or a live reading', () => {
   // The server marks the owner's number predictionMethod 'owner_report'
-  // (services/ownerReports.js). It used to stay 'ml', which passed the
-  // rule_engine test above, so a pulsing LIVE sat beside "From the bar itself,
-  // not a Flock estimate". ESTIMATED would be the opposite untruth, so the chip
-  // steps aside and the owner line says whose number it is and when it was set.
-  // ownerReport.applied, the flag that line is drawn on, is read too, for a
-  // server that predates the method.
-  expect(card).toMatch(/const ownerNumber = !!cd && \(cd\.predictionMethod === 'owner_report' \|\| cd\.ownerReport\?\.applied === true\);/);
-  expect(card).toMatch(/if \(!cd\?\.lastUpdated \|\| ownerNumber\) return false;/);
-  // The branch before it is the chip's loading shape (venueCardTapFeedback
-  // .test.js), and the owner's number still drops the chip after it, as does
-  // a read with no number in it (venueSheetCrowdForecast.test.js).
-  expect(card).toMatch(/<div aria-hidden="true" className="skeleton" style=\{\{ width: '56px', height: '12px', borderRadius: '6px' \}\} \/>\s*<\/>\s*\) : \(ownerNumber \|\| \(!cd && noEstimate\)\) \? null : \(/);
+  // (services/ownerReports.js). A pulsing LIVE once sat beside "From the bar
+  // itself, not a Flock estimate", and ESTIMATED would have been the opposite
+  // untruth. With no chip, the owner line says whose number it is and when it
+  // was set, and the source line says it is not a Flock estimate.
+  expect(card).toMatch(/The \{cd\.ownerReport\.noun \|\| 'venue'\} says it's at \{cd\.score\}% right now/);
+  expect(card).toMatch(/mins <= 1 \? 'set just now' : `set \$\{mins\} min ago`/);
 });
 
 test('the Now bar and the trend arrow copy every reading the dial draws, 0 included', () => {

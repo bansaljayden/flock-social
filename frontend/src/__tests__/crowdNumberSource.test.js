@@ -30,18 +30,23 @@ test('each value the server names has plain words, and anything else has none', 
   }
 });
 
-test('a number that is a carried live reading says so, with its age', () => {
-  expect(numberSourcePhrase('live_reading_1h')).toBe("this venue's live reading taken an hour ago");
-  expect(numberSourcePhrase('live_reading_2h')).toBe("this venue's live reading taken 2 hours ago");
-  expect(numberSourcePhrase('live_reading_12h')).toBe("this venue's live reading taken 12 hours ago");
+test('a number that is a carried reading says so, with its age, and does not call itself live', () => {
+  expect(numberSourcePhrase('live_reading_1h')).toBe("this venue's reading taken an hour ago");
+  expect(numberSourcePhrase('live_reading_2h')).toBe("this venue's reading taken 2 hours ago");
+  expect(numberSourcePhrase('live_reading_12h')).toBe("this venue's reading taken 12 hours ago");
+  // An hour-old reading beside the word live is the claim a recording caught
+  // (2026-11-06). The age is the honest half, so it is the half that is said.
+  for (const v of ['live_reading_1h', 'live_reading_3h', 'live_reading_1h_adjusted']) {
+    expect(numberSourcePhrase(v)).not.toMatch(/\blive\b/i);
+  }
 });
 
 test('a number visitor reports adjusted is never worded as the reading itself, nor as people there now', () => {
   // A reading of 20 blended to 35 by verified reporters.
   expect(numberSourcePhrase('live_reading_1h_adjusted'))
-    .toBe("this venue's live reading taken an hour ago, adjusted by visitor reports from this time of week over the last four weeks");
+    .toBe("this venue's reading taken an hour ago, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('live_reading_3h_adjusted'))
-    .toBe("this venue's live reading taken 3 hours ago, adjusted by visitor reports from this time of week over the last four weeks");
+    .toBe("this venue's reading taken 3 hours ago, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('venue_pattern_live_adjusted'))
     .toBe("this venue's usual pattern and its recent live readings, adjusted by visitor reports from this time of week over the last four weeks");
   expect(numberSourcePhrase('venue_pattern_adjusted')).toBe("this venue's usual pattern, adjusted by visitor reports from this time of week over the last four weeks");
@@ -80,7 +85,7 @@ describe('the hourly chart caption comes from the bars drawn', () => {
 
   test('bars that all share one source take its words', () => {
     expect(hourlySourcePhrase([ml('venue_pattern_live'), ml('venue_pattern_live')])).toBe(numberSourcePhrase('venue_pattern_live'));
-    expect(hourlySourcePhrase([ml('live_reading_1h')])).toBe("this venue's live reading taken an hour ago");
+    expect(hourlySourcePhrase([ml('live_reading_1h')])).toBe("this venue's reading taken an hour ago");
   });
 
   test('a rule-engine bar beside named bars is said to be typical, never credited to the pattern', () => {
@@ -138,8 +143,9 @@ test('every surface that credits the crowd model reads the number source first',
   // so no line may say the people adjusting the number are there now.
   expect(card).not.toMatch(/adjusted by people who are there/);
   expect(card).not.toMatch(/From the crowd model, /);
-  // A number that is the venue's pattern alone is not LIVE.
-  expect(card).toMatch(/if \(isPatternOnlySource\(cd\.numberSource\)\) return false;/);
+  // No chip reads the reply to call a number LIVE any more (the venue's
+  // pattern alone included); the line above carries where it came from.
+  expect(card).not.toMatch(/isLiveNow|'LIVE'/);
 
   const insights = read('components/VenueInsightCards.js');
   // The hourly charts read the bars they draw FIRST, before the current
@@ -155,12 +161,13 @@ test('every surface that credits the crowd model reads the number source first',
   const demo = read('website/LiveDemo.js');
   // The note under the chart reads the bars drawn as a crowd first, and the
   // headline only when no chart is drawn; lib/crowd demoNoteLead, run with
-  // payloads below, words it and says whether it is live.
+  // payloads below, words it.
   expect(demo).toMatch(/const crowdBars = hourly\.filter\(\(h\) => h && h\.open !== false\);/);
   expect(demo).toMatch(/const note = demoNoteLead\(crowdBars, selected\);/);
-  expect(demo).toMatch(/\{note\?\.live && \(\s*<span/);
+  // No live dot beside it (2026-11-06).
+  expect(demo).not.toMatch(/note\?\.live|lpd-live-dot/);
   expect(demo).toMatch(/\{note && <>\{note\.text\}\{ageMs != null/);
-  // A covered card's note is null (below): no dot, no lead, no "updated", and
+  // A covered card's note is null (below): no lead, no "updated", and
   // the paragraph is drawn only when the compare hint has somewhere to point,
   // with no leading space then.
   expect(demo).toMatch(/\{\(note \|\| comparable > 1\) && \(\s*<p className="lpd-note">/);
@@ -184,62 +191,63 @@ test('every surface that credits the crowd model reads the number source first',
 // curve (any place outside the corpus, and the demo takes coordinates from
 // anywhere) is scored by the rule engine every hour, so no bar names a source.
 // The note then fell back to "Live from the model inside Flock" over a
-// category estimate no model and no live reading touched.
-describe("the public demo's note names what made its numbers, and is live only when something live did", () => {
+// category estimate no model and no live reading touched. Since 2026-11-06 no
+// note says "Live" at all, and the demo draws no green dot beside one: the
+// words say what made the number and the "updated" tail says how old it is.
+describe("the public demo's note names what made its numbers, and never calls itself live", () => {
   const rule = () => ({ predictionMethod: 'rule_engine_no_baseline', liveReadings: false });
   const on = (numberSource, liveReadings) => ({ predictionMethod: 'ml', numberSource, liveReadings });
 
   test('a strip the rule engine made alone is a category estimate, not the model and not live', () => {
     const note = demoNoteLead(Array.from({ length: 12 }, rule), { confidence_basis: 'category_pattern' });
-    expect(note).toEqual({ text: 'An estimate from typical patterns for this kind of place', live: false });
+    expect(note).toEqual({ text: 'An estimate from typical patterns for this kind of place' });
     expect(note.text).not.toMatch(/model|live/i);
     // The words the in-app card gives the same number.
     expect(cardSourceLine({ confidenceBasis: 'category_pattern', predictionMethod: 'rule_engine_no_baseline' })).toBe(`${note.text}.`);
   });
 
   test('with no chart drawn, the headline decides the same way', () => {
-    expect(demoNoteLead([], { confidence_basis: 'category_pattern' })).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
-    expect(demoNoteLead([], { confidence_basis: 'model_holdout' })).toEqual({ text: 'Live from the model inside Flock', live: true });
+    expect(demoNoteLead([], { confidence_basis: 'category_pattern' })).toEqual({ text: DEMO_RULE_ENGINE_NOTE });
+    expect(demoNoteLead([], { confidence_basis: 'model_holdout' })).toEqual({ text: 'From the model inside Flock' });
     expect(demoNoteLead([], { confidence_basis: 'model_holdout', number_source: 'venue_pattern_live' }))
-      .toEqual({ text: "Live from this venue's usual pattern and its recent live readings", live: true });
+      .toEqual({ text: "From this venue's usual pattern and its recent live readings" });
     expect(demoNoteLead([], { confidence_basis: 'model_holdout', number_source: 'venue_pattern' }))
-      .toEqual({ text: "From this venue's usual pattern", live: false });
+      .toEqual({ text: "From this venue's usual pattern" });
   });
 
   test("the no-curve fallback's numbers are what is typical for this kind of place, never live", () => {
     const table = () => ({ predictionMethod: NO_CURVE_FALLBACK_METHOD, numberSource: 'category_typical', liveReadings: false });
     expect(demoNoteLead(Array.from({ length: 12 }, table), {}))
-      .toEqual({ text: 'From what is typical for this kind of place at each hour of the week', live: false });
+      .toEqual({ text: 'From what is typical for this kind of place at each hour of the week' });
     // With no chart drawn the headline carries the same source, and it is no
     // model's number however its basis reads.
     for (const basis of ['category_pattern', 'model_holdout', undefined]) {
       const note = demoNoteLead([], { confidence_basis: basis, number_source: 'category_typical' });
-      expect(note.live).toBe(false);
       expect(note.text).not.toMatch(/^Live/);
     }
   });
 
-  test('a strip with live readings in it is live, and the pattern alone is not', () => {
+  test('a strip with live readings in it says so in words, and the pattern alone says it is the pattern', () => {
     expect(demoNoteLead([on('venue_pattern_live', true), on('venue_pattern', false)], {}))
-      .toEqual({ text: "Live from this venue's usual pattern, with this venue's recent live readings in some hours", live: true });
-    expect(demoNoteLead([on('live_reading_1h', true)], {})).toEqual({ text: "Live from this venue's live reading taken an hour ago", live: true });
+      .toEqual({ text: "From this venue's usual pattern, with this venue's recent live readings in some hours" });
+    expect(demoNoteLead([on('live_reading_1h', true)], {})).toEqual({ text: "From this venue's reading taken an hour ago" });
     expect(demoNoteLead([on('venue_pattern', false), on('venue_pattern', false)], {}))
-      .toEqual({ text: "From this venue's usual pattern", live: false });
+      .toEqual({ text: "From this venue's usual pattern" });
     expect(demoNoteLead([rule(), on('venue_pattern', false)], {}))
-      .toEqual({ text: "From this venue's usual pattern, and in hours not measured there yet, what is typical for a venue like this one", live: false });
+      .toEqual({ text: "From this venue's usual pattern, and in hours not measured there yet, what is typical for a venue like this one" });
   });
 
   test("with both switches off the model's own strip keeps the old words, and names any rule-engine hours", () => {
     expect(demoNoteLead([{ predictionMethod: 'ml' }, { predictionMethod: 'ml' }], { confidence_basis: 'model_holdout' }))
-      .toEqual({ text: 'Live from the model inside Flock', live: true });
+      .toEqual({ text: 'From the model inside Flock' });
     expect(demoNoteLead([rule(), { predictionMethod: 'ml' }], {}))
-      .toEqual({ text: 'Live from the model inside Flock, and in hours not measured there yet, what is typical for a venue like this one', live: true });
+      .toEqual({ text: 'From the model inside Flock, and in hours not measured there yet, what is typical for a venue like this one' });
   });
 
   test('a bar or a headline with no method is never taken for the model', () => {
-    expect(demoNoteLead([{ score: 40 }, null], null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
-    expect(demoNoteLead([], {})).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
-    expect(demoNoteLead(null, null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
+    expect(demoNoteLead([{ score: 40 }, null], null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE });
+    expect(demoNoteLead([], {})).toEqual({ text: DEMO_RULE_ENGINE_NOTE });
+    expect(demoNoteLead(null, null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE });
   });
 
   // Past three venues a day with the paywall on, the demo covers the card
@@ -259,9 +267,20 @@ describe("the public demo's note names what made its numbers, and is live only w
     // Only the forecast locked (backend gateDemoCard): the headline number is
     // still on the dial, so the note still says what made it.
     expect(demoNoteLead([], { score: 40, confidence_basis: 'category_pattern', forecast_locked: true, hourly: [] }))
-      .toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
+      .toEqual({ text: DEMO_RULE_ENGINE_NOTE });
     expect(demoNoteLead([], { score: 40, number_source: 'venue_pattern_live', confidence_basis: 'model_holdout', forecast_locked: true }))
-      .toEqual({ text: "Live from this venue's usual pattern and its recent live readings", live: true });
+      .toEqual({ text: "From this venue's usual pattern and its recent live readings" });
+  });
+
+  test('no note starts with Live, whatever made it', () => {
+    const sets = [[on('venue_pattern_live', true)], [on('live_reading_1h', true)], [{ predictionMethod: 'ml' }],
+      [rule(), { predictionMethod: 'ml' }], [rule()], [on('venue_pattern', false)]];
+    for (const bars of sets) {
+      const note = demoNoteLead(bars, { confidence_basis: 'model_holdout' });
+      expect(Object.keys(note)).toEqual(['text']);
+      expect(note.text).not.toMatch(/^Live/);
+    }
+    expect(demoNoteLead([], { confidence_basis: 'model_holdout' }).text).toBe('From the model inside Flock');
   });
 
   test('no note carries an em dash', () => {
@@ -300,7 +319,7 @@ describe('the card\'s line under the dial names the engine that actually scored 
     expect(cardSourceLine({ confidenceBasis: 'model_holdout', predictionMethod: 'ml', numberSource: 'venue_pattern' }))
       .toBe("From this venue's usual pattern.");
     expect(cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: 'ml', numberSource: 'live_reading_1h_adjusted' }))
-      .toBe(`From this venue's live reading taken an hour ago, ${R}.`);
+      .toBe(`From this venue's reading taken an hour ago, ${R}.`);
     expect(cardSourceLine({ confidenceBasis: 'user_reports', predictionMethod: 'ml', numberSource: 'venue_pattern' }))
       .toBe(`From this venue's usual pattern, ${R}.`);
   });

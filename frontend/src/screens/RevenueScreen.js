@@ -4847,8 +4847,7 @@ export default function RevenueScreen({
             const modeToggle = (
               <button className="hit44" disabled={researchLoading} onClick={() => { if (demoMode) fetchResearchLive(); else setResearchDemoMode(true); }}
                 style={{ ...hubStyle.textButton, alignSelf: 'center', flexShrink: 0, cursor: researchLoading ? 'default' : 'pointer' }}>
-                <span style={{ width: '6px', height: '6px', borderRadius: '3px', background: demoMode ? '#D97706' : colors.steel }} />
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{researchLoading ? 'Reading the database...' : demoMode ? 'Demo data · Tap for live' : 'Live data · Tap for demo'}</span>
+                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{researchLoading ? 'Reading the database...' : demoMode ? 'Demo data · Tap for real data' : 'Real data · Tap for demo'}</span>
               </button>
             );
 
