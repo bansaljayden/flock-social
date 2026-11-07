@@ -8,22 +8,24 @@
 // two-person plan at the venue whose time is within 12 hours of the report,
 // either side. A 9 PM plan's answers therefore stopped counting at 9 AM, while
 // "How was it?" is asked about the night after it: the plan screen asks from
-// an hour in, and the Nest redesign asks once the night has rolled over at
-// 4 AM. An answer given after 9 AM the next morning could not count.
+// an hour after the plan's time (frontend lib/planNight.js) until somebody
+// answers, the next morning included. An answer given after 9 AM the next
+// morning could not count.
 //
-// THE RULE (2026-11-06). A report from somebody who was a member of the plan
-// when it was locked in counts from the plan's start until 12:00 noon on the
-// day after the plan's night, on the VENUE's clock. The old 12 hours stay as a
-// floor, so a plan whose 12 hours run past that noon keeps them: a 2 AM plan
-// counts until 2 PM.
+// THE RULE (2026-11-06). A report from somebody who had accepted the plan by
+// an hour after it began (WHO, below) counts from the plan's start until 12:00
+// noon on the day after the plan's night, on the VENUE's clock. The old 12
+// hours stay as a floor, so a plan whose 12 hours run past that noon keeps
+// them: a 2 AM plan counts until 2 PM.
 //
 // THE PLAN'S NIGHT. A plan between midnight and 4 AM belongs to the night
-// before, the way the rest of the app reads a night: the Tonight answer clears
-// at 4 AM (routes/availability.js, frontend lib/pulse.js), and the Nest
-// redesign rolls its day over at the same hour. So a 1 AM Saturday plan is
-// Friday's night, its "next morning" is Saturday's, and noon Saturday is
-// earlier than its 12-hour floor (1 PM), which wins. A 9 PM Friday plan counts
-// until noon Saturday; an 11 AM Saturday brunch until noon Sunday.
+// before, the way the rest of the app reads a night: a Tonight answer runs
+// until 4 AM the next day (routes/availability.js, frontend lib/pulse.js). So
+// a 1 AM Saturday plan is Friday's night, its "next morning" is Saturday's,
+// and noon Saturday is earlier than its 12-hour floor (1 PM), which wins. A
+// 9 PM Friday plan counts until noon Saturday, 15 hours; an 11 AM Saturday
+// brunch until noon Sunday, 25 hours. A plan between 4 AM and 11 AM is the
+// longest: a 4 AM start gets 32 hours (33 on the night the clocks go back).
 //
 // NOON IS A WALL-CLOCK TIME, so it is found with the zone's own rules
 // (utils/venueZone.js instantForWallClock), never by adding hours: on the
@@ -33,29 +35,58 @@
 // instantForWallClock would still place one inside a change.
 //
 // WITHOUT A ZONE there is no venue noon to find, and the floor alone applies:
-// the old 12 hours, nothing added. The caller supplies the zone
-// (ml_venues.timezone, else the reporter's device zone).
+// the old 12 hours, nothing added. The caller supplies the zone:
+// ml_venues.timezone, else the reporter's device zone when it can be the
+// venue's (deviceZoneForPlan, below), else none.
 //
-// WHAT ELSE A REPORT NEEDS for this window (planReportStanding), each a rule
-// the plan clause of VERIFIED_PRESENCE_SQL already has or a tighter one:
-//   - the plan is LOCKED IN: confirmed_at is set and it is confirmed or
-//     completed now (the sweep completes a confirmed plan 12 hours after its
-//     time, which must not end the window);
-//   - the reporter was a member AT LOCK-IN: accepted at or before
-//     confirmed_at, so joining the night after buys nothing;
-//   - the host has not marked them absent (attendance 'no_show');
-//   - the plan names this venue and has at least two accepted members;
+// WHO, AND WHAT ELSE A REPORT NEEDS for this window (planReportStanding),
+// each a rule the plan clause of VERIFIED_PRESENCE_SQL already has or a
+// tighter one. Three are judged at the moment the plan BEGAN, the later of its
+// time and the moment it was made (a plan made at 7:30 for the 7:00 its group
+// is already at began at 7:30), plus an hour (PLAN_JOIN_GRACE_MS), so a plan
+// made on the spot leaves its members time to say yes:
+//   - the plan was LOCKED IN by then: confirmed_at is at or before it, and the
+//     plan is confirmed or completed now (the sweep completes a confirmed plan
+//     12 hours after its time, which must not end the window), so a plan
+//     locked in the morning after its night buys nothing;
+//   - the reporter had ACCEPTED by then (flock_members.joined_at, the moment
+//     they said yes; the host's is the moment they made the plan), so
+//     somebody invited who says yes after the lock-in but before the night
+//     is in, and joining the night after buys nothing;
+//   - at least TWO members had accepted by then, and still have, so a second
+//     account added the morning after cannot turn a plan of one into
+//     evidence;
+// and, as for any plan report:
+//   - the host has not marked the reporter absent (attendance 'no_show');
+//   - the plan names this venue;
 //   - the plan has STARTED: nothing before its time counts through this
 //     window (the old ±12 hours still decide a report filed earlier).
+// confirmed_at keeps the FIRST lock-in (migration 102), so a plan unlocked and
+// locked again after its night still reads as locked in by then; who was in
+// it is still judged an hour after it began.
 // One report per member per plan is the route's job: an in-window report
-// replaces the member's earlier reports on the same plan.
+// replaces the member's earlier reports on the same plan at that venue.
+//
+// A DEVICE ZONE MUST FIT THE MAP. For a venue ml_venues has no zone for, the
+// reporter's phone names one, and a wrong one (a traveler's home zone, or an
+// invented one) moved both the noon and the hour the report was filed under:
+// Asia/Riyadh for a 9 PM plan in New York put the close at 5 AM Sunday New
+// York time, 32 hours in, and filed the report under Saturday 4 AM. So the
+// phone's zone is used only when its offset at the plan's time is within
+// DEVICE_ZONE_TOLERANCE_HOURS of the plan venue's longitude / 15, its solar
+// time, and never for a plan with no longitude. Zones keep their offset that
+// close to solar time almost everywhere (western China and Spain come
+// nearest the edge); the few places further out, the Pacific islands across
+// the date line and the far west of Alaska in summer, fall back to the
+// floor. Inside the tolerance a wrong zone moves the close and the report's
+// hour by at most about three hours.
 // ---------------------------------------------------------------------------
 
-const { civilTime, instantForWallClock, validTimeZone, clockInZone } = require('./venueZone');
+const { civilTime, instantForWallClock, validTimeZone, clockInZone, zoneOffsetMinutes } = require('./venueZone');
 
 const HOUR_MS = 60 * 60 * 1000;
-// The hour a night ends: the 4 AM routes/availability.js clears a Tonight
-// answer at, and the hour the Nest redesign rolls its day over.
+// The hour a night ends: a Tonight answer runs until 4 AM the next day
+// (routes/availability.js, frontend lib/pulse.js).
 const NIGHT_ROLL_HOUR = 4;
 // Noon on the venue's clock, the day after the plan's night.
 const REPORT_CLOSE_HOUR = 12;
@@ -63,7 +94,16 @@ const REPORT_CLOSE_HOUR = 12;
 const PLAN_REPORT_FLOOR_MS = 12 * HOUR_MS;
 // A plan needs a second accepted member, as VERIFIED_PRESENCE_SQL does: one
 // account can make a plan at any place id, so a solo plan certifies itself.
+// Here both must have accepted by an hour after the plan began.
 const MIN_ACCEPTED_MEMBERS = 2;
+// How long after a plan began its lock-in and its members' yeses still count
+// for this window. routes/feedback.js PLAN_FACTS_SQL writes the same hour as
+// INTERVAL '1 hour'; __tests__/feedbackPlanWindow.test.js holds the two
+// together.
+const PLAN_JOIN_GRACE_MS = HOUR_MS;
+// How far a device zone's offset may sit from the plan venue's solar time
+// (longitude / 15) and still be taken as the venue's zone.
+const DEVICE_ZONE_TOLERANCE_HOURS = 3;
 
 /**
  * Noon on the venue's clock on the day after the plan's night, as an instant,
@@ -113,20 +153,44 @@ const asNumber = (v) => {
 };
 
 /**
+ * The reporter's device zone as the plan window's clock, for a venue
+ * ml_venues has no zone for: the zone when its name is usable and its offset
+ * at the plan's time is within DEVICE_ZONE_TOLERANCE_HOURS of the plan venue's
+ * longitude / 15. Null otherwise, including a plan with no readable time or
+ * longitude, and the window is then the 12-hour floor.
+ * @param {unknown} zone the time_zone the phone sent
+ * @param {{ event_ms?: unknown, venue_longitude?: unknown }|null} plan
+ *   the route's PLAN_FACTS_SQL row
+ * @returns {string|null}
+ */
+function deviceZoneForPlan(zone, plan) {
+  const z = validTimeZone(zone);
+  if (!z || !plan || typeof plan !== 'object') return null;
+  const eventMs = asNumber(plan.event_ms);
+  const longitude = asNumber(plan.venue_longitude);
+  if (!Number.isFinite(eventMs) || !Number.isFinite(longitude)) return null;
+  if (longitude < -180 || longitude > 180) return null;
+  const offsetMinutes = zoneOffsetMinutes(eventMs, z);
+  if (offsetMinutes == null) return null;
+  return Math.abs(offsetMinutes / 60 - longitude / 15) <= DEVICE_ZONE_TOLERANCE_HOURS ? z : null;
+}
+
+/**
  * Where one member's report on one plan stands against this window.
  *
  * `plan` is the route's read of the plan and of this member's row:
- *   { venue_id, event_ms, locked_in, member_at_lock, not_marked_absent,
- *     accepted_members }
+ *   { venue_id, venue_longitude, event_ms, locked_in, joined_in_time,
+ *     not_marked_absent, members_in_time }
  * (column names as routes/feedback.js PLAN_FACTS_SQL selects them; event_ms
- * may arrive as a numeric string).
+ * may arrive as a numeric string). locked_in, joined_in_time and
+ * members_in_time are each judged an hour after the plan began (the header).
  *
  * Returns null when there is no plan to judge (no row, or no readable start).
  * Otherwise:
  *   eventMs       the plan's start
- *   sameVenue     the plan names the venue the report is about
  *   eligible      every rule but time holds: this member's report on this plan
- *                 is the kind the window is for
+ *                 is the kind the window is for (a plan at another venue is
+ *                 not: a report about a different place is not about its night)
  *   started       the plan's time has come
  *   closesAtMs    when the window shuts (planReportClosesAtMs)
  *   counts        eligible, started, and before closesAtMs
@@ -139,20 +203,17 @@ function planReportStanding(plan, { venuePlaceId, nowMs, zone }) {
   if (!plan || typeof plan !== 'object') return null;
   const eventMs = asNumber(plan.event_ms);
   if (!Number.isFinite(eventMs) || !Number.isFinite(nowMs)) return null;
-  const accepted = asNumber(plan.accepted_members);
+  const members = asNumber(plan.members_in_time);
   const eligible = plan.locked_in === true
-    && plan.member_at_lock === true
+    && plan.joined_in_time === true
     && plan.not_marked_absent === true
     && typeof plan.venue_id === 'string' && plan.venue_id === venuePlaceId
-    && Number.isFinite(accepted) && accepted >= MIN_ACCEPTED_MEMBERS;
+    && Number.isFinite(members) && members >= MIN_ACCEPTED_MEMBERS;
   const closesAtMs = planReportClosesAtMs(eventMs, zone);
   const started = nowMs >= eventMs;
   const open = closesAtMs != null && nowMs < closesAtMs;
   return {
     eventMs,
-    // The report is about this plan's venue at all. A report naming a plan
-    // but a different place is not a report on that plan's night.
-    sameVenue: typeof plan.venue_id === 'string' && plan.venue_id === venuePlaceId,
     eligible,
     started,
     closesAtMs,
@@ -163,7 +224,8 @@ function planReportStanding(plan, { venuePlaceId, nowMs, zone }) {
 
 /**
  * The plan's start on the venue's clock, { day (0 = Sunday), hour }, for the
- * bucket keys a report about that plan is filed under. Null without a zone.
+ * bucket keys a report inside the plan's window is filed under. Null without
+ * a zone.
  */
 function planClock(eventMs, zone) {
   const z = validTimeZone(zone);
@@ -177,8 +239,11 @@ module.exports = {
   REPORT_CLOSE_HOUR,
   PLAN_REPORT_FLOOR_MS,
   MIN_ACCEPTED_MEMBERS,
+  PLAN_JOIN_GRACE_MS,
+  DEVICE_ZONE_TOLERANCE_HOURS,
   noonAfterNightMs,
   planReportClosesAtMs,
+  deviceZoneForPlan,
   planReportStanding,
   planClock,
 };

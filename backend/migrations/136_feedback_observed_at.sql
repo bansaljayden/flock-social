@@ -6,13 +6,14 @@
 -- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
 -- runs is WIN1252.
 --
--- WHY. A member of a locked-in plan may now answer "How was it?" until noon
--- the day after the plan, venue time (routes/feedback.js, the plan window;
--- utils/planReportWindow.js). Those answers are about the night, and they can
--- come the morning after. day_of_week and hour are the bucket the crowd
--- calibration reads a report under (routes/crowd.js), so routes/feedback.js
--- files a report that names its plan under the plan's start on the venue's
--- clock, not the hour it was typed. The training export
+-- WHY. A member who had said yes to a locked-in plan by an hour after it
+-- began may now answer "How was it?" until noon the day after the plan, venue
+-- time (routes/feedback.js, the plan window; utils/planReportWindow.js).
+-- Those answers are about the night, and they can come the morning after.
+-- day_of_week and hour are the bucket the crowd calibration reads a report
+-- under (routes/crowd.js), so routes/feedback.js files a report the plan
+-- window counts under the plan's start on the venue's clock, not the hour it
+-- was typed; every other report keeps the hour it was typed. The training export
 -- (scripts/ml/train/export_training_data.js) dates every verified report and
 -- checks its bucket against that date, and created_at would now disagree with
 -- the bucket by the length of a night. This column is the instant the bucket

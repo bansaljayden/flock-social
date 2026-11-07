@@ -1,9 +1,12 @@
 // Run: node --test __tests__/feedbackPlanWindow.test.js  (from backend/)
 //
-// THE PLAN WINDOW (2026-11-06): a report from somebody who was a member of a
-// locked-in plan counts from the plan's start until noon the day after the
-// plan's night on the VENUE's clock, never less than the old 12 hours
-// (utils/planReportWindow.js, routes/feedback.js PLAN_FACTS_SQL).
+// THE PLAN WINDOW (2026-11-06): a report from somebody who had accepted a
+// plan by an hour after it began, the plan locked in and a second member
+// accepted by then too, counts from the plan's start until noon the day after
+// the plan's night on the VENUE's clock, never less than the old 12 hours
+// (utils/planReportWindow.js, routes/feedback.js PLAN_FACTS_SQL). Only a
+// report the window counts is filed under the plan's hour, and an answer that
+// does not count never erases one that does.
 //
 // Every clock here is pinned to a fixed instant, in three zones and across
 // both 2026-27 clock changes in New York, so no test depends on the hour the
@@ -28,7 +31,10 @@ const {
   planReportClosesAtMs,
   planReportStanding,
   planClock,
+  deviceZoneForPlan,
   PLAN_REPORT_FLOOR_MS,
+  PLAN_JOIN_GRACE_MS,
+  DEVICE_ZONE_TOLERANCE_HOURS,
 } = require('../utils/planReportWindow');
 
 const at = (iso) => Date.parse(iso);
@@ -122,14 +128,55 @@ test("the plan's own hour on the venue clock is the bucket a report on it takes"
 });
 
 const PLACE = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
+const NY_LON = -73.99;   // Manhattan; solar time UTC-4:56
+const LA_LON = -118.24;  // Los Angeles; UTC-7:53
+const KOL_LON = 88.36;   // Kolkata; UTC+5:53
 const planRow = (o = {}) => ({
   venue_id: PLACE,
+  venue_longitude: NY_LON,
   event_ms: String(NY_FRI_9PM), // EXTRACT(EPOCH ...) * 1000 arrives as a numeric string
   locked_in: true,
-  member_at_lock: true,
+  joined_in_time: true,
   not_marked_absent: true,
-  accepted_members: 3,
+  members_in_time: 3,
   ...o,
+});
+
+test('a device zone is the venue clock only when it fits the venue longitude', () => {
+  const ny = planRow();
+  assert.equal(deviceZoneForPlan('America/New_York', ny), 'America/New_York');
+  assert.equal(deviceZoneForPlan('America/Chicago', ny), 'America/Chicago', 'an hour off is inside the tolerance');
+  // Riyadh is +3 against New York's solar -4.9: the case that held a window
+  // open 32 hours and filed the report under Saturday 4 AM.
+  assert.equal(deviceZoneForPlan('Asia/Riyadh', ny), null);
+  assert.equal(deviceZoneForPlan('Europe/London', ny), null);
+  assert.equal(deviceZoneForPlan('Asia/Kolkata', ny), null);
+  // A Los Angeles phone at a New York plan: PST is -8 in November, 3.1 hours
+  // from New York's solar time, so it falls back; in July PDT is -7, 2.1
+  // hours off, inside the tolerance. The offset is the one at the plan's time.
+  assert.equal(deviceZoneForPlan('America/Los_Angeles', ny), null);
+  const julyNy = planRow({ event_ms: String(at('2026-07-11T01:00:00Z')) });
+  assert.equal(deviceZoneForPlan('America/Los_Angeles', julyNy), 'America/Los_Angeles');
+  // Each zone at its own venue.
+  assert.equal(deviceZoneForPlan('America/Los_Angeles', planRow({ venue_longitude: LA_LON, event_ms: String(LA_FRI_9PM) })), 'America/Los_Angeles');
+  assert.equal(deviceZoneForPlan('Asia/Kolkata', planRow({ venue_longitude: KOL_LON, event_ms: String(KOL_FRI_9PM) })), 'Asia/Kolkata');
+  // Postgres hands a double back as a number, but a string reads the same.
+  assert.equal(deviceZoneForPlan('America/New_York', planRow({ venue_longitude: '-73.99' })), 'America/New_York');
+  assert.equal(DEVICE_ZONE_TOLERANCE_HOURS, 3);
+});
+
+test('no longitude, no time or no usable name: the device zone is not used', () => {
+  for (const [name, zone, row] of [
+    ['a plan with no longitude', 'America/New_York', planRow({ venue_longitude: null })],
+    ['a longitude off the globe', 'America/New_York', planRow({ venue_longitude: 200 })],
+    ['a plan with no time', 'America/New_York', planRow({ event_ms: null })],
+    ['no plan read', 'America/New_York', null],
+    ['a name ICU does not know', 'Mars/Olympus_Mons', planRow()],
+    ['no zone sent', null, planRow()],
+    ['not a string', 42, planRow()],
+  ]) {
+    assert.equal(deviceZoneForPlan(zone, row), null, name);
+  }
 });
 const stand = (row, nowIso, zone = 'America/New_York') => planReportStanding(row, {
   venuePlaceId: PLACE, nowMs: at(nowIso), zone,
@@ -156,12 +203,12 @@ test('standing: counts from the start until noon, and says when the clock is the
 test('standing: every rule but time must hold, or the window is not this report\'s', () => {
   const now = '2026-11-07T15:30:00Z';
   for (const [name, row] of [
-    ['never locked in', planRow({ locked_in: false })],
-    ['joined after lock-in', planRow({ member_at_lock: false })],
+    ['not locked in by an hour after it began', planRow({ locked_in: false })],
+    ['accepted more than an hour after it began', planRow({ joined_in_time: false })],
     ['marked absent by the host', planRow({ not_marked_absent: false })],
-    ['a plan of one', planRow({ accepted_members: 1 })],
+    ['one member by an hour after it began', planRow({ members_in_time: 1 })],
     ['another venue', planRow({ venue_id: 'ChIJOtherPlaceIdxxxxxxxxxxxx' })],
-    ['a NULL from the database', planRow({ member_at_lock: null })],
+    ['a NULL from the database', planRow({ joined_in_time: null })],
   ]) {
     const s = stand(row, now);
     assert.equal(s.eligible, false, name);
@@ -170,8 +217,8 @@ test('standing: every rule but time must hold, or the window is not this report\
   }
   assert.equal(stand(null, now), null);
   assert.equal(stand(planRow({ event_ms: null }), now), null);
-  // accepted_members as Postgres hands back a bigint: a string.
-  assert.equal(stand(planRow({ accepted_members: '2' }), now).counts, true);
+  // A count that arrives as a string reads the same.
+  assert.equal(stand(planRow({ members_in_time: '2' }), now).counts, true);
 });
 
 // ===========================================================================
@@ -340,13 +387,15 @@ test('New York: at noon the window has shut, and the answer says the clock is wh
   assert.equal(inserted[VERIFIED], false);
   assert.equal(r.body.plan_window_closed, true);
   assert.equal(r.body.plan_report_closes_at, '2026-11-07T17:00:00.000Z');
-  // Still filed under the night it is about.
-  assert.deepEqual([inserted[DAY], inserted[HOUR]], [5, 21]);
+  // Outside the window it is filed under the hour it was sent, noon Saturday,
+  // with no observed_at: only a report the window counts takes the night's.
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 12]);
+  assert.equal(inserted[OBSERVED], null);
 });
 
 test('Los Angeles, zone from the reporter: 11:59 AM counts, 12:01 PM does not', async () => {
   state.timezone = null; // not an ml_venues venue
-  state.planFacts[10] = planRow({ event_ms: String(LA_FRI_9PM) });
+  state.planFacts[10] = planRow({ event_ms: String(LA_FRI_9PM), venue_longitude: LA_LON });
   const ok = await report('2026-11-07T19:59:00Z', { time_zone: 'America/Los_Angeles' });
   assert.equal(ok.status, 201, ok.text);
   assert.equal(inserted[VERIFIED], true);
@@ -354,10 +403,50 @@ test('Los Angeles, zone from the reporter: 11:59 AM counts, 12:01 PM does not', 
 
   reset();
   state.timezone = null;
-  state.planFacts[10] = planRow({ event_ms: String(LA_FRI_9PM) });
-  const late = await report('2026-11-07T20:01:00Z', { time_zone: 'America/Los_Angeles' });
+  state.planFacts[10] = planRow({ event_ms: String(LA_FRI_9PM), venue_longitude: LA_LON });
+  const late = await report('2026-11-07T20:01:00Z', { time_zone: 'America/Los_Angeles', local_day: 6, local_hour: 12 });
   assert.equal(inserted[VERIFIED], false);
   assert.equal(late.body.plan_window_closed, true);
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 12], 'after the window, the phone clock it was sent on');
+});
+
+test('a phone zone that does not fit the venue longitude is not the venue clock', async () => {
+  // The reviewer's case: a 9 PM plan in New York, a venue ml_venues has no
+  // zone for, and a phone set to Asia/Riyadh. Read in Riyadh, the plan began
+  // at 5 AM Saturday, so its noon was Sunday's, 4 AM Sunday in New York: a
+  // 4 PM Saturday answer counted, filed under Saturday 5 AM. Now the zone is
+  // refused and the window is the old 12 hours.
+  state.timezone = null;
+  const r = await report('2026-11-07T21:00:00Z', { time_zone: 'Asia/Riyadh', local_day: 6, local_hour: 16 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[VERIFIED], false);
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 16], 'the hour the phone sent, not Saturday 5 AM');
+  assert.equal(inserted[OBSERVED], null);
+  assert.equal(r.body.plan_report_closes_at, '2026-11-07T14:00:00.000Z', '9 PM + 12 hours');
+  assert.equal(r.body.plan_window_closed, true);
+
+  // The same phone at 10:30 AM: past the 12 hours, so it does not count either.
+  reset();
+  state.timezone = null;
+  await report('2026-11-07T15:30:00Z', { time_zone: 'Asia/Riyadh', local_day: 6, local_hour: 10 });
+  assert.equal(inserted[VERIFIED], false);
+
+  // A New York phone at the same plan is the venue's clock and counts.
+  reset();
+  state.timezone = null;
+  await report('2026-11-07T15:30:00Z', { time_zone: 'America/New_York', local_day: 6, local_hour: 10 });
+  assert.equal(inserted[VERIFIED], true);
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [5, 21]);
+});
+
+test('a plan with no longitude cannot check a phone zone, so it gets the old 12 hours', async () => {
+  state.timezone = null;
+  state.planFacts[10] = planRow({ venue_longitude: null });
+  const r = await report('2026-11-07T15:30:00Z', { time_zone: 'America/New_York', local_day: 6, local_hour: 10 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[VERIFIED], false);
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 10]);
+  assert.equal(r.body.plan_report_closes_at, '2026-11-07T14:00:00.000Z');
 });
 
 test('Kolkata (+5:30): the half-hour zone shuts at 12:00 IST exactly', async () => {
@@ -416,10 +505,10 @@ test('a 2 AM plan keeps its 12 hours: 1:59 PM counts, 2 PM does not', async () =
 
 test('the anti-abuse rules hold inside the window', async () => {
   for (const [name, row] of [
-    ['a plan never locked in', planRow({ locked_in: false })],
-    ['a member who joined after lock-in', planRow({ member_at_lock: false })],
+    ['a plan not locked in by an hour after it began', planRow({ locked_in: false })],
+    ['a member who accepted more than an hour after it began', planRow({ joined_in_time: false })],
     ['a member the host marked absent', planRow({ not_marked_absent: false })],
-    ['a plan of one', planRow({ accepted_members: 1 })],
+    ['a plan with one member by an hour after it began', planRow({ members_in_time: 1 })],
   ]) {
     reset();
     state.planFacts[10] = row;
@@ -427,9 +516,22 @@ test('the anti-abuse rules hold inside the window', async () => {
     assert.equal(r.status, 201, `${name}: ${r.text}`);
     assert.equal(inserted[VERIFIED], false, name);
     assert.equal(r.body.plan_window_closed, undefined, `${name}: the clock is not the reason, so nothing says it is`);
-    // Still about that night: a member of the plan, after its start.
-    assert.deepEqual([inserted[DAY], inserted[HOUR]], [5, 21], name);
+    // Not in the window, so not re-dated to the night: the hour it was sent.
+    assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 10], name);
+    assert.equal(inserted[OBSERVED], null, name);
   }
+});
+
+test('a report the old rule counts but the window does not keeps the hour it was sent', async () => {
+  // A no-show on an old plan with a signed NFC tap today: the tap verifies the
+  // report, and naming the plan must not move it to the plan's night.
+  state.planFacts[10] = planRow({ not_marked_absent: false, event_ms: String(at('2026-10-03T01:00:00Z')) });
+  state.signedNfcCheckin = true;
+  const r = await report('2026-11-07T15:30:00Z');
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[VERIFIED], true, 'the tap counts it');
+  assert.deepEqual([inserted[DAY], inserted[HOUR]], [6, 10], 'Saturday 10 AM, not a Friday 9 PM five weeks back');
+  assert.equal(inserted[OBSERVED], null);
 });
 
 test('nothing before the start counts through the window, and keeps its own clock', async () => {
@@ -482,18 +584,20 @@ test('a zone name the server does not know is ignored, not refused', async () =>
   assert.equal(bad.status, 400, 'an over-long zone is a 400');
 });
 
-test('one report per member per plan: a counted report replaces the earlier ones on that plan', async () => {
+test('one report per member per plan: a counted report replaces the earlier ones on that plan here', async () => {
   await report('2026-11-07T15:30:00Z');
   const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
-  assert.match(del.text, /OR flock_id = \$3::int/);
-  assert.deepEqual(del.params, [1, PLACE, 10, null]);
+  // The venue binds both halves: the plan's reports at another venue stay.
+  assert.match(del.text, /WHERE user_id = \$1 AND venue_place_id = \$2 AND \(\(created_at > NOW\(\) - INTERVAL '2 hours'/);
+  assert.match(del.text, /OR flock_id = \$3::int\)$/);
+  assert.deepEqual(del.params, [1, PLACE, 10, false], 'a counted report protects nothing it replaces');
 });
 
 test('a late answer replaces nothing on the plan, and protects the one that counted', async () => {
   await report('2026-11-07T18:00:00Z'); // 1 PM, after noon
   const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
-  assert.match(del.text, /AND NOT COALESCE\(verified IS TRUE AND flock_id = \$4::int, false\)/);
-  assert.deepEqual(del.params, [1, PLACE, null, 10]);
+  assert.match(del.text, /AND NOT \(verified IS TRUE AND \$4::boolean\)/);
+  assert.deepEqual(del.params, [1, PLACE, null, true]);
 });
 
 test('whether a report counts is settled before the dedupe that depends on it', async () => {
@@ -504,10 +608,22 @@ test('whether a report counts is settled before the dedupe that depends on it', 
   assert.ok(presence >= 0 && presence < del);
 });
 
-test('a report that names no plan keeps the plain 2-hour dedupe', async () => {
-  await report('2026-11-07T15:30:00Z', { flock_id: null });
+test('a report that names no plan and does not count cannot erase a counted one either', async () => {
+  // The venue card's "There now? Rate the crowd" sends no flock_id. At 12:15
+  // the morning after, it does not count, and inside the 2 hours it used to
+  // delete the plan answer that counted at 11:30.
+  await report('2026-11-07T17:15:00Z', { flock_id: null });
+  assert.equal(inserted[VERIFIED], false);
   const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
-  assert.deepEqual(del.params, [1, PLACE, null, null]);
+  assert.deepEqual(del.params, [1, PLACE, null, true]);
+});
+
+test('a counted report that names no plan keeps the plain 2-hour dedupe', async () => {
+  state.signedNfcCheckin = true;
+  await report('2026-11-07T15:30:00Z', { flock_id: null });
+  assert.equal(inserted[VERIFIED], true);
+  const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
+  assert.deepEqual(del.params, [1, PLACE, null, false]);
 });
 
 test("the denominator is the card read in the plan's hour, from 12 hours either side of it", async () => {
@@ -575,14 +691,22 @@ test('a plan that was called off is still refused', async () => {
   assert.equal(inserted, null);
 });
 
-test('PLAN_FACTS_SQL reads the instant as UTC and the lock-in as a time, not a flag', () => {
+test('PLAN_FACTS_SQL judges the lock-in and every yes an hour after the plan began, as UTC instants', () => {
   const sql = feedbackRouter.__testables.PLAN_FACTS_SQL.replace(/\s+/g, ' ');
   assert.match(sql, /EXTRACT\(EPOCH FROM \(f\.event_time AT TIME ZONE 'UTC'\)\) \* 1000 AS event_ms/);
-  assert.match(sql, /f\.confirmed_at IS NOT NULL AND f\.status IN \('confirmed', 'completed'\)/);
-  assert.match(sql, /\(fm\.joined_at AT TIME ZONE 'UTC'\) <= f\.confirmed_at/);
+  assert.match(sql, /f\.venue_longitude,/);
+  // The cutoff: the later of the plan's time and its making, as UTC, plus
+  // the hour planReportWindow.js names.
+  assert.match(sql, /\(GREATEST\(f\.event_time, f\.created_at\) AT TIME ZONE 'UTC'\) \+ INTERVAL '1 hour' AS cutoff/);
+  assert.equal(PLAN_JOIN_GRACE_MS, 60 * 60 * 1000, 'the SQL says one hour');
+  assert.match(sql, /f\.status IN \('confirmed', 'completed'\) AND f\.confirmed_at IS NOT NULL AND f\.confirmed_at <= b\.cutoff\) AS locked_in/);
+  assert.match(sql, /COALESCE\(\(fm\.joined_at AT TIME ZONE 'UTC'\) <= b\.cutoff, false\) AS joined_in_time/);
   assert.match(sql, /fm\.attendance IS DISTINCT FROM 'no_show'/);
   assert.match(sql, /fm\.status = 'accepted'/);
-  assert.match(sql, /m\.status = 'accepted'\)::int AS accepted_members/);
+  // The two-member count is of members who had accepted by the cutoff, not
+  // of everyone accepted now.
+  assert.match(sql, /m\.status = 'accepted' AND \(m\.joined_at AT TIME ZONE 'UTC'\) <= b\.cutoff\)::int AS members_in_time/);
+  assert.doesNotMatch(sql, /joined_at AT TIME ZONE 'UTC'\) <= f\.confirmed_at/, 'not "at lock-in" any more');
 });
 
 test('no unscripted statement was issued', () => {

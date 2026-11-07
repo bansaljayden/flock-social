@@ -60,7 +60,7 @@ const { authenticate } = require('../middleware/auth');
 const pool = require('../config/database');
 const { isPlaceIdShaped } = require('../utils/places');
 const { validTimeZone } = require('../utils/venueZone');
-const { planReportStanding, planClock } = require('../utils/planReportWindow');
+const { planReportStanding, planClock, deviceZoneForPlan } = require('../utils/planReportWindow');
 
 const router = express.Router();
 router.use(authenticate);
@@ -262,14 +262,23 @@ const VERIFIED_PRESENCE_SQL = `
 //
 // "How was it?" is answered after a plan, the next morning included, and the
 // 12 hours above shut at 9 AM for a 9 PM plan. So a report on a plan the
-// reporter was a member of when it was locked in also counts from the plan's
+// reporter had accepted by an hour after it began also counts from the plan's
 // start until noon the next day on the venue's clock, never less than those 12
 // hours (utils/planReportWindow.js has the rule and its reasons). Everything the
-// plan clause above asks is asked again, plus three things it does not:
-//   - the plan was LOCKED IN (confirmed_at, and confirmed or completed now);
-//   - this member had accepted by then (joined_at at or before confirmed_at,
-//     both UTC: joined_at is a naive TIMESTAMP holding UTC wall time);
+// plan clause above asks is asked again, each of the first three judged at
+// `cutoff`, an hour after the plan BEGAN (the later of event_time and
+// created_at, so a plan made at 7:30 for 7:00 began at 7:30):
+//   - the plan was LOCKED IN by the cutoff (confirmed_at, the first lock-in,
+//     at or before it), and is confirmed or completed now;
+//   - this member had accepted by the cutoff (joined_at, the moment they said
+//     yes), so an invitee who says yes after the lock-in but before the night
+//     is in, and one who joins the morning after is not;
+//   - two or more members had accepted by the cutoff and still have, where the
+//     clause above counts everyone accepted now, so a second account added the
+//     morning after cannot make a plan of one into evidence;
 //   - the plan has started (planReportStanding).
+// joined_at, event_time and created_at are naive TIMESTAMPs holding UTC wall
+// time, so each is lifted to timestamptz AS UTC before it meets confirmed_at.
 // Only a report that names the plan (flock_id) can use it, because only then
 // is the report ABOUT that plan's night, which is what lets it be filed under
 // that night's hour below. Reports from anyone else keep the rule above.
@@ -277,24 +286,35 @@ const VERIFIED_PRESENCE_SQL = `
 // event_ms is the true instant: event_time is a naive TIMESTAMP holding UTC
 // wall time (migrations/000_bootstrap.sql), lifted to timestamptz as UTC
 // before its epoch is read, so neither the session zone nor node-postgres's
-// local-time parsing of a naive value can move it.
+// local-time parsing of a naive value can move it. venue_longitude is how the
+// reporter's device zone is checked for a venue ml_venues has no zone for
+// (utils/planReportWindow.js deviceZoneForPlan).
 //
 // Read BEFORE the transaction, beside the timezone, because the report's
 // bucket and its served-prediction lookup both depend on the plan's hour and
 // both are settled before BEGIN. Nothing here locks the plan, inside the
 // transaction or out, so reading it here judges the same facts. A failure only
 // costs the plan window: the report is filed under the old rule.
+//
+// The hour of grace is PLAN_JOIN_GRACE_MS in utils/planReportWindow.js;
+// __tests__/feedbackPlanWindow.test.js holds the two to the same hour.
 const PLAN_FACTS_SQL = `
   SELECT f.venue_id,
+         f.venue_longitude,
          EXTRACT(EPOCH FROM (f.event_time AT TIME ZONE 'UTC')) * 1000 AS event_ms,
-         (f.confirmed_at IS NOT NULL AND f.status IN ('confirmed', 'completed')) AS locked_in,
-         COALESCE((fm.joined_at AT TIME ZONE 'UTC') <= f.confirmed_at, false) AS member_at_lock,
+         (f.status IN ('confirmed', 'completed') AND f.confirmed_at IS NOT NULL
+          AND f.confirmed_at <= b.cutoff) AS locked_in,
+         COALESCE((fm.joined_at AT TIME ZONE 'UTC') <= b.cutoff, false) AS joined_in_time,
          fm.attendance IS DISTINCT FROM 'no_show' AS not_marked_absent,
          (SELECT COUNT(*) FROM flock_members m
-           WHERE m.flock_id = f.id AND m.status = 'accepted')::int AS accepted_members
+           WHERE m.flock_id = f.id AND m.status = 'accepted'
+             AND (m.joined_at AT TIME ZONE 'UTC') <= b.cutoff)::int AS members_in_time
     FROM flocks f
     JOIN flock_members fm
       ON fm.flock_id = f.id AND fm.user_id = $2 AND fm.status = 'accepted'
+   CROSS JOIN LATERAL (
+     SELECT (GREATEST(f.event_time, f.created_at) AT TIME ZONE 'UTC') + INTERVAL '1 hour' AS cutoff
+   ) b
    WHERE f.id = $1`;
 
 // ---------------------------------------------------------------------------
@@ -337,13 +357,18 @@ router.post('/',
     body('local_day').optional({ values: 'null' }).isInt({ min: 0, max: 6 }).withMessage('local_day must be 0-6'),
     body('local_hour').optional({ values: 'null' }).isInt({ min: 0, max: 23 }).withMessage('local_hour must be 0-23'),
     // The reporter's device zone (IANA name), the plan window's clock when
-    // ml_venues has no zone for the venue. Someone reporting on a night at a
-    // venue is almost always in its zone, and a wrong one cannot buy much: the
-    // window is bounded by the plan's own time, which a member already chose.
-    // A name ICU does not know is ignored rather than refused, so an odd
-    // device never loses the report; only the shape is checked here. Used for
-    // that one sum and never stored. 64 is the bound device_tokens.timezone
-    // and Birdie's zone use.
+    // ml_venues has no zone for the venue. A zone decides both when the window
+    // shuts and the hour an in-window report is filed under, and a wrong one
+    // moved both a long way (Asia/Riyadh for a 9 PM New York plan held the
+    // window open 32 hours and filed the report under Saturday 4 AM), so it is
+    // used only when its offset is within three hours of the plan venue's
+    // longitude / 15 (utils/planReportWindow.js deviceZoneForPlan). A
+    // traveler's home zone or an invented one falls back to the old 12 hours;
+    // one inside that tolerance moves the close and the hour by about three
+    // hours at most. A name ICU does not know is ignored rather than refused,
+    // so an odd device never loses the report; only the shape is checked here.
+    // Used for that one sum and never stored. 64 is the bound
+    // device_tokens.timezone and Birdie's zone use.
     body('time_zone').optional({ values: 'null' })
       .isString().withMessage('time_zone must be a zone name').bail()
       .isLength({ min: 1, max: 64 }).withMessage('time_zone must be a zone name'),
@@ -414,26 +439,35 @@ router.post('/',
 
       const now = new Date(clock.now());
       // The plan window's clock: the venue's zone from ml_venues, else the
-      // reporter's device zone. Without either, the window is the old 12 hours.
-      const windowZone = validTimeZone(venueTimezone) || validTimeZone(time_zone) || null;
+      // reporter's device zone when it fits the plan venue's longitude
+      // (deviceZoneForPlan; see time_zone above). Without either, the window
+      // is the old 12 hours and no report is filed under the plan's hour.
+      const windowZone = validTimeZone(venueTimezone) || deviceZoneForPlan(time_zone, planFacts) || null;
       const planStanding = planReportStanding(planFacts, {
         venuePlaceId: venue_place_id,
         nowMs: now.getTime(),
         zone: windowZone,
       });
 
-      // A REPORT ON A PLAN IS FILED UNDER THE PLAN'S HOUR. "How was it?" asks
-      // about the night, and now counts when answered the morning after. Bucketed
-      // on the moment of filing, a 9 AM answer that the bar was packed would be
-      // read by routes/crowd.js as Saturday 8-10 AM evidence ("packed" at
-      // breakfast) and paired with the morning's predicted score in the error
-      // feature mlPredictor averages. So once the plan has started, a report
-      // that names it, at its venue, takes the plan's start on the venue's
-      // clock for its bucket and stores that instant as observed_at
-      // (migration 136), which is what the training export dates it by. A plan
-      // that has not started yet, or no zone to read the plan's hour in, keeps
-      // the clock below.
-      const planHour = planStanding && planStanding.started && planStanding.sameVenue
+      // A REPORT INSIDE ITS PLAN'S WINDOW IS FILED UNDER THE PLAN'S HOUR.
+      // "How was it?" asks about the night, and now counts when answered the
+      // morning after. Bucketed on the moment of filing, a 9 AM answer that the
+      // bar was packed would be read by routes/crowd.js as Saturday 8-10 AM
+      // evidence ("packed" at breakfast) and paired with the morning's
+      // predicted score in the error feature mlPredictor averages. So a report
+      // the window counts takes the plan's start on the venue's clock for its
+      // bucket and stores that instant as observed_at (migration 136), which is
+      // what the training export dates it by. An answer sent during the night
+      // itself is inside the window too, so it takes the start hour as well.
+      //
+      // ONLY INSIDE THE WINDOW. Every other report keeps the hour it was sent:
+      // one after the window shut, one from a member who joined late or was
+      // marked absent, one about a plan weeks old. Naming a plan is not
+      // evidence about that plan's night, so it must not re-date a report to
+      // it; a no-show with a signed tap today was filed five weeks back under
+      // the old plan's Friday 9 PM. Without a zone there is no plan hour, and
+      // the window does not count anything the old 12 hours would not.
+      const planHour = planStanding && planStanding.counts
         ? planClock(planStanding.eventMs, windowZone)
         : null;
       const observedAt = planHour ? new Date(planStanding.eventMs) : null;
@@ -577,9 +611,9 @@ router.post('/',
       // "10 requests an hour" — request volume is the general apiLimiter's job
       // (server.js). That is the intended trade: corrections are free, breadth
       // is not, and breadth is what steering a venue's numbers requires. One
-      // exception, on purpose: an answer on a plan that does not count is
-      // filed beside the member's counted answer on that plan rather than
-      // over it (the plan-window dedupe below), so that pair holds two rows.
+      // exception, on purpose: an answer that does not count is filed beside a
+      // counted one at the same venue rather than over it (the dedupe below),
+      // so that pair holds two rows. Only the counted one moves any number.
       const client = await pool.connect();
       let inserted;
       let refusal = null;
@@ -689,36 +723,39 @@ router.post('/',
         // needs the answer. The presence check reads check-ins and plans and
         // never venue_feedback, so the delete cannot change what it says.
         const verifiedCheck = await client.query(VERIFIED_PRESENCE_SQL, [req.user.id, venue_place_id]);
-        // The plan window counts only a report filed under the plan's hour
-        // (planHour): the rule's whole reason is the night, so a report it
-        // admits must be readable as the night's. Without a zone there is no
-        // plan hour and no noon, and the old 12 hours above already cover
-        // everything the floor alone would.
-        const planCounts = Boolean(planStanding && planStanding.counts && planHour);
+        // The plan window counts exactly the reports filed under the plan's
+        // hour: planHour is set only for a report inside the window, with a
+        // zone to read the hour in (above). The rule's whole reason is the
+        // night, so a report it admits must be readable as the night's.
+        // Without a zone there is no plan hour and no noon, and the old 12
+        // hours above already cover everything the floor alone would.
+        const planCounts = planHour != null;
         const verified = verifiedCheck.rows[0]?.verified === true || planCounts;
 
-        // ONE REPORT PER MEMBER PER PLAN, under the plan window. The 2-hour
-        // dedupe alone would let a member hold a counted report from the night
-        // and another from the morning after, two votes on one night. So:
-        //   $3: a report that counts under the window replaces every earlier
-        //       report this person filed on the same plan (newest wins, as
-        //       within the 2 hours: people can correct themselves);
-        //   $4: a report on a plan that does NOT count (the window has shut)
-        //       erases none of their counted reports on that plan, not even
-        //       one inside the 2 hours, so a correction at 12:15 cannot wipe
-        //       out the answer that counted at 11:30. It is filed beside it.
-        // Each is NULL otherwise. `flock_id = NULL` matches no row, and the
-        // COALESCE makes a NULL comparison "not protected", so with $4 NULL
-        // the 2-hour dedupe is exactly what it was.
+        // THE DEDUPE, at this venue only, in two parts:
+        //   - the 2 hours: this person's reports here in the last 2 hours are
+        //     replaced (newest wins: people can correct themselves), EXCEPT
+        //     that a report that does not count ($4 true) leaves every counted
+        //     one in place, whatever plan it names or none, so an answer that
+        //     does not count can never erase one that does. A "There now?" tap
+        //     at 12:15, which names no plan and no longer counts, is filed
+        //     beside the plan answer that counted at 11:30, not over it.
+        //   - ONE REPORT PER MEMBER PER PLAN under the window ($3): the 2 hours
+        //     alone would let a member hold a counted report from the night and
+        //     another from the morning after, two votes on one night, so a
+        //     report the window counts also replaces this person's earlier
+        //     reports on the same plan here, whenever they were filed.
+        // $3 is NULL unless the window counts this report, and `flock_id =
+        // NULL` matches no row; with $4 false the 2 hours are the plain dedupe.
         const replacesPlanReports = planCounts ? flockId : null;
-        const keepsCountedOnPlan = flockId !== null && !verified ? flockId : null;
         await client.query(
           `DELETE FROM venue_feedback
            WHERE user_id = $1
-             AND ((venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'
-                   AND NOT COALESCE(verified IS TRUE AND flock_id = $4::int, false))
+             AND venue_place_id = $2
+             AND ((created_at > NOW() - INTERVAL '2 hours'
+                   AND NOT (verified IS TRUE AND $4::boolean))
                   OR flock_id = $3::int)`,
-          [req.user.id, venue_place_id, replacesPlanReports, keepsCountedOnPlan]
+          [req.user.id, venue_place_id, replacesPlanReports, !verified]
         );
         const recentCount = await client.query(
           `SELECT COUNT(*)::int AS n FROM venue_feedback

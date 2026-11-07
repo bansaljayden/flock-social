@@ -237,7 +237,8 @@ function revokeUserSessions(io, userId) {
 //     VERIFIED_PRESENCE_SQL (routes/feedback.js): an HMAC-signed NFC tap, or
 //     accepted membership in a non-cancelled flock with >= 2 accepted members.
 //     The plan window beside it (PLAN_FACTS_SQL, 2026-11-06) is the flock leg
-//     again, stricter: accepted by the plan's lock-in.
+//     again, stricter: the plan locked in, and the reporter and a second
+//     member accepted, by an hour after the plan began.
 //   * This list already closes the flock leg for unverified accounts: they
 //     cannot create, join, or invite (the entries below), so the only way an
 //     email-unverified account mints a verified row is a signed NFC tap —

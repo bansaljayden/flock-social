@@ -805,10 +805,10 @@ function feedbackExportRequested(env = process.env) {
 // would otherwise abort the whole query. Rows it excludes are counted by the
 // census as `no_usable_timezone` rather than disappearing.
 //
-// THE REPORT'S MOMENT (migration 136, 2026-11-06). A report that names its
-// plan, filed once the plan has started, is bucketed under the plan's start on
-// the venue's clock (routes/feedback.js, the plan window), because "How was
-// it?" is about the night and now counts when answered the morning after.
+// THE REPORT'S MOMENT (migration 136, 2026-11-06). A report its plan's window
+// counts is bucketed under the plan's start on the venue's clock
+// (routes/feedback.js, the plan window), because "How was it?" is about the
+// night and now counts when answered the morning after.
 // observed_at holds that instant and created_at still says when it was typed,
 // so the date and the bucket check read observed_at where it is set. Without
 // that, every morning-after report would be dated a day late and fail the
