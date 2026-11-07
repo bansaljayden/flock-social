@@ -463,9 +463,9 @@ export default function ChatListScreen({
 
                         {/* Venue + status row */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
+                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>
                           {f.venue && f.venue !== 'TBD' && (
-                            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
+                            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
                           )}
                           <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 12)}</span>
                         </div>

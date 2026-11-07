@@ -343,7 +343,7 @@ describe('5: every other Locked in chip', () => {
   test("the Messages list's chip and the guest page's tag wear blush for Locked in only", () => {
     const list = strip(read('screens', 'ChatListScreen.js'));
     expect(list).toContain("const lockedIn = f.status === 'confirmed';");
-    expect(list).toContain("color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>");
+    expect(list).toContain("color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>");
     expect(read('website', 'GuestInvite.js')).toContain('{chosen && <span className="gi-tag gi-tag--locked">Locked in</span>}');
     expect(read('website', 'GuestInvite.js')).toContain('{mine && <span className="gi-tag">Your vote</span>}');
     const css = strip(read('website', 'GuestInvite.css'), 'x.css');
