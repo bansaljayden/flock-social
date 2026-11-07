@@ -4612,3 +4612,19 @@ test('today put in the week ranked takes main\'s path while last night is still 
   }));
 });
 
+test('the week ranked on the weekend\'s route takes main\'s path: on a Sunday it is never that Sunday alone', async () => {
+  // "Which days this week will be the busiest?", given the weekend's route on
+  // a Sunday, was answered "Sunday projects busiest around 9 PM, at 45", the
+  // week's quietest day, where main named next Friday and Saturday.
+  const advisorRoute = require('../routes/advisor');
+  const q = 'which days this week will be the busiest';
+  assert.strictEqual(advisorRoute.__formOnRoute(q, 'grounded', 'weekend_outlook'), false);
+  assert.strictEqual(advisorRoute.__formOnRoute(q, 'grounded', 'peak_hours'), true);
+  await withNightCurve('ChIJr10WeekOnWeekendSun0', () => pinnedAt('2026-11-08T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: q });
+    assert.ok(r.body.text.startsWith('Your busiest day this weekend is Saturday, with its peak around 9 PM at 74'), r.body.text);
+    assert.deepStrictEqual(sourceIds(r).slice(0, 2), ['peak_2026-11-14', 'peak_2026-11-13']);
+  }));
+});
+

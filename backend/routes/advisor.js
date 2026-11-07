@@ -1675,12 +1675,19 @@ async function quietEnds(b, entries) {
 // Sun slower than tonight?" dropped tonight and "Which is busier, Fri or
 // tmrw?" dropped tomorrow. There each is answered on main's path. `mode` is
 // the route's: 'grounded' or 'advice'.
+//
+// THE WEEK RANKED, ON THE WEEKEND'S ROUTE, TAKES MAIN'S PATH (seventh
+// recheck, 2026-11-07). "Which days this week will be the busiest?", given
+// the weekend's route on a Sunday, was answered with that Sunday alone, the
+// weekend the route reads from today, where main named next Friday and
+// Saturday. A ranking names no weekend for the reading to read.
 const TODAY_WORD_KINDS = new Set(['today', 'tomorrow', 'dayAfterTomorrow']);
 function formOnRoute(question, mode, intentId) {
   const form = roostDayReader.plainFormOf(question);
   if (!form) return false;
   const todayWord = form.words.some((w) => TODAY_WORD_KINDS.has(w.kind));
   if (form.days === 2 && ((mode === 'advice' && todayWord) || intentId === 'money_move')) return false;
+  if (intentId === 'weekend_outlook' && form.days === 0) return false;
   return !(intentId === 'weekend_outlook' && todayWord);
 }
 
