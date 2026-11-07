@@ -126,8 +126,9 @@ describe('no raw star glyph renders a rating anywhere in App.js', () => {
     expect(block).toContain('starSvgString(12)');
     // And the import actually reaches it. It is the map module's import since
     // 2026-09-13: the label moved there and App.js had no other reader, so the
-    // named import went with it and only the default Icons stayed behind.
-    expect(APP).toContain("import { starSvgString } from '../ui/Icons';");
+    // named import went with it and only the default Icons stayed behind. The
+    // map module takes the default too since 2026-11-07, for its controls.
+    expect(APP).toContain("import Icons, { starSvgString } from '../ui/Icons';");
   });
 
   it('starSvgString is the same drawing as Icons.star, not a second star', () => {
