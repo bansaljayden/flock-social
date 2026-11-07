@@ -610,6 +610,22 @@ function checkLaterDay(text, ctx, problems, warnings) {
   }
 }
 
+// WHICH LATER DAY (2026-11-06). With no zone for the user, Birdie's Now line
+// is UTC, and on a US evening UTC's date is already tomorrow, so a tomorrow
+// worked out from it is the day after: the lookup and the answer were about
+// Sunday when the person meant Saturday. A case that knows the day it is
+// about (laterDayIs, the weekday's name) fails when no dated lookup was for
+// that day, and when the answer names another weekday.
+const WEEKDAY_WORDS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+function checkLaterDayIs(text, tools, dayName, problems) {
+  const dated = tools.filter((c) => c.name === 'get_crowd_prediction' && c.args && typeof c.args.date === 'string' && c.result && !c.result.error);
+  if (dated.length && !dated.some((c) => c.result.day === dayName)) {
+    problems.push(`later day: looked up ${dated.map((c) => c.result.day || c.args.date).join(' and ')}, not ${dayName}`);
+  }
+  const other = WEEKDAY_WORDS.filter((d) => d !== dayName).find((d) => new RegExp(`\\b${d}s?\\b`, 'i').test(text));
+  if (other) problems.push(`later day: names ${other}, not ${dayName}`);
+}
+
 function checkAnswer(input) {
   const {
     expect = {}, ageBracket, status, out, tools = [], priorTools = [], userTexts = [], clock, systemPrompt,
@@ -803,6 +819,7 @@ function checkAnswer(input) {
   if (expect.salesOff && SALES.test(text)) problems.push('sales: names a plan, an upgrade or a price on a build that sells nothing');
   if (expect.bestTime) checkBestTime(text, { facts: turnFacts.bestTimes.length ? turnFacts : facts, userTexts, clock }, problems);
   if (expect.laterDay) checkLaterDay(text, { tools, userTexts }, problems, warnings);
+  if (expect.laterDayIs) checkLaterDayIs(text, tools, expect.laterDayIs, problems);
   // A known minor only: an account with no date of birth is not held to it.
   if (ageBracket === 'minor') checkLateForMinor(text, clock, problems);
 

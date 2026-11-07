@@ -704,6 +704,13 @@ const BATTERY = [
   // to give, and with it on it is what is typical for places like it.
   { id: 'W04', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['how crowded is coral tide ceviche next saturday'],
     expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true, honesty: { venue: 'coral', kind: 'category' } } },
+  // Tomorrow with no time zone for the user (an installed build from before
+  // the consent question sends none): at 7:40 PM Friday in New York the UTC
+  // Now line already reads Saturday, so a tomorrow worked out from it is
+  // Sunday. The lookup sends the word and the venue's calendar makes it
+  // Saturday (routes/ai.js THE DAY WORDS); the answer names no other day.
+  { id: 'W05', clock: 'fri_evening', persona: 'ken_legacy', ctx: ctxHome, turns: ['how busy does mango street tacos get tomorrow night'],
+    expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true, laterDayIs: 'Saturday' } },
 
   // How busy is it
   { id: 'B01', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['how busy is thistle & crust right now'],

@@ -502,3 +502,30 @@ test('a later day: the answers that started it fail, and the plain one passes', 
   const good = grade("Palma Pasta Bar. I can't see tomorrow night's crowd yet. Saturdays there usually peak around 9.", { ...later, tools: [search(palma), laterLookup(palma)] });
   assert.deepStrictEqual(good.problems.filter((p) => /later day/.test(p)), []);
 });
+
+test('a later day with no zone for the user: the lookup and the answer are for the venue\'s tomorrow', () => {
+  const later = { expect: { laterDay: true, laterDayIs: 'Saturday' }, userTexts: ['how busy does palma get tomorrow night'] };
+  // Tomorrow worked out from a UTC Now line that already reads Saturday.
+  const sunday = laterLookup(palma, { date: '2026-11-08', day: 'Sunday' });
+  sunday.args.date = '2026-11-08';
+  const wrongDay = grade("I can't see Sunday night's crowd at Palma Pasta Bar yet. Sundays there usually peak around 9.", { ...later, tools: [search(palma), sunday] });
+  assert.ok(wrongDay.problems.some((p) => /later day: looked up Sunday, not Saturday/.test(p)), wrongDay.problems.join('\n'));
+  assert.ok(wrongDay.problems.some((p) => /later day: names Sunday, not Saturday/.test(p)), wrongDay.problems.join('\n'));
+  // The word sent as the word, read on the venue's calendar: Saturday.
+  const word = laterLookup(palma);
+  word.args.date = 'tomorrow';
+  const good = grade("I can't see tomorrow night's crowd at Palma Pasta Bar yet. Saturdays there usually peak around 9.", { ...later, tools: [search(palma), word] });
+  assert.deepStrictEqual(good.problems.filter((p) => /later day/.test(p)), []);
+  // Without a case's day there is nothing to hold it to.
+  const unpinned = grade("I can't see Sunday night's crowd at Palma Pasta Bar yet.", { expect: { laterDay: true }, userTexts: later.userTexts, tools: [search(palma), sunday] });
+  assert.ok(!unpinned.problems.some((p) => /not Saturday/.test(p)));
+});
+
+test('W05 asks for tomorrow from a client that sends no time zone', () => {
+  const w05 = cases.BATTERY.find((i) => i.id === 'W05');
+  assert.ok(w05, 'W05 is in the battery');
+  assert.strictEqual(cases.PERSONAS[w05.persona].client, 'ios_legacy');
+  assert.strictEqual(w05.clock, 'fri_evening');
+  assert.strictEqual(w05.expect.laterDayIs, 'Saturday');
+  assert.match(w05.turns[0], /\btomorrow\b/);
+});
