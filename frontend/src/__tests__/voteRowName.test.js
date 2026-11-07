@@ -18,6 +18,6 @@ test('the vote row name clamps at two lines instead of one', () => {
   expect(style).not.toContain("whiteSpace: 'nowrap'");
 });
 
-test('the host still gets the Confirm button on the same row', () => {
-  expect(CHAT).toContain("aria-label={`${isAssigned ? 'Lock in' : 'Confirm'} ${v.venue}`}");
+test('the host still gets the Lock it in button on the same row', () => {
+  expect(CHAT).toContain("aria-label={`Lock in ${v.venue}`}");
 });

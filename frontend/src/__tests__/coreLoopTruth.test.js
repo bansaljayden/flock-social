@@ -36,9 +36,9 @@ test('the vote row is not a button with a button inside it', () => {
   expect(chat).not.toMatch(/<button key=\{v\.venue\}/);
   expect(chat).toMatch(/<div key=\{v\.venue\} className="glass-btn glass-secondary"/);
   expect(chat).toMatch(/<button type="button" aria-pressed=\{isMyVote\} aria-label=\{`\$\{v\.venue\}, \$\{count\} vote/);
-  // Confirm says which venue it locks in, since a screen reader hears the
-  // label and not the row it sits in.
-  expect(chat).toMatch(/aria-label=\{`\$\{isAssigned \? 'Lock in' : 'Confirm'\} \$\{v\.venue\}`\}/);
+  // Lock it in says which venue it locks in, since a screen reader hears
+  // the label and not the row it sits in.
+  expect(chat).toMatch(/aria-label=\{`Lock in \$\{v\.venue\}`\}/);
 });
 
 test('the chat says when the plan is and where the plan screen is', () => {

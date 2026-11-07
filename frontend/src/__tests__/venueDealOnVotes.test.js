@@ -444,8 +444,8 @@ describe('the vote in the chat', () => {
     // Corvid Coffee has no deal for this reader: no line and no words.
     const corvid = screen.getByRole('button', { name: 'Corvid Coffee, 1 vote' });
     expect(corvid.querySelector('[data-deal-line]')).toBeNull();
-    // The host's Confirm buttons sit beside the vote buttons, not under them.
-    expect(screen.getByRole('button', { name: 'Confirm Kome' })).toBeTruthy();
+    // The host's Lock it in buttons sit beside the vote buttons, not under them.
+    expect(screen.getByRole('button', { name: 'Lock in Kome' })).toBeTruthy();
     expect(container.querySelectorAll('[data-deal-line]').length).toBeGreaterThanOrEqual(1);
   });
 

@@ -4797,7 +4797,7 @@ export default function ChatDetail({
                               {count > 0 && <span aria-hidden="true" style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !planLocked && (
-                                <button type="button" aria-label={`${isAssigned ? 'Lock in' : 'Confirm'} ${v.venue}`} className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
+                                <button type="button" aria-label={`Lock in ${v.venue}`} className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap' }}>Lock it in</button>
                               )}
                             </div>
                           </div>

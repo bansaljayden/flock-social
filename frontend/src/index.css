@@ -869,14 +869,18 @@ code {
   filter: brightness(0.97);
 }
 
+/* Opaque: at 0.88 the navy let the cream through and read as slate grey
+   beside the solid navy of Directions, Invite and Open Chat. Every filled
+   primary button is one colour, --btn-primary-bg; steel is for a selected
+   state only. */
 .glass-primary {
-  background: rgba(30, 41, 59, 0.88) !important;
+  background: var(--btn-primary-bg) !important;
   border: 1px solid rgba(255, 255, 255, 0.18) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 1px 2px rgba(30, 41, 59, 0.10) !important;
   color: #ffffff !important;
 }
 [data-theme="dark"] .glass-primary {
-  background: rgba(241, 237, 224, 0.92) !important;
+  background: var(--btn-primary-bg) !important;
   border: 1px solid rgba(255, 255, 255, 0.35) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 1px 2px rgba(0, 0, 0, 0.20) !important;
   color: #1e293b !important;
