@@ -1,9 +1,9 @@
 /* A LOCAL HOUR OF THE SPEC'S CHOOSING.
  *
  * The app changes with the local hour: auto mode paints it dark from 20:00 to
- * 06:00 and puts NIGHT beside the name on the Nest (context/ThemeContext.js),
- * and the greeting says morning, afternoon or evening. A spec that only ever
- * runs at whatever hour somebody happens to start it tests half of that.
+ * 06:00 (context/ThemeContext.js), and the Nest's day line says morning,
+ * afternoon, evening or night (lib/nestTime.js). A spec that only ever runs
+ * at whatever hour somebody happens to start it tests half of that.
  *
  * This moves the hour by moving the browser's time zone, not its clock.
  * Date.now() stays the real instant, so the session token, the server's

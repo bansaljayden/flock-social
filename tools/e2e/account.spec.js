@@ -622,10 +622,8 @@ for (const [when, hour, theme] of [['by day', 13, 'light'], ['at night', 22, 'da
       await page.evaluate(() => window.localStorage.setItem('flock.sosAlertAt', String(Date.now() - 60_000)));
       await page.reload();
       await expect(page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
-      // The hour took in the app, not only in the browser: auto mode's theme,
-      // and the NIGHT tag the Nest draws beside the name after 20:00.
+      // The hour took in the app, not only in the browser: auto mode's theme.
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-      await expect(page.getByText('NIGHT', { exact: true })).toHaveCount(theme === 'dark' ? 1 : 0);
 
       await page.getByRole('button', { name: /safety and emergency sos/i }).click();
       const sheet = page.getByRole('alertdialog');
@@ -689,7 +687,6 @@ test.describe('across 20:00', () => {
     await page.clock.setSystemTime(new Date(SUNSET.at.getTime() + 10 * 60_000 + 5_000));
     await page.clock.fastForward(60_000);
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await expect(page.getByText('NIGHT', { exact: true })).toHaveCount(1);
 
     await expect(said).toBeVisible();
     expect(await said.innerText()).toBe(before);
