@@ -48,6 +48,7 @@
  */
 import React from 'react';
 import './cards.css';
+import Icons from '../../ui/Icons';
 
 /* ===========================================================================
  * formatMoney
@@ -281,9 +282,7 @@ export function MemberAvatar({
             boxSizing: 'border-box',
           }}
         >
-          <svg width={badgeSize - 5} height={badgeSize - 5} viewBox="0 0 24 24" fill="none" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: 'var(--chat-on-fill)' }}>
-            <path d="M4 12.5 9.5 18 20 7.5" />
-          </svg>
+          {Icons.check('var(--chat-on-fill)', badgeSize - 5)}
         </span>
       )}
 

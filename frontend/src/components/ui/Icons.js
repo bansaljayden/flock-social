@@ -701,6 +701,7 @@ const Icons = {
   chevronUp: make(CHEVRON, { style: ROT(0) }),
   chevronRight: make(CHEVRON, { style: ROT(90) }),
   chevronDown: make(CHEVRON, { style: ROT(180) }),
+  chevronLeft: make(CHEVRON, { style: ROT(270) }),
 
   // A plain closed ring: the "not yet" mark. Exists so a checklist can pair
   // it with `check` and carry met/unmet on shape as well as colour - the
@@ -825,6 +826,20 @@ const Icons = {
   ),
 
   filter: make(<path d="M3 5 21 5 14 12 14 20 10 20 10 12Z" />),
+
+  // A fork (three tines over a bowl, on a handle) beside a knife whose blade
+  // curves out to the left on a radius-4 arc. The map's pins and the search
+  // rows draw it for a place to eat (lib/categoryGlyph.js), which had its own
+  // copy with a Bezier blade.
+  food: make(
+    <>
+      <path d="M5 3 5 8" />
+      <path d="M8 3 8 21" />
+      <path d="M11 3 11 8" />
+      <path d="M5 8A3 3 0 0 0 11 8" />
+      <path d="M18 21 18 3A4 4 0 0 0 14 7L14 13 18 13" />
+    </>
+  ),
 
   flame: make(<path d="M12 2 5 9A7 7 0 0 0 19 9Z" fill="currentColor" stroke="currentColor" />, {
     color: '#F59E0B',
@@ -1246,6 +1261,14 @@ const Icons = {
     </>
   ),
 
+  // trendingUp turned over: the crowd falling hour to hour.
+  trendingDown: make(
+    <>
+      <path d="M3 6 10 13 14 9 21 16" />
+      <path d="M15 16 21 16 21 10" />
+    </>
+  ),
+
   upload: make(
     <>
       <path d="M12 20 12 5" />
@@ -1289,5 +1312,28 @@ const Icons = {
   zap: make(<path d="M18 3 9 12 15 12 6 21" />, { color: '#F59E0B' }),
 };
 
+/**
+ * A glyph's drawing as SVG markup (its paths and circles, no <svg> around
+ * them), for markup built as a string where JSX cannot go: the map's pins
+ * (lib/categoryGlyph.js). Read off the same elements Icons[key] renders, so a
+ * pin's glyph cannot drift from the app's. Rotation set through make()'s
+ * style is not carried; no key read this way has one.
+ */
+const markupOf = (node) => {
+  if (node == null || typeof node === 'boolean') return '';
+  if (Array.isArray(node)) return node.map(markupOf).join('');
+  if (typeof node !== 'object' || !node.props) return '';
+  const { type, props } = node;
+  if (type === 'path') return `<path d="${props.d}"${props.fill ? ` fill="${props.fill}"` : ''}/>`;
+  if (type === 'circle') return `<circle cx="${props.cx}" cy="${props.cy}" r="${props.r}"${props.fill ? ` fill="${props.fill}"` : ''}${props.stroke ? ` stroke="${props.stroke}"` : ''}/>`;
+  return markupOf(props.children);
+};
+const iconMarkup = (key) => {
+  const draw = Object.prototype.hasOwnProperty.call(Icons, key) ? Icons[key] : null;
+  if (typeof draw !== 'function') return '';
+  const wrap = draw();
+  return markupOf(wrap.props.children.props.children);
+};
+
 export default Icons;
-export { Icons, sw, ring, gull, dot, starSvgString, circlePath, EGG_D };
+export { Icons, sw, ring, gull, dot, starSvgString, circlePath, EGG_D, iconMarkup };

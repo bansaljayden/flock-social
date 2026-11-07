@@ -4,13 +4,11 @@
 // Food, so a Mexican restaurant and a bakery were both a dark disc with an F
 // in it, and a search row with no photo was an empty grey square. These are
 // the glyphs instead: a fork and knife, a stemmed glass, a note, a ball, and a
-// place mark for anything else, drawn on the app's 24-unit grid with round
-// strokes like components/ui/Icons.js (the glass and the note are its
-// drawings).
+// place mark for anything else, every one an Icons.js key.
 //
-// The map builds its pins as SVG text, so the glyphs are path data here,
-// constants keyed by the kind of place glyphCategoryFor (below) reads off a
-// listing's types. The lookup is own-property only: an owner-typed category
+// The map builds its pins as SVG text, so the glyphs reach it as markup
+// (iconMarkup in Icons.js), keyed by the kind of place glyphCategoryFor
+// (below) reads off a listing's types. The lookup is own-property only: an owner-typed category
 // of "constructor" draws the place mark, never anything off Object.prototype.
 //
 // THE GLYPH IS NOT THE FILTER'S CATEGORY (review, 2026-11-06). The pins and
@@ -22,24 +20,23 @@
 // for anything that is not food, drink, music or sport, and reads "bar" as a
 // type of its own, never as letters inside another one.
 
-import React from 'react';
+import Icons, { iconMarkup } from '../components/ui/Icons';
 
-const GLYPHS = {
-  // Fork (three tines and a bowl) beside a knife with its blade on the left.
-  Food: ['M5 3 5 8', 'M8 3 8 21', 'M11 3 11 8', 'M5 8A3 3 0 0 0 11 8', 'M18 21 18 3C15.5 3 14 5.5 14 9L14 13 18 13'],
-  // Stemware, Icons.cocktail's drawing.
-  Nightlife: ['M4 6 20 6 12 14Z', 'M12 14 12 20', 'M8 20 16 20'],
-  // Two beamed notes, Icons.music's drawing.
-  'Live Music': ['M9 17 9 5 19 5 19 15', 'M3 17A3 3 0 1 0 9 17A3 3 0 1 0 3 17Z', 'M13 15A3 3 0 1 0 19 15A3 3 0 1 0 13 15Z'],
-  // A ball with its seams, Icons.sports's drawing.
-  Sports: ['M3 12A9 9 0 1 0 21 12A9 9 0 1 0 3 12Z', 'M4.5 8 19.5 8', 'M4.5 16 19.5 16'],
-  // A place mark with its centre.
-  Place: ['M12 21C12 21 5 14.5 5 9.5A7 7 0 0 1 19 9.5C19 14.5 12 21 12 21Z', 'M10 9.5A2 2 0 1 0 14 9.5A2 2 0 1 0 10 9.5Z'],
-};
-
-export const glyphPaths = (category) => (
+// Each kind of place draws an Icons.js key: the fork and knife (`food`), the
+// stemmed glass (`cocktail`), the note (`music`), the ball (`sports`) and the
+// map pin (`mapPin`) for anything else. This file kept a second set of path
+// data, drawn at its own strokes; the glyphs are the app's own now.
+const GLYPHS = { Food: 'food', Nightlife: 'cocktail', 'Live Music': 'music', Sports: 'sports', Place: 'mapPin' };
+const keyFor = (category) => (
   (typeof category === 'string' && Object.prototype.hasOwnProperty.call(GLYPHS, category) && GLYPHS[category]) || GLYPHS.Place
 );
+// The drawing as markup, one string per category, made once.
+const MARKUP = {};
+export const glyphPaths = (category) => {
+  const key = keyFor(category);
+  if (!MARKUP[key]) MARKUP[key] = [iconMarkup(key)];
+  return MARKUP[key];
+};
 
 // The glyph as an SVG <g>, for a pin built as markup: scaled from the 24 grid
 // to `size` units and centred on (cx, cy) of the host SVG's own viewBox.
@@ -48,17 +45,14 @@ export const glyphSvgGroup = (category, { cx, cy, size, color, strokeWidth = 2.4
   const k = size / 24;
   const x = cx - size / 2;
   const y = cy - size / 2;
-  const d = glyphPaths(category).map((p) => `<path d="${p}"/>`).join('');
+  const d = glyphPaths(category).join('').replace(/currentColor/g, color);
   return `<g transform="translate(${x} ${y}) scale(${k})" fill="none" stroke="${color}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round">${d}</g>`;
 };
 
-// The same glyph as a React element, for a list row's empty thumbnail.
-export function CategoryGlyph({ category, color = 'currentColor', size = 20, strokeWidth = 2 }) {
-  return (
-    <svg aria-hidden="true" focusable="false" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-      {glyphPaths(category).map((d) => <path key={d} d={d} />)}
-    </svg>
-  );
+// The same glyph as a React element, for a list row's empty thumbnail: the
+// Icons.js key itself, at the set's one stroke.
+export function CategoryGlyph({ category, color = 'currentColor', size = 20 }) {
+  return Icons[keyFor(category)](color, size);
 }
 
 // A type that is a place to drink: "bar" and "pub" and "lounge" as types of

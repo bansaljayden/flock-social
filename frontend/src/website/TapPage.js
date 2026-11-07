@@ -143,12 +143,14 @@ const GitHubMark = () => (
 );
 
 /* Stroked, not filled, because a filled globe at 20px is a dark blob next to
-   a mark that reads as a shape. Same 24-unit box as the GitHub mark. */
+   a mark that reads as a shape. Same 24-unit box as the GitHub mark. The
+   drawing is Icons.globe's (circular arcs, no ellipses), written out here
+   because this page keeps no icon module. */
 const SiteMark = () => (
   <svg className="tap-stroke" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <circle cx="12" cy="12" r="9" />
-    <path d="M3 12h18" />
-    <path d="M12 3c2.4 2.5 3.8 5.7 3.8 9s-1.4 6.5-3.8 9c-2.4-2.5-3.8-5.7-3.8-9s1.4-6.5 3.8-9z" />
+    <path d="M3 12 21 12" />
+    <path d="M12 3A11 11 0 0 1 12 21A11 11 0 0 1 12 3Z" />
   </svg>
 );
 
