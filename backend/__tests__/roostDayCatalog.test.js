@@ -650,6 +650,14 @@ const OPEN = {
   '804/model': 'S', '804/offline': 'S', '808/model': 'S', '808/offline': 'S', '809/model': 'S', '811/model': 'S',
   '812/model': 'S', '813/model': 'S', '814/model': 'S', '815/model': 'S', '816/model': 'S', '817/model': 'S',
   '818/model': 'S', '819/model': 'S', '820/model': 'S', '822/model': 'S', '1109/model': 'S', '1111/model': 'S',
+  // No plain form (sixth recheck, 2026-11-07; roostDayReader.dayConfidence):
+  // a sentence of setup beside the question ("The whole week has been
+  // slow."), a condition ("if it rains"), "after this afternoon", "wondering
+  // if", a greeting that names the day ("TGIF!"). Each is answered exactly as
+  // main answers it, at main's level.
+  '601/model': 'S', '611/model': 'S', '611/offline': 'S', '612/model': 'S', '613/model': 'S', '614/model': 'S',
+  '615/model': 'S', '616/model': 'S', '617/model': 'S', '805/model': 'S', '821/model': 'S', '823/model': 'S',
+  '825/model': 'S', '827/model': 'S', '905/model': 'S',
 };
 
 const ROWS = CASES.map(([id, q, route, clock, venue, expect, extra = {}]) => ({

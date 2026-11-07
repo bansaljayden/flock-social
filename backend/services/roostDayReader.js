@@ -456,6 +456,10 @@ function todayInRanking(question) {
 // beside one it does, a day or weekend word anywhere in the question the
 // reading does not use, two days the question does not join, and a day it
 // leaves out ("besides monday?").
+//
+// These checks now stand behind the plain forms (THE PLAIN FORMS below,
+// sixth recheck): a question is sure only when it is one of those forms, and
+// then only when it passes every check here too.
 const DAY_FORM = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
 const SPAN_JOIN = '(?:-|\\u2013|\\u2014|through|thru|to|till|til|until|into)';
 // A range of days asked about ("Friday thru Sunday", "Thu-Sat", "from Friday
@@ -712,16 +716,242 @@ function unusedWord(a) {
   return loose ? loose.kind : null;
 }
 
+// ─── THE PLAIN FORMS (sixth recheck, 2026-11-07) ────────────────────────────
+//
+// Five rechecks each found wordings the checks above were sure of and that
+// were answered worse than main: a day set aside after it ("Saturday aside",
+// "Sunday excluded", "not included", "doesn't count", "off the table") or
+// before it in words no list held ("ignoring", "w/o", "excl.", "sans", "drop
+// Saturday", "leave out", "that isn't", "other than the obvious"), a
+// correction joined by "or" ("Monday or rather Wednesday"), a pair narrowed by
+// saying one day again ("Saturday or Sunday? Just Sunday."), a day glued to a
+// word ("fridaynight"), a day in another language, a day said with a time of
+// night ("1am Saturday"). The checks were sure unless a warning they knew
+// appeared, so every wording nobody had listed came out sure. Now it is the
+// other way round: the reader is sure only of a question that is, as a whole,
+// one of the plain forms below, and every other question is answered exactly
+// as main answers it.
+//
+// The question is read in lower case, with its punctuation and emoji taken
+// out, the spellings owners type put right (ownerWords) and a few greetings
+// and fillers set aside at either end ("hey", "ok", "so", "quick question",
+// "please", "thanks"). A letter of another alphabet, or a mark that says no
+// ("❌ Saturday", "!Saturday"), is no plain form. Each day the form holds is
+// one day reference:
+//   * a weekday, written out or short ("Friday", "fri", "this Sat", "next
+//     Saturday", "Friday next week", "the Friday after next"), with a part of
+//     the day after it ("Friday night", "Sun brunch") or as "Friday's happy
+//     hour";
+//   * today, tonight, this morning, this afternoon, this evening; tomorrow,
+//     "tomorrow night"; the day after tomorrow;
+//   * this weekend, the weekend, the rest of the weekend, next weekend, the
+//     following weekend, the weekend after next.
+// The forms are the questions that won over main in the catalog, the
+// batteries and the sweeps, said plainly (FORMS below): how busy one day or
+// weekend will be; two different days compared; the week ranked, today put in
+// or left out of it in so many words ("Besides tonight, which day is busiest
+// this week?"); and staffing, prep and promotion with exactly one day.
+// Advice about two days ("how many bartenders for fri and sat") is not one.
+//
+// A plain form is still read by the grammar above, and is sure only where that
+// reading holds exactly the form's days ("how busy will sat be" in lower case
+// reads no day, the word "sat") and passes every check above.
+const FORM_WEEKDAY = '(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)';
+const FORM_SHORT = '(?:mon|tues?|weds?|thu|thurs?|fri|sat|sun)';
+const FORM_PART = '(?:night|evening|morning|afternoon|brunch|lunch|dinner|breakfast)';
+const FORM_OWNED = '(?:night|evening|morning|afternoon|brunch|lunch|dinner|breakfast|happy hour|crowd|rush)';
+// One day reference, the longest first.
+const FORM_REF = new RegExp([
+  '(?<dat>(?:the )?day after tomorrow)',
+  '(?<afterNextWeekend>the weekend after next)',
+  '(?<followingWeekend>the following weekend)',
+  '(?<nextWeekend>(?:the )?next weekend)',
+  '(?<weekend>this weekend|the rest of the weekend|the weekend|weekend)',
+  `the (?<afterNext>${FORM_WEEKDAY}) after next`,
+  `(?<nextWeek>${FORM_WEEKDAY}) next week`,
+  `(?<owned>${FORM_WEEKDAY})'s ${FORM_OWNED}`,
+  `next (?<next>${FORM_WEEKDAY}|${FORM_SHORT})(?: ${FORM_PART})?`,
+  `(?:this )?(?<day>${FORM_WEEKDAY}|${FORM_SHORT})(?: ${FORM_PART})?`,
+  `(?<tomorrowOwned>tomorrow)'s ${FORM_OWNED}`,
+  `(?<tomorrow>tomorrow)(?: ${FORM_PART})?`,
+  '(?<today>today|tonight|this morning|this afternoon|this evening)',
+].map((s) => `\\b${s}\\b`).join('|'), 'g');
+// The day word a reference is, as dayWords writes it.
+function formWord(g) {
+  const weekday = (w) => SHORT_DAYS[w] || WEEKDAY(w);
+  if (g.dat) return { kind: 'dayAfterTomorrow' };
+  if (g.afterNextWeekend) return { kind: 'weekend', scope: 'after_next' };
+  if (g.followingWeekend) return { kind: 'weekend', scope: 'next' };
+  if (g.nextWeekend) return { kind: 'weekend', scope: 'next_words' };
+  if (g.weekend) return { kind: 'weekend', scope: 'this' };
+  if (g.afterNext) return { kind: 'weekday', weekday: weekday(g.afterNext), afterNext: true };
+  if (g.nextWeek) return { kind: 'weekday', weekday: weekday(g.nextWeek), nextWeek: true };
+  if (g.owned) return { kind: 'weekday', weekday: weekday(g.owned) };
+  if (g.next) return { kind: 'weekday', weekday: weekday(g.next), next: true };
+  if (g.day) return { kind: 'weekday', weekday: weekday(g.day) };
+  if (g.tomorrowOwned || g.tomorrow) return { kind: 'tomorrow' };
+  return { kind: 'today', part: /night|evening/.test(g.today) ? 'tonight' : (/morning|afternoon/.test(g.today) ? 'day' : 'today') };
+}
+const wordKey = (t) => [t.kind, t.weekday || '', t.part || '', t.scope || '', t.next ? 'next' : '', t.nextWeek ? 'nextWeek' : '', t.afterNext ? 'afterNext' : ''].join('|');
+
+const FORM_LEAD = /^(?:(?:hey|hi|hello|hiya|yo|ok|okay|so|well|um+|uh+|hmm+|alright|roost|quick question|quick q|question|q|c'mon|come on|good (?:morning|afternoon|evening))\s+)+/;
+const FORM_TAIL = /(?:\s+(?:please|pls|plz|thanks|thank you|thx|ty|roost))+$/;
+// A mark that says no: "❌ Saturday", "🚫", "👎", "Friday ≠ Saturday", "!Saturday".
+const FORM_NO = /[\u274C\u274E\u2716\u26D4\u2260\u{1F6AB}\u{1F645}\u{1F44E}]|![\p{L}]/u;
+const FORM_MOST_CHARS = 120;
+// The question as the forms read it, or '' when it can be no plain form.
+function formText(question) {
+  let t = String(question || '').normalize('NFKC');
+  if (FORM_NO.test(t)) return '';
+  t = t.toLowerCase().replace(/[\u2018\u2019\u02bc`\u00b4]/g, "'")
+    .replace(/[a-z]+/g, (w) => (Object.hasOwn(SPELLING, w) ? SPELLING[w] : w))
+    .replace(/\s*[&+]\s*/g, ' and ').replace(/(?<=[a-z])\s*\/\s*(?=[a-z])/g, ' and ');
+  // A letter outside a to z: another alphabet, or an accent.
+  if (/[^\x00-\x7f]/.test(t.replace(/[^\p{L}\p{N}]+/gu, ''))) return '';
+  // An apostrophe inside a word stays; every other mark and emoji is a space.
+  t = t.replace(/'(?![a-z])|(?<![a-z])'/g, ' ').replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/\bn\b/g, 'and');
+  return t.replace(FORM_LEAD, '').replace(FORM_TAIL, '');
+}
+
+const F_ADJ = '(?:busy|packed|dead|slow|quiet|crowded|full|slammed|empty|hectic|rammed|steady|lively)';
+const F_MORE = '(?:busier|quieter|slower|deader|emptier|fuller|bigger|more packed|more crowded|less busy)';
+const F_MOST = '(?:busiest|quietest|slowest|deadest|biggest)';
+const F_BE = '(?:be|get)';
+const F_GOING = '(?:going to be|gonna be)';
+const F_WHO = '(?:it|we|things|the place|the bar|the restaurant|the cafe|the venue|the lunch rush|the dinner rush|the rush)';
+const F_ON = '(?:(?:on|for) )?';
+const F_WEEK = '(?: (?:this|of the) week)?';
+const F_US = '(?: for us| at our place)?';
+const F_STAFF = '(?:staff|servers|bartenders|people|cooks|line cooks|baristas|hosts|bussers|runners|dishwashers|employees|waiters|waitstaff|barbacks|hands|workers|staffers)';
+const F_HAND = '(?:staff|server|bartender|cook|line cook|barista|host|busser|runner|dishwasher|person|barback|hand|worker|staffer)';
+const F_PROMO = '(?:promo|promotion|special|deal|discount|happy hour|happy hour special|event|special event)';
+const F_OUT = '(?:besides|other than|apart from|aside from|except|except for|excluding|not counting|not including)';
+const F_IN = '(?:including|starting|starting from|starting with|counting)';
+// The week ranked, with no day in it.
+const F_RANK = `(?:${[
+  `(?:what's|whats|what is|which is) (?:the|our) ${F_MOST} (?:day|night)${F_WEEK}`,
+  `(?:what|which) (?:day|night)(?: this week)? (?:is|will be)(?: the| our)? ${F_MOST}${F_WEEK}`,
+  `which (?:days|nights)(?: this week)? (?:are|will be|look)(?: the)? (?:${F_ADJ}|${F_MOST})${F_WEEK}`,
+  `what are (?:the|our|my) ${F_MOST} (?:days|nights)${F_WEEK}`,
+  `(?:the |our )?${F_MOST} (?:day|night)${F_WEEK}`,
+  `which will be (?:the |our )?${F_MOST}(?: day| night)?${F_WEEK}`,
+  `when (?:are we|will we be|is it|will it be) (?:${F_MOST}|${F_ADJ})${F_WEEK}`,
+  `when (?:do|will) we peak${F_WEEK}`,
+  `when's (?:our|the) peak${F_WEEK}`,
+].join('|')})`;
+// Each form, over the question with every day reference written D: its name,
+// its words, and { days: how many references (1 unless said), pair: two
+// different days and no weekend, cue: 'in' or 'out' for today or tonight put
+// in or left out of the week ranked, weekend: the reference is a weekend,
+// nextWeek: "next week" said after "be" }.
+const FORMS = [
+  // How busy one day or one weekend will be.
+  ['how busy will D be', `how ${F_ADJ} will D ${F_BE}(?: this week)?${F_US}`],
+  ['how busy will D be next week', `how ${F_ADJ} will D be next week`, { nextWeek: true }],
+  ['how busy is D', `how ${F_ADJ} is D(?: ${F_GOING}| going to get| gonna get| looking)?${F_US}`],
+  ['how busy will we be D', `how ${F_ADJ} (?:will ${F_WHO} ${F_BE}|is ${F_WHO}(?: ${F_GOING})?|are we(?: ${F_GOING}| going to get)?) ${F_ON}D${F_US}`],
+  ['how busy D', `how ${F_ADJ} ${F_ON}D${F_US}`],
+  ['D, how busy', `(?:and )?(?:on )?D how ${F_ADJ}(?: will it ${F_BE}| is it(?: ${F_GOING})?| are we| will we ${F_BE})?`],
+  ['how is D looking', `(?:how's|hows|how is) D (?:looking|lookin|shaping up)${F_US}`],
+  ['how does D look', `how (?:does|will) D look${F_US}`],
+  ['what is D looking like', `(?:what's|whats|what is) D (?:looking|lookin) like${F_US}`],
+  ['what does D look like', `what (?:does|will) D look like${F_US}`],
+  ['is D busy', `(?:is|will) D(?: ${F_GOING}| be)? ${F_ADJ}${F_US}`],
+  ['D busy', `D(?: is| will be| ${F_GOING})? ${F_ADJ}`],
+  ['will it be busy D', `(?:is it|are we|will it be|will we be|is it ${F_GOING}|are we ${F_GOING}) ${F_ADJ} ${F_ON}D${F_US}`],
+  ['busy D', `${F_ADJ} ${F_ON}D`],
+  ['what about D', '(?:and )?(?:what|how) about D(?: then)?'],
+  ['D', '(?:and )?D'],
+  ['D outlook', 'D outlook|outlook for D'],
+  ['when will we peak D', `(?:when|what time) (?:will|do|does) (?:we|it) peak ${F_ON}D`],
+  ['when does D peak', '(?:when|what time) (?:does|will) D peak'],
+  ['when does the rush start D', `(?:when|what time) (?:does|will) the rush (?:start|hit|begin|kick in) ${F_ON}D`],
+  ['what should I expect D', `(?:what (?:should|can|do) (?:i|we) expect|(?:should|can|do) (?:i|we) expect a (?:crowd|rush|big crowd)) ${F_ON}D`],
+  ['how many people should I expect D', `how many (?:people|guests|covers|customers) (?:should|can|do|will) (?:i|we) (?:expect|get|see) ${F_ON}D`],
+  // Two different days compared.
+  ['is D busier than D', `(?:is|will) D(?: be| ${F_GOING})? ${F_MORE} than D${F_US}`, { pair: true }],
+  ['which is busier, D or D', `which (?:(?:one |day |night )?(?:is|will be) )?${F_MORE}(?: this week)? ${F_ON}D (?:or|vs|versus) D`, { pair: true }],
+  ['D or D, which is busier', `D (?:or|vs|versus|and) D(?: which (?:one )?(?:is|will be))? ${F_MORE}`, { pair: true }],
+  ['is D or D busier', `(?:is|will) D or D(?: be)? ${F_MORE}(?: this week)?${F_US}`, { pair: true }],
+  ['D or D', 'D (?:or|vs|versus|and) D', { pair: true }],
+  ['compare D with D', 'compare D (?:with|to|and|vs|versus) D', { pair: true }],
+  ['how does D compare to D', 'how does D compare (?:to|with) D', { pair: true }],
+  ['how busy will D be compared to D', `how ${F_ADJ} will D be compared (?:to|with) D`, { pair: true }],
+  ['how busy will we be D and D', `how ${F_ADJ} will (?:we|it) be ${F_ON}D (?:and|or) D`, { pair: true }],
+  ['how busy will D and D be', `how ${F_ADJ} will D (?:and|or) D be`, { pair: true }],
+  // The week ranked; today put in or left out of it; a day against the week.
+  ['which day is busiest this week', `${F_RANK}${F_US}`, { days: 0 }],
+  ['which day is busiest this weekend', `(?:what's|whats|what is|which is) (?:the|our) ${F_MOST} (?:day|night) (?:of )?D|which (?:day|night) (?:of )?D (?:is|will be) ${F_MOST}`, { weekend: true }],
+  ['besides tonight, which day is busiest', `${F_OUT} D ${F_RANK}`, { cue: 'out' }],
+  ['which day is busiest, besides tonight', `${F_RANK} ${F_OUT} D`, { cue: 'out' }],
+  ['including today, which day is busiest', `${F_IN} D ${F_RANK}`, { cue: 'in' }],
+  ['which day is busiest, including today', `${F_RANK} ${F_IN} D`, { cue: 'in' }],
+  ['besides tonight, how busy is the rest of the week', `${F_OUT} D how ${F_ADJ} (?:is|will be) the rest of the week`, { cue: 'out' }],
+  ['how busy is the rest of the week, besides today', `how ${F_ADJ} (?:will the(?: rest of the)? week be|is the rest of the week) (?:${F_OUT}|after) D`, { cue: 'out' }],
+  ['how does the rest of the week look after today', `how does the(?: rest of the)? week look (?:${F_OUT}|after) D`, { cue: 'out' }],
+  ['is D the busiest night this week', `is D (?:${F_GOING} )?(?:the|our) ${F_MOST}(?: day| night)?${F_WEEK}`],
+  ['how does D compare to the week', 'how does D compare (?:to|with) the(?: rest of the)? week'],
+  // Staffing, prep and promotions, on one day.
+  ['how should I staff D', `how (?:should|do|can|would) (?:i|we) staff ${F_ON}D`],
+  ['how many servers do I need D', `how many ${F_STAFF}(?: (?:should|do|will|would) (?:i|we) (?:need|have|schedule|bring in|put on|book|staff))? ${F_ON}D`],
+  ['should I bring in extra staff D', `should (?:i|we) (?:bring in|call in|add|schedule|get|have) (?:an? )?(?:extra|more|another) ${F_HAND}s? ${F_ON}D`],
+  ['how do I fill D', 'how (?:do|can|should) (?:i|we) (?:fill (?:a slow |the slow )?D|make D busier)'],
+  ['should I run a promo D', `should (?:i|we) (?:run|do|have|try|offer|host) (?:a |an )?${F_PROMO} ${F_ON}D|what ${F_PROMO} should (?:i|we) run ${F_ON}D`],
+  ['how much should I prep for D', `(?:how much should (?:i|we) prep|should (?:i|we) prep more|how much (?:do|should) (?:i|we) prep) ${F_ON}D`],
+].map(([name, words, o = {}]) => ({
+  name, re: new RegExp(`^(?:${words})$`), days: o.days !== undefined ? o.days : (o.pair ? 2 : 1), ...o,
+}));
+const FORM_BARE_WEEKDAY = new RegExp(`^${FORM_WEEKDAY}$`);
+
+// The plain form `question` is ({ form, refs: [{ said, word }], cue }), or null.
+function plainForm(question) {
+  const text = formText(question);
+  if (!text || text.length > FORM_MOST_CHARS) return null;
+  const refs = [];
+  const skeleton = text.replace(FORM_REF, (said, ...rest) => {
+    refs.push({ said, word: formWord(rest[rest.length - 1]) });
+    return 'D';
+  });
+  for (const f of FORMS) {
+    if (refs.length !== f.days || !f.re.test(skeleton)) continue;
+    if (f.pair && (refs.some((r) => r.word.kind === 'weekend') || wordKey(refs[0].word) === wordKey(refs[1].word))) continue;
+    if (f.cue && !refs.every((r) => r.said === 'today' || r.said === 'tonight')) continue;
+    if (f.weekend && !refs.every((r) => r.word.kind === 'weekend')) continue;
+    if (f.nextWeek) {
+      if (refs[0].word.kind !== 'weekday' || !FORM_BARE_WEEKDAY.test(refs[0].said)) continue;
+      refs[0].word = { ...refs[0].word, nextWeek: true };
+    }
+    return { form: f.name, refs, cue: f.cue || null };
+  }
+  return null;
+}
+// Whether the reading holds exactly the plain form's days: the days it reads
+// where it asks (the week aside), and for a cue today put in or left out as
+// the form says, that today word aside.
+function formRead(a, form) {
+  const read = new Set(a.words.filter((t) => t.kind !== 'week').map(wordKey));
+  const want = new Set();
+  for (const r of form.refs) {
+    if (form.cue) read.delete(wordKey(r.word));
+    else want.add(wordKey(r.word));
+  }
+  if (form.cue && a.todayCue !== form.cue) return false;
+  return read.size === want.size && [...want].every((k) => read.has(k));
+}
+
 /**
- * How sure the reading of `question` is (above): { sure: true } for the
- * shapes the catalog and batteries prove, else { sure: false, why }.
+ * How sure the reading of `question` is: { sure: true } for a plain form whose
+ * reading holds its days and passes every check above, else { sure: false, why }.
  */
 function dayConfidence(question) {
+  const form = plainForm(question);
+  if (!form) return { sure: false, why: 'not one of the plain forms' };
   const a = analysisOf(question);
-  if (!a.conf) a.conf = confidenceOf(a, question);
+  if (!a.conf) a.conf = confidenceOf(a, question, form);
   return { ...a.conf };
 }
-function confidenceOf(a, question) {
+function confidenceOf(a, question, form) {
   const { text, shouting } = a;
   const unsure = (why) => ({ sure: false, why });
   for (const m of text.matchAll(RANGE_SAID)) {
@@ -755,6 +985,7 @@ function confidenceOf(a, question) {
   if (loose) return unsure(`a ${loose} word the reading does not use`);
   if (!daysJoined(a)) return unsure('two days the question does not join');
   if (a.leftOut) return unsure('a day the question leaves out');
+  if (!formRead(a, form)) return unsure('a reading that is not the plain form\'s');
   return { sure: true };
 }
 
@@ -849,5 +1080,5 @@ function analyze(question) {
 }
 
 module.exports = {
-  dayWords, todayInRanking, saidShut, weekdaysNamed, dayConfidence, __parts: (q) => parts(normalize(q)),
+  dayWords, todayInRanking, saidShut, weekdaysNamed, dayConfidence, __parts: (q) => parts(normalize(q)), __plainForm: plainForm,
 };
