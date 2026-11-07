@@ -260,7 +260,7 @@ describe('Roost chat: the three answers are told apart', () => {
     expect(sourcesLine([src()])).toBe('Sources: model estimate.');
     expect(sourcesLine([src('venue_pattern')])).toBe("Sources: your venue's usual pattern.");
     expect(sourcesLine([src('venue_pattern_live')])).toBe("Sources: your venue's usual pattern and live readings.");
-    expect(sourcesLine([src('live_reading_2h')])).toBe('Sources: your live readings, carried forward.');
+    expect(sourcesLine([src('live_reading_2h')])).toBe('Sources: your readings taken in earlier hours, carried forward.');
     // The model made these, so the model's label stands.
     expect(sourcesLine([src('model_live')])).toBe('Sources: model estimate.');
     expect(sourcesLine([src('model_alone')])).toBe('Sources: model estimate.');

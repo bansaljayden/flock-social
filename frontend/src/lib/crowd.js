@@ -276,7 +276,7 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
 
   const bases = new Set(measured.map((p) => p.base).filter(Boolean));
   const live = measured.filter((p) => p.live).length;
-  if (bases.size === 0) return withRule("this venue's live readings from earlier hours");
+  if (bases.size === 0) return withRule("this venue's readings taken in earlier hours");
   const base = bases.size > 1 ? BASE_PHRASES.both : BASE_PHRASES[[...bases][0]];
   if (live === measured.length) return withRule(`${base} and this venue's recent live readings`);
   if (live > 0) return withRule(`${base}, with this venue's recent live readings in some hours`);
@@ -388,7 +388,7 @@ const modelPeersPhrase = (drawn) => {
   if (measured > 0 && live === measured) phrase += ' and recent live readings';
   else if (live > 0) phrase += ', with recent live readings for some venues';
   if (readings > 0) {
-    phrase = phrase ? `${phrase}, or a live reading from an earlier hour` : 'live readings from earlier hours';
+    phrase = phrase ? `${phrase}, or a reading taken in an earlier hour` : 'readings taken in earlier hours';
   }
   return phrase;
 };

@@ -124,7 +124,7 @@ describe('the hourly chart caption comes from the bars drawn', () => {
     expect(hourlySourcePhrase([ml('live_reading_1h'), ml('model_live')]))
       .toBe("the Flock crowd model and this venue's recent live readings");
     expect(hourlySourcePhrase([ml('model_alone'), ml()])).toBe('the Flock crowd model');
-    expect(hourlySourcePhrase([ml('live_reading_1h'), ml('live_reading_2h')])).toBe("this venue's live readings from earlier hours");
+    expect(hourlySourcePhrase([ml('live_reading_1h'), ml('live_reading_2h')])).toBe("this venue's readings taken in earlier hours");
   });
 
   test('no caption carries an em dash', () => {
@@ -413,9 +413,9 @@ describe('the strip of nearby peaks is captioned from the rows drawn, one per ve
   test('model rows beside pattern rows name both, and carried readings are named as readings', () => {
     expect(peersSourcePhrase([row('venue_pattern', false), row(null, false)]))
       .toBe("each venue's usual pattern or the Flock crowd model");
-    expect(peersSourcePhrase([row('live_reading_2h', true), row('live_reading_1h', true)])).toBe('live readings from earlier hours');
+    expect(peersSourcePhrase([row('live_reading_2h', true), row('live_reading_1h', true)])).toBe('readings taken in earlier hours');
     expect(peersSourcePhrase([row('venue_pattern', false), row('live_reading_1h', true)]))
-      .toBe("each venue's usual pattern, or a live reading from an earlier hour");
+      .toBe("each venue's usual pattern, or a reading taken in an earlier hour");
   });
 
   test('no strip caption says "this venue" or carries an em dash', () => {
@@ -424,6 +424,34 @@ describe('the strip of nearby peaks is captioned from the rows drawn, one per ve
       expect(peersSourcePhrase(s)).not.toMatch(/this venue/);
       expect(peersSourcePhrase(s)).not.toMatch(EM_DASH);
     }
+  });
+});
+
+describe("a carried reading's age is said in words, and it is never called live", () => {
+  const ml = (numberSource) => ({ predictionMethod: 'ml', numberSource });
+  const rule = { predictionMethod: 'rule_engine_no_baseline', liveReadings: false };
+  const row = (numberSource, liveReadings) => ({ predictionMethod: 'ml', ...(numberSource ? { numberSource } : {}), liveReadings });
+  test('a reading carried forward from an earlier hour is never called live', () => {
+    // The chart caption, the strip caption and the website demo's note all
+    // said "live readings from earlier hours" of readings an hour or more
+    // old. They say "readings taken in earlier hours" now, as the single-source
+    // line says "this venue's reading taken an hour ago".
+    const CARRIED_LIVE = /live readings?[^,]*earlier hours?/i;
+    const carried = [
+      hourlySourcePhrase([ml('live_reading_1h'), ml('live_reading_2h')]),
+      hourlySourcePhrase([ml('live_reading_1h'), ml('live_reading_2h')], { reader: 'visitor' }),
+      hourlySourcePhrase([rule, ml('live_reading_1h'), ml('live_reading_3h')]),
+      peersSourcePhrase([row('live_reading_2h', true), row('live_reading_1h', true)]),
+      peersSourcePhrase([row('venue_pattern', false), row('live_reading_1h', true)]),
+      peersSourcePhrase([row(null, false), row('live_reading_4h', true)]),
+      demoNoteLead([ml('live_reading_1h'), ml('live_reading_2h')], null).text,
+    ];
+    for (const phrase of carried) {
+      expect(typeof phrase).toBe('string');
+      expect(phrase).toMatch(/earlier hour/);
+      expect(phrase).not.toMatch(CARRIED_LIVE);
+    }
+    expect(demoNoteLead([ml('live_reading_1h'), ml('live_reading_2h')], null).text).toBe("From this venue's readings taken in earlier hours");
   });
 });
 

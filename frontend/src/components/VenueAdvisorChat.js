@@ -166,7 +166,7 @@ const CARRIED_READING = /^live_reading_([1-9]|1[0-2])h$/;
 export const answerSourceLabel = (s) => {
   const served = s && typeof s.numberSource === 'string' ? s.numberSource : '';
   if (Object.prototype.hasOwnProperty.call(SERVED_SOURCE_LABELS, served)) return SERVED_SOURCE_LABELS[served];
-  if (CARRIED_READING.test(served)) return 'your live readings, carried forward';
+  if (CARRIED_READING.test(served)) return 'your readings taken in earlier hours, carried forward';
   return sourceLabel(s && s.source);
 };
 
