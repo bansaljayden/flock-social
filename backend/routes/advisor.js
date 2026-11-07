@@ -604,10 +604,16 @@ const INTENT_PLANS = {
     if (scope === 'after_next' || (scope === 'next' && !reach('next').length)) {
       // From Monday to Thursday "the weekend after next" is the one after the
       // coming weekend, whose Friday comes into the seven days this Saturday.
+      // The weekend refused is named as the owner named it (seventh recheck,
+      // 2026-11-07): from Monday to Thursday "next weekend" is the coming one,
+      // answered with its days, so "the following weekend" refused as "Next
+      // weekend is past the seven days" read as the coming one refused.
       const soon = scope === 'next' || midweek;
+      let refused = 'The weekend after next';
+      if (scope === 'next') refused = asked === 'next' ? 'The following weekend' : 'Next weekend';
       return [advisorFacts.makeRefusal({
         id: 'refuse_weekend_past_forecast',
-        reason: `${scope === 'next' ? 'Next weekend' : 'The weekend after next'} is past the seven days the forecast covers.`,
+        reason: `${refused} is past the seven days the forecast covers.`,
         whatWouldUnlock: soon ? 'Its Friday comes into them on Saturday.' : 'Its Friday comes into them the Saturday before it.',
       })];
     }

@@ -2230,10 +2230,10 @@ test('"next weekend" is the one after this weekend from Friday to Sunday: the da
     setUp({ placeId: 'ChIJreviewNextWeekendFri0', phrasing: true });
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     draftFor = () => null;
-    for (const q of [question, 'How busy will the next weekend be?', 'What about the following weekend?']) {
+    for (const [q, refused] of [[question, 'Next weekend'], ['How busy will the next weekend be?', 'Next weekend'], ['What about the following weekend?', 'The following weekend']]) {
       const r = await call('/api/venue/advisor/question', { question: q });
       assert.strictEqual(r.body.mode, 'refusal', r.body.text);
-      assert.strictEqual(r.body.text, 'We can\'t answer that yet. Next weekend is past the seven days the forecast covers. Its Friday comes into them on Saturday.', q);
+      assert.strictEqual(r.body.text, `We can't answer that yet. ${refused} is past the seven days the forecast covers. Its Friday comes into them on Saturday.`, q);
     }
     const after = await call('/api/venue/advisor/question', { question: 'What about the weekend after next?' });
     assert.strictEqual(after.body.text, 'We can\'t answer that yet. The weekend after next is past the seven days the forecast covers. Its Friday comes into them the Saturday before it.');
@@ -2473,7 +2473,9 @@ test('"next weekend" from Monday to Thursday is the coming weekend, said with it
       // one is past the forecast; its Friday comes in on Saturday.
       const now = await call('/api/venue/advisor/question', { question: 'What does this weekend look like?' });
       assert.match(now.body.text, /^In Flock's forecast for places like yours, the busiest day this weekend is Saturday/);
-      for (const [q, reason] of [['What about the weekend after next?', 'The weekend after next'], ['What about the following weekend?', 'Next weekend']]) {
+      // The following weekend is named as asked: "next weekend" is the
+      // coming one from Monday to Thursday (seventh recheck, 2026-11-07).
+      for (const [q, reason] of [['What about the weekend after next?', 'The weekend after next'], ['What about the following weekend?', 'The following weekend']]) {
         const r = await call('/api/venue/advisor/question', { question: q });
         assert.strictEqual(r.body.text, `We can't answer that yet. ${reason} is past the seven days the forecast covers. Its Friday comes into them on Saturday.`, `${d}: ${q}`);
       }
