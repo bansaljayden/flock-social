@@ -3295,7 +3295,7 @@ test('advice on two days named opens on each day\'s own peak, picking none', () 
     ['2026-11-12', 'Thursday', 64], ['2026-11-13', 'Friday', 66], ['2026-11-14', 'Saturday', 74], ['2026-11-15', 'Sunday', 45],
   ].map(([date, weekday, score]) => ({ id: `typical_peak_${date}`, value: { weekday, peakHour: 21, peakScore: score }, source: 'category_pattern', asOf: '2026-11-11T16:00:00Z' }));
   let lead = roostPlaybook.groundedLead('peak_hours', card, '', ['Friday', 'Saturday']);
-  assert.strictEqual(lead.text, `${KIND_OPEN}Friday projects busiest around 9 PM, at 66, and Saturday around 9 PM, at 74, on our 0 to 100 index.`);
+  assert.strictEqual(lead.text, `${KIND_OPEN}Friday projects busiest around 9 PM, at 66 on our 0 to 100 index, and Saturday around 9 PM, at 74.`);
   assert.deepStrictEqual(lead.facts.map((f) => f.id), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']);
   // One of them with no forecast: the other said as a single day is.
   lead = roostPlaybook.groundedLead('peak_hours', card, '', ['Monday', 'Thursday']);
@@ -3311,13 +3311,13 @@ test('advice on two days named leads with both through the route, the fill move 
     route = { mode: 'advice', intentId: 'peak_hours' };
     let r = await call('/api/venue/advisor/question', { question: 'how many bartenders for fri and sat' });
     assert.strictEqual(r.body.mode, 'advice', r.body.text);
-    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Friday projects busiest around 9 PM, at 66, and Saturday around 9 PM, at 74, on our 0 to 100 index. `), r.body.text);
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Friday projects busiest around 9 PM, at 66 on our 0 to 100 index, and Saturday around 9 PM, at 74. `), r.body.text);
     for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-07']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
     // The days the owner names stay the move's: the quieter of the two,
     // Thursday, never a day the owner did not ask about (third recheck,
     // 2026-11-06).
     r = await call('/api/venue/advisor/question', { question: 'should i do live music on thursday or friday' });
-    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Thursday projects busiest around 9 PM, at 64, and Friday around 9 PM, at 66, on our 0 to 100 index. Host a weekly music, comedy or open mic night on Thursday`), r.body.text);
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Thursday projects busiest around 9 PM, at 64 on our 0 to 100 index, and Friday around 9 PM, at 66. Host a weekly music, comedy or open mic night on Thursday`), r.body.text);
     // Over the week, from tonight: the week's quietest, as before.
     route = { mode: 'advice', intentId: 'quiet_nights' };
     r = await call('/api/venue/advisor/question', { question: 'How do I fill the slow nights this week, starting tonight?' });

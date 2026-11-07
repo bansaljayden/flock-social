@@ -872,15 +872,19 @@ function groundedLead(intentId, facts, question = '', askedFor = undefined) {
       if (f && !said.includes(f)) said.push(f);
     }
     if (said.length < 2) return said.length ? groundedLead(intentId, facts, question, said[0].value.weekday) : null;
+    // The index is named once, beside the first number, as a single day's
+    // lead names it: "Thursday projects busiest around 9 PM, at 64 on our 0
+    // to 100 index, and Friday around 9 PM, at 66." (third recheck,
+    // 2026-11-06: it closed on ", on our 0 to 100 index.").
     const at = (f, i) => {
       const hour = Number(f.value.peakHour);
       const when = Number.isInteger(hour) && hour >= 0 && hour < 24 ? ` around ${clockHour(hour)}` : '';
       const night = f.value.afterMidnight === true ? ' night' : '';
-      return `${f.value.weekday}${night}${i ? '' : ' projects busiest'}${when}, at ${Number(f.value.peakScore)}`;
+      return `${f.value.weekday}${night}${i ? '' : ' projects busiest'}${when}, at ${Number(f.value.peakScore)}${i ? '' : ' on our 0 to 100 index'}`;
     };
     const parts = said.map(at);
     const list = `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
-    return { text: open(`${list}, on our 0 to 100 index.`), fact: said[0], facts: said };
+    return { text: open(`${list}.`), fact: said[0], facts: said };
   }
   // A question about a named day is answered about that day. "How do I fill
   // Thursdays" used to open on whichever day was quietest (2026-10-28), an
