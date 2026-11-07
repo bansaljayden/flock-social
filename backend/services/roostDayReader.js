@@ -752,6 +752,8 @@ function unusedWord(a) {
 // or left out of it in so many words ("Besides tonight, which day is busiest
 // this week?"); and staffing, prep and promotion with exactly one day.
 // Advice about two days ("how many bartenders for fri and sat") is not one.
+// Which routes each form is read on is the route's to say (routes/advisor.js
+// formOnRoute, which reads plainFormOf below).
 //
 // A plain form is still read by the grammar above, and is sure only where that
 // reading holds exactly the form's days ("how busy will sat be" in lower case
