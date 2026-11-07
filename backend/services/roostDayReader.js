@@ -187,21 +187,39 @@ function normalize(question) {
     .replace(/[A-Za-z]+/g, (w) => (Object.hasOwn(SPELLING, w.toLowerCase()) ? SPELLING[w.toLowerCase()] : w));
 }
 
-/** The parts of `text` a question asks in, and every part. */
-function parts(text) {
-  const asking = [];
+/**
+ * Every part of `text`, each with where it starts in `text` ({ p, at }), and
+ * the indices of the parts a question asks in.
+ */
+function partsAt(text) {
   const all = [];
-  for (const sentence of text.split(SENTENCES).map((s) => s.trim()).filter(Boolean)) {
+  const asking = [];
+  let from = 0;
+  for (const raw of text.split(SENTENCES)) {
+    const sentence = raw.trim();
+    if (!sentence) continue;
+    const sentenceAt = text.indexOf(sentence, from);
+    from = sentenceAt + sentence.length;
     const pieces = sentence.split(SPLICE).flatMap((p) => p.split(RUN_ON)).map((p) => p.trim()).filter(Boolean);
-    all.push(...pieces);
+    let pieceFrom = 0;
+    for (const p of pieces) {
+      const pieceAt = sentence.indexOf(p, pieceFrom);
+      pieceFrom = pieceAt + p.length;
+      all.push({ p, at: sentenceAt + pieceAt });
+    }
     // The last part of a sentence that ends on a question mark asks.
-    if (pieces.length && MARKED.test(sentence)) asking.push(pieces[pieces.length - 1]);
+    if (pieces.length && MARKED.test(sentence)) asking.push(all.length - 1);
   }
   if (!asking.length) {
-    const holding = all.filter((p) => HOLDS_ASK.test(p));
-    asking.push(...(holding.length ? holding : all.slice(-1)));
+    const holding = all.map((_, i) => i).filter((i) => HOLDS_ASK.test(all[i].p));
+    asking.push(...(holding.length ? holding : all.map((_, i) => i).slice(-1)));
   }
-  return { asking, all };
+  return { all, asking };
+}
+/** The parts of `text` a question asks in, and every part. */
+function parts(text) {
+  const { all, asking } = partsAt(text);
+  return { asking: asking.map((i) => all[i].p), all: all.map((x) => x.p) };
 }
 
 // A WEEKEND GONE BY IS NO WEEKEND ASKED (acceptance, 2026-11-06): "last
@@ -221,7 +239,9 @@ const SHUT_SAID = /\b(?:closed|shut|close|off)\b/i;
 const HABIT_BEFORE = /\b(?:on|every|most|some)\s+$/i;
 const CROWD_SAID = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|quietest|dead|deadest|packed|slammed|empty|full|crowded|crowds?|rush)\b/i;
 
-function tokensIn(piece, shouting = false) {
+// The day words of one part, each with where it is said in the question
+// (`at` to `end`, from `offset`, where the part starts).
+function tokensIn(piece, shouting = false, offset = 0) {
   const out = [];
   // The weekdays this part says the venue is shut on (shutDaysIn below).
   const shutHere = shutDaysIn(piece);
@@ -276,6 +296,8 @@ function tokensIn(piece, shouting = false) {
     // counts only when no other day word does, as a reason given does.
     const shutSaid = Boolean(g.day) && out.length > at && shutHere.includes(out[at].weekday);
     if ((given || shutSaid) && out.length > at) Object.assign(out[at], { weak: true, possessive: false });
+    // Where the word is said, for the words the reading uses (analyze below).
+    if (out.length > at) Object.assign(out[at], { at: offset + m.index, end: offset + m.index + m[0].length });
   }
   return out;
 }
@@ -325,7 +347,7 @@ function shutDaysIn(text) {
   return out;
 }
 function saidShut(question) {
-  return shutDaysIn(normalize(question));
+  return shutDaysIn(analysisOf(question).text);
 }
 
 const same = (a, b) => a.kind === b.kind && a.weekday === b.weekday && a.scope === b.scope
@@ -340,35 +362,7 @@ const same = (a, b) => a.kind === b.kind && a.weekday === b.weekday && a.scope =
  * none.
  */
 function dayWords(question) {
-  const text = normalize(question);
-  const { asking, all } = parts(text);
-  // A question in capitals throughout says nothing by its case.
-  const shouting = !/[a-z]/.test(text);
-  // "The day after" is a day only where tomorrow is said (DAY_AFTER_OF).
-  const saysTomorrow = /\btomorrow\b/i.test(text);
-  const read = (p) => tokensIn(p, shouting).filter((t) => !t.loose || saysTomorrow);
-  let found = asking.flatMap(read);
-  if (!found.length) found = all.flatMap(read).filter((t) => !t.habit);
-  const strong = found.filter((t) => !t.weak);
-  let kept = strong.length ? strong : found;
-  // Two weekdays or more in the possessive beside only a weekend or the week
-  // are the days asked, and the weekend or the week says which ones ("How will
-  // Friday's crowd compare to Saturday's this weekend?", acceptance,
-  // 2026-11-06); one alone is what something belongs to ("How's the rest of
-  // the weekend after Saturday's rush?").
-  const owned = found.filter((t) => t.possessive && t.kind === 'weekday');
-  if (strong.length && strong.every((t) => t.kind === 'weekend' || t.kind === 'week')
-      && new Set(owned.map((t) => t.weekday)).size > 1) {
-    kept = found.filter((t) => !t.weak || owned.includes(t));
-  }
-  // The week beside a weekday only says which one ("Monday this week").
-  if (kept.some((t) => t.kind === 'weekday')) kept = kept.filter((t) => t.kind !== 'week');
-  const out = [];
-  for (const t of kept) {
-    const { weak, plural, habit, possessive, loose, ...tok } = t;
-    if (!out.some((o) => same(o, tok))) out.push(tok);
-  }
-  return out;
+  return analysisOf(question).words.map((t) => ({ ...t }));
 }
 
 // THE WEEKDAYS A QUESTION NAMES ANYWHERE IN IT (recheck, 2026-11-06), for the
@@ -382,14 +376,18 @@ function dayWords(question) {
 // weekend?"): that day is someone's hours, not a day asked.
 const CLOSING_SAID = /\b(?:clos(?:e|ed|es|ing)|shut(?:s|ting)?)\b/i;
 function weekdaysNamed(question) {
-  const text = normalize(question);
-  const shouting = !/[a-z]/.test(text);
-  const out = [];
-  for (const t of parts(text).all.filter((p) => !CLOSING_SAID.test(p)).flatMap((p) => tokensIn(p, shouting))) {
-    if (t.kind !== 'weekday' || t.weak || t.habit || t.next || t.nextWeek || t.afterNext) continue;
-    if (!out.includes(t.weekday)) out.push(t.weekday);
+  const a = analysisOf(question);
+  if (!a.named) {
+    a.named = [];
+    a.all.forEach(({ p }, i) => {
+      if (CLOSING_SAID.test(p)) return;
+      for (const t of a.tokens[i]) {
+        if (t.kind !== 'weekday' || t.weak || t.habit || t.next || t.nextWeek || t.afterNext) continue;
+        if (!a.named.includes(t.weekday)) a.named.push(t.weekday);
+      }
+    });
   }
-  return out;
+  return [...a.named];
 }
 
 // TODAY IN THE WEEK RANKED, OR LEFT OUT OF IT (third review, 2026-11-06).
@@ -411,11 +409,15 @@ const TODAY_IN = new RegExp([
   `\\b${TODAY_W}\\s+(?:(?:is|be|will\\s+be|going\\s+to\\s+be|gonna\\s+be)\\s+)?(?:one\\s+of\\s+)?(?:the|our)\\s+(?:[a-z']+\\s+)?(?:busiest|quietest|slowest|deadest|biggest|best|worst|top|highest|lowest)\\b`,
 ].join('|'), 'i');
 
+// Each, matched throughout, for where the today word it reads is said
+// (analyze below).
+const TODAY_LEFT_OUT_ALL = new RegExp(TODAY_LEFT_OUT.source, 'gi');
+const TODAY_IN_ALL = new RegExp(TODAY_IN.source, 'gi');
+const TODAY_SAID = /\b(?:today|tonight|this\s+(?:evening|afternoon|morning))\b/g;
+
 /** 'out' when the question leaves today out of the days it ranks, 'in' when it puts today in, else null. */
 function todayInRanking(question) {
-  const text = normalize(question).toLowerCase();
-  if (TODAY_LEFT_OUT.test(text)) return 'out';
-  return TODAY_IN.test(text) ? 'in' : null;
+  return analysisOf(question).todayCue;
 }
 
 // ─── HOW SURE THE READING IS (third recheck, 2026-11-06) ─────────────────────
@@ -432,24 +434,27 @@ function todayInRanking(question) {
 //   * one day said plainly: a weekday written out or a short form written as
 //     a day ("Fri night"), with next, next week or after next beside it;
 //     today, tonight, this morning; tomorrow; the day after tomorrow;
-//   * two such days ("Is Saturday busier than Friday?", "Will tomorrow be
-//     busier than tonight?");
+//   * two such days the question joins ("Is Saturday busier than Friday?",
+//     "Will tomorrow be busier than tonight?", daysJoined below);
 //   * one weekend said with a weekend word (this weekend, next weekend, the
 //     following weekend, the weekend after next);
 //   * the week, alone or beside today ("Which day is busiest this week,
 //     starting today?");
-//   * any of those beside days the owner says the venue is shut on, a day
-//     given as a reason or said in the past, or a possessive, which the
-//     grammar above sets aside;
-//   * no day word at all.
+//   * no day word at all;
+//
+// and only where the reading uses every word of the question that is or may
+// be a day or a weekend (unusedWord below, fourth recheck): the same day said
+// again elsewhere is used, a day the grammar sets aside (a day said shut, a
+// reason, the past, a possessive) is not.
 //
 // Anything else is not sure, and the route answers it exactly as main does
 // (routes/advisor.js mainBridge), so it cannot come out worse than main: a
 // range of days, a holiday by name, a date, "after tomorrow", "in two days",
 // "the day after" or "the day before" said from another day, three days or
-// more, two weekends, a day beside a weekend, weekends as a habit, and a word
+// more, two weekends, a day beside a weekend, weekends as a habit, a word
 // that may be a day this grammar does not read ("sat nite", "satday", "w/e")
-// beside one it does.
+// beside one it does, a day or weekend word anywhere in the question the
+// reading does not use, and two days the question does not join.
 const DAY_FORM = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
 const SPAN_JOIN = '(?:-|\\u2013|\\u2014|through|thru|to|till|til|until|into)';
 // A range of days asked about ("Friday thru Sunday", "Thu-Sat", "from Friday
@@ -534,12 +539,29 @@ const NOT_A_DAY = new Set(['today', 'tonight', 'tomorrow', 'weekend', 'weekends'
 const MAYBE_WEEKEND = /^(?:w\/e|w\/end|wkd|wkds|wknd|wknds|wkend|wkends|wk-end|wk-ends|week-end|week-ends)$/;
 const MAYBE_TOMORROW = /^(?:tmr|tmw|tmmrw|tmrrw|tmrow|tomoz|tomo|2moro|2morro|2morrow|2morow|2mrw|2mro)$/;
 const MAYBE_TODAY = /^(?:2nite|2night|2nyt|tnite|tn|2day|tday|tdy)$/;
-function nearDay(w) {
-  if (NOT_A_DAY.has(w) || DAY_NAMES.includes(w) || DAY_NAMES.includes(w.replace(/s$/, ''))) return false;
-  if (MAYBE_WEEKEND.test(w) || MAYBE_TOMORROW.test(w) || MAYBE_TODAY.test(w)) return true;
-  if (w.length < 5 || !/^[a-z]+$/.test(w)) return false;
+// 'day' or 'weekend' for a word that may be one, else null.
+function nearDayKind(w) {
+  if (NOT_A_DAY.has(w) || DAY_NAMES.includes(w) || DAY_NAMES.includes(w.replace(/s$/, ''))) return null;
+  if (MAYBE_WEEKEND.test(w)) return 'weekend';
+  if (MAYBE_TOMORROW.test(w) || MAYBE_TODAY.test(w)) return 'day';
+  if (w.length < 5 || !/^[a-z]+$/.test(w)) return null;
   const near = (target, most) => w.slice(0, 2) === target.slice(0, 2) && (editDistance(w, target) <= most || editDistance(w, `${target}s`) <= most);
-  return DAY_NAMES.some((d) => near(d, 2)) || (w.length >= 6 && (near('weekend', 2) || near('tomorrow', 2) || near('tonight', 1)));
+  if (DAY_NAMES.some((d) => near(d, 2))) return 'day';
+  if (w.length < 6) return null;
+  if (near('weekend', 2)) return 'weekend';
+  return near('tomorrow', 2) || near('tonight', 1) ? 'day' : null;
+}
+// Each word of `text` that may be a day or a weekend (nearDayKind), with
+// where it is said; where lower case moves the letters (a letter that lowers
+// to two), with nowhere, which no word the reading uses holds.
+function maybeWordsIn(text, lower) {
+  const moved = lower.length !== text.length;
+  const out = [];
+  for (const m of lower.matchAll(/[a-z0-9/'-]+/g)) {
+    const kind = nearDayKind(m[0].replace(/'s$/, '').replace(/^'+|'+$/g, ''));
+    if (kind) out.push(moved ? { at: -1, end: Infinity, kind } : { at: m.index, end: m.index + m[0].length, kind });
+  }
+  return out;
 }
 const SHORT_WORD = /\b(mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)\b\.?/gi;
 // "We sat dinner at 6", "the sun rush", "with this sun", "C'mon": the word.
@@ -563,16 +585,129 @@ function maybeShortForms(piece, shouting) {
 }
 
 const DAY_KINDS = new Set(['weekday', 'today', 'tomorrow', 'dayAfterTomorrow']);
+
+// TWO DAYS ARE READ TOGETHER ONLY WHERE THE QUESTION JOINS THEM (fourth
+// recheck, 2026-11-06). The reading answers two days it reads with both,
+// the busier first, which is right for "Is Saturday busier than Friday?" and
+// wrong where the owner names one day and means the other: a correction
+// ("Saturday, I mean Sunday, how busy?", "how busy is tuesday *wednesday",
+// "How busy will tonight be, I mean tomorrow night"), a rhetorical question
+// before the real one ("Who even goes out on a Monday? How's Tuesday?"), a
+// day in a name or beside a thing ("Saturday Night Fever theme on Friday",
+// "Is the Saturday crew enough for Friday?") or a condition ("How busy will
+// tonight be if it rains tomorrow?"). So two days said one after the other
+// are sure only where the question joins them: in one part, with a word that
+// joins or compares them a few words apart ("Friday or Saturday", "Is Sunday
+// busier than Saturday", "Saturday and Sunday", "Is Monday as busy as
+// Tuesday", "compare tonight with tomorrow"); or the second at the head of a
+// part of its own after one ("Is Saturday going to be busy? Or Sunday?",
+// "How busy will today be? and tomorrow?").
+const JOIN_BETWEEN = /\b(?:or|and|n|nor|vs|versus|than|plus|compar\w*)\b|[&/+]|\bas\s+\S+\s+as\b/i;
+const JOIN_COMPARED = /\b(?:with|to|against)\b/i;
+const JOIN_LEADS = /^[^\p{L}\p{N}]*(?:(?:ok|okay|so|well|also)\b[^\p{L}\p{N}]*)*(?:(?:or|and|n|nor|vs|versus|plus)\b|[&/+])/iu;
+const JOIN_MOST_WORDS = 6;
+function daysJoined(a) {
+  const days = a.kept.filter((t) => DAY_KINDS.has(t.kind)).sort((x, y) => x.at - y.at);
+  for (let i = 1; i < days.length; i += 1) {
+    const x = days[i - 1];
+    const y = days[i];
+    if (same(x, y) && x.part === y.part) continue;
+    if (x.piece === y.piece) {
+      const between = a.text.slice(x.end, y.at);
+      const many = (between.match(/[\p{L}\p{N}]+/gu) || []).length > JOIN_MOST_WORDS;
+      const compares = /\bcompar/i.test(a.all[x.piece].p) && JOIN_COMPARED.test(between);
+      if (many || !(JOIN_BETWEEN.test(between) || compares)) return false;
+    } else if (!JOIN_LEADS.test(a.text.slice(a.all[y.piece].at, y.at))) {
+      return false;
+    }
+  }
+  return true;
+}
 // A question that asks which day: "which other day is quietest?", "what's our
 // busiest night?".
 const CHOICE_ASKED = /\b(?:which|what)\b[^.?!]{0,40}?\b(?:day|night|evening)s?\b/i;
+
+// EVERY WORD THAT IS OR MAY BE A DAY OR A WEEKEND, WHEREVER IT IS SAID (fourth
+// recheck, 2026-11-06). The rechecks kept finding a day the owner named and
+// then set aside in a later sentence with no question mark ("How busy will
+// Saturday be? Sorry, I meant Friday.", "Why is Monday always dead? Anyway,
+// tell me about Thursday."), a short form that is the only day word ("wknd
+// outlook? sat esp"), a contraction read as a possessive ("If Thursday's
+// busier than Friday I'll move trivia. Is it?") and a day in another language
+// ("sabado"), each read with confidence and answered with the wrong day. So
+// the reading is sure only when it uses every word of the question that is or
+// may be a day or a weekend, in every sentence, the previous turn's included
+// when the follow-on reads it in (advisorFollowOn): a weekday in any case,
+// plural, possessive or contraction; a short form (mon, tue, tues, wed, weds,
+// thu, thur, thurs, thr, fri, sat, sun), however it is used ("we sat 40
+// covers" too); today, tonight, tomorrow, yesterday, this morning, this
+// afternoon, this evening, this night; a misspelling or a short spelling of
+// any of them (nearDayKind); the weekend, written out or short; and the
+// weekdays, today, tomorrow, yesterday and the weekend in Spanish, French,
+// Portuguese, German and Italian. A word the reading does not use, anywhere,
+// leaves it unsure, and the route answers as main answers.
+const FOREIGN_DAYS = [
+  // Spanish and Portuguese
+  'lunes', 'martes', 'mi[e\\u00e9]rcoles', 'jueves', 'viernes', 's[a\\u00e1]bados?', 'domingos?',
+  'segunda(?:-feira)?s?', 'ter[c\\u00e7]a(?:-feira)?s?', 'quarta(?:-feira)?s?', 'quinta(?:-feira)?s?', 'sexta(?:-feira)?s?',
+  'hoy', 'ma[n\\u00f1]ana', 'ayer', 'anoche', 'esta\\s+noche', 'hoje', 'amanh[a\\u00e3]', 'ontem', 'esta\\s+noite',
+  // French
+  'lundis?', 'mardis?', 'mercredis?', 'jeudis?', 'vendredis?', 'samedis?', 'dimanches?',
+  "aujourd'hui", 'demain', 'hier', 'ce\\s+soir',
+  // German
+  'montags?', 'dienstags?', 'mittwochs?', 'donnerstags?', 'freitags?', 'samstags?', 'sonnabends?', 'sonntags?',
+  'heute', 'morgen', '[u\\u00fc]bermorgen', 'gestern',
+  // Italian
+  'luned[i\\u00ec\\u00ed]', 'marted[i\\u00ec\\u00ed]', 'mercoled[i\\u00ec\\u00ed]', 'gioved[i\\u00ec\\u00ed]', 'venerd[i\\u00ec\\u00ed]',
+  'sabat[oi]', 'domenic(?:a|he)', 'oggi', 'domani', 'dopodomani', 'ieri', 'stasera', 'stanotte',
+];
+const FOREIGN_WEEKENDS = [
+  'fin\\s+de\\s+semana', 'fin\\s+de\\s+semaine', 'fim\\s+de\\s+semana', 'fine\\s+settimana', 'findes?', 'wochenenden?',
+];
+// A word on its own: no letter or digit beside it, and not after a letter and
+// an apostrophe ("c'mon").
+const ALONE_BEFORE = "(?<![\\p{L}\\p{N}])(?<!\\p{L}')";
+const ALONE_AFTER = '(?![\\p{L}\\p{N}])';
+const DAY_SAID_ANYWHERE = new RegExp(`${ALONE_BEFORE}(?:${[
+  '(?:mon|tues|wednes|thurs|fri|satur|sun)days?',
+  'mon|tues?|weds?|thu(?:rs?)?|thrs?|fri|sat|sun',
+  'today|tonight|tomorrow|yesterday|todays|tonights|tomorrows',
+  'this\\s+(?:morning|afternoon|evening|night)',
+  ...FOREIGN_DAYS,
+].join('|')})${ALONE_AFTER}`, 'giu');
+const WEEKEND_SAID_ANYWHERE = new RegExp(`${ALONE_BEFORE}(?:${['weekends?', ...FOREIGN_WEEKENDS].join('|')})${ALONE_AFTER}`, 'giu');
+// 'day' or 'weekend' for the first word of the question that is or may be
+// one and that the reading does not use, else null. A word the reading uses
+// is one it reads where it asks (a.used), or the same day said again
+// elsewhere, as the grammar reads that day ("Thursday trivia flopped, how do I
+// fill Thursdays?", "Saturday was packed. How busy will Saturday be?"); a
+// word the grammar reads as another day, or reads as no day at all, is not.
+function unusedWord(a) {
+  const said = [...a.maybe];
+  for (const m of a.text.matchAll(DAY_SAID_ANYWHERE)) said.push({ at: m.index, end: m.index + m[0].length, kind: 'day' });
+  for (const m of a.text.matchAll(WEEKEND_SAID_ANYWHERE)) said.push({ at: m.index, end: m.index + m[0].length, kind: 'weekend' });
+  const inside = (w) => ([at, end]) => w.at >= at && w.end <= end;
+  const sameDay = (t) => a.words.some((o) => same(o, t) && o.part === t.part);
+  const all = a.tokens.flat();
+  const loose = said.find((w) => {
+    if (a.used.some(inside(w))) return false;
+    const t = all.find((x) => inside(w)([x.at, x.end]));
+    return !(t && sameDay(t));
+  });
+  return loose ? loose.kind : null;
+}
 
 /**
  * How sure the reading of `question` is (above): { sure: true } for the
  * shapes the catalog and batteries prove, else { sure: false, why }.
  */
 function dayConfidence(question) {
-  const text = normalize(question);
+  const a = analysisOf(question);
+  if (!a.conf) a.conf = confidenceOf(a, question);
+  return { ...a.conf };
+}
+function confidenceOf(a, question) {
+  const { text, shouting } = a;
   const unsure = (why) => ({ sure: false, why });
   for (const m of text.matchAll(RANGE_SAID)) {
     if (!HOURS_BEFORE.test(text.slice(0, m.index))) return unsure('a range of days');
@@ -582,12 +717,11 @@ function dayConfidence(question) {
   if (WEEK_ON.test(text)) return unsure('a week counted on from a day');
   if (DAY_FROM_DAY.test(text)) return unsure('a day said from another day');
   if (DATE_SAID.test(text) || SHORT_DATE.test(text)) return unsure('a date');
-  const words = dayWords(question);
+  const { words } = a;
   const days = words.filter((t) => DAY_KINDS.has(t.kind));
-  const shouting = !/[a-z]/.test(text);
   // A weekend said anywhere in the question, not only where it asks: "Will
   // we be busy on the weekend, esp. Sunday?" asks in "Sunday?".
-  const weekends = [...words, ...parts(text).all.flatMap((p) => tokensIn(p, shouting))].filter((t) => t.kind === 'weekend');
+  const weekends = [...words, ...a.tokens.flat()].filter((t) => t.kind === 'weekend');
   if (days.length >= 3) return unsure('three days or more');
   if (new Set(weekends.map((t) => t.scope)).size >= 2) return unsure('two weekends');
   if (weekends.some((t) => t.scope === 'habit')) return unsure('weekends as a habit');
@@ -595,16 +729,90 @@ function dayConfidence(question) {
   // A day read from outside the sentence that asks, when that sentence asks
   // which day ("We might shut Wednesday, which other day is quietest?"): the
   // day is the setup, and may be the one the owner sets aside.
-  const { asking } = parts(text);
-  if (days.length && !todayInRanking(question) && asking.some((p) => CHOICE_ASKED.test(p))
-      && !asking.some((p) => tokensIn(p, shouting).some((t) => DAY_KINDS.has(t.kind)))) {
+  if (days.length && !todayInRanking(question) && a.asking.some((i) => CHOICE_ASKED.test(a.all[i].p))
+      && !a.asking.some((i) => a.tokens[i].some((t) => DAY_KINDS.has(t.kind)))) {
     return unsure('a day said outside a question that asks which day');
   }
-  if (words.length) {
-    const maybe = [...text.toLowerCase().matchAll(/[a-z0-9/'-]+/g)].map((m) => m[0].replace(/'s$/, '').replace(/^'+|'+$/g, '')).filter(nearDay);
-    if (maybe.length || parts(text).all.some((p) => maybeShortForms(p, shouting).length)) return unsure('a word that may be a day');
+  if (words.length && (a.maybe.length || a.all.some(({ p }) => maybeShortForms(p, shouting).length))) {
+    return unsure('a word that may be a day');
   }
+  const loose = unusedWord(a);
+  if (loose) return unsure(`a ${loose} word the reading does not use`);
+  if (!daysJoined(a)) return unsure('two days the question does not join');
   return { sure: true };
+}
+
+// ONE READING OF A QUESTION, KEPT (fourth recheck, 2026-11-06). The route
+// reads a question's days several times over (dayGate, readingFor, the
+// weekend's plan, the advice path), and each read normalised it, split it and
+// read every part again. The reading is made once per question and kept for
+// the last few questions, so a question costs one reading. A reading is of the
+// question's text alone, so a kept one is the one a new read would make.
+const READINGS = new Map();
+const READINGS_KEPT = 32;
+function analysisOf(question) {
+  const key = String(question || '');
+  let a = READINGS.get(key);
+  if (!a) {
+    a = analyze(key);
+    if (READINGS.size >= READINGS_KEPT) READINGS.delete(READINGS.keys().next().value);
+    READINGS.set(key, a);
+  }
+  return a;
+}
+// The reading of `question`: its text, its parts and each part's day words,
+// the day words it says where it asks (dayWords), today put in or left out of
+// the week (todayInRanking), where the words those read are said in it
+// (`used`, each [at, end]), and the words in it that may be a day
+// (maybeWordsIn).
+function analyze(question) {
+  const text = normalize(question);
+  const lower = text.toLowerCase();
+  // A question in capitals throughout says nothing by its case.
+  const shouting = !/[a-z]/.test(text);
+  const { all, asking } = partsAt(text);
+  const tokens = all.map(({ p, at }, i) => tokensIn(p, shouting, at).map((t) => Object.assign(t, { piece: i })));
+  // "The day after" is a day only where tomorrow is said (DAY_AFTER_OF).
+  const saysTomorrow = /\btomorrow\b/i.test(text);
+  const read = (i) => tokens[i].filter((t) => !t.loose || saysTomorrow);
+  let found = asking.flatMap(read);
+  if (!found.length) found = all.flatMap((_, i) => read(i)).filter((t) => !t.habit);
+  const strong = found.filter((t) => !t.weak);
+  let kept = strong.length ? strong : found;
+  // Two weekdays or more in the possessive beside only a weekend or the week
+  // are the days asked, and the weekend or the week says which ones ("How will
+  // Friday's crowd compare to Saturday's this weekend?", acceptance,
+  // 2026-11-06); one alone is what something belongs to ("How's the rest of
+  // the weekend after Saturday's rush?").
+  const owned = found.filter((t) => t.possessive && t.kind === 'weekday');
+  if (strong.length && strong.every((t) => t.kind === 'weekend' || t.kind === 'week')
+      && new Set(owned.map((t) => t.weekday)).size > 1) {
+    kept = found.filter((t) => !t.weak || owned.includes(t));
+  }
+  // The week beside a weekday only says which one ("Monday this week").
+  if (kept.some((t) => t.kind === 'weekday')) kept = kept.filter((t) => t.kind !== 'week');
+  const words = [];
+  for (const t of kept) {
+    const {
+      weak, plural, habit, possessive, loose, at, end, piece, ...tok
+    } = t;
+    if (!words.some((o) => same(o, tok))) words.push(tok);
+  }
+  const used = kept.map((t) => [t.at, t.end]);
+  // Today put in or left out of the week in so many words ("Besides tonight,
+  // which day is busiest this week?") is a reading of that today word, which
+  // the route ranks the week by (routes/advisor.js readingFor).
+  let todayCue = null;
+  if (TODAY_LEFT_OUT.test(lower)) todayCue = 'out';
+  else if (TODAY_IN.test(lower)) todayCue = 'in';
+  if (todayCue && lower.length === text.length) {
+    for (const m of lower.matchAll(todayCue === 'out' ? TODAY_LEFT_OUT_ALL : TODAY_IN_ALL)) {
+      for (const w of m[0].matchAll(TODAY_SAID)) used.push([m.index + w.index, m.index + w.index + w[0].length]);
+    }
+  }
+  return {
+    text, shouting, all, asking, tokens, words, kept, todayCue, used, maybe: maybeWordsIn(text, lower),
+  };
 }
 
 module.exports = {

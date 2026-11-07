@@ -720,6 +720,18 @@ const INVENTORY = [
     why: 'Account-keyed, server-sized payloads, and the money leg is not even here: the global daily token wall is the Postgres row advisor_spend (migration 035), which survives deploys and instances, closing the "a brake, not a cap" gap birdieUsage documents in its own global figure.',
   },
 
+  // ── services/roostDayReader.js ───────────────────────────────────────────
+  {
+    file: 'services/roostDayReader.js', name: 'READINGS', kind: 'cache',
+    key: 'the owner\'s typed question as the route hands it to the reader (sanitised, at most FREE_TEXT_MAX_CHARS = 280 characters, the previous turn included when the follow-on reads it in)',
+    callerControls: 'all of it — the owner types the question',
+    protects: 'milliseconds of the only thread: the route reads one question several times (dayGate, readingFor, the weekend\'s plan, the advice path), and each read normalised and parsed it again',
+    denominator: 'n/a (a pure memo, no counter)',
+    bound: 'READINGS_KEPT = 32, oldest-first',
+    verdict: 'SAFE',
+    why: 'An optimisation the caller can switch off by asking new questions, which only puts back the per-read cost the route paid before; the reading is a pure function of the text, so a kept entry is what a fresh read would return; advisorQuestionLimiter (10 an hour per account on POST /api/venue/advisor/question) and the 280-character cap bound how many misses there are and what each costs.',
+  },
+
   // ── services/birdieUsage.js ───────────────────────────────────────────────
   {
     file: 'services/birdieUsage.js', name: 'userRateLimits', kind: 'counter',

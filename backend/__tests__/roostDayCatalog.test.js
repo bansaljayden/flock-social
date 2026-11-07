@@ -636,6 +636,20 @@ const OPEN = {
   '501/model': 'F', '502/model': 'F', '503/model': 'F', '640/model': 'F', '644/model': 'F',
   '901/model': 'S', '901/offline': 'S', '902/model': 'S', '903/model': 'S', '904/model': 'S', '907/model': 'F',
   '911/model': 'S', '913/model': 'S', '914/model': 'S',
+  // A day or weekend word the reading does not use (fourth recheck,
+  // 2026-11-06): a day the reading sets aside itself, as a reason, the past,
+  // a possessive or a day said shut; a short form that is the word ("we sat
+  // 40", "the sun rush"); a name ("Ruby Tuesday", "Sun Devils"); the hours
+  // ("Mon-Fri"); a weekend gone by. Each is answered exactly as main answers
+  // it, at main's level.
+  '114/model': 'S', '116/model': 'S', '509/model': 'F', '603/model': 'S', '603/offline': 'S', '604/model': 'S',
+  '605/model': 'S', '605/offline': 'S', '606/model': 'S', '607/model': 'S', '607/offline': 'S', '631/model': 'S',
+  '636/model': 'F', '637/model': 'F', '638/model': 'F', '638/offline': 'F', '642/model': 'F', '642/offline': 'F',
+  '710/model': 'S', '712/model': 'S', '714/model': 'S', '716/model': 'S', '717/model': 'S', '719/model': 'S',
+  '722/model': 'S', '723/model': 'S', '724/model': 'S', '801/model': 'S', '801/offline': 'S', '803/model': 'S',
+  '804/model': 'S', '804/offline': 'S', '808/model': 'S', '808/offline': 'S', '809/model': 'S', '811/model': 'S',
+  '812/model': 'S', '813/model': 'S', '814/model': 'S', '815/model': 'S', '816/model': 'S', '817/model': 'S',
+  '818/model': 'S', '819/model': 'S', '820/model': 'S', '822/model': 'S', '1109/model': 'S', '1111/model': 'S',
 };
 
 const ROWS = CASES.map(([id, q, route, clock, venue, expect, extra = {}]) => ({
