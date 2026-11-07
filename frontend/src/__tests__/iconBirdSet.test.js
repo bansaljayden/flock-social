@@ -445,6 +445,8 @@ describe('where the set is drawn', () => {
     expect(settings).toContain("icon: Icons.birdie, size: 16, v: birdieConsented ? 'On' : 'Off' }");
     expect(settings).toContain('{m.icon(colors.navy, m.size || 18)}');
     expect(settings).toMatch(/\{Icons\.helpCircle\(colors\.navy, 18\)\}<\/div>\s*<span[^>]*>Support<\/span>/);
+    // The screen that row opens wears the same mark, where it drew a bubble.
+    expect(settings).toMatch(/\{Icons\.birdie\(colors\.navy, 16\)\}<\/div>\s*<h2[^>]*>Let Birdie use Google's Gemini<\/h2>/);
   });
 
   test('a flock\'s money: the cash pool and the budget are a nest egg, the bill a torn receipt', () => {
@@ -562,6 +564,10 @@ describe('the stray stock SVGs are folded into the set', () => {
     const text = read(...file);
     calls.forEach((c) => expect(text).toContain(c));
     expect(text).not.toMatch(/<svg\b/);
+  });
+
+  test('a paywall benefit with no mark of its own draws a tick instead of throwing', () => {
+    expect(read('components', 'PaywallSheet.js')).toContain('const [glyph, size] = BENEFIT_GLYPH[name] || [Icons.check, 18];');
   });
 });
 

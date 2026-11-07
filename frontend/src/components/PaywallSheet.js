@@ -114,8 +114,10 @@ const BENEFIT_GLYPH = {
   forecast: [Icons.barChart, 18],
   alerts: [Icons.bell, 18],
 };
+// A benefit with no mark of its own draws a tick rather than throwing during
+// render (the old inline svg drew nothing there).
 const BenefitIcon = ({ name, color }) => {
-  const [glyph, size] = BENEFIT_GLYPH[name];
+  const [glyph, size] = BENEFIT_GLYPH[name] || [Icons.check, 18];
   return <span data-benefit-icon="" style={{ display: 'inline-flex', flexShrink: 0, width: '18px', justifyContent: 'center' }}>{glyph(color, size)}</span>;
 };
 

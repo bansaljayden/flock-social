@@ -827,7 +827,7 @@ export default function ProfileSettings({
               <div>
                 <div style={styles.card}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.messageSquare(colors.navy, 18)}</div>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.birdie(colors.navy, 16)}</div>
                     <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>Let Birdie use Google's Gemini</h2>
                     {/* The same answer Birdie's own question records, and the
                         way to take it back (DELETE /api/ai/consent). Off means
