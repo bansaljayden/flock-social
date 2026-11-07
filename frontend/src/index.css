@@ -1147,6 +1147,12 @@ button:active, [role="button"]:active {
 .venue-sheet {
   --venue-sheet-room: calc(100vh - var(--safe-top) - var(--safe-bottom) - 16px);
   max-height: var(--venue-sheet-room);
+  /* ONE HEIGHT FROM THE FIRST FRAME. The sheet sized itself to its content,
+     so it opened at half height over the loading shapes and jumped to full
+     height when Place Details answered. It is the full room now (to 860px on
+     a tall desktop window), whatever has loaded; the scroll region inside
+     takes up the difference. */
+  height: min(860px, var(--venue-sheet-room));
 }
 @supports (height: 100dvh) {
   .venue-sheet { --venue-sheet-room: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 16px); }

@@ -28,7 +28,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, within } = require('@testing-library/react');
+const { render, screen, fireEvent, within, act } = require('@testing-library/react');
 
 jest.mock('../components/ui/MapsChooser', () => ({
   __esModule: true,
@@ -227,12 +227,21 @@ describe('the venue sheet', () => {
     }, over);
   };
 
-  test('the header photo carries its own credit, and the next photo carries the next one', () => {
-    const p = props();
-    const { rerender } = render(React.createElement(VenueDetailSheet, p));
-    expect(screen.getByTestId('photo-credit').textContent).toMatch(/Dana Reyes/);
-    rerender(React.createElement(VenueDetailSheet, { ...p, venueDetailPhotoIdx: 1 }));
-    expect(screen.getByTestId('photo-credit').textContent).toMatch(/Lee Park/);
+  test('the header photo carries its own credit, and the next photo carries the next one', async () => {
+    // The next photo replaces the one on screen once it has decoded
+    // (VenueDetailSheet SteadyPhoto; venueSheetSteadyOpen.test.js), and its
+    // credit comes with it, never before it.
+    const realDecode = HTMLImageElement.prototype.decode;
+    HTMLImageElement.prototype.decode = () => Promise.resolve();
+    try {
+      const p = props();
+      const { rerender } = render(React.createElement(VenueDetailSheet, p));
+      expect(screen.getByTestId('photo-credit').textContent).toMatch(/Dana Reyes/);
+      await act(async () => { rerender(React.createElement(VenueDetailSheet, { ...p, venueDetailPhotoIdx: 1 })); });
+      expect(screen.getByTestId('photo-credit').textContent).toMatch(/Lee Park/);
+    } finally {
+      HTMLImageElement.prototype.decode = realDecode;
+    }
   });
 
   test('the card carries the Google Maps mark, while loading too', () => {

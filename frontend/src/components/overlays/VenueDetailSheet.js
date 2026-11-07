@@ -87,6 +87,49 @@ function CreditedPhoto({ src, credit }) {
   );
 }
 
+// THE HEADER KEEPS ITS PICTURE UNTIL THE NEXT ONE IS READY TO DRAW. The sheet
+// opens on the photo its caller had (a search row's, a pin's), and Place
+// Details answers a moment later with its own list, usually starting on a
+// different photo. Swapping the <img> on that answer blanked the header to
+// the theme colour until the new file downloaded: the beige flash a tester
+// recorded between the sheet opening and the photo coming back. So the photo
+// on screen stays, with its own credit, until the next one has decoded
+// (img.decode()), and then the two swap in one frame. A photo that fails to
+// load never replaces the one showing. With nothing showing yet, the
+// `fallback` (the header map) holds the place instead, and keeps it if the
+// photo never draws. The same hold covers
+// the arrows: the next photo appears when it can be drawn, not before.
+// A function declaration with no destructured arrow parameter in it: the
+// sheet's tests find the end of its prop list by the first such arrow in this
+// file.
+function SteadyPhoto(props) {
+  const { src, credit, fallback } = props;
+  // usableCredit builds a fresh object on every render, so the credit is
+  // compared by what it says.
+  const creditKey = credit ? [credit.name, credit.uri, credit.maps_uri].join('|') : '';
+  const [shown, setShown] = React.useState(src ? { src, credit, creditKey } : null);
+  React.useEffect(function swapWhenDecoded() {
+    if (!src) { setShown(null); return undefined; }
+    if (shown && shown.src === src) {
+      if (shown.creditKey !== creditKey) setShown({ src, credit, creditKey });
+      return undefined;
+    }
+    let cancelled = false;
+    const img = new Image();
+    function show() { if (!cancelled) setShown({ src, credit, creditKey }); }
+    function keep() { /* the photo on screen stays */ }
+    const ready = typeof img.decode === 'function'
+      ? (img.src = src, img.decode())
+      : new Promise(function onLoad(resolve, reject) { img.onload = resolve; img.onerror = reject; img.src = src; });
+    // A photo that will not draw never replaces what is showing: the photo
+    // before it, or with none, the map.
+    ready.then(show, keep);
+    return function cancel() { cancelled = true; };
+  }, [src, creditKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!shown) return fallback || null;
+  return <CreditedPhoto key={shown.src} src={shown.src} credit={shown.credit} />;
+}
+
 const VenueDetailSheet = ({
   // Module scope helpers and components that live in App.js and are not
   // exported, so they stay declared there and arrive here.
@@ -274,6 +317,34 @@ const VenueDetailSheet = ({
           },
           googleUrl: httpUrl(venueDetailModal.google_maps_url) || (venueDetailModal.place_id ? `https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}` : null),
         });
+        // The header's photo: the details' list when it has one (at the photo
+        // the arrows chose), else the seed photo with its credit, else none.
+        const detailPhotos = !!(venueDetailModal.photos && venueDetailModal.photos.length > 0);
+        const heroIdx = detailPhotos && venueDetailModal.photos[venueDetailPhotoIdx] ? venueDetailPhotoIdx : 0;
+        const heroSrc = detailPhotos ? venueDetailModal.photos[heroIdx] : (seedCredit ? venueDetailModal.photo_url : null);
+        const heroCredit = detailPhotos ? creditAt(venueDetailModal.photo_attributions, heroIdx) : seedCredit;
+        /* No photo, which is every venue Places has none for and every venue
+           once the photo spend cap is reached, and a seed photo with no
+           credit in hand (seedCredit, above): the block it is on, in the app
+           theme, with its credit top left where the name and the close button
+           leave room. A real photo beats a map in a header, so this is the
+           no-photo branch, and what holds the header while a first photo
+           decodes. With no key, no coordinates or a failed image it is the
+           navy box with a pin it always was. A tap opens the same chooser as
+           Get Directions. */
+        const heroMap = (
+          <StaticVenueMap
+            lat={venueMapAt.lat}
+            lng={venueMapAt.lng}
+            name={venueDetailModal.name}
+            size="sheet"
+            height={220}
+            dark={paletteIsDark(colors)}
+            creditCorner="topleft"
+            onOpen={openVenueDirections}
+            fallback={<div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>}
+          />
+        );
         return (
         // CLEAR OF THE STATUS BAR AND THE HOME INDICATOR. The backdrop covers
         // the whole screen, and the sheet was centred in it at up to 92vh, so
@@ -294,14 +365,14 @@ const VenueDetailSheet = ({
           <div className="venue-sheet" style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             {/* Photo area */}
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
-              {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
+              {/* One photo slot for the map, the seed photo and the details'
+                  list alike, so the answer landing does not remount it and
+                  the picture showing holds until the next can be drawn
+                  (SteadyPhoto, above). */}
+              <SteadyPhoto src={heroSrc} credit={heroCredit} fallback={heroMap} />
+              {heroSrc && (
                 <>
-                  {(() => {
-                    const idx = venueDetailModal.photos[venueDetailPhotoIdx] ? venueDetailPhotoIdx : 0;
-                    const src = venueDetailModal.photos[idx];
-                    return <CreditedPhoto key={src} src={src} credit={creditAt(venueDetailModal.photo_attributions, idx)} />;
-                  })()}
-                  {venueDetailModal.photos.length > 1 && (
+                  {venueDetailModal.photos && venueDetailModal.photos.length > 1 && (
                     <>
                       <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
                       <button aria-label="Next" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>›</button>
@@ -313,29 +384,6 @@ const VenueDetailSheet = ({
                     </>
                   )}
                 </>
-              ) : seedCredit ? (
-                <CreditedPhoto key={venueDetailModal.photo_url} src={venueDetailModal.photo_url} credit={seedCredit} />
-              ) : (
-                /* No photo, which is every venue Places has none for and
-                   every venue once the photo spend cap is reached, and a seed
-                   photo with no credit in hand (seedCredit, above): the block
-                   it is on, in the app theme, with its credit top left where
-                   the name and the close button leave room. A real photo beats
-                   a map in a header, so this is the no-photo branch only. With
-                   no key, no coordinates or a failed image it is the navy box
-                   with a pin it always was. A tap opens the same chooser as
-                   Get Directions. */
-                <StaticVenueMap
-                  lat={venueMapAt.lat}
-                  lng={venueMapAt.lng}
-                  name={venueDetailModal.name}
-                  size="sheet"
-                  height={220}
-                  dark={paletteIsDark(colors)}
-                  creditCorner="topleft"
-                  onOpen={openVenueDirections}
-                  fallback={<div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>}
-                />
               )}
               {/* Overlay gradient */}
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
