@@ -118,14 +118,16 @@ import { cardOpenPill } from '../../lib/cardOpenPill';
 import { isLaterDay } from '../../lib/usualNight';
 
 // The consent question's two answers, drawn the same: neither is the
-// filled one (the consent block, below, says why).
+// filled one (the consent block, below, says why). The warm tertiary well,
+// which shows on the card in both themes (1.31:1 light, 1.26:1 dark, where
+// --bg-inset is 1.03:1 on a dark card), with ink at 11.2:1 and 9.9:1.
 const consentChoice = {
   flex: 1,
   minHeight: '44px',
   padding: '10px',
   borderRadius: '10px',
   border: 'none',
-  background: 'var(--bg-inset)',
+  background: 'var(--bg-tertiary)',
   color: 'var(--text-primary)',
   fontSize: 'var(--t-meta)',
   fontWeight: '600',

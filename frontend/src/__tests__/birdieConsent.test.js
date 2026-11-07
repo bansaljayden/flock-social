@@ -403,7 +403,7 @@ describe('Allow and Not now weigh the same', () => {
     expect(PANEL_SRC).toMatch(/onClick=\{closeAiChat\} disabled=\{birdieConsentBusy\} style=\{\{ \.\.\.consentChoice,/);
     expect(PANEL_SRC).toMatch(/onClick=\{\(\) => answerBirdieConsent\(true\)\} disabled=\{birdieConsentBusy\} style=\{\{ \.\.\.consentChoice,/);
     const choice = PANEL_SRC.slice(PANEL_SRC.indexOf('const consentChoice = {'), PANEL_SRC.indexOf('};', PANEL_SRC.indexOf('const consentChoice = {')));
-    expect(choice).toContain("background: 'var(--bg-inset)'");
+    expect(choice).toContain("background: 'var(--bg-tertiary)'");
     expect(choice).toContain("border: 'none'");
     expect(choice).not.toMatch(/#1e293b|white/);
   });
