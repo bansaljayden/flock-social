@@ -1032,9 +1032,9 @@ export default function DmDetail({
 
       {/* Location sharing indicator */}
       {dmSharingLocation && (
-        <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div style={{ padding: '8px 14px', backgroundColor: 'var(--nest-hero-bg)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing your location with {selectedDm.name}</p>
-          {dmMemberLocation && <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
+          {dmMemberLocation && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--nest-hero-meta)', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
           <button className="hit44" onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
         </div>
       )}
@@ -1216,7 +1216,7 @@ export default function DmDetail({
                     const isLeading = !v.isPinned && idx === 0 && voteCount > 0;
                     const iconBg = v.isPinned
                       ? colors.navyBg
-                      : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                      : isLeading ? colors.steel : `${colors.navy}1F`;
                     /* THE DEAL THIS READER'S VENUE PAGE LEADS WITH, when the
                        venue has one for them. The server decides it per person
                        (backend sockets/handlers.js dmVotesFor), so a drink deal
@@ -1308,7 +1308,7 @@ export default function DmDetail({
                             {showPhoto ? (
                               <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                             ) : (
-                              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                 {Icons.mapPin('white', 14)}
                               </div>
                             )}
@@ -1359,7 +1359,7 @@ export default function DmDetail({
 
             {/* Current pinned venue display */}
             {dmPinnedVenue ? (
-              <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}15)`, border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ padding: '12px', borderRadius: '14px', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {Icons.mapPin('white', 18)}
                 </div>
@@ -1444,7 +1444,7 @@ export default function DmDetail({
                           onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
                         />
                       ) : (
-                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
                         </div>
                       )}

@@ -2027,7 +2027,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const age = Math.round((Date.now() - loc.timestamp) / 1000);
         const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
         const popupHtml = `<div style="font-family:'Hanken Grotesk',-apple-system,system-ui,sans-serif;display:flex;align-items:center;gap:10px;padding:6px 4px;min-width:160px">
-          <div style="width:36px;height:36px;border-radius:18px;background:linear-gradient(135deg,#1e293b,#1a3a5c);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <div style="width:36px;height:36px;border-radius:18px;background:#1e293b;display:flex;align-items:center;justify-content:center;flex-shrink:0">
             <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
           </div>
           <div style="flex:1;min-width:0">

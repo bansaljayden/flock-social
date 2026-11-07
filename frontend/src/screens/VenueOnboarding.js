@@ -603,7 +603,7 @@ export default function VenueOnboarding({
           )}
           <button className="hit44" onClick={handleNext} disabled={!canAdvance() || launching} aria-busy={launching || undefined} style={{
             width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
-            background: canAdvance() ? 'linear-gradient(135deg, #f0ead8 0%, #d4c9a8 100%)' : 'rgba(148,163,184,0.1)',
+            background: canAdvance() ? '#f0ead8' : 'rgba(148,163,184,0.1)',
             color: canAdvance() ? '#1a2744' : 'rgba(148,163,184,0.3)',
             fontSize: 'var(--t-body)', fontWeight: '600', cursor: launching ? 'progress' : canAdvance() ? 'pointer' : 'not-allowed',
             boxShadow: canAdvance() ? '0 4px 16px rgba(240,234,216,0.15)' : 'none',

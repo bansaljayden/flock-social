@@ -583,9 +583,9 @@ export default function ExploreScreen({
           <div style={{
             position: 'absolute', top: '8px', left: '8px', right: '8px',
             padding: '8px 12px', borderRadius: '14px',
-            background: 'linear-gradient(135deg, #059669, #047857)',
+            backgroundColor: 'var(--nest-hero-bg)',
             display: 'flex', alignItems: 'center', gap: '8px',
-            zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
+            zIndex: 35, boxShadow: '0 1px 3px rgba(30,41,59,0.15)',
           }}>
             <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
               Sharing your location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}

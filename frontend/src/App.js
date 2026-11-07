@@ -23077,7 +23077,7 @@ const FlockApp = () => {
         {notice}
         <div style={{
           minHeight: '100vh',
-          background: `linear-gradient(135deg, #1e293b 0%, #1a3a5c 50%, #2d5a87 100%)`,
+          backgroundColor: '#1e293b',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',

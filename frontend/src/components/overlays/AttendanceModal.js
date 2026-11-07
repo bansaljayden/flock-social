@@ -86,7 +86,7 @@ const AttendanceModal = ({
               {attendanceMembers.map(m => (
                 <button className="hit44" key={m.id} aria-pressed={!!attendanceChecks[m.id]} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(45,90,135,0.45)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(45,90,135,0.08)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0 }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0 }}>
                     {(m.name || '?')[0].toUpperCase()}
                   </div>
                   <span style={{ flex: 1, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
@@ -140,7 +140,7 @@ const AttendanceModal = ({
                   setShowAttendanceModal(false);
                 } catch (err) { showToast(err?.message || "That didn't save. Try again.", 'error'); }
                 finally { setAttendanceSubmitting(false); }
-              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
+              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '13px', borderRadius: '14px', border: 'none', color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', opacity: attendanceSubmitting ? 0.6 : 1 }}>
                 {attendanceSubmitting ? 'Saving...' : 'Confirm'}
               </button>
               <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAttendanceModal(false)} style={{ padding: '13px 18px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Skip</button>

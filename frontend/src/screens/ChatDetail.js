@@ -3468,20 +3468,19 @@ export default function ChatDetail({
         )}
 
         {locBannerAsk && (
-          /* Tokened, not mint hex. This band was the one piece of chrome on
-             the screen with no dark answer: #ecfdf5 to #d1fae5 is a near-white
-             slab in dark mode, under a header that is navy. The token pair
-             already carries both themes, and the text beside it was reading
-             from it all along. */
-          <div style={{ padding: '10px 14px', background: 'var(--accent-green-bg)', borderBottom: '1px solid rgba(16,185,129,0.35)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(16,185,129,0.3)' }}>
-              {Icons.mapPin('white', 18)}
+          /* The band style the venue and budget bands use: the card fill, a
+             hairline under it and a steel mark. It was a mint slab with an
+             emerald gradient disc, the loudest colour on the chat and in no
+             token family the rest of the app draws from. */
+          <div style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              {Icons.mapPin(colors.steel, 18)}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-green-text)', margin: 0 }}>Share your location with the group?</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-green-text)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
+              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: 0 }}>Share your location with the group?</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
-            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
             <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: flock.eventTime || true }; lsSet('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
@@ -3493,11 +3492,11 @@ export default function ChatDetail({
             would be one more banner between the header and the first
             message, which is the thing the chat rebuild exists to remove. */}
         {sharingLocationForFlock === flock.id && (
-          <div style={{ padding: '8px 14px', background: 'linear-gradient(135deg, #059669, #047857)', flexShrink: 0 }}>
+          <div style={{ padding: '8px 14px', backgroundColor: 'var(--nest-hero-bg)', flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing location with {flock.name}</p>
               {sharingHere > 0 && (
-                <span style={{ fontSize: 'var(--t-meta)', color: '#a7f3d0', fontWeight: '500' }}>{sharingHere} sharing</span>
+                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--nest-hero-meta)', fontWeight: '500' }}>{sharingHere} sharing</span>
               )}
               <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
             </div>
@@ -3541,7 +3540,7 @@ export default function ChatDetail({
 
         {/* Budget status bar */}
         {flock.budgetEnabled && budgetStatus && (
-          <div role="button" tabIndex={0} aria-label="Open group cash pool" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.steel}08, ${colors.steel}15)`, borderBottom: `1px solid ${colors.steel}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div role="button" tabIndex={0} aria-label="Open group cash pool" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.dollar(colors.steel, 13)}
               {budgetStatus.ceiling ? (
@@ -4744,7 +4743,7 @@ export default function ChatDetail({
                       const isLeading = !isAssigned && idx === 0 && count > 0 && !isTiedTop;
                       const iconBg = isAssigned
                         ? colors.navyBg
-                        : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
+                        : isLeading ? colors.steel : `${colors.navy}1F`;
                       /* TWO CONTROLS, SIDE BY SIDE, IN A PLAIN CONTAINER.
                       This row used to be role="button" with the Confirm
                       <button> nested inside it. WebKit collapses a control
@@ -4922,7 +4921,7 @@ export default function ChatDetail({
                               {showPhoto ? (
                                 <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                               ) : (
-                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                   {Icons.mapPin('white', 14)}
                                 </div>
                               )}
@@ -4973,7 +4972,7 @@ export default function ChatDetail({
 
               {/* Current venue display */}
               {flock.venue && flock.venue !== 'TBD' ? (
-                <div style={{ padding: '12px', borderRadius: '14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}15)`, border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ padding: '12px', borderRadius: '14px', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {Icons.mapPin('white', 18)}
                   </div>
@@ -5056,7 +5055,7 @@ export default function ChatDetail({
                           width: '44px',
                           height: '44px',
                           borderRadius: '12px',
-                          background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+                          backgroundColor: getCategoryColor(venue.category),
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center'
