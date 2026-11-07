@@ -19,6 +19,7 @@ const path = require('path');
 const { createRequire } = require('module');
 const { test, expect, devices } = require('@playwright/test');
 const { signUp, failOnPageErrors } = require('./helpers');
+const { zoneForLocalHour, localTime } = require('./clock');
 
 const backendRequire = createRequire(path.join(__dirname, '..', '..', 'backend', 'package.json'));
 const PG_URL = `postgresql://postgres:postgres@127.0.0.1:${process.env.E2E_PG_PORT || 59610}/flock_e2e`;
@@ -579,26 +580,122 @@ test('the SOS sheet explains itself and Call 911 is the loudest thing on it', as
   expect(errors).toEqual([]);
 });
 
-test('after an alert has gone out there is a way to stand down', async ({ page }) => {
-  const { errors } = await enterApp(page, 'Standdown Tester');
+/** Whether the toast holding this text is what a finger would land on at its middle. */
+function toastOnTop(text) {
+  return text.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return Boolean(hit) && el.parentElement.contains(hit);
+  });
+}
 
-  // An alert went out earlier tonight. That is a state a person is genuinely in
-  // when they reopen the app, and the app itself remembers it exactly this way.
-  await page.evaluate(() => window.localStorage.setItem('flock.sosAlertAt', String(Date.now() - 60_000)));
-  await page.reload();
-  await expect(page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
-  await page.getByRole('button', { name: /safety and emergency sos/i }).click();
+/* THE STAND-DOWN ANSWERS, BY DAY AND AT NIGHT.
+ *
+ * This account never sent an alert, so the server has nothing to withdraw and
+ * says so (routes/safety.js, nothingToCancel). The app shows that sentence as
+ * a toast, drops the stale band and forgets the timestamp. The assertion reads
+ * that sentence INSIDE THE TOAST REGION.
+ *
+ * It used to look anywhere on the page for /told|ok|no recent alert|could not/.
+ * The server's sentence matches none of those, and the band's own line, "They
+ * have not been told anything since.", matches "told". So the test passed when
+ * the server answered after Playwright's first look (on the band, the sentence
+ * that says the alert is STILL out) and failed when it answered before it.
+ * That is why it went green at 19:12 and red at 21:18 on 2026-11-06, on the
+ * same commit. NIGHT on the failing screen was a coincidence: the trace held
+ * the toast, in the night theme, with the server's sentence in it.
+ *
+ * Both hours run on every run anyway (clock.js moves the browser's zone and
+ * leaves its clock alone). Auto mode repaints the whole app at 20:00, and a
+ * safety confirmation that went missing at night would be found here.
+ */
+for (const [when, hour, theme] of [['by day', 13, 'light'], ['at night', 22, 'dark']]) {
+  test.describe(when, () => {
+    test.use({ timezoneId: zoneForLocalHour(hour) });
 
-  const sheet = page.getByRole('alertdialog');
-  await expect(sheet.getByText(/your contacts were alerted/i)).toBeVisible();
-  const ok = sheet.getByRole('button', { name: /tell them i'm ok/i });
-  await expect(ok).toBeEnabled();
+    test(`after an alert has gone out there is a way to stand down, and its answer shows ${when}`, async ({ page }) => {
+      const { errors } = await enterApp(page, 'Standdown Tester');
 
-  await ok.click();
-  // Whatever the server says, the app has to say something. Silence here is the
-  // worst answer: the person cannot tell whether the all clear went out.
-  await expect(page.getByText(/told|ok|no recent alert|could not/i).first()).toBeVisible({ timeout: 20_000 });
-  expect(errors).toEqual([]);
+      // An alert went out earlier tonight. That is a state a person is genuinely in
+      // when they reopen the app, and the app itself remembers it exactly this way.
+      await page.evaluate(() => window.localStorage.setItem('flock.sosAlertAt', String(Date.now() - 60_000)));
+      await page.reload();
+      await expect(page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
+      // The hour took in the app, not only in the browser: auto mode's theme,
+      // and the NIGHT tag the Nest draws beside the name after 20:00.
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await expect(page.getByText('NIGHT', { exact: true })).toHaveCount(theme === 'dark' ? 1 : 0);
+
+      await page.getByRole('button', { name: /safety and emergency sos/i }).click();
+      const sheet = page.getByRole('alertdialog');
+      await expect(sheet.getByText(/your contacts were alerted/i)).toBeVisible();
+      const ok = sheet.getByRole('button', { name: /tell them i'm ok/i });
+      await expect(ok).toBeEnabled();
+
+      await ok.click();
+      // Whatever the server says, the app has to say something. Silence here is the
+      // worst answer: the person cannot tell whether the all clear went out.
+      const said = page.getByRole('status').getByText(/nothing to stand down/i);
+      await expect(said).toBeVisible({ timeout: 20_000 });
+      // Visible to a person: the sheet still open underneath does not cover it.
+      expect(await toastOnTop(said), 'the answer is drawn underneath something').toBe(true);
+
+      // And the screen acts on it: the stale band is gone, and so is the memory
+      // of it, so the next open does not offer it again.
+      await expect(sheet.getByText(/your contacts were alerted/i)).toHaveCount(0);
+      expect(await page.evaluate(() => window.localStorage.getItem('flock.sosAlertAt'))).toBeNull();
+      expect(errors).toEqual([]);
+    });
+  });
+}
+
+/* A TOAST THAT IS UP AT 20:00 IS STILL UP AFTER IT.
+ *
+ * Auto mode turns the app dark at 20:00 on a 60 second check (ThemeContext),
+ * which re-renders everything under the theme. If anything above the toast
+ * region ever remounted on a theme change, every toast on screen at that
+ * moment would vanish. The one this matters most for is a failed stand-down:
+ * the alert is still out, and its error toast holds until it is dismissed. So
+ * the phone sits on that toast across 20:00 here. The wire is cut for the one
+ * request, the way a bar basement cuts it, because the local stack cannot make
+ * the server fail.
+ */
+const SUNSET = localTime(19, 50);
+test.describe('across 20:00', () => {
+  test.use({ timezoneId: SUNSET.timezoneId });
+
+  test('a failed stand-down stays on screen when auto mode turns the app dark', async ({ page }) => {
+    await page.clock.install({ time: SUNSET.at });
+    const { errors } = await enterApp(page, 'Sunset Tester');
+    await page.evaluate(() => window.localStorage.setItem('flock.sosAlertAt', String(Date.now() - 60_000)));
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+
+    await page.getByRole('button', { name: /safety and emergency sos/i }).click();
+    const sheet = page.getByRole('alertdialog');
+    await expect(sheet.getByText(/your contacts were alerted/i)).toBeVisible();
+    await page.route('**/api/safety/alert/cancel', (route) => route.abort('connectionrefused'));
+    await sheet.getByRole('button', { name: /tell them i'm ok/i }).click();
+
+    const said = page.getByRole('status').getByText(/couldn.t reach flock/i);
+    await expect(said).toBeVisible({ timeout: 20_000 });
+    const before = await said.innerText();
+    // The alert is still out, so the band stays for another try.
+    await expect(sheet.getByText(/your contacts were alerted/i)).toBeVisible();
+
+    // 20:00:05, and the next tick of auto mode's check.
+    await page.clock.setSystemTime(new Date(SUNSET.at.getTime() + 10 * 60_000 + 5_000));
+    await page.clock.fastForward(60_000);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.getByText('NIGHT', { exact: true })).toHaveCount(1);
+
+    await expect(said).toBeVisible();
+    expect(await said.innerText()).toBe(before);
+    expect(await toastOnTop(said), 'the toast went under something at 20:00').toBe(true);
+    expect(errors).toEqual([]);
+  });
 });
 
 /* ═══ DELETING THE ACCOUNT ═════════════════════════════════════════════════ */

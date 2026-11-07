@@ -11,8 +11,19 @@
 'use strict';
 
 const { defineConfig, devices } = require('@playwright/test');
+const { zoneForLocalHour } = require('./clock');
 
 const WEB_PORT = Number(process.env.E2E_WEB_PORT || 3199);
+
+// E2E_LOCAL_HOUR=22 runs every spec at 22:xx local, in the dark night theme,
+// whatever the time on this machine; 13 runs them by day (see clock.js). Unset,
+// the browser keeps this machine's own zone, as it always has. A spec that
+// pins its own hour with test.use({ timezoneId }) keeps it. This reaches the
+// `page` every test is handed; a second phone a spec opens itself with
+// browser.newContext() inherits nothing from here, so it keeps this machine's
+// zone unless the spec passes one.
+const LOCAL_HOUR = process.env.E2E_LOCAL_HOUR;
+const PINNED_ZONE = LOCAL_HOUR === undefined || LOCAL_HOUR === '' ? null : zoneForLocalHour(Number(LOCAL_HOUR));
 
 module.exports = defineConfig({
   testDir: __dirname,
@@ -56,6 +67,6 @@ module.exports = defineConfig({
   },
 
   projects: [
-    { name: 'phone', use: { ...devices['iPhone 13'] } },
+    { name: 'phone', use: { ...devices['iPhone 13'], ...(PINNED_ZONE ? { timezoneId: PINNED_ZONE } : {}) } },
   ],
 });
