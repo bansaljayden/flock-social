@@ -62,7 +62,7 @@ describe('Birdie at the daily cap', () => {
 describe('the locked venue card', () => {
   test('one row names what is behind it instead of a heading over nothing', () => {
     const locked = card.indexOf("{cd?.forecastAccess?.locked && !(process.env.REACT_APP_PURCHASES !== 'off') ? (\n                  <m.div");
-    const heading = card.indexOf('Expected Crowd by Hour');
+    const heading = card.indexOf('Expected crowd by hour');
     expect(locked).toBeGreaterThan(-1);
     expect(locked).toBeLessThan(heading);
     expect(card).toContain('The hour-by-hour chart is part of Flock Pro.');

@@ -161,7 +161,7 @@ describe('the venue sheet shows the forecast on the first tap', () => {
   test('under the rating, price and open row and above the hours', () => {
     render(<VenueDetailSheet {...sheetProps()} />);
     const rating = screen.getByText('4.3');
-    const heading = screen.getByText(/Expected Crowd by Hour/);
+    const heading = screen.getByText(/Expected crowd by hour/);
     const hours = screen.getByRole('heading', { name: 'Hours' });
     expect(screen.getByText('Not Busy')).toBeTruthy();
     expect(follows(rating, heading)).toBe(true);
@@ -252,8 +252,8 @@ describe('the venue sheet shows the forecast on the first tap', () => {
 
   test('a sheet with no place yet draws no forecast, and nothing from the map card\'s navigation', () => {
     render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { ...VENUE, place_id: undefined } })} />);
-    expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
-    expect(screen.queryByText(/Less Crowded Nearby/i)).toBeNull();
+    expect(screen.queryByText(/Expected crowd by hour/)).toBeNull();
+    expect(screen.queryByText(/Less crowded nearby/i)).toBeNull();
   });
 });
 
@@ -273,7 +273,7 @@ describe('no read, no verdict', () => {
     expect(screen.queryByText(VERDICT)).toBeNull();
     expect(screen.queryByText('(4)')).toBeNull();
     expect(screen.queryByText('Group:')).toBeNull();
-    expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
+    expect(screen.queryByText(/Expected crowd by hour/)).toBeNull();
     expect(screen.queryByText('Busiest hours')).toBeNull();
     expect(screen.queryByText(/Est\. Wait/)).toBeNull();
   });
@@ -498,13 +498,13 @@ describe('CrowdForecastPanel', () => {
 
   test('the map card\'s nearby list and its way back draw only from what the card passes', () => {
     const { unmount } = render(<CrowdForecastPanel {...panelProps(nearbyProps)} />);
-    expect(screen.getByText('Less Crowded Nearby')).toBeTruthy();
+    expect(screen.getByText('Less crowded nearby')).toBeTruthy();
     expect(screen.getByText(/Back to The Last Place/)).toBeTruthy();
     unmount();
     // The sheet's call: the same read, none of the card's navigation.
     render(<CrowdForecastPanel {...panelProps({ crowdData: nearbyProps.crowdData })} />);
     expect(screen.getByText('Busy')).toBeTruthy();
-    expect(screen.queryByText('Less Crowded Nearby')).toBeNull();
+    expect(screen.queryByText('Less crowded nearby')).toBeNull();
     expect(screen.queryByText(/Back to /)).toBeNull();
   });
 
@@ -559,19 +559,19 @@ describe('a plan for another day', () => {
     expect(strip).toBeTruthy();
     const dd = new Date(`${date}T12:00:00`);
     expect(strip.textContent).toBe(`${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dd.getDay()]} ${dd.getDate()} · Usually busiest 7-9 PM`);
-    const heading = screen.getByText(/Today's Crowd by Hour/);
+    const heading = screen.getByText(/Today's crowd by hour/);
     expect(follows(strip, heading)).toBe(true);
-    expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
+    expect(screen.queryByText(/Expected crowd by hour/)).toBeNull();
   });
 
   test('today, or no plan, is the sheet it was', () => {
     const today = later(0);
     const { unmount } = render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { ...VENUE, planDay: { date: today, usual: usualFor(today) } } })} />);
-    expect(screen.getByText(/Expected Crowd by Hour/)).toBeTruthy();
+    expect(screen.getByText(/Expected crowd by hour/)).toBeTruthy();
     expect(document.querySelector('[data-usual-night]')).toBeNull();
     unmount();
     render(<VenueDetailSheet {...sheetProps()} />);
-    expect(screen.getByText(/Expected Crowd by Hour/)).toBeTruthy();
+    expect(screen.getByText(/Expected crowd by hour/)).toBeTruthy();
     expect(document.querySelector('[data-usual-night]')).toBeNull();
   });
 

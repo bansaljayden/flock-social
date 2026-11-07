@@ -1070,8 +1070,8 @@ export function CrowdForecastPanel({
                     {/* The hours are the venue's, not the phone's. Say so only
                         when the two clocks differ, so someone in Pennsylvania
                         reading an LA bar knows why the chart starts at 8 PM. */}
-                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>
-                      {isLaterDay(planDate) ? "Today's Crowd by Hour" : 'Expected Crowd by Hour'}{venueLocalTime ? <span style={{ fontWeight: '500', textTransform: 'none' }}> · {venueLocalTime} there</span> : ''}
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>
+                      {isLaterDay(planDate) ? "Today's crowd by hour" : 'Expected crowd by hour'}{venueLocalTime ? <span style={{ fontWeight: '500' }}> · {venueLocalTime} there</span> : ''}
                     </p>
                     {(() => {
                       if (!cd) return null; // no trend claims without a read
@@ -1229,7 +1229,7 @@ export function CrowdForecastPanel({
                     question, and both require two real numbers. */}
                 {!venueOwnerView && (crowdAlternatives.length > 0 || (!cd && typeof score === 'number' && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).length > 0)) && (
                 <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
-                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
+                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Less crowded nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && typeof score === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
                       <button key={v.placeId || v.id || i} className="hit44 glass-btn glass-secondary" onClick={() => {
@@ -1582,7 +1582,7 @@ export default function ConsumerVenueCard({
                     )}
 
                     <div>
-                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Last 12 Hours</p>
+                      <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 4px' }}>Last 12 hours</p>
                       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '3px', height: '36px' }}>
                         {slots.map((s, i) => {
                           const val = people(s.reading);

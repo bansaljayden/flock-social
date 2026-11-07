@@ -8,7 +8,7 @@
  * (backend/scripts/ml/HOUR-RANKING-EVAL.md). The server refuses to name a
  * quiet hour, a standout or a direction below that gap.
  *
- * The card's "Expected Crowd by Hour" trend arrow draws its OWN comparison,
+ * The card's "Expected crowd by hour" trend arrow draws its OWN comparison,
  * client side, between the current hour and the next one. It used to use a
  * 5 point dead zone justified in a code comment by the model's LEVEL error
  * ("MAE is ~5pts"), which is the exact substitution the ordering evaluation
@@ -64,7 +64,7 @@ describe('the hour-ordering floor', () => {
 
   test('the trend arrow decides on the named constant, never on a literal', () => {
     // The block between the heading and the bar chart.
-    const start = cardSource.indexOf('Expected Crowd by Hour');
+    const start = cardSource.indexOf('Expected crowd by hour');
     expect(start).toBeGreaterThan(-1);
     const block = cardSource.slice(start, start + 3000);
     const arrow = block.slice(0, block.indexOf("{arrow} {label}"));
@@ -75,7 +75,7 @@ describe('the hour-ordering floor', () => {
   });
 
   test('the dead zone is never justified by the level error again', () => {
-    const start = cardSource.indexOf('Expected Crowd by Hour');
+    const start = cardSource.indexOf('Expected crowd by hour');
     const block = cardSource.slice(start, start + 3000);
     const arrow = block.slice(0, block.indexOf("{arrow} {label}"));
     // The old comment read "model's MAE is ~5pts so use that as the dead-zone
