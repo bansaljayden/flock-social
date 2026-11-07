@@ -157,8 +157,12 @@ export default function SearchResultsOverlay({
                     </div>
                   </div>
 
-                  {/* Back to map + count + sort */}
-                  <div style={{ padding: '0 12px 10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {/* Back to map + count + sort. The three sort chips keep
+                      one line each and the row wraps: at 390px they do not
+                      fit beside Map and the count, and squeezed into the
+                      space left, Best Rated broke onto two lines while its
+                      neighbours kept one. They move under Map together. */}
+                  <div style={{ padding: '0 12px 10px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
                     <button className="hit44" onClick={() => setShowSearchResults(false)} style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0', flexShrink: 0 }}>
                       {Icons.arrowLeft(colors.navy, 14)}
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>Map</span>
@@ -166,13 +170,13 @@ export default function SearchResultsOverlay({
                     <div style={{ width: '1px', height: '16px', backgroundColor: 'var(--pill-bg)', flexShrink: 0 }} />
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)', flexShrink: 0 }}>{sorted.length} result{sorted.length !== 1 ? 's' : ''}</span>
                     <div style={{ flex: 1 }} />
-                    <div style={{ display: 'flex', gap: '4px' }}>
+                    <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                       {[
                         { id: 'rating', label: 'Best Rated' },
                         { id: 'recommended', label: 'Recommended' },
                         { id: 'distance', label: 'Closest' },
                       ].map(s => (
-                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
+                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
                           {s.label}
                         </button>
                       ))}
