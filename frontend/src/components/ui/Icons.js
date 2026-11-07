@@ -21,7 +21,14 @@
  *     edge to edge, at the family stroke: head to shoulders, a plus to a
  *     head, a pebble to a rule, a cut in a filled glyph. That is 1.5 px at 24
  *     and 0.75 px at 12, so a gap that has to survive at 12 px on a 1x screen
- *     is drawn 3 units wide.
+ *     is drawn 3 units wide. Four stated exceptions, each with its reason in
+ *     its own comment: helpCircle's question mark (its dot 1.1 from the hook
+ *     and the ring, the hook 1.2 from the ring), the $ in nestEgg (1.1 from
+ *     the shell, so the glyph is drawn from 16 px up), pro's two gulls (1.3
+ *     apart), and the binocular eyepieces, whose own opening is 0.7 tall and
+ *     fills in at 1x while they still read as eyepieces.
+ *     iconBirdSet.test.js measures every key of the bird set against the
+ *     rule and holds each exception to its number.
  *   - stroke-width is derived from the render size and applied with
  *     vector-effect: non-scaling-stroke. The exact contract, with the
  *     measurements behind it, is documented on sw() below - the short form is
@@ -56,8 +63,9 @@
  *     selected. A filled glyph keeps its outline twin's silhouette exactly,
  *     carries the same stroke so it does not shrink on the swap, and punches
  *     its inner details out with fill-rule evenodd, so it needs no background
- *     token. A cut is drawn half a stroke (1.14 units) wider than the gap it
- *     shows, because the stroke runs along both of its edges.
+ *     token. A cut is drawn a full stroke (2.29 units) wider than the gap it
+ *     shows: the stroke runs along both of its edges and eats half a stroke
+ *     from each, so plansFilled's 4-unit cut shows 1.71.
  *   - People stay people: the bust (`you`, `user`, `userPlus`, `users`) keeps
  *     a clear neck gap between head and shoulders and carries no bird at all.
  *   - One drawing per meaning: `user` is the `you` bust and `chat` /
@@ -445,23 +453,28 @@ const Icons = {
   ),
 
   // A nest egg: the money a flock has set aside (the budget, the cash pool).
-  // The egg with a $ whose bowls are r 2. Drawn from 16 px up, where the $
-  // still clears the shell; below that the call site uses `dollar`, and
-  // `dollar` stays the mark for prices and amounts.
+  // The egg with a $: bowls r 2, so their counters stay 1.7 open, 6 units
+  // wide, one less than it was, because the wider $ touched the shell (0.2 at
+  // its bottom riser, 0.7 at its left bowl). Its bottom bar still ends 1.1
+  // units from the shell, under the set's 1.5: a stated exception in the
+  // header, and the reason the glyph is drawn from 16 px up. Below that the
+  // call site uses `dollar`, which stays the mark for prices and amounts.
   nestEgg: make(
     <>
       <path d={EGG_D} />
-      <path d="M14.5 9 10.5 9A2 2 0 0 0 10.5 13L13.5 13A2 2 0 0 1 13.5 17L9.5 17" />
-      <path d="M12 7.5 12 9M12 17 12 18.5" />
+      <path d="M14 9 11 9A2 2 0 0 0 11 13L13 13A2 2 0 0 1 13 17L10 17" />
+      <path d="M12 7.5 12 9M12 17 12 17.5" />
     </>
   ),
 
   // Split the bill: a receipt with two lines and a torn foot drawn as a row
-  // of 45 degree Vs. `creditCard` stays for real card payments.
+  // of 45 degree Vs. The lines stop 1.7 units clear of the walls, so they
+  // never read as rungs joining them. `creditCard` stays for real card
+  // payments.
   splitBill: make(
     <>
       <path d="M18 19.5 18 3 6 3 6 19.5 8 21.5 10 19.5 12 21.5 14 19.5 16 21.5Z" />
-      <path d="M9 8 15 8M9 12.5 15 12.5" />
+      <path d="M10 8 14 8M10 12.5 14 12.5" />
     </>
   ),
 
@@ -851,9 +864,9 @@ const Icons = {
 
   // Help: the ring with a question mark, an r 3 hook over the top that turns
   // down at 45 degrees. The mark is as large as the ring allows, so its dot
-  // keeps 1.1 units clear of the hook and of the ring instead of the set's
-  // 1.5: with a smaller hook (r 2, which would fit the 1.5) the bowl closes up
-  // and reads as a blot at 16 px.
+  // keeps 1.1 units clear of the hook and of the ring, and the hook's crown
+  // 1.2 clear of the ring, instead of the set's 1.5: with a smaller hook (r 2,
+  // which would fit the 1.5) the bowl closes up and reads as a blot at 16 px.
   helpCircle: make(
     <>
       <circle cx="12" cy="12" r="9" />

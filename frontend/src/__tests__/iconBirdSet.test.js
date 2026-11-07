@@ -323,7 +323,22 @@ describe('every tab glyph sits on the 24 grid', () => {
     expect(offAngle).toEqual([]);
   });
 
-  test.each(['nest', 'discover', 'plans', 'messages', 'you'])('%s: separate parts stay 1.5 units clear', (key) => {
+  test('the cut in plansFilled shows at least 1.5 units once the stroke has eaten its edges', () => {
+    const body = shapes(draw('plansFilled')).find((s) => s.filled);
+    // The slit is the second sub-path: a band from y 9 to y 13.
+    const ys = body.points.slice(4, 8).map(([, y]) => y);
+    expect(Math.max(...ys) - Math.min(...ys) - STROKE_UNITS).toBeGreaterThanOrEqual(1.5);
+  });
+});
+
+describe('separate parts stay 1.5 units clear, across the set', () => {
+  // The stated exceptions (the Icons.js header, README rule 5), each held to
+  // the number its comment gives, so none of them can quietly shrink further.
+  const GAP_FLOOR = { helpCircle: 1.1, nestEgg: 1.1, pro: 1.3 };
+  const GAP_KEYS = [...SET_KEYS, 'users', 'userPlus'];
+
+  /** Edge-to-edge gaps between the parts of a glyph that do not touch. */
+  function gaps(key) {
     const parts = shapes(draw(key));
     const n = parts.length;
     const dist = [...Array(n)].map(() => Array(n).fill(Infinity));
@@ -336,25 +351,41 @@ describe('every tab glyph sits on the 24 grid', () => {
       }
     }
     // Shapes that touch are one part (the walls meet the roof, the hangers
-    // meet the box, the bridge meets the barrels); only parts that do not
-    // touch at all are held to the gap.
+    // meet the box, the bridge meets the barrels, the locate ticks meet its
+    // ring); only parts that do not touch at all are held to the gap.
     const root = [...Array(n).keys()];
     const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
     for (let a = 0; a < n; a += 1) for (let b = a + 1; b < n; b += 1) if (dist[a][b] < 0.06) root[find(a)] = find(b);
+    const out = [];
     for (let a = 0; a < n; a += 1) {
       for (let b = a + 1; b < n; b += 1) {
         if (find(a) === find(b)) continue;
-        const clear = dist[a][b] - (parts[a].stroked ? HALF : 0) - (parts[b].stroked ? HALF : 0);
-        expect({ key, a, b, clear: Number(clear.toFixed(2)), ok: clear >= 1.5 - 0.06 }).toEqual({ key, a, b, clear: Number(clear.toFixed(2)), ok: true });
+        out.push({ a, b, clear: dist[a][b] - (parts[a].stroked ? HALF : 0) - (parts[b].stroked ? HALF : 0) });
       }
+    }
+    return out;
+  }
+
+  test.each(GAP_KEYS)('%s', (key) => {
+    const floor = key in GAP_FLOOR ? GAP_FLOOR[key] : 1.5;
+    for (const { a, b, clear } of gaps(key)) {
+      expect({ key, a, b, clear: Number(clear.toFixed(2)), ok: clear >= floor - 0.06 }).toEqual({ key, a, b, clear: Number(clear.toFixed(2)), ok: true });
     }
   });
 
-  test('the cut in plansFilled shows at least 1.5 units once the stroke has eaten its edges', () => {
-    const body = shapes(draw('plansFilled')).find((s) => s.filled);
-    // The slit is the second sub-path: a band from y 9 to y 13.
-    const ys = body.points.slice(4, 8).map(([, y]) => y);
-    expect(Math.max(...ys) - Math.min(...ys) - STROKE_UNITS).toBeGreaterThanOrEqual(1.5);
+  test('each exception is still needed, so the list cannot outlive the drawing it excuses', () => {
+    Object.keys(GAP_FLOOR).forEach((key) => {
+      const tightest = Math.min(...gaps(key).map((g) => g.clear));
+      expect({ key, tightest: Number(tightest.toFixed(2)), under: tightest < 1.5 - 0.06 }).toEqual({ key, tightest: Number(tightest.toFixed(2)), under: true });
+    });
+  });
+
+  test('the binocular eyepieces are the one opening under the rule: 3 tall less the stroke', () => {
+    // A counter inside one part, so the measure above does not see it. It
+    // fills in at 1x and the eyepieces still read; it may not get smaller.
+    const eyepieces = shapes(draw('discover')).find((s) => s.points.some(([x, y]) => x === 4 && y === 5.5));
+    const ys = eyepieces.points.map(([, y]) => y);
+    expect(Number((Math.max(...ys) - Math.min(...ys) - STROKE_UNITS).toFixed(2))).toBe(0.71);
   });
 });
 

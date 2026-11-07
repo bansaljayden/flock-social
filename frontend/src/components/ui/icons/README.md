@@ -24,14 +24,21 @@ After changing a glyph, rewrite the files from `frontend/`:
    (the star, Birdie, the egg) are named in the `Icons.js` header.
 4. **Corners** are sharp, softened only by the round join.
 5. **Clear gaps.** Separate parts of a glyph stay 1.5 units apart, edge to edge
-   (3 units where the gap has to survive at 12 px).
+   (3 units where the gap has to survive at 12 px). Four stated exceptions:
+   `helpCircle`'s question mark (its dot 1.1 from the hook and the ring, the
+   hook 1.2 from the ring), the $ in `nestEgg` (1.1 from the shell, which is
+   why it is drawn from 16 px up), `pro`'s two gulls (1.3 apart), and the
+   binocular eyepieces, whose opening is 0.7 tall and fills in at 1x.
+   `iconBirdSet.test.js` measures the set and holds each exception to its
+   number; a new one needs a reason in the glyph's comment.
 6. **Colour.** `currentColor` only: no gradient, no second tone, and no default
    colour on a new key. Each glyph clears 3:1 against the surface it sits on.
 7. **Fill.** Outline is the default. The tabs have filled twins for the
    selected state (`nestFilled` and the rest). A filled glyph keeps its
    outline twin's silhouette and stroke, and punches its inner details out with
-   fill-rule evenodd, so it needs no background colour. A cut is drawn half a
-   stroke (1.14 units) wider than the gap it shows.
+   fill-rule evenodd, so it needs no background colour. A cut is drawn a full
+   stroke (2.29 units) wider than the gap it shows: half a stroke is eaten
+   from each edge, so a 4-unit cut shows 1.71.
 8. **Bird cues.** One per glyph, about a fifth of its ink at most, and it fails
    safe: take it away and the glyph still says its plain meaning. The cues come
    from a closed list: the birdhouse's entrance hole, binoculars, the beak, the
