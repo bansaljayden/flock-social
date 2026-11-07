@@ -95,7 +95,7 @@ describe('the words on each row', () => {
 
   test('an ask the hero card already carries is not asked twice', () => {
     const asks = nestAsks([plan(1, { iBudgetOpen: true }), plan(2, { iOwe: true })], []);
-    expect(nestRows({ asks, excludeIds: [1] }).map((r) => r.flockId)).toEqual([2]);
+    expect(nestRows({ asks, excludeKeys: ['budget:1'] }).map((r) => r.flockId)).toEqual([2]);
   });
 });
 
@@ -136,7 +136,7 @@ describe('App.js reads the flags, and the card uses them', () => {
     // The vote half is untouched, so nestCardTruth's lift still runs it.
     expect(home).toMatch(/const needsAction = liveFlocks\.filter\(f => f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\)\);/);
     expect(home).toMatch(/const nestAskList = nestAsks\(flocks, needsAction\);/);
-    expect(home).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: \[\.\.\.heroIds\] \}\)/);
+    expect(home).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeKeys: heroAsk \? \[`\$\{heroAsk\.kind\}:\$\{heroFlock\.id\}`\] : \[\] \}\)/);
     expect(home).toMatch(/onClick: r\.kind === 'invite' \? \(\) => setCurrentTab\('chat'\) : \(\) => openNestAsk\(r\.flockId, r\.kind\),/);
     expect(home).toMatch(/<NestRows rows=\{nestOpenRows\} \/>/);
     // The hero's button goes to the same places: money to the money sheet,

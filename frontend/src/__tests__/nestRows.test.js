@@ -1,9 +1,9 @@
 /**
  * NEEDS YOU (lib/nestAsks.js nestRows, components/nest/NestRows.js).
  *
- * Every open loop on the Nest is its own row that closes in one tap: in
- * nestAsks()'s order (owe, budget, vote), then invites, then nights to rate.
- * What the hero card already asks is left out. Three rows show and the rest
+ * Every open loop on the Nest is its own row that closes in one tap: invites
+ * first, then nestAsks()'s order (owe, budget, vote), then nights to rate.
+ * Only the ask on the hero card's button is left out. Three rows show and the rest
  * wait behind "Show N more". An invite from a host whose name did not come
  * through is "You're invited to", never "Unknown invited you". A plan whose
  * tally this session has not read is never in the vote asks, so it is never a
@@ -14,32 +14,60 @@
  */
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
-import { nestAsks, nestRows } from '../lib/nestAsks';
+import { nestAsks, nestRows, NEST_ROWS_CAP } from '../lib/nestAsks';
+import { heroAction } from '../lib/nestHero';
 import NestRows, { NEST_ROW_LEAVE_MS } from '../components/nest/NestRows';
+
+const fs = require('fs');
+const path = require('path');
+
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+const HOME = APP.slice(APP.indexOf('const HomeScreen = () => {'), APP.indexOf('// The past flocks screen was declared here'));
 
 const plan = (id, extra = {}) => ({ id, name: `Plan ${id}`, status: 'voting', venue: 'TBD', ...extra });
 
 describe('nestRows', () => {
-  test('asks in their order, then invites, then nights to rate', () => {
+  test('invites first, then the asks in their order, then nights to rate', () => {
+    // An invite waits on a reply to a named friend, and behind three asks it
+    // went fifth, under Show 2 more, at every width (seeded run, 2026-11-06).
     const asks = nestAsks([plan(1, { iOwe: true }), plan(2, { iBudgetOpen: true })], [plan(3)]);
     const rows = nestRows({
       asks,
       invites: [plan(4, { host: 'Leo' })],
       howWasIt: [plan(5, { status: 'confirmed', askHowItWas: true, venue: 'Juniper Bowl' })],
     });
-    expect(rows.map((r) => r.kind)).toEqual(['owe', 'budget', 'vote', 'invite', 'how']);
+    expect(rows.map((r) => r.kind)).toEqual(['invite', 'owe', 'budget', 'vote', 'how']);
     expect(rows.map((r) => r.title)).toEqual([
+      'Leo invited you to Plan 4',
       'Pay your share for Plan 1',
       'Add your budget for Plan 2',
       'Vote on Plan 3',
-      'Leo invited you to Plan 4',
       'How was Juniper Bowl?',
     ]);
   });
 
-  test('what the hero and its night already ask is left out', () => {
-    const asks = nestAsks([plan(1, { iOwe: true })], [plan(2), plan(3)]);
-    expect(nestRows({ asks, excludeIds: [1, 3] }).map((r) => r.flockId)).toEqual([2]);
+  test('an invite is inside the three that show, whatever else is open', () => {
+    const asks = nestAsks([plan(1, { iBudgetOpen: true })], [plan(2), plan(3), plan(5)]);
+    const rows = nestRows({ asks, invites: [plan(4, { host: 'Leo Martin' })] });
+    expect(rows.slice(0, NEST_ROWS_CAP).map((r) => r.title)).toContain('Leo invited you to Plan 4');
+  });
+
+  test('only the ask the hero\'s button carries is left out', () => {
+    // The hero shows one button. Its plan's other asks, and the asks of the
+    // other plans that night, are rows like any other.
+    const asks = nestAsks([plan(1, { iOwe: true })], [plan(1), plan(2), plan(3)]);
+    expect(nestRows({ asks, excludeKeys: ['owe:1'] }).map((r) => r.key)).toEqual(['vote:1', 'vote:2', 'vote:3']);
+  });
+
+  test('a hero with a budget and a vote open: the button asks the budget, and the vote is a row', () => {
+    // Tonight's plan was voting with a budget open: the hero said Add your
+    // budget, and the vote appeared nowhere on the Nest until the budget was in.
+    const hero = plan(1, { iBudgetOpen: true });
+    const asks = nestAsks([hero], [hero]);
+    const action = heroAction(hero, asks);
+    expect(action.kind).toBe('budget');
+    const rows = nestRows({ asks, excludeKeys: [`${action.kind}:${hero.id}`] });
+    expect(rows.map((r) => r.title)).toEqual(['Vote on Plan 1']);
   });
 
   test('the host is named by first name, the way a friend is', () => {
@@ -68,6 +96,23 @@ describe('nestRows', () => {
     expect(row.eventTime).toBe('2026-11-07T19:00:00Z');
     expect(row.venue).toBe('Juniper Bowl');
     expect(nestRows({ asks: nestAsks([], [plan(3)]) })[0].venue).toBeNull();
+  });
+});
+
+describe('the Nest builds the rows', () => {
+  test('leaving out only the hero button\'s own ask, and saying the time the short way', () => {
+    expect(HOME).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeKeys: heroAsk \? \[`\$\{heroAsk\.kind\}:\$\{heroFlock\.id\}`\] : \[\] \}\)/);
+    expect(HOME).toMatch(/when: shortWhen\(r\.eventTime, nestNow\),/);
+  });
+
+  test('a plan beside the hero is a state and opens the plan: its asks are Needs you rows', () => {
+    // It used to carry the ask on its chip and open the money sheet, so a
+    // same-night vote or money ask showed only as a chip on a row titled with
+    // the plan's name.
+    const block = HOME.slice(HOME.indexOf('sameNight={heroNight.map((f) => ({'), HOME.indexOf('}))}', HOME.indexOf('sameNight={heroNight.map((f) => ({')));
+    expect(block).toMatch(/chip: planChip\(f, \{ needsVote: f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\), voted: iHaveVoted\(f\) \}\),/);
+    expect(block).toMatch(/onClick: \(\) => openPlan\(f\.id\),/);
+    expect(block).not.toMatch(/openNestAsk|askKindFor/);
   });
 });
 

@@ -18101,7 +18101,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // the bill usually lands the morning after, on a plan this list has
     // already let go.
     const nestAskList = nestAsks(flocks, needsAction);
-    const askKindFor = (f) => (nestAskList.find((a) => a.flock.id === f.id) || {}).kind || null;
     // Where an ask goes: the budget and the bill both live in the cash pool
     // sheet over the chat, so that is where their tap goes; a vote, and a
     // night to rate, open the plan, as they always have.
@@ -18145,9 +18144,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         onClick: () => openPlan(f.id),
       })),
     }));
-    // Every other open loop, as rows: the asks the hero and its night do not
-    // already carry, the invites, and last night's plans to rate.
-    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: [...heroIds] })
+    // Every other open loop, as rows: the invites, every ask but the one the
+    // hero's button carries (its plan's other asks and the asks of the plans
+    // beside it that night included), and last night's plans to rate.
+    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeKeys: heroAsk ? [`${heroAsk.kind}:${heroFlock.id}`] : [] })
       .map((r) => ({
         ...r,
         when: shortWhen(r.eventTime, nestNow),
@@ -18280,25 +18280,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             onOpen={() => openPlan(heroFlock.id)}
             onAction={() => heroAsk && openNestAsk(heroFlock.id, heroAsk.kind)}
             onLockMoment={hapticSuccess}
-            sameNight={heroNight.map((f) => {
-              const ask = askKindFor(f);
-              return {
-                id: f.id,
-                name: f.name,
-                line: alsoLine(f.eventTime, nestNow),
-                chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f), ask }),
-                onClick: () => (ask ? openNestAsk(f.id, ask) : openPlan(f.id)),
-              };
-            })}
+            /* The other plans that night: each chip says the reader's state,
+               as a Coming up card's does, and the row opens the plan. Their
+               asks are Needs you rows below, where a vote or a share was
+               a chip on a row that opened the money sheet. */
+            sameNight={heroNight.map((f) => ({
+              id: f.id,
+              name: f.name,
+              line: alsoLine(f.eventTime, nestNow),
+              chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f) }),
+              onClick: () => openPlan(f.id),
+            }))}
           />
         )}
 
         {/* NEEDS YOU. Every other open loop, one tap each (lib/nestAsks.js
-            nestRows): what the reader owes, the budget and the votes in
-            nestAsks()'s order, then invites, then nights to rate. The money
-            opens the money sheet, a vote and a rating open the plan, an
-            invite opens Messages, where the invite cards are. Drawn only
-            when something needs the reader. */}
+            nestRows): invites first, then what the reader owes, the budget
+            and the votes in nestAsks()'s order, then nights to rate. Only
+            the ask the hero's button carries is left out. The money opens
+            the money sheet, a vote and a rating open the plan, an invite
+            opens Messages, where the invite cards are. Drawn only when
+            something needs the reader. */}
         <NestRows rows={nestOpenRows} />
 
         {/* OUT TONIGHT? Only for an account with somebody to see the answer.

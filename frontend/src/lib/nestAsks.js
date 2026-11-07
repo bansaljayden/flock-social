@@ -58,10 +58,15 @@ export function nestAsks(flocks, voteAsks = []) {
  *           the night has rolled over at 4 AM (before that the plan is the
  *           hero and asks there)
  *
- * In nestAsks()'s order (owe, budget, vote), then invites, then how-was-it.
- * A plan the hero card or its same-night rows already ask about is left out:
- * one ask, said once. Votes are only ever the ones App.js's needsMyVote has
- * read, so an unread tally is never an accusation.
+ * Invites first: each waits on a reply to a named friend, and behind three
+ * asks an invite went fifth, under Show 2 more, at every width. Then
+ * nestAsks()'s order (owe, budget, vote), then how-was-it. The one ask the
+ * hero card's button carries is left out (`excludeKeys`, '{kind}:{id}'), and
+ * only that one: the hero's plan can have a budget and a vote open at once,
+ * and the plans beside it that night have asks of their own, and each of
+ * those is a row, so every open loop is on the page once. Votes are only
+ * ever the ones App.js's needsMyVote has read, so an unread tally is never
+ * an accusation.
  *
  * Each row carries the plan's time and place for its second line, as data;
  * the words for the time come from lib/nestTime.js shortWhen ("Sun 11:00 AM",
@@ -78,11 +83,12 @@ export const NEST_ROW_TITLE = {
   how: (f) => `How was ${f.venue}?`,
 };
 
-export function nestRows({ asks = [], invites = [], howWasIt = [], excludeIds = [] } = {}) {
-  const skip = new Set((excludeIds || []).map(String));
-  const keep = (f) => f && !skip.has(String(f.id));
+export function nestRows({ asks = [], invites = [], howWasIt = [], excludeKeys = [] } = {}) {
+  const skip = new Set((excludeKeys || []).map(String));
+  const keyOf = (kind, f) => `${kind}:${f.id}`;
+  const keep = (kind, f) => f && !skip.has(keyOf(kind, f));
   const row = (kind, f) => ({
-    key: `${kind}:${f.id}`,
+    key: keyOf(kind, f),
     kind,
     flockId: f.id,
     title: NEST_ROW_TITLE[kind](f),
@@ -91,9 +97,9 @@ export function nestRows({ asks = [], invites = [], howWasIt = [], excludeIds = 
   });
   const seenInvite = new Set();
   return [
-    ...(Array.isArray(asks) ? asks : []).filter((a) => a && keep(a.flock)).map((a) => row(a.kind, a.flock)),
-    ...(Array.isArray(invites) ? invites : []).filter((f) => keep(f) && !seenInvite.has(f.id) && seenInvite.add(f.id)).map((f) => row('invite', f)),
-    ...(Array.isArray(howWasIt) ? howWasIt : []).filter((f) => keep(f) && f.askHowItWas && f.venue && f.venue !== 'TBD').map((f) => row('how', f)),
+    ...(Array.isArray(invites) ? invites : []).filter((f) => keep('invite', f) && !seenInvite.has(f.id) && seenInvite.add(f.id)).map((f) => row('invite', f)),
+    ...(Array.isArray(asks) ? asks : []).filter((a) => a && keep(a.kind, a.flock)).map((a) => row(a.kind, a.flock)),
+    ...(Array.isArray(howWasIt) ? howWasIt : []).filter((f) => keep('how', f) && f.askHowItWas && f.venue && f.venue !== 'TBD').map((f) => row('how', f)),
   ];
 }
 
