@@ -383,7 +383,6 @@ export default function ProfileSettings({
   phoneDiscoveryError,
   phoneDiscoveryNeedsNumber,
   profileBio,
-  profileHandle,
   profileName,
   profilePhone,
   profilePic,
@@ -961,7 +960,6 @@ export default function ProfileSettings({
           </button>
           <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>{profileName}</h1>
-          <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.6)', margin: 0 }}>@{profileHandle}</p>
         </div>
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>

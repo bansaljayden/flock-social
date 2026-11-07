@@ -85,7 +85,6 @@ function props(over = {}) {
     newContact: {},
     profileScreen: 'main',
     profileName: 'Jay',
-    profileHandle: 'jay',
     sessionEndCopy: (reason) => `ended: ${reason}`,
     needsEmailVerification: () => false,
     flocksError: '',

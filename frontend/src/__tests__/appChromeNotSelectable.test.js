@@ -324,8 +324,10 @@ describe('the things people copy carry the mark', () => {
     for (const [file, snippet] of sites) expect([file, read(...file.split('/')).includes(snippet)]).toEqual([file, true]);
   });
 
-  test('the You screen\'s handle has no copy control, so it is chrome like the rest', () => {
+  test('the You screen\'s name line has no copy control, so it is chrome like the rest', () => {
+    // The @handle under it is gone (youScreenNoHandle.test.js).
     const you = read('screens', 'ProfileSettings.js');
-    expect(you).toContain("<p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.6)', margin: 0 }}>@{profileHandle}</p>");
+    expect(you).toContain("color: 'white', margin: 0 }}>{profileName}</h1>");
+    expect(you).not.toContain('@{profileHandle}');
   });
 });

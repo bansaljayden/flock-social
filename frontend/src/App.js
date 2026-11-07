@@ -9496,11 +9496,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // dark whatever the theme, so the glyphs go back to the launch style.
   useEffect(() => () => setStatusBarOverDark(true), []);
   const [profileName, setProfileName] = useState(authUser?.name || '');
-  // The local part of the address, shown as a read-only @handle on the profile
-  // card. Derived, not state: it used to be edited in a "Username" field that
-  // had no column behind it, so typing in it changed nothing and the field
-  // reset to this on save. The field is gone; this stays as a display.
-  const profileHandle = authUser?.email?.split('@')[0] || '';
+  // NO @HANDLE. The profile card printed the local part of the account's
+  // email as "@name", and nobody ever chose it: there is no username column
+  // and the old Username field changed nothing. With Sign in with Apple's Hide
+  // My Email the address is a relay box, so a tester's card read
+  // "@h7h8vgjm2n", and for everyone else it put half their email address on
+  // the screen they show friends. A handle comes back when people can pick
+  // one; until then the card shows the name alone.
   // Real bio from the account, never invented. (This used to be a hardcoded
   // sample sentence about exploring places that no server ever saw.)
   const [profileBio, setProfileBio] = useState(authUser?.bio || '');
@@ -21122,7 +21124,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           phoneDiscoveryError,
           phoneDiscoveryNeedsNumber,
           profileBio,
-          profileHandle,
           profileName,
           profilePhone,
           profilePic,

@@ -279,9 +279,8 @@ describe('A8: the dead Username field is gone', () => {
     expect(EDIT_PROFILE).not.toContain('setProfileHandle');
   });
 
-  it('App.js keeps the read-only handle for display but no writable state behind it', () => {
+  it('App.js keeps no handle at all: nobody chose one (youScreenNoHandle.test.js)', () => {
     expect(APP).not.toContain('setProfileHandle');
-    // Derived from the address, not React state that a removed field would set.
-    expect(APP).toContain("const profileHandle = authUser?.email?.split('@')[0]");
+    expect(APP).not.toContain('const profileHandle');
   });
 });
