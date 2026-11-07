@@ -10,6 +10,8 @@ const { isPlaceIdShaped } = require('../utils/places');
 // Google's `timeZone` off a place, as a validated IANA name or null. The same
 // read routes/crowd.js makes for the card. See the field mask note below.
 const { placeTimeZone } = require('../utils/venueZone');
+// One row per place in a search answer.
+const { dedupeSearchRows } = require('../utils/searchRowDedupe');
 // Google's credit for a photo (author name and profile link, the photo's page
 // on Google Maps), which the app has to draw with it. Off the same Photo object
 // the masks below already ask for, so no new field and no new SKU.
@@ -1750,7 +1752,10 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     });
 
     recordPlacesResult(true);
-    const result = { venues, total: venues.length };
+    // One row per place, before the answer is cached (utils/searchRowDedupe.js):
+    // "tor" listed Tor Chimney & Fireplace twice in one answer.
+    const rows = dedupeSearchRows(venues);
+    const result = { venues: rows, total: rows.length };
     setCache(cacheKey, result);
     return { status: 200, result };
   } catch (err) {
