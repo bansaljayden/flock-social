@@ -1360,13 +1360,16 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
     const week = await b.week();
     const others = days.filter((t) => t.date !== tonightDate)
       .map((t) => week.find((e) => isDay(e) && entryDate(e) === t.date)).filter(Boolean);
-    if (shut) return { entries: [shut, ...others, ...pasts], askedFor: undefined };
+    // The days asked are said with the answer, as the peaks' route says them, so
+    // advice reads the days it names from this one block (the advice path).
+    const askedDays = days.map((t) => t.weekday);
+    if (shut) return { entries: [shut, ...others, ...pasts], askedFor: undefined, askedDays };
     const rest = week.filter((e) => isDay(e) && !others.includes(e) && entryDate(e) !== tonightDate);
     // A day asked of tonight's weekday, a week on (at 12:30 AM on a Saturday,
     // "tonight or Friday"), is told apart from tonight (sayApart).
     const entries = [tonight, ...others, ...rest, ...pasts];
     const twinAsked = others.some((e) => e.value.weekday === tonight.value.weekday);
-    return { entries: twinAsked ? sayApart(entries, tonightDate) : entries, askedFor: undefined };
+    return { entries: twinAsked ? sayApart(entries, tonightDate) : entries, askedFor: undefined, askedDays };
   }
   // A card's week starts tomorrow: today's entry is ranked with it only when
   // the question puts today in ("including today", "Is tonight the busiest
@@ -1804,7 +1807,7 @@ async function answerFor(b, mb, intentId, question, force = null) {
 // `question`, when there is one, is what the owner asked: a question that
 // names today's weekday is answered from today (withNamedToday above).
 // `dayReading` 'main' answers it on main's path whatever it says (answerFor).
-async function bridgeFactBlock(userId, intentId, { question = '', dayReading = null } = {}) {
+async function bridgeFactBlock(userId, intentId, { question = '', dayReading = null, mainFacts = false } = {}) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile.google_place_id) {
     return {
@@ -1876,6 +1879,17 @@ async function bridgeFactBlock(userId, intentId, { question = '', dayReading = n
   } = answered;
   const onMain = answered.dayReading === 'main';
   const cardRead = onMain ? mainMemo.mainCardRead : memo.cardRead;
+  // THE WEEKDAYS MAIN'S OWN PLAN HOLDS, for the advice path, which reads the
+  // week a second time only where main would (`mainFacts`): main's plan for
+  // the route, off this block's reads, which it shares, so it costs no read.
+  let mainSaid = null;
+  if (mainFacts && !onMain && MAIN_PLANS[intentId]) {
+    const held = (await MAIN_PLANS[intentId](mb)).filter((e) => !advisorFacts.isRefusal(e));
+    mainSaid = {
+      weekdays: [...new Set(held.filter((f) => f && f.value && typeof f.value.weekday === 'string').map((f) => f.value.weekday))],
+      cardRead: mainMemo.mainCardRead,
+    };
+  }
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
@@ -1913,6 +1927,8 @@ async function bridgeFactBlock(userId, intentId, { question = '', dayReading = n
     // and template (advisorPhrasing.renderTemplate). Never a fact, and never
     // handed to a model.
     dayReading: answered.dayReading,
+    // What main's own plan holds (mainFacts above); never a fact.
+    ...(mainSaid ? { mainSaid } : {}),
   };
 }
 
@@ -2579,7 +2595,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // too, so the answer is main's whole.
     const adviceSure = roostDayReader.dayConfidence(asked).sure && formOnRoute(asked, 'advice', route.intentId);
     if (route.intentId) {
-      block = await buildFactBlock(userId, route.intentId, { question: asked, ...(adviceSure ? {} : { dayReading: 'main' }) });
+      block = await buildFactBlock(userId, route.intentId, { question: asked, ...(adviceSure ? { mainFacts: true } : { dayReading: 'main' }) });
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
     // `offline` and `fallback` come from an offline route: the playbook
@@ -2601,14 +2617,15 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // 2026-11-06; dayGate above): main's reader names the day, the week is
     // read a second time only when the route's facts lack it, from main's
     // plan, and the playbook leads as main led (roostPlaybook.answer,
-    // `dayReading`). Kept as main wrote it.
-    const mainAdvice = async () => {
+    // `dayReading`). Kept as main wrote it. `read`, when the reading has just
+    // read that week on main's path already, is that block, never read again.
+    const mainAdvice = async (read = null) => {
       let facts = groundedFacts;
       const named = roostPlaybook.mainNamedWeekday(asked);
       if (named && !(block && block.cardRead === false)
           && !facts.some((f) => f && f.value && f.value.weekday === named)) {
         try {
-          const week = await buildFactBlock(userId, 'peak_hours', { question: asked, dayReading: 'main' });
+          const week = read || await buildFactBlock(userId, 'peak_hours', { question: asked, dayReading: 'main' });
           const have = new Set(facts.map((f) => f && f.id));
           facts = [...facts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
         } catch (err) {
@@ -2665,12 +2682,34 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       let days = block && Array.isArray(block.askedDays) ? block.askedDays : null;
       let both = Boolean(days);
       const overWeek = words.some((w) => w.kind === 'week');
-      if (asksDay && !both && !(block && block.cardRead === false)
-          && (named ? !groundedFacts.some((f) => f && f.value && f.value.weekday === named) : !readDay(block))) {
+      // NEVER A READ MAIN DOES NOT PAY FOR (seventh recheck, 2026-11-07).
+      // "Should I bring in extra staff Mon?" routed to advice with no plan of
+      // its own read the week a second time for Monday, one more Google Places
+      // lookup and the evening's predictions, where main's reader, which reads
+      // weekdays written out, read no day and no week. The week is read a
+      // second time only where main reads it too: for the weekday main's reader
+      // names, when the route's facts lack it. Where the reading would read it
+      // and main would not, a route's facts that are main's own (no plan, or a
+      // route not about the week's days) are answered as main answers them
+      // (mainAdvice); a route about the week's days has read the day asked
+      // already (forQuestion), and its own facts answer it, with no second
+      // read: main's lead from them would rank a part of the week ("Tuesday
+      // projects as the busiest day this week" from a shut Monday's answer).
+      const wantsWeek = asksDay && !both && !(block && block.cardRead === false)
+        && (named ? !groundedFacts.some((f) => f && f.value && f.value.weekday === named) : !readDay(block));
+      const mainNamed = roostPlaybook.mainNamedWeekday(asked);
+      // On the reading's block, what main's own plan holds (bridgeFactBlock's
+      // `mainSaid`); else the block is main's own.
+      const mainSaid = block && block.mainSaid ? block.mainSaid : null;
+      const mainReads = Boolean(mainNamed) && !((mainSaid ? mainSaid.cardRead : block && block.cardRead) === false)
+        && !(mainSaid ? mainSaid.weekdays.includes(mainNamed) : groundedFacts.some((f) => f && f.value && f.value.weekday === mainNamed));
+      if (wantsWeek && !mainReads && (!block || block.dayReading === 'main')) return mainAdvice();
+      if (wantsWeek && mainReads) {
         try {
           const week = await buildFactBlock(userId, 'peak_hours', { question: asked });
-          // The week read on main's path takes the whole answer there.
-          if (week && week.dayReading === 'main') return mainAdvice();
+          // The week read on main's path takes the whole answer there, from
+          // this one read.
+          if (week && week.dayReading === 'main') return mainAdvice(week);
           if (!readDay(block) && readDay(week)) named = week.askedDay;
           if (!readDay(block) && week && Array.isArray(week.askedDays)) { both = true; days = week.askedDays; }
           const have = new Set(groundedFacts.map((f) => f && f.id));

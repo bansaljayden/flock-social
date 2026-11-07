@@ -4680,3 +4680,63 @@ test('a question about the quiet end that leaves today out is ranked from the qu
   });
 });
 
+test('advice never reads the week a second time where main does not: a weekday written short, on a route with no plan of its own', async () => {
+  // "Should I bring in extra staff Mon?" read the card a second time for
+  // Monday, one more Google Places lookup, where main's reader reads weekdays
+  // written out and read none.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr10AdviceShortMon000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'advice', intentId: null };
+    const reads = countCardReads();
+    try {
+      const r = await call('/api/venue/advisor/question', { question: 'Should I bring in extra staff Mon?' });
+      assert.strictEqual(r.status, 200);
+      assert.strictEqual(reads.reads(), 0, r.body.text);
+      // Written out, main reads the week for it too, and so does the reading.
+      const w = await call('/api/venue/advisor/question', { question: 'Should I bring in extra staff Monday?' });
+      assert.strictEqual(w.status, 200);
+      assert.strictEqual(reads.reads(), 1, w.body.text);
+      assert.ok(w.body.text.includes('Monday'), w.body.text);
+    } finally {
+      reads.restore();
+    }
+  });
+  // On a route about the week's days the day asked is read with the route's
+  // own facts, never a second time, and main's lead is never drawn from them:
+  // of a bar shut on Mondays, on its Sunday evening, "should I bring in extra
+  // staff tomorrow?" never says "Tuesday projects as the busiest day this
+  // week" from the shut Monday's answer.
+  await pinnedAt('2026-11-08T20:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr10AdviceShutTmrw000', phrasing: true });
+    draftFor = () => null;
+    placePeriods = [0, 2, 3, 4, 5, 6].map((d) => (d === 0
+      ? { open: { day: 0, hour: 12, minute: 0 }, close: { day: 0, hour: 22, minute: 0 } }
+      : { open: { day: d, hour: 16, minute: 0 }, close: { day: (d + 1) % 7, hour: d >= 5 ? 4 : 0, minute: 0 } }));
+    route = { mode: 'advice', intentId: 'peak_hours' };
+    const reads = countCardReads();
+    try {
+      const r = await call('/api/venue/advisor/question', { question: 'should I bring in extra staff tomorrow?' });
+      assert.strictEqual(r.status, 200);
+      assert.ok(!/Tuesday projects as the busiest day/.test(r.body.text), r.body.text);
+      assert.strictEqual(reads.reads(), 1, r.body.text);
+    } finally {
+      reads.restore();
+    }
+  });
+  // Two days asked on today's route are said with its block, so advice leads
+  // with each of them from that one read.
+  await pinnedAt('2026-11-08T20:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr10AdviceTwoTonight0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'advice', intentId: 'tonight_outlook' };
+    const reads = countCardReads();
+    try {
+      const r = await call('/api/venue/advisor/question', { question: 'How busy will we be on Sunday and Thursday?' });
+      assert.ok(/^In Flock's forecast for places like yours, Sunday projects busiest .*Thursday/.test(r.body.text), r.body.text);
+      assert.strictEqual(reads.reads(), 1, r.body.text);
+    } finally {
+      reads.restore();
+    }
+  });
+});

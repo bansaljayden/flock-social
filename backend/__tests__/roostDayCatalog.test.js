@@ -658,6 +658,11 @@ const OPEN = {
   '601/model': 'S', '611/model': 'S', '611/offline': 'S', '612/model': 'S', '613/model': 'S', '614/model': 'S',
   '615/model': 'S', '616/model': 'S', '617/model': 'S', '805/model': 'S', '821/model': 'S', '823/model': 'S',
   '825/model': 'S', '827/model': 'S', '905/model': 'S',
+  // Advice that would read the week a second time where main does not
+  // (seventh recheck, 2026-11-07): "How busy will Sat be?" given advice with
+  // no plan by the router's own reading. Main's reader reads weekdays written
+  // out and read no day, so it paid for no week; the answer is main's.
+  '1019/offline': 'S',
 };
 
 const ROWS = CASES.map(([id, q, route, clock, venue, expect, extra = {}]) => ({
