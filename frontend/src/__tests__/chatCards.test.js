@@ -1556,6 +1556,9 @@ describe('the folder as a whole', () => {
       '--chat-notice-size', '--chat-notice-line', '--chat-notice',
       '--accent-green-text', '--accent-amber-text', '--accent-red-text',
       '--t-body', '--t-label', '--t-meta', '--t-micro', '--t-title', '--t-display',
+      // The poll's Lock it in is the app's one primary fill, the same pair
+      // .glass-primary paints, so it reads the index.css tokens for it.
+      '--btn-primary-bg', '--btn-primary-fg',
     ]);
     CARD_JS.forEach((file) => {
       const used = readCard(file).match(/var\((--[a-z0-9-]+)\)/g) || [];
