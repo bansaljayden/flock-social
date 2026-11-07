@@ -1407,7 +1407,7 @@ export default function ConsumerVenueCard({
                     const types = activeVenue.types || [];
                     if (types.length > 0) return types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     return activeVenue.type || 'Place';
-                  })()}{activeVenue.price ? ` • ${activeVenue.price}` : ''}</span>
+                  })()}{activeVenue.price ? ` · ${activeVenue.price}` : ''}</span>
                   {/* Google returns no rating for plenty of places. Unguarded,
                       this printed the literal word "undefined" next to a star. */}
                   {activeVenue.stars != null && (

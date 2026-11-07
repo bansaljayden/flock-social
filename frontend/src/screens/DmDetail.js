@@ -1184,7 +1184,7 @@ export default function DmDetail({
                   {/* The tally is a count of other people, so it is only
                       printed when the read that produced it landed. */}
                   {!dmVenueVotesError && (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` · You voted for ${myVote}` : ''}</p>
                   )}
                 </div>
                 <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
@@ -1314,7 +1314,7 @@ export default function DmDetail({
                             )}
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> · {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                             </div>
                             <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                               {Icons.vote(colors.navy, 12)} Vote
@@ -1450,7 +1450,7 @@ export default function DmDetail({
                       )}
                       <div style={{ flex: 1 }}>
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` · ${venue.price}` : ''}</p>
                       </div>
                       {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {venue.crowd}%

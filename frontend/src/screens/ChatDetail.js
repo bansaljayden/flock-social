@@ -4711,7 +4711,7 @@ export default function ChatDetail({
                     {votesLoading && flockVotes.length === 0 ? (
                       <SkeletonBar width={120} height={11} style={{ margin: '5px 0 2px' }} />
                     ) : (
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` · You voted for ${myVote}` : ''}</p>
                     )}
                   </div>
                   <button aria-label="Close" className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
@@ -4927,7 +4927,7 @@ export default function ChatDetail({
                               )}
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> • {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
+                                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> · {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                               </div>
                               <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                                 {Icons.vote(colors.navy, 12)} Vote
@@ -5070,7 +5070,7 @@ export default function ChatDetail({
                             unconditionally — so most rows in this list read
                             "Bar • " with nothing after the bullet. Every other
                             venue row in the file already guards it this way. */}
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` · ${venue.price}` : ''}</p>
                       </div>
                       {(() => {
                         /* The plan's own hour first. venue.crowd is the map's

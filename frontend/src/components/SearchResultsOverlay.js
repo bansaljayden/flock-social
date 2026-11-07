@@ -310,7 +310,7 @@ export default function SearchResultsOverlay({
                           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
-                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` · ${venue.price}` : ''}</p>
                               {/* The table line, under the name, for a venue
                                   whose Flux sensor answered. */}
                               {tableSummaries[venue.place_id] && (

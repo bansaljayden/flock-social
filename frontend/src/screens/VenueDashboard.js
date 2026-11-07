@@ -2187,7 +2187,7 @@ export default function VenueDashboard({
                         {(promo.description || promo.desc) && (promo.description || promo.desc) !== promo.title ? (
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{promo.description || promo.desc}</p>
                         ) : null}
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} - {promo.days}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>{promo.time_slot || promo.time} · {promo.days}</p>
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {/* No Edit on a hidden promotion. PUT /promotions/:id

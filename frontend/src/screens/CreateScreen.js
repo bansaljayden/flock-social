@@ -941,7 +941,7 @@ export default function CreateScreen({
             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.navy, whiteSpace: 'nowrap', flexShrink: 0 }}>
               {whenShort}
             </span>
-            <span aria-hidden="true" style={{ width: '3px', height: '3px', borderRadius: '2px', backgroundColor: 'var(--text-tertiary)', flexShrink: 0 }} />
+            <span aria-hidden="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', flexShrink: 0 }}>·</span>
             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {dmTarget ? `Just ${dmTarget.name}` : flockFriends.length === 0 ? 'Just you so far' : `You and ${flockFriends.length} more`}
               {selectedVenueForCreate && !dmTarget ? ` at ${selectedVenueForCreate.name}` : ''}
