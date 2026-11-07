@@ -97,12 +97,12 @@ export default function SiteFooter({
           </ul>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Social LLC.</span>
-            {/* The app screenshots on these pages show real places' photos
-                from Google Maps, and a still picture cannot carry the app's
-                own per-photo credit, so the credit is here. No crowd-data
-                credit: BestTime's terms ask for none; the line that was here
-                was only their optional link-for-credits offer. */}
-            <span>Venue photos in the app screenshots: Google Maps and its contributors.</span>
+            {/* No photo credit: the app screenshots on these pages show
+                invented places, and every venue picture in them is a
+                drawing of Flock's own (public/screenshots/WIRING.md). No
+                crowd-data credit either: BestTime's terms ask for none; the
+                line that was here was only their optional link-for-credits
+                offer. */}
             {/* Apple's credit lines, which its marketing guidelines ask for
                 once, where a site gives its legal notices, whenever the App
                 Store badge is used (AppStoreBadge.js). The pages also name

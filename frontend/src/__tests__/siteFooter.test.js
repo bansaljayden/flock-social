@@ -126,6 +126,17 @@ describe('the contract every footer carries', () => {
     expect(footer.textContent).toContain('Flock Social LLC.');
     unmount();
   });
+
+  test.each(PAGES)('%s: no credit for photos the app screenshots do not show', (name) => {
+    // The screenshots carried Google Maps photos of real places until
+    // 2026-11-07, and the footer credited them. They show invented places
+    // with drawn pictures now (public/screenshots/WIRING.md), so a credit
+    // would claim photos that are not there.
+    const { footer, unmount } = mountFooter(name);
+    expect(footer.textContent).not.toMatch(/Google Maps and its contributors/);
+    expect(footer.textContent).not.toMatch(/Venue photos in the app screenshots/);
+    unmount();
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────

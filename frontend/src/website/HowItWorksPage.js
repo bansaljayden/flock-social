@@ -112,10 +112,11 @@ function PitchVideo() {
 
 // The plan, in order, one band per step, paper and navy in turn (the maintainer,
 // 2026-10-21). Each `shot` is a real capture of the web app against seeded
-// demo data (scripts/capture-screenshots.mjs, 2026-10-21), the same Friday
-// Night Crew flock the home page follows, in the dark theme every capture on
-// the site uses. The navy bands' vignettes are the robin and a sparrow: their
-// pale and orange breasts read on navy, where the navy wrens would vanish.
+// demo data (scripts/capture-screenshots.mjs --story=site, 2026-11-07), the
+// same Friday Night Crew flock the home page follows, its places invented and
+// drawn, in the dark theme every capture on the site uses. The navy bands'
+// vignettes are the robin and a sparrow: their pale and orange breasts read
+// on navy, where the navy wrens would vanish.
 // Paths are written out in full
 // so publicScreenshotsShipped.test.js can see what ships.
 const STEPS = [
@@ -127,9 +128,9 @@ const STEPS = [
       'Pick a day and time and invite your friends. Anyone without the app gets a link and joins from the browser, budget included, no account needed.',
     ],
     shot: {
-      src: '/screenshots/create-dark-v2@2x.webp',
-      srcSet: '/screenshots/create-dark-v2-480w.webp 480w, /screenshots/create-dark-v2@2x.webp 780w',
-      alt: 'Starting a flock: which day, what time, and three friends invited.',
+      src: '/screenshots/create-dark-v3@2x.webp',
+      srcSet: '/screenshots/create-dark-v3-480w.webp 480w, /screenshots/create-dark-v3@2x.webp 780w',
+      alt: 'Starting a flock: tomorrow at 8 PM, and four friends invited.',
       caption: 'Invites go out right away.',
     },
   },
@@ -142,9 +143,9 @@ const STEPS = [
       'Out of ideas? Ask Birdie for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
     ],
     shot: {
-      src: '/screenshots/vote-dark-v2@2x.webp',
-      srcSet: '/screenshots/vote-dark-v2-480w.webp 480w, /screenshots/vote-dark-v2@2x.webp 780w',
-      alt: 'Vote for a Venue: five votes cast, Pizzeria Stella ahead with three, Oh Brother Philly and Silk City with one each.',
+      src: '/screenshots/vote-dark-v3@2x.webp',
+      srcSet: '/screenshots/vote-dark-v3-480w.webp 480w, /screenshots/vote-dark-v3@2x.webp 780w',
+      alt: 'Vote for a Venue: five votes cast, The Copper Finch ahead with three, Bluewing Diner and Juniper Bowl with one each.',
       // No caption; the alt says what it shows.
     },
   },
@@ -156,8 +157,8 @@ const STEPS = [
       'Everyone types what they can spend, and only they see it. Once at least three members have put in an amount, and everyone going has answered or the creator locks it, the group gets one number. It’s rounded down, so it’s never anyone’s exact budget, and the places Flock suggests stay under it.',
     ],
     shot: {
-      src: '/screenshots/budget-dark-v2@2x.webp',
-      srcSet: '/screenshots/budget-dark-v2-480w.webp 480w, /screenshots/budget-dark-v2@2x.webp 780w',
+      src: '/screenshots/budget-dark-v3@2x.webp',
+      srcSet: '/screenshots/budget-dark-v3-480w.webp 480w, /screenshots/budget-dark-v3@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
       caption: 'The group never sees this.',
     },
@@ -171,8 +172,8 @@ const STEPS = [
       'You can share your live location with the group while the plan is on, if you want. If something goes wrong, two taps on SOS send where you are to the people you picked.',
     ],
     shot: {
-      src: '/screenshots/sos-dark-v2@2x.webp',
-      srcSet: '/screenshots/sos-dark-v2-480w.webp 480w, /screenshots/sos-dark-v2@2x.webp 780w',
+      src: '/screenshots/sos-dark-v3@2x.webp',
+      srcSet: '/screenshots/sos-dark-v3-480w.webp 480w, /screenshots/sos-dark-v3@2x.webp 780w',
       alt: 'The SOS sheet: call 911, alert two trusted contacts by email, or share your location.',
       // No caption (the maintainer, 2026-10-21: "delete this"); the alt says what it shows.
     },
@@ -185,8 +186,8 @@ const STEPS = [
       'Whoever paid enters the total, and Flock splits it. Everyone gets a Venmo or Cash App link for their share, or Zelle instructions.',
     ],
     shot: {
-      src: '/screenshots/bill-split-dark-v2@2x.webp',
-      srcSet: '/screenshots/bill-split-dark-v2-480w.webp 480w, /screenshots/bill-split-dark-v2@2x.webp 780w',
+      src: '/screenshots/bill-split-dark-v3@2x.webp',
+      srcSet: '/screenshots/bill-split-dark-v3-480w.webp 480w, /screenshots/bill-split-dark-v3@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Asad Ali, $28.52 each for five people.',
       caption: '$28.52 each, paid back here.',
     },
@@ -346,8 +347,8 @@ export default function HowItWorksPage() {
                 <PhoneDevice>
                   <img
                     className="lp-shot"
-                    src="/screenshots/venue-card-events-dark-v2@2x.webp"
-                    srcSet="/screenshots/venue-card-events-dark-v2-480w.webp 480w, /screenshots/venue-card-events-dark-v2@2x.webp 780w"
+                    src="/screenshots/venue-card-events-dark-v3@2x.webp"
+                    srcSet="/screenshots/venue-card-events-dark-v3-480w.webp 480w, /screenshots/venue-card-events-dark-v3@2x.webp 780w"
                     sizes="(min-width: 860px) 224px, (min-width: 760px) 186px, min(242px, 65vw)"
                     width="390" height="844"
                     loading="lazy" decoding="async"

@@ -18,17 +18,17 @@ import PhoneDevice from './PhoneDevice';
    other screen loads lazily, at the 480px cut, which is 2x at the strip's
    widest card. */
 
-export const HOME_ALT = 'The Flock home screen: tonight’s status, your flocks, and a plan that still needs votes.';
+export const HOME_ALT = 'The Flock home screen: tonight’s trivia night at The Copper Finch, locked in for 9 PM, a budget and a vote that still need an answer, and two friends down for tonight.';
 
 function Screen({ shot, first, copy }) {
   if (first) {
     return (
       <picture>
-        <source type="image/avif" srcSet="/screenshots/home-reel-v2.avif" />
-        <source type="image/webp" srcSet="/screenshots/nest-dark-v2@2x.webp" />
+        <source type="image/avif" srcSet="/screenshots/home-reel-v3.avif" />
+        <source type="image/webp" srcSet="/screenshots/nest-dark-v3@2x.webp" />
         <img
           className="lp-shot-hero"
-          src="/screenshots/nest-dark-v2@2x.png"
+          src="/screenshots/nest-dark-v3@2x.png"
           width="390" height="844"
           alt={copy ? '' : HOME_ALT}
           {...(copy ? { loading: 'lazy', decoding: 'async' } : {})}

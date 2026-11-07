@@ -97,8 +97,8 @@ test('after a full run the manifest names what public/ still holds, not the capt
   const committed = committedManifest();
   const archive = path.join(FRONTEND, 'screenshots');
   const run = [
-    { ...RUN_CAPTURE, file: 'screenshots/nest-dark-v2@2x.png' },
-    { ...RUN_CAPTURE, file: 'screenshots/nest-dark-v2@2x.webp' },
+    { ...RUN_CAPTURE, file: 'screenshots/nest-dark-v3@2x.png' },
+    { ...RUN_CAPTURE, file: 'screenshots/nest-dark-v3@2x.webp' },
     RUN_CAPTURE,
     { ...RUN_CAPTURE, file: 'screenshots/nest-dark@2x.webp' },
     { ...RUN_CAPTURE, file: 'store-assets/nest-dark-6.9in.png', set: 'appstore-6.9' },
@@ -147,6 +147,6 @@ test('after a full run the manifest names what public/ still holds, not the capt
   // The committed entries stay, the fresh take of a shipped frame is the
   // run's entry now, and the App Store set, outside public/, is kept.
   for (const c of committed.captures) expect(files).toContain(c.file);
-  expect(written.captures.find((c) => c.file === 'screenshots/nest-dark-v2@2x.png').set).toBe('web');
+  expect(written.captures.find((c) => c.file === 'screenshots/nest-dark-v3@2x.png').set).toBe('web');
   expect(files).toContain('store-assets/nest-dark-6.9in.png');
 });

@@ -54,7 +54,7 @@ describe('the hero screenshot preload lives on / only', () => {
   test('the / Link header keeps the canonical and adds an AVIF-gated, high-priority preload', () => {
     expect(link).toBeTruthy();
     expect(link.value).toContain('<https://www.flockcorp.com/>; rel="canonical"');
-    expect(link.value).toContain('</screenshots/home-reel-v2.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
+    expect(link.value).toContain('</screenshots/home-reel-v3.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
   });
 
   test('the preloaded file is the one the hero <picture> actually requests', () => {
@@ -62,10 +62,10 @@ describe('the hero screenshot preload lives on / only', () => {
     // (type-gated to AVIF) also picks that source; the rest fall to WebP.
     // The home screen leads the hero reel since 2026-10-21 (HeroReel.js).
     const page = read('src/website/HeroReel.js');
-    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/home-reel-v2.avif" />');
+    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/home-reel-v3.avif" />');
     expect(avif).toBeGreaterThan(-1);
-    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark-v2@2x.webp" />')).toBeGreaterThan(avif);
-    for (const f of ['home-reel-v2.avif', 'nest-dark-v2@2x.webp']) {
+    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark-v3@2x.webp" />')).toBeGreaterThan(avif);
+    for (const f of ['home-reel-v3.avif', 'nest-dark-v3@2x.webp']) {
       expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', f))).toBe(true);
     }
   });
@@ -75,12 +75,42 @@ describe('the hero screenshot preload lives on / only', () => {
     // shows every screen whole, the home screen included.
     // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
     // height as 32-bit big-endian integers.
-    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'home-reel-v2.avif'));
+    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'home-reel-v3.avif'));
     expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
     const at = buf.indexOf('ispe');
     expect(at).toBeGreaterThan(-1);
     expect([buf.readUInt32BE(at + 8), buf.readUInt32BE(at + 12)]).toEqual([780, 1688]);
     expect(buf.length).toBeLessThan(40000);
+  });
+
+  /* THE SHIPPED CAPTURES' WEIGHT (2026-11-07). The -v3 set is the dark theme
+     at 780 x 1688 with a 480px cut of each, the home screen also as the reel's
+     AVIF and the PNG fallback the PWA lists. These are the ceilings each file
+     and the whole set stay under, a little above what the -v2 set weighed
+     (2,276,556 bytes in all, the heaviest @2x 112,438, the heaviest cut
+     54,588), so a retake that grows past them is a choice someone makes. */
+  test('the shipped captures stay inside their weight: each @2x, each 480px cut, the PNG and the set', () => {
+    const dir = path.join(FRONTEND, 'public', 'screenshots');
+    const files = fs.readdirSync(dir).filter((f) => /-v3[@.-]/.test(f));
+    expect(files.length).toBe(36);
+    let total = 0;
+    for (const f of files) {
+      const buf = fs.readFileSync(path.join(dir, f));
+      total += buf.length;
+      if (f.endsWith('@2x.webp')) {
+        expect(`${f} ${buf.length <= 120000}`).toBe(`${f} true`);
+        expect(webpInfo(buf)).toMatchObject({ width: 780, height: 1688 });
+      } else if (f.endsWith('-480w.webp')) {
+        expect(`${f} ${buf.length <= 60000}`).toBe(`${f} true`);
+        expect(webpInfo(buf).width).toBe(480);
+      } else if (f.endsWith('.png')) {
+        expect(`${f} ${buf.length <= 700000}`).toBe(`${f} true`);
+      } else {
+        expect(f).toBe('home-reel-v3.avif');
+        expect(buf.length).toBeLessThan(40000);
+      }
+    }
+    expect(total).toBeLessThanOrEqual(2300000);
   });
 
   test('no other route carries it, and the shared index.html has no preload link of its own', () => {
