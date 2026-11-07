@@ -66,6 +66,10 @@ import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
 // The map card's own forecast, so the two cannot disagree (sheetCrowd,
 // below, has why the sheet draws it).
 import { CrowdForecastPanel } from '../venue/ConsumerVenueCard';
+// "Open until 9:30 PM" from the week's periods, and the type chips without
+// Google's catch-alls.
+import { openStatus } from '../../lib/venueHours';
+import { displayVenueTypes, placeTypeLabel } from '../../lib/venueTypes';
 
 // The header photo and Google's credit for it, as one piece, keyed by photo
 // so each photo starts clean. A photo that fails to load becomes the
@@ -298,6 +302,23 @@ const VenueDetailSheet = ({
         // failed, so it says there is none instead of pulsing skeletons for
         // ever.
         const sheetCrowd = venueDetailCrowd && venueDetailModal.place_id && venueDetailCrowd.placeId === venueDetailModal.place_id ? venueDetailCrowd : null;
+        // THE OPEN TILE SAYS UNTIL WHEN. It said Open Now or Closed and no
+        // more, so a place closing in twenty minutes read like one that just
+        // opened, and Closed at 3:44 PM gave no hint of the five o'clock
+        // opening. Google's openNow decides open or closed (it knows a
+        // holiday's hours); the week's periods, read on the venue's own
+        // clock, add when that changes, only while the two agree.
+        const hours = venueDetailModal.opening_hours || null;
+        const openNow = hours && typeof hours.openNow === 'boolean' ? hours.openNow : null;
+        const fromPeriods = hours ? openStatus(hours, { utcOffsetMinutes: venueDetailModal.utcOffsetMinutes }) : null;
+        const openTile = fromPeriods && (openNow === null || fromPeriods.open === openNow)
+          ? fromPeriods
+          : { open: openNow === true, text: openNow === true ? 'Open now' : 'Closed' };
+        const typeChips = displayVenueTypes(venueDetailModal.types);
+        // A menu link only when the venue has one. Places sends none, so the
+        // row was always "View Menu" over a Google search for the name; it
+        // says that is what it is now.
+        const menuUrl = httpUrl(venueDetailModal.menu_url);
         const sheetCrowdData = sheetCrowd ? sheetCrowd.read : null;
         const sheetCrowdLoading = !!sheetCrowd && sheetCrowd.loading;
         // The paywall sheet is drawn inside the app frame, under this
@@ -507,8 +528,8 @@ const VenueDetailSheet = ({
                     )}
                     {venueDetailModal.opening_hours && (
                       <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ marginBottom: '2px' }}>{Icons.clock(venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, 18)}</div>
-                        <p style={{ fontSize: 'var(--t-meta)', color: venueDetailModal.opening_hours.openNow ? colors.steel : colors.red, fontWeight: '500', margin: 0 }}>{venueDetailModal.opening_hours.openNow ? 'Open Now' : 'Closed'}</p>
+                        <div style={{ marginBottom: '2px' }}>{Icons.clock(openTile.open ? colors.steel : colors.red, 18)}</div>
+                        <p data-open-tile="true" style={{ fontSize: 'var(--t-meta)', color: openTile.open ? colors.steel : colors.red, fontWeight: '500', margin: 0 }}>{openTile.text}</p>
                       </div>
                     )}
                   </div>
@@ -594,21 +615,21 @@ const VenueDetailSheet = ({
 
                   {/* View Menu */}
                   {!venueDetailModal.loading && (
-                    <a href={httpUrl(venueDetailModal.menu_url) || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
+                    <a href={menuUrl || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
                       <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
                       <div style={{ flex: 1 }}>
-                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>View Menu</span>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{venueDetailModal.menu_url ? 'Official menu' : 'Search online'}</p>
+                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{menuUrl ? 'View menu' : 'Find the menu online'}</span>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{menuUrl ? 'Official menu' : 'Opens a web search'}</p>
                       </div>
                       {Icons.externalLink(colors.textTertiary, 14)}
                     </a>
                   )}
 
                   {/* Types/Tags */}
-                  {venueDetailModal.types && venueDetailModal.types.length > 0 && (
+                  {typeChips.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
-                      {venueDetailModal.types.slice(0, 6).map((t, i) => (
-                        <span key={i} style={{ fontSize: 'var(--t-meta)', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', border: '1px solid var(--border-subtle)' }}>{t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                      {typeChips.map((t) => (
+                        <span key={t} style={{ fontSize: 'var(--t-meta)', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', border: '1px solid var(--border-subtle)' }}>{placeTypeLabel(t)}</span>
                       ))}
                     </div>
                   )}
