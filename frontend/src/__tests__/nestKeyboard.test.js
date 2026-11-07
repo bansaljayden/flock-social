@@ -30,7 +30,9 @@ const page = () => {
 
 test('focus pads the page\'s end by the keyboard, blur takes it away', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8');
-  expect(css).toMatch(/\.nest-kb-open \{\s*padding-bottom: calc\(16px \+ var\(--kb-inset, 0px\)\) !important;\s*\}/);
+  expect(css).toMatch(/\.nest-kb-open::after \{\s*content: '';\s*display: block;\s*height: var\(--kb-inset, 0px\);\s*\}/);
+  // No calc() around the keyboard inset: the build's CSS minifier refuses it.
+  expect(css).not.toMatch(/calc\([^;]*var\(--kb-inset/);
   const { box, field } = page();
   liftNestField({ currentTarget: field });
   expect(box.classList.contains('nest-kb-open')).toBe(true);

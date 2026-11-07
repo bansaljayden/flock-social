@@ -942,9 +942,14 @@ code {
 
 /* While the Nest's Birdie field has focus (lib/nestKeyboard.js), the page's
    scroll box gets room at its end the height of the keyboard, so the field can
-   be brought up above the keys. The WebView does not resize for them. */
-.nest-kb-open {
-  padding-bottom: calc(16px + var(--kb-inset, 0px)) !important;
+   be brought up above the keys. The WebView does not resize for them. A block
+   after the page's own content rather than a calc() on its padding: the build's
+   CSS minifier cannot parse a calc() around --kb-inset, and in a browser the
+   block is 0px tall, so a focus moves nothing. */
+.nest-kb-open::after {
+  content: '';
+  display: block;
+  height: var(--kb-inset, 0px);
 }
 
 /* Smooth fade + slide in */
