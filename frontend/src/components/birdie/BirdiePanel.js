@@ -19,7 +19,8 @@
  * WHY IT CAN BE LAZY, WHICH MOST OF THESE CANNOT
  *
  * aiChatMode starts at 'bubble' and nothing reads a stored value or a URL into
- * it, so the only ways to 'panel' or 'fullscreen' are the home-tab bubble, the
+ * it, so the only ways to 'panel' or 'fullscreen' are the Nest's own Birdie
+ * section (which shows a thread inline, in 'inline', and opens the full chat), the
  * chat composer's Ask Birdie tile, and the fullscreen toggle once it is already
  * open. There is no first-paint path into this subtree, which makes it a real
  * React.lazy candidate rather than a file split. The guard that decides whether

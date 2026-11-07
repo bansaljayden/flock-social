@@ -79,7 +79,7 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
           height: '44px',
           padding: '0 16px 0 8px',
           border: 'none',
-          borderRadius: '22px',
+          borderRadius: '999px',
           backgroundColor: 'var(--bg-inset)',
           color: 'var(--text-primary)',
           display: 'flex',

@@ -60,7 +60,7 @@ test('the filled button reads the --btn-primary pair, and no isDark ternary pick
 });
 
 test('the side margin is the gutter token', () => {
-  expect(HOME).toMatch(/padding: `0 var\(--nest-gutter\) /);
+  expect(HOME).toMatch(/padding: [`']0 var\(--nest-gutter\) /);
   const css = read('index.css');
   expect(css).toContain('--nest-gutter: clamp(16px, 5.2vw, 20px);');
 });

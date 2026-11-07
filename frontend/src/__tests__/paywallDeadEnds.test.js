@@ -29,7 +29,11 @@ describe('Birdie at the daily cap', () => {
 
   test('offers no chip that would send while nothing can be sent', () => {
     expect(birdie).toMatch(/\{!outOfChirps && \(\n\s*<div style=\{\{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' \}\}>/);
-    expect(birdie).toMatch(/\{!aiTyping && aiMessages\.length > 0 && !outOfChirps && \(/);
+    // The mid-thread chips (not drawn at all in the Nest's inline thread).
+    expect(birdie).toMatch(/\{!isInline && !aiTyping && aiMessages\.length > 0 && !outOfChirps && \(/);
+    // And the Nest's own suggestions are none while the day's messages are
+    // spent (lib/birdieChips.js; birdieChips.test.js runs it).
+    expect(app).toMatch(/chips=\{birdieChips\(\{ liveFlocks, now: nestNow, outOfChirps, firstRun: flocks\.length === 0 \}\)\}/);
   });
 
   test('the panel is handed both names it now reads', () => {
