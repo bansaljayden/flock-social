@@ -232,6 +232,16 @@ describe('every key of the set exists and paints in currentColor only', () => {
     const [head, shoulders] = users;
     expect(head.typed[1] + head.typed[2] + STROKE_UNITS + 1.5).toBeLessThanOrEqual(Math.min(...shoulders.samples.map(([, y]) => y)) + 1e-9);
   });
+
+  test('one drawing per meaning: user is the You bust, chat and messageSquare the Messages bubble', () => {
+    // A new account with no photo saw `user` (a head resting on its shoulders)
+    // in the Nest's header over the tab bar's `you`, and Open Chat drew a
+    // stock bubble while the Messages tab drew the beak. The old names stay,
+    // so every caller draws the set's glyph with no edit of its own.
+    expect(Icons.user).toBe(Icons.you);
+    expect(Icons.chat).toBe(Icons.messages);
+    expect(Icons.messageSquare).toBe(Icons.messages);
+  });
 });
 
 describe('the five tab glyphs come in pairs', () => {
@@ -249,9 +259,27 @@ describe('the five tab glyphs come in pairs', () => {
   });
 
   test('a filled twin punches its inner details out instead of painting them in a background colour', () => {
-    ['nestFilled', 'discoverFilled', 'plansFilled'].forEach((key) => {
+    ['nestFilled', 'discoverFilled', 'plansFilled', 'messagesFilled'].forEach((key) => {
       const holes = [...draw(key).querySelectorAll('path[fill-rule="evenodd"]')];
       expect(holes.length).toBeGreaterThan(0);
+    });
+  });
+
+  test('the selected bubble keeps its two lines of text, carved where the outline draws them', () => {
+    // Solid and empty, messagesFilled read as a plain square slab and the
+    // unread badge on its corner fused with it. The outline's two lines are
+    // carved out of it: each slit shows 1.5 units or more once the stroke has
+    // eaten half a stroke from each of its edges, on the line it stands for.
+    const lines = shapes(draw('messages')).find((s) => !s.filled && s.segs.length === 2);
+    const lineYs = lines.segs.map((seg) => seg.from[1]);
+    const body = shapes(draw('messagesFilled')).find((s) => s.filled);
+    // The bubble is the first sub-path (five corners and the beak); the slits
+    // are the two four-cornered ones after it.
+    const slits = [body.points.slice(7, 11), body.points.slice(11, 15)];
+    slits.forEach((corners, i) => {
+      const ys = corners.map(([, y]) => y);
+      expect(Math.max(...ys) - Math.min(...ys) - STROKE_UNITS).toBeGreaterThanOrEqual(1.5);
+      expect((Math.max(...ys) + Math.min(...ys)) / 2).toBe(lineYs[i]);
     });
   });
 });

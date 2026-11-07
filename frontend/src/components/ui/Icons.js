@@ -58,8 +58,11 @@
  *     its inner details out with fill-rule evenodd, so it needs no background
  *     token. A cut is drawn half a stroke (1.14 units) wider than the gap it
  *     shows, because the stroke runs along both of its edges.
- *   - People stay people: the bust (`you`, `userPlus`, `users`) keeps a clear
- *     neck gap between head and shoulders and carries no bird at all.
+ *   - People stay people: the bust (`you`, `user`, `userPlus`, `users`) keeps
+ *     a clear neck gap between head and shoulders and carries no bird at all.
+ *   - One drawing per meaning: `user` is the `you` bust and `chat` /
+ *     `messageSquare` are the Messages tab's beak bubble, so a screen never
+ *     shows two people or two bubbles side by side.
  *
  * Public API: Icons.name(color, size) returns JSX. `color` is honoured as a
  * CSS `color` on a wrapper and picked up through currentColor, so an icon also
@@ -239,6 +242,16 @@ const EGG_D = 'M5 14A7 7 0 0 0 19 14A14 14 0 0 0 14.9 4.1A4.1 4.1 0 0 0 9.1 4.1A
 // as any tail; the convex pair reads as a bill. No eye, so it never becomes a
 // bird's head beside Birdie.
 const MESSAGES_D = 'M9.5 17.5 21 17.5 21 3.5 5.5 3.5 5.5 13.5A9 9 0 0 0 3 20A9 9 0 0 0 9.5 17.5Z';
+// Two lines of text in the bubble, the second shorter: they keep the selected
+// (filled) bubble a message. Solid and empty, it read as a plain square slab,
+// the heaviest of the five selected tabs, and the unread badge on its corner
+// fused with it. Outline, the lines are stroked, 2.2 units clear of the walls
+// and of each other. Filled, each is carved as a slit 4 units tall, which
+// shows 1.71 once the stroke has eaten half a stroke from each edge (the way
+// plansFilled carves its rule), and about the length of the outline's
+// centreline, because a light line on a dark ground reads longer than it is.
+const MESSAGES_LINES_D = 'M10 8.5 16.5 8.5M10 13 13.5 13';
+const MESSAGES_SLITS_D = 'M9 6.5 17.5 6.5 17.5 10.5 9 10.5ZM9 11 14.5 11 14.5 15 9 15Z';
 
 // birdie - the specimen's head alone: filled round head, square-cut wedge beak,
 // and the punched eye cut with fill-rule evenodd so it needs no background token.
@@ -267,11 +280,6 @@ const STEM = (
   </>
 );
 
-// chat / messageSquare - a closed bubble with the tail drawn as part of the
-// outline. The old version was an open-bottom box with a floating tail; the
-// closed contour is the universal speech-bubble silhouette.
-const CHAT = <path d="M4 6 20 6 20 18 12 18 9 21 9 18 4 18Z" />;
-
 // party / partyPopper - a popper cone with a burst actually leaving it: three
 // straight rays fanning up / diagonal / out from the mouth, two confetti dots
 // in the spaces between. The old three parallel 45deg dashes read as motion
@@ -291,7 +299,24 @@ const PARTY = (
    so an alias can never drift away from its twin. */
 const MUG_ICON = make(MUG);
 const STEM_ICON = make(STEM, { color: '#1a3a5c' });
-const CHAT_ICON = make(CHAT);
+// The Messages tab's bubble, and every other "message" in the app: `chat` and
+// `messageSquare` draw it too (Open Chat, Message <name>, a friend's Message
+// button), where they drew a stock square bubble with a notch tail beside it.
+const MESSAGES_ICON = make(
+  <>
+    <path d={MESSAGES_D} />
+    <path d={MESSAGES_LINES_D} />
+  </>
+);
+// The You tab's bust, and `user` everywhere a person without a photo is drawn
+// (the Nest's and the You screen's avatar, Birdie's thread), where `user` drew
+// a stock head resting on its shoulders a tab away from it.
+const YOU_ICON = make(
+  <>
+    <circle cx="12" cy="6.25" r="3.5" />
+    <path d="M5 20.75A7 7 0 0 1 19 20.75" />
+  </>
+);
 const PARTY_ICON = make(PARTY);
 // pro - two gulls at two distances, which read as a double chevron climbing: a
 // level up. The drawing used to be called `sparkles`, the stock name for "AI",
@@ -389,21 +414,17 @@ const Icons = {
   ),
 
   // messages / messagesFilled - the Messages tab. See MESSAGES_D: a bubble
-  // with sharp corners whose tail is a beak. Selected, the same contour solid.
-  messages: make(<path d={MESSAGES_D} />),
-  messagesFilled: make(<path d={MESSAGES_D} fill="currentColor" />),
+  // with sharp corners whose tail is a beak, with two lines of text in it.
+  // Selected, the same contour solid with the lines carved out of it.
+  messages: MESSAGES_ICON,
+  messagesFilled: make(<path fillRule="evenodd" fill="currentColor" d={`${MESSAGES_D}${MESSAGES_SLITS_D}`} />),
 
   // you / youFilled - the You tab. A bust with no bird in it, on purpose: the
   // person is the meaning, and every wing or feather tried on it read as a
   // cape, a hook or a creature. Head r 3.5, shoulders an r 7 arc open at the
   // base, 1.7 units clear between them so the filled pair stays two shapes
   // and never merges into a pawn.
-  you: make(
-    <>
-      <circle cx="12" cy="6.25" r="3.5" />
-      <path d="M5 20.75A7 7 0 0 1 19 20.75" />
-    </>
-  ),
+  you: YOU_ICON,
   youFilled: make(
     <>
       <circle cx="12" cy="6.25" r="3.5" fill="currentColor" />
@@ -643,7 +664,8 @@ const Icons = {
     </>
   ),
 
-  chat: CHAT_ICON,
+  // The Messages tab's bubble. See MESSAGES_ICON.
+  chat: MESSAGES_ICON,
 
   checkCircle: make(
     <>
@@ -933,7 +955,7 @@ const Icons = {
   // A venue's menu: four lines of a list, the last two shorter.
   menuLines: make(<path d="M4 6 20 6M4 10 20 10M4 14 16 14M4 18 12 18" />),
 
-  messageSquare: CHAT_ICON,
+  messageSquare: MESSAGES_ICON,
 
   mic: make(
     <>
@@ -1215,12 +1237,8 @@ const Icons = {
     </>
   ),
 
-  user: make(
-    <>
-      <circle cx="12" cy="8" r="4" />
-      <path d="M4 20A8 8 0 0 1 20 20" />
-    </>
-  ),
+  // The You tab's bust. See YOU_ICON.
+  user: YOU_ICON,
 
   // The `you` bust moved left, with a plus 1.7 units clear of the head.
   userPlus: make(

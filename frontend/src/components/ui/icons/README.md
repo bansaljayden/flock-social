@@ -55,8 +55,8 @@ beside the glyphs it sits next to.
 | `nest`, `nestFilled` | Nest tab | a birdhouse with its entrance hole |
 | `discover`, `discoverFilled` | Discover tab | binoculars |
 | `plans`, `plansFilled` | Plans tab | a calendar with one pebble marking the day |
-| `messages`, `messagesFilled` | Messages tab | a speech bubble whose tail is a beak |
-| `you`, `youFilled` | You tab | a bust with a neck gap, no bird on purpose |
+| `messages`, `messagesFilled` | Messages tab; `chat` and `messageSquare` are the same drawing | a speech bubble whose tail is a beak, with two lines of text (carved out of the filled one) |
+| `you`, `youFilled` | You tab; `user` is the same drawing | a bust with a neck gap, no bird on purpose |
 | `startFlock` | Start a flock, 15 px and up | an egg with a plus |
 | `nestEgg` | a flock's budget or cash pool, 16 px and up | an egg with a $ |
 | `splitBill` | Split the bill | a receipt with a torn foot |
