@@ -26,6 +26,32 @@ export const BAND_HEAD = {
   color: 'var(--text-secondary)',
 };
 
+/**
+ * A label inside a band, over a group of its cards (Coming up's This week,
+ * Later). It sat in the band heading's own type, 13px in the secondary ink
+ * 8px under it, so Coming up over This week read as two headings stacked,
+ * and Later over Still open as two bands. It is quieter and of another kind:
+ * the type scale's supporting-text role (--t-meta, 12/500) in the tertiary
+ * ink, a hairline running on from it to the edge in --nest-edge (the line
+ * the page already draws where it scrolls under its edges), and room above
+ * it, 12px under the band's heading and 20px under the group before.
+ */
+export const BAND_LABEL = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  margin: '0 0 8px',
+  fontSize: 'var(--t-meta)',
+  fontWeight: '500',
+  lineHeight: 1.3,
+  color: 'var(--text-tertiary)',
+};
+/** The hairline after a band label, drawn for the eye only. */
+export const BAND_LABEL_RULE = { flex: 1, minWidth: '24px', height: '1px', backgroundColor: 'var(--nest-edge)' };
+/** Room above a band label: under the band's heading, then under the group before. */
+export const LABEL_GAP_FIRST = '12px';
+export const LABEL_GAP = '20px';
+
 /** Under the hero, before Needs you. */
 export const HERO_GAP = '20px';
 /** After every other band. */

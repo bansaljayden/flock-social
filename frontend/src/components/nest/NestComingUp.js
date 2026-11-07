@@ -8,6 +8,9 @@
  * card made two levels of heading for three plans, so the labels show only
  * when a band holds two or more plans or there are four or more in all
  * (showComingLabels), and otherwise each card says its whole day itself.
+ * A label is quieter than the band's heading and of another kind, small and
+ * tertiary with a hairline after it (nestBand.js BAND_LABEL), so Coming up
+ * over This week no longer reads as two headings stacked.
  *
  * Each card says three things: the plan's name in the display face, when and
  * where on one line, and who, with the head count in words beside the faces.
@@ -33,7 +36,7 @@
 import React from 'react';
 import { FaceRow } from './Face';
 import NestChip from './NestChip';
-import { BAND_HEAD, BAND_GAP } from './nestBand';
+import { BAND_HEAD, BAND_GAP, BAND_LABEL, BAND_LABEL_RULE, LABEL_GAP_FIRST, LABEL_GAP } from './nestBand';
 
 const listReset = { listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '8px' };
 
@@ -79,8 +82,11 @@ export default function NestComingUp({ groups = [], labelled = true }) {
     <div data-nest-band="coming-up" style={{ marginBottom: BAND_GAP }}>
       <h2 style={BAND_HEAD}>Coming up</h2>
       {labelled ? groups.map((g, gi) => (
-        <div key={g.label} style={{ marginTop: gi === 0 ? 0 : '18px' }}>
-          <h3 style={{ margin: '0 0 8px', fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>{g.label}</h3>
+        <div key={g.label} style={{ marginTop: gi === 0 ? LABEL_GAP_FIRST : LABEL_GAP }}>
+          <h3 style={BAND_LABEL}>
+            <span>{g.label}</span>
+            <span aria-hidden="true" style={BAND_LABEL_RULE} />
+          </h3>
           <ul style={listReset}>
             {g.cards.map((card) => <NestPlanCard key={card.id} card={card} level={4} />)}
           </ul>
