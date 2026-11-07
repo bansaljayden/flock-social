@@ -41,6 +41,22 @@ describe('Birdie at the daily cap', () => {
     expect(props).toMatch(/\n\s+outOfChirps,\n/);
     expect(props).toMatch(/\n\s+setPaywallTrigger,\n/);
   });
+
+  test("the Nest's own field at rest says so too, and sends nothing (2026-11-06)", () => {
+    // The resting field in the Nest's page took a question at the cap and
+    // sent nothing, with no thread open to say why. It is off now, with the
+    // composer's own line under it and Get Flock Pro where it is sold
+    // (birdieInline.test.js renders it).
+    const section = read('components/nest/NestBirdieSection.js');
+    expect(section).toMatch(/disabled=\{outOfChirps\}/);
+    expect(section).toMatch(/They come back \{birdieBackText\(resetsAt\)\}\./);
+    expect(section).toMatch(/\{onGetPro && \(/);
+    const home = app.slice(app.indexOf('const nestBirdieSection = ('), app.indexOf('    return (', app.indexOf('const nestBirdieSection = (')));
+    expect(home).toMatch(/outOfChirps=\{outOfChirps\}/);
+    expect(home).toMatch(/onGetPro=\{process\.env\.REACT_APP_PURCHASES !== 'off' \? \(\) => setPaywallTrigger\('birdie'\) : null\}/);
+    const send = app.slice(app.indexOf('const nestBirdieSend = () => {'), app.indexOf('const nestBirdieChip'));
+    expect(send).toMatch(/if \(outOfChirps\) return;/);
+  });
 });
 
 describe('the locked venue card', () => {
