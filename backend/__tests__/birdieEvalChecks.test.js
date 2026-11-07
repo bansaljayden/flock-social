@@ -488,6 +488,7 @@ test('a later day: the answers that started it fail, and the plain one passes', 
   // The 11-03 live run's P06 answer, scored against tonight's lookup it made.
   const recorded = grade("Palma Pasta Bar. It sits at $$$, rates 4.7, and doesn't get mobbed the way the places closer to you do. The crowd reads I have are only for tonight, so check Discover tomorrow afternoon before you head out.", { ...later, tools: [search(palma), crowd(palma)] });
   assert.ok(recorded.problems.some((p) => /later day: never looked the place up for that day/.test(p)), recorded.problems.join('\n'));
+  assert.ok(recorded.problems.some((p) => /later day: explains how far ahead it can see \("reads I have"\)/.test(p)), recorded.problems.join('\n'));
   // The answer from the recording, with a lookup for the day this time.
   const jargon = grade('Palma Pasta Bar. Crowds only read twelve hours out, so check back closer to Saturday for the timing.', { ...later, tools: [search(palma), laterLookup(palma)] });
   assert.ok(jargon.problems.some((p) => /later day: explains how far ahead it can see \("only read"\)/.test(p)), jargon.problems.join('\n'));

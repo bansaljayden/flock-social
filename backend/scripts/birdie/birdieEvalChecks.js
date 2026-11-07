@@ -583,6 +583,11 @@ function checkBestTime(text, ctx, problems) {
 const AHEAD_JARGON = /\b(?:twelve|12)\s*hours?\b|\bonly read\b|\breads? (?:i have|only|are only)\b|\bforecast window\b|\bthat far (?:ahead|out)\b/i;
 function checkLaterDay(text, ctx, problems, warnings) {
   const { tools, userTexts } = ctx;
+  if (/\b\d{1,3}\s?(?:%|percent\b)/i.test(text)) problems.push('later day: a crowd number for that day');
+  if (/\bbest time\b/i.test(text)) problems.push('later day: a best time for that day');
+  const jargon = text.match(AHEAD_JARGON);
+  if (jargon) problems.push(`later day: explains how far ahead it can see ("${jargon[0]}")`);
+  if (/\bcheck back\b/i.test(text)) warnings.push('later day: tells them to check back');
   const dated = tools.filter((c) => c.name === 'get_crowd_prediction' && c.args && typeof c.args.date === 'string' && c.result && !c.result.error);
   if (!dated.length) {
     problems.push('later day: never looked the place up for that day (get_crowd_prediction with date)');
@@ -603,11 +608,6 @@ function checkLaterDay(text, ctx, problems, warnings) {
       problems.push(`later day: names "${n.raw}", which the lookup for that day did not give`);
     }
   }
-  if (/\b\d{1,3}\s?(?:%|percent\b)/i.test(text)) problems.push('later day: a crowd number for that day');
-  if (/\bbest time\b/i.test(text)) problems.push('later day: a best time for that day');
-  const jargon = text.match(AHEAD_JARGON);
-  if (jargon) problems.push(`later day: explains how far ahead it can see ("${jargon[0]}")`);
-  if (/\bcheck back\b/i.test(text)) warnings.push('later day: tells them to check back');
 }
 
 function checkAnswer(input) {

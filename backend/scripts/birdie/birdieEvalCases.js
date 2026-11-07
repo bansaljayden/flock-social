@@ -694,15 +694,15 @@ const BATTERY = [
   // so check back closer to the 13th", over cards with no crowd row. Each of
   // these looks the place up for that day and says when it is usually
   // busiest, in plain words, with no number and no best time for that night.
-  { id: 'F01', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['need a spot for dinner on the 13th, somewhere good regardless of price'],
+  { id: 'W01', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['need a spot for dinner on the 13th, somewhere good regardless of price'],
     expect: { tools: { must: ['search_venues', 'get_crowd_prediction'] }, pickOne: true, laterDay: true } },
-  { id: 'F02', clock: 'sat_morning', persona: 'marcus_22', ctx: ctxHome, turns: ['is pinwheel lanes busy friday'],
+  { id: 'W02', clock: 'sat_morning', persona: 'marcus_22', ctx: ctxHome, turns: ['is pinwheel lanes busy friday'],
     expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true } },
-  { id: 'F03', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ['how packed does lehigh lanes get tomorrow night'],
+  { id: 'W03', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ['how packed does lehigh lanes get tomorrow night'],
     expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true } },
   // No curve of its own: with the category table off there is no usual night
   // to give, and with it on it is what is typical for places like it.
-  { id: 'F04', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['how crowded is coral tide ceviche next saturday'],
+  { id: 'W04', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['how crowded is coral tide ceviche next saturday'],
     expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true, honesty: { venue: 'coral', kind: 'category' } } },
 
   // How busy is it
