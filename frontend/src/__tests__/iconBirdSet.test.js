@@ -443,3 +443,23 @@ describe('the stray stock SVGs are folded into the set', () => {
     expect(text).not.toMatch(/<svg\b/);
   });
 });
+
+describe('the tab bar draws the pairs', () => {
+  const APP = read('App.js');
+
+  test('each tab names its outline glyph, and its filled twin for the tab you are on', () => {
+    expect(APP).toContain('const NAV_ICONS = { home: Icons.nest, explore: Icons.discover, calendar: Icons.plans, chat: Icons.messages, profile: Icons.you };');
+    expect(APP).toContain('const NAV_ICONS_SELECTED = { home: Icons.nestFilled, explore: Icons.discoverFilled, calendar: Icons.plansFilled, chat: Icons.messagesFilled, profile: Icons.youFilled };');
+    expect(APP).toContain('<NavIcon id={t.id} selected={currentTab === t.id} />');
+    expect(APP).toContain('const draw = (selected ? NAV_ICONS_SELECTED : NAV_ICONS)[id];');
+  });
+
+  test('a tap presses the tab in and lets it go, with no bounce past full size', () => {
+    const frames = APP.slice(APP.indexOf('@keyframes tabPress {'), APP.indexOf('}', APP.indexOf('to { transform: scale(1); }')) + 1);
+    expect(frames).toContain('from { transform: scale(0.94); }');
+    const scales = [...frames.matchAll(/scale\(([\d.]+)\)/g)].map((m) => Number(m[1]));
+    expect(Math.max(...scales)).toBe(1);
+    expect(APP).toContain('animation: tabPress 160ms ease-out;');
+    expect(APP).not.toMatch(/tabBounce|tab-bounce/);
+  });
+});

@@ -159,18 +159,21 @@ describe('no function reads the light-only module palette', () => {
 });
 
 describe('the two components that moved out on 09-22', () => {
-  test('NavIcon draws the app icon set in currentColor and reads no palette', () => {
+  test('NavIcon draws the bird set in currentColor and reads no palette', () => {
     // Since 2026-11-06 the bar draws components/ui/Icons.js at 24 instead of
-    // its own stroked set; the colour still comes in as currentColor.
+    // its own stroked set, and since 2026-11-07 the bird set: the outline
+    // idle and its filled twin selected. The colour still comes in as
+    // currentColor.
     const src = topLevelSource('NavIcon');
     expect(src).toMatch(/const color = 'currentColor';/);
     expect(src).toMatch(/return draw \? draw\(color, 24\) : null;/);
     expect(src).not.toMatch(/colors\./);
-    expect(APP).toMatch(/const NAV_ICONS = \{ home: Icons\.home, explore: Icons\.map, calendar: Icons\.calendar, chat: Icons\.chat, profile: Icons\.user \};/);
+    expect(APP).toMatch(/const NAV_ICONS = \{ home: Icons\.nest, explore: Icons\.discover, calendar: Icons\.plans, chat: Icons\.messages, profile: Icons\.you \};/);
+    expect(APP).toMatch(/const NAV_ICONS_SELECTED = \{ home: Icons\.nestFilled, explore: Icons\.discoverFilled, calendar: Icons\.plansFilled, chat: Icons\.messagesFilled, profile: Icons\.youFilled \};/);
   });
 
   test('the tab bar sets the icon colour from the live palette', () => {
-    const at = APP.indexOf('<NavIcon id={t.id} />');
+    const at = APP.indexOf('<NavIcon id={t.id} selected={currentTab === t.id} />');
     expect(at).toBeGreaterThan(-1);
     const wrapper = APP.slice(APP.lastIndexOf('<div', at), at);
     expect(wrapper).toMatch(/color: currentTab === t\.id \? colors\.navy : colors\.textTertiary/);

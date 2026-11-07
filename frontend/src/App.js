@@ -3945,10 +3945,14 @@ const Toggle = ({ on, onChange, label, pendingOn }) => {
 // fullChatChips), by its words.
 const FULL_CHAT_CHIP_ICON = { [BUSY_NOW]: Icons.activity, [SPOT_TONIGHT]: Icons.mapPin, [HEAD_OUT]: Icons.clock, [BILL]: Icons.dollar };
 
-const NAV_ICONS = { home: Icons.home, explore: Icons.map, calendar: Icons.calendar, chat: Icons.chat, profile: Icons.user };
-const NavIcon = ({ id }) => {
+// The tab bar draws the bird set (since 2026-11-07): the outline when a tab
+// is idle and its filled twin on the tab you are on, so the tab you are on
+// shows in shape as well as in colour (the twin keeps the outline's shape).
+const NAV_ICONS = { home: Icons.nest, explore: Icons.discover, calendar: Icons.plans, chat: Icons.messages, profile: Icons.you };
+const NAV_ICONS_SELECTED = { home: Icons.nestFilled, explore: Icons.discoverFilled, calendar: Icons.plansFilled, chat: Icons.messagesFilled, profile: Icons.youFilled };
+const NavIcon = ({ id, selected }) => {
   const color = 'currentColor';
-  const draw = NAV_ICONS[id];
+  const draw = (selected ? NAV_ICONS_SELECTED : NAV_ICONS)[id];
   return draw ? draw(color, 24) : null;
 };
 
@@ -15421,7 +15425,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   comes from, and it has to be here: `colors` is the live
                   palette only inside FlockAppInner. */}
               <div style={{ display: 'flex', color: currentTab === t.id ? colors.navy : colors.textTertiary }}>
-                <NavIcon id={t.id} />
+                <NavIcon id={t.id} selected={currentTab === t.id} />
               </div>
               {/* One sign of the tab you are on: its icon and label in navy,
                   the label at 600. There were two, a pill behind the tab
