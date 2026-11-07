@@ -132,6 +132,7 @@ const LOOPS_ALLOWED = {
   'lp-reel': "the landing page's reel",
   'lpd-shimmer': "the website demo's loading shimmer",
   tapBreath: "the tap page's breathing card",
+  searchProgress: "Discover search's 2px progress line, drawn only while a search is out",
 };
 const TIMING_WORDS = new Set(['linear', 'ease', 'ease-in', 'ease-out', 'ease-in-out', 'step-start', 'step-end',
   'alternate', 'alternate-reverse', 'reverse', 'normal', 'forwards', 'backwards', 'both', 'none', 'running', 'paused']);
