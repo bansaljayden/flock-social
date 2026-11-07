@@ -458,17 +458,79 @@ describe('where the set is drawn', () => {
   });
 
   test('Start Flock hatches an egg, never at a size the egg cannot hold', () => {
-    expect(read('screens', 'ExploreScreen.js')).toContain("{Icons.startFlock('white', 15)} Start Flock");
-    expect(read('components', 'EventDetailOverlay.js')).toContain("{Icons.startFlock('white', 16)} Start Flock");
+    // 18 beside a 12 or 15 px label: at 15 and 16 the egg drew about 9 x 12
+    // px with a plus that smeared into a dot, lighter than the words.
+    expect(read('screens', 'ExploreScreen.js')).toContain("{Icons.startFlock('white', 18)} Start Flock");
+    expect(read('components', 'EventDetailOverlay.js')).toContain("{Icons.startFlock('white', 18)} Start Flock");
   });
 
-  test('every literal size the egg glyphs are called at clears their floors (startFlock 15, nestEgg 16)', () => {
-    const floors = { startFlock: 15, nestEgg: 16 };
+  // The smallest size each egg glyph holds at: startFlock's plus and nestEgg's
+  // $ (1.1 clear of the shell) close up under these.
+  const EGG_FLOORS = { startFlock: 18, nestEgg: 16 };
+
+  /** Each Icons.startFlock(...) or Icons.nestEgg(...) call, with its size argument as written. */
+  function eggCalls(text) {
+    const out = [];
+    for (const m of text.matchAll(/Icons\.(startFlock|nestEgg)\(/g)) {
+      let depth = 1;
+      let i = m.index + m[0].length;
+      const commas = [];
+      for (; i < text.length && depth > 0; i += 1) {
+        if (text[i] === '(') depth += 1;
+        else if (text[i] === ')') depth -= 1;
+        else if (text[i] === ',' && depth === 1) commas.push(i);
+      }
+      const end = i - 1;
+      const size = commas.length ? text.slice(commas[0] + 1, commas.length > 1 ? commas[1] : end).trim() : '';
+      out.push({ key: m[1], call: text.slice(m.index, end + 1), size });
+    }
+    return out;
+  }
+
+  test('every call of an egg glyph names its size, and the size clears the floor (startFlock 18, nestEgg 16)', () => {
+    // Counted with the call's own brackets, so a colour like
+    // 'var(--accent-purple-text)' in the first argument cannot hide the size.
+    let calls = 0;
     for (const [file, text] of ALL) {
-      for (const m of text.matchAll(/Icons\.(startFlock|nestEgg)\([^()]*?,\s*(\d+)\s*[,)]/g)) {
-        expect({ file, call: m[0], ok: Number(m[2]) >= floors[m[1]] }).toEqual({ file, call: m[0], ok: true });
+      for (const { key, call, size } of eggCalls(text)) {
+        calls += 1;
+        expect({ file, call, ok: /^\d+$/.test(size) && Number(size) >= EGG_FLOORS[key] }).toEqual({ file, call, ok: true });
       }
     }
+    expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
+  test('an egg glyph handed to a component clears the floor at the size the component draws it', () => {
+    // FlockProfileSheet's Row draws its glyph at 17 and ComposerPlusSheet's
+    // Tile at its default 22, sizes no call above names. Any other way of
+    // drawing an egg has to be added here before it can ship.
+    const handed = [];
+    for (const [file, text] of ALL) {
+      for (const m of text.matchAll(/Icons\.(startFlock|nestEgg)\b(?!\()/g)) {
+        const before = text.slice(Math.max(0, m.index - 8), m.index);
+        expect({ file, ref: m[0], handed: /glyph(=\{|: )$/.test(before) }).toEqual({ file, ref: m[0], handed: true });
+        handed.push(`${file} ${m[1]}`);
+      }
+    }
+    expect(handed.sort()).toEqual([
+      'components/chat/sheets/ComposerPlusSheet.js nestEgg',
+      'components/chat/sheets/FlockProfileSheet.js nestEgg',
+    ]);
+    /** The sizes component `name` in `text` draws its glyph at. */
+    const drawnAt = (text, name) => {
+      const at = text.search(new RegExp(`function ${name}\\(`));
+      const body = text.slice(at, text.indexOf('\n}\n', at));
+      const dflt = (body.match(/\bsize = (\d+)/) || [])[1];
+      return [...body.matchAll(/glyph\('currentColor', (\d+|size)\)/g)].map((m) => Number(m[1] === 'size' ? dflt : m[1]));
+    };
+    const profile = read('components', 'chat', 'sheets', 'FlockProfileSheet.js');
+    expect(profile).toMatch(/<Row\s+glyph=\{Icons\.nestEgg\}/);
+    expect(drawnAt(profile, 'Row')).toEqual([17]);
+    const composer = read('components', 'chat', 'sheets', 'ComposerPlusSheet.js');
+    const tile = composer.match(/\{ key: 'pool', glyph: Icons\.nestEgg[^}]*\}/)[0];
+    const tileSize = /size: (\d+)/.test(tile) ? Number(tile.match(/size: (\d+)/)[1]) : drawnAt(composer, 'Tile')[0];
+    expect(tileSize).toBe(22);
+    [17, tileSize].forEach((size) => expect(size).toBeGreaterThanOrEqual(EGG_FLOORS.nestEgg));
   });
 });
 

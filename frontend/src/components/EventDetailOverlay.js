@@ -225,7 +225,7 @@ export default function EventDetailOverlay({
               setShowEventsView(false);
               setCurrentScreen('create');
             }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-              {Icons.startFlock('white', 16)} Start Flock
+              {Icons.startFlock('white', 18)} Start Flock
             </button>
             {httpUrl(eventDetail.url) && (
               <button className="hit44" onClick={() => openExternal(eventDetail.url)} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>

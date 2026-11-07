@@ -973,7 +973,7 @@ export default function ExploreScreen({
                         setShowEventsView(false);
                         setCurrentScreen('create');
                       }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                        {Icons.startFlock('white', 15)} Start Flock
+                        {Icons.startFlock('white', 18)} Start Flock
                       </button>
                       <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
                         e.stopPropagation();

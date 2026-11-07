@@ -443,12 +443,15 @@ const Icons = {
   /* --- the bird set: what the Nest and a plan ask for --- */
 
   // Start a flock: the egg with a plus in it. A new flock hatches. The plus
-  // keeps 2 units clear of the shell. Drawn from 15 px up; at 12-13 the call
-  // site uses `plus`, because the egg's curve is noise that small.
+  // carries the meaning, so its arms are 3, as long as the shell allows (1.67
+  // clear of it): at 15 px with arms of 2.5 it smeared into a dot and the
+  // egg read as a water drop beside its label. Drawn from 18 px up, which
+  // balances a 13 px link or a 15 px button label (20 in a 48 px primary
+  // button); smaller, the call site uses `plus`.
   startFlock: make(
     <>
       <path d={EGG_D} />
-      <path d="M12 10.5 12 15.5M9.5 13 14.5 13" />
+      <path d="M12 10 12 16M9 13 15 13" />
     </>
   ),
 
