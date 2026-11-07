@@ -18324,6 +18324,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             saving={pulseSaving}
             onSet={handleSetPulse}
             friends={nestFriendsOut}
+            onAddFriends={openAddFriendsFromNest}
             onPlanWith={() => {
               setFlockFriends((prev) => mergePlanFriends(prev, nestFriendsOut ? nestFriendsOut.people : []));
               setCurrentScreen('create');

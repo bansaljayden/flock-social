@@ -4,8 +4,18 @@
  * One segmented control, Down / Maybe / Not, on a quiet track: the most
  * tapped control in the app, so it keeps its 44px segments, its spoken names
  * ("Tonight: Down"), its pressed state, the optimistic write with a rollback
- * (handleSetPulse in App.js) and the fills that clear 4.5:1 under white. The
- * audience is said right under it, in the same words as before.
+ * (handleSetPulse in App.js) and a 160 ms change. The audience is said right
+ * under it, in the same words as before.
+ *
+ * The chosen answer is a tint of its hue with ink of the same hue (index.css
+ * --pulse-{down,maybe,not}-{bg,ink}): every ink clears 4.5:1 on its tint and
+ * every tint stands apart from the track (nestOutTonight.test.js). Down used
+ * to fill its segment solid green under white, the loudest block on the page
+ * after the hero and SOS, for an answer that is a quiet fact about tonight.
+ *
+ * Add friends is a steel text link at the end of the heading, so a returning
+ * person with friends has it on the first screen and not only in the footer:
+ * friends are what make the rest of the page work.
  *
  * Under that, the friends who are out tonight by name with their faces,
  * because what the people closest to you are doing is what moves you, and
@@ -13,24 +23,45 @@
  * It adds to whoever is already picked, never replaces a draft, and sends
  * nothing until the person does. A friend who said Not is never shown, and
  * from midnight to 4 AM the line is not drawn at all (lib/pulse.js
- * friendsDownLine).
+ * friendsDownLine). The button belongs to the names: beside them when they
+ * fit on one line, and under their first letter when they do not.
  */
 import React from 'react';
 import Icons from '../ui/Icons';
 import { FaceRow } from './Face';
 
-// The ACTIVE fill under white text has to clear 4.5:1 with white, not just
-// read as green or amber: #047857 = 5.48:1, #b45309 = 5.02:1, #3f4a5a = 8.98:1.
 export const PULSE_OPTIONS = [
-  { key: 'down', fill: '#047857', label: 'Down' },
-  { key: 'maybe', fill: '#b45309', label: 'Maybe' },
-  { key: 'not', fill: '#3f4a5a', label: 'Not' },
+  { key: 'down', label: 'Down' },
+  { key: 'maybe', label: 'Maybe' },
+  { key: 'not', label: 'Not' },
 ];
 
-export default function NestPulse({ active, saving, onSet, friends, onPlanWith }) {
+const textLink = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  flexShrink: 0,
+  minHeight: '36px',
+  padding: 0,
+  border: 'none',
+  background: 'none',
+  color: 'var(--accent-purple-text)',
+  fontSize: 'var(--t-label)',
+  fontWeight: '600',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+};
+
+export default function NestPulse({ active, saving, onSet, friends, onPlanWith, onAddFriends }) {
   return (
     <div data-nest-band="out-tonight" style={{ marginBottom: '28px' }}>
-      <h2 style={{ margin: '0 0 10px', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Out tonight?</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', margin: '0 0 10px', minHeight: '20px' }}>
+        <h2 style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Out tonight?</h2>
+        {onAddFriends && (
+          <button type="button" className="hit44" onClick={onAddFriends} style={{ ...textLink, gap: '6px', minHeight: '32px', margin: '-6px 0' }}>
+            {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
+          </button>
+        )}
+      </div>
       <div style={{ display: 'flex', gap: '2px', padding: '2px', minHeight: '48px', boxSizing: 'border-box', borderRadius: '12px', backgroundColor: 'var(--bg-inset)' }}>
         {PULSE_OPTIONS.map((opt) => {
           const on = active === opt.key;
@@ -50,8 +81,8 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith }
                 padding: 0,
                 border: 'none',
                 borderRadius: '10px',
-                backgroundColor: on ? opt.fill : 'transparent',
-                color: on ? '#ffffff' : 'var(--text-secondary)',
+                backgroundColor: on ? `var(--pulse-${opt.key}-bg)` : 'transparent',
+                color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-secondary)',
                 fontSize: 'var(--t-body)',
                 fontWeight: '600',
                 cursor: saving ? 'wait' : 'pointer',
@@ -65,19 +96,19 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith }
         })}
       </div>
       {friends && (
-        // One line when it fits; when the names run long (or the phone is
-        // narrow) the button takes its own line under them, at the end.
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: '10px', marginTop: '10px', minHeight: '44px' }}>
-          <FaceRow people={friends.people.slice(0, 3).map((p) => ({ key: p.id, name: p.name, image: p.profile_image_url }))} total={Math.min(3, friends.people.length)} size={28} max={3} ring="var(--bg-primary)" />
-          <span style={{ flex: '1 1 150px', minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.4, color: 'var(--text-secondary)' }}>{friends.text}</span>
-          <button
-            type="button"
-            className="hit44"
-            onClick={onPlanWith}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', flexShrink: 0, marginLeft: 'auto', minHeight: '36px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
-          >
-            {friends.planLabel} {Icons.chevronRight('var(--accent-purple-text)', 14)}
-          </button>
+        // The faces, then one wrapping line that holds the names and the
+        // button: beside the names while they fit, and at the start of its
+        // own line, under the names' first letter, when they do not.
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginTop: '10px' }}>
+          <span style={{ display: 'flex', alignItems: 'center', minHeight: '36px', flexShrink: 0 }}>
+            <FaceRow people={friends.people.slice(0, 3).map((p) => ({ key: p.id, name: p.name, image: p.profile_image_url }))} total={Math.min(3, friends.people.length)} size={28} max={3} ring="var(--bg-primary)" />
+          </span>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: '10px', minHeight: '36px' }}>
+            <span style={{ flex: '1 1 150px', minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.4, color: 'var(--text-secondary)' }}>{friends.text}</span>
+            <button type="button" className="hit44" onClick={onPlanWith} style={{ ...textLink, gap: '2px' }}>
+              {friends.planLabel} {Icons.chevronRight('var(--accent-purple-text)', 14)}
+            </button>
+          </div>
         </div>
       )}
       {/* The audience, stated. The first screen's one social disclosure:
