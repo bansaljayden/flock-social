@@ -42,6 +42,10 @@ describe('nestRows', () => {
     expect(nestRows({ asks, excludeIds: [1, 3] }).map((r) => r.flockId)).toEqual([2]);
   });
 
+  test('the host is named by first name, the way a friend is', () => {
+    expect(nestRows({ invites: [plan(4, { host: 'Leo Martin' })] })[0].title).toBe('Leo invited you to Plan 4');
+  });
+
   test('an Unknown host is not named', () => {
     expect(nestRows({ invites: [plan(4, { host: 'Unknown' })] })[0].title).toBe("You're invited to Plan 4");
     expect(nestRows({ invites: [plan(4, {})] })[0].title).toBe("You're invited to Plan 4");

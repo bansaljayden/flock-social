@@ -65,14 +65,16 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith }
         })}
       </div>
       {friends && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '12px', minHeight: '44px' }}>
+        // One line when it fits; when the names run long (or the phone is
+        // narrow) the button takes its own line under them, at the end.
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', columnGap: '10px', marginTop: '10px', minHeight: '44px' }}>
           <FaceRow people={friends.people.slice(0, 3).map((p) => ({ key: p.id, name: p.name, image: p.profile_image_url }))} total={Math.min(3, friends.people.length)} size={28} max={3} ring="var(--bg-primary)" />
-          <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>{friends.text}</span>
+          <span style={{ flex: '1 1 150px', minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.4, color: 'var(--text-secondary)' }}>{friends.text}</span>
           <button
             type="button"
             className="hit44"
             onClick={onPlanWith}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', flexShrink: 0, padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '2px', flexShrink: 0, marginLeft: 'auto', minHeight: '36px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
             {friends.planLabel} {Icons.chevronRight('var(--accent-purple-text)', 14)}
           </button>

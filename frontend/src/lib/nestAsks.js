@@ -52,8 +52,8 @@ export function nestAsks(flocks, voteAsks = []) {
  *   owe     "Pay your share for {plan}"
  *   budget  "Add your budget for {plan}"
  *   vote    "Vote on {plan}"
- *   invite  "{host} invited you to {plan}", or "You're invited to {plan}" when
- *           the host's name did not come through
+ *   invite  "{host's first name} invited you to {plan}", or "You're invited
+ *           to {plan}" when the host's name did not come through
  *   how     "How was {venue}?" for a night that is over and not rated, once
  *           the night has rolled over at 4 AM (before that the plan is the
  *           hero and asks there)
@@ -66,11 +66,14 @@ export function nestAsks(flocks, voteAsks = []) {
  * Each row carries the plan's time and place for its second line, as data;
  * the words for the time come from lib/nestTime.js whenLine.
  */
+// A first name reads as a friend; the full one is on the invite card itself.
+const firstName = (name) => String(name || '').trim().split(/\s+/)[0];
+
 export const NEST_ROW_TITLE = {
   owe: (f) => `Pay your share for ${f.name}`,
   budget: (f) => `Add your budget for ${f.name}`,
   vote: (f) => `Vote on ${f.name}`,
-  invite: (f) => (f.host && f.host !== 'Unknown' ? `${f.host} invited you to ${f.name}` : `You're invited to ${f.name}`),
+  invite: (f) => (f.host && f.host !== 'Unknown' ? `${firstName(f.host)} invited you to ${f.name}` : `You're invited to ${f.name}`),
   how: (f) => `How was ${f.venue}?`,
 };
 
