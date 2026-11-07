@@ -274,14 +274,53 @@ describe('the card', () => {
     ...over,
   });
 
-  test('a section named by the plan, whose body is one button read out as the whole card', () => {
+  test('a section named by the plan, whose name is a heading holding the one button that opens it', () => {
     const p = props();
     render(<NestHero {...p} />);
     expect(screen.getByRole('region', { name: 'Trivia Night' })).toBeInTheDocument();
-    const open = screen.getByRole('button', { name: 'Trivia Night, Tonight at 8:33 PM, The Copper Finch, Locked in, 3 going' });
+    // A heading the rotor can reach (and the browser specs find a plan by),
+    // never a span inside a button, whose children are presentational.
+    const heading = screen.getByRole('heading', { level: 2, name: 'Trivia Night' });
+    const open = screen.getByRole('button', { name: 'Trivia Night' });
+    expect(heading.contains(open)).toBe(true);
+    expect(open.parentElement.closest('button')).toBeNull();
     fireEvent.click(open);
     expect(p.onOpen).toHaveBeenCalledTimes(1);
     expect(p.onAction).not.toHaveBeenCalled();
+  });
+
+  test("the button says what it shows: no aria-label over the card, the rest is its description in the card's order", () => {
+    const p = props({ note: 'You voted. Sam locks it in.' });
+    const { container } = render(<NestHero {...p} />);
+    const open = screen.getByRole('button', { name: 'Trivia Night' });
+    // WCAG 2.5.3: the spoken name is the visible one. The label used to start
+    // with the name while the card starts with the time, and it hid the
+    // names line and the note from VoiceOver.
+    expect(open).not.toHaveAttribute('aria-label');
+    expect(open).toHaveAccessibleDescription('Tonight at 8:33 PM Locked in The Copper Finch You, Jordan and 1 more You voted. Sam locks it in.');
+    expect(container.querySelector('[aria-label]')).toBeNull();
+  });
+
+  test('the tap area is stretched over the card from its own box, and the action rides above it', () => {
+    const p = props();
+    const { container } = render(<NestHero {...p} />);
+    const section = container.querySelector('section');
+    expect(section.style.position).toBe('relative');
+    expect(section.style.isolation).toBe('isolate');
+    const open = screen.getByRole('button', { name: 'Trivia Night' });
+    expect(open).toHaveClass('nest-stretch', 'nest-stretch--hero');
+    // Nothing between the button and the card moves: a transform on an
+    // ancestor would shrink the layer to it. The settle moves a span inside.
+    let el = open.parentElement;
+    while (el && el !== section) { expect(el.className || '').not.toMatch(/nest-lock-settle/); el = el.parentElement; }
+    expect(screen.getByRole('button', { name: 'Add your budget' })).toHaveClass('nest-raise', 'nest-on-navy');
+  });
+
+  test('the keyboard ring on the navy is near-white, 3:1 or better, never the steel ring (1.89:1)', () => {
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8');
+    expect(css).toMatch(/\.nest-stretch--hero:focus-visible::after \{[^}]*outline-color: rgba\(241, 237, 224, 0\.9\);[^}]*outline-offset: -4px;/);
+    expect(css).toMatch(/\.nest-on-navy:focus-visible \{\s*outline-color: rgba\(241, 237, 224, 0\.9\);/);
+    expect(css).toMatch(/\.nest-stretch::after \{[^}]*position: absolute;[^}]*inset: 0;/);
   });
 
   test("the one action is a sibling button, never inside the card's button", () => {
@@ -300,11 +339,16 @@ describe('the card', () => {
     expect(container.textContent).not.toMatch(/\d+\s*(min|minutes|hrs?|hours) (left|to go)|starts in/i);
   });
 
-  test("the plans beside it on the same night are rows with the reader's state", () => {
+  test("the plans beside it on the same night are rows with the reader's state, each name a heading", () => {
     const onClick = jest.fn();
     render(<NestHero {...props({ sameNight: [{ id: 9, name: 'Friday Night Crew', line: 'Also tonight at 8:00 PM', chip: { label: 'Voted', tone: 'neutral' }, onClick }] })} />);
-    fireEvent.click(screen.getByRole('button', { name: /Friday Night Crew/ }));
+    const heading = screen.getByRole('heading', { level: 3, name: 'Friday Night Crew' });
+    const open = screen.getByRole('button', { name: 'Friday Night Crew' });
+    expect(heading.contains(open)).toBe(true);
+    expect(open).toHaveAccessibleDescription('Also tonight at 8:00 PM Voted');
+    fireEvent.click(open);
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(screen.getByText('Voted')).toBeInTheDocument();
+    expect(screen.getByRole('list')).toBeInTheDocument();
   });
 });

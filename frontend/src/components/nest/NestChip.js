@@ -6,12 +6,13 @@
 import React from 'react';
 import Icons from '../ui/Icons';
 
-export default function NestChip({ chip }) {
+export default function NestChip({ chip, id }) {
   if (!chip) return null;
   const accent = chip.tone === 'accent';
   const ink = accent ? 'var(--accent-purple-text)' : 'var(--text-secondary)';
   return (
     <span
+      id={id}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

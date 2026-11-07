@@ -392,11 +392,14 @@ test('every empty panel a brand new account meets explains itself', async ({ pag
   // what to do next instead of just being empty.
   await expect(page.getByText(/search (a|any) place by name/i)).toBeVisible();
 
-  // Past flocks, reached from home.
+  // Past flocks is offered from home only once there is history to see. On a
+  // brand-new account it opened an empty list, so the Nest no longer draws
+  // it there (App.js, the empty state and the footer both gate on a finished
+  // plan existing). Its own empty state is unchanged and still reachable for
+  // anyone whose last plan was cancelled.
   await page.getByRole('button', { name: 'Nest', exact: true }).click();
-  await page.getByRole('button', { name: /past flocks/i }).click();
-  await expect(page.getByText(/nothing here yet/i)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText(/a flock lands here once its night has been and gone/i)).toBeVisible();
+  await expect(page.getByText(/no flocks yet/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: /past flocks/i })).toHaveCount(0);
 
   expect(errors).toEqual([]);
 });

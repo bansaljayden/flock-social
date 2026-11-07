@@ -957,6 +957,64 @@ code {
 }
 .nest-lock-fade { animation: nestLockFade 200ms var(--ease-out) both; }
 .nest-lock-settle { animation: nestLockSettle 300ms var(--ease-out) both; }
+
+/* A NEST PLAN'S NAME IS A HEADING, AND ITS CARD IS ONE TAP
+   (components/nest/NestHero.js, NestComingUp.js). The button that opens a
+   plan sits inside the plan's heading and holds the name alone; this lays its
+   tap area over the whole card, from the card's own box (the nearest
+   positioned ancestor, which isolates itself so the layer stays inside it and
+   never paints over the page's scroll edge). The button takes the heading's
+   type. Anything else on a card that is its own control rides above the
+   layer (.nest-raise).
+
+   The keyboard ring is drawn on the layer, around the card, since the button
+   is only as wide as the name: outside a card on the ground, inside a row of
+   a group (the group clips its corners), and inside the hero in near-white,
+   where the steel ring is 1.89:1 on the navy in light mode and the ring
+   needs 3:1 (12.5:1 here, as .plan-head-control does on the plan screen).
+   The hero's own action button gets the same near-white ring (.nest-on-navy),
+   drawn on the navy around it. */
+.nest-stretch {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+.nest-stretch::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 12px;
+}
+.nest-raise {
+  position: relative;
+  z-index: 2;
+}
+.nest-stretch:focus-visible { outline: none; }
+.nest-stretch:focus-visible::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.nest-stretch--row:focus-visible::after {
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+.nest-stretch--hero::after { border-radius: 16px; }
+.nest-stretch--hero:focus-visible::after {
+  outline-color: rgba(241, 237, 224, 0.9);
+  outline-offset: -4px;
+}
+.nest-on-navy:focus-visible {
+  outline-color: rgba(241, 237, 224, 0.9);
+}
 @media (prefers-reduced-motion: reduce) {
   .nest-lock-fade { animation-duration: 200ms !important; }
   .nest-lock-settle { animation-name: nestLockFade !important; animation-duration: 200ms !important; }

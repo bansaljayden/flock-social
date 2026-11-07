@@ -566,8 +566,14 @@ test('accepting puts the guest on the roster and the headcount agrees everywhere
   //
   //    SOFT, so one run reports every surface that disagrees rather than
   //    stopping at the first. The test still fails.
+  //
+  //    The card is the box that holds the plan's heading (data-nest-plan on
+  //    the hero and on every Coming up card). The heading holds the button
+  //    that opens the plan, so the card is no longer one big button: a
+  //    button's children are presentational and the name inside it was no
+  //    heading to VoiceOver (components/nest/NestComingUp.js).
   await goTab(host.page, 'Nest');
-  const card = host.page.locator('button').filter({ has: host.page.getByRole('heading', { name, exact: true }) });
+  const card = host.page.locator('[data-nest-plan]').filter({ has: host.page.getByRole('heading', { name, exact: true }) });
   await expect.soft(card.getByText(host.firstName[0], { exact: true }),
     'the host is one of the faces on the home card').toBeVisible();
   await expect.soft(card.getByText(mate.firstName[0], { exact: true }),
