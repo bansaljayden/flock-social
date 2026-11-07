@@ -55,8 +55,13 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
   useEffect(() => {
     const root = getScroller ? getScroller() : null;
     if (!root || !band || typeof IntersectionObserver === 'undefined') { setAskShown(false); return undefined; }
-    const io = new IntersectionObserver(([entry]) => {
-      setAskShown(!entry.isIntersecting);
+    // The LAST record decides: one callback can carry several records for
+    // the section (its first look, then a move as the list lands), oldest
+    // first. Reading only the first kept the pill hidden on a section the
+    // list had pushed off screen, about one load in three on the rig.
+    const io = new IntersectionObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry) setAskShown(!entry.isIntersecting);
     }, { root, threshold: 0 });
     io.observe(band);
     return () => io.disconnect();

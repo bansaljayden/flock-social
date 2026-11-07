@@ -109,7 +109,7 @@ describe('the Ask Birdie pill', () => {
   beforeEach(() => {
     observed = [];
     window.IntersectionObserver = class {
-      constructor(cb, opts) { this.cb = cb; this.opts = opts; fire = (where) => cb([entry(where)]); }
+      constructor(cb, opts) { this.cb = cb; this.opts = opts; fire = (...where) => cb(where.map(entry)); }
       observe(el) { observed.push({ el, opts: this.opts }); }
       disconnect() {}
     };
@@ -179,6 +179,20 @@ describe('the Ask Birdie pill', () => {
     expect(pill.textContent).toBe('Ask Birdie');
     act(() => fire('in'));
     hidden();
+  });
+
+  test('one callback with several records: the newest decides', () => {
+    // The observer can hand over the section's first look (on screen, while
+    // the list was still loading) and its move off screen in one callback,
+    // oldest first. Reading only the first record kept the pill hidden about
+    // one load in three on the rig (seeded Nest, 390, dark).
+    const box = page();
+    const { container } = render(<NestDock {...props(box)} />);
+    const pill = container.querySelector('button');
+    act(() => fire('in', 'below'));
+    expect(pill.style.opacity).toBe('1');
+    act(() => fire('below', 'in'));
+    expect(pill.style.opacity).toBe('0');
   });
 
   test('watches the section the page hands it, and a new one at once when the page replaces it', () => {
