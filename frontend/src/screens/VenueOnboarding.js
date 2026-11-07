@@ -48,6 +48,7 @@ import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } fr
 import { lsSet } from '../lib/storage';
 import { queueSync } from '../services/userSettings';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
+import Icons from '../components/ui/Icons';
 // The support address in a sentence, as a link and text that copies.
 import { withSupportAddress } from '../components/ui/SupportAddress';
 
@@ -311,7 +312,7 @@ export default function VenueOnboarding({
               return (
                 <button className="hit44" key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: '12px', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
                   <div style={{ width: '20px', height: '20px', borderRadius: '6px', border: selected ? '2px solid #f0ead8' : '2px solid rgba(148,163,184,0.2)', backgroundColor: selected ? '#f0ead8' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    {selected && <svg aria-hidden="true" focusable="false" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                    {selected && Icons.check('#0f172a', 14)}
                   </div>
                   {goal}
                 </button>

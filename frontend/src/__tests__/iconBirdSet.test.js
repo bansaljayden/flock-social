@@ -284,20 +284,15 @@ describe('every tab glyph sits on the 24 grid', () => {
   });
 
   test.each(TAB_KEYS)('%s: straight segments run at 0, 45 or 90 degrees, arcs are circular', (key) => {
-    for (const s of shapes(draw(key))) {
-      for (const seg of s.segs || []) {
-        if (seg.type === 'A') {
-          expect(seg.rx).toBe(seg.ry);
-          continue;
-        }
-        const [x1, y1] = seg.from;
-        const [x2, y2] = seg.to;
-        const dx = Math.abs(x2 - x1);
-        const dy = Math.abs(y2 - y1);
-        const ok = dx < 1e-9 || dy < 1e-9 || Math.abs(dx - dy) < 1e-9;
-        expect({ key, seg: [seg.from, seg.to], ok }).toEqual({ key, seg: [seg.from, seg.to], ok: true });
-      }
-    }
+    const segs = shapes(draw(key)).flatMap((s) => s.segs || []);
+    const elliptical = segs.filter((seg) => seg.type === 'A' && seg.rx !== seg.ry);
+    expect(elliptical).toEqual([]);
+    const offAngle = segs.filter((seg) => seg.type === 'L').filter((seg) => {
+      const dx = Math.abs(seg.to[0] - seg.from[0]);
+      const dy = Math.abs(seg.to[1] - seg.from[1]);
+      return !(dx < 1e-9 || dy < 1e-9 || Math.abs(dx - dy) < 1e-9);
+    }).map((seg) => [seg.from, seg.to]);
+    expect(offAngle).toEqual([]);
   });
 
   test.each(['nest', 'discover', 'plans', 'messages', 'you'])('%s: separate parts stay 1.5 units clear', (key) => {
@@ -415,5 +410,36 @@ describe('where the set is drawn', () => {
         expect({ file, call: m[0], ok: Number(m[2]) >= floors[m[1]] }).toEqual({ file, call: m[0], ok: true });
       }
     }
+  });
+});
+
+describe('the stray stock SVGs are folded into the set', () => {
+  // Each of these screens drew its own Feather-style mark (a 2 px stroke,
+  // rounded rectangles, one in an off-palette blue) beside the set's glyphs.
+  // They draw Icons.js keys now; none keeps an inline <svg> for an icon.
+  test('the map controls: locate, zoom, and the map/satellite switch', () => {
+    const map = read('components', 'map', 'MapLibreMapView.js');
+    const controls = map.slice(map.indexOf('{/* My Location button.'), map.lastIndexOf('export default MapLibreMapView'));
+    expect(controls).toContain("{Icons.locate('var(--text-primary)', 22)}");
+    expect(controls).toContain("{Icons.plus('var(--text-primary)', 18)}");
+    expect(controls).toContain("{Icons.minus('var(--text-primary)', 18)}");
+    expect(controls).toContain("{(mapType === 'roadmap' ? Icons.globe : Icons.map)('var(--text-primary)', 22)}");
+    expect(controls).not.toMatch(/<svg\b/);
+    expect(controls).not.toContain('#3b82f6');
+  });
+
+  test.each([
+    [['components', 'PaywallSheet.js'], ['Icons.birdie, 16', 'Icons.barChart, 18', 'Icons.bell, 18', "{Icons.x('currentColor', 16)}"]],
+    [['components', 'EditProfileForm.js'], ["(show ? Icons.eyeOff : Icons.eye)('var(--text-secondary)', 18)"]],
+    [['components', 'auth', 'PasswordReset.js'], ["(c.ok ? Icons.check : Icons.circle)('currentColor', 14)"]],
+    [['components', 'overlays', 'AttendanceModal.js'], ["Icons.check('#fff', 14)"]],
+    [['screens', 'VenueOnboarding.js'], ["Icons.check('#0f172a', 14)"]],
+    [['components', 'VenueAdvisorChat.js'], ["Icons.send(canAsk ? 'white' : 'var(--text-tertiary)', 16)"]],
+    [['components', 'overlays', 'VenueDetailSheet.js'], ['{Icons.menuLines(colors.navy, 18)}']],
+    [['components', 'venue', 'ConsumerVenueCard.js'], ["{Icons.lock('var(--text-tertiary)', 18)}"]],
+  ])('%j draws set glyphs and no inline icon svg', (file, calls) => {
+    const text = read(...file);
+    calls.forEach((c) => expect(text).toContain(c));
+    expect(text).not.toMatch(/<svg\b/);
   });
 });

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import request, { clearLocalSession, RESET_DONE_KEY } from '../../services/api';
 import AuthShell, { AUTH, AuthError, AuthNotice, PasswordEye } from './AuthShell';
+import Icons from '../ui/Icons';
 
 /* ═══════════════════════════════════════════════════════════════════
    PASSWORD RESET — the two screens either side of the email.
@@ -393,9 +394,7 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
                     color: c.ok ? AUTH.green : AUTH.cream2,
                   }}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    {c.ok ? <polyline points="20 6 9 17 4 12" /> : <circle cx="12" cy="12" r="9" />}
-                  </svg>
+                  {(c.ok ? Icons.check : Icons.circle)('currentColor', 14)}
                   {c.label}
                 </li>
               ))}

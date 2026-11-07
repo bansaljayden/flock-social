@@ -7,6 +7,7 @@ import { birdieBackText, forecastBackText } from '../lib/meterResets';
 import { isNativeShell } from '../lib/nativeShell';
 import useSheetDrag from '../hooks/useSheetDrag';
 import { SkeletonBar } from './ui/Skeleton';
+import Icons from './ui/Icons';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
 // (overlay, 440px max, 20px top radius, a grabber that pulls it closed,
@@ -103,17 +104,19 @@ const PAID_NOT_ON_YET = `Your payment went through, but Flock Pro isn't on yet. 
 
 const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 
-// Minimal 18px stroke icons (in-app SVG language, no emoji as UI icons).
-const BenefitIcon = ({ path, color }) => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-    {path}
-  </svg>
-);
-
-const ICON_PATHS = {
-  birdie: <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />,
-  forecast: <><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></>,
-  alerts: <><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" /></>,
+// Each benefit's mark, from the app's own set (components/ui/Icons.js), in
+// place of a stock chat bubble, pulse line and bell: Birdie's head for the
+// Birdie messages, the hour bars the venue sheet draws its forecast with, and
+// the bell. Birdie is the one solid glyph, so it draws a size under the
+// outlines (as everywhere it sits beside them).
+const BENEFIT_GLYPH = {
+  birdie: [Icons.birdie, 16],
+  forecast: [Icons.barChart, 18],
+  alerts: [Icons.bell, 18],
+};
+const BenefitIcon = ({ name, color }) => {
+  const [glyph, size] = BENEFIT_GLYPH[name];
+  return <span data-benefit-icon="" style={{ display: 'inline-flex', flexShrink: 0, width: '18px', justifyContent: 'center' }}>{glyph(color, size)}</span>;
 };
 
 // Every line here must name something that actually ships (DESIGN-STANDARD.md C1).
@@ -629,9 +632,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
           aria-label="Close"
           style={{ position: 'absolute', top: '10px', right: '12px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '15px', border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: busy || restoring ? 'default' : 'pointer', padding: 0 }}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
+          {Icons.x('currentColor', 16)}
         </button>
 
         <div style={{ padding: '6px 20px 20px' }}>
@@ -644,7 +645,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
             {benefits.map((b) => (
               <div key={b.icon} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <BenefitIcon path={ICON_PATHS[b.icon]} color={accent} />
+                <BenefitIcon name={b.icon} color={accent} />
                 <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>{b.label}</span>
               </div>
             ))}

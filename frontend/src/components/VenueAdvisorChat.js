@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BirdieStill, BirdNote } from './ui/BirdieBird';
 import { SkeletonBar } from './ui/Skeleton';
+import Icons from './ui/Icons';
 import { signInKey } from '../lib/sessionIdentity';
 import { isNativeShell } from '../lib/nativeShell';
 import { landingTop, awayFromEnd } from '../lib/threadLanding';
@@ -1475,9 +1476,8 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
               transition: 'background-color 0.2s ease',
             }}
           >
-            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={canAsk ? 'white' : 'var(--text-tertiary)'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-            </svg>
+            {/* The paper plane the chat composer sends with. */}
+            {Icons.send(canAsk ? 'white' : 'var(--text-tertiary)', 16)}
           </button>
         </div>
 

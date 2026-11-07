@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { renderToStaticMarkup } = require('react-dom/server');
+const { renderToStaticMarkup: toMarkup } = require('react-dom/server');
 const Icons = require('../components/ui/Icons').default;
 
 const DIR = path.join(__dirname, '..', 'components', 'ui', 'icons');
@@ -42,7 +42,7 @@ function topLevel(markup) {
 
 /** Icons[key] at 24 px as the file this folder keeps for it. */
 function standalone(key) {
-  const markup = renderToStaticMarkup(Icons[key]('currentColor', 24));
+  const markup = toMarkup(Icons[key]('currentColor', 24));
   const svg = markup.slice(markup.indexOf('<svg'), markup.lastIndexOf('</svg>') + '</svg>'.length);
   const open = svg.slice(0, svg.indexOf('>') + 1);
   const body = svg.slice(open.length, -'</svg>'.length).replace(EMPTY_ELEMENTS, '<$1$2/>');

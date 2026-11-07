@@ -74,7 +74,7 @@ import { glyphSvgGroup, glyphCategoryFor } from '../../lib/categoryGlyph';
 // Which results a new result set and a committed search frame.
 import { clusterPoints, framePoints, COMMITTED_FIT_RADIUS_KM } from '../../lib/fitResults';
 import { useTheme } from '../../context/ThemeContext';
-import { starSvgString } from '../ui/Icons';
+import Icons, { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
 import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
@@ -2316,9 +2316,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
         title="My Location"
       >
-        <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
-        </svg>
+        {/* The app's own locate mark in the controls' ink, beside the
+            zoom buttons, where it was a stock target in an off-palette
+            blue. The blue stays on the map itself, on your dot. */}
+        {Icons.locate('var(--text-primary)', 22)}
       </button>
       )}
 
@@ -2335,9 +2336,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom in"
         >
-          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
+          {Icons.plus('var(--text-primary)', 18)}
         </button>
         <div style={{ height: '1px', background: 'var(--border-default)' }} />
         <button aria-label="Zoom out" className="hit44"
@@ -2345,9 +2344,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           style={{ width: '44px', height: '40px', border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           title="Zoom out"
         >
-          <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
+          {Icons.minus('var(--text-primary)', 18)}
         </button>
       </div>
       )}
@@ -2373,15 +2370,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
         title={mapType === 'roadmap' ? 'Switch to Satellite' : 'Switch to Map'}
       >
-        {mapType === 'roadmap' ? (
-          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
-          </svg>
-        ) : (
-          <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-primary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>
-          </svg>
-        )}
+        {(mapType === 'roadmap' ? Icons.globe : Icons.map)('var(--text-primary)', 22)}
       </button>
       )}
     </div>

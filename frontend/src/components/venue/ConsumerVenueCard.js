@@ -551,7 +551,7 @@ export function CrowdForecastPanel({
                   return (
                     <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '12px', marginBottom: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div aria-hidden="true" style={{ width: '48px', height: '48px', borderRadius: '24px', flexShrink: 0, border: '3px dashed var(--border-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                        {Icons.lock('var(--text-tertiary)', 18)}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ margin: 0, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>{(process.env.REACT_APP_PURCHASES !== 'off') ? 'Crowd level is part of Flock Pro' : "You've reached this month's limit"}</p>

@@ -45,7 +45,9 @@ beforeEach(() => {
 });
 afterEach(() => { jest.clearAllMocks(); });
 
-const benefitLines = (container) => Array.from(container.querySelectorAll('[role="dialog"] svg + span')).map((s) => s.textContent);
+// Each benefit is its mark (an Icons.js glyph, in a fixed-width holder so the
+// smaller Birdie lines up with the outlines) and then its line.
+const benefitLines = (container) => Array.from(container.querySelectorAll('[role="dialog"] [data-benefit-icon] + span')).map((s) => s.textContent);
 
 describe('the headline follows the trigger', () => {
   test('a locked forecast: the 30 venues, when they come back, and no monthly limit with Pro', async () => {

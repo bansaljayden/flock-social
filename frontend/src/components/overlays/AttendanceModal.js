@@ -57,6 +57,7 @@
  */
 import React from 'react';
 import { submitAttendance, getUserStats } from '../../services/api';
+import Icons from '../ui/Icons';
 
 const AttendanceModal = ({
   DialogBehavior,
@@ -90,7 +91,7 @@ const AttendanceModal = ({
                   </div>
                   <span style={{ flex: 1, fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>{m.name}</span>
                   <div style={{ width: '24px', height: '24px', borderRadius: '12px', border: `2px solid ${attendanceChecks[m.id] ? colors.steel : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? colors.steel : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {attendanceChecks[m.id] && <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"><path d="M3 8.5l3 3 7-7.5"/></svg>}
+                    {attendanceChecks[m.id] && Icons.check('#fff', 14)}
                   </div>
                 </button>
               ))}

@@ -629,7 +629,7 @@ const VenueDetailSheet = ({
                   {/* View Menu */}
                   {!venueDetailModal.loading && (
                     <a href={menuUrl || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
-                      <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
+                      {Icons.menuLines(colors.navy, 18)}
                       <div style={{ flex: 1 }}>
                         <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{menuUrl ? 'View menu' : 'Find the menu online'}</span>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{menuUrl ? 'Official menu' : 'Opens a web search'}</p>
