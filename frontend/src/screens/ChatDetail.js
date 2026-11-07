@@ -4181,7 +4181,7 @@ export default function ChatDetail({
                           <>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more answers</p>
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people in the group chat shared an amount. Skips and guest answers do not count towards those three. Showing a number earlier would move it every time somebody answered, which is how you work out whose answer it was.
+                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people in the group chat shared an amount. Skips and guest answers do not count towards those three.
                             </p>
                           </>
                         )}
