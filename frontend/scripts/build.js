@@ -71,7 +71,29 @@ function vercelDefaults(env) {
   return (env.VERCEL || env.CF_PAGES) && env.GENERATE_SOURCEMAP === undefined ? { GENERATE_SOURCEMAP: 'false' } : {};
 }
 
-module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, DEPENDENCY_READS };
+// WHICH BUILD THIS IS, for the line at the foot of the You screen
+// (src/lib/appVersion.js). The iPhone app reads its own version and build
+// number from iOS; a web build has neither, so it carries the short commit it
+// was built from, or the day it was built when no commit can be read. The
+// hosts name the commit in their own variables (Cloudflare Pages, Vercel,
+// Codemagic, GitHub Actions); a local build asks git. A REACT_APP_BUILD_ID
+// already set wins.
+const COMMIT_VARS = ['CF_PAGES_COMMIT_SHA', 'VERCEL_GIT_COMMIT_SHA', 'CM_COMMIT', 'GITHUB_SHA'];
+function buildIdDefaults(env, gitSha, now = new Date()) {
+  if (env.REACT_APP_BUILD_ID) return {};
+  const fromHost = COMMIT_VARS.map((k) => env[k]).find((v) => typeof v === 'string' && /^[0-9a-f]{7,40}$/i.test(v));
+  const sha = fromHost || (typeof gitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(gitSha) ? gitSha : null);
+  return { REACT_APP_BUILD_ID: sha ? sha.slice(0, 7).toLowerCase() : now.toISOString().slice(0, 10) };
+}
+function readGitSha() {
+  try {
+    return require('child_process').execSync('git rev-parse --short=7 HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, buildIdDefaults, DEPENDENCY_READS };
 
 if (require.main === module) {
   // What react-scripts/scripts/build.js sets first. config/env.js throws
@@ -79,6 +101,7 @@ if (require.main === module) {
   process.env.BABEL_ENV = 'production';
   process.env.NODE_ENV = 'production';
   Object.assign(process.env, vercelDefaults(process.env));
+  Object.assign(process.env, buildIdDefaults(process.env, readGitSha()));
   const envModule = require.resolve('react-scripts/config/env');
   const getClientEnvironment = require(envModule);
   const reads = new Set([...envReadsIn(SRC), ...DEPENDENCY_READS]);

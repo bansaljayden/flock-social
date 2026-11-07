@@ -67,6 +67,8 @@ import { SkeletonBar, SkeletonRow, SkeletonStatus } from '../components/ui/Skele
 import EditProfileForm from '../components/EditProfileForm';
 import OAuthReconfirm, { canReconfirmHere, PROVIDER_NAMES } from '../components/auth/OAuthReconfirm';
 import { isNativeShell } from '../lib/nativeShell';
+// The real version and build at the foot of the screen (lib/appVersion.js).
+import { initialVersionLine, readVersionLine } from '../lib/appVersion';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 // REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
 // the subscription note on deletion is a plain App Store warning for an account
@@ -1616,7 +1618,7 @@ export default function ProfileSettings({
                 {Icons.users ? Icons.users(colors.navy, 14) : Icons.shield(colors.navy, 14)} Community Guidelines
               </button>
             </div>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginTop: '16px', textAlign: 'center' }}>Flock v1.0.0</p>
+            <VersionLine />
           </div>
 
         </div>
@@ -1625,6 +1627,21 @@ export default function ProfileSettings({
         {BottomNav()}
       </div>
     );
+}
+
+// WHICH BUILD THIS IS, said at the foot of the screen: "Flock 1.0.1 (50)" on
+// the iPhone, read from iOS, and the web build's commit on the web. It read
+// the literal "Flock v1.0.0" in every build, so a tester could not say which
+// one they had. Its own component because ProfileSettings returns early for
+// its subscreens and may not hold the read's hook.
+function VersionLine() {
+  const [line, setLine] = React.useState(() => initialVersionLine());
+  React.useEffect(() => {
+    let alive = true;
+    readVersionLine().then((text) => { if (alive && text) setLine(text); });
+    return () => { alive = false; };
+  }, []);
+  return <p data-version-line="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginTop: '16px', textAlign: 'center' }}>{line}</p>;
 }
 
 // Apple's own page for a person's subscriptions. Capacitor hands a window.open
