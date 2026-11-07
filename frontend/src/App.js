@@ -18156,10 +18156,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       {/* The edge the page scrolls under. A 1px line that shows only while
-          something is beneath it (handleScroll). The header itself scrolls
-          with the page: pinned, it held 197px of a 320x693 screen, 28% of
-          it, on every scroll position. */}
-      <div ref={headerRef} aria-hidden="true" style={{ height: '1px', marginBottom: '-1px', flexShrink: 0, position: 'relative', zIndex: 1, backgroundColor: 'var(--divider)', opacity: (TAB_SCROLL.get('home') || 0) > 0 ? 1 : 0, transition: 'opacity 120ms ease' }} />
+          something is beneath it (handleScroll), in --nest-edge, which
+          shows on the cream where --divider did not. The header itself
+          scrolls with the page: pinned, it held 197px of a 320x693 screen,
+          28% of it, on every scroll position. */}
+      <div ref={headerRef} aria-hidden="true" style={{ height: '1px', marginBottom: '-1px', flexShrink: 0, position: 'relative', zIndex: 1, backgroundColor: 'var(--nest-edge)', opacity: (TAB_SCROLL.get('home') || 0) > 0 ? 1 : 0, transition: 'opacity 120ms ease' }} />
 
       {/* Scrollable Content */}
       {/* NOTHING FLOATS OVER THE LIST (2026-11-06). The page scrolls in this

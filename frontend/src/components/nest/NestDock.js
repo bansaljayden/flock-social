@@ -64,7 +64,7 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
   const left = sosSide !== 'left';
   return (
     <div data-nest-dock="" style={{ position: 'relative', flexShrink: 0, height: `${height}px`, backgroundColor: 'var(--bg-primary)' }}>
-      <div ref={lineRef} aria-hidden="true" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', backgroundColor: 'var(--divider)', opacity: 0, transition: 'opacity 120ms ease' }} />
+      <div ref={lineRef} aria-hidden="true" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', backgroundColor: 'var(--nest-edge)', opacity: 0, transition: 'opacity 120ms ease' }} />
       <button
         type="button"
         onClick={ask}

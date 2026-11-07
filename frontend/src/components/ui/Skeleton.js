@@ -207,7 +207,14 @@ export function FlockCardSkeleton({ past = false }) {
  * page does not jump when the plans land, and it says nothing about how many
  * plans there are: "0 flocks" while loading was a claim the app could not
  * make.
+ *
+ * The hero block is drawn in the hero's own placeholder tone (--nest-hero-skel,
+ * index.css), warm and darker than a card, where the cool #e5e7eb every other
+ * skeleton reads turned into the navy card on every cold load in light mode.
+ * In dark mode the tone is the one the hero already stepped up from.
  */
+const NEST_HERO_SKELETON = { background: 'var(--nest-hero-skel)' };
+
 function NestRowSkeleton({ first }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minHeight: '60px', padding: '0 14px 0 16px', boxSizing: 'border-box', boxShadow: first ? 'none' : 'inset 46px 1px 0 var(--bg-card-solid), inset 0 1px 0 var(--divider)' }}>
@@ -223,7 +230,7 @@ function NestRowSkeleton({ first }) {
 export function NestHeroSkeleton({ label = 'Loading your flocks' }) {
   return (
     <SkeletonStatus label={label} style={{ marginBottom: '28px' }}>
-      <SkeletonBlock height={196} radius={16} />
+      <SkeletonBlock height={196} radius={16} style={NEST_HERO_SKELETON} />
       <div aria-hidden="true" style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
         <NestRowSkeleton first />
         <NestRowSkeleton />
@@ -385,7 +392,7 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
             <SkeletonCircle size={36} />
           </div>
         </div>
-        <SkeletonBlock height={196} radius={16} />
+        <SkeletonBlock height={196} radius={16} style={NEST_HERO_SKELETON} />
         <div style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
           <NestRowSkeleton first />
           <NestRowSkeleton />

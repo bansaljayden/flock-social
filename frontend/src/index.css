@@ -245,7 +245,17 @@
        --nest-hero-*       the hero card: the next plan, the only filled
                            surface on the page. Ink on navy measures
                            12.5:1 in light and 9.9:1 in dark; the meta
-                           line 7.5:1 and 6.7:1
+                           line 7.5:1 and 6.7:1. --nest-hero-skel is its
+                           placeholder while the list is read: navy at 14%
+                           over the cream, warm like the page and darker
+                           than a card, so the swap to the navy card is a
+                           step in the same direction rather than a grey
+                           slab turning blue
+       --nest-edge         the 1px line where the page scrolls under the
+                           top of its box and under the strip above the
+                           tabs: navy at 14% over the cream, 1.30:1, where
+                           --divider (#eeeeee) is lighter than the cream
+                           and drew nothing
 
      Theme-free: --nest-gutter widens the side margin on bigger phones the
      way iOS lists do (16 at 320, 20 from 385 up), and --ease-out is the
@@ -261,6 +271,8 @@
   --nest-hero-face: #3a4558;
   --nest-hero-action-bg: #f1ede0;
   --nest-hero-action-fg: #1e293b;
+  --nest-hero-skel: #d3d2c9;
+  --nest-edge: #d3d2c9;
   --nest-gutter: clamp(16px, 5.2vw, 20px);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -347,6 +359,8 @@
   --nest-hero-face: #2d5a87;
   --nest-hero-action-bg: #f1ede0;
   --nest-hero-action-fg: #1e293b;
+  --nest-hero-skel: #1e3a5c;
+  --nest-edge: #1e3a5c;
 }
 
 *,

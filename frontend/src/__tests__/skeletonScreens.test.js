@@ -151,6 +151,11 @@ describe('the flock card, on the Nest and on Past flocks', () => {
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars[0].style.height).toBe('196px');
     expect(bars[0].style.borderRadius).toBe('16px');
+    // The hero's own warm tone, not the cool #e5e7eb every other skeleton
+    // reads: in light mode a grey slab turned into the navy card on every
+    // cold load. jsdom keeps no var() in a style, so the source says it.
+    expect(SKELETON_SRC).toMatch(/<SkeletonBlock height=\{196\} radius=\{16\} style=\{NEST_HERO_SKELETON\} \/>/);
+    expect(SKELETON_SRC).toContain("const NEST_HERO_SKELETON = { background: 'var(--nest-hero-skel)' };");
     // Two rows, each an 18px icon over a title and its line.
     expect(bars.filter((b) => b.style.width === '18px' && b.style.height === '18px')).toHaveLength(2);
     // No count of anything: no flock cards to count.

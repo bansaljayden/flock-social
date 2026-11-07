@@ -65,6 +65,46 @@ test('the side margin is the gutter token', () => {
   expect(css).toContain('--nest-gutter: clamp(16px, 5.2vw, 20px);');
 });
 
+// The two edges the page scrolls under (the top of the scroll box, and the
+// strip above the tabs) were drawn in --divider, #eeeeee, which is LIGHTER than
+// the #f1ede0 cream it sits on: 1.01:1, so in light mode the strip cut text
+// through its letters with no line at all. They read --nest-edge now, which
+// has to show on the ground in both themes.
+describe('the scroll edges show on the ground', () => {
+  const css = read('index.css');
+  const block = (selector) => {
+    const out = {};
+    let from = 0;
+    for (;;) {
+      const open = css.indexOf(`\n${selector} {`, from);
+      if (open === -1) break;
+      const close = css.indexOf('}', open);
+      for (const m of css.slice(open, close).matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) out[m[1]] = m[2].trim();
+      from = close;
+    }
+    return out;
+  };
+  const lum = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+    .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+
+  test('both edges are drawn in --nest-edge, not --divider', () => {
+    const dock = strip(read('components', 'nest', 'NestDock.js'));
+    expect(dock).toMatch(/height: '1px', backgroundColor: 'var\(--nest-edge\)'/);
+    expect(HOME).toMatch(/<div ref=\{headerRef\}[^\n]*backgroundColor: 'var\(--nest-edge\)'/);
+    expect(dock).not.toContain('var(--divider)');
+  });
+
+  test('--nest-edge clears 1.25:1 on the ground in light and in dark, where --divider measured 1.01:1 in light', () => {
+    const light = block(':root');
+    const dark = block('[data-theme="dark"]');
+    expect(ratio(light['--divider'], light['--bg-primary'])).toBeLessThan(1.05);
+    expect(ratio(light['--nest-edge'], light['--bg-primary'])).toBeGreaterThanOrEqual(1.25);
+    expect(ratio(dark['--nest-edge'], dark['--bg-primary'])).toBeGreaterThanOrEqual(1.25);
+  });
+});
+
 test('a face never carries an online dot, a last-seen time or a place', () => {
   const face = read('components', 'nest', 'Face.js');
   expect(strip(face)).not.toMatch(/#22C55E|online|lastSeen|last_seen|location/i);
