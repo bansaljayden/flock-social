@@ -4760,17 +4760,21 @@ export default function ChatDetail({
                         <div key={v.venue} className="glass-btn glass-secondary" style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
-                          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}${dealSaid ? `, ${dealSaid}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
+                          {/* Wraps under 360px: the count and Lock it in drop
+                              under the name rather than squeezing it, which
+                              at 320 left "The Copper Finch" a column of
+                              single letters. */}
+                          <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 10px' }}>
+                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}${dealSaid ? `, ${dealSaid}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: '1 1 180px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
                             <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '2px 6px' }}>
                                 {/* Two lines before the ellipsis: beside the host's
                                     Confirm button one line held only "The Coppe..."
                                     at 390px. */}
-                                <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{v.venue}</h4>
+                                <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{v.venue}</h4>
                                 {isAssigned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
                                 {(isLeading || isTiedTop) && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>{isLeading ? 'Leading' : 'Tied'}</span>}
                               </div>
@@ -4793,7 +4797,7 @@ export default function ChatDetail({
                               })()}</p>
                             </div>
                             </button>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
                               {count > 0 && <span aria-hidden="true" style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !planLocked && (
