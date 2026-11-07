@@ -1731,6 +1731,14 @@ async function dayGate(b, question, intentId) {
   const onward = targets.some((t) => t.word && (t.word.kind === 'tomorrow' || t.word.kind === 'dayAfterTomorrow'));
   if (onward && await inSmallHours(b)) return null;
   if (await smallHoursTwoWays(b, question)) return null;
+  // TODAY PUT IN THE WEEK RANKED WHILE LAST NIGHT IS STILL RUNNING READS TWO
+  // WAYS (seventh recheck, 2026-11-07): from that night, or from the
+  // calendar's today. At 12:30 AM on a Wednesday "Counting tonight, which
+  // night will be the slowest?" ranked from Tuesday night and named Tuesday,
+  // tied at 48 with Wednesday, which main named and which is the quietest
+  // either way. Main's path answers it.
+  const form = reading.todayCue === 'in' ? roostDayReader.plainFormOf(question) : null;
+  if (form && form.cue === 'in' && TODAY_WORD_INTENTS.has(intentId) && await nightStillRunning(b)) return null;
   return reading;
 }
 
@@ -1760,8 +1768,9 @@ async function answerFor(b, mb, intentId, question, force = null) {
   // beside them (`nightBeside`, bothAnswer): read from the night still
   // running, the week lost the calendar's seventh day (seventh recheck,
   // 2026-11-07). Tonight asked about against the week ("Is tonight the
-  // busiest night this week?", "Counting tonight, which night is slowest?")
-  // keeps the seven days from tonight.
+  // busiest night this week?") keeps the seven days from tonight; tonight put
+  // in the week ranked ("Counting tonight, which night is slowest?") takes
+  // main's path while that night is still running (dayGate).
   const fromTonight = Boolean(reading.fromTonight) && NAMED_TODAY_INTENTS.has(intentId) && !advisorFacts.corpusGate(b.ctx.profile);
   const daysAsked = (reading.targets || []).filter((t) => t.kind === 'day' || t.kind === 'past');
   b.nightBeside = fromTonight && (daysAsked.length > 1 || reading.todayCue === 'out') && await nightStillRunning(b);

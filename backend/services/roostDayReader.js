@@ -1000,6 +1000,14 @@ function confidenceOf(a, question, form) {
   if (loose) return unsure(`a ${loose} word the reading does not use`);
   if (!daysJoined(a)) return unsure('two days the question does not join');
   if (a.leftOut) return unsure('a day the question leaves out');
+  // TODAY PUT IN A RANKING THAT SAYS NO WEEK (seventh recheck, 2026-11-07).
+  // "Including today, when are we busiest?", "The busiest night, counting
+  // tonight" and "Including tonight, what's the quietest night?" read today
+  // alone: their ranking words say no week the way "which day" or "this week"
+  // do, so the route answered about today and lost the week's busiest or
+  // quietest day, which main names. Today put in a ranking is sure only
+  // beside a week word ("Including today, which day is busiest?").
+  if (form.cue === 'in' && !words.some((t) => t.kind === 'week')) return unsure('today put in a ranking that says no week');
   if (!formRead(a, form)) return unsure('a reading that is not the plain form\'s');
   return { sure: true };
 }

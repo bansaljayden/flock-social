@@ -4571,3 +4571,44 @@ test('today put in the week ranked is ranked with it, never said as a line of it
     assert.strictEqual(sourceIds(t)[0], 'typical_peak_2026-11-07');
   });
 });
+
+// ── Rankings, pairs and reads the reading answered worse than main (seventh recheck, 2026-11-07) ──
+
+test('today put in a ranking that says no week takes main\'s path, and with a week word it is still ranked', async () => {
+  // "Including today, when are we busiest?" read today alone: its ranking
+  // words say no week, so the route answered "Friday peaks around 9 PM at 66"
+  // on a Friday and lost the week's busiest day, which main names.
+  const roostDayReader = require('../services/roostDayReader');
+  for (const q of ['Including today, when are we busiest?', 'The busiest night, counting tonight', 'including tonight what\'s the quietest night', 'starting today, what are the busiest days']) {
+    assert.deepStrictEqual(roostDayReader.dayConfidence(q), { sure: false, why: 'today put in a ranking that says no week' }, q);
+  }
+  for (const q of ['Including today, which day is busiest?', 'When are we busiest this week, starting today?']) {
+    assert.strictEqual(roostDayReader.dayConfidence(q).sure, true, q);
+  }
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr10LoneTodayCardFri0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'Including today, when are we busiest?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`), r.body.text);
+    route = { mode: 'grounded', intentId: 'quiet_nights' };
+    r = await call('/api/venue/advisor/question', { question: 'Including tonight, what\'s the quietest night?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the quietest day this week is Sunday, with its peak around 9 PM at 45 on our 0 to 100 index.`), r.body.text);
+    route = { mode: 'advice', intentId: 'peak_hours' };
+    r = await call('/api/venue/advisor/question', { question: 'Including today, when are we busiest?' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}Saturday projects as the busiest day this week.`), r.body.text);
+  });
+});
+
+test('today put in the week ranked takes main\'s path while last night is still running', async () => {
+  // At 12:30 AM on a Sunday, with Saturday night still running, "Counting
+  // tonight, which night will be the busiest?" is ranked from the calendar's
+  // Sunday, as main ranks it: next Saturday, never the night still running.
+  await withNightCurve('ChIJr10CountingTonightSm', () => pinnedAt('2026-11-08T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'counting tonight, which night will be the busiest' });
+    assert.ok(r.body.text.startsWith('Your busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.'), r.body.text);
+    assert.strictEqual(sourceIds(r)[0], 'peak_2026-11-14');
+  }));
+});
+
