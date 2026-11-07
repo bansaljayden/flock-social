@@ -18184,7 +18184,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         <header data-nest-band="header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', padding: '14px 0 18px' }}>
           <div style={{ minWidth: 0 }}>
             <NestDayLine />
-            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', margin: '2px 0 0', color: 'var(--text-primary)', letterSpacing: '-0.01em', lineHeight: 1.2 }}>Hey, {profileName.split(' ')[0]}</h1>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', margin: '2px 0 0', color: 'var(--text-primary)', letterSpacing: '-0.01em', lineHeight: 1.2, overflowWrap: 'anywhere' }}>Hey, {profileName.split(' ')[0]}</h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
             {/* NEW, TOP RIGHT, IN WORDS. Where people look for "make a new

@@ -146,6 +146,15 @@ describe('the line over the greeting', () => {
     expect(h1[1]).toMatch(/fontSize: 'var\(--t-title\)'/);
     expect(h1[1]).toMatch(/fontFamily: 'var\(--font-display\)'/);
   });
+
+  test('a long first name wraps inside its column instead of running under the buttons', () => {
+    // + Start a flock and the avatar take about 160px; at 320 a first name of
+    // thirteen letters or more could not wrap and ran into the scroll box,
+    // which can then scroll sideways.
+    const h1 = HOME.match(/<h1 style=\{\{([^}]*)\}\}>Hey, /);
+    expect(h1[1]).toMatch(/overflowWrap: 'anywhere'/);
+    expect(HOME).toMatch(/<div style=\{\{ minWidth: 0 \}\}>\s*<NestDayLine \/>/);
+  });
 });
 
 describe('nothing the Nest draws overshoots', () => {
