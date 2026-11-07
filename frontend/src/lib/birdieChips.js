@@ -6,12 +6,13 @@
  * can answer well right now, about the person's own plans where it can be, so
  * they come from the plans on the Nest and the hour, in this order:
  *
- *   1. "How busy will {venue} be tonight?"  a plan at a known place starts
+ *   1. "How busy is {venue} tonight?"  a plan at a known place starts
  *      within 12 hours: crowd reads reach about 12 hours out, so nothing
  *      further is offered. Said the way a person asks it, with the night
  *      ("tonight", "today", "tomorrow") and never the minute: "How busy is
  *      The Copper Finch at 11:33 PM?" read as a template filled in by a
- *      machine, and wrapped to two lines at 320 and 390
+ *      machine, and wrapped to two lines at 320 and 390. Short, so the
+ *      seeded place's question fits one line at 390
  *   2. "When should we head out?"        a plan is tonight
  *   3. "Pick a spot for {plan}"          a live plan has no place yet
  *   4. "Pick a spot for tonight"         before midnight, nothing on tonight
@@ -84,7 +85,7 @@ export function birdieChips({ liveFlocks = [], now = new Date(), outOfChirps = f
     .map((f) => ({ f, at: asTime(f.eventTime) }))
     .filter(({ at }) => at != null && at > nowMs && at - nowMs <= CROWD_READ_HOURS * 3600 * 1000)
     .sort((a, b) => a.at - b.at)[0];
-  const crowd = soon ? `How busy will ${soon.f.venue} be ${crowdWhen(soon.at, n)}?` : null;
+  const crowd = soon ? `How busy is ${soon.f.venue} ${crowdWhen(soon.at, n)}?` : null;
   add(crowd);
 
   // 2. A plan tonight: when to leave for it.

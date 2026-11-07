@@ -23,7 +23,7 @@ test('a plan at a known place within 12 hours: how busy it will be that night, a
   // the old disc's Pick a spot for tonight).
   const trivia = plan(1, at(6, 20, 33), { venue: 'The Copper Finch', venueId: 'p1', status: 'confirmed' });
   expect(plain(birdieChips({ liveFlocks: [trivia], now: at(6, 19, 12) }))).toEqual([
-    'How busy will The Copper Finch be tonight?',
+    'How busy is The Copper Finch tonight?',
     'Pick a spot for tonight',
   ]);
 });
@@ -31,7 +31,7 @@ test('a plan at a known place within 12 hours: how busy it will be that night, a
 test('after a crowd question, the spot asked for is a plan still choosing its place, when there is one', () => {
   const list = [plan(1, at(6, 21, 0), { venue: 'The Copper Finch', venueId: 'p1' }), plan(3, at(7, 19, 0))];
   expect(plain(birdieChips({ liveFlocks: list, now: at(6, 19, 12) }))).toEqual([
-    'How busy will The Copper Finch be tonight?',
+    'How busy is The Copper Finch tonight?',
     'Pick a spot for Plan 3',
   ]);
 });
@@ -44,10 +44,10 @@ test('the crowd question names the night the way a person would, never the minut
   const lunch = plan(2, at(6, 12, 30), { venue: 'Marigold Diner', venueId: 'p2', status: 'confirmed' });
   const breakfast = plan(3, at(7, 8, 30), { venue: 'Marigold Diner', venueId: 'p2', status: 'confirmed' });
   const pastMidnight = plan(4, at(7, 1, 0), { venue: 'The Copper Finch', venueId: 'p1', status: 'confirmed' });
-  expect(birdieChips({ liveFlocks: [late], now: at(6, 19, 12) })[0]).toBe('How busy will The Copper Finch be tonight?');
-  expect(birdieChips({ liveFlocks: [lunch], now: at(6, 9, 0) })[0]).toBe('How busy will Marigold Diner be today?');
-  expect(birdieChips({ liveFlocks: [breakfast], now: at(6, 21, 0) })[0]).toBe('How busy will Marigold Diner be tomorrow?');
-  expect(birdieChips({ liveFlocks: [pastMidnight], now: at(6, 22, 0) })[0]).toBe('How busy will The Copper Finch be tonight?');
+  expect(birdieChips({ liveFlocks: [late], now: at(6, 19, 12) })[0]).toBe('How busy is The Copper Finch tonight?');
+  expect(birdieChips({ liveFlocks: [lunch], now: at(6, 9, 0) })[0]).toBe('How busy is Marigold Diner today?');
+  expect(birdieChips({ liveFlocks: [breakfast], now: at(6, 21, 0) })[0]).toBe('How busy is Marigold Diner tomorrow?');
+  expect(birdieChips({ liveFlocks: [pastMidnight], now: at(6, 22, 0) })[0]).toBe('How busy is The Copper Finch tonight?');
   for (const f of [late, lunch, breakfast, pastMidnight]) {
     for (const now of [at(6, 9, 0), at(6, 19, 12), at(6, 21, 0), at(6, 22, 0)]) {
       for (const q of birdieChips({ liveFlocks: [f], now })) expect(q).not.toMatch(/\d:\d\d|\b(AM|PM)\b/);
