@@ -351,25 +351,32 @@ export default function BirdiePanel({
           overflow: 'hidden',
         }}>
           <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
-          {/* Header */}
-          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: colors.navyMidBg, borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          {/* Header. On the card's own surface with a hairline under it, where
+              it was a navy bar: the panel is one sheet, and a coloured band
+              across its top made it read as a chat widget bolted onto the
+              page. The controls are painted at 32px, 8px apart, so their 44px
+              hit boxes (.hit44) no longer overlap one another. */}
+          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: 'var(--bg-card-solid)', borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexShrink: 0 }}>
             {/* minWidth 0 and a one-line subtitle. The header gained a third
                 button, and without these the title block refuses to shrink: at
                 320px the tagline wrapped to three lines and pushed the header
                 down into a panel that is only 55% of the screen tall. */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
-              <div style={{ position: 'relative', flexShrink: 0 }}>
-                <div style={{ width: isAiPanel ? '34px' : '40px', height: isAiPanel ? '34px' : '40px', borderRadius: '50%', background: isDark ? '#162046' : '#e8eaf0', overflow: 'hidden', boxShadow: '0 4px 12px rgba(30,58,92,0.35)', border: '2px solid rgba(45,90,135,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '12px', height: '12px', borderRadius: '6px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />
+              {/* No green "online" dot: Birdie is software, always there, and
+                  a presence light is a person's cue. */}
+              <div style={{ width: isAiPanel ? '34px' : '40px', height: isAiPanel ? '34px' : '40px', borderRadius: '50%', background: isDark ? '#162046' : '#e8eaf0', overflow: 'hidden', flexShrink: 0 }}>
+                <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
               <div style={{ minWidth: 0 }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>Birdie</h2>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>knows what's good tonight</p>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, lineHeight: 1.2 }}>Birdie</h2>
+                {/* What Birdie is for, not a promise about tonight: it said
+                    "knows what's good tonight" over answers about other days,
+                    and it knows nothing for certain (the line under the box
+                    says so). */}
+                <p style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>AI help with places and plans</p>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
               {/* New chat. The way out of a thread the server will not take,
                   and the only reset there was ever a way to ask for. Shown
                   once there is something to clear, and held closed while a
@@ -382,27 +389,21 @@ export default function BirdiePanel({
                   title="New chat"
                   onClick={startNewAiChat}
                   disabled={aiTyping}
-                  style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease, opacity 0.2s ease' }}
+                  style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease' }}
                 >
-                  {Icons.plus('white', 14)}
+                  {Icons.plus('var(--text-primary)', 14)}
                 </button>
               )}
               {/* Expand/Collapse toggle */}
-              <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
-              >
+              <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {isAiFullscreen ? (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
                 ) : (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
+                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
                 )}
               </button>
               {/* Close */}
-              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}
-                onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.25)'}
-                onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.15)'}
-              >{Icons.x('white', 14)}</button>
+              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-primary)', 14)}</button>
             </div>
           </div>
 
@@ -457,7 +458,7 @@ export default function BirdiePanel({
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
                 <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
                 <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
-                <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight, how packed it is, what your flock is up to. ask away.</p>
+                <p style={{ fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center', maxWidth: '260px', lineHeight: 1.5 }}>where's good tonight and how packed it gets. ask away.</p>
                 {/* THE AI DISCLOSURE, IN THE PRODUCT.
                     Terms sec.7 and the privacy policy both name Google's Gemini
                     and say Birdie's answers are generated and can be wrong, but
@@ -709,7 +710,7 @@ export default function BirdiePanel({
               carries its own chips under the bird */}
           {!aiTyping && aiMessages.length > 0 && !outOfChirps && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
-              {isAiFullscreen && <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px', textTransform: 'uppercase' }}>Try asking</p>}
+              {isAiFullscreen && <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
                   <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -743,7 +744,7 @@ export default function BirdiePanel({
                     the ref: reopening after closing without sending, and a
                     re-armed chunk while it is open. Seeding off the ref reads
                     "" in every other case, because both senders clear it. */}
-                <input aria-label="Ask me anything" ref={aiInputRef} type="text" defaultValue={aiInputValueRef.current || ''} maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask me anything..." style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                <input aria-label="Ask Birdie" enterKeyHint="send" ref={aiInputRef} type="text" defaultValue={aiInputValueRef.current || ''} maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask about a place or a night out" style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
                 {/* `!aiInputHasText && !aiTyping` left this ENABLED for the
                     whole time Birdie was answering, including over an empty
                     box, where pressing it did nothing; and it was drawn at 0.4
@@ -790,13 +791,17 @@ export default function BirdiePanel({
                     The else branch is the AI disclosure: "Birdie AI" alone is a
                     label, not a disclosure, and this is the only line rendered
                     under EVERY turn, so it carries the generated-output caveat
-                    for anyone who scrolled past the empty state. */}
+                    for anyone who scrolled past the empty state. At full
+                    strength: it sat at 0.6 opacity in tertiary ink, 2.48:1 on
+                    white, the one sentence about trusting the answers drawn
+                    as the faintest text on the sheet. Secondary ink at 13px
+                    reads 6.2:1 in light and 8.3:1 in dark. */}
                 {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
                   <span style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
                     {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
                 ) : (
-                  <span style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI &middot; answers are generated and can be wrong</span>
+                  <span data-birdie-disclosure="" style={{ flexBasis: '100%', padding: '2px 10px 0', fontSize: 'var(--t-label)', color: 'var(--text-secondary)', fontWeight: '500' }}>Answers are generated and can be wrong.</span>
                 )}
               </div>
               )}

@@ -459,7 +459,7 @@ describe('every var(--t-*) field in the app resolves to at least 16px', () => {
   });
 
   it('the Birdie composer specifically — the field the bug was reported on', () => {
-    const birdie = fields.find((f) => /aria-label="Ask me anything"/.test(f.text));
+    const birdie = fields.find((f) => /aria-label="Ask Birdie"/.test(f.text));
     expect(birdie).toBeTruthy();
     expect(birdie.token).toBe('--t-body');
     expect(onControl(birdie.token)).toBeGreaterThanOrEqual(MIN);

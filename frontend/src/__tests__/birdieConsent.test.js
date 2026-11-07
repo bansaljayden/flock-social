@@ -136,7 +136,7 @@ describe('the panel before the account has said yes', () => {
     for (const shortcut of ['Search', 'Crowds', 'My Flocks']) {
       expect(screen.queryByRole('button', { name: shortcut })).toBeNull();
     }
-    expect(screen.queryByLabelText('Ask me anything')).toBeNull();
+    expect(screen.queryByLabelText('Ask Birdie')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
     for (const button of screen.getAllByRole('button')) {
       if (['Allow', 'Not now'].includes(button.textContent)) continue;
@@ -150,7 +150,7 @@ describe('the panel before the account has said yes', () => {
     const props = panelProps({ aiInputValueRef: { current: 'where to tonight' } });
     const { rerender } = render(<BirdiePanel {...props} />);
     rerender(<BirdiePanel {...props} birdieConsented />);
-    expect(screen.getByLabelText('Ask me anything')).toHaveValue('where to tonight');
+    expect(screen.getByLabelText('Ask Birdie')).toHaveValue('where to tonight');
   });
 
   test('Allow records the answer and does nothing else', () => {
@@ -205,7 +205,7 @@ describe('the panel once the account has said yes', () => {
     const props = panelProps({ birdieConsented: true });
     render(<BirdiePanel {...props} />);
     expect(screen.queryByRole('group', { name: 'Before Birdie answers' })).toBeNull();
-    expect(screen.getByLabelText('Ask me anything')).toBeInTheDocument();
+    expect(screen.getByLabelText('Ask Birdie')).toBeInTheDocument();
     fireEvent.click(screen.getByText(CHIP));
     expect(props.fillAiInput).toHaveBeenCalledWith(CHIP, { send: true });
   });

@@ -1303,16 +1303,16 @@ const DRIVERS = {
       await allow.click();
       await allow.waitFor({ state: 'detached', timeout: 15000 });
     }
-    const input = page.locator('input[aria-label="Ask me anything"]');
+    const input = page.locator('input[aria-label="Ask Birdie"]');
     await input.waitFor({ timeout: 10000 });
     await input.fill(BIRDIE_ASK);
     // A Birdie turn is a real Gemini tool loop (up to ~45s server-side). Done
-    // = the HTTP turn returns AND the animated typing bubble (svg animate#b1)
-    // leaves the DOM.
+    // = the HTTP turn returns AND Birdie's Working on your answer line
+    // ([data-birdie-working]) leaves the DOM.
     const reply = page.waitForResponse((r) => r.url().includes('/api/ai/chat'), { timeout: 90000 });
     await input.press('Enter');
     await reply;
-    await page.locator('#b1').waitFor({ state: 'detached', timeout: 30000 }).catch(() => {});
+    await page.locator('[data-birdie-working]').waitFor({ state: 'detached', timeout: 30000 }).catch(() => {});
     // Give venue-card images from the reply a beat to load, then hand the
     // cards their pictures in the order they are shown.
     await settle(page, { quiet: 2000 });
