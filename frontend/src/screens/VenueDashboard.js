@@ -1797,7 +1797,7 @@ export default function VenueDashboard({
               pill's own text says which it is. */}
           {intelReady && venueProfile?.google_place_id && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Crowd Badge for Your Website</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Crowd badge for your website</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
               <button className="hit44"
                 onClick={async () => {
@@ -2028,7 +2028,7 @@ export default function VenueDashboard({
           {/* Today, hour by hour — from the model */}
           {intelReady && venueIntel.todayHourly?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Today, Hour by Hour</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Today, hour by hour</h3>
               {/* Three fixes, all measured in a browser at 375px.
                   The bar sits in a fixed well and the hour label sits under
                   that well in flow, so no box here has a height its contents
@@ -3457,7 +3457,7 @@ export default function VenueDashboard({
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={cancelHoursEditor} label="Venue hours" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit operating hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {operatingHours.map((slot, index) => (
                     <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>

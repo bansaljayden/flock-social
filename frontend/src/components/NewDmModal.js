@@ -66,7 +66,7 @@ const NewDmModal = ({
         <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '70%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--divider)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>New Message</h2>
+              <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>New message</h2>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Search for someone to message</p>
             </div>
             <button aria-label="Close" className="hit44" onClick={() => { setShowNewDmModal(false); setDmSearchText(''); setDmModalResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'var(--icon-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
