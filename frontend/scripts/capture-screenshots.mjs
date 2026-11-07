@@ -14,6 +14,28 @@
  *       node scripts/capture-screenshots.mjs --set=web      (web|appstore|all)
  *       node scripts/capture-screenshots.mjs --only=made,stillin,guestlink --set=web --modes=light --out=../some/dir
  *       node scripts/capture-screenshots.mjs --only=nest,chat --modes=dark --viewport=430x932 --scale=3 --out=../some/dir
+ *       node scripts/capture-screenshots.mjs --story=site --suffix=-v3   (the website's frames)
+ *
+ * THE SITE STORY (--story=site). The frames the website ships, from one
+ * command: the dark theme at 390 x 844, shot at 2x, every one named the way
+ * the site names it (<frame>-dark<suffix>@2x.webp, a 480px cut, the home
+ * screen's AVIF and PNG), into a folder of the rig's own scratch space and
+ * never into public/. The friends are the same five people the site's words
+ * follow, and every place is invented and drawn (SITE_VENUES, shot-art.mjs):
+ * no Places search, no Places photo. It spends nothing: the backend child's
+ * paid keys are blanked whatever backend/.env holds, and every venue search,
+ * venue detail, crowd figure, events list, weather reading and Birdie answer
+ * a screen asks for is given in the browser, in the shape the server answers
+ * with. The browser's clock reads 7 PM wherever the run happens (its time
+ * zone moves, the instant does not), and each frame is audited before it is
+ * kept: no picture from outside the rig, no generated photo-real cover, no
+ * LIVE or ESTIMATED badge, no real business's name, and the bird tab bar.
+ * Run it from frontend/ with SHOTS_SCRATCH (and SHOTS_API_PORT /
+ * SHOTS_WEB_PORT beside another stack); --out moves the output folder,
+ * --only narrows it to some frames. SHOTS_MAPTILER_KEY, the map's browser
+ * key, is the one key it can be given: with it the build draws the map and
+ * the site story shoots the Discover map (map-crowd) where it otherwise
+ * shoots the search list (crowd-list).
  *
  * --viewport and --scale shoot every screen asked for at one size of your own
  * instead of the sets (430x932 at 3 is 1290x2796, an App Store 6.9-inch
@@ -33,7 +55,8 @@
  * spends quota. Use --only to drive the one screen you are working on, and
  * expect discover and crowd to be the two that fail first when the API pushes
  * back. Venue photos cost nothing: the browser never asks the photo proxy, it
- * is answered with drawings (shot-art.mjs).
+ * is answered with drawings (shot-art.mjs). The site story is the exception
+ * to all of this: it can reach no paid service at all (above).
  *
  * PRODUCTION SAFETY (read before touching):
  *   - The database is an embedded Postgres in a temp dir, created fresh every
@@ -87,6 +110,9 @@ const requireFrontend = createRequire(path.join(FRONTEND_DIR, 'package.json'));
 
 const { Client } = requireBackend('pg');
 const bcrypt = requireBackend('bcryptjs');
+// The browser suite's clock helper (a local hour, by moving the time zone),
+// shared rather than copied so the two rigs cannot drift apart.
+const { zoneForLocalHour } = createRequire(import.meta.url)('../../tools/e2e/clock.js');
 
 // ---------------------------------------------------------------------------
 // Fixed ports. The API port is baked into the CRA build (REACT_APP_API_URL is
@@ -110,13 +136,9 @@ const ONLY = opt('only') ? opt('only').split(',').map((s) => s.trim()) : null;
 const SET = opt('set') || 'all'; // web | appstore | all
 const SKIP_BUILD = flag('skip-build');
 const KEEP_ALIVE = flag('keep-alive'); // leave the stack up for manual poking
-/* Somewhere other than public/. The default output is deployed with the site
-   and its archive step moves every unreferenced capture into the tracked
-   frontend/screenshots/, so a run made only to look at a layout would leave
-   files in the repo either way. With --out set, captures go to that directory
-   and nothing under public/ or frontend/screenshots/ is written or moved. */
-const OUT_OVERRIDE = opt('out');
-const OUT_DIR = OUT_OVERRIDE ? path.resolve(OUT_OVERRIDE) : path.join(FRONTEND_DIR, 'public', 'screenshots');
+
+const log = (msg) => console.log(`[shots] ${msg}`);
+const die = (msg) => { console.error(`[shots] FATAL: ${msg}`); process.exit(1); };
 
 // Scratch space OUTSIDE the repo: the CRA build output and the pg data dir.
 // A second rig needs its own (SHOTS_SCRATCH), or it rebuilds over the first
@@ -125,8 +147,52 @@ const SCRATCH = process.env.SHOTS_SCRATCH ? path.resolve(process.env.SHOTS_SCRAT
 const BUILD_DIR = path.join(SCRATCH, 'build');
 const BUILD_STAMP = path.join(SCRATCH, 'build.stamp.json');
 
-const log = (msg) => console.log(`[shots] ${msg}`);
-const die = (msg) => { console.error(`[shots] FATAL: ${msg}`); process.exit(1); };
+/* THE SITE STORY (--story=site; see the header). Opt in: without it the run is
+   the App Store and web sets as before. `--suffix` is the version every file
+   name carries (-v3), because the site's CDN keeps a same-named file for a day
+   and a new name needs no purge. */
+const STORY = opt('story');
+const SITE = STORY === 'site';
+const SUFFIX = opt('suffix') || '';
+if (STORY !== null && !SITE) die(`--story takes "site", not "${STORY}"`);
+if (SUFFIX && !SITE) die('--suffix names the site story\'s files; it goes with --story=site');
+if (SUFFIX && !/^-[a-z0-9]{1,12}$/.test(SUFFIX)) die(`--suffix is a short tag that starts with a hyphen, like -v3, not "${SUFFIX}"`);
+if (SITE) {
+  for (const o of ['viewport', 'scale', 'modes', 'set']) {
+    if (opt(o) !== null) die(`--story=site shoots the website's frames, dark, at 390x844 at 2, and takes no --${o}`);
+  }
+}
+
+/* Somewhere other than public/. The default output is deployed with the site
+   and its archive step moves every unreferenced capture into the tracked
+   frontend/screenshots/, so a run made only to look at a layout would leave
+   files in the repo either way. With --out set, captures go to that directory
+   and nothing under public/ or frontend/screenshots/ is written or moved. The
+   site story always works this way: its frames are named for the site before
+   any source names them, so the archive step would move every one of them
+   out of public/ again. It writes to its own folder in the scratch space,
+   and copying the frames into public/ is a deliberate step after a look. */
+const OUT_OVERRIDE = opt('out') || (SITE ? path.join(SCRATCH, `site${SUFFIX}`) : null);
+const OUT_DIR = OUT_OVERRIDE ? path.resolve(OUT_OVERRIDE) : path.join(FRONTEND_DIR, 'public', 'screenshots');
+if (SITE) {
+  const inPublic = path.relative(path.join(FRONTEND_DIR, 'public'), OUT_DIR);
+  if (!inPublic || (!inPublic.startsWith('..') && !path.isAbsolute(inPublic))) {
+    die(`--story=site writes outside frontend/public (it was given ${OUT_DIR}); copy the frames in by hand once they have been looked at`);
+  }
+}
+// Every key the backend reads for a service that bills or reaches a third
+// party, blanked for the site story (backendEnv).
+const SITE_BLANK_KEYS = [
+  'GOOGLE_PLACES_API_KEY', 'GEMINI_API_KEY', 'WEATHER_API_KEY', 'TICKETMASTER_API_KEY',
+  'VISION_API_KEY', 'GOOGLE_VISION_API_KEY', 'STRIPE_SECRET_KEY', 'REVENUECAT_SECRET_API_KEY',
+  'REVENUECAT_V2_SECRET_API_KEY', 'POSTHOG_API_KEY', 'MAPTILER_SERVICE_TOKEN', 'SPORTSDB_API_KEY',
+];
+/* The map's browser key, the one key the site story can be given. It is the
+   key every visitor's browser already sends to the map tiles, read from the
+   environment at build time only and never written anywhere: with it the build
+   draws the map (and the plan card's map strip), and the reel's fifth frame is
+   the Discover map; without it, the search list. */
+const SITE_MAP_KEY = SITE ? (process.env.SHOTS_MAPTILER_KEY || '') : '';
 
 /* ONE SIZE OF YOUR OWN (--viewport=430x932 --scale=3). Every screen asked for
    is shot at it, the owner screens and the narrow-only ones included, in
@@ -273,6 +339,12 @@ function backendEnv(dbUrl, dbPort) {
     RAILWAY_API_TOKEN: '',
     RESEND_API_KEY: '',
     SENTRY_DSN: '',
+    // The site story spends nothing, on any machine: every key a screen could
+    // spend is blank (dotenv never fills a variable that exists, even an empty
+    // one), so a call that slipped past the browser's answers fails here
+    // instead of billing. Its screens are answered in the browser
+    // (installSiteStubs).
+    ...(SITE ? Object.fromEntries(SITE_BLANK_KEYS.map((k) => [k, ''])) : {}),
 
     NODE_ENV: 'development',
     PORT: String(API_PORT),
@@ -334,14 +406,26 @@ export { backendEnv }; // exported for eyeballing in a REPL, nothing imports it
 const DEMO = {
   password: 'Screenshot1',
   // The Nest greets the camera account by its first name, in the first App
-  // Store screenshot, so that set gets an ordinary one.
-  camera: { email: 'maya@shots.flock.local', name: SET === 'appstore' ? 'Maya Chen' : 'Judge' },
-  friends: [
-    { email: 'jordan@shots.flock.local', name: 'Jordan Avery' },
-    { email: 'sam@shots.flock.local', name: 'Sam Rivera' },
-    { email: 'priya@shots.flock.local', name: 'Priya Shah' },
-    { email: 'leo@shots.flock.local', name: 'Leo Martin' },
-  ],
+  // Store screenshot, so that set gets an ordinary one. The site story's five
+  // are the people its pages follow (seedSite): two of the names are real,
+  // the two people who make Flock, and each of the five has a painted bird
+  // for a picture, never a face.
+  camera: SITE
+    ? { email: 'jayden@shots.flock.local', name: 'Jayden Bansal' }
+    : { email: 'maya@shots.flock.local', name: SET === 'appstore' ? 'Maya Chen' : 'Judge' },
+  friends: SITE
+    ? [
+      { email: 'asad@shots.flock.local', name: 'Asad Ali' },
+      { email: 'nick@shots.flock.local', name: 'Nick Ferraro' },
+      { email: 'kaitlyn@shots.flock.local', name: 'Kaitlyn Brennan' },
+      { email: 'tommy@shots.flock.local', name: 'Tommy Walsh' },
+    ]
+    : [
+      { email: 'jordan@shots.flock.local', name: 'Jordan Avery' },
+      { email: 'sam@shots.flock.local', name: 'Sam Rivera' },
+      { email: 'priya@shots.flock.local', name: 'Priya Shah' },
+      { email: 'leo@shots.flock.local', name: 'Leo Martin' },
+    ],
   owner: { email: 'owner@shots.flock.local', name: 'Copper Finch Owner' },
   flockName: 'Friday Night Crew',
   // Invented venue used in chat cards, votes, and the owner dashboard. A burger
@@ -480,7 +564,7 @@ async function seed(dbUrl) {
     // the bottle shelves in view, which the App Store set cannot show either.
     // So the card now points at the photo proxy with a ref of its own, and the
     // rig answers that request, like every other venue photo, with a drawing
-    // from shot-art.mjs (the burger). resolveVenuePhoto prefixes the API origin
+    // from shot-art.mjs (the dining room). resolveVenuePhoto prefixes the API origin
     // for paths beginning "/api/", which is what routes it there. Outside the
     // rig the proxy finds no such ref and the card shows the sparrow.
     photo_url: '/api/venues/photo?ref=shots-copper-finch&maxwidth=400',
@@ -684,13 +768,534 @@ async function resetNightRows(dbUrl, night) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. The site story (--story=site): its clock, its places, its seed.
+// ---------------------------------------------------------------------------
+
+/* 7 PM WHEREVER THE RUN HAPPENS. The website's frames are an evening out, so
+   the browser's clock reads 7 PM whatever the hour of the run: its time zone
+   is the Etc/GMT zone where it is 7 PM now (tools/e2e/clock.js), the way the
+   browser suite pins a local hour, so the instant itself stays real and the
+   server, the session and every window agree with the page. Every seeded time
+   is a wall-clock time in that zone (`at`), so "tonight at 9" is 9 PM on the
+   screen on any day the run happens. `dow` and `hour` are the zone's own. */
+function siteClock(now, zoneFor) {
+  const zone = zoneFor(19, now);
+  // Etc/GMT zones carry the sign backwards: Etc/GMT-6 is six hours ahead.
+  const m = /^Etc\/GMT([+-])(\d+)$/.exec(zone);
+  const offsetH = m ? (m[1] === '-' ? 1 : -1) * Number(m[2]) : 0;
+  const local = new Date(now.getTime() + offsetH * 3600000);
+  const y = local.getUTCFullYear();
+  const mo = local.getUTCMonth();
+  const d = local.getUTCDate();
+  return {
+    zone,
+    offsetH,
+    dow: local.getUTCDay(),
+    hour: local.getUTCHours(),
+    minute: local.getUTCMinutes(),
+    // The instant whose wall clock there reads hh:mm, daysAhead days from
+    // today there, as the ISO string a naive column keeps as UTC.
+    at: (daysAhead, hh, mm = 0) => new Date(Date.UTC(y, mo, d + daysAhead, hh - offsetH, mm)).toISOString(),
+    // That day's date there, YYYY-MM-DD.
+    date: (daysAhead) => new Date(Date.UTC(y, mo, d + daysAhead)).toISOString().slice(0, 10),
+  };
+}
+
+/* NOT ON A FRIDAY, AND NOT LATE IN THE HOUR. Friday Night Crew is the coming
+   Friday, and on a Friday that is a week out: past the seven days the venue
+   dashboard's incoming list reads (routes/venueDashboard.js), so the owner's
+   frame would lose its "Party of 5, Considering you". The zone is picked for
+   7 PM, so that refusal holds from 05:00 UTC on a Friday to 05:00 UTC on the
+   Saturday. And the answers given in the browser are 7 PM's (the crowd's "now"
+   bar, the weather), while the page's own clock runs on, so a run must not
+   start so late in the hour that its frames are taken at 8. */
+function siteRefusal(clock) {
+  if (clock.dow === 5) return 'it is Friday at 7 PM where the site story stands, and Friday Night Crew would be a week out, past the seven days the venue dashboard lists. Run it on any other day';
+  if (clock.minute >= 50) return `it is 7:${clock.minute} PM where the site story stands, and the run would end after 8. Start it in the first fifty minutes of an hour`;
+  return null;
+}
+
+// The instant the run started: every answer the browser is given (the crowd,
+// the weather, the Birdie turn) is this one moment's.
+const RUN_T = new Date();
+const SITE_CLOCK = SITE ? siteClock(RUN_T, zoneForLocalHour) : null;
+
+/* THE PLACES, ALL INVENTED. Old City, Philadelphia is where the camera stands
+   (its map, its weather), and every place around it here is made up, its name
+   searched for first so that it names no business there, its address a
+   number on a Main St that has no such number, and its picture a drawing from
+   shot-art.mjs (`ref`; shots-art-<id> names a drawing). `d` is the place's
+   offset from the camera, west of Columbus Blvd so no pin lands in the river,
+   and `score` its crowd figure at 7 PM, written here and served in the
+   browser as the crowd service's answer. No bars, and no drinks in any
+   picture: the website is for everyone. */
+const SITE_CAMERA = { lat: 39.9502, lng: -75.1447 };
+const SITE_VENUES = [
+  { key: 'finch', id: 'shots_copper_finch_0001', name: 'The Copper Finch', addr: '214 Main St', ref: 'shots-copper-finch', types: ['american_restaurant', 'restaurant', 'food'], price: 2, rating: 4.6, reviews: 412, d: [-0.0006, -0.0056], score: 78, open: 11, close: 1 },
+  { key: 'juniper', id: 'shots_juniper_bowl_0002', name: 'Juniper Bowl', addr: '88 Main St', ref: 'shots-art-noodles', types: ['ramen_restaurant', 'restaurant', 'food'], price: 2, rating: 4.5, reviews: 268, d: [0.0035, -0.0080], score: 58, open: 11, close: 22 },
+  { key: 'bluewing', id: 'shots_bluewing_diner_0003', name: 'Bluewing Diner', addr: '301 Main St', ref: 'shots-art-pancakes', types: ['diner', 'restaurant', 'food'], price: 1, rating: 4.3, reviews: 190, d: [-0.0040, -0.0020], score: 34, open: 7, close: 23 },
+  { key: 'kestrel', id: 'shots_kestrel_pizza_0004', name: 'Kestrel Pizza Co.', addr: '57 Main St', ref: 'shots-art-pizza', types: ['pizza_restaurant', 'restaurant', 'food'], price: 2, rating: 4.4, reviews: 351, d: [0.0020, -0.0035], score: 72, open: 11, close: 23 },
+  { key: 'saltmarsh', id: 'shots_saltmarsh_tacos_0005', name: 'Saltmarsh Tacos', addr: '12 Main St', ref: 'shots-art-tacos', types: ['mexican_restaurant', 'restaurant', 'food'], price: 1, rating: 4.6, reviews: 233, d: [-0.0025, -0.0065], score: 66, open: 10, close: 22 },
+  { key: 'bunting', id: 'shots_snow_bunting_0006', name: 'Snow Bunting Creamery', addr: '7 Main St', ref: 'shots-art-ice-cream', types: ['ice_cream_shop', 'dessert_shop', 'food'], price: 1, rating: 4.8, reviews: 412, d: [0.0010, 0.0012], score: 45, open: 11, close: 23 },
+  { key: 'plover', id: 'shots_plover_sushi_0007', name: 'Plover Sushi', addr: '410 Main St', ref: 'shots-art-sushi', types: ['sushi_restaurant', 'restaurant', 'food'], price: 3, rating: 4.7, reviews: 302, d: [0.0045, -0.0015], score: 81, open: 16, close: 23 },
+  { key: 'wren', id: 'shots_wren_rye_0008', name: 'Wren & Rye Bakery', addr: '22 Main St', ref: 'shots-art-bakery', types: ['bakery', 'cafe', 'food'], price: 1, rating: 4.5, reviews: 147, d: [-0.0055, -0.0090], score: 18, open: 6, close: 20 },
+  { key: 'fernway', id: 'shots_fernway_greens_0009', name: 'Fernway Greens', addr: '134 Main St', ref: 'shots-art-salad', types: ['salad_shop', 'restaurant', 'food'], price: 2, rating: 4.2, reviews: 98, d: [0.0060, -0.0060], score: 27, open: 10, close: 21 },
+];
+const SITE_VENUE = Object.fromEntries(SITE_VENUES.map((v) => [v.key, v]));
+const sitePhoto = (ref, w = 400) => `/api/venues/photo?ref=${ref}&maxwidth=${w}`;
+/* The Copper Finch's four photos, as a listed venue's Place Details would give
+   them, in the order its "Happening here" cards take them (photos[1..3], one
+   event each, soonest first: the trivia night tonight, the wing contest
+   tomorrow, the acoustic night on Friday), and its logo, a fifth picture. */
+const SITE_FINCH_PHOTOS = ['shots-copper-finch', 'shots-copper-finch-counter', 'shots-copper-finch-wings', 'shots-copper-finch-stage'];
+const SITE_FINCH_LOGO = sitePhoto('shots-copper-finch-logo');
+// The Copper Finch's usual day by hour; hours it is shut are absent.
+const SITE_FINCH_CURVE = { 11: 24, 12: 41, 13: 37, 14: 22, 15: 19, 16: 27, 17: 46, 18: 63, 19: 78, 20: 82, 21: 74, 22: 58, 23: 41, 0: 26 };
+// The crowd service's own ladder (backend services/crowdEngine.js getLabel).
+const siteLabel = (s) => (s <= 20 ? 'Quiet' : s <= 39 ? 'Not Busy' : s <= 69 ? 'Steady' : s <= 84 ? 'Busy' : 'Packed');
+const siteHourLabel = (h) => { const x = ((h % 24) + 24) % 24; return x === 0 ? '12 AM' : x < 12 ? `${x} AM` : x === 12 ? '12 PM' : `${x - 12} PM`; };
+const siteOpenAt = (v, h) => (v.close > v.open ? h >= v.open && h < v.close : h >= v.open || h < v.close);
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const siteClockWords = (h) => { const x = ((h % 24) + 24) % 24; const hh = x % 12 === 0 ? 12 : x % 12; return `${hh}:00 ${x < 12 ? 'AM' : 'PM'}`; };
+// Opening hours the way Places writes them (currentOpeningHours).
+function siteOpeningHours(v) {
+  const h = SITE_CLOCK ? SITE_CLOCK.hour : 19;
+  const periods = Array.from({ length: 7 }, (_, day) => ({
+    open: { day, hour: v.open, minute: 0 },
+    close: { day: v.close > v.open ? day : (day + 1) % 7, hour: v.close % 24, minute: 0 },
+  }));
+  const weekdayDescriptions = [1, 2, 3, 4, 5, 6, 0].map((day) => `${DAY_NAMES[day]}: ${siteClockWords(v.open)} – ${siteClockWords(v.close)}`);
+  return { openNow: siteOpenAt(v, h), periods, weekdayDescriptions };
+}
+const siteLocation = (v) => ({ latitude: +(SITE_CAMERA.lat + v.d[0]).toFixed(6), longitude: +(SITE_CAMERA.lng + v.d[1]).toFixed(6) });
+// A row of GET /api/venues/search (backend routes/venueSearch.js).
+function siteSearchRow(v) {
+  return {
+    place_id: v.id,
+    name: v.name,
+    formatted_address: v.addr,
+    rating: v.rating,
+    user_ratings_total: v.reviews,
+    price_level: v.price,
+    photo_url: sitePhoto(v.ref),
+    photo_attribution: null,
+    types: v.types,
+    opening_hours: siteOpeningHours(v),
+    location: siteLocation(v),
+    utcOffsetMinutes: SITE_CLOCK.offsetH * 60,
+    timeZone: SITE_CLOCK.zone,
+  };
+}
+// GET /api/venues/details's `venue` (shapeDetails in the same file).
+function siteDetails(v) {
+  const photos = v.key === 'finch' ? SITE_FINCH_PHOTOS.map((r) => sitePhoto(r, 600)) : [sitePhoto(v.ref, 600)];
+  return {
+    ...siteSearchRow(v),
+    formatted_phone_number: null,
+    website: null,
+    photos,
+    photo_attributions: photos.map(() => null),
+    photo_url: photos[0],
+    google_maps_url: null,
+    menu_url: null,
+  };
+}
+const siteClockNow = () => ({ hour: SITE_CLOCK.hour, day: SITE_CLOCK.dow, utcOffsetMinutes: SITE_CLOCK.offsetH * 60, local: true });
+/* A place's crowd card as GET /api/crowd/:placeId answers it (routes/crowd.js),
+   from the rule engine: what is typical for a place like it, which the card
+   says in so many words ("An estimate from typical patterns for this kind of
+   place."), and which is why its label is hedged ("Usually busy"). No
+   numberSource: none is sent for a rule-engine number. */
+function siteCrowdCard(v) {
+  const now = SITE_CLOCK.hour;
+  const curve = v.key === 'finch' ? SITE_FINCH_CURVE : null;
+  const hourly = Array.from({ length: 12 }, (_, i) => {
+    const h = (now + i) % 24;
+    const open = siteOpenAt(v, h);
+    const score = !open ? 6 : curve && curve[h] != null ? curve[h] : Math.max(8, Math.round(v.score - Math.abs(i - 1) * 7));
+    return { hour: siteHourLabel(h), score, label: siteLabel(score), predictionMethod: 'rule_engine', open };
+  });
+  const score = v.score;
+  let peakIdx = 0;
+  hourly.forEach((b, i) => { if (b.open && b.score > hourly[peakIdx].score) peakIdx = i; });
+  const later = hourly.map((b, i) => ({ ...b, i })).filter((b) => b.i > 0 && b.open && b.i <= 4);
+  const quiet = later.reduce((a, b) => (b.score < a.score ? b : a), later[0] || hourly[0]);
+  const bestIsNow = !quiet || quiet.score >= score - 8;
+  return {
+    placeId: v.id,
+    name: v.name,
+    score,
+    label: `Usually ${siteLabel(score).toLowerCase()}`,
+    rawEngineScore: score,
+    confidence: 42,
+    predictionMethod: 'rule_engine',
+    confidenceBasis: 'category_pattern',
+    confidenceMeans: 'input_completeness',
+    supported: false,
+    capacity: null,
+    bestTime: bestIsNow ? (score > 69 ? "Now, but it's busy" : 'Now is good') : quiet.hour,
+    peak: `${hourly[Math.max(0, peakIdx - 1)].hour} - ${hourly[Math.min(11, peakIdx + 1)].hour}`,
+    waitEstimate: score < 40 ? 'No wait' : score <= 55 ? '~5 min' : score <= 69 ? '10-20 min' : score <= 84 ? '20-35 min' : '35+ min',
+    venueTypes: v.types,
+    priceLevel: v.price,
+    isOpen: siteOpenAt(v, now),
+    openHour: v.open,
+    closeHour: v.close,
+    hoursToday: [],
+    hourly,
+    bestHour: bestIsNow ? null : quiet.hour,
+    bestIndex: bestIsNow ? null : quiet.i,
+    bestIsNow,
+    factors: [],
+    calibration: { feedbackUsed: false, reportCount: 0, predictionDrift: 0 },
+    dataSourcesUsed: [],
+    modelVersion: null,
+    baselineData: null,
+    weather: null,
+    eventAlert: null,
+    gameNight: null,
+    lastUpdated: RUN_T.toISOString(),
+    venueClock: siteClockNow(),
+  };
+}
+
+/* THE SITE STORY'S SEED. The five people the website's words follow, their
+   four plans and the invented places, written as production writes them: a
+   UTC session and instants, so every naive column holds UTC wall-clock. Every
+   time is a wall-clock time where the camera stands (siteClock). The plans:
+     Trivia Night       tonight 9:00 PM at The Copper Finch, locked in, the
+                        camera account's, Asad and Kaitlyn already still in:
+                        the Nest's hero, the roster frame and the owner's
+                        "Party of 3".
+     Friday Night Crew  the coming Friday 8:00 PM, all five, still voting: The
+                        Copper Finch leads 3 to 1 to 1, four budgets of five in,
+                        the camera account's the open one (its $35 sheet).
+     Nick's Birthday    in two days, Nick's, at Snow Bunting Creamery: the
+                        camera account has not voted, so it is asked to.
+     Thursday Dinner    last Thursday at Kestrel Pizza Co., finished: $120.85
+                        plus an 18% tip is $142.60, $28.52 each, Asad paid.
+   Returns the ids the passes and frames need. */
+async function seedSite(dbUrl) {
+  const db = new Client({ connectionString: dbUrl, options: '-c TimeZone=UTC' });
+  await db.connect();
+  const q = (text, params) => db.query(text, params);
+  const at = SITE_CLOCK.at;
+  const hash = await bcrypt.hash(DEMO.password, 10);
+  const mkUser = async (u, role = 'user') => {
+    const r = await q(
+      `INSERT INTO users (email, password, name, role, terms_accepted_at, date_of_birth, email_verified, verified_email)
+       VALUES ($1,$2,$3,$4,NOW(),'2004-06-15',TRUE,$1)
+       ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+      [u.email, hash, u.name, role]
+    );
+    return r.rows[0].id;
+  };
+  const jayden = await mkUser(DEMO.camera);
+  const ids = {};
+  for (const f of DEMO.friends) ids[f.name.split(' ')[0].toLowerCase()] = await mkUser(f);
+  const owner = await mkUser(DEMO.owner, 'venue_owner');
+
+  /* PROFILE PICTURES: a painted bird each, one species a person, never a face
+     (two of these names are real people). 160px JPEGs in scripts/shot-avatars,
+     sent as data URLs under the 11,000 characters a list read lets through
+     (lib/avatarImage.js). The owner's house finch is the venue account's own. */
+  for (const [file, uid] of [['jayden', jayden], ['asad', ids.asad], ['nick', ids.nick], ['kaitlyn', ids.kaitlyn], ['tommy', ids.tommy], ['owner', owner]]) {
+    const url = `data:image/jpeg;base64,${fs.readFileSync(path.join(__dirname, 'shot-avatars', `${file}.jpg`)).toString('base64')}`;
+    if (url.length > 11000) throw new Error(`shot-avatars/${file}.jpg is ${url.length} characters as a data URL, over the 11,000 a list read lets through`);
+    await q('UPDATE users SET profile_image_url = $1 WHERE id = $2', [url, uid]);
+  }
+
+  // The camera account is friends with all four, and has a plan history so
+  // its profile is not a brand-new account's, every number on it true of
+  // this database.
+  for (const fid of [ids.asad, ids.nick, ids.kaitlyn, ids.tommy]) {
+    await q(
+      `INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1,$2,'accepted')
+       ON CONFLICT (requester_id, addressee_id) DO UPDATE SET status='accepted'`,
+      [fid, jayden]
+    );
+  }
+  await q('UPDATE users SET total_plans_joined = 6, total_plans_attended = 5, reliability_score = 92 WHERE id = $1', [jayden]);
+  // The camera account let Birdie use Google's Gemini weeks ago (the question
+  // this build asks, copy 2), so the Nest's field takes a question at once.
+  await q(`UPDATE users SET birdie_ai_consent_at = NOW() - interval '20 days', birdie_ai_consent_copy = 2 WHERE id = $1`, [jayden]);
+
+  // Two trusted contacts for the SOS sheet. 555-01xx numbers and example.com
+  // addresses are reserved for fiction.
+  for (const [name, phone, email, rel] of [
+    ['Linda Novak', '(215) 555-0142', 'linda.novak@example.com', 'Mom'],
+    ['Dan Okafor', '(215) 555-0187', 'dan.okafor@example.com', 'Roommate'],
+  ]) {
+    await q(
+      `INSERT INTO trusted_contacts (user_id, contact_name, contact_phone, contact_email, relationship, email_set_at)
+       VALUES ($1,$2,$3,$4,$5,NOW()) ON CONFLICT (user_id, contact_phone) DO NOTHING`,
+      [jayden, name, phone, email, rel]
+    );
+  }
+
+  // Out tonight: Nick and Tommy are down, Kaitlyn maybe, each until the next
+  // 4 AM there, as the app's own answer expires.
+  for (const [uid, status, setAt] of [[ids.nick, 'down', at(0, 17, 48)], [ids.tommy, 'down', at(0, 18, 25)], [ids.kaitlyn, 'maybe', at(0, 18, 2)]]) {
+    await q(
+      `INSERT INTO availability_pulses (user_id, status, set_at, expires_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (user_id) DO UPDATE SET status = EXCLUDED.status, set_at = EXCLUDED.set_at, expires_at = EXCLUDED.expires_at`,
+      [uid, status, setAt, at(1, 4, 0)]
+    );
+  }
+
+  // ---- The Copper Finch's own side ------------------------------------------
+  const finch = SITE_VENUE.finch;
+  await q(
+    `INSERT INTO venue_profiles (user_id, business_name, category, location, description, google_place_id, verified, tier, operating_hours, photo_url)
+     VALUES ($1,$2,'Burgers & wings',$3,'Wings, burgers and tables for big groups. Busiest after 7.',$4,TRUE,'free','[]',$5)
+     ON CONFLICT (user_id) DO UPDATE SET google_place_id = EXCLUDED.google_place_id, verified = TRUE, photo_url = EXCLUDED.photo_url`,
+    [owner, finch.name, finch.addr, finch.id, SITE_FINCH_LOGO]
+  );
+  // Two deals with the views and claims a listing's weeks would have. A card
+  // shows a venue's newest deal (backend utils/venueDeals.js), so the wings.
+  await q(
+    `INSERT INTO venue_promotions (venue_user_id, google_place_id, title, description, time_slot, days, active, views, claims, created_at)
+     VALUES ($1,$2,'Free fries for groups of 6+','Bring six or more and the table gets a basket of fries.','All day','Every day',TRUE,214,38, NOW() - interval '9 days'),
+            ($1,$2,'Half-price wings','Every order of wings is half price.','9 PM to close','Thu, Fri, Sat',TRUE,131,17, NOW() - interval '2 days')`,
+    [owner, finch.id]
+  );
+  // "Happening here": tonight's trivia (the plan the five are going to),
+  // a wing contest tomorrow and an acoustic night on Friday. Not "Live music":
+  // no frame says Live.
+  const toFri = ((5 - SITE_CLOCK.dow + 7) % 7) || 7;
+  await q(
+    `INSERT INTO venue_events (venue_user_id, google_place_id, title, event_date, event_time, capacity, rsvps)
+     VALUES ($1,$2,'Trivia Night',$3,'9 PM',60,34),
+            ($1,$2,'Wing-eating contest',$4,'6 PM',40,19),
+            ($1,$2,'Acoustic night',$5,'8:30 PM',80,22)`,
+    [owner, finch.id, SITE_CLOCK.date(0), SITE_CLOCK.date(1), SITE_CLOCK.date(toFri)]
+  );
+  // Three reviews over three weeks, and the owner's reply to Asad's
+  // (venue_reply_user_id: only the venue's current owner speaks for it).
+  for (const [uid, rating, text, daysAgo] of [
+    [ids.asad, 5, 'Went with four friends on a Friday, service kept up even at peak. Wings earn the hype.', 17],
+    [ids.kaitlyn, 4, 'Good spot for a group. Gets loud after 10 but that is kind of the point.', 9],
+    [ids.tommy, 5, 'Fast kitchen, fair prices, easy to hold a table for six.', 3],
+  ]) {
+    await q(
+      `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, created_at) VALUES ($1,$2,$3,$4, NOW() - ($5 || ' days')::interval)
+       ON CONFLICT (google_place_id, user_id) DO NOTHING`,
+      [finch.id, uid, rating, text, daysAgo]
+    );
+  }
+  await q(
+    `UPDATE venue_reviews SET venue_reply = 'Thanks Asad. Friday crews are what we are built for.', venue_replied_at = NOW() - interval '16 days', venue_reply_user_id = $3
+     WHERE google_place_id = $1 AND user_id = $2`,
+    [finch.id, ids.asad, owner]
+  );
+  for (const [uid, minAgo] of [[ids.asad, 50], [ids.nick, 35], [ids.kaitlyn, 20], [ids.tommy, 10]]) {
+    await q(
+      `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source, created_at)
+       VALUES ($1,$2,'manual', NOW() - ($3 || ' minutes')::interval)`,
+      [finch.id, uid, minAgo]
+    );
+  }
+  // The analytics side's corpus row and 168-hour week, at its own coordinates.
+  const loc = siteLocation(finch);
+  await q(
+    `INSERT INTO ml_venues (google_place_id, name, address, city, latitude, longitude, venue_category, timezone, rating, review_count)
+     VALUES ($1,$2,$3,'Philadelphia',$4,$5,'restaurant','America/New_York',$6,$7)
+     ON CONFLICT (google_place_id) DO NOTHING`,
+    [finch.id, finch.name, finch.addr, loc.latitude, loc.longitude, finch.rating, finch.reviews]
+  );
+  const week = [];
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      const busy = SITE_FINCH_CURVE[h] != null ? SITE_FINCH_CURVE[h] : 0;
+      week.push(`('${finch.id}', ${d}, ${h}, ${(d === 4 || d === 5 || d === 6) && h >= 19 && h <= 22 ? Math.min(95, busy + 8) : busy}, 'collected')`);
+    }
+  }
+  await q(`INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source) VALUES ${week.join(',')} ON CONFLICT DO NOTHING`);
+
+  // ---- The plans ------------------------------------------------------------
+  const mkPlan = async (p) => {
+    const r = await q(
+      `INSERT INTO flocks (name, creator_id, venue_id, venue_name, venue_address, venue_photo_url, venue_rating, event_time, status, budget_enabled, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING id`,
+      [p.name, p.host, p.venue ? p.venue.id : null, p.venue ? p.venue.name : null, p.venue ? p.venue.addr : null,
+        p.photo || null, p.venue ? p.venue.rating : null, p.when, p.status, !!p.budget, p.created]
+    );
+    const id = r.rows[0].id;
+    for (const uid of p.members) {
+      await q(`INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1,$2,'accepted') ON CONFLICT (flock_id, user_id) DO NOTHING`, [id, uid]);
+    }
+    return id;
+  };
+  const say = async (flockId, uid, text, when, extra = {}) => {
+    const r = await q(
+      `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, created_at) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [flockId, uid, text, extra.type || 'text', extra.venue ? JSON.stringify(extra.venue) : null, when]
+    );
+    return r.rows[0].id;
+  };
+  const vote = (flockId, uid, v, when) => q(
+    `INSERT INTO venue_votes (flock_id, user_id, venue_name, venue_id, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
+    [flockId, uid, v.name, v.id, when]
+  );
+  const all5 = [jayden, ids.asad, ids.nick, ids.kaitlyn, ids.tommy];
+
+  // Trivia Night: locked in days ago (so the Nest's one-time lock moment is
+  // long past), its night-of window open, Asad and Kaitlyn still in, the
+  // camera account not yet. No budget, no guest.
+  const trivia = await mkPlan({ name: 'Trivia Night', host: jayden, venue: finch, photo: sitePhoto('shots-copper-finch-counter'), when: at(0, 21, 0), status: 'confirmed', members: [jayden, ids.asad, ids.kaitlyn], created: at(-4, 13, 5) });
+  await q(`UPDATE flocks SET confirmed_at = $2, reconfirm_opened_at = NOW() WHERE id = $1`, [trivia, at(-3, 18, 30)]);
+  await q(`UPDATE flock_members SET reconfirmed_at = NOW() WHERE flock_id = $1 AND user_id = ANY($2::int[])`, [trivia, [ids.asad, ids.kaitlyn]]);
+  const triviaLast = await say(trivia, ids.asad, 'we still on for tonight?', at(0, 18, 12));
+
+  // Friday Night Crew: today's conversation, The Copper Finch's card with two
+  // reactions, five votes and four budgets.
+  const friday = await mkPlan({ name: DEMO.flockName, host: jayden, venue: finch, photo: sitePhoto('shots-copper-finch'), when: at(toFri, 20, 0), status: 'planning', budget: true, members: all5, created: at(0, 16, 5) });
+  const finchCard = {
+    name: finch.name, addr: finch.addr, category: 'Burgers & wings', type: 'restaurant',
+    stars: finch.rating, rating: finch.rating, price: '$$', price_level: 2, place_id: finch.id,
+    photo_url: sitePhoto('shots-copper-finch'),
+  };
+  const fridayLines = [
+    [ids.asad, 'ok who is actually free friday', at(0, 16, 12)],
+    [ids.nick, 'free after 7. i can drive 4 people', at(0, 16, 31)],
+    [ids.kaitlyn, '7:30 works for me. where are we thinking', at(0, 17, 5)],
+    [jayden, `Check out ${finch.name}!`, at(0, 17, 22), { type: 'venue_card', venue: finchCard }],
+    [ids.tommy, 'down, their wings are unreal', at(0, 18, 40)],
+    [ids.asad, 'voted for it. kaitlyn you are outnumbered', at(0, 18, 51)],
+  ];
+  const fridayIds = [];
+  for (const [uid, text, when, extra] of fridayLines) fridayIds.push(await say(friday, uid, text, when, extra));
+  const fridayCard = fridayIds[3];
+  await q(`INSERT INTO emoji_reactions (message_id, user_id, emoji) VALUES ($1,$2,'👀') ON CONFLICT DO NOTHING`, [fridayCard, ids.tommy]);
+  await q(`INSERT INTO emoji_reactions (message_id, user_id, emoji) VALUES ($1,$2,'🔥') ON CONFLICT DO NOTHING`, [fridayCard, ids.asad]);
+  await vote(friday, jayden, finch, at(0, 17, 23));
+  await vote(friday, ids.asad, finch, at(0, 17, 30));
+  await vote(friday, ids.nick, SITE_VENUE.bluewing, at(0, 17, 41));
+  await vote(friday, ids.kaitlyn, SITE_VENUE.juniper, at(0, 17, 52));
+  await vote(friday, ids.tommy, finch, at(0, 18, 38));
+  for (const [uid, amount] of [[ids.asad, 30], [ids.nick, 40], [ids.kaitlyn, 25], [ids.tommy, 30]]) {
+    await q(`INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1,$2,$3,FALSE) ON CONFLICT DO NOTHING`, [friday, uid, amount]);
+  }
+
+  // Nick's Birthday: Nick's plan, three of four votes in, the camera
+  // account's missing.
+  const birthday = await mkPlan({ name: "Nick's Birthday", host: ids.nick, venue: SITE_VENUE.bunting, photo: sitePhoto(SITE_VENUE.bunting.ref), when: at(2, 19, 0), status: 'planning', members: [ids.nick, jayden, ids.asad, ids.tommy], created: at(0, 15, 50) });
+  const birthdayLast = await say(birthday, ids.nick, 'who is in?', at(0, 16, 0));
+  for (const [uid, m] of [[ids.nick, 1], [ids.asad, 8], [ids.tommy, 15]]) await vote(birthday, uid, SITE_VENUE.bunting, at(0, 16, m));
+
+  // Thursday Dinner: last Thursday, finished, the bill posted that night.
+  const back = ((SITE_CLOCK.dow - 4 + 7) % 7) || 7;
+  const thu = (after, hh, mm) => at(after - back, hh, mm);
+  const kestrel = SITE_VENUE.kestrel;
+  const dinner = await mkPlan({ name: 'Thursday Dinner', host: jayden, venue: kestrel, photo: sitePhoto(kestrel.ref), when: thu(0, 19, 30), status: 'completed', members: all5, created: thu(-2, 12, 10) });
+  let dinnerLast = 0;
+  for (const [uid, text, when] of [
+    [ids.asad, 'table for 5 at 7:30, see you all there', thu(0, 16, 40)],
+    [jayden, 'perfect, i will grab the big booth', thu(0, 17, 5)],
+    [ids.nick, 'running 10 late, order for me', thu(0, 19, 22)],
+    [ids.kaitlyn, 'that was so good. who has the check?', thu(0, 21, 38)],
+    [ids.asad, 'got it, putting it in the app now', thu(0, 21, 41)],
+    [ids.nick, 'paid you back asad', thu(1, 9, 12)],
+    [ids.kaitlyn, 'sent mine too', thu(2, 11, 27)],
+  ]) dinnerLast = await say(dinner, uid, text, when);
+  await q(`UPDATE flock_members SET attendance = 'attended' WHERE flock_id = $1`, [dinner]);
+  // $120.85 and an 18% tip is $142.60, $28.52 a share, the way POST
+  // /api/billing/:id/create splits it. Asad paid; Nick and Kaitlyn have paid
+  // him back, Tommy has not; the camera account's share is settled or not by pass
+  // (setSitePass).
+  const billAt = thu(0, 21, 44);
+  const bill = await q(
+    `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent, had_payer, created_at, updated_at)
+     VALUES ($1, 120.85, 'equal', $2, 18.0, TRUE, $3, $3) RETURNING id`,
+    [dinner, ids.asad, billAt]
+  );
+  const billId = bill.rows[0].id;
+  for (const [uid, settled, when] of [
+    [jayden, true, thu(1, 8, 30)],
+    [ids.asad, true, billAt],
+    [ids.nick, true, thu(1, 9, 12)],
+    [ids.kaitlyn, true, thu(2, 11, 27)],
+    [ids.tommy, false, null],
+  ]) {
+    await q(
+      `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at, paid_amount) VALUES ($1,$2,28.52,FALSE,$3,$4,0)`,
+      [billId, uid, settled, when]
+    );
+  }
+
+  // ---- Asad's DMs -----------------------------------------------------------
+  let dmUnread = 0;
+  for (const [s, r2, text, when] of [
+    [ids.asad, jayden, 'you in for friday?', at(0, 15, 40)],
+    [jayden, ids.asad, 'yeah, already voted', at(0, 15, 44)],
+    [ids.asad, jayden, 'legend', at(0, 15, 46)],
+  ]) {
+    const r = await q(
+      `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, read_status, created_at)
+       VALUES ($1,$2,$3,'text',TRUE,$4) RETURNING id`,
+      [s, r2, text, when]
+    );
+    dmUnread = r.rows[0].id;
+  }
+
+  await db.end();
+  log(`site story seeded at 7 PM in ${SITE_CLOCK.zone} (${DAY_NAMES[SITE_CLOCK.dow]}): Trivia Night tonight, Friday Night Crew in ${toFri} day(s), Nick's Birthday, Thursday Dinner ${back} day(s) back; nine invented places`);
+  return {
+    maya: jayden,
+    owner,
+    flockId: friday,
+    plans: { trivia, friday, birthday, dinner },
+    billId,
+    // What the camera account has read: everything but the last two Friday lines and
+    // Asad's "legend" (setSitePass puts these back before every frame).
+    reads: { [trivia]: triviaLast, [friday]: fridayCard, [birthday]: birthdayLast, [dinner]: dinnerLast },
+    dmUnread,
+    night: null,
+  };
+}
+
+/* One pass's state, put back before every frame so no frame depends on the
+   ones before it: opening a chat marks it read, and the BILL pass leaves
+   the camera account's share of Thursday's bill unpaid where the MAIN pass has it paid
+   (the Nest then asks for nothing on that plan). Nothing a driver does
+   outlives the next frame. */
+async function setSitePass(dbUrl, seeded, pass) {
+  const db = new Client({ connectionString: dbUrl, options: '-c TimeZone=UTC' });
+  await db.connect();
+  const q = (text, params) => db.query(text, params);
+  const me = seeded.maya;
+  for (const [flockId, lastRead] of Object.entries(seeded.reads)) {
+    await q(
+      `UPDATE flock_members SET last_read_message_id = $3, last_opened_message_id = $3, last_delivered_message_id = GREATEST(last_delivered_message_id, $3)
+       WHERE flock_id = $1 AND user_id = $2`,
+      [Number(flockId), me, lastRead]
+    );
+  }
+  await q('UPDATE direct_messages SET read_status = (id <> $2) WHERE receiver_id = $1', [me, seeded.dmUnread]);
+  const paid = pass !== 'bill';
+  await q(
+    `UPDATE bill_split_shares SET settled = $3, settled_at = CASE WHEN $3 THEN $4::timestamptz ELSE NULL END
+     WHERE bill_id = $1 AND user_id = $2`,
+    [seeded.billId, me, paid, SITE_CLOCK.at(-(((SITE_CLOCK.dow - 4 + 7) % 7) || 7) + 1, 8, 30)]
+  );
+  // Whatever a driver might have answered for the camera account, taken back.
+  await q('DELETE FROM budget_submissions WHERE flock_id = $1 AND user_id = $2', [seeded.plans.friday, me]);
+  await q('DELETE FROM availability_pulses WHERE user_id = $1', [me]);
+  await q(`UPDATE flock_members SET reconfirmed_at = NULL WHERE flock_id = $1 AND user_id = $2`, [seeded.plans.trivia, me]);
+  await db.end();
+}
+
+// ---------------------------------------------------------------------------
 // 4. Frontend build against the local API, output OUTSIDE the repo.
 // ---------------------------------------------------------------------------
 async function buildFrontend() {
-  const stamp = { apiUrl: API_ORIGIN };
+  /* The site story's build is its own: whether it was given the map's key
+     decides whether the map draws at all, so a build made with the key is
+     never reused by a run without it, or the other way round. */
+  const stamp = SITE ? { apiUrl: API_ORIGIN, story: 'site', mapKey: !!SITE_MAP_KEY } : { apiUrl: API_ORIGIN };
   if (SKIP_BUILD && fs.existsSync(path.join(BUILD_DIR, 'index.html')) && fs.existsSync(BUILD_STAMP)) {
     const old = JSON.parse(fs.readFileSync(BUILD_STAMP, 'utf8').replace(/^﻿/, ''));
-    if (old.apiUrl === API_ORIGIN) {
+    if (old.apiUrl === API_ORIGIN && (old.story || null) === (stamp.story || null) && !!old.mapKey === !!stamp.mapKey) {
       // The stamp tracks the API url and nothing else, so a build made before
       // your last edit is reused without complaint. That cost a full debug
       // cycle once: a fix was made, the capture re-run with --skip-build, and
@@ -721,6 +1326,9 @@ async function buildFrontend() {
           // No analytics or error reporting from a screenshot rig.
           REACT_APP_POSTHOG_KEY: '',
           REACT_APP_SENTRY_DSN: '',
+          // The site story's map: the browser key from SHOTS_MAPTILER_KEY or
+          // none, never the keyless basemap (that service asks for a key).
+          ...(SITE ? { REACT_APP_MAPTILER_KEY: SITE_MAP_KEY, REACT_APP_KEYLESS_BASEMAP: '' } : {}),
           BUILD_PATH: BUILD_DIR,
           GENERATE_SOURCEMAP: 'false',
           CI: 'false',
@@ -871,10 +1479,15 @@ function startStaticServer() {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (SITE) {
+    const refused = siteRefusal(SITE_CLOCK);
+    if (refused) die(refused);
+    log(`site story: 7 PM in ${SITE_CLOCK.zone}, ${DAY_NAMES[SITE_CLOCK.dow]}; map ${SITE_MAP_KEY ? 'drawn (SHOTS_MAPTILER_KEY)' : 'off (no key: the search list stands in for it)'}; frames to ${OUT_DIR}`);
+  }
   await assertPortFree(API_PORT, 'backend API');
   await assertPortFree(WEB_PORT, 'static frontend');
   fs.mkdirSync(OUT_DIR, { recursive: true });
-  fs.mkdirSync(APPSTORE_DIR, { recursive: true });
+  if (!SITE) fs.mkdirSync(APPSTORE_DIR, { recursive: true });
 
   let pgHandle = null;
   let backend = null;
@@ -883,12 +1496,13 @@ async function main() {
     pgHandle = await startPostgres();
     backend = startBackend(pgHandle.url, pgHandle.port);
     await backend.waitUp();
-    const seeded = await seed(pgHandle.url);
+    const seeded = SITE ? await seedSite(pgHandle.url) : await seed(pgHandle.url);
     if (flag('stack-only')) { log('stack-only: backend + seed verified, skipping build/capture'); return; }
     await buildFrontend();
     webServer = await startStaticServer();
 
-    await captureAll(pgHandle.url, seeded);
+    if (SITE) await captureSite(pgHandle.url, seeded);
+    else await captureAll(pgHandle.url, seeded);
 
     if (KEEP_ALIVE) {
       log(`--keep-alive: stack stays up. App: ${WEB_ORIGIN}/app  API: ${API_ORIGIN}`);
@@ -1066,10 +1680,15 @@ async function openDiscoverPins(page) {
        and given tabindex -1, so a Playwright click on it raced the move and
        silently did nothing. Dropping `maplibregl-compact-show` is the same
        state a user reaches by tapping it, and it cannot race. */
-    await page.evaluate(() => {
-      document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
-        .forEach((el) => el.classList.remove('maplibregl-compact-show'));
-    }).catch(() => {});
+    /* NOT IN THE SITE STORY. A frame on the website is marketing use of the
+       map, which MapTiler's terms allow with the credit visible, so there the
+       credit is left as MapLibre draws it. */
+    if (!SITE) {
+      await page.evaluate(() => {
+        document.querySelectorAll('.maplibregl-ctrl-attrib.maplibregl-compact-show')
+          .forEach((el) => el.classList.remove('maplibregl-compact-show'));
+      }).catch(() => {});
+    }
     /* WAIT FOR THE PHOTO PINS. Each marker paints a lettered SVG fallback
        immediately and swaps to the venue's circular photo only once
        buildPhotoPin resolves, so a short settle photographs the fallback and
@@ -1525,6 +2144,9 @@ async function launchChromium() {
 }
 
 async function newAppContext(browser, { size, mode, token, userMode }) {
+  // The site story stands in Old City at 7 PM (siteClock); the other sets in
+  // Philadelphia on the machine's own clock.
+  const here = SITE ? SITE_CAMERA : { lat: 39.9526, lng: -75.1652 };
   const context = await browser.newContext({
     viewport: size.viewport,
     deviceScaleFactor: size.dsf,
@@ -1532,27 +2154,32 @@ async function newAppContext(browser, { size, mode, token, userMode }) {
     hasTouch: true,
     reducedMotion: 'reduce',
     permissions: ['geolocation'],
-    geolocation: { latitude: 39.9526, longitude: -75.1652 }, // Philadelphia
+    geolocation: { latitude: here.lat, longitude: here.lng },
     locale: 'en-US',
-    timezoneId: 'America/New_York',
+    timezoneId: SITE ? SITE_CLOCK.zone : 'America/New_York',
     colorScheme: mode,
   });
+  /* The site story's answers from outside Flock (installSiteStubs). The
+     page's clock is left real: Playwright's installed clock stalls the
+     animations framer-motion runs (the crowd forecast stayed at opacity 0),
+     and the zone alone makes it 7 PM (siteClock). */
+  if (SITE) await installSiteStubs(context);
   // Every venue picture on every screen is a drawing from shot-art.mjs, never
   // a Places photo (see that file for why).
   await installVenueArt(context, requireFrontend('sharp'));
-  await context.addInitScript(([theme, jwt, uMode]) => {
+  await context.addInitScript(([theme, jwt, uMode, lat, lng]) => {
     localStorage.setItem('flock-theme-mode', 'manual');
     localStorage.setItem('flock-theme', theme);
     localStorage.setItem('flock_notif_denied', 'true');
     localStorage.setItem('flockUserMode', uMode);
     if (uMode === 'venue') localStorage.setItem('flockVenueOnboardingComplete', 'true');
-    localStorage.setItem('flock_user_lat', '39.9526');
-    localStorage.setItem('flock_user_lng', '-75.1652');
+    localStorage.setItem('flock_user_lat', String(lat));
+    localStorage.setItem('flock_user_lng', String(lng));
     // No token means no session: the guest page is shot as a stranger.
     if (jwt) localStorage.setItem('flockToken', jwt);
     // Lets the map audit below project venues and measure their pins.
     window.__FLOCK_MAP_DEBUG__ = true;
-  }, [mode, token, userMode]);
+  }, [mode, token, userMode, here.lat, here.lng]);
   const page = await context.newPage();
   return { context, page };
 }
@@ -1974,6 +2601,913 @@ function reportOverflow() {
   } else {
     log('no horizontal overflow on any screen (DESIGN-STANDARD rule 6)');
   }
+}
+
+// ---------------------------------------------------------------------------
+// 7. The site story's capture (--story=site).
+// ---------------------------------------------------------------------------
+
+/* EVERY ANSWER A SITE FRAME NEEDS FROM OUTSIDE FLOCK, GIVEN IN THE BROWSER.
+   Venue search and details (Google Places), crowd figures (the forecast),
+   events (Ticketmaster), weather and Birdie's turn (Gemini) are answered here
+   from SITE_VENUES, in the shapes the backend returns, before a request
+   leaves the page; the backend's keys for all of them are blank anyway
+   (backendEnv). Everything else the app asks of its own API goes through, so
+   the plans, chats, votes, budgets, bills and the venue's own side are the
+   seeded database's. A request for any host but the rig's two (and the map's
+   tiles, when the build has the map's key) is refused and recorded, so no
+   frame can carry something fetched from outside. */
+const SITE_BIRDIE_ASK = 'Somewhere cheaper than The Copper Finch for the five of us tonight?';
+// The search list's places: sit-down dinner, no bakery and no ice cream.
+const SITE_DINNER = ['finch', 'kestrel', 'juniper', 'saltmarsh', 'bluewing', 'plover', 'fernway'];
+function siteBirdieReply() {
+  const pick = ['bluewing', 'saltmarsh', 'juniper'].map((k) => SITE_VENUE[k]);
+  return {
+    text: "Bluewing Diner. Booths that fit five, most plates under $15, and it's quieter than The Copper Finch right now.",
+    venues: pick.map((v) => {
+      const at = siteLocation(v);
+      return {
+        place_id: v.id,
+        name: v.name,
+        address: v.addr,
+        rating: v.rating,
+        reviews: v.reviews,
+        price_level: v.price,
+        types: v.types,
+        is_open: siteOpenAt(v, SITE_CLOCK.hour),
+        lat: at.latitude,
+        lng: at.longitude,
+        photo_url: sitePhoto(v.ref),
+        crowd: v.score,
+        crowd_label: `Usually ${siteLabel(v.score).toLowerCase()}`,
+      };
+    }),
+    remaining: 149,
+  };
+}
+function siteWeather() {
+  return {
+    temp: 52,
+    feelsLike: 49,
+    humidity: 58,
+    windSpeed: 7,
+    // A cloud, not a sun: the card draws the sun for any clear sky, at 7 PM too.
+    conditions: 'few clouds',
+    conditionId: 801,
+    isRaining: false,
+    fetchedAt: RUN_T.getTime() - 12 * 60 * 1000,
+  };
+}
+function siteForecast() {
+  const days = [[54, 'clear sky', '01d'], [57, 'few clouds', '02d'], [55, 'scattered clouds', '03d'], [51, 'light rain', '10d'], [49, 'clear sky', '01d']];
+  return days.map(([temp, conditions, icon], i) => ({
+    date: SITE_CLOCK.date(i + 1), temp, feelsLike: temp - 3, humidity: 55 + i * 3, windSpeed: 6 + i, conditions, icon,
+  }));
+}
+async function installSiteStubs(context) {
+  const cors = { 'Access-Control-Allow-Origin': WEB_ORIGIN, 'Access-Control-Allow-Credentials': 'true', 'Cache-Control': 'no-store' };
+  const preflight = (route) => route.fulfill({ status: 204, headers: { ...cors, 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS' } });
+  const json = (route, body, status = 200) => route.fulfill({ status, contentType: 'application/json', headers: cors, body: JSON.stringify(body) });
+  const answered = [];
+  const refused = [];
+  context.__siteAnswered = answered;
+  context.__siteRefused = refused;
+  const byId = new Map(SITE_VENUES.map((v) => [v.id, v]));
+  const ownHost = (url) => url.host === `127.0.0.1:${WEB_PORT}` || url.host === `127.0.0.1:${API_PORT}`
+    || (!!SITE_MAP_KEY && url.host === 'api.maptiler.com');
+  // Registered first, so every route below is consulted before it.
+  await context.route((url) => !ownHost(url), (route) => {
+    refused.push(route.request().url().slice(0, 160));
+    return route.abort('blockedbyclient');
+  });
+  await context.route((url) => url.pathname === '/api/venues/search' || url.pathname === '/api/venues/details' || url.pathname === '/api/venues/resolve-poi', (route) => {
+    if (route.request().method() === 'OPTIONS') return preflight(route);
+    const url = new URL(route.request().url());
+    answered.push(`${url.pathname}?${url.search.slice(1, 60)}`);
+    if (url.pathname === '/api/venues/details') {
+      const v = byId.get(url.searchParams.get('place_id'));
+      return v ? json(route, { venue: siteDetails(v) }) : json(route, { error: 'This venue is no longer listed, so its details cannot load.' }, 404);
+    }
+    if (url.pathname === '/api/venues/resolve-poi') return json(route, { error: 'That spot is not on the map.' }, 400);
+    const query = (url.searchParams.get('query') || '').toLowerCase();
+    const named = SITE_VENUES.filter((v) => query.includes(v.name.toLowerCase().replace(/^the /, '')));
+    const hits = named.length ? named : /dinner/.test(query) ? SITE_DINNER.map((k) => SITE_VENUE[k]) : SITE_VENUES;
+    return json(route, { venues: hits.map(siteSearchRow), total: hits.length });
+  });
+  await context.route((url) => url.pathname.startsWith('/api/crowd/'), (route) => {
+    if (route.request().method() === 'OPTIONS') return preflight(route);
+    const url = new URL(route.request().url());
+    answered.push(url.pathname);
+    if (url.pathname === '/api/crowd/batch') {
+      let asked = [];
+      try { asked = (JSON.parse(route.request().postData() || '{}').venues || []).map((v) => v.place_id || v.placeId); } catch { /* none */ }
+      const predictions = asked.filter((id) => byId.has(id)).map((id) => {
+        const v = byId.get(id);
+        return {
+          placeId: v.id, name: v.name, venueTypes: v.types, score: v.score, label: `Usually ${siteLabel(v.score).toLowerCase()}`,
+          rawEngineScore: v.score, confidence: 42, predictionMethod: 'rule_engine', modelVersion: null,
+          confidenceBasis: 'category_pattern', confidenceMeans: 'input_completeness', supported: false, baselineData: null,
+          calibration: { feedbackUsed: false, reportCount: 0, predictionDrift: 0 }, venueClock: siteClockNow(),
+        };
+      });
+      return json(route, { predictions, weather: null, timestamp: RUN_T.toISOString() });
+    }
+    const id = decodeURIComponent(url.pathname.split('/')[3] || '');
+    const v = byId.get(id);
+    if (!v) return json(route, { error: 'Venue not found' }, 404);
+    if (url.pathname.endsWith('/alternatives')) {
+      const quieter = SITE_VENUES.filter((o) => o.id !== v.id && o.score < v.score && SITE_DINNER.includes(o.key))
+        .sort((a, b) => a.score - b.score).slice(0, 2);
+      return json(route, {
+        currentVenue: { name: v.name, venueTypes: v.types, score: v.score, predictionMethod: 'rule_engine', confidenceBasis: 'category_pattern', supported: false },
+        alternatives: quieter.map((o) => ({
+          placeId: o.id, name: o.name, venueTypes: o.types, score: o.score, label: `Usually ${siteLabel(o.score).toLowerCase()}`,
+          predictionMethod: 'rule_engine', confidenceBasis: 'category_pattern', supported: false,
+        })),
+      });
+    }
+    return json(route, siteCrowdCard(v));
+  });
+  // Ticketmaster's events would put real events and their pictures in frame.
+  await context.route((url) => url.pathname.startsWith('/api/events/'), (route) => {
+    if (route.request().method() === 'OPTIONS') return preflight(route);
+    answered.push(new URL(route.request().url()).pathname);
+    return json(route, { events: [] });
+  });
+  await context.route((url) => url.pathname === '/api/weather' || url.pathname === '/api/weather/forecast', (route) => {
+    if (route.request().method() === 'OPTIONS') return preflight(route);
+    const url = new URL(route.request().url());
+    answered.push(url.pathname);
+    return json(route, url.pathname === '/api/weather' ? siteWeather() : { forecast: siteForecast() });
+  });
+  // Birdie's turn, written here: no Gemini call (WIRING.md says so).
+  await context.route((url) => url.pathname === '/api/ai/chat', (route) => {
+    if (route.request().method() === 'OPTIONS') return preflight(route);
+    if (route.request().method() !== 'POST') return route.continue();
+    answered.push('/api/ai/chat');
+    return json(route, siteBirdieReply());
+  });
+}
+
+/* THE FRAMES, in the order the site's reel and plates are listed (PLAN.md 2c).
+   `id` is the shipped base name, `driver` the SITE_DRIVERS entry that frames
+   it (one visit can frame two: the bill's chat and its sheet), `frame` the
+   label that driver gives it, `pass` the database state it is shot in, `nav`
+   whether the bird tab bar is in it, `anchors` the home page's annotated
+   plate it is (landingAnnotations.js), measured as it is shot. */
+const SITE_SHOTS = [
+  { id: 'nest', driver: 'nest', pass: 'main', nav: true, title: "The Nest: tonight's plan, what needs you, who is out tonight" },
+  { id: 'crowd-dial', driver: 'crowd-dial', pass: 'main', title: "The Copper Finch's crowd forecast: usually busy at 78, and the next twelve hours" },
+  { id: 'still-in', driver: 'stillin', frame: 'roster', pass: 'main', title: 'Trivia Night on the night: two of three already still in' },
+  { id: 'birdie-pick', driver: 'birdie-pick', pass: 'main', nav: true, title: 'Birdie, asked for somewhere cheaper for five, answers with Bluewing Diner' },
+  SITE_MAP_KEY
+    ? { id: 'map-crowd', driver: 'map-crowd', pass: 'main', nav: true, map: true, title: 'Discover over Old City: the places nearby and the crowd heat' }
+    : { id: 'crowd-list', driver: 'crowd-list', pass: 'main', title: 'Discover, searched for dinner: places nearby with their crowd figures' },
+  { id: 'plans-tab', driver: 'plans', pass: 'main', nav: true, title: "The Plans tab: this month, tonight's weather and tonight's trivia" },
+  { id: 'profile', driver: 'you', pass: 'main', nav: true, title: "Jayden Bansal's profile: four flocks, four friends, 92% reliable" },
+  { id: 'messages', driver: 'messages', pass: 'main', nav: true, title: "The Messages tab: Asad's message and four flock chats" },
+  { id: 'bill-chat', driver: 'bill', frame: 'chat', pass: 'bill', title: "Thursday Dinner's chat: the $142.60 bill, three of five settled" },
+  { id: 'chat', driver: 'chat', pass: 'main', anchors: 'vote', title: 'Friday Night Crew: The Copper Finch pinned, four of five budgets in, five of five voted' },
+  { id: 'budget', driver: 'budget', pass: 'main', anchors: 'budget', title: 'Private budget: $35 typed in, and the note that nobody sees it' },
+  { id: 'bill-split', driver: 'bill', frame: 'sheet', pass: 'bill', anchors: 'bill', title: 'Split the bill: $142.60 with an 18% tip, $28.52 each' },
+  { id: 'sos', driver: 'sos', pass: 'main', anchors: 'sos', title: 'Safety: the SOS sheet over the Nest' },
+  { id: 'owner-dashboard', driver: 'venue-events', pass: 'main', owner: true, anchors: 'venue', title: "The Copper Finch's dashboard: the flocks with it in their vote, and its events" },
+  { id: 'create', driver: 'create', pass: 'main', title: 'Start a flock: Burger night tomorrow at 8, four friends invited' },
+  { id: 'vote', driver: 'vote', pass: 'main', title: 'Vote for a venue: The Copper Finch ahead with three' },
+  { id: 'venue-card-events', driver: 'venue-card', frame: 'events', pass: 'main', title: "The Copper Finch's card: three events under Happening here" },
+];
+
+// Shared by several drivers: Messages, then a flock's chat by name.
+async function openSiteChat(page, name) {
+  await tab(page, 'Messages').click();
+  await page.getByRole('button', { name: new RegExp(escapeSiteRe(name)) }).filter({ visible: true }).first().click();
+  await page.locator('.chat-composer-field').first().waitFor({ timeout: 15000 });
+}
+const escapeSiteRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const blurAll = (page) => page.evaluate(() => document.activeElement && document.activeElement.blur());
+// Scroll a descendant's nearest scrolling box so the descendant sits `pad` px
+// below that box's top. The window never scrolls in the app; its boxes do.
+const scrollInBox = (locator, pad = 12) => locator.evaluate((el, p) => {
+  let s = el.parentElement;
+  while (s && !/(auto|scroll)/.test(getComputedStyle(s).overflowY)) s = s.parentElement;
+  if (!s) return;
+  s.scrollTop += el.getBoundingClientRect().top - s.getBoundingClientRect().top - p;
+}, pad);
+
+/* THE NEWEST MESSAGE, WHOLE. The thread anchors to its bottom when it opens,
+   and a row that grows after that (the poll card, a reaction strip) can leave
+   the newest message half under the composer. Says how far short it opened,
+   then finishes the scroll a reader would make. */
+async function scrollChatToNewest(page, label) {
+  const short = await page.evaluate(() => {
+    const el = document.querySelector('.chat-scroller');
+    if (!el) return null;
+    const gap = Math.round(el.scrollHeight - el.scrollTop - el.clientHeight);
+    el.scrollTop = el.scrollHeight;
+    return gap;
+  });
+  if (short != null && short > 1) log(`  ${label}: the thread opened ${short}px short of its newest message; scrolled the rest of the way`);
+  await page.waitForTimeout(400);
+}
+
+const SITE_DRIVERS = {
+  /* THE NEST, as it opens at 7 PM: tonight's plan as the hero, what needs
+     the camera account, who is out tonight. */
+  async nest(page) {
+    await tab(page, 'Nest').click();
+    await page.locator('[data-nest-band="hero"]').getByText('Trivia Night').waitFor({ timeout: 20000 });
+    await page.getByText(/^[A-Z][a-z]+day evening$/).first().waitFor({ timeout: 15000 });
+    for (const row of [/Add your budget for Friday Night Crew/, /Vote on Nick.s Birthday/]) {
+      await page.getByText(row).first().waitFor({ timeout: 15000 }).catch(() => log(`  nest: no "${row.source}" row`));
+    }
+    await page.locator('[data-nest-band="out-tonight"]').waitFor({ timeout: 15000 }).catch(() => log('  nest: no Out tonight? band'));
+    await blurAll(page);
+    await page.evaluate(() => { const s = document.querySelector('[data-nest-scroll]'); if (s) s.scrollTop = 0; });
+    await settle(page, { quiet: 1200 });
+  },
+  /* THE COPPER FINCH'S CROWD FORECAST. With the map, the card its pin opens on
+     Discover; without it, the venue sheet the chat's venue card opens, whose
+     forecast is the same panel (CrowdForecastPanel). */
+  async 'crowd-dial'(page) {
+    if (SITE_MAP_KEY) {
+      await openDiscoverPins(page);
+      await page.getByRole('button', { name: /^The Copper Finch/ }).first().dispatchEvent('click');
+    } else {
+      await openSiteChat(page, DEMO.flockName);
+      await settle(page);
+      await page.locator('[data-card="venue"][role="button"]').filter({ visible: true }).first().click();
+      const sheet = page.getByRole('dialog', { name: DEMO.venue.name });
+      await sheet.waitFor({ timeout: 15000 });
+      await sheet.getByText('Loading details...').waitFor({ state: 'detached', timeout: 20000 }).catch(() => {});
+    }
+    await page.getByText('An estimate from typical patterns for this kind of place.').first().waitFor({ timeout: 20000 });
+    await blurAll(page);
+    await settle(page, { quiet: 1500 });
+  },
+  stillin: DRIVERS.stillin,
+  /* BIRDIE ON THE NEST, answered in the page: the question at the top, the
+     answer and its three cards under it. The answer is written by the rig
+     (siteBirdieReply); no Gemini call is made. */
+  async 'birdie-pick'(page) {
+    await tab(page, 'Nest').click();
+    let input = page.locator('[data-nest-band="birdie"] input[aria-label="Ask Birdie"]');
+    await input.waitFor({ timeout: 15000 });
+    await input.scrollIntoViewIfNeeded();
+    await input.click();
+    const allow = page.getByRole('button', { name: 'Allow', exact: true });
+    if (await allow.waitFor({ timeout: 3000 }).then(() => true).catch(() => false)) {
+      await allow.click();
+      await allow.waitFor({ state: 'detached', timeout: 15000 });
+    }
+    input = page.locator('[data-nest-band="birdie"] input[aria-label="Ask Birdie"]');
+    await input.waitFor({ timeout: 10000 });
+    await input.fill(SITE_BIRDIE_ASK);
+    const reply = page.waitForResponse((r) => r.url().includes('/api/ai/chat') && r.request().method() === 'POST', { timeout: 30000 });
+    await input.press('Enter');
+    await reply;
+    await page.locator('[data-birdie-working]').waitFor({ state: 'detached', timeout: 30000 }).catch(() => {});
+    await page.getByText(/^Bluewing Diner\. Booths/).first().waitFor({ timeout: 15000 });
+    await blurAll(page);
+    await settle(page, { quiet: 1500 });
+    await page.getByText(SITE_BIRDIE_ASK).first().evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await page.waitForTimeout(700);
+  },
+  /* DISCOVER WITH THE MAP (SHOTS_MAPTILER_KEY): the invented places over Old
+     City, the crowd heat warm over the busy ones, the map's credit drawn. */
+  async 'map-crowd'(page) {
+    await openDiscoverPins(page);
+    await blurAll(page);
+    await settle(page, { quiet: 3000 });
+  },
+  /* DISCOVER WITHOUT THE MAP: a search for dinner, its full list, each place
+     with its drawing and its crowd figure. */
+  async 'crowd-list'(page) {
+    await tab(page, 'Discover').click();
+    const search = page.locator('#search-input');
+    await search.waitFor({ timeout: 15000 });
+    const batch = page.waitForResponse((r) => r.url().includes('/api/crowd/batch'), { timeout: 30000 }).catch(() => null);
+    await search.fill('dinner');
+    await batch;
+    await page.getByRole('button', { name: /^See (all \d+|1 result)/ }).first().click();
+    await page.getByLabel(/out of 100/).first().waitFor({ timeout: 30000 });
+    await blurAll(page);
+    await settle(page, { quiet: 1500 });
+  },
+  async plans(page) {
+    await tab(page, 'Plans').click();
+    await page.getByText('Trivia Night').first().waitFor({ timeout: 15000 });
+    await page.getByText(/52°/).first().waitFor({ timeout: 15000 }).catch(() => log('  plans: no weather on the card'));
+    await settle(page, { quiet: 900 });
+  },
+  async you(page) {
+    await tab(page, 'You').click();
+    await page.getByText('Jayden Bansal').first().waitFor({ timeout: 15000 });
+    await settle(page, { quiet: 900 });
+  },
+  async messages(page) {
+    await tab(page, 'Messages').click();
+    await page.getByText(DEMO.flockName).first().waitFor({ timeout: 15000 });
+    await page.getByText('Asad Ali').first().waitFor({ timeout: 15000 }).catch(() => {});
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+  },
+  /* THE BILL, on last Thursday's dinner (the BILL pass, so the camera
+     account still owes): the bill card in the thread, then the split sheet
+     it opens. */
+  async bill(page, shoot) {
+    await openSiteChat(page, 'Thursday Dinner');
+    const card = page.locator('[data-card="bill"]').first();
+    await card.waitFor({ timeout: 15000 });
+    await settle(page);
+    await scrollChatToNewest(page, 'bill');
+    await blurAll(page);
+    await settle(page, { quiet: 600 });
+    await shoot('chat');
+    await card.getByText(/^Bill \$/).first().click();
+    const pool = page.getByRole('dialog', { name: 'Cash pool' });
+    await pool.waitFor({ timeout: 10000 });
+    await pool.getByText(/18% tip/).first().waitFor({ timeout: 10000 });
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+    await shoot('sheet');
+    return true;
+  },
+  async chat(page) {
+    await openSiteChat(page, DEMO.flockName);
+    await page.getByText(DEMO.venue.name).first().waitFor({ timeout: 15000 });
+    await page.locator('[data-card="poll"]').first().waitFor({ timeout: 15000 });
+    await settle(page);
+    await scrollChatToNewest(page, 'chat');
+    await blurAll(page);
+    await settle(page, { quiet: 600 });
+  },
+  /* THE PRIVATE BUDGET: the camera account has not answered, so the band opens the ask.
+     $35 typed and not sent. */
+  async budget(page) {
+    await openSiteChat(page, DEMO.flockName);
+    await page.getByText(/answered/).first().waitFor({ timeout: 15000 });
+    await settle(page);
+    await page.locator('[aria-label="Open group cash pool"]').click();
+    const ask = page.getByText("What's your budget tonight?");
+    if (!(await ask.isVisible().catch(() => false))) {
+      const change = page.getByRole('button', { name: 'Change', exact: true });
+      if (await change.isVisible().catch(() => false)) await change.click();
+    }
+    await ask.waitFor({ timeout: 10000 });
+    await page.getByLabel('Amount').fill('35');
+    await page.waitForTimeout(400);
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+  },
+  /* SOS from the Nest: the sheet, with two trusted contacts to email. */
+  async sos(page) {
+    await tab(page, 'Nest').click();
+    await page.locator('[data-nest-band="hero"]').waitFor({ timeout: 15000 });
+    await settle(page);
+    await page.locator('[aria-label="Safety and emergency SOS"]').click();
+    await page.getByRole('alertdialog').waitFor({ timeout: 10000 });
+    await page.getByText(/2 trusted contacts will be emailed/).waitFor({ timeout: 15000 });
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+  },
+  /* THE OWNER'S DASHBOARD, Events tab: the drawn dining room behind the
+     header, the burger as the logo, the flocks with it in their vote, its
+     three events. */
+  async 'venue-events'(page) {
+    await DRIVERS['venue-events'](page);
+    await page.getByText('Party of 5').first().waitFor({ timeout: 15000 }).catch(() => log('  owner-dashboard: no Party of 5'));
+    await page.getByText(/Your Events/).first().waitFor({ timeout: 15000 }).catch(() => {});
+    await settle(page, { quiet: 1200 });
+  },
+  /* START A FLOCK: a name, tomorrow at 8, four friends invited, and the form's
+     own box scrolled so When and Who share the frame. */
+  async create(page) {
+    await tab(page, 'Nest').click();
+    await page.getByText('Start a flock').first().click();
+    const name = page.locator('#flock-name-input');
+    await name.waitFor({ timeout: 10000 });
+    await name.fill('Burger night');
+    for (const label of ['Tomorrow', '8 PM']) {
+      await page.getByRole('button', { name: label, exact: true }).first().click();
+    }
+    await page.getByText('Suggested', { exact: true }).waitFor({ timeout: 15000 });
+    for (const who of ['Asad', 'Nick', 'Kaitlyn', 'Tommy']) {
+      await page.locator('button.glass-secondary', { hasText: who }).first().click();
+      await page.getByRole('button', { name: new RegExp(`^Remove ${who}`) }).waitFor({ timeout: 5000 });
+    }
+    await page.getByText('You and 4 more').first().waitFor({ timeout: 5000 });
+    await scrollInBox(page.getByRole('heading', { name: 'When', exact: true }), 12);
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+  },
+  /* VOTING: the poll card's title opens the vote panel without the places
+     search the composer's tile runs, so the panel holds the ballot alone.
+     Nothing in it is tapped: every row there casts or moves a vote. */
+  async vote(page) {
+    await openSiteChat(page, DEMO.flockName);
+    const poll = page.locator('[data-card="poll"]').first();
+    await poll.waitFor({ timeout: 15000 });
+    await settle(page);
+    await poll.getByText('Where are we going?', { exact: true }).click();
+    const panel = page.getByRole('dialog', { name: 'Vote on a venue' });
+    await panel.waitFor({ timeout: 10000 });
+    await panel.getByText(/votes? cast/).first().waitFor({ timeout: 10000 });
+    await blurAll(page);
+    await settle(page, { quiet: 900 });
+  },
+  /* THE VENUE SHEET from the chat's venue card, scrolled to Happening here:
+     each event over one of the venue's own (drawn) photos. */
+  async 'venue-card'(page, shoot) {
+    await openSiteChat(page, DEMO.flockName);
+    await settle(page);
+    await page.locator('[data-card="venue"][role="button"]').filter({ visible: true }).first().click();
+    const sheet = page.getByRole('dialog', { name: DEMO.venue.name });
+    await sheet.waitFor({ timeout: 15000 });
+    await sheet.getByText('Loading details...').waitFor({ state: 'detached', timeout: 20000 }).catch(() => {});
+    const heading = sheet.getByRole('heading', { name: /Happening here/ });
+    await heading.waitFor({ timeout: 15000 });
+    await blurAll(page);
+    await settle(page, { quiet: 1200 });
+    await scrollInBox(heading, 16);
+    await settle(page, { quiet: 900 });
+    await shoot('events');
+    return true;
+  },
+};
+
+/* WHAT A SITE FRAME MAY CARRY, checked on the page as it is shot. A frame
+   that fails is not written.
+   - Pictures: every visible <img>, <image>, <source> and CSS background is
+     the rig's own page, a data: or blob: URL, the photo proxy asked for one
+     of the rig's drawings (a shots-* ref), the map's tiles and its pin (map
+     frames only). A Places photo name, a Google host or the generated
+     photo-real cover (/venue-covers/) fails it, and so does anything else.
+   - Words: no element whose own text is a LIVE or ESTIMATED badge (the shapes
+     noLiveDotLabel.test.js refuses), and no real business from the earlier
+     captures by name.
+   - The tab bar, where the frame shows it: the bird set (the birdhouse's roof
+     and entrance hole, the binoculars' two lenses).
+   Requests the stubs refused are reported with the frame. */
+const SITE_BADGE_WORDS = /^(LIVE|Live|LIVE NOW|ESTIMATED|Estimated|FORECAST)$/;
+const SITE_REAL_NAMES = /Sonny|Pizzeria Stella|Oh Brother|Silk City|Franklin Fountain|Race Street|European Republic|\bFork\b|IL GUSTO/;
+async function auditSiteFrame(page, shot) {
+  const seen = await page.evaluate(() => {
+    const shown = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0 || r.bottom <= 0 || r.right <= 0 || r.top >= innerHeight || r.left >= innerWidth) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) !== 0;
+    };
+    const urls = new Set();
+    const add = (u) => { if (u && typeof u === 'string') urls.add(u); };
+    for (const img of document.images) if (shown(img)) add(img.currentSrc || img.src);
+    for (const im of document.querySelectorAll('image')) if (shown(im)) add(im.getAttribute('href') || im.getAttribute('xlink:href'));
+    for (const s of document.querySelectorAll('source')) {
+      const pic = s.closest('picture');
+      if (pic && shown(pic)) for (const part of String(s.srcset || '').split(',')) add(part.trim().split(/\s+/)[0]);
+    }
+    const badge = [];
+    for (const el of document.querySelectorAll('body *')) {
+      if (!shown(el)) continue;
+      for (const pseudo of [null, '::before', '::after']) {
+        const bg = getComputedStyle(el, pseudo).backgroundImage;
+        if (bg && bg !== 'none') for (const m of bg.matchAll(/url\(["']?([^"')]+)["']?\)/g)) add(m[1]);
+      }
+      const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('').trim();
+      if (own && /^(LIVE|Live|LIVE NOW|ESTIMATED|Estimated|FORECAST)$/.test(own)) badge.push(`<${el.tagName.toLowerCase()}>${own}`);
+    }
+    const nav = [...document.querySelectorAll('nav[aria-label="Main"]')].find(shown) || null;
+    return {
+      urls: [...urls].map((u) => { try { return new URL(u, location.href).href; } catch { return u; } }),
+      badge,
+      text: document.body.innerText,
+      // Each tab draws an outline when idle and a solid shape when chosen:
+      // the birdhouse's hole is a circle on the outline and a cut in the
+      // solid one, and so are the binoculars' two lenses.
+      nav: nav ? (() => {
+        const ds = [...nav.querySelectorAll('path')].map((pth) => pth.getAttribute('d') || '');
+        return {
+          roof: ds.includes('M2.5 12 12 2.5 21.5 12'),
+          hole: !!nav.querySelector('circle[cx="12"][cy="13.5"]') || ds.some((d) => d.startsWith('M5.5 9 12 2.5 18.5 9')),
+          lenses: nav.querySelectorAll('circle[r="3.5"]').length >= 2 || ds.some((d) => d.startsWith('M2.5 15.5 2.5 8.5 9.5 8.5')),
+        };
+      })() : null,
+    };
+  });
+  const refOf = (u) => { try { return new URL(u).searchParams.get('ref') || ''; } catch { return ''; } };
+  const pathOf = (u) => { try { return new URL(u).pathname; } catch { return ''; } };
+  const verdicts = seen.urls.map((u) => {
+    if (u.startsWith('data:') || u.startsWith('blob:')) return { u, ok: true, kind: 'inline' };
+    if (/googleusercontent\.com|googleapis\.com|gstatic\.com|ggpht\.com|google\.com\/maps/.test(u)) return { u, ok: false, kind: 'google' };
+    const own = u.startsWith(`${WEB_ORIGIN}/`) || u.startsWith(`${API_ORIGIN}/`);
+    if (own && pathOf(u) === '/api/venues/photo') {
+      const ref = refOf(u);
+      if (ref.startsWith('places/')) return { u, ok: false, kind: 'places-photo' };
+      return { u, ok: ref.startsWith('shots-'), kind: 'drawing' };
+    }
+    if (own && pathOf(u).startsWith('/venue-covers/')) return { u, ok: false, kind: 'photo-real-cover' };
+    if (u.startsWith(`${WEB_ORIGIN}/`)) return { u, ok: true, kind: 'site' };
+    if (shot.map && u.startsWith('https://api.maptiler.com/')) return { u, ok: true, kind: 'map' };
+    if (/^https:\/\/www\.flockcorp\.com\/map\/pin-[a-z0-9-]+\.svg$/.test(u)) return { u, ok: true, kind: 'map-pin' };
+    return { u, ok: false, kind: 'foreign' };
+  });
+  const realNames = (seen.text.match(new RegExp(SITE_REAL_NAMES.source, 'g')) || []);
+  const problems = [
+    ...verdicts.filter((v) => !v.ok).map((v) => `${v.kind} picture: ${v.u.slice(0, 120)}`),
+    ...seen.badge.map((b) => `a ${b} badge`),
+    ...realNames.map((n) => `a real business's name: ${n}`),
+  ];
+  if (shot.nav) {
+    if (!seen.nav) problems.push('no tab bar in the frame');
+    else if (!seen.nav.roof || !seen.nav.hole || !seen.nav.lenses) problems.push(`the tab bar is not the bird set (${JSON.stringify(seen.nav)})`);
+  }
+  const ctx = page.context();
+  return {
+    pictures: verdicts.reduce((acc, v) => ({ ...acc, [v.kind]: (acc[v.kind] || 0) + 1 }), {}),
+    drawings: [...new Set(verdicts.filter((v) => v.kind === 'drawing').map((v) => refOf(v.u)))],
+    nav: seen.nav,
+    answeredInBrowser: [...new Set(ctx.__siteAnswered || [])],
+    refusedRequests: [...new Set(ctx.__siteRefused || [])],
+    problems,
+  };
+}
+
+/* THE CALLOUT TARGETS, measured as each annotated frame is shot, in percent
+   of the frame to two decimals (the unit landingAnnotations.js uses). Each
+   target is found in the page; a button, chip or field with a fill of its
+   own is its border box, and text and icons are the box of their own pixels
+   in the frame, read from the lossless capture inside the box the page gives
+   them (a text's line box runs a few pixels above and below its letters, and
+   a leader that ends on it would stop short). `boxes` is what the plates use,
+   `dom` the page's boxes, `texts` every line of text in the frame (for placing
+   a note's number where it covers none), `sheetTop` a sheet's top edge in CSS
+   px, for cutting a plate down to its sheet. Specs:
+     text / texts   the characters of one needle, or of several, unioned
+     row            only the hits on the same line as that needle
+     exact          a text node that is the needle and nothing else
+     every          every hit of each needle, not only the first
+     within         look inside the first visible match of that selector
+     selector       an element (all: every match, unioned)
+     box            button | chip | field | line | firstLine | sheet
+     ink            measure the pixels inside the page's box (pad: px) */
+const SITE_ANCHOR_SPECS = {
+  vote: [
+    { key: 'pinned', texts: ['The Copper Finch', 'Pinned', 'Google Maps'], row: 'Pinned', ink: true },
+    { key: 'answered', text: 'answered', box: 'line', ink: true },
+    { key: 'lock', text: 'Lock it in', exact: true, box: 'button', within: '[data-card="poll"]' },
+    { key: 'voted', text: 'voted', box: 'line', within: '[data-card="poll"]', ink: true },
+  ],
+  budget: [
+    { key: 'chip', selector: 'button.glass-secondary[aria-pressed]', within: '[role="dialog"]' },
+    { key: 'field', selector: 'input[aria-label="Amount"]', box: 'field' },
+    { key: 'note', text: 'This is anonymous', box: 'firstLine', ink: true },
+    { key: 'skip', text: 'Skip', box: 'button' },
+    { key: 'sheet', text: 'Group Budget', exact: true, box: 'sheet' },
+  ],
+  bill: [
+    { key: 'total', texts: ['Total', 'Paid by'], within: '[role="dialog"]', box: 'line', ink: true },
+    { key: 'rows', texts: ['Jayden Bansal', 'Tommy Walsh', 'Owes'], every: true, within: '[role="dialog"]', box: 'line', ink: true, pad: 4 },
+    { key: 'settle', text: 'Settle Up', box: 'button' },
+    { key: 'sheet', text: 'Split the Bill', exact: true, box: 'sheet' },
+  ],
+  sos: [
+    { key: 'call911', text: 'Call 911', box: 'button' },
+    { key: 'alert', text: 'Alert Contacts', box: 'button' },
+    { key: 'share', text: 'Share Location', box: 'button' },
+  ],
+  venue: [
+    { key: 'create', text: 'Create Event', box: 'button' },
+    { key: 'heading', text: 'Flocks With You in Their Vote', box: 'line', ink: true },
+    { key: 'chips', texts: ['Confirmed', 'Considering you'], exact: true, box: 'chip' },
+    { key: 'editDelete', selector: 'button[aria-label="Edit Trivia Night"] svg, button[aria-label="Delete Trivia Night"] svg', all: true, ink: true },
+  ],
+};
+async function measureAnchors(page, kind) {
+  const spec = SITE_ANCHOR_SPECS[kind];
+  const out = await page.evaluate((list) => {
+    const W = innerWidth;
+    const H = innerHeight;
+    const pct = (r) => [r.left / W * 100, r.top / H * 100, r.right / W * 100, r.bottom / H * 100].map((v) => Math.round(v * 100) / 100);
+    const union = (rs) => (rs.length ? {
+      left: Math.min(...rs.map((r) => r.left)), top: Math.min(...rs.map((r) => r.top)),
+      right: Math.max(...rs.map((r) => r.right)), bottom: Math.max(...rs.map((r) => r.bottom)),
+    } : null);
+    const visible = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0 || r.bottom <= 0 || r.top >= H) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none';
+    };
+    // Every text node shown that holds `needle`, with the needle's range.
+    const textHits = (needle, exact, root) => {
+      const hits = [];
+      const walker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        const t = n.textContent;
+        if (!t || !n.parentElement || !visible(n.parentElement)) continue;
+        const i = exact ? (t.trim() === needle ? t.indexOf(needle) : -1) : t.indexOf(needle);
+        if (i < 0) continue;
+        const range = document.createRange();
+        range.setStart(n, i);
+        range.setEnd(n, i + needle.length);
+        const r = range.getBoundingClientRect();
+        if (r.width === 0 || r.bottom <= 0 || r.top >= H) continue;
+        hits.push({ node: n, rect: r });
+      }
+      return hits;
+    };
+    const nodeRect = (node, first) => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return first ? (range.getClientRects()[0] || null) : range.getBoundingClientRect();
+    };
+    const filled = (el) => {
+      let c = el;
+      while (c && c !== document.body) {
+        const cs = getComputedStyle(c);
+        if (parseFloat(cs.borderTopWidth) > 0 || cs.backgroundColor !== 'rgba(0, 0, 0, 0)') return c;
+        c = c.parentElement;
+      }
+      return el;
+    };
+    const result = {};
+    for (const s of list) {
+      let rect = null;
+      if (s.selector) {
+        const scope = s.within ? [...document.querySelectorAll(s.within)].find(visible) : document;
+        const els = scope ? [...scope.querySelectorAll(s.selector)].filter(visible) : [];
+        if (s.all) rect = union(els.map((el) => el.getBoundingClientRect()));
+        else if (els[0] && s.box === 'field') rect = filled(els[0]).getBoundingClientRect();
+        else if (els[0]) rect = els[0].getBoundingClientRect();
+      } else {
+        const root = s.within ? [...document.querySelectorAll(s.within)].find(visible) : null;
+        let hits = (s.texts || [s.text]).map((needle) => textHits(needle, s.exact, root));
+        if (s.row) {
+          const line = textHits(s.row, true, root)[0];
+          const mid = (r) => (r.top + r.bottom) / 2;
+          hits = hits.map((hs) => (line ? hs.filter((h) => Math.abs(mid(h.rect) - mid(line.rect)) < 14) : hs));
+        }
+        // The first hit of each needle, or every hit (`every`).
+        const chosen = hits.flatMap((hs) => (s.every ? hs : hs.slice(0, 1)));
+        const rects = chosen.map((h) => {
+          const el = h.node.parentElement;
+          if (!s.box) return h.rect;
+          if (s.box === 'line') return nodeRect(h.node, false);
+          if (s.box === 'firstLine') return nodeRect(h.node, true);
+          if (s.box === 'button') return (el.closest('button, [role="button"], a') || el).getBoundingClientRect();
+          if (s.box === 'chip') return filled(el).getBoundingClientRect();
+          if (s.box === 'sheet') {
+            // The panel the heading sits on: the nearest ancestor with a fill
+            // of its own that spans the screen.
+            let c = el;
+            while (c && c !== document.body) {
+              const r = c.getBoundingClientRect();
+              if (r.width >= W * 0.95 && getComputedStyle(c).backgroundColor !== 'rgba(0, 0, 0, 0)') return r;
+              c = c.parentElement;
+            }
+            return null;
+          }
+          return h.rect;
+        }).filter(Boolean);
+        rect = union(rects);
+      }
+      result[s.key] = rect ? pct(rect) : null;
+      if (s.box === 'sheet' && rect) result.sheetTop = Math.round(rect.top * 100) / 100;
+    }
+    // Every line of text on screen, for placing the phone's numbers.
+    const texts = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.textContent.trim() || !n.parentElement || !visible(n.parentElement)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      for (const r of range.getClientRects()) {
+        if (r.width < 1 || r.bottom <= 0 || r.top >= H) continue;
+        texts.push(pct(r));
+      }
+    }
+    result.texts = texts;
+    return result;
+  }, spec);
+  const missing = spec.filter((s) => !out[s.key]).map((s) => s.key);
+  if (missing.length) log(`  anchors ${kind}: not found on the page: ${missing.join(', ')}`);
+  return out;
+}
+
+/* The pixels of a text or an icon inside the box the page gave it, grown by
+   `pad` capture pixels: whatever differs from the colour that box's own
+   border holds most (the measure3.py method: summed channel difference over
+   60). The box, in percent to two decimals; the page's box if nothing shows. */
+function inkBox(img, box, pad = 10, threshold = 60) {
+  const { data, width: W, height: H, channels: C } = img;
+  const r = [
+    Math.max(0, Math.round(box[0] / 100 * W) - pad), Math.max(0, Math.round(box[1] / 100 * H) - pad),
+    Math.min(W, Math.round(box[2] / 100 * W) + pad), Math.min(H, Math.round(box[3] / 100 * H) + pad),
+  ];
+  const at = (x, y) => { const i = (y * W + x) * C; return [data[i], data[i + 1], data[i + 2]]; };
+  const counts = new Map();
+  const tally = (x, y) => { const k = at(x, y).join(','); counts.set(k, (counts.get(k) || 0) + 1); };
+  for (let x = r[0]; x < r[2]; x += 1) { tally(x, r[1]); tally(x, r[3] - 1); }
+  for (let y = r[1]; y < r[3]; y += 1) { tally(r[0], y); tally(r[2] - 1, y); }
+  const bg = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
+  let x1 = Infinity; let y1 = Infinity; let x2 = -1; let y2 = -1;
+  for (let y = r[1]; y < r[3]; y += 1) {
+    for (let x = r[0]; x < r[2]; x += 1) {
+      const p = at(x, y);
+      if (Math.abs(p[0] - bg[0]) + Math.abs(p[1] - bg[1]) + Math.abs(p[2] - bg[2]) > threshold) {
+        if (x < x1) x1 = x;
+        if (x > x2) x2 = x;
+        if (y < y1) y1 = y;
+        if (y > y2) y2 = y;
+      }
+    }
+  }
+  if (x2 < 0) return box;
+  const p = (v, d) => Math.round(v / d * 10000) / 100;
+  return [p(x1, W), p(y1, H), p(x2 + 1, W), p(y2 + 1, H)];
+}
+
+/* One frame of the site story, kept as a lossless master in memory and
+   audited; the shipped files are cut from it at the end (exportSite). */
+async function snapSite(page, shot, frames, report) {
+  await checkOverflow(page, { screen: { id: shot.id }, size: SIZES[0], mode: 'dark' });
+  const audit = await auditSiteFrame(page, shot);
+  const dom = shot.anchors ? await measureAnchors(page, shot.anchors) : null;
+  const raw = await page.screenshot({ type: 'png' });
+  report.audit[shot.id] = audit;
+  if (dom) {
+    const sharp = requireFrontend('sharp');
+    const { data, info } = await sharp(raw).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    const img = { data, width: info.width, height: info.height, channels: info.channels };
+    const boxes = {};
+    const how = {};
+    for (const s of SITE_ANCHOR_SPECS[shot.anchors]) {
+      if (!dom[s.key] || s.box === 'sheet') continue;
+      boxes[s.key] = s.ink ? inkBox(img, dom[s.key], s.pad) : dom[s.key];
+      how[s.key] = s.ink ? 'ink' : 'element';
+    }
+    const { texts, sheetTop, ...domBoxes } = dom;
+    report.anchors[shot.anchors] = { frame: shot.id, boxes, how, dom: domBoxes, sheetTop: sheetTop ?? null, texts };
+  }
+  if (audit.problems.length) throw new Error(`refused by the audit: ${audit.problems.slice(0, 4).join('; ')}`);
+  frames.set(shot.id, raw);
+  const pics = Object.entries(audit.pictures).map(([k, n]) => `${n} ${k}`).join(', ') || 'none';
+  log(`  ok ${shot.id}: pictures ${pics}${audit.drawings.length ? ` (${audit.drawings.join(', ')})` : ''}${audit.refusedRequests.length ? `; refused ${audit.refusedRequests.length} outside request(s)` : ''}`);
+}
+
+async function captureSite(dbUrl, seeded) {
+  const sharp = requireFrontend('sharp');
+  const browser = await launchChromium();
+  const userToken = await apiLogin(DEMO.camera.email, DEMO.password);
+  const ownerToken = await apiLogin(DEMO.owner.email, DEMO.password);
+  const size = SIZES[0];
+  const mode = 'dark';
+  const wanted = SITE_SHOTS.filter((s) => !ONLY || ONLY.includes(s.id));
+  const frames = new Map();
+  const report = { audit: {}, anchors: {} };
+  const failures = [];
+  const diagnose = (page) => {
+    page.__consoleErrors = [];
+    page.on('console', (m) => { if (m.type() === 'error') page.__consoleErrors.push(m.text().slice(0, 200)); });
+    page.on('pageerror', (err) => page.__consoleErrors.push(`pageerror: ${String(err).slice(0, 200)}`));
+  };
+  try {
+    for (const pass of ['main', 'bill']) {
+      const shots = wanted.filter((s) => s.pass === pass);
+      if (!shots.length) continue;
+      log(`site story, ${pass.toUpperCase()} pass: ${shots.map((s) => s.id).join(', ')}`);
+      await setServerTheme(dbUrl, mode);
+      // One visit per driver; a driver that frames two shots (the bill) runs once.
+      const drivers = [...new Set(shots.filter((s) => !s.owner).map((s) => s.driver))];
+      if (drivers.length) {
+        const { context, page } = await newAppContext(browser, { size, mode, token: userToken, userMode: 'user' });
+        diagnose(page);
+        try {
+          for (const driver of drivers) {
+            const mine = shots.filter((s) => s.driver === driver && !s.owner);
+            try {
+              await setSitePass(dbUrl, seeded, pass);
+              context.__siteAnswered.length = 0;
+              context.__siteRefused.length = 0;
+              await page.goto(`${WEB_ORIGIN}/app`, { waitUntil: 'domcontentloaded' });
+              await page.addStyleTag({ content: hideCaretCss });
+              await waitAppReady(page);
+              const shoot = async (label) => {
+                const shot = mine.find((s) => s.frame === label);
+                if (shot) await snapSite(page, shot, frames, report);
+              };
+              const framed = await SITE_DRIVERS[driver](page, shoot);
+              if (!framed) await snapSite(page, mine.find((s) => !s.frame) || mine[0], frames, report);
+            } catch (e) {
+              failures.push(await failureReport(page, e, { screen: { id: mine.map((s) => s.id).join('+') }, size, mode }));
+            }
+          }
+        } finally {
+          await context.close();
+        }
+      }
+      const owned = shots.filter((s) => s.owner);
+      if (owned.length) {
+        const { context, page } = await newAppContext(browser, { size, mode, token: ownerToken, userMode: 'venue' });
+        diagnose(page);
+        try {
+          for (const shot of owned) {
+            try {
+              await setSitePass(dbUrl, seeded, pass);
+              context.__siteAnswered.length = 0;
+              context.__siteRefused.length = 0;
+              await page.goto(`${WEB_ORIGIN}/app?venue=true`, { waitUntil: 'domcontentloaded' });
+              await page.addStyleTag({ content: hideCaretCss });
+              await SITE_DRIVERS[shot.driver](page);
+              await snapSite(page, shot, frames, report);
+            } catch (e) {
+              failures.push(await failureReport(page, e, { screen: { id: shot.id }, size, mode }));
+            }
+          }
+        } finally {
+          await context.close();
+        }
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  const kept = frames.size;
+  await exportSite(sharp, frames, report);
+  reportOverflow();
+  log(`site story: ${kept} of ${wanted.length} frame(s) kept${failures.length ? `, ${failures.length} FAILURES` : ''}`);
+  for (const f of failures) log(`  FAIL ${f}`);
+  if (failures.length) process.exitCode = 1;
+}
+
+/* THE SHIPPED NAMES, cut from each frame's master: <frame>-dark<suffix>@2x.webp
+   (780 wide, quality 82) and -480w.webp (480 wide, lanczos3), and for the
+   home screen the PNG fallback (full colour: a 256-colour palette bands the
+   drawings) and the reel's AVIF, which siteSpeedPass.test.js holds under
+   40,000 bytes. Beside them: the audit, the anchors, a manifest of what was
+   written and a contact sheet of every frame. */
+async function exportSite(sharp, frames, report) {
+  const written = [];
+  const put = async (file, buf, extra) => {
+    fs.writeFileSync(path.join(OUT_DIR, file), buf);
+    const meta = await sharp(buf).metadata();
+    written.push({ file, bytes: buf.length, width: meta.width, height: meta.height, ...extra });
+  };
+  fs.mkdirSync(path.join(OUT_DIR, 'masters'), { recursive: true });
+  for (const shot of SITE_SHOTS) {
+    const raw = frames.get(shot.id);
+    if (!raw) continue;
+    fs.writeFileSync(path.join(OUT_DIR, 'masters', `${shot.id}-dark${SUFFIX}@2x.png`), raw);
+    const base = `${shot.id}-dark${SUFFIX}`;
+    await put(`${base}@2x.webp`, await sharp(raw).webp({ quality: 82 }).toBuffer(), { screen: shot.id, title: shot.title });
+    await put(`${base}-480w.webp`, await sharp(raw).resize(480, null, { kernel: 'lanczos3' }).webp({ quality: 82 }).toBuffer(), { screen: shot.id, title: shot.title });
+    if (shot.id === 'nest') {
+      await put(`${base}@2x.png`, await sharp(raw).png({ compressionLevel: 9, effort: 10 }).toBuffer(), { screen: shot.id, title: shot.title });
+      let avif = null;
+      for (let quality = 50; quality >= 30; quality -= 4) {
+        avif = await sharp(raw).flatten({ background: '#000000' }).removeAlpha().avif({ quality, effort: 9 }).toBuffer();
+        if (avif.length < 40000) break;
+      }
+      await put(`home-reel${SUFFIX}.avif`, avif, { screen: shot.id, title: shot.title });
+    }
+  }
+  const earlier = (file, empty) => {
+    try { return JSON.parse(fs.readFileSync(path.join(OUT_DIR, file), 'utf8')); } catch { return empty; }
+  };
+  const audit = earlier(`audit${SUFFIX}.json`, { frames: {} });
+  fs.writeFileSync(path.join(OUT_DIR, `audit${SUFFIX}.json`), JSON.stringify({
+    takenAt: RUN_T.toISOString(), zone: SITE_CLOCK.zone, mapKey: !!SITE_MAP_KEY,
+    frames: { ...(audit.frames || {}), ...report.audit }, overflow: overflowFindings,
+  }, null, 2));
+  fs.writeFileSync(path.join(OUT_DIR, `anchors${SUFFIX}.json`), JSON.stringify({ ...earlier(`anchors${SUFFIX}.json`, {}), ...report.anchors }, null, 2));
+  const files = new Map(earlier(`site-manifest${SUFFIX}.json`, []).map((f) => [f.file, f]));
+  for (const f of written) files.set(f.file, f);
+  fs.writeFileSync(path.join(OUT_DIR, `site-manifest${SUFFIX}.json`), JSON.stringify([...files.values()].sort((a, b) => a.file.localeCompare(b.file)), null, 2));
+  // The contact sheet: every frame at 260 px, six to a row, named over it.
+  const master = (id) => path.join(OUT_DIR, 'masters', `${id}-dark${SUFFIX}@2x.png`);
+  for (const shot of SITE_SHOTS) if (!frames.has(shot.id) && fs.existsSync(master(shot.id))) frames.set(shot.id, fs.readFileSync(master(shot.id)));
+  const shots = SITE_SHOTS.filter((s) => frames.has(s.id));
+  if (shots.length) {
+    const w = 260;
+    const h = Math.round(w * 1688 / 780);
+    const cols = 6;
+    const rows = Math.ceil(shots.length / cols);
+    const pad = 14;
+    const label = 26;
+    const tiles = [];
+    for (const [i, shot] of shots.entries()) {
+      const x = pad + (i % cols) * (w + pad);
+      const y = pad + Math.floor(i / cols) * (h + label + pad);
+      tiles.push({ input: await sharp(frames.get(shot.id)).resize(w).png().toBuffer(), left: x, top: y + label });
+      const text = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${label}"><text x="0" y="18" font-family="Arial, sans-serif" font-size="15" fill="#e8ecf2">${shot.id}-dark${SUFFIX}</text></svg>`);
+      tiles.push({ input: text, left: x, top: y });
+    }
+    const sheet = await sharp({
+      create: { width: pad + cols * (w + pad), height: pad + rows * (h + label + pad), channels: 3, background: '#1b1f27' },
+    }).composite(tiles).png().toBuffer();
+    fs.writeFileSync(path.join(OUT_DIR, `contact${SUFFIX}.png`), sheet);
+  }
+  log(`site story: ${written.length} file(s) written to ${OUT_DIR} (audit${SUFFIX}.json, anchors${SUFFIX}.json, contact${SUFFIX}.png beside them)`);
 }
 
 main().catch((e) => die(e.stack || e.message));

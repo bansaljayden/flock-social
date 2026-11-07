@@ -18,15 +18,19 @@
  * run no longer spends Places photo quota at all.
  *
  * The seeded demo venue (The Copper Finch) points its photo at the same proxy
- * with the ref "shots-copper-finch", so it gets the burger picture.
+ * with the ref "shots-copper-finch", so it gets the dining room; its three
+ * further photos (counter, stage, wings) and its logo (the burger) are pinned
+ * the same way. A ref of the form "shots-art-<id>" names its own drawing,
+ * which is how the site story's invented places (capture-screenshots.mjs,
+ * SITE_VENUES) each keep one picture.
  */
 
 const W = 400;
 const H = 300;
 const svg = (body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">${body}</svg>`;
 
-/* Eleven pictures. Each keeps its subject in the middle, because the map crops
-   a venue photo to a small circle around the centre. */
+/* Fourteen pictures. Each keeps its subject in the middle, because the map
+   crops a venue photo to a small circle around the centre. */
 export const VENUE_ART = [
   {
     id: 'burger',
@@ -188,6 +192,129 @@ export const VENUE_ART = [
       <g fill="#4f8a3e"><ellipse cx="368" cy="196" rx="8" ry="24" transform="rotate(-20 368 196)"/><ellipse cx="386" cy="194" rx="8" ry="24" transform="rotate(20 386 194)"/></g>
       <ellipse cx="377" cy="186" rx="7" ry="26" fill="#6aa84f"/>`),
   },
+  /* The Copper Finch's other three photos, in the dining room's colours so the
+     four read as one place. The venue sheet draws each "Happening here" card
+     over a different photo (photos[1..3]), and a card is a wide strip cut from
+     the middle of the picture, so each subject sits between y 80 and y 220.
+     The counter has a quiz board where a bar would have taps: no drinks in
+     any frame. */
+  {
+    id: 'counter',
+    svg: svg(`
+      <rect width="400" height="300" fill="#9fb9a5"/>
+      <line x1="80" y1="0" x2="80" y2="30" stroke="#3b3b3b" stroke-width="3"/>
+      <circle cx="80" cy="52" r="30" fill="#fff3c4" opacity="0.3"/>
+      <path d="M62 30 L98 30 L106 50 L54 50 Z" fill="#e9b44c"/>
+      <line x1="320" y1="0" x2="320" y2="30" stroke="#3b3b3b" stroke-width="3"/>
+      <circle cx="320" cy="52" r="30" fill="#fff3c4" opacity="0.3"/>
+      <path d="M302 30 L338 30 L346 50 L294 50 Z" fill="#e9b44c"/>
+      <g transform="translate(0 16)">
+      <rect x="128" y="66" width="144" height="78" rx="4" fill="#2f3b36" stroke="#8a5a3b" stroke-width="7"/>
+      <path d="M186 92 q0 -14 14 -14 q14 0 14 12 q0 9 -10 13 q-4 2 -4 9 l0 4" fill="none" stroke="#f5efe4" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="200" cy="129" r="3.5" fill="#f5efe4"/>
+      <g stroke="#f5efe4" stroke-width="3" stroke-linecap="round" opacity="0.55">
+        <line x1="142" y1="84" x2="166" y2="84"/><line x1="142" y1="98" x2="160" y2="98"/><line x1="142" y1="112" x2="168" y2="112"/><line x1="142" y1="126" x2="158" y2="126"/>
+        <line x1="234" y1="84" x2="258" y2="84"/><line x1="240" y1="98" x2="258" y2="98"/><line x1="232" y1="112" x2="258" y2="112"/><line x1="242" y1="126" x2="258" y2="126"/>
+      </g>
+      <rect x="54" y="136" width="20" height="22" rx="3" fill="#2f7f7a"/>
+      <g stroke-width="4" stroke-linecap="round"><line x1="58" y1="138" x2="54" y2="122" stroke="#f2c94c"/><line x1="64" y1="138" x2="66" y2="120" stroke="#f2c94c"/><line x1="70" y1="138" x2="76" y2="124" stroke="#e8743b"/></g>
+      <rect x="92" y="148" width="40" height="10" rx="2" fill="#fbf7ef"/><rect x="96" y="143" width="40" height="7" rx="2" fill="#f2e9d8"/>
+      <rect x="306" y="152" width="34" height="6" rx="2" fill="#6b3a21"/>
+      <path d="M310 152 Q323 128 336 152 Z" fill="#e9b44c"/><circle cx="323" cy="134" r="3" fill="#e9b44c"/>
+      <rect y="158" width="400" height="12" fill="#8a5a3b"/>
+      <rect y="170" width="400" height="80" fill="#6f4630"/>
+      <g stroke="#5e3b28" stroke-width="3"><line x1="66" y1="170" x2="66" y2="250"/><line x1="146" y1="170" x2="146" y2="250"/><line x1="254" y1="170" x2="254" y2="250"/><line x1="334" y1="170" x2="334" y2="250"/></g>
+      <rect y="250" width="400" height="50" fill="#a26f4c"/>
+      <g stroke="#8d5e3f" stroke-width="3"><line x1="0" y1="274" x2="400" y2="274"/><line x1="120" y1="250" x2="112" y2="274"/><line x1="290" y1="274" x2="284" y2="300"/></g>
+      <g fill="#1f3048">
+        <ellipse cx="96" cy="206" rx="28" ry="8"/><rect x="92" y="210" width="8" height="66"/><rect x="80" y="246" width="32" height="5" rx="2"/>
+        <ellipse cx="200" cy="206" rx="28" ry="8"/><rect x="196" y="210" width="8" height="66"/><rect x="184" y="246" width="32" height="5" rx="2"/>
+        <ellipse cx="304" cy="206" rx="28" ry="8"/><rect x="300" y="210" width="8" height="66"/><rect x="288" y="246" width="32" height="5" rx="2"/>
+      </g>
+      <g fill="#2b4364"><ellipse cx="96" cy="203" rx="24" ry="5"/><ellipse cx="200" cy="203" rx="24" ry="5"/><ellipse cx="304" cy="203" rx="24" ry="5"/></g>
+      </g>`),
+  },
+  {
+    id: 'stage',
+    svg: svg(`
+      <rect width="400" height="300" fill="#9fb9a5"/>
+      <rect x="56" y="0" width="288" height="216" fill="#22324a"/>
+      <g stroke="#2b3f5d" stroke-width="12"><line x1="86" y1="0" x2="86" y2="216"/><line x1="134" y1="0" x2="134" y2="216"/><line x1="182" y1="0" x2="182" y2="216"/><line x1="230" y1="0" x2="230" y2="216"/><line x1="278" y1="0" x2="278" y2="216"/><line x1="320" y1="0" x2="320" y2="216"/></g>
+      <path d="M -10 66 Q 100 112 200 78 Q 300 112 410 66" fill="none" stroke="#f5efe4" stroke-width="2" opacity="0.45"/>
+      <g>
+        <circle cx="42" cy="90" r="12" fill="#f5b942" opacity="0.18"/><circle cx="42" cy="90" r="4.5" fill="#f5b942"/>
+        <circle cx="100" cy="100" r="12" fill="#f5b942" opacity="0.18"/><circle cx="100" cy="100" r="4.5" fill="#f5b942"/>
+        <circle cx="152" cy="98" r="12" fill="#f5b942" opacity="0.18"/><circle cx="152" cy="98" r="4.5" fill="#f5b942"/>
+        <circle cx="200" cy="86" r="12" fill="#f5b942" opacity="0.18"/><circle cx="200" cy="86" r="4.5" fill="#f5b942"/>
+        <circle cx="248" cy="98" r="12" fill="#f5b942" opacity="0.18"/><circle cx="248" cy="98" r="4.5" fill="#f5b942"/>
+        <circle cx="300" cy="100" r="12" fill="#f5b942" opacity="0.18"/><circle cx="300" cy="100" r="4.5" fill="#f5b942"/>
+        <circle cx="358" cy="90" r="12" fill="#f5b942" opacity="0.18"/><circle cx="358" cy="90" r="4.5" fill="#f5b942"/>
+      </g>
+      <ellipse cx="200" cy="214" rx="150" ry="18" fill="#f5b942" opacity="0.08"/>
+      <rect x="36" y="204" width="328" height="12" fill="#c58a5c"/>
+      <rect x="36" y="216" width="328" height="34" fill="#8d5e3f"/>
+      <g stroke="#7a4f34" stroke-width="3"><line x1="118" y1="216" x2="118" y2="250"/><line x1="200" y1="216" x2="200" y2="250"/><line x1="282" y1="216" x2="282" y2="250"/></g>
+      <rect y="250" width="400" height="50" fill="#a26f4c"/>
+      <line x1="0" y1="274" x2="400" y2="274" stroke="#8d5e3f" stroke-width="3"/>
+      <g stroke="#0f1726" stroke-linecap="round">
+        <line x1="150" y1="126" x2="150" y2="202" stroke-width="5"/>
+        <line x1="150" y1="202" x2="134" y2="206" stroke-width="4"/><line x1="150" y1="202" x2="166" y2="206" stroke-width="4"/>
+        <line x1="150" y1="128" x2="168" y2="118" stroke-width="4"/>
+      </g>
+      <rect x="164" y="104" width="12" height="22" rx="6" fill="#c7ccd4" transform="rotate(-58 170 115)"/>
+      <g fill="#8a5a3b"><rect x="282" y="172" width="44" height="8" rx="3"/><rect x="286" y="180" width="6" height="24"/><rect x="316" y="180" width="6" height="24"/></g>
+      <g transform="rotate(-10 226 160)">
+        <rect x="221" y="84" width="10" height="64" fill="#6b3a21"/>
+        <rect x="218" y="76" width="16" height="14" rx="3" fill="#4a2a17"/>
+        <g fill="#e6dccb"><circle cx="216" cy="80" r="2"/><circle cx="216" cy="86" r="2"/><circle cx="236" cy="80" r="2"/><circle cx="236" cy="86" r="2"/></g>
+        <circle cx="226" cy="152" r="21" fill="#e0a052"/>
+        <circle cx="226" cy="184" r="27" fill="#e0a052"/>
+        <circle cx="226" cy="160" r="8" fill="#3b2416"/>
+        <rect x="214" y="186" width="24" height="5" rx="2" fill="#6b3a21"/>
+        <g stroke="#f5efe4" stroke-width="1" opacity="0.7"><line x1="223" y1="88" x2="223" y2="188"/><line x1="226" y1="88" x2="226" y2="188"/><line x1="229" y1="88" x2="229" y2="188"/></g>
+      </g>
+      <g stroke="#0f1726" stroke-width="4" stroke-linecap="round"><line x1="214" y1="204" x2="226" y2="190"/><line x1="246" y1="204" x2="234" y2="190"/></g>`),
+  },
+  {
+    id: 'wings',
+    svg: svg(`
+      <defs><clipPath id="paper"><ellipse cx="200" cy="164" rx="104" ry="36"/></clipPath></defs>
+      <rect width="400" height="300" fill="#9fb9a5"/>
+      <rect x="26" y="0" width="92" height="66" fill="#dceff2" stroke="#f5efe4" stroke-width="8"/>
+      <line x1="72" y1="0" x2="72" y2="66" stroke="#f5efe4" stroke-width="6"/>
+      <rect y="92" width="400" height="208" fill="#a26f4c"/>
+      <g fill="none" stroke="#8d5e3f" stroke-width="3" opacity="0.8"><path d="M0 128 C120 120 280 136 400 126"/><path d="M0 232 C140 222 260 240 400 228"/><path d="M0 276 C150 266 250 284 400 270"/></g>
+      <g transform="translate(304 84)">
+        <rect x="-16" y="52" width="32" height="8" rx="2" fill="#6b3a21"/>
+        <rect x="-5" y="38" width="10" height="16" fill="#e9b44c"/>
+        <path d="M-20 4 L20 4 Q20 36 0 40 Q-20 36 -20 4 Z" fill="#e9b44c"/>
+        <path d="M-20 10 Q-34 12 -30 24 Q-26 30 -16 28" fill="none" stroke="#e9b44c" stroke-width="5"/>
+        <path d="M20 10 Q34 12 30 24 Q26 30 16 28" fill="none" stroke="#e9b44c" stroke-width="5"/>
+        <path d="M-10 10 Q-8 26 2 32" fill="none" stroke="#f6d77a" stroke-width="3" stroke-linecap="round"/>
+      </g>
+      <ellipse cx="200" cy="176" rx="122" ry="44" fill="#5e2a1d" opacity="0.35"/>
+      <ellipse cx="200" cy="168" rx="116" ry="44" fill="#9a3b2a"/>
+      <ellipse cx="200" cy="164" rx="104" ry="36" fill="#fbf7ef"/>
+      <g clip-path="url(#paper)" fill="#d64a3b" opacity="0.85">
+        <rect x="96" y="128" width="16" height="16"/><rect x="128" y="128" width="16" height="16"/><rect x="160" y="128" width="16" height="16"/><rect x="192" y="128" width="16" height="16"/><rect x="224" y="128" width="16" height="16"/><rect x="256" y="128" width="16" height="16"/><rect x="288" y="128" width="16" height="16"/>
+        <rect x="112" y="144" width="16" height="16"/><rect x="144" y="144" width="16" height="16"/><rect x="176" y="144" width="16" height="16"/><rect x="208" y="144" width="16" height="16"/><rect x="240" y="144" width="16" height="16"/><rect x="272" y="144" width="16" height="16"/>
+        <rect x="96" y="160" width="16" height="16"/><rect x="128" y="160" width="16" height="16"/><rect x="160" y="160" width="16" height="16"/><rect x="192" y="160" width="16" height="16"/><rect x="224" y="160" width="16" height="16"/><rect x="256" y="160" width="16" height="16"/><rect x="288" y="160" width="16" height="16"/>
+        <rect x="112" y="176" width="16" height="16"/><rect x="144" y="176" width="16" height="16"/><rect x="176" y="176" width="16" height="16"/><rect x="208" y="176" width="16" height="16"/><rect x="240" y="176" width="16" height="16"/><rect x="272" y="176" width="16" height="16"/>
+        <rect x="96" y="192" width="16" height="16"/><rect x="128" y="192" width="16" height="16"/><rect x="160" y="192" width="16" height="16"/><rect x="192" y="192" width="16" height="16"/><rect x="224" y="192" width="16" height="16"/><rect x="256" y="192" width="16" height="16"/><rect x="288" y="192" width="16" height="16"/>
+      </g>
+      <g>
+        <g transform="rotate(-24 150 162)"><ellipse cx="150" cy="162" rx="26" ry="15" fill="#b8481f"/><ellipse cx="146" cy="157" rx="15" ry="6" fill="#d9773a"/></g>
+        <g transform="rotate(18 196 150)"><ellipse cx="196" cy="150" rx="27" ry="15" fill="#c4522a"/><ellipse cx="192" cy="145" rx="15" ry="6" fill="#e08a46"/></g>
+        <g transform="rotate(-8 246 160)"><ellipse cx="246" cy="160" rx="26" ry="15" fill="#b8481f"/><ellipse cx="242" cy="155" rx="15" ry="6" fill="#d9773a"/></g>
+        <g transform="rotate(30 176 180)"><ellipse cx="176" cy="180" rx="24" ry="14" fill="#c4522a"/><ellipse cx="172" cy="175" rx="13" ry="5" fill="#e08a46"/></g>
+        <g transform="rotate(-30 226 182)"><ellipse cx="226" cy="182" rx="25" ry="14" fill="#b8481f"/><ellipse cx="222" cy="177" rx="13" ry="5" fill="#d9773a"/></g>
+        <g fill="#f3e2c6"><circle cx="126" cy="170" r="6"/><circle cx="268" cy="150" r="6"/><circle cx="202" cy="128" r="5"/><circle cx="248" cy="196" r="5"/></g>
+      </g>
+      <g fill="#7cbf5a"><rect x="40" y="166" width="44" height="9" rx="4" transform="rotate(-14 62 170)"/><rect x="46" y="184" width="44" height="9" rx="4" transform="rotate(-6 68 188)"/></g>
+      <ellipse cx="76" cy="132" rx="24" ry="9" fill="#fbf7ef"/><ellipse cx="76" cy="130" rx="18" ry="6" fill="#e8743b"/>
+      <ellipse cx="330" cy="196" rx="24" ry="9" fill="#fbf7ef"/><ellipse cx="330" cy="194" rx="18" ry="6" fill="#f2c94c"/>
+      <path d="M300 226 L372 218 L380 246 L306 254 Z" fill="#f5efe4"/><path d="M306 254 L380 246 L376 252 L310 260 Z" fill="#dcd3c2"/>`),
+  },
   {
     id: 'storefront',
     svg: svg(`
@@ -297,14 +424,27 @@ export const VENUE_ART = [
 const BY_ID = new Map(VENUE_ART.map((a) => [a.id, a]));
 
 /* Refs that always get a particular picture. The demo venue's photo points at
-   the proxy with this ref (see the seed in capture-screenshots.mjs). */
-const PINNED = { 'shots-copper-finch': 'burger' };
+   the proxy with the first ref (see the seed in capture-screenshots.mjs).
+   The dining room rather than the burger: the venue sheet repeats the venue's
+   photo behind every "Happening here" card, and a room reads as the place the
+   events happen in. The next three are its further photos, which the rig hands
+   the venue sheet as Place Details would for a listed venue, so each "Happening
+   here" card has a picture of its own; the logo is the owner's profile picture
+   (venue_profiles.photo_url), which the dashboard draws in its round badge. */
+const PINNED = {
+  'shots-copper-finch': 'dining-room',
+  'shots-copper-finch-counter': 'counter',
+  'shots-copper-finch-stage': 'stage',
+  'shots-copper-finch-wings': 'wings',
+  'shots-copper-finch-logo': 'burger',
+};
 
 /* Which pictures a screen draws from. A search for pizza that shows croissants
    and ice cream reads as broken, so a driver can narrow the pool to pictures
    that fit what its screen is about (setVenueArtTheme). Without a theme every
-   picture except the demo venue's burger is in play. */
-const ALL = VENUE_ART.map((a) => a.id).filter((id) => id !== 'burger');
+   picture except the burger and the Copper Finch's own three is in play. */
+const COPPER_FINCH_ONLY = new Set(['burger', 'counter', 'stage', 'wings']);
+const ALL = VENUE_ART.map((a) => a.id).filter((id) => !COPPER_FINCH_ONLY.has(id));
 
 /* Same venue, same picture, for the whole run (every size and theme pass), and
    neighbours get different ones: refs take pictures from the pool in the order
@@ -314,6 +454,8 @@ const assigned = new Map(); // `${pool}|${ref}` -> id
 const nextInPool = new Map(); // pool -> next index
 function artIdForRef(ref, theme) {
   if (PINNED[ref]) return PINNED[ref];
+  // An invented place names its own drawing: ref=shots-art-<id>.
+  if (typeof ref === 'string' && ref.startsWith('shots-art-') && BY_ID.has(ref.slice(10))) return ref.slice(10);
   const pool = theme && theme.length ? theme : ALL;
   const key = `${pool.join(',')}|${ref}`;
   if (!assigned.has(key)) {
