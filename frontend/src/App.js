@@ -3929,7 +3929,7 @@ const Toggle = ({ on, onChange, label, pendingOn }) => {
   const saving = pending !== null;
   const shown = saving ? pending : !!on;
   return (
-    <button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: shown ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1, position: 'relative', transition: 'background-color 0.2s, opacity 0.2s' }}>
+    <button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange} style={{ width: '44px', height: '24px', flexShrink: 0, borderRadius: '12px', border: 'none', backgroundColor: shown ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1, position: 'relative', transition: 'background-color 0.2s, opacity 0.2s' }}>
       <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: shown ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
     </button>
   );

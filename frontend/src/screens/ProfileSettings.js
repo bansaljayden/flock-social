@@ -515,7 +515,7 @@ export default function ProfileSettings({
               <div>
                 {/* Safety toggle */}
                 <div style={styles.card}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                     <div>
                       <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>SOS button</p>
                       {/* What this toggle ACTUALLY gates is the emergency
