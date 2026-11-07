@@ -17,6 +17,7 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { nestAsks, nestRows, NEST_ROWS_CAP } from '../lib/nestAsks';
 import { heroAction } from '../lib/nestHero';
 import NestRows, { NEST_ROW_LEAVE_MS } from '../components/nest/NestRows';
+import Icons from '../components/ui/Icons';
 
 const fs = require('fs');
 const path = require('path');
@@ -171,12 +172,17 @@ describe('NestRows', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: /^Vote on Plan 3/ }));
   });
 
-  test('an open vote is a ballot going into its box, never a ticked square', () => {
+  test('an open vote wears the place pin, never a ticked square', () => {
     // A check in a box is a to-do list's sign for done, on a row still open.
     const { container } = render(<NestRows rows={rows(1)} />);
-    const paths = [...container.querySelectorAll('[data-nest-row="vote"] svg path')].map((p) => p.getAttribute('d'));
-    expect(paths).toContain('M8 12 8 4 16 4 16 12');
-    expect(paths).not.toContain('M8 13 11 16 16 11');
+    const rowPaths = [...container.querySelectorAll('[data-nest-row="vote"] svg path')].map((p) => p.getAttribute('d'));
+    const pin = render(<span data-pin="">{Icons.mapPin('var(--text-secondary)', 18)}</span>).container;
+    const pinPaths = [...pin.querySelectorAll('[data-pin] svg path')].map((p) => p.getAttribute('d'));
+    expect(pinPaths.length).toBeGreaterThan(0);
+    for (const d of pinPaths) expect(rowPaths).toContain(d);
+    expect(rowPaths).not.toContain('M8 13 11 16 16 11');
+    const SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestRows.js'), 'utf8');
+    expect(SRC).toContain("vote: 'mapPin'");
   });
 
   test('one tap closes the loop: the row calls its own target', () => {

@@ -7,10 +7,10 @@
  * between rows are the ones the eye lands on. Neutral facts only: no count of
  * what is "waiting on you", no word about anyone else.
  *
- * A vote's glyph is a ballot going into its box, never a ticked square: a
- * check in a box is a to-do list's sign for done, on a row that is still
- * open, where a list's checkbox would sit, so a tap on it read as ticking the
- * row off. The check is kept for what is settled (Locked in).
+ * A vote's glyph is the place pin, never a ticked square: a check in a box
+ * is a to-do list's sign for done, on a row that is still open, where a
+ * list's checkbox would sit, so a tap on it read as ticking the row off. The
+ * check is kept for what is settled (Locked in).
  *
  * Three rows show; a fourth or later waits behind "Show N more", which opens
  * in place and hands the keyboard and VoiceOver to the first row it revealed,
@@ -32,7 +32,11 @@ import Icons from '../ui/Icons';
 import { NEST_ROWS_CAP } from '../../lib/nestAsks';
 import { BAND_HEAD, BAND_GAP } from './nestBand';
 
-const ICON = { owe: 'dollar', budget: 'dollar', vote: 'vote', invite: 'mail', how: 'star' };
+// A vote on the Nest is a vote on a place ("Vote on a place" is the hero's
+// words for it), so its row wears the place pin: Icons.vote is a ticked
+// square, a to-do list's sign for done, on a row that is still open, and a
+// ballot going into a box drew as a printer at 18px.
+const ICON = { owe: 'dollar', budget: 'dollar', vote: 'mapPin', invite: 'mail', how: 'star' };
 export const NEST_ROW_LEAVE_MS = 220;
 
 const prefersReducedMotion = () => {
