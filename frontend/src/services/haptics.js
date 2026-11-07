@@ -5,24 +5,42 @@
 // to a no-op bridge or rejects, and both are silently fine.
 //
 // Vocabulary, chosen once so call sites cannot invent their own scale:
-//   tap()     light impact. A small selection: the pulse, a vote, the plan's
-//             slide to complete reaching the point of no return.
+//   tap()     light impact. A primary commit: the pulse (Down / Maybe /
+//             Not), a vote, a message sent, the plan's slide to complete
+//             reaching the point of no return.
 //   success() medium impact. Something real landed: a plan created, a
-//             check-in, a plan locked in, a plan joined, a budget sent.
+//             check-in, a plan joined, a budget sent.
 //   warning() error notification. The server refused something the screen
 //             had already shown as done, and the screen has just put it
-//             back: a vote, a lock-in. The only verb that is not an impact,
+//             back: a vote, a lock-in. A notification, not an impact,
 //             because iOS gives a refusal its own triple pattern and people
 //             know it. A catch calls it through hapticRefused() below, which
 //             keeps it to the refusals the screen actually showed.
 //   alarm()   heavy impact. The SOS press, and nothing else.
+//   selection() the selection tick (UISelectionFeedbackGenerator). The chosen
+//             thing changed: a tab switched, a segment or choice chip picked.
+//             Never for confirming, and never when the choice did not change
+//             (Apple: "use it only when the selection changes").
+//   locked()  the success notification. A plan locked in, the outcome the
+//             whole app works toward, so it gets iOS's own pattern for a task
+//             that succeeded rather than another impact.
 // Fire and forget by design: never await these on a user path.
+
+import { isNativeShell } from '../lib/nativeShell';
 
 let bridge = null;
 let loading = null;
 
 async function load() {
   if (bridge) return bridge;
+  // NOTHING ON THE WEB. The plugin's web half answers impact() with
+  // navigator.vibrate, so Chrome on an Android phone buzzed on a website that
+  // has no haptics to give. Only the app shell asks the plugin, and the web
+  // build never fetches the plugin's chunk.
+  if (!isNativeShell()) {
+    bridge = { Haptics: null };
+    return bridge;
+  }
   if (!loading) {
     loading = import('@capacitor/haptics')
       .then((mod) => { bridge = mod; return mod; })
@@ -45,7 +63,24 @@ function notify(type) {
   }).catch(() => {});
 }
 
+// selectionChanged() alone plays nothing: the plugin keeps no generator until
+// selectionStart() makes one (@capacitor/haptics 8, Haptics.swift), so a single
+// tick is start, changed, end.
+function selection() {
+  load().then((mod) => {
+    const h = mod && mod.Haptics;
+    if (!h || typeof h.selectionChanged !== 'function') return;
+    Promise.resolve()
+      .then(() => h.selectionStart())
+      .then(() => h.selectionChanged())
+      .then(() => h.selectionEnd())
+      .catch(() => {});
+  }).catch(() => {});
+}
+
 export function hapticTap() { impact('Light'); }
+export function hapticSelection() { selection(); }
+export function hapticLocked() { notify('Success'); }
 export function hapticSuccess() { impact('Medium'); }
 export function hapticWarning() { notify('Error'); }
 export function hapticAlarm() { impact('Heavy'); }

@@ -350,12 +350,13 @@ describe('the card', () => {
   });
 
   test('a press never moves the button: the layer would shrink to the name and the tap would land on the heading', () => {
-    // The app presses every button with button:active { transform: scale(.96) },
+    // The app presses every button in (index.css PRESS, scale(var(--press-scale))),
     // and a transformed element becomes the box its absolutely placed
     // children are laid out in. In the browser suite every tap on a plan's
-    // heading away from its letters opened nothing.
+    // heading away from its letters opened nothing. The shared press leaves
+    // .nest-stretch out by name, and its own rule says none as well.
     const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8');
-    expect(css).toMatch(/button:active, \[role="button"\]:active \{\s*transform: scale\(0\.96\);/);
+    expect(css).toMatch(/:where\(button, \[role="button"\]\):where\(:active:not\(:disabled\):not\(\[aria-disabled="true"\]\):not\([^)]*\.nest-stretch[^)]*\)\) \{\s*transform: scale\(var\(--press-scale\)\);/);
     expect(css).toMatch(/\.nest-stretch:active \{ transform: none; \}/);
     // The card takes the press instead: it is already the layer's box.
     expect(css).toMatch(/\[data-nest-plan\]:has\(\.nest-stretch:active\) \{\s*transform: scale\(0\.985\);/);

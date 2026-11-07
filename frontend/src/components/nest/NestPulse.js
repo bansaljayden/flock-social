@@ -52,6 +52,7 @@ import { FaceRow } from './Face';
 import { BAND_HEAD, BAND_GAP } from './nestBand';
 import { useNow } from '../../lib/nestTime';
 import { pulseHeading } from '../../lib/pulse';
+import { PRESS_TRANSITION } from '../../lib/press';
 
 // Each answer with the fill and ink it takes once chosen.
 export const PULSE_OPTIONS = [
@@ -130,7 +131,9 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
                 fontWeight: '600',
                 cursor: saving ? 'wait' : 'pointer',
                 opacity: saving ? 0.6 : 1,
-                transition: 'background-color 160ms var(--ease-out), color 160ms var(--ease-out)',
+                // Its own colour change, and the shared press's release
+                // (an inline transition replaces index.css's whole list).
+                transition: `background-color 160ms var(--ease-out), color 160ms var(--ease-out), ${PRESS_TRANSITION}`,
               }}
             >
               {rule && <span aria-hidden="true" data-nest-pulse-rule="" style={{ position: 'absolute', left: '-2px', top: '12px', bottom: '12px', width: '1px', backgroundColor: 'var(--nest-edge)' }} />}

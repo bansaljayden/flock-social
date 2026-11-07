@@ -1,4 +1,6 @@
 import React from 'react';
+import { hapticSelection } from '../../services/haptics';
+import { PRESS_TRANSITION } from '../../lib/press';
 
 /**
  * The settings-form primitives, and the two plan-time choice lists.
@@ -67,7 +69,11 @@ export const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
     type="button"
     className="hit44"
     aria-pressed={selected}
-    onClick={onClick}
+    onClick={(e) => {
+      // The selection tick when a chip becomes the choice (services/haptics.js).
+      if (!selected) hapticSelection();
+      if (onClick) onClick(e);
+    }}
     style={{
       padding: '9px 14px',
       borderRadius: '10px',
@@ -77,7 +83,7 @@ export const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
       fontWeight: '600',
       fontSize: 'var(--t-label)',
       cursor: 'pointer',
-      transition: 'background-color 0.15s ease, color 0.15s ease',
+      transition: `background-color 0.15s ease, color 0.15s ease, ${PRESS_TRANSITION}`,
       ...style,
     }}
     {...rest}

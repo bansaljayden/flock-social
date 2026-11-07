@@ -224,7 +224,8 @@ describe('on my way', () => {
     expect(bar).toMatch(/onClick=\{\(\) => updateTravel\(\{ intent: 'omw' \}\)\}[^>]*>On my way<\/button>/);
     expect(bar).toMatch(/\{myTravel\?\.intent === 'omw' && \(/);
     expect(bar).toMatch(/TRAVEL_MODE_CHIPS\.map\(\(\{ mode, label \}\) => \(/);
-    expect(bar).toMatch(/aria-pressed=\{myTravel\.mode === mode\} onClick=\{\(\) => updateTravel\(\{ \.\.\.myTravel, mode \}\)\}/);
+    // The selection tick rides on a real change of mode only (pressFeel.test.js).
+    expect(bar).toMatch(/aria-pressed=\{myTravel\.mode === mode\} onClick=\{\(\) => \{ if \(myTravel\.mode !== mode\) hapticSelection\(\); updateTravel\(\{ \.\.\.myTravel, mode \}\); \}\}/);
     expect(bar).toMatch(/\{myTravel\.mode === 'drive' && \(/);
     expect(bar).toMatch(/updateTravel\(\{ \.\.\.myTravel, mode: 'drive', seats: Math\.max\(0, mySeats - 1\) \}\)/);
     expect(bar).toMatch(/updateTravel\(\{ \.\.\.myTravel, mode: 'drive', seats: Math\.min\(MAX_SEATS, mySeats \+ 1\) \}\)/);

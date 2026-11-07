@@ -21,8 +21,14 @@ import { detectNativeShell } from './lib/nativeShell';
 // lib/scrubUrlTokens.js, which the crash report shares; re-exported here for
 // src/__tests__/analyticsPrivacy.test.js.
 import { scrubUrlTokens } from './lib/scrubUrlTokens';
+import { installPress } from './lib/press';
 
 export { scrubUrlTokens };
+
+// Every control's press: :active on iOS at all, and which kind of press a
+// button gets (lib/press.js, index.css PRESS). Before the first render, on the
+// website and in the app alike, so the first tap anywhere already answers.
+installPress();
 
 // Sentry (B3) — no-op until REACT_APP_SENTRY_DSN is set (Vercel env). Never commit the DSN.
 //

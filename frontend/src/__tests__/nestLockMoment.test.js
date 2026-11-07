@@ -114,8 +114,8 @@ describe('the hero card', () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.nest-lock-fade \{ animation-duration: 200ms !important; \}\s*\.nest-lock-settle \{ animation-name: nestLockFade !important; animation-duration: 200ms !important; \}/);
   });
 
-  test('App.js hands it the success buzz', () => {
+  test('App.js hands it the lock-in buzz, the success notification', () => {
     const app = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
-    expect(app).toContain('onLockMoment={hapticSuccess}');
+    expect(app).toContain('onLockMoment={hapticLocked}');
   });
 });

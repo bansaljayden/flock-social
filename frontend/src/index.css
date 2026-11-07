@@ -853,16 +853,22 @@ code {
    If a future button genuinely needs frosting, give THAT button the property.
    Do not put it back on the shared class. */
 
+/* The glass press is the shared one (the PRESS block at the end of this
+   file): down at once, back on --press-out, never past full size, no press at
+   all while disabled. A glass list row (.press-row) fills instead of shrinking. */
 .glass-btn {
-  transition: transform 0.15s ease, filter 0.15s ease !important;
+  transition: transform var(--press-out) var(--press-ease), opacity var(--press-out) var(--press-ease), filter var(--press-out) var(--press-ease) !important;
   cursor: pointer;
 }
-.glass-btn:hover {
-  filter: brightness(1.05);
+@media (hover: hover) and (pointer: fine) {
+  .glass-btn:hover {
+    filter: brightness(1.05);
+  }
 }
-.glass-btn:active {
-  transform: scale(0.98) !important;
-  filter: brightness(0.97);
+.glass-btn:where(:active:not(:disabled):not([aria-disabled="true"]):not(.press-row)) {
+  transform: scale(var(--press-scale)) !important;
+  opacity: var(--press-fill-opacity);
+  transition-duration: var(--press-in) !important;
 }
 
 /* Opaque: at 0.88 the navy let the cream through and read as slate grey
@@ -1216,14 +1222,8 @@ code {
   transition: transform 0.1s ease !important;
 }
 
-/* Global smooth interactions — tap highlight only, transitions opt-in */
-button, a, [role="button"] {
-  -webkit-tap-highlight-color: transparent;
-}
-button:active, [role="button"]:active {
-  transform: scale(0.96);
-  transition: transform 0.1s ease;
-}
+/* The press every other button gets, and the tap highlight, live in the PRESS
+   block at the end of this file. */
 
 .shimmer-btn, .shimmer-btn-light {
   transition: transform 0.2s var(--ease-out),
@@ -1469,4 +1469,116 @@ button:active, [role="button"]:active {
 }
 @media (prefers-reduced-motion: reduce) {
   .search-progress::after { animation: none; width: 100%; opacity: 0.35; transform: none; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   PRESS. How a control answers a finger, everywhere in the app, the way
+   iOS answers one. lib/press.js is the JavaScript half.
+
+   DOWN AT ONCE, BACK SOFTLY. iOS highlights a control the instant a
+   finger lands and acts when it lifts (WWDC18 "Designing Fluid
+   Interfaces"), so the press goes in with no animation (--press-in) and
+   eases back out on release (--press-out, an ease-out with no overshoot:
+   Apple starts a tap's motion at 100% damping, nothing springs past 1).
+   The action is the browser's click, which fires on release and not at
+   all when the touch turns into a scroll; WebKit drops :active then too,
+   as UIScrollView cancels a control's tracking.
+
+   THREE KINDS OF PRESS, as iOS has:
+     text  a text or icon button fades to --press-text-opacity and does
+           not move, like a plain UIButton or SwiftUI's default button.
+     fill  a filled, bordered or shadowed button dims a little
+           (--press-fill-opacity) and presses in (--press-scale), the
+           press iOS gives things that look like objects (cards, tiles).
+     row   a list row (Needs you, the You screen's settings, the chat
+           list) fills grey behind its content and does not move, like a
+           table cell's highlight (systemGray4 over the row).
+   lib/press.js writes data-press-auto="text" or "fill" from the
+   control's resting face on pointerdown; a control can say what it is
+   with data-press="text|fill|row|tab|none" or the .press-row class.
+
+   ONLY SCALE IS MOTION. Under Reduce Motion the scales go to 1 and the
+   fades stay (HIG Accessibility: reduce "zooming, scaling"). A transform
+   never reflows anything, so the Nest's layout cannot move under a press.
+
+   NEVER A PRESS ON A DISABLED CONTROL, never past full size, and the
+   keyboard focus rings are untouched: nothing here draws an outline.
+
+   Every rule sits inside :where(), so it weighs nothing: a component's
+   own class rule wins over it, and a control that draws its own press
+   (lib/press.js OWN_PRESS, listed again in the :not() below) keeps that
+   one press and gets no second.
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  --press-in: 0ms;
+  --press-out: 200ms;
+  --press-ease: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --press-scale: 0.97;
+  --press-tab-scale: 0.95;
+  --press-fill-opacity: 0.8;
+  --press-text-opacity: 0.5;
+  --press-row-fill: rgba(60, 60, 67, 0.16);
+}
+[data-theme="dark"] {
+  --press-row-fill: rgba(235, 235, 245, 0.14);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --press-scale: 1;
+    --press-tab-scale: 1;
+  }
+}
+
+/* No grey tap flash anywhere (Safari Web Content Guide: the flash is
+   -webkit-tap-highlight-color, and it inherits), and inside the app no
+   long-press callout or text selection on a control, said on the control
+   itself as well as inherited from body (the selection block above, whose
+   allow-list still wins for fields and .selectable). The website keeps
+   ordinary selection, controls included, as that block decided. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+html.flock-app button,
+html.flock-app [role="button"] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* The release: what every press eases back on. */
+:where(button, [role="button"]) {
+  transition: transform var(--press-out) var(--press-ease), opacity var(--press-out) var(--press-ease), background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+/* fill, the default for a button nothing has classified yet. */
+:where(button, [role="button"]):where(:active:not(:disabled):not([aria-disabled="true"]):not(.glass-btn, .fab-press, .nest-stretch, .shimmer-btn, .shimmer-btn-light, .auth-eye, .auth-primary, .auth-provider, .auth-secondary, .chat-card-tappable, .chat-venue-action, .cs-row, .cs-menu-item, .cs-tile, .es-btn, .es-call, [data-press="none"])) {
+  transform: scale(var(--press-scale));
+  opacity: var(--press-fill-opacity);
+  transition-duration: var(--press-in) !important;
+}
+/* text */
+:where([data-press="text"], [data-press-auto="text"]):where(:active:not(:disabled):not([aria-disabled="true"])) {
+  transform: none;
+  opacity: var(--press-text-opacity);
+}
+/* tab: the tab bar presses in a little and never bounces past full size. */
+:where([data-press="tab"]):where(:active:not(:disabled)) {
+  transform: scale(var(--press-tab-scale));
+  opacity: 1;
+}
+/* row. The :root and the :is() weigh it (0,2,0), enough to beat the glass
+   faces' own !important backgrounds: [data-theme="dark"] .glass-secondary
+   weighs the same and comes earlier in this file. */
+:root :is(.press-row, .nest-row-btn, [data-press="row"]):where(:active:not(:disabled):not([aria-disabled="true"])) {
+  transform: none !important;
+  opacity: 1;
+  background-image: linear-gradient(var(--press-row-fill), var(--press-row-fill)) !important;
+  transition-duration: var(--press-in) !important;
+}
+
+/* The presses drawn elsewhere, under Reduce Motion too. */
+@media (prefers-reduced-motion: reduce) {
+  [data-nest-plan]:has(.nest-stretch:active) { transform: none; }
+  .fab-press:active { transform: none !important; }
+  .shimmer-btn:active, .shimmer-btn-light:active { transform: none; }
 }

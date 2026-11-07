@@ -221,7 +221,7 @@ import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
-import { hapticSuccess } from '../services/haptics';
+import { hapticSuccess, hapticSelection } from '../services/haptics';
 
 /* A half-written message, per flock, for the length of the session.
    Outside this screen because App.js unmounts it on every navigation, and
@@ -3517,7 +3517,7 @@ export default function ChatDetail({
               {myTravel?.intent === 'omw' && (
                 <>
                   {TRAVEL_MODE_CHIPS.map(({ mode, label }) => (
-                    <button key={mode} className="hit44" aria-pressed={myTravel.mode === mode} onClick={() => updateTravel({ ...myTravel, mode })} style={travelChipStyle(myTravel.mode === mode)}>{label}</button>
+                    <button key={mode} className="hit44" aria-pressed={myTravel.mode === mode} onClick={() => { if (myTravel.mode !== mode) hapticSelection(); updateTravel({ ...myTravel, mode }); }} style={travelChipStyle(myTravel.mode === mode)}>{label}</button>
                   ))}
                   {myTravel.mode === 'drive' && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: 'auto', flexShrink: 0 }}>

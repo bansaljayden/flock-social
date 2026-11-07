@@ -16,7 +16,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { hapticTap, hapticSuccess, hapticRefused, hapticAlarm } from './services/haptics';
+import { hapticTap, hapticSuccess, hapticLocked, hapticSelection, hapticRefused, hapticAlarm } from './services/haptics';
 import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Location goes through this shim, never the browser API directly. Calling the
 // web API inside the iOS shell made WKWebView raise a SECOND permission sheet,
@@ -11109,7 +11109,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const lockingIn = confirming && previousStatus !== 'confirmed' && previousStatus !== 'locked';
     if (lockingIn) {
       setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
-      hapticSuccess();
+      hapticLocked();
     }
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
     // A flock that exists only in local state (no numeric id) has nothing to
@@ -11170,8 +11170,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
     // The plan's biggest moment, felt as it lands on screen, on the same beat
     // the status changes. A refusal below puts it back and buzzes again in the
-    // refusal pattern, so the hand is told as well as the eye.
-    hapticSuccess();
+    // refusal pattern, so the hand is told as well as the eye. iOS's success
+    // notification, the pattern for a task that worked.
+    hapticLocked();
     if (typeof flockId !== 'number') return Promise.resolve(true);
     return setFlockStatus(flockId, 'confirmed')
       .then(() => {
@@ -15343,6 +15344,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           try { el.scrollTo({ top: 0, behavior: 'smooth' }); } catch { el.scrollTop = 0; }
         }
       }
+      // The selection tick when the tab changes (iOS: selection feedback is
+      // for a changed selection only), and none for the tab you are on.
+      if (tabId !== currentTab) hapticSelection();
       setCurrentTab(tabId);
       setCurrentScreen('main');
       setProfileScreen('main');
@@ -15405,7 +15409,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)}
+          <button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)} data-press="tab"
             aria-current={currentTab === t.id ? 'page' : undefined}
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
@@ -18401,7 +18405,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             action={heroAsk}
             onOpen={() => openPlan(heroFlock.id)}
             onAction={() => heroAsk && openNestAsk(heroFlock.id, heroAsk.kind)}
-            onLockMoment={hapticSuccess}
+            onLockMoment={hapticLocked}
             /* The other plans that night: each chip says the reader's state,
                as a Coming up card's does, and the row opens the plan. A plan
                with an ask is its Needs you row instead, right below, and not
@@ -22527,14 +22531,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           border-color: var(--focus-ring) !important;
           box-shadow: 0 0 0 3px rgba(13,40,71,0.1) !important;
         }
-        button {
-          transition: background-color 0.2s ease, opacity 0.2s ease, box-shadow 0.2s ease;
-        }
-        button:active {
-          opacity: 0.7;
-        }
-        button:hover {
-          opacity: 0.85;
+        /* A button's press and its release are index.css's PRESS block. The
+           hover fade is for a pointer that can hover: on a phone a tap left
+           :hover stuck on the button, dimmed, until the next tap elsewhere,
+           and it outweighed the press itself. */
+        @media (hover: hover) and (pointer: fine) {
+          button:hover:not(:active) {
+            opacity: 0.85;
+          }
         }
         @keyframes spin {
           from { transform: rotate(0deg); }

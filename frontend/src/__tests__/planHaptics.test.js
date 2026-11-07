@@ -36,6 +36,13 @@ jest.mock('@capacitor/haptics', () => ({
   ImpactStyle: { Light: 'LIGHT', Medium: 'MEDIUM', Heavy: 'HEAVY' },
   NotificationType: { Success: 'SUCCESS', Warning: 'WARNING', Error: 'ERROR' },
 }));
+/* Inside the app shell: the service asks the plugin only there, and is silent
+   on the web (pressFeel.test.js runs that side). A plain function, so CRA's
+   resetMocks cannot strip it. */
+jest.mock('../lib/nativeShell', () => ({
+  ...jest.requireActual('../lib/nativeShell'),
+  isNativeShell: () => true,
+}));
 /* The real service, with a spy on each verb so the rendered screen below can
    be counted while every call still goes through to the plugin above. */
 jest.mock('../services/haptics', () => {
@@ -219,7 +226,7 @@ function hapticCallsIn(ast, name) {
 describe('where each verb is called', () => {
   test('locking a plan in buzzes as it lands, and a refusal buzzes the refusal', () => {
     const { calls, src, start } = hapticCallsIn(APP_AST, 'confirmFlockPlan');
-    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticRefused', true]]);
+    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticLocked', false], ['hapticRefused', true]]);
     // Rolled back only when there was a status on screen to put back, the
     // same test that guards the rollback line.
     expect(calls[1].args).toEqual(['err', '!!previousStatus']);
@@ -236,8 +243,8 @@ describe('where each verb is called', () => {
 
   test('the chat\'s vote sheet locks in through the venue save, and gets the same pair', () => {
     const { calls, src } = hapticCallsIn(APP_AST, 'updateFlockVenue');
-    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticRefused', true]]);
-    expect(APP).toMatch(/if \(lockingIn\) \{\s*setFlocks\(prev => prev\.map\(f => f\.id === flockId \? \{ \.\.\.f, status: 'confirmed' \} : f\)\);\s*hapticSuccess\(\);/);
+    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticLocked', false], ['hapticRefused', true]]);
+    expect(APP).toMatch(/if \(lockingIn\) \{\s*setFlocks\(prev => prev\.map\(f => f\.id === flockId \? \{ \.\.\.f, status: 'confirmed' \} : f\)\);\s*hapticLocked\(\);/);
     // A refused venue save that was not a lock-in, or a lock-in on a plan
     // that was not on screen, puts back no status, so it does not buzz.
     expect(calls[1].args).toEqual(['err', 'lockingIn && !!previous']);
@@ -272,7 +279,7 @@ describe('where each verb is called', () => {
 
   test('a budget buzzes after submitBudget resolves, in the same try as the toast', () => {
     const chat = read('screens', 'ChatDetail.js');
-    expect(chat).toMatch(/import \{ hapticSuccess \} from '\.\.\/services\/haptics';/);
+    expect(chat).toMatch(/import \{ hapticSuccess, hapticSelection \} from '\.\.\/services\/haptics';/);
     // Measured from the resolve to the buzz rather than inside a fixed window:
     // the same try also clears the Nest's budget ask (lib/nestAsks.js), and the
     // rule is that nothing between the two is a catch.
@@ -287,14 +294,14 @@ describe('where each verb is called', () => {
 
 describe('the Nest marks a plan locked in, once', () => {
   // The first time this device shows a hero plan that is locked in, the card
-  // calls the success buzz once (components/nest/NestHero.js, remembered under
+  // calls the lock-in buzz once (components/nest/NestHero.js, remembered under
   // nest.lockSeen.<id>; nestLockMoment.test.js renders it and counts).
-  test('App.js hands the hero the success buzz, and the card takes it at most once a plan', () => {
+  test('App.js hands the hero the lock-in buzz, and the card takes it at most once a plan', () => {
     const fs = require('fs');
     const path = require('path');
     const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
     const hero = fs.readFileSync(path.join(__dirname, '..', 'components', 'nest', 'NestHero.js'), 'utf8');
-    expect(app).toContain('onLockMoment={hapticSuccess}');
+    expect(app).toContain('onLockMoment={hapticLocked}');
     // takeLockMoment also reads the plan's own lock time (nestLockMoment.test.js).
     expect(hero).toMatch(/if \(lockId == null \|\| !takeLockMoment\(lockId, LOCK_STORE, \{ lockedAt \}\)\) return;\s*setSettle\(true\);\s*if \(onLockMoment\) onLockMoment\(\);/);
   });

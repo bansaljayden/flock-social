@@ -1085,7 +1085,7 @@ export default function ProfileSettings({
               <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>{group.g}</h4>
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
                 {group.rows.map((m, i) => (
-                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } if (m.s === 'admin') { openAdminDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+                  <button key={m.s} className="hit44 glass-btn glass-secondary press-row" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } if (m.s === 'admin') { openAdminDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                     {/* A row may name its own size: Birdie's mark is the one
                         solid glyph here and draws at 16, where it weighs what
                         the outlines do at 18 (the composer's sheet does the
@@ -1271,13 +1271,13 @@ export default function ProfileSettings({
                 It sits above Delete on purpose: somebody who has come to this
                 part of the screen to leave should see that they can take their
                 things with them BEFORE they hit the irreversible one. */}
-            <button className="hit44" onClick={() => { setExportPassword(''); setExportError(''); setExportNeedsReauth(false); setShowExportData(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+            <button className="hit44 press-row" onClick={() => { setExportPassword(''); setExportError(''); setExportNeedsReauth(false); setShowExportData(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
               {Icons.download('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Get a copy of my data</span>
             </button>
 
             {/* Delete account (Apple Guideline 5.1.1(v)) — permanent, in-app */}
-            <button className="hit44" onClick={() => { setDeleteConfirmText(''); setDeletePassword(''); setDeleteError(''); setDeleteNeedsReauth(false); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+            <button className="hit44 press-row" onClick={() => { setDeleteConfirmText(''); setDeletePassword(''); setDeleteError(''); setDeleteNeedsReauth(false); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
               {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Delete account</span>
             </button>
@@ -1567,7 +1567,7 @@ export default function ProfileSettings({
               to reach someone about content, from inside the app). */}
           <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '20px 0 6px' }}>Help</h4>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
-            <button className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/support')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+            <button className="hit44 glass-btn glass-secondary press-row" onClick={() => openExternal('https://www.flockcorp.com/support')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.helpCircle(colors.navy, 18)}</div>
               <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Support</span>
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Questions and problems</span>
@@ -1782,7 +1782,7 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
     }
     if (!entitlements?.paywallEnabled) return null;
     return (
-      <button className="hit44 glass-btn glass-secondary" onClick={() => setPaywallTrigger('settings')} style={{ ...rowStyle, cursor: 'pointer' }}>
+      <button className="hit44 glass-btn glass-secondary press-row" onClick={() => setPaywallTrigger('settings')} style={{ ...rowStyle, cursor: 'pointer' }}>
         {icon}
         {title('Flock Pro')}
         {chevron}
