@@ -3375,24 +3375,24 @@ async function measureAnchors(page, kind) {
 }
 
 /* A sheet's first whole row in the capture, for cutting a plate down to its
-   sheet: the first row from the page's edge for it whose pixel a quarter of
-   the way across (clear of the rounded corner and the grab handle) is the
-   sheet's own colour, read eight rows inside it. The page can put that edge
-   on a half pixel (the bill's at 374.5), and the row there is the edge
-   blended with what is behind, so a cut at the page's figure (749 of 1688,
-   44.37%) leaves a seam where the first whole row (750, 44.43%) does not.
-   Device pixels, and the crop it makes in percent to two decimals. */
+   sheet: the first row from the page's edge for it whose pixel is the sheet's
+   own colour (within 10, summed over the channels: the fill varies by a point
+   or two from row to row) and whose row above is not, read where the cut
+   reads it, 60 px in at 780 wide, past the rounded corner's curve, with the
+   fill taken eight rows inside the sheet. The page can put that edge on a
+   half pixel (the bill's at 374.5), and the row there is the edge blended
+   with what is behind, so a cut at the page's figure (749 of 1688, 44.37%)
+   leaves a seam where the first whole row (750, 44.43%) does not. Device
+   pixels, and the crop it makes in percent to two decimals. */
 function sheetRowOf(img, sheetTopCss, viewH) {
   const { data, width: W, height: H, channels: C } = img;
-  const x = Math.round(W / 4);
+  const x = Math.min(W - 1, Math.round(W * 60 / 780));
   const at = (y) => { const i = (y * W + x) * C; return [data[i], data[i + 1], data[i + 2]]; };
   const top = Math.floor(sheetTopCss * (H / viewH));
   const fill = at(Math.min(H - 1, top + 8));
-  for (let y = Math.max(0, top - 2); y < Math.min(H, top + 8); y += 1) {
-    const p = at(y);
-    if (Math.abs(p[0] - fill[0]) + Math.abs(p[1] - fill[1]) + Math.abs(p[2] - fill[2]) <= 3) {
-      return { row: y, crop: Math.round(y / H * 10000) / 100, fill };
-    }
+  const near = (y) => { const p = at(y); return Math.abs(p[0] - fill[0]) + Math.abs(p[1] - fill[1]) + Math.abs(p[2] - fill[2]) <= 10; };
+  for (let y = Math.max(1, top - 3); y < Math.min(H, top + 8); y += 1) {
+    if (near(y) && !near(y - 1)) return { row: y, crop: Math.round(y / H * 10000) / 100, fill };
   }
   return null;
 }

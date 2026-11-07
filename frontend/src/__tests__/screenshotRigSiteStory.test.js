@@ -117,16 +117,22 @@ test('a sheet is cut at its first whole row, not at the half pixel its edge fall
   const sheetRowOf = new Function(`${RIG.slice(start, RIG.indexOf('\n}\n', start) + 2)}\nreturn sheetRowOf;`)();
   const W = 8;
   const H = 1688;
-  const frame = (firstSheetRow, blendRow) => {
+  const frame = (colourAt) => {
     const data = new Uint8Array(W * H * 3);
     for (let y = 0; y < H; y += 1) {
-      const c = y >= firstSheetRow ? [31, 42, 61] : y === blendRow ? [16, 29, 36] : [8, 12, 20];
-      for (let x = 0; x < W; x += 1) data.set(c, (y * W + x) * 3);
+      for (let x = 0; x < W; x += 1) data.set(colourAt(y), (y * W + x) * 3);
     }
     return { data, width: W, height: H, channels: 3 };
   };
-  expect(sheetRowOf(frame(750, 749), 374.5, 844)).toMatchObject({ row: 750, crop: 44.43 });
-  expect(sheetRowOf(frame(610, -1), 305, 844)).toMatchObject({ row: 610, crop: 36.14 });
+  const bill = frame((y) => (y >= 750 ? [31, 42, 61] : y === 749 ? [16, 29, 36] : [8, 12, 20]));
+  expect(sheetRowOf(bill, 374.5, 844)).toMatchObject({ row: 750, crop: 44.43 });
+  const budget = frame((y) => (y >= 610 ? [31, 42, 61] : [8, 12, 20]));
+  expect(sheetRowOf(budget, 305, 844)).toMatchObject({ row: 610, crop: 36.14 });
+  // The fill moves by a point or two from row to row (the bill's capture:
+  // 32,43,60 on its first row, 31,41,59 eight rows down), and that is still
+  // the sheet; a test of three points took row 751.
+  const noisy = frame((y) => (y > 750 ? (y % 2 ? [31, 41, 59] : [30, 42, 60]) : y === 750 ? [32, 43, 60] : y === 749 ? [20, 25, 34] : [18, 23, 33]));
+  expect(sheetRowOf(noisy, 374.5, 844)).toMatchObject({ row: 750, crop: 44.43 });
 });
 
 /* THE COPPER FINCH'S PICTURES ARE ITS OWN. It drew the burger until the site
