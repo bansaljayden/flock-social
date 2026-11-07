@@ -1624,6 +1624,21 @@ router.get('/search',
   }
 );
 
+// A SHORT QUERY IS RANKED BY DISTANCE. "tor" typed in Bethlehem PA came back
+// with a chimney shop 40 km away and a state park 125 km away, and the
+// restaurant 16 km away appeared only once the whole word was typed: the bias
+// below only leans, and for a prefix that matches little Google's relevance
+// ranking is free to lead with places far outside the circle. A query under
+// five letters (counted on the folded query Google is sent) asks Google to
+// rank by distance from the same circle instead. The bias stays, so the
+// answer is never narrower than it was and there is nothing to fall back from
+// when it is empty. A locationRestriction would narrow it, but Text Search
+// takes only a rectangle there, and a restricted answer that came back empty
+// would need a second, paid call to fall back to the bias. So a search is
+// still exactly one Google call and one budget unit, short or long.
+const SHORT_QUERY_LETTERS = 5;
+const isShortQuery = (q) => typeof q === 'string' && Array.from(q).length < SHORT_QUERY_LETTERS;
+
 // The worker behind GET /search. Never rejects: resolves to
 // { status: 200, result } or { status, error }, so a failure reaches every
 // coalesced waiter as the same clean response and is never cached — setCache
@@ -1636,6 +1651,9 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
       body.locationBias = {
         circle: { center: { latitude: coarse.lat, longitude: coarse.lng }, radius: 20000.0 }
       };
+      // Nearest first for a short query (SHORT_QUERY_LETTERS has why). Only
+      // with a location: with none there is nothing to measure from.
+      if (isShortQuery(searchQuery)) body.rankPreference = 'DISTANCE';
     }
 
     const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
