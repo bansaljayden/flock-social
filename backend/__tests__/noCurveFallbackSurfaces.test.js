@@ -464,6 +464,7 @@ test('Birdie, asked about a later day: the table\'s usual night for a venue with
   assert.ok(busiest, out.usual_for_day.busiest);
   assert.strictEqual((Number(busiest[1]) % 12) + (busiest[2] === 'PM' ? 12 : 0), tableBusiest(weekday));
   assert.match(out.day_note, /what is typical for this kind of place, not this venue's own pattern and not a reading of it/);
+  assert.match(out.day_note, /"I can't see that night's crowd yet\. Spots like this (usually peak around|are usually busiest from) [^"]* on (Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)days\."$/);
   assert.ok(!('crowd_score' in out) && !('hourly_forecast' in out) && !('crowd_method' in out));
 });
 
@@ -476,6 +477,7 @@ test('Birdie, asked about a later day about a venue with a curve: its own curve,
   const out = await executeTool('get_crowd_prediction', { place_id: id, date }, ++nextUser, { includeForecast: true });
   assert.strictEqual(out.usual_for_day.source, 'venue_pattern');
   assert.strictEqual(out.usual_for_day.busiest, '9 PM');
+  assert.match(out.day_note, /days there usually peak around 9 PM\."$/);
 });
 
 test('Birdie\'s rules name the method and its source only while the switch can serve them', () => {

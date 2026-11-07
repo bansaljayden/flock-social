@@ -185,7 +185,8 @@ test('the 13th: how busy it usually is that Friday, in words, and nothing about 
     // so the busiest stretch is 7 PM to 9 PM.
     assert.deepStrictEqual(out.usual_for_day, { source: 'venue_pattern', busiest: '7 PM to 9 PM' });
     assert.match(out.day_note, /usually busiest on that weekday, from its own usual pattern/);
-    assert.match(out.day_note, /I can't see that night's crowd yet\. Fridays there usually peak around 9\./);
+    // The example is this venue's own day and hours.
+    assert.match(out.day_note, /for example: "I can't see that night's crowd yet\. Fridays there are usually busiest from 7 PM to 9 PM\."$/);
     for (const k of ['crowd_score', 'crowd_label', 'crowd_source', 'crowd_method', 'confidence', 'confidence_measurement',
       'best_time', 'peak_hours', 'hourly_forecast', 'is_open', 'weather', 'game_night', 'clock']) {
       assert.ok(!(k in out), `a later day carries no ${k}`);

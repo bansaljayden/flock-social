@@ -1434,8 +1434,17 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 const ASKED_DATE_ERROR = 'date has to be the day they mean as YYYY-MM-DD, like 2026-11-13. Leave it out for today.';
 const ASKED_DATE_PAST = 'That day has already passed there.';
 const ASKED_DATE_FAR = 'That day is more than a year away, too far to say how busy it usually is then.';
-const USUAL_DAY_NOTE = 'There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when this venue is usually busiest on that weekday, from its own usual pattern. Say it as what usually happens there, never as that night\'s crowd, for example: "I can\'t see that night\'s crowd yet. Fridays there usually peak around 9."';
-const USUAL_DAY_CATEGORY_NOTE = 'There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when places like this one are usually busiest on that weekday: what is typical for this kind of place, not this venue\'s own pattern and not a reading of it. Say it that way, for example: "I can\'t see that night\'s crowd yet. Spots like this usually peak around 9 on Fridays."';
+// The note's example is this venue's own day and hours, so the sentence the
+// model is shown is one that is true here: an example naming another weekday
+// is one it could repeat.
+function usualDayNote(source, dayName, busiest) {
+  const when = (busiest.end - busiest.start + 24) % 24 === 1
+    ? `usually peak around ${clockText(busiest.start)}`
+    : `are usually busiest from ${clockText(busiest.start)} to ${clockText(busiest.end)}`;
+  return source === 'category_typical'
+    ? `There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when places like this one are usually busiest on that weekday: what is typical for this kind of place, not this venue's own pattern and not a reading of it. Say it that way, for example: "I can't see that night's crowd yet. Spots like this ${when} on ${dayName}s."`
+    : `There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when this venue is usually busiest on that weekday, from its own usual pattern. Say it as what usually happens there, never as that night's crowd, for example: "I can't see that night's crowd yet. ${dayName}s there ${when}."`;
+}
 const USUAL_DAY_NONE_NOTE = 'There is no crowd level or forecast for that day yet, and no usual pattern for this venue on that weekday. Say you can\'t see that night\'s crowd yet, and give no level and no hour for it.';
 
 // What `date` asks for, against the venue's own date (`wall`): { later: false }
@@ -1916,8 +1925,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         const curve = await mlPredictor.usualDayCurve(venue, asked.weekday, { userId });
         const busiest = curve ? usualBusiest(curve.hours) : null;
         later.usual_for_day = busiest ? { source: curve.source, busiest: busiestText(busiest) } : null;
-        later.day_note = !busiest ? USUAL_DAY_NONE_NOTE
-          : curve.source === 'category_typical' ? USUAL_DAY_CATEGORY_NOTE : USUAL_DAY_NOTE;
+        later.day_note = busiest ? usualDayNote(curve.source, later.day, busiest) : USUAL_DAY_NONE_NOTE;
         if (busiest) {
           later[BIRDIE_CARD_ONLY] = {
             usual: {
