@@ -990,6 +990,11 @@ code {
   text-align: inherit;
   cursor: pointer;
 }
+/* Whatever sits inside the button keeps the heading's face too. The app's
+   `*` rule sets the body face on every element, not by inheritance, so the
+   span the hero's lock-in settle moves (NestHero.js) drew the plan's name in
+   Hanken Grotesk under a Fraunces heading. */
+.nest-stretch * { font-family: inherit; }
 .nest-stretch::after {
   content: '';
   position: absolute;

@@ -129,7 +129,9 @@ export default function NestHero({
         >
           <button type="button" className="nest-stretch nest-stretch--hero" onClick={onOpen} aria-describedby={described}>
             {/* The settle moves this span, never an ancestor of the button:
-                a transform on one would shrink the stretched tap area to it. */}
+                a transform on one would shrink the stretched tap area to it.
+                It takes the heading's face from index.css .nest-stretch *;
+                the app's * rule would set it in the body face. */}
             <span className={settle ? 'nest-lock-settle' : undefined} style={{ display: 'inline-block' }}>{flock.name}</span>
           </button>
         </h2>

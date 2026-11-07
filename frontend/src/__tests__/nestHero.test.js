@@ -371,6 +371,46 @@ describe('the card', () => {
     expect(css).toMatch(/\.nest-stretch::after \{[^}]*position: absolute;[^}]*inset: 0;/);
   });
 
+  test("the plan's name is drawn in the display face down to its letters, never the body face", () => {
+    // index.css sets the body face on every element with a `*` rule, not by
+    // inheritance, so the span the lock-in settle moves, inside the button
+    // inside the h2, drew the name in Hanken Grotesk under a Fraunces
+    // heading. jsdom applies the real stylesheet here but does not inherit,
+    // so faceOf walks up past every element that says inherit (or nothing)
+    // to the face the cascade actually names.
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8').replace(/\r\n/g, '\n');
+    expect(css).toMatch(/\n\*,\n\*::before,\n\*::after \{\n  font-family: var\(--font-body\);\n\}/);
+    expect(css).toMatch(/\.nest-stretch \{[^}]*font: inherit;/);
+    expect(css).toMatch(/\.nest-stretch \* \{ font-family: inherit; \}/);
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.appendChild(style);
+    try {
+      const faceOf = (el) => {
+        for (let n = el; n && n.nodeType === 1; n = n.parentElement) {
+          const f = getComputedStyle(n).fontFamily;
+          if (f && f !== 'inherit') return f;
+        }
+        return null;
+      };
+      const p = props({ sameNight: [{ id: 9, name: 'Friday Night Crew', line: 'Also tonight at 8:00 PM', chip: null, onClick: jest.fn() }] });
+      render(<NestHero {...p} />);
+      const open = screen.getByRole('button', { name: 'Trivia Night' });
+      const letters = screen.getByText('Trivia Night');
+      expect(open.contains(letters)).toBe(true);
+      expect(letters).not.toBe(open);
+      expect(faceOf(screen.getByRole('heading', { level: 2 }))).toBe('var(--font-display)');
+      expect(faceOf(letters)).toBe('var(--font-display)');
+      // The check tells the two apart: the place line under the name gets
+      // the body face, and so does a same-night row's name, a body-face
+      // title by design.
+      expect(faceOf(screen.getByText('The Copper Finch'))).toBe('var(--font-body)');
+      expect(faceOf(screen.getByRole('button', { name: 'Friday Night Crew' }))).toBe('var(--font-body)');
+    } finally {
+      style.remove();
+    }
+  });
+
   test("the one action is a sibling button, never inside the card's button", () => {
     const p = props();
     const { container } = render(<NestHero {...p} />);
