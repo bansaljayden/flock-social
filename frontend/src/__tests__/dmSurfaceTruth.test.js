@@ -103,5 +103,7 @@ test('the person row shows something the server actually returns', () => {
 
 test('the DM unread badge is capped and announced', () => {
   expect(chatList).toMatch(/\{dm\.unread > 99 \? '99\+' : dm\.unread\}<span className="sr-only"> unread messages<\/span>/);
-  expect(chatList).toMatch(/minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient\(135deg, #EF4444, #DC2626\)'/);
+  // #B91C1C, the Messages tab badge's red: white on it is 6.47:1, where the
+  // #EF4444 to #DC2626 gradient was 3.76:1 at 12px.
+  expect(chatList).toMatch(/minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', backgroundColor: '#B91C1C'/);
 });

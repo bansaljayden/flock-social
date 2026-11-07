@@ -3197,7 +3197,7 @@ export default function ChatDetail({
                     </button>
                   )}
                   <button className="hit44 glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: '#EF4444' }}>
-                    {Icons.doorOpen('#EF4444', 16)} Leave flock
+                    {Icons.doorOpen('currentColor', 16)} Leave flock
                   </button>
                 </div>
               )}

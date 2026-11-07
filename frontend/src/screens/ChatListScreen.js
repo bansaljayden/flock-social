@@ -286,7 +286,7 @@ export default function ChatListScreen({
                       </div>
                     </div>
                     {dm.unread > 0 && (
-                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         {dm.unread > 99 ? '99+' : dm.unread}<span className="sr-only"> unread messages</span>
                       </div>
                     )}
@@ -494,7 +494,7 @@ export default function ChatListScreen({
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
-                        <div style={{ minWidth: '20px', height: '20px', borderRadius: '10px', padding: '0 6px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <div style={{ minWidth: '20px', height: '20px', borderRadius: '10px', padding: '0 6px', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           {f.unread > 99 ? '99+' : f.unread}
                           <span className="sr-only"> unread messages</span>
                         </div>

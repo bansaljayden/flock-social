@@ -2300,7 +2300,7 @@ export default function VenueDashboard({
                           'confirmed' here means coming here. Anything else is
                           a plan still deciding with this venue in the running,
                           which "Active" did not say. */}
-                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? 'var(--accent-purple-bg)' : 'var(--accent-amber-bg)', color: flock.status === 'confirmed' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Considering you'}
                       </span>
                     </div>
