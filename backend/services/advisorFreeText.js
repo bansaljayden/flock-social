@@ -1324,14 +1324,21 @@ const PLAYS_IN_PAYLOAD = 3;
  * question asks about as the route read it against the venue's own today
  * ("tonight" is today's weekday, "next Monday" on a Monday is none), or the
  * weekdays when it names two or more, passed to the playbook's lead
- * (roostPlaybook.groundedLead).
+ * (roostPlaybook.groundedLead). `dayReading` 'main' is a question whose day
+ * words the route's reader is not sure of, led as main led it
+ * (roostPlaybook.mainGroundedLead, routes/advisor.js answerFor).
  *
  * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null, tactics: string[]}>}
  */
-async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [], unrouted = false, askedFor = undefined }) {
+async function advise({
+  userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [], unrouted = false,
+  askedFor = undefined, dayReading = null,
+}) {
   const venue = roostPlaybook.venueOf(ctx);
   const playbookAnswer = () => {
-    const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude, askedFor });
+    const answer = roostPlaybook.answer({
+      question, intentId, ctx, groundedFacts, exclude, askedFor, dayReading,
+    });
     if (!answer) return null;
     return {
       mode: 'advice',

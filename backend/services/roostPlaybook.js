@@ -830,11 +830,63 @@ function namedWeekday(question) {
   return asked && asked.weekday ? asked.weekday : null;
 }
 
+// MAIN'S DAY READER, KEPT WHOLE (third recheck, 2026-11-06), for a question
+// whose day words roostDayReader is not sure of (dayConfidence), which is
+// answered exactly as main answers it (routes/advisor.js answerFor): the
+// weekday a question asks about, capitalised the way the forecast writes it,
+// or null. "How do I fill Thursdays" names Thursday. With 2 days named it is
+// the last: "Saturdays are packed, how do I fill Tuesdays" asks about
+// Tuesday, and the first one named is the setup (2026-10-28 second review).
+const NAMED_DAY = /\b(mon|tues|wednes|thurs|fri|satur|sun)days?\b/g;
+function mainNamedWeekday(question) {
+  const all = [...normalizeOwnerText(String(question || '')).matchAll(NAMED_DAY)];
+  const m = all[all.length - 1];
+  return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)}day` : null;
+}
+
 // "9 PM", and "midnight" and "noon" on the hour (services/clockWords.js).
 const { spokenClock: clockHour } = require('./clockWords');
 const {
   KIND_FORECAST, isKindForecast, unownDays, isBesideWeek,
 } = require('./kindForecast');
+
+// Main's lead for advice on a question its reader names the day of
+// (mainNamedWeekday above), kept whole beside groundedLead below.
+function mainGroundedLead(intentId, facts, question = '') {
+  const days = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
+    && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
+  if (!days.length) return null;
+  const kind = days.some(isKindForecast);
+  const open = (s) => (kind ? `In ${KIND_FORECAST}, ${s}` : s);
+  const your = kind ? 'the' : 'your';
+  const named = mainNamedWeekday(question);
+  if (named) {
+    const day = days.find((f) => f.value.weekday === named);
+    if (!day) return null;
+    const quietest = days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a));
+    const markedLowest = /LOWEST projected day in the week/.test(String(day.note || ''));
+    if (markedLowest || (days.length >= 6 && quietest === day)) {
+      return { text: open(`${named} projects as ${your} quietest day this week.`), fact: day };
+    }
+    const hour = Number(day.value.peakHour);
+    const when = Number.isInteger(hour) && hour >= 0 && hour < 24 ? ` around ${clockHour(hour)}` : '';
+    const night = day.value.afterMidnight === true ? ' night' : '';
+    return { text: open(`${named}${night} projects busiest${when}, at ${Number(day.value.peakScore)} on our 0 to 100 index.`), fact: day };
+  }
+  if (intentId === 'money_move') {
+    if (days.some((f) => /projects level/.test(String(f.note || '')))) return null;
+    const low = days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a));
+    return { text: open(`${low.value.weekday} projects as ${your} quietest day this week.`), fact: low };
+  }
+  if (intentId === 'quiet_nights') {
+    return { text: open(`${days[0].value.weekday} projects as ${your} quietest day this week.`), fact: days[0] };
+  }
+  if (intentId === 'peak_hours') {
+    const top = days.reduce((a, b) => (Number(b.value.peakScore) > Number(a.value.peakScore) ? b : a));
+    return { text: open(`${top.value.weekday} projects as ${your} busiest day this week.`), fact: top };
+  }
+  return null;
+}
 
 // `askedFor`, when the route has read the question against the venue's own
 // today (routes/advisor.js readingFor), is the weekday it asks about, or null
@@ -1024,7 +1076,9 @@ function calculatorAnswer(book, { question, ctx, venue, intentId, exclude = [] }
  * Returns null when no tactic clears the floor.
  * @returns {{mode: 'advice', text: string, sources: Array, tactics: string[], followUp: string|null}|null}
  */
-function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [], exclude = [], askedFor = undefined } = {}) {
+function answerFrom(book, {
+  question, intentId = null, ctx = null, groundedFacts = [], exclude = [], askedFor = undefined, dayReading = null,
+} = {}) {
   const venue = venueOf(ctx);
   const calc = calculatorAnswer(book, { question: normalizeOwnerText(String(question || '')), ctx, venue, intentId, exclude });
   if (calc) {
@@ -1064,7 +1118,11 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   const second = runnerUp ? runnerUp.t : null;
   const picks = second ? [first, second] : [first];
   const spend = spendOf(ctx);
-  const lead = groundedLead(intentId, groundedFacts, question, askedFor);
+  // A question whose day words roostDayReader is not sure of leads as main
+  // led (mainGroundedLead, routes/advisor.js answerFor).
+  const lead = dayReading === 'main'
+    ? mainGroundedLead(intentId, groundedFacts, question)
+    : groundedLead(intentId, groundedFacts, question, askedFor);
   // Under a lead that names a day of Flock's forecast for places like this
   // venue, the move names that day, never "your slowest day"
   // (services/kindForecast.js unownDays). With two days or more led, the
@@ -1320,7 +1378,9 @@ module.exports = {
   spendOf,
   moneyLine,
   groundedLead,
+  mainGroundedLead,
   namedWeekday,
+  mainNamedWeekday,
   askedDay,
   coversIn,
   dollars,

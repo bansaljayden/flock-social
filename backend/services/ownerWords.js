@@ -63,7 +63,6 @@ const SPELLING = Object.freeze({
   sundy: 'sunday', sundys: 'sundays', sunady: 'sunday',
   weeknd: 'weekend', weeknds: 'weekends', wekend: 'weekend', wekends: 'weekends',
   weekned: 'weekend', weekneds: 'weekends',
-  wknd: 'weekend', wknds: 'weekends', wkend: 'weekend', wkends: 'weekends',
   nigths: 'nights', nigth: 'night', nite: 'night', nites: 'nights', tonite: 'tonight',
   weeknite: 'weeknight', weeknites: 'weeknights', weeknigths: 'weeknights',
   yesturday: 'yesterday', yesterdy: 'yesterday',

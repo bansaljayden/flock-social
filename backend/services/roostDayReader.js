@@ -416,4 +416,168 @@ function todayInRanking(question) {
   return TODAY_IN.test(text) ? 'in' : null;
 }
 
-module.exports = { dayWords, todayInRanking, saidShut, weekdaysNamed, __parts: (q) => parts(normalize(q)) };
+// ─── HOW SURE THE READING IS (third recheck, 2026-11-06) ─────────────────────
+//
+// Three rechecks each found a new kind of question where main's answer, the
+// week's or the weekend's whole ranking, happened to hold the day the owner
+// meant, and this reader's narrower reading did not: a range of days ("Friday
+// thru Sunday" read as its two ends), a holiday ("Black Friday", "Thanksgiving
+// weekend"), "after tomorrow", "the day after that", a weekend beside a day
+// the owner dwells on, a habit beside "this one". Patching each wording left
+// the next one open. So the reading says how sure it is, and the route uses it
+// only where it is sure: the shapes the catalog and the batteries prove.
+//
+//   * one day said plainly: a weekday written out or a short form written as
+//     a day ("Fri night"), with next, next week or after next beside it;
+//     today, tonight, this morning; tomorrow; the day after tomorrow;
+//   * two such days ("Is Saturday busier than Friday?", "Will tomorrow be
+//     busier than tonight?");
+//   * one weekend said with a weekend word (this weekend, next weekend, the
+//     following weekend, the weekend after next);
+//   * the week, alone or beside today ("Which day is busiest this week,
+//     starting today?");
+//   * any of those beside days the owner says the venue is shut on, a day
+//     given as a reason or said in the past, or a possessive, which the
+//     grammar above sets aside;
+//   * no day word at all.
+//
+// Anything else is not sure, and the route answers it exactly as main does
+// (routes/advisor.js mainBridge), so it cannot come out worse than main: a
+// range of days, a holiday by name, a date, "after tomorrow", "in two days",
+// "the day after" or "the day before" said from another day, three days or
+// more, two weekends, a day beside a weekend, weekends as a habit, and a word
+// that may be a day this grammar does not read ("sat nite", "satday", "w/e")
+// beside one it does.
+const DAY_FORM = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
+const SPAN_JOIN = '(?:-|\\u2013|\\u2014|through|thru|to|till|til|until|into)';
+// A range of days asked about ("Friday thru Sunday", "Thu-Sat", "from Friday
+// until Sunday", "between Friday and Sunday", "Thursday through the weekend"),
+// not the venue's hours ("We're open Mon-Fri, how busy will Wed be?").
+const RANGE_SAID = new RegExp([
+  `\\b${DAY_FORM}\\.?(?:'s)?\\s*${SPAN_JOIN}\\s*${DAY_FORM}\\b`,
+  `\\bbetween\\s+${DAY_FORM}\\s+(?:and|&)\\s+${DAY_FORM}\\b`,
+  `\\b${DAY_FORM}\\s+(?:through|thru|to|till|til|until|into)\\s+(?:the\\s+)?(?:weekend|end\\s+of\\s+the\\s+week)\\b`,
+].join('|'), 'gi');
+const HOURS_BEFORE = /\b(?:open|opens|opened|closed|shut|hours|serve|serving|run|running)\s+(?:on\s+|from\s+|only\s+)?$/i;
+const HOLIDAY_SAID = new RegExp(`\\b(?:${[
+  'black\\s+friday', 'cyber\\s+monday', 'small\\s+business\\s+saturday', 'super\\s+bowl', 'thanksgiving', 'christmas',
+  "new\\s+year'?s?", 'nye', 'easter', 'memorial\\s+day', 'labou?r\\s+day', "veterans'?\\s+day", 'independence\\s+day',
+  '(?:4th|fourth)\\s+of\\s+july', 'july\\s+(?:4th|4|fourth)', 'halloween', "valentine'?s", "mother'?s\\s+day",
+  "father'?s\\s+day", "st\\.?\\s+(?:patrick|paddy)'?s", "patrick'?s\\s+day", 'cinco\\s+de\\s+mayo', 'juneteenth',
+  "presidents?'?\\s+day", 'mlk\\s+day', 'martin\\s+luther\\s+king', 'columbus\\s+day', "indigenous\\s+peoples?'?\\s+day",
+  'boxing\\s+day', 'hanukkah', 'chanukah', 'diwali', 'eid', 'ramadan', 'lunar\\s+new\\s+year', 'chinese\\s+new\\s+year',
+  'mardi\\s+gras', 'fat\\s+tuesday', 'ash\\s+wednesday', 'palm\\s+sunday', 'maundy\\s+thursday', 'holy\\s+(?:thursday|saturday)',
+  'election\\s+day', 'bank\\s+holiday', 'long\\s+weekend', 'holiday\\s+weekend', 'public\\s+holiday',
+].join('|')})\\b`, 'i');
+// Ordinary words before a day as well ("a good Friday to run a promo"), so a
+// holiday only with capitals, as the grammar reads them (NAME_HOLIDAY_BEFORE).
+const HOLIDAY_NAMED = /\b(?:Good\s+Friday|Giving\s+Tuesday|Super\s+Sunday)\b/;
+const AFTER_TOMORROW = new RegExp([
+  '(?<!\\bday\\s)\\bafter\\s+tomorrow\\b',
+  '\\bovermorrow\\b',
+  '\\bin\\s+(?:two|2|three|3|four|4|a\\s+couple(?:\\s+of)?|couple(?:\\s+of)?|a\\s+few|few)\\s+days\\b',
+  '\\b(?:two|2|three|3|four|4)\\s+days\\s+(?:from\\s+(?:now|today)|out|ahead|away|later|time)\\b',
+  '\\bnext\\s+(?:two|2|three|3|four|4|few|couple(?:\\s+of)?)\\s+(?:days|nights)\\b',
+].join('|'), 'i');
+// A day said from another one: "the day after" (that, the game, or
+// tomorrow's), "the day before", "the next day".
+const DAY_FROM_DAY = /\bthe\s+day\s+after\b(?!\s+tomorrow\b)|\bday\s+before\b|\b(?:the\s+)?(?:next|following|previous)\s+(?:day|night|evening)\b/i;
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\b\\.?';
+// "the 2nd seating" and "1st turn" are no dates.
+const NOT_DATE_AFTER = '(?!\\s+(?:seating|sitting|turn|time|round|shift|floor|course|table|service|wave|half|place|week|weekend|month|year|of\\s+(?:the|our|my)\\b))';
+const DATE_SAID = new RegExp([
+  `\\b${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`,
+  `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}`,
+  `\\b(?:the|on|by|until|till|for|from)\\s+\\d{1,2}(?:st|nd|rd|th)\\b${NOT_DATE_AFTER}`,
+  '\\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\\s+(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)?\\b(?!\\s*(?:am|pm|a\\.m|p\\.m|:|covers|people|guests|tables|staff|servers|bartenders))',
+  '(?<![\\d/])\\b(?!24\\/7\\b)(?:0?[1-9]|[12]\\d|3[01])\\/(?:0?[1-9]|[12]\\d|3[01])(?:\\/\\d{2,4})?\\b(?![\\d/])',
+].join('|'), 'i');
+// A short form written with a date ("Sat 14th", "Fri 11/13").
+const SHORT_DATE = /\b(?:Mon|Tues?|Weds?|Thu(?:rs?)?|Fri|Sat|Sun)\.?,?\s+(?:the\s+)?\d{1,2}(?:st|nd|rd|th|\/\d{1,2})?\b(?!\s*(?:am|pm|a\.m|p\.m|:|seating|sitting|turn|covers?|people|guests?|tables?|staff|servers?|bartenders?))/;
+
+function editDistance(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 3;
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j += 1) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+// A WORD THAT MAY BE A DAY, which this grammar does not read: a misspelling
+// near a weekday ("satday", "thrusdy"), the weekend ("w/e", "weeekend") or
+// tomorrow ("tmr", "2moro"), and a short form a lower-case owner may mean as
+// the day ("sat nite", "how about sun", "esp sat"). Beside a day the grammar
+// does read, the reading may have lost one, and is not sure.
+const DAY_NAMES = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+const NOT_A_DAY = new Set(['today', 'tonight', 'tomorrow', 'weekend', 'weekends', 'weekday', 'weekdays', 'weekly', 'money',
+  'monkey', 'monkeys', 'mondo', 'moody', 'month', 'months', 'sunny', 'sundae', 'sundaes', 'sundry', 'funday', 'fundays',
+  'fridge', 'fridges', 'friend', 'friends', 'frida', 'tuesdays', 'saturn', 'satay', 'thursty', 'weekender', 'weekenders',
+  'weakened', 'tomato', 'tomatoes', 'tonights', 'tomorrows']);
+const MAYBE_WEEKEND = /^(?:w\/e|w\/end|wkd|wkds|wknd|wknds|wkend|wkends|wk-end|wk-ends|week-end|week-ends)$/;
+const MAYBE_TOMORROW = /^(?:tmr|tmw|tmmrw|tmrrw|tmrow|tomoz|tomo|2moro|2morro|2morrow|2morow|2mrw|2mro)$/;
+const MAYBE_TODAY = /^(?:2nite|2night|2nyt|tnite|2day|tday|tdy)$/;
+function nearDay(w) {
+  if (NOT_A_DAY.has(w) || DAY_NAMES.includes(w) || DAY_NAMES.includes(w.replace(/s$/, ''))) return false;
+  if (MAYBE_WEEKEND.test(w) || MAYBE_TOMORROW.test(w) || MAYBE_TODAY.test(w)) return true;
+  if (w.length < 5 || !/^[a-z]+$/.test(w)) return false;
+  const near = (target, most) => w.slice(0, 2) === target.slice(0, 2) && (editDistance(w, target) <= most || editDistance(w, `${target}s`) <= most);
+  return DAY_NAMES.some((d) => near(d, 2)) || (w.length >= 6 && (near('weekend', 2) || near('tomorrow', 2) || near('tonight', 1)));
+}
+const SHORT_WORD = /\b(mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)\b\.?/gi;
+// "We sat dinner at 6", "the sun rush", "with this sun", "C'mon": the word.
+const WORD_BEFORE = /(?:\b(?:we|i|they|you|he|she|it|who|people|guests|everyone|everybody|the|a|an|this|that|in|with|of|under|our|their)\s+|c')$/i;
+const MAYBE_BEFORE = /(?:\b(?:about|abt|for|by|till|til|until|and|or|n|vs|versus|esp|especially|mostly|mainly|particularly)\.?\s+|[&+/]\s*)$/i;
+const MAYBE_AFTER = /^\s*(?:[?!.]+\s*)?$|^\s*(?:[&+/]|and\b|or\b|n\b|vs\b)|^\s+(?:in\s+particular|esp(?:ecially)?\b|mostly|mainly|only|too|also)\b/i;
+// "sat 1st turn by 6:30": a count, not a date.
+const COUNT_NEXT = /^\s*\d{1,2}(?:st|nd|rd|th)?\s+(?:seating|sitting|turn|time|round|shift|table|tables|covers?|people|guests?|wave)\b/i;
+function maybeShortForms(piece, shouting) {
+  const out = [];
+  for (const m of piece.matchAll(SHORT_WORD)) {
+    const before = piece.slice(0, m.index);
+    const after = piece.slice(m.index + m[0].length);
+    if (shortIsDay(m[1], before, after, shouting) || WORD_BEFORE.test(before)) continue;
+    // A range is its own kind above, the venue's hours when it says so.
+    if (RANGE_NEXT.test(after) || RANGE_BEFORE.test(before) || /^-[a-z]/i.test(after) || COUNT_NEXT.test(after)) continue;
+    if (PART_NEXT.test(after) || DATE_NEXT.test(after) || MAYBE_BEFORE.test(before) || MAYBE_AFTER.test(after)) out.push(m[1]);
+  }
+  return out;
+}
+
+const DAY_KINDS = new Set(['weekday', 'today', 'tomorrow', 'dayAfterTomorrow']);
+
+/**
+ * How sure the reading of `question` is (above): { sure: true } for the
+ * shapes the catalog and batteries prove, else { sure: false, why }.
+ */
+function dayConfidence(question) {
+  const text = normalize(question);
+  const unsure = (why) => ({ sure: false, why });
+  for (const m of text.matchAll(RANGE_SAID)) {
+    if (!HOURS_BEFORE.test(text.slice(0, m.index))) return unsure('a range of days');
+  }
+  if (HOLIDAY_SAID.test(text) || HOLIDAY_NAMED.test(text)) return unsure('a holiday');
+  if (AFTER_TOMORROW.test(text)) return unsure('a day counted on from tomorrow');
+  if (DAY_FROM_DAY.test(text)) return unsure('a day said from another day');
+  if (DATE_SAID.test(text) || SHORT_DATE.test(text)) return unsure('a date');
+  const words = dayWords(question);
+  const days = words.filter((t) => DAY_KINDS.has(t.kind));
+  const shouting = !/[a-z]/.test(text);
+  // A weekend said anywhere in the question, not only where it asks: "Will
+  // we be busy on the weekend, esp. Sunday?" asks in "Sunday?".
+  const weekends = [...words, ...parts(text).all.flatMap((p) => tokensIn(p, shouting))].filter((t) => t.kind === 'weekend');
+  if (days.length >= 3) return unsure('three days or more');
+  if (new Set(weekends.map((t) => t.scope)).size >= 2) return unsure('two weekends');
+  if (weekends.some((t) => t.scope === 'habit')) return unsure('weekends as a habit');
+  if (weekends.length && (days.length || weekdaysNamed(question).length)) return unsure('a day beside a weekend');
+  if (words.length) {
+    const maybe = [...text.toLowerCase().matchAll(/[a-z0-9/'-]+/g)].map((m) => m[0].replace(/'s$/, '').replace(/^'+|'+$/g, '')).filter(nearDay);
+    if (maybe.length || parts(text).all.some((p) => maybeShortForms(p, shouting).length)) return unsure('a word that may be a day');
+  }
+  return { sure: true };
+}
+
+module.exports = {
+  dayWords, todayInRanking, saidShut, weekdaysNamed, dayConfidence, __parts: (q) => parts(normalize(q)),
+};

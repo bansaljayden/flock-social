@@ -409,10 +409,10 @@ function cardWeek(byDay, window) {
 // advisorFacts.projectionFacts and todayProjectionFacts and the route's own
 // plans, and the corpus refusal for everything the card does not carry.
 const CARD_INTENTS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'quiet_nights', 'weekend_outlook']);
-async function noHistoryBlock(v, intentId, question = '') {
+async function noHistoryBlock(v, intentId, question = '', dayReading = null) {
   const refusalText = (r) => [r.reason, r.whatWouldUnlock].filter(Boolean).join(' ');
   const gate = advisorFacts.corpusGate(v.ctx.profile);
-  if (!CARD_INTENTS.has(intentId)) return { intent: intentId, facts: [], refusals: [refusalText(gate)] };
+  if (!CARD_INTENTS.has(intentId)) return { intent: intentId, facts: [], refusals: [refusalText(gate)], dayReading: 'main' };
   const card = advisorFacts.projectionFacts(v.card);
   const today = advisorFacts.todayProjectionFacts(v.card);
   const advisorRoute = require(path.join(B, 'routes', 'advisor'));
@@ -429,13 +429,16 @@ async function noHistoryBlock(v, intentId, question = '') {
   // A typed question is read for the day it asks about, against the card's
   // today, and one about today gets today's entry alone, as the bridge does.
   // Its day words are read before the plan, as the bridge reads them: the
-  // weekend the plan reads, and two days answered with both.
-  const reading = question ? await advisorRoute.__readingFor(b, question, intentId) : {};
-  b.weekendScope = reading.weekendScope;
-  const { entries, askedFor, askedDays, intent } = await advisorRoute.__forQuestion(await advisorRoute.__INTENT_PLANS[intentId](b), intentId, b, question, reading);
+  // weekend the plan reads, and two days answered with both. A question
+  // whose day words the reader is not sure of is answered on main's path,
+  // as the bridge answers it (routes/advisor.js answerFor).
+  const answered = await advisorRoute.__answerFor(b, b, intentId, question, dayReading);
+  const { entries, askedFor, askedDays, intent } = answered;
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
-  const asked = { ...(askedFor !== undefined ? { askedDay: askedFor } : {}), ...(askedDays ? { askedDays } : {}) };
+  const asked = {
+    ...(askedFor !== undefined ? { askedDay: askedFor } : {}), ...(askedDays ? { askedDays } : {}), dayReading: answered.dayReading,
+  };
   // Nothing on the card for it: the corpus refusal, as the bridge gives.
   return facts.length
     ? { intent: intent || intentId, facts, refusals: [], ...asked }
@@ -446,11 +449,11 @@ async function noHistoryBlock(v, intentId, question = '') {
 // facts (routes/advisor.js bridgeFactBlock): the venue's kind, its service
 // style and its spend per head. `question` is the typed question, when the
 // route hands one over.
-async function blockFor(venue, intentId, { question = '' } = {}) {
+async function blockFor(venue, intentId, { question = '', dayReading = null } = {}) {
   const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
   const { ctx } = VENUES[venue];
   return {
-    ...(await rawBlockFor(venue, intentId, question)),
+    ...(await rawBlockFor(venue, intentId, question, dayReading)),
     venue: roostPlaybook.venueOf(ctx),
     serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
@@ -458,9 +461,20 @@ async function blockFor(venue, intentId, { question = '' } = {}) {
   };
 }
 
-function rawBlockFor(venue, intentId, question = '') {
+async function rawBlockFor(venue, intentId, question = '', dayReading = null) {
   const v = VENUES[venue];
-  if (v.noHistory) return noHistoryBlock(v, intentId, question);
+  if (v.noHistory) return noHistoryBlock(v, intentId, question, dayReading);
+  // A venue with crowd history hands its week as it stands, and says which
+  // path its question takes, as the bridge does (routes/advisor.js
+  // answerFor): main's for a route not about the week's days and for a
+  // question whose day words the reader is not sure of.
+  const roostDayReader = require(path.join(B, 'services', 'roostDayReader'));
+  const onMain = dayReading === 'main' || !CARD_INTENTS.has(intentId)
+    || (Boolean(question) && !roostDayReader.dayConfidence(question).sure);
+  return { ...ownBlock(v, intentId), dayReading: onMain ? 'main' : 'v2' };
+}
+
+function ownBlock(v, intentId) {
   const sorted = [...v.week].sort((a, z) => a.value.peakScore - z.value.peakScore);
   switch (intentId) {
     case 'peak_hours': return { intent: intentId, facts: v.week, refusals: [] };

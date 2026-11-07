@@ -827,6 +827,72 @@ const INTENT_PLANS = {
   },
 };
 
+// ─── MAIN'S DAY PATH, KEPT WHOLE (third recheck, 2026-11-06) ────────────────
+//
+// A question whose day words the reader is not sure of
+// (roostDayReader.dayConfidence) is answered exactly as origin/main answers
+// it: main's plans for today and the weekend below, which read the week the
+// way main read it (every Friday, Saturday and Sunday of the seven days, today
+// first), main's choice between the card and the venue's own week
+// (mainWeekFor, mainTonightFor), no reading of the question by the bridge, and
+// main's day reader and template in the answer (roostPlaybook.mainNamedWeekday,
+// advisorPhrasing's main shapers). The plans for the peaks, the quiet days and
+// the money move are main's already and are shared. Kept as main wrote them,
+// not rebuilt from the new ones, so a question this path answers says what
+// main says.
+function isWeekendDate(date) {
+  const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return dow === 5 || dow === 6 || dow === 0;
+}
+const MAIN_PLANS = {
+  ...INTENT_PLANS,
+  tonight_outlook: async (b) => {
+    const week = await (b.tonight ? b.tonight() : b.week());
+    const tonight = week.slice(0, 1);
+    const date = tonight.length ? entryDate(tonight[0]) : null;
+    const around = await b.around();
+    const street = around.filter((e) => {
+      const d = entryDate(e);
+      return d === null || d === date;
+    });
+    return [...tonight, ...street];
+  },
+  weekend_outlook: async (b) => {
+    const week = (await b.week()).filter((e) => {
+      const d = entryDate(e);
+      if (d === null) return advisorFacts.isRefusal(e);
+      return isWeekendDate(d);
+    });
+    const street = (await b.around()).filter((e) => {
+      const d = entryDate(e);
+      return (d !== null && isWeekendDate(d)) || e.id === 'no_listed_events';
+    });
+    return [...week, ...street];
+  },
+};
+
+// Main's choice of week and today for a venue with no crowd history: the
+// card's week where the corpus gate is the one reason the week would refuse,
+// and the card's today only when the card held a week or was not read yet,
+// off the block's one read of the card (cardFor). `memo.mainCardRead` is
+// whether the card held them, as main kept it.
+async function mainWeekFor(ctx, ownWeek, card, memo) {
+  if (advisorFacts.corpusGate(ctx.profile)) {
+    const { week } = await card();
+    memo.mainCardRead = week.length > 0;
+    if (week.length) return week;
+  }
+  return ownWeek();
+}
+async function mainTonightFor(ctx, ownTonight, card, memo) {
+  if (memo.mainCardRead !== false && advisorFacts.corpusGate(ctx.profile)) {
+    const { today } = await card();
+    if (typeof memo.mainCardRead !== 'boolean') memo.mainCardRead = today.length > 0;
+    if (today.length) return today;
+  }
+  return ownTonight();
+}
+
 // A VENUE WITH NO CROWD HISTORY OF ITS OWN STILL HAS A WEEK AHEAD on its
 // dashboard: Flock's forecast for places like it, every number a category
 // prior (advisorFacts.buildWeekProjection says why that card exists and what
@@ -1470,9 +1536,53 @@ async function quietEnds(b, entries) {
   });
 }
 
+// THE READING IS USED ONLY WHERE IT IS SURE (third recheck, 2026-11-06). A
+// typed question on a route about the week's days is read for its days
+// (readingFor) only when the reader is sure of its words
+// (roostDayReader.dayConfidence), and only when, in the small hours, it does
+// not count a day on from tonight ("tomorrow", "the day after tomorrow"),
+// which an owner still at work may mean of the coming daytime or of the
+// calendar's next day. Anything else is answered on main's path, exactly as
+// main answers it (MAIN_PLANS above). The reading, or null for main's path.
+async function dayGate(b, question, intentId) {
+  if (!roostDayReader.dayConfidence(question).sure) return null;
+  const reading = await readingFor(b, question, intentId);
+  const targets = reading.targets || (reading.target ? [reading.target] : []);
+  const onward = targets.some((t) => t.word && (t.word.kind === 'tomorrow' || t.word.kind === 'dayAfterTomorrow'));
+  if (onward && await inSmallHours(b)) return null;
+  return reading;
+}
+
+// The entries a block answers with, on the path its question's reading takes
+// (dayGate): `b` reads the week the way the reading does, `mb` the way main
+// did (mainWeekFor). A chip, with no question, is answered by the plans as
+// they read the week now; a route not about the week's days, and a question
+// the reader is not sure of, by main's. `force` 'main' takes main's path
+// whatever the question (the advice path's second read, on main's path).
+// Returns { entries, intent, askedFor, askedDays, dayReading: 'v2' | 'main' }.
+async function answerFor(b, mb, intentId, question, force = null) {
+  const reading = force === 'main' || !DAY_INTENTS.has(intentId) ? null
+    : (question ? await dayGate(b, question, intentId) : {});
+  if (!reading) {
+    const plan = MAIN_PLANS[intentId];
+    return { entries: plan ? await plan(mb) : [], intent: intentId, askedFor: undefined, dayReading: 'main' };
+  }
+  // "How busy will we be tonight?" about a venue's own week reads it from the
+  // night in progress, the week the today chip reads, so in the small hours
+  // tonight is the night still running and is in the week it is answered
+  // from (review, 2026-11-06; readingFor above).
+  b.fromTonight = Boolean(reading.fromTonight) && NAMED_TODAY_INTENTS.has(intentId) && !advisorFacts.corpusGate(b.ctx.profile);
+  b.weekendScope = reading.weekendScope;
+  const plan = INTENT_PLANS[intentId];
+  const answered = await forQuestion(plan ? await plan(b) : [], intentId, b, question, reading);
+  const entries = QUIET_END_INTENTS.has(answered.intent || intentId) ? await quietEnds(b, answered.entries) : answered.entries;
+  return { ...answered, entries, dayReading: 'v2' };
+}
+
 // `question`, when there is one, is what the owner asked: a question that
 // names today's weekday is answered from today (withNamedToday above).
-async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
+// `dayReading` 'main' answers it on main's path whatever it says (answerFor).
+async function bridgeFactBlock(userId, intentId, { question = '', dayReading = null } = {}) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile.google_place_id) {
     return {
@@ -1487,12 +1597,8 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
 
   const opts = { now: new Date(), userId };
   const memo = {};
-  // "How busy will we be tonight?" about a venue's own week reads it from the
-  // night in progress, the week the today chip reads, so in the small hours
-  // tonight is the night still running and is in the week it is answered
-  // from (review, 2026-11-06; readingFor above).
-  let fromTonight = false;
-  const b = {
+  // What the builders read, shared by both paths, so either reads each once.
+  const built = {
     ctx,
     now: opts.now,
     // The owner's typed question, for the plan that reads which weekend it
@@ -1501,20 +1607,16 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     // The venue's own week: its corpus forecast, or the corpus refusal, which
     // is a field read and costs nothing.
     ownWeek: () => (memo.ownWeek = memo.ownWeek || advisorFacts.buildWeekAhead(ctx, opts)),
-    // The week a question about the week ahead reads (weekFor above).
-    week: () => (memo.week = memo.week || (fromTonight ? b.tonight() : weekFor(ctx, b.ownWeek, b.card))),
     // The same week, started from last night's evening while that night is
-    // still running: what "tonight" means at 12:30 AM. For a venue with no
-    // crowd history, today off its dashboard card (tonightFor above).
-    tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx,
-      () => advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true }), b.card)),
+    // still running: what "tonight" means at 12:30 AM.
+    ownTonight: () => (memo.ownTonight = memo.ownTonight || advisorFacts.buildWeekAhead(ctx, { ...opts, nightInProgress: true })),
     // The card's week, today and today's date off one read (cardFor above).
     // Read only for a venue the corpus gate sends to the card.
     card: () => cardFor(ctx, opts, memo),
     around: () => (memo.around = memo.around || advisorFacts.buildAroundYou(ctx, opts)),
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
-      || Promise.resolve(b.ownWeek()).then((week) => advisorFacts.buildListingReadBack(ctx, week, opts))),
+      || Promise.resolve(built.ownWeek()).then((week) => advisorFacts.buildListingReadBack(ctx, week, opts))),
     verdict: () => (memo.verdict = memo.verdict
       || (lastNightVerdict
         ? lastNightVerdict.buildLastDayVerdict(ctx, opts)
@@ -1526,17 +1628,30 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
         ? advisorFacts.buildTableFacts(ctx, opts)
         : Promise.resolve([]))),
   };
+  const b = {
+    ...built,
+    // The week a question about the week ahead reads (weekFor above), from
+    // the night in progress for a day counted from tonight (answerFor).
+    week: () => (memo.week = memo.week || (b.fromTonight ? b.tonight() : weekFor(ctx, b.ownWeek, b.card))),
+    // Tonight: for a venue with no crowd history, today off its dashboard
+    // card (tonightFor above).
+    tonight: () => (memo.tonight = memo.tonight || tonightFor(ctx, b.ownTonight, b.card)),
+  };
+  // Main's path reads the same builders, and chooses its week and today as
+  // main did (mainWeekFor, mainTonightFor).
+  const mainMemo = {};
+  const mb = {
+    ...built,
+    week: () => (mainMemo.week = mainMemo.week || mainWeekFor(ctx, built.ownWeek, built.card, mainMemo)),
+    tonight: () => (mainMemo.tonight = mainMemo.tonight || mainTonightFor(ctx, built.ownTonight, built.card, mainMemo)),
+  };
 
   // The question's day words, read against the venue's own today before
-  // the plan runs: the weekend it asks about, and whether a day word is
-  // counted from tonight (readingFor).
-  const reading = question && DAY_INTENTS.has(intentId) ? await readingFor(b, question, intentId) : {};
-  fromTonight = Boolean(reading.fromTonight) && NAMED_TODAY_INTENTS.has(intentId) && !advisorFacts.corpusGate(ctx.profile);
-  b.weekendScope = reading.weekendScope;
-  const plan = INTENT_PLANS[intentId];
-  const answered = await forQuestion(plan ? await plan(b) : [], intentId, b, question, reading);
-  const { askedFor, askedDays, intent } = answered;
-  const entries = QUIET_END_INTENTS.has(intent || intentId) ? await quietEnds(b, answered.entries) : answered.entries;
+  // the plan runs, where the reader is sure of them (answerFor).
+  const answered = await answerFor(b, mb, intentId, question, dayReading);
+  const { askedFor, askedDays, intent, entries } = answered;
+  const onMain = answered.dayReading === 'main';
+  const cardRead = onMain ? mainMemo.mainCardRead : memo.cardRead;
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
@@ -1557,8 +1672,9 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     spend: roostPlaybook.spendOf(ctx),
     spendAsOf: ctx.profile.updated_at ? `owner-set ${String(ctx.profile.updated_at).slice(0, 10)}` : 'owner-set',
     // Whether this block read the no-history venue's Week Ahead card and
-    // found anything on it (cardFor); absent when it never needed to.
-    ...(typeof memo.cardRead === 'boolean' ? { cardRead: memo.cardRead } : {}),
+    // found anything on it (cardFor; on main's path, as main kept it);
+    // absent when it never needed to.
+    ...(typeof cardRead === 'boolean' ? { cardRead } : {}),
     // The day the question asks about, read against the venue's own today
     // (readingFor): the template and the playbook's lead answer about this
     // day, not the one the question's words alone would name. Absent when
@@ -1567,6 +1683,10 @@ async function bridgeFactBlock(userId, intentId, { question = '' } = {}) {
     // The days a question names two or more of, in the order it names
     // them (bothAnswer): the template says each.
     ...(askedDays ? { askedDays } : {}),
+    // Which path answered (answerFor): 'main' is said with main's day reader
+    // and template (advisorPhrasing.renderTemplate). Never a fact, and never
+    // handed to a model.
+    dayReading: answered.dayReading,
   };
 }
 
@@ -2232,88 +2352,117 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       block = await buildFactBlock(userId, route.intentId, { question: asked });
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
-    // A question about a named day gets that day's forecast beside whatever
-    // its route reads: the quiet-days plan carries only the 2 quietest days,
-    // so "how do I fill Thursdays" had nothing about Thursday to stand on.
-    // Only when the route's own facts lack that day (a second build of the
-    // week costs reads), and a failure here costs the lead, never the answer
-    // (2026-10-28 second review: it ran the week twice and could 500). A
-    // block that already tried a no-history venue's Week Ahead card and found
-    // none is not asked again: the second read is a second paid lookup that
-    // fails the same way (2026-11-03 review). Today's weekday comes off the
-    // card's today for a venue with no crowd history (withNamedToday).
-    //
-    // The day is the one a block read against the venue's own today
-    // (readingFor, 2026-11-06): "tonight" is the night the today chip
-    // answers, and "next Monday" on a Monday is no day held, so nothing
-    // stands for it and no lead names it. A question naming a day its route
-    // did not read ("How do I fill Thursdays?" routed to no week at all)
-    // reads the week's peaks, which read the day as well.
-    // "Today", "tonight" and "this morning" ask about a day in advice only
-    // when the question is routed to a day (the peaks, the quiet days,
-    // today's outlook) and asks about the day's crowd (second review,
-    // 2026-11-06): "My bartender quit this morning, what do I do?" opened on
-    // today's forecast, and "Got a 1 star review today, how should I
-    // respond?" paid for a second read of the week to do it, while "How do I
-    // fill tonight?" is about tonight.
-    const reading = roostPlaybook.askedDay(asked);
-    const todayWord = (r) => Boolean(r) && (r.today || r.tomorrow || r.dayAfterTomorrow);
-    const words = reading && reading.several ? reading.several : [];
-    const anyToday = todayWord(reading) || words.some((w) => ['today', 'tomorrow', 'dayAfterTomorrow'].includes(w.kind));
-    const dayish = Boolean(reading) && (Boolean(reading.weekday) || todayWord(reading)
-      || words.some((w) => w.kind !== 'weekend' && w.kind !== 'week'));
-    const asksDay = dayish && (!anyToday || (TODAY_WORD_INTENTS.has(route.intentId) && CROWD_ASKED.test(asked)));
-    const readDay = (blk) => Boolean(blk) && Object.prototype.hasOwnProperty.call(blk, 'askedDay');
-    let named = readDay(block) ? block.askedDay : roostPlaybook.namedWeekday(asked);
-    // TWO DAYS NAMED: THE LEAD SAYS EACH (acceptance, 2026-11-06). "How many
-    // bartenders for fri and sat" and "should i do live music on thursday or
-    // friday" opened on no day at all, where the week's lead used to name one
-    // of them: the playbook's lead now gives each day's own peak, picking
-    // none (roostPlaybook.groundedLead). A question over the whole week
-    // ("How do I fill the slow nights this week, starting tonight?") or one
-    // that leaves today out of it ("Apart from tonight, ...") leads with the
-    // week's own ranking, as before 2026-11-06.
-    let days = block && Array.isArray(block.askedDays) ? block.askedDays : null;
-    let both = Boolean(days);
-    const overWeek = words.some((w) => w.kind === 'week');
-    if (asksDay && !both && !(block && block.cardRead === false)
-        && (named ? !groundedFacts.some((f) => f && f.value && f.value.weekday === named) : !readDay(block))) {
-      try {
-        const week = await buildFactBlock(userId, 'peak_hours', { question: asked });
-        if (!readDay(block) && readDay(week)) named = week.askedDay;
-        if (!readDay(block) && week && Array.isArray(week.askedDays)) { both = true; days = week.askedDays; }
-        const have = new Set(groundedFacts.map((f) => f && f.id));
-        groundedFacts = [...groundedFacts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
-      } catch (err) {
-        console.warn('Advisor: the week for a named day could not be read:', err.message);
-      }
-    }
-    // The day the playbook's lead names: the one day read, or with two or
-    // more, each weekday named; the week's ranking for a question over the
-    // week; and none for today beside another day ("We're dead tonight,
-    // trying to figure out if tomorrow is worth opening early"), as before.
-    const leadFor = () => {
-      if (!both) return named;
-      if (overWeek || !days.length) return undefined;
-      return anyToday ? null : days;
-    };
     // `offline` and `fallback` come from an offline route: the playbook
     // answers with no model call, and `fallback` is the sentence the owner
     // reads if it has nothing for the question.
-    const answer = await advisorFreeText.advise({
+    const adviseOn = (facts, day) => advisorFreeText.advise({
       userId,
       question: asked,
       ctx,
-      groundedFacts,
+      groundedFacts: facts,
       intentId: route.intentId || null,
       offline: route.offline === true,
       fallback: route.fallback || null,
       exclude: follow.exclude,
       unrouted: route.unrouted === true,
+      ...day,
+    });
+    // MAIN'S PATH FOR A DAY THE READER IS NOT SURE OF (third recheck,
+    // 2026-11-06; dayGate above): main's reader names the day, the week is
+    // read a second time only when the route's facts lack it, from main's
+    // plan, and the playbook leads as main led (roostPlaybook.answer,
+    // `dayReading`). Kept as main wrote it.
+    const mainAdvice = async () => {
+      let facts = groundedFacts;
+      const named = roostPlaybook.mainNamedWeekday(asked);
+      if (named && !(block && block.cardRead === false)
+          && !facts.some((f) => f && f.value && f.value.weekday === named)) {
+        try {
+          const week = await buildFactBlock(userId, 'peak_hours', { question: asked, dayReading: 'main' });
+          const have = new Set(facts.map((f) => f && f.id));
+          facts = [...facts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
+        } catch (err) {
+          console.warn('Advisor: the week for a named day could not be read:', err.message);
+        }
+      }
+      return adviseOn(facts, { dayReading: 'main' });
+    };
+    const onMain = !roostDayReader.dayConfidence(asked).sure
+      || Boolean(block && DAY_INTENTS.has(route.intentId) && block.dayReading === 'main');
+    // THE READING, where the reader is sure of the question's day words.
+    const readAdvice = async () => {
+      // A question about a named day gets that day's forecast beside whatever
+      // its route reads: the quiet-days plan carries only the 2 quietest days,
+      // so "how do I fill Thursdays" had nothing about Thursday to stand on.
+      // Only when the route's own facts lack that day (a second build of the
+      // week costs reads), and a failure here costs the lead, never the answer
+      // (2026-10-28 second review: it ran the week twice and could 500). A
+      // block that already tried a no-history venue's Week Ahead card and found
+      // none is not asked again: the second read is a second paid lookup that
+      // fails the same way (2026-11-03 review). Today's weekday comes off the
+      // card's today for a venue with no crowd history (withNamedToday).
+      //
+      // The day is the one a block read against the venue's own today
+      // (readingFor, 2026-11-06): "tonight" is the night the today chip
+      // answers, and "next Monday" on a Monday is no day held, so nothing
+      // stands for it and no lead names it. A question naming a day its route
+      // did not read ("How do I fill Thursdays?" routed to no week at all)
+      // reads the week's peaks, which read the day as well.
+      // "Today", "tonight" and "this morning" ask about a day in advice only
+      // when the question is routed to a day (the peaks, the quiet days,
+      // today's outlook) and asks about the day's crowd (second review,
+      // 2026-11-06): "My bartender quit this morning, what do I do?" opened on
+      // today's forecast, and "Got a 1 star review today, how should I
+      // respond?" paid for a second read of the week to do it, while "How do I
+      // fill tonight?" is about tonight.
+      const reading = roostPlaybook.askedDay(asked);
+      const todayWord = (r) => Boolean(r) && (r.today || r.tomorrow || r.dayAfterTomorrow);
+      const words = reading && reading.several ? reading.several : [];
+      const anyToday = todayWord(reading) || words.some((w) => ['today', 'tomorrow', 'dayAfterTomorrow'].includes(w.kind));
+      const dayish = Boolean(reading) && (Boolean(reading.weekday) || todayWord(reading)
+        || words.some((w) => w.kind !== 'weekend' && w.kind !== 'week'));
+      const asksDay = dayish && (!anyToday || (TODAY_WORD_INTENTS.has(route.intentId) && CROWD_ASKED.test(asked)));
+      const readDay = (blk) => Boolean(blk) && Object.prototype.hasOwnProperty.call(blk, 'askedDay');
+      let named = readDay(block) ? block.askedDay : roostPlaybook.namedWeekday(asked);
+      // TWO DAYS NAMED: THE LEAD SAYS EACH (acceptance, 2026-11-06). "How many
+      // bartenders for fri and sat" and "should i do live music on thursday or
+      // friday" opened on no day at all, where the week's lead used to name one
+      // of them: the playbook's lead now gives each day's own peak, picking
+      // none (roostPlaybook.groundedLead). A question over the whole week
+      // ("How do I fill the slow nights this week, starting tonight?") or one
+      // that leaves today out of it ("Apart from tonight, ...") leads with the
+      // week's own ranking, as before 2026-11-06.
+      let days = block && Array.isArray(block.askedDays) ? block.askedDays : null;
+      let both = Boolean(days);
+      const overWeek = words.some((w) => w.kind === 'week');
+      if (asksDay && !both && !(block && block.cardRead === false)
+          && (named ? !groundedFacts.some((f) => f && f.value && f.value.weekday === named) : !readDay(block))) {
+        try {
+          const week = await buildFactBlock(userId, 'peak_hours', { question: asked });
+          // The week read on main's path takes the whole answer there.
+          if (week && week.dayReading === 'main') return mainAdvice();
+          if (!readDay(block) && readDay(week)) named = week.askedDay;
+          if (!readDay(block) && week && Array.isArray(week.askedDays)) { both = true; days = week.askedDays; }
+          const have = new Set(groundedFacts.map((f) => f && f.id));
+          groundedFacts = [...groundedFacts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
+        } catch (err) {
+          console.warn('Advisor: the week for a named day could not be read:', err.message);
+        }
+      }
+      // The day the playbook's lead names: the one day read, or with two or
+      // more, each weekday named; the week's ranking for a question over the
+      // week; and none for today beside another day ("We're dead tonight,
+      // trying to figure out if tomorrow is worth opening early"), as before.
+      const leadFor = () => {
+        if (!both) return named;
+        if (overWeek || !days.length) return undefined;
+        return anyToday ? null : days;
+      };
       // The day as read above, when the question asks about one; the days,
       // when it names two or more.
-      ...(asksDay ? { askedFor: leadFor() } : {}),
-    });
+      return adviseOn(groundedFacts, asksDay ? { askedFor: leadFor() } : {});
+    };
+    const answer = onMain ? await mainAdvice() : await readAdvice();
     return res.json({
       mode: answer.mode,
       intentId: route.intentId || null,
@@ -2360,3 +2509,10 @@ module.exports.__forQuestion = forQuestion;
 // The day words of a typed question read against the venue's own today,
 // which the eval's bridge reads before its plan, as bridgeFactBlock does.
 module.exports.__readingFor = readingFor;
+// The path a typed question's block takes and the entries it answers with
+// (answerFor: the reading where the reader is sure of it, main's path
+// otherwise), for the live eval's stand-in bridge, which builds its blocks the
+// way bridgeFactBlock does.
+module.exports.__answerFor = answerFor;
+// Main's plans, kept whole for a question the reader is not sure of.
+module.exports.__MAIN_PLANS = MAIN_PLANS;

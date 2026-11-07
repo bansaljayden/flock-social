@@ -2703,10 +2703,13 @@ test('a weekday the weekend\'s route is asked about that this weekend does not h
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     let r = await call('/api/venue/advisor/question', { question: 'How busy will next Saturday be?' });
     assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', 'We can\'t answer that yet. Next Saturday is past the seven days the forecast covers. It comes into them tomorrow.']);
-    // A day of next weekend is that day (2026-11-06): on a Saturday, next
-    // weekend's Saturday is past the seven days.
+    // A day said with a weekend is one the reader is not sure of (third
+    // recheck, 2026-11-06: "How busy will next weekend be on Saturday?" at a
+    // cafe shut on weekends was answered with the week's ranking under the
+    // weekend's name), so it is answered exactly as main answers it, from
+    // the weekend days the seven days hold (roostDayReader.dayConfidence).
     r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday be next weekend?' });
-    assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', 'We can\'t answer that yet. Saturday of next weekend is past the seven days the forecast covers. It comes into them tomorrow.']);
+    assert.deepStrictEqual([r.body.mode, r.body.text], ['template', `${kind}the busiest day this weekend is Friday, with its peak around 9 PM at 66 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.`]);
     // The chip and a question naming no day are the weekend's, as before.
     const chip = await call('/api/venue/advisor/ask', { intentId: 'weekend_outlook' });
     assert.ok(chip.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), chip.body.text);
@@ -2882,16 +2885,17 @@ test('two days asked are both answered, never one picked from them: the bar on t
       '• That makes it the busiest day this week.',
     ]);
     assert.strictEqual(r.body.sources[0].id, 'typical_peak_2026-11-07');
-    // This weekend beside next weekend on a Friday: this weekend, and next
-    // weekend said to be past the seven days, never refused outright.
+    // Two weekends, and a weekday beside a weekend, are readings the reader
+    // is not sure of (third recheck, 2026-11-06; roostDayReader
+    // .dayConfidence), so each is answered exactly as main answers it: the
+    // weekend days the card's week holds, never refused outright.
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     r = await call('/api/venue/advisor/question', { question: 'how does this weekend compare to next weekend?' });
     assert.strictEqual(r.body.mode !== 'refusal', true, r.body.text);
     assert.ok(r.body.text.startsWith(`${kind}the busiest day this weekend is Saturday, `), r.body.text);
-    assert.ok(r.body.text.includes('Next Friday, Saturday and Sunday are past the seven days the forecast covers.'), r.body.text);
-    // A weekend said in its own sentence is the weekend, with today in it.
+    assert.ok(!/past the seven days/.test(r.body.text), r.body.text);
     r = await call('/api/venue/advisor/question', { question: 'Happy Friday! How busy will this weekend be?' });
-    for (const id of ['typical_peak_2026-11-06', 'typical_peak_2026-11-07', 'typical_peak_2026-11-08']) {
+    for (const id of ['typical_peak_2026-11-07', 'typical_peak_2026-11-08']) {
       assert.ok(r.body.sources.some((s) => s.id === id), `${id}: ${JSON.stringify(r.body.sources)}`);
     }
   });
@@ -3166,16 +3170,14 @@ test('two days named on the weekend\'s route are both answered on a Sunday, poss
     setUp({ placeId: 'ChIJr7TwoDaysSunday00000', phrasing: true });
     draftFor = () => null;
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
-    // A comparison leads with its two days, the higher first (recheck,
-    // 2026-11-06).
+    // Two days beside a weekend are a reading the reader is not sure of
+    // (third recheck, 2026-11-06), answered exactly as main answers it: the
+    // last day named, off the weekend days the card's week holds.
     let r = await call('/api/venue/advisor/question', { question: 'How will Friday\'s crowd compare to Saturday\'s this weekend?' });
-    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
-      `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
-      '• That makes it the busiest day this week.',
-      '• Friday peaks around 9 PM at 66.',
-    ]);
-    for (const id of ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']) assert.ok(sourceIds(r).includes(id), `${id}: ${sourceIds(r)}`);
-    assert.ok(!sourceIds(r).includes('typical_peak_2026-11-08'), JSON.stringify(sourceIds(r)));
+    assert.deepStrictEqual(r.body.text.split('\n'), [`${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`]);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-14']);
+    // A comparison of two days leads with both, the higher first (recheck,
+    // 2026-11-06).
     r = await call('/api/venue/advisor/question', { question: 'Which is busier, Saturday or Sunday?' });
     assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
       `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
@@ -3201,15 +3203,17 @@ test('two days named on the weekend\'s route are both answered on a Sunday, poss
 
 test('"weekends" is a habit, read from every Friday, Saturday and Sunday of the week ahead, so on a Sunday it is never that Sunday alone', async () => {
   assert.strictEqual(saidDays('Are weekends busier than weekdays for us?'), 'weekend:habit');
+  // Weekends as a habit are a reading the reader is not sure of (third
+  // recheck, 2026-11-06), answered exactly as main answers it: every
+  // Friday, Saturday and Sunday the week read holds, the card's from
+  // tomorrow.
   await pinnedAt('2026-11-08T20:00:00Z', async () => {
     setUp({ placeId: 'ChIJr7WeekendsHabitSun00', phrasing: true });
     draftFor = () => null;
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     const r = await call('/api/venue/advisor/question', { question: 'Are weekends busier than weekdays for us?' });
     assert.deepStrictEqual(r.body.text.split('\n'), [
-      `${KIND_OPEN}the busiest day this weekend is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
-      '• Friday is close behind, around 9 PM at 66.',
-      '• Sunday is the quietest, around 9 PM at 45.',
+      `${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`,
     ]);
     // "This weekend" on a Sunday is still that Sunday.
     const t = await call('/api/venue/advisor/question', { question: 'How busy will this weekend be?' });
@@ -3264,11 +3268,16 @@ test('a day of the weekend a question names that the listing has the venue shut 
     cafeOpenOn('ChIJr7OfficeFriday000000', [1, 2, 3, 4, 5]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     const weekend = `Your Google listing has you closed on Saturday and Sunday. ${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`;
-    for (const question of ['how busy will sunday be', 'Sunday Funday is this weekend, how busy will it be?', 'Which is busier, Saturday or Sunday?']) {
+    for (const question of ['how busy will sunday be', 'Which is busier, Saturday or Sunday?']) {
       const r = await call('/api/venue/advisor/question', { question });
       assert.strictEqual(r.body.text, weekend, question);
       assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-06'], question);
     }
+    // A day beside a weekend is a reading the reader is not sure of (third
+    // recheck, 2026-11-06): main's answer, from the card's week, which starts
+    // tomorrow and holds no open weekend day.
+    const r = await call('/api/venue/advisor/question', { question: 'Sunday Funday is this weekend, how busy will it be?' });
+    assert.deepStrictEqual([r.body.mode, r.body.text], ['refusal', "We can't answer that yet. Nothing we track at your venue grounds it so far."]);
   });
   // The cafe shut on Sundays: Saturday's line, after Sunday shut, and no
   // Friday mixed in ("no day stands out this weekend: every day peaks
@@ -3529,10 +3538,13 @@ function barShutSundayMonday(placeId) {
   placePeriods = [2, 3, 4, 5, 6].map((d) => ({ open: { day: d, hour: 17, minute: 0 }, close: { day: (d + 1) % 7, hour: 2, minute: 0 } }));
 }
 
-test('a weekend question that names one day the venue is shut on says it is shut and answers the weekend\'s open days', async () => {
+test('a weekend question that also names a day is a reading the reader is not sure of, answered as main answers it, the weekend\'s open days kept', async () => {
   // The cafe shut on Sundays, on its Wednesday: each of these was "Your
-  // Google listing has you closed on Sunday." alone, and Friday and Saturday
-  // were lost (main said both).
+  // Google listing has you closed on Sunday." alone at one point, and Friday
+  // and Saturday were lost (main said both). A day beside a weekend has
+  // been read wrong by three rounds in turn (third recheck, 2026-11-06), so
+  // it is answered exactly as main answers it (roostDayReader.dayConfidence),
+  // which keeps the weekend's open days.
   await pinnedAt('2026-11-11T15:00:00Z', async () => {
     cafeOpenOn('ChIJr8WeekendShutSunWed00', [1, 2, 3, 4, 5, 6]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
@@ -3543,50 +3555,42 @@ test('a weekend question that names one day the venue is shut on says it is shut
       'Will Sunday brunch be busy this weekend?',
     ]) {
       const r = await call('/api/venue/advisor/question', { question });
-      assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday. ${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`, question);
-      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14', 'weekend_closed'], question);
+      assert.strictEqual(r.body.text, `${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`, question);
+      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14'], question);
     }
   });
-  // The office cafe, open Monday to Friday: Saturday asked, and both shut
-  // days said, then Friday ("closed on Saturday." alone before).
+  // The office cafe, open Monday to Friday: Friday, its one open day.
   await pinnedAt('2026-11-11T15:00:00Z', async () => {
     cafeOpenOn('ChIJr8WeekendOfficeWed000', [1, 2, 3, 4, 5]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     const r = await call('/api/venue/advisor/question', { question: 'Is this weekend going to be busy, especially Saturday?' });
-    assert.strictEqual(r.body.text, `Your Google listing has you closed on Saturday and Sunday. ${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
-    assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-13']);
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-13']);
   });
 });
 
-test('in the small hours, a tomorrow the venue is shut on is said to be, with the coming daytime when it is open, and a shut day asked is followed by the next day it opens', async () => {
+test('in the small hours, tomorrow is answered as main answers it; past them, a tomorrow the venue is shut on is said to be, and a shut day asked is followed by the next day it opens', async () => {
   // A bar shut on Sundays and Mondays, at 12:30 AM on a Saturday with Friday
-  // night still running: "How busy will tomorrow be?" on today's route ranked
-  // the week from Friday 66, leaving out today and saying nothing of Sunday
-  // (main said today, Saturday, 74).
+  // night still running. Tomorrow then may be the coming daytime or the
+  // calendar's next day, and each round read a new case of it wrong (third
+  // recheck, 2026-11-06: "How should I staff tomorrow?" lost main's day), so
+  // in the small hours a day counted on from tonight is answered exactly as
+  // main answers it: today's chip says today, Saturday, 74.
   await pinnedAt('2026-11-07T00:30:00Z', async () => {
     barShutSundayMonday('ChIJr8SmallHoursBarShut00');
-    for (const intentId of ['tonight_outlook', 'peak_hours']) {
-      route = { mode: 'grounded', intentId };
-      const r = await call('/api/venue/advisor/question', { question: 'How busy will tomorrow be?' });
-      // The peaks' route adds its move under the answer.
-      assert.strictEqual(r.body.text.split('\n')[0], `Your Google listing has you closed on Sunday. ${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`, intentId);
-      assert.deepStrictEqual(sourceIds(r).slice(0, 2), ['weekend_closed', 'typical_peak_2026-11-07'], intentId);
-    }
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will tomorrow be?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}today peaks around 9 PM at 74 on our 0 to 100 index.`);
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const p = await call('/api/venue/advisor/question', { question: 'How busy will tomorrow be?' });
+    assert.ok(p.body.text.startsWith(`${KIND_OPEN}the busiest day this week is `), p.body.text);
   });
   // The cafe shut on Sundays at 3:30 AM on its Saturday: the same.
   await pinnedAt('2026-11-07T03:30:00Z', async () => {
     cafeOpenOn('ChIJr8SmallHoursCafeSun00', [1, 2, 3, 4, 5, 6]);
     route = { mode: 'grounded', intentId: 'tonight_outlook' };
     const r = await call('/api/venue/advisor/question', { question: 'How busy will tomorrow be?' });
-    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday. ${KIND_OPEN}Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
-  });
-  // The office cafe at 12:30 AM on its Saturday: the coming daytime is shut
-  // too, so both are said, and the next day it opens follows.
-  await pinnedAt('2026-11-07T00:30:00Z', async () => {
-    cafeOpenOn('ChIJr8SmallHoursOffice000', [1, 2, 3, 4, 5]);
-    route = { mode: 'grounded', intentId: 'tonight_outlook' };
-    const r = await call('/api/venue/advisor/question', { question: 'How busy will tomorrow be?' });
-    assert.strictEqual(r.body.text, `Your Google listing has you closed today and on Sunday. ${KIND_OPEN}Monday peaks around 8 AM at 48 on our 0 to 100 index.`);
+    assert.strictEqual(r.body.text, `${KIND_OPEN}today peaks around 8 AM at 74 on our 0 to 100 index.`);
   });
   // Past the small hours tomorrow is the calendar's: the office cafe on its
   // Friday afternoon, shut the whole weekend, then Monday.
@@ -3642,10 +3646,6 @@ test('a comparison leads with the days compared, the higher first, and never und
       const { all, busiest } = busiestClaims(r.body.text);
       for (const n of busiest) assert.ok(all.every((x) => x <= n), `${question}: ${r.body.text}`);
     }
-    route = { mode: 'grounded', intentId: 'weekend_outlook' };
-    const r = await call('/api/venue/advisor/question', { question: 'How will Friday\'s crowd compare to Saturday\'s this weekend?' });
-    assert.strictEqual(r.body.text.split('\n')[0], `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`);
-    assert.ok(!/busiest day this week is Friday/.test(r.body.text), r.body.text);
   });
   // The office cafe on its Friday: tomorrow shut, and today's 66 led after
   // "the busiest day this week is Thursday ... at 64" before.
@@ -3720,15 +3720,21 @@ test('only the owner\'s own venue said shut takes a day out, never another venue
 // ── The second recheck of the day reader (2026-11-06) ─────────────────────
 // Each test below is one finding of the second recheck, on a pinned clock.
 
-test('on the weekend\'s route, a weekend day the venue is shut on is said with the weekend\'s open days, whatever the owner calls the weekend', async () => {
+test('on the weekend\'s route, a weekend day the venue is shut on is said with the weekend\'s open days; a day beside a weekend word is answered as main answers it', async () => {
   // The cafe shut on Sundays, on its Wednesday: each of these was "Your
-  // Google listing has you closed on Sunday." alone, where main said Friday
-  // and Saturday. The route decides, not the word: "wknd", "wkend", "on the
-  // weekend", "at the weekend", "weekends", a day named in a sentence of its
-  // own, and no weekend word at all.
+  // Google listing has you closed on Sunday." alone at one point, where main
+  // said Friday and Saturday. A day asked on the weekend's route alone is
+  // said with the weekend's open days. A day beside a weekend word, however
+  // the owner spells the weekend, is a reading the reader is not sure of
+  // (third recheck, 2026-11-06: a new wording of it was read wrong in each
+  // round), and is answered exactly as main answers it, which keeps the
+  // weekend's open days (roostDayReader.dayConfidence).
   await pinnedAt('2026-11-11T15:00:00Z', async () => {
     cafeOpenOn('ChIJr9WeekendRouteCafe000', [1, 2, 3, 4, 5, 6]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'how busy will sunday be' });
+    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday. ${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14', 'weekend_closed']);
     for (const question of [
       'how busy this wknd esp sunday',
       'hows the wkend looking? sunday esp',
@@ -3736,42 +3742,47 @@ test('on the weekend\'s route, a weekend day the venue is shut on is said with t
       'At the weekend, will Sunday be busy?',
       'How busy are weekends for us, esp. Sundays?',
       'this wkend? sunday?',
-      'how busy will sunday be',
       'Weekend outlook? Particularly Sunday.',
     ]) {
-      const r = await call('/api/venue/advisor/question', { question });
-      assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday. ${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`, question);
-      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14', 'weekend_closed'], question);
+      r = await call('/api/venue/advisor/question', { question });
+      assert.strictEqual(r.body.text, `${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`, question);
+      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-13', 'typical_peak_2026-11-14'], question);
     }
-    // A day named that the weekend holds open is said by name under the
-    // range, as main said it; a day another venue closes on says nothing of
-    // this one.
-    let r = await call('/api/venue/advisor/question', { question: 'How busy will the wkend be? Especially Saturday' });
-    assert.strictEqual(r.body.text, `${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.\n• Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
+    // Main's answer to a weekend day named that the weekend holds open is
+    // that day's line; a day another venue closes on says nothing of this
+    // one, and the weekend is answered.
+    r = await call('/api/venue/advisor/question', { question: 'How busy will the wkend be? Especially Saturday' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
     r = await call('/api/venue/advisor/question', { question: 'Our competitor closes Sundays; how busy is this weekend?' });
     assert.strictEqual(r.body.text, `${KIND_OPEN}no day stands out this weekend: every day peaks between 66 and 74 on our 0 to 100 index.`);
   });
   // The office cafe, shut Saturday and Sunday: a shut Saturday asked about
-  // is said beside a shut Sunday, then Friday ("closed on Saturday." or
-  // "closed on Sunday." alone before, and Friday lost).
+  // on the weekend's route is said beside a shut Sunday, then Friday; beside
+  // a weekend word, main's answer, Friday.
   await pinnedAt('2026-11-11T15:00:00Z', async () => {
     cafeOpenOn('ChIJr9WeekendRouteOffice0', [1, 2, 3, 4, 5]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will Saturday be?' });
+    assert.strictEqual(r.body.text, `Your Google listing has you closed on Saturday and Sunday. ${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-13']);
     for (const question of [
+      'Will this weekend\'s Saturday be packed?',
       'How busy will the wkend be? Especially Saturday',
       'how busy this wknd esp sunday',
       'Weekend outlook? Particularly Saturday night.',
-      'Will this weekend\'s Saturday be packed?',
       'Sat & Sun this wknd: how busy?',
     ]) {
-      const r = await call('/api/venue/advisor/question', { question });
-      assert.strictEqual(r.body.text, `Your Google listing has you closed on Saturday and Sunday. ${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`, question);
-      assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-13'], question);
+      const m = await call('/api/venue/advisor/question', { question });
+      assert.strictEqual(m.body.text, `${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`, question);
+      assert.deepStrictEqual(sourceIds(m), ['typical_peak_2026-11-13'], question);
     }
   });
-  const { dayWords, weekdaysNamed } = require('../services/roostDayReader');
-  assert.deepStrictEqual(dayWords('how busy this wknd'), [{ kind: 'weekend', scope: 'this' }]);
-  assert.deepStrictEqual(dayWords('how busy next wkend'), [{ kind: 'weekend', scope: 'next_words' }]);
+  const { dayWords, weekdaysNamed, dayConfidence } = require('../services/roostDayReader');
+  // "wknd" and "wkend" are words the grammar does not read, and beside a day
+  // it does read they leave the reader unsure.
+  assert.deepStrictEqual(dayWords('how busy this wknd'), []);
+  assert.strictEqual(dayConfidence('how busy this wknd').sure, true);
+  assert.strictEqual(dayConfidence('how busy this wknd esp sunday').sure, false);
   assert.deepStrictEqual(weekdaysNamed('Weekend outlook? Particularly Saturday night.'), ['Saturday']);
   assert.deepStrictEqual(weekdaysNamed('Our competitor closes Sundays; how busy is this weekend?'), []);
 });
@@ -3788,32 +3799,34 @@ test('"the day after" where the question says tomorrow is the day after tomorrow
   assert.deepStrictEqual(dayWords('Is tomorrow busier than the day after that?'), [{ kind: 'tomorrow' }]);
   assert.deepStrictEqual(dayWords('tomorrow or the day after we reopen?'), [{ kind: 'tomorrow' }]);
   assert.deepStrictEqual(dayWords('Is the day after a holiday? How busy will tomorrow be?'), [{ kind: 'tomorrow' }]);
+  // Each is a day said from another day, which the route answers as main
+  // answers it (third recheck, 2026-11-06; roostDayReader.dayConfidence).
+  const { dayConfidence } = require('../services/roostDayReader');
+  for (const q of ['Is tomorrow busier than the day after?', 'Is tomorrow busier than the day after that?', 'and the day after?', 'Is the day after a holiday? How busy will tomorrow be?']) {
+    assert.deepStrictEqual(dayConfidence(q), { sure: false, why: 'a day said from another day' }, q);
+  }
+  assert.strictEqual(dayConfidence('How busy will the day after tomorrow be?').sure, true);
 });
 
-test('tomorrow against the day after is answered with both days, the higher first', async () => {
+test('tomorrow against the day after is answered as main answers it, with the week\'s ranking that holds both days', async () => {
   // The bar on its Thursday: tomorrow Friday 66, the day after Saturday 74.
-  // This was "Friday peaks around 9 PM at 66" alone, where main's ranking
-  // held both.
+  // This was "Friday peaks around 9 PM at 66" alone at one point, where
+  // main's ranking held both; "the day after that" then lost the second day
+  // the same way (third recheck, 2026-11-06). A day said from another day is
+  // a reading the reader is not sure of, so it is main's ranking.
   await pinnedAt('2026-11-12T16:00:00Z', async () => {
     setUp({ placeId: 'ChIJr9DayAfterCardThu000', phrasing: true });
     draftFor = () => null;
     route = { mode: 'grounded', intentId: 'peak_hours' };
-    for (const question of ['Is tomorrow busier than the day after?', 'Will tomorrow or the day after be busier?']) {
+    for (const question of ['Is tomorrow busier than the day after?', 'Will tomorrow or the day after be busier?', 'How busy will tomorrow be, and the day after that?']) {
       const r = await call('/api/venue/advisor/question', { question });
       assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
-        `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
-        '• That makes it the busiest day this week.',
-        '• Friday peaks around 9 PM at 66.',
+        `${KIND_OPEN}the busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
+        '• Friday is close behind, around 9 PM at 66.',
+        '• Sunday is the quietest, around 9 PM at 45.',
       ], question);
-      assert.deepStrictEqual(sourceIds(r).slice(0, 2), ['typical_peak_2026-11-14', 'typical_peak_2026-11-13'], question);
+      for (const id of ['typical_peak_2026-11-13', 'typical_peak_2026-11-14']) assert.ok(sourceIds(r).includes(id), `${question}: ${sourceIds(r)}`);
     }
-  });
-  // The office cafe on its Friday: both days shut, and said so first.
-  await pinnedAt('2026-11-06T16:00:00Z', async () => {
-    cafeOpenOn('ChIJr9DayAfterOfficeFri00', [1, 2, 3, 4, 5]);
-    route = { mode: 'grounded', intentId: 'peak_hours' };
-    const r = await call('/api/venue/advisor/question', { question: 'Is tomorrow busier than the day after?' });
-    assert.ok(r.body.text.startsWith('Your Google listing has you closed on Saturday and Sunday.'), r.body.text);
   });
 });
 
@@ -3837,16 +3850,18 @@ test('one day against the same weekday past the seven days leads with the day th
 });
 
 test('under the quiet days\' chip a busy day alone gets the busy day\'s move, and advice keeps the day the owner names', async () => {
-  // The cafe shut on Sundays at 12:30 AM on its Saturday: tomorrow is shut,
-  // the coming daytime is Saturday at 74, the week's high, and the answer
-  // ended on "Give Saturday one recurring reason to visit".
+  // The cafe shut on Sundays at 12:30 AM on its Saturday: "Is tomorrow a
+  // write-off?" said the shut Sunday, then Saturday at 74, the week's high,
+  // and ended on "Give Saturday one recurring reason to visit" (second
+  // recheck). Tomorrow in the small hours may be the coming daytime or the
+  // calendar's next day, so it is answered as main answers it (third
+  // recheck, 2026-11-06): the week's quiet days.
   await pinnedAt('2026-11-07T00:30:00Z', async () => {
     cafeOpenOn('ChIJr9WriteOffCafeSat000', [1, 2, 3, 4, 5, 6]);
     route = { mode: 'grounded', intentId: 'quiet_nights' };
     const r = await call('/api/venue/advisor/question', { question: 'Is tomorrow a write-off?' });
-    assert.strictEqual(r.body.text.split('\n')[0], `Your Google listing has you closed on Sunday. ${KIND_OPEN}Saturday peaks around 8 AM at 74 on our 0 to 100 index.`);
-    assert.ok(!/recurring reason|Give Saturday/.test(r.body.text), r.body.text);
-    assert.ok(!r.body.followUps.some((f) => f.text === 'How do I fill Saturdays?'), JSON.stringify(r.body.followUps));
+    assert.strictEqual(r.body.text.split('\n')[0], `${KIND_OPEN}the quietest day this week is Monday, with its peak around 8 AM at 48 on our 0 to 100 index.`);
+    assert.ok(!/Give Saturday/.test(r.body.text), r.body.text);
   });
   // A quiet day beside a busy one is still the one the fill move names: the
   // card on its Thursday, today 64 against Sunday 45.
@@ -3879,33 +3894,34 @@ test('under the quiet days\' chip a busy day alone gets the busy day\'s move, an
   assert.ok(!/discount (?:Sunday|Monday)\b/.test(promo.text), promo.text);
 });
 
-test('next weekend with a day of it past the seven days gives the days the forecast holds, and a day the venue is shut on is said to be', async () => {
-  // The cafe shut on Sundays: "Sunday of next weekend is past the seven
-  // days the forecast covers. It comes into them on Monday." before, which
-  // lost next Friday and implied a Sunday forecast was coming.
+test('next weekend beside a day of it is a reading the reader is not sure of, answered as main answers it', async () => {
+  // "How busy will next weekend be, especially Sunday?" was read three ways
+  // in three rounds: Sunday's refusal alone, then next Friday with Sunday
+  // said to be shut or past the seven days; "How busy will next weekend be
+  // on Saturday?" at the office cafe on its Sunday got the week's ranking
+  // under the weekend's name (third recheck, 2026-11-06). A day beside a
+  // weekend is answered exactly as main answers it.
   await pinnedAt('2026-11-07T16:00:00Z', async () => {
     cafeOpenOn('ChIJr9NextWeekendCafeSat0', [1, 2, 3, 4, 5, 6]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
     const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
-    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday next weekend. ${KIND_OPEN}next Friday peaks around 8 AM at 66 on our 0 to 100 index.\n• Next Saturday is past the seven days the forecast covers.`);
-    assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-13', 'next_weekend_past_forecast']);
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-13']);
   });
   await pinnedAt('2026-11-08T16:00:00Z', async () => {
-    cafeOpenOn('ChIJr9NextWeekendCafeSun0', [1, 2, 3, 4, 5, 6]);
+    cafeOpenOn('ChIJr9NextWeekendOffSun00', [1, 2, 3, 4, 5]);
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
-    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
-    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday next weekend. ${KIND_OPEN}no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.`);
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be on Saturday?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Friday peaks around 8 AM at 66 on our 0 to 100 index.`);
   });
-  // A bar open on Sundays: next Friday, and the rest past the seven days.
+  // Next weekend alone is the reader's: next Friday, and the rest past the
+  // seven days.
   await pinnedAt('2026-11-07T16:00:00Z', async () => {
     setUp({ placeId: 'ChIJr9NextWeekendCardSat0', phrasing: true });
     draftFor = () => null;
     route = { mode: 'grounded', intentId: 'weekend_outlook' };
-    let r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be?' });
     assert.strictEqual(r.body.text, `${KIND_OPEN}next Friday peaks around 9 PM at 66 on our 0 to 100 index.\n• Next Saturday and Sunday are past the seven days the forecast covers.`);
-    // A day of next weekend asked in its own right is still its refusal.
-    r = await call('/api/venue/advisor/question', { question: 'How busy will Sunday be next weekend?' });
-    assert.strictEqual(r.body.mode, 'refusal');
   });
 });
 
@@ -3930,6 +3946,105 @@ test('a day said beside the card\'s week never stands under a quietest day it be
   });
 });
 
+// ── THE READING IS USED ONLY WHERE IT IS SURE (third recheck, 2026-11-06) ──
+// Each recheck found a new kind of question where main's whole ranking held
+// the day the owner meant and the reader's narrower reading did not. A
+// reading the reader is not sure of is answered exactly as main answers it
+// (roostDayReader.dayConfidence, routes/advisor.js answerFor).
+
+test('the reader says how sure it is: sure of a day, two days, a weekend or the week said plainly, not of ranges, holidays, dates, days counted on, three days, two weekends, a day beside a weekend or a word that may be a day', () => {
+  const { dayConfidence } = require('../services/roostDayReader');
+  for (const q of [
+    'How busy will Saturday be?', 'Fri night busy?', 'How busy will next Monday be?', 'How busy will Friday next week be?',
+    'How busy will tonight be?', 'How busy will tomorrow be?', 'How busy will the day after tomorrow be?',
+    'Is Saturday busier than Friday?', 'Will tomorrow be busier than tonight?', 'Is this Saturday busier than next Saturday?',
+    'How busy will this weekend be?', 'What does next weekend look like?', 'How busy is the weekend after next?',
+    'Which day is busiest this week, starting today?', 'We\'re closed Sundays. How does this weekend look?',
+    'How busy will tonight be since tomorrow is a holiday?', 'Tonight was dead so I\'m wondering if tomorrow will pick up',
+    'We\'re open Mon-Fri, how busy will Wed be?', 'we sat 40 covers last night, how do I get more tonight?',
+    'Our competitor closes Sundays; how busy is this weekend?', 'What are our peak hours?', 'how busy this wknd',
+    'We sat 2nd seating at 8:30, how should I staff tonight?', 'Is this a good Friday to run a promo?',
+  ]) {
+    assert.deepStrictEqual(dayConfidence(q), { sure: true }, q);
+  }
+  for (const [q, why] of [
+    ['How busy are we Friday thru Sunday?', 'a range of days'],
+    ['Thu-Sat forecast?', 'a range of days'],
+    ['from Friday until Sunday how busy', 'a range of days'],
+    ['Will Black Friday be busy for us?', 'a holiday'],
+    ['Thanksgiving weekend, how busy?', 'a holiday'],
+    ['How busy will Good Friday be?', 'a holiday'],
+    ['How busy will it be after tomorrow?', 'a day counted on from tomorrow'],
+    ['how busy the days after tomorrow', 'a day counted on from tomorrow'],
+    ['How busy in two days?', 'a day counted on from tomorrow'],
+    ['How busy will tomorrow be, and the day after that?', 'a day said from another day'],
+    ['Is Saturday busier than the day before?', 'a day said from another day'],
+    ['How busy will the 14th be?', 'a date'],
+    ['How busy on 11/14?', 'a date'],
+    ['How busy will Sat Nov 21 be?', 'a date'],
+    ['Fri, Sat or Sun, which is busiest?', 'three days or more'],
+    ['how does this weekend compare to next weekend?', 'two weekends'],
+    ['Weekends are usually slow on Sundays for us, what about this one?', 'weekends as a habit'],
+    ['How busy will next weekend be on Saturday?', 'a day beside a weekend'],
+    ['Will we be busy on the weekend, esp. Sunday?', 'a day beside a weekend'],
+    ['Happy Friday! How busy will this weekend be?', 'a day beside a weekend'],
+    ['is tonight busier than sat night?', 'a word that may be a day'],
+    ['Is tomorrow busier than satday?', 'a word that may be a day'],
+    ['how busy this wknd esp sunday', 'a word that may be a day'],
+  ]) {
+    assert.deepStrictEqual(dayConfidence(q), { sure: false, why }, q);
+  }
+});
+
+test('a reading the reader is not sure of is answered exactly as main answers it: a range, a holiday, after tomorrow, the day after that, a date', async () => {
+  // Each answer below is main's own, from origin/main on the same card and
+  // clock (third recheck, 2026-11-06); the branch had answered each with a
+  // narrower reading that lost a day main's ranking held.
+  const ranking = [
+    `${KIND_OPEN}the busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.`,
+    '• Friday is close behind, around 9 PM at 66.',
+    '• Sunday is the quietest, around 9 PM at 45.',
+  ];
+  await pinnedAt('2026-11-11T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJrAUnsureMainCardWed0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will Friday to Sunday be?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}Sunday peaks around 9 PM at 45 on our 0 to 100 index.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-15']);
+    assert.ok(!('dayReading' in r.body), JSON.stringify(Object.keys(r.body)));
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    for (const question of ['How busy will it be after tomorrow?', 'How busy will tomorrow be, and the day after that?', 'How busy will the 14th be?']) {
+      r = await call('/api/venue/advisor/question', { question });
+      assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), ranking, question);
+      assert.deepStrictEqual(sourceIds(r).slice(0, 3), ['typical_peak_2026-11-14', 'typical_peak_2026-11-13', 'typical_peak_2026-11-15'], question);
+    }
+  });
+  // A holiday inside the seven days: main read Black Friday as the coming
+  // Friday, which it is, and Thanksgiving weekend from the card's weekend
+  // days, which on that Saturday are Thanksgiving weekend's Friday and this
+  // Sunday.
+  await pinnedAt('2026-11-22T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJrAUnsureMainCardSun0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Will Black Friday be busy for us?' });
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 2), [
+      `${KIND_OPEN}Friday peaks around 9 PM at 66 on our 0 to 100 index.`,
+      '• The busiest day this week is Saturday, around 9 PM at 74.',
+    ]);
+    assert.strictEqual(sourceIds(r)[0], 'typical_peak_2026-11-27');
+  });
+  await pinnedAt('2026-11-21T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJrAUnsureMainCardSat0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Thanksgiving weekend, how busy?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}the busiest day this weekend is Friday, with its peak around 9 PM at 66 on our 0 to 100 index.\n• Sunday is next, around 9 PM at 45.`);
+    assert.deepStrictEqual(sourceIds(r), ['typical_peak_2026-11-27', 'typical_peak_2026-11-22']);
+  });
+});
+
 test('advice keeps the day the owner names to fill, discount or promote, in its move and its warning, as main does', async () => {
   // Each named another day, the week's quiet day, in the move and the
   // discount warning, unsaid (third recheck, 2026-11-06).
@@ -3946,5 +4061,21 @@ test('advice keeps the day the owner names to fill, discount or promote, in its 
     r = await call('/api/venue/advisor/question', { question: 'Would a Saturday deal bring more people?' });
     assert.ok(r.body.text.includes('Before you discount Saturday, count how many guests'), r.body.text);
     assert.ok(!/discount (?:Sunday|Monday|Tuesday|Wednesday)\b/.test(r.body.text), r.body.text);
+  });
+});
+
+test('in the small hours, advice about tomorrow or the day after leads as main led it', async () => {
+  // At 2 AM on the card's Saturday, "How should I staff tomorrow?" and "How
+  // should I staff the day after tomorrow?" lost main's day lead (third
+  // recheck's 33 sweep rows): tomorrow then may be the coming daytime or the
+  // calendar's next day, so the lead is main's, the week's busiest.
+  await pinnedAt('2026-11-07T02:00:00Z', async () => {
+    setUp({ placeId: 'ChIJrASmallHoursStaff000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'advice', intentId: 'peak_hours' };
+    for (const question of ['How should I staff tomorrow?', 'How should I staff the day after tomorrow?']) {
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.ok(/^In Flock's forecast for places like yours, \w+day projects as the busiest day this week\. /.test(r.body.text), `${question}: ${r.body.text}`);
+    }
   });
 });

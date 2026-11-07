@@ -1621,18 +1621,131 @@ const TEMPLATE_SHAPERS = Object.freeze({
   last_night_verdict: shapeVerdict,
 });
 
+// MAIN'S TEMPLATE, KEPT WHOLE (third recheck, 2026-11-06). A block the route
+// answered on main's path (routes/advisor.js answerFor, `dayReading` 'main':
+// a question whose day words roostDayReader is not sure of, or a route not
+// about the week's days) is said exactly as main said it: main's shapers for
+// the week's days and the money move, below as main wrote them (the comments
+// on shapeWeek and shapeMoneyMove above give each line's reason), and main's
+// day reader (roostPlaybook.mainNamedWeekday). The others are main's already.
+function mainShapeWeek(which) {
+  return (facts, { named = null } = {}) => {
+    const days = facts.filter(isPeakFact).sort(byScore);
+    const rest = facts.filter((f) => !isPeakFact(f));
+    if (days.length === 1 && isKindForecast(days[0])) {
+      return { lead: weekVoice(days).open(dayPeak(days[0])), points: rest.map(templateLine), used: [days[0], ...rest] };
+    }
+    if (days.length < 2) return null;
+    const top = days[0];
+    const lowest = Number(days[days.length - 1].value.peakScore);
+    const low = days.find((f) => Number(f.value.peakScore) === lowest);
+    const v = weekVoice(days);
+    const asked = named ? days.find((f) => f.value.weekday === named) : null;
+    if (asked && days.length < 6) {
+      return {
+        lead: v.open(dayPeak(asked)),
+        points: rest.map(templateLine),
+        used: [asked, ...rest],
+      };
+    }
+    if (asked) {
+      const level = Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP;
+      const points = [];
+      const used = [asked];
+      if (level) {
+        points.push(`No day stands out this week: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}.`);
+        used.push(top, low);
+      } else {
+        if (top !== asked) { points.push(`${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
+        if (low !== asked && low !== top) { points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`); used.push(low); }
+        if (top === asked) points.unshift(`That makes it ${v.your} busiest day this week.`);
+        if (low === asked) points.unshift(`That makes it ${v.your} quietest day this week.`);
+      }
+      return {
+        lead: v.open(dayPeak(asked)),
+        points: [...points, ...rest.map(templateLine)],
+        used: [...new Set(used), ...rest],
+      };
+    }
+    if (which === 'quiet') {
+      const [first, second] = facts.filter(isPeakFact)
+        .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
+      return {
+        lead: v.open(`${v.Your} quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`),
+        points: [`${dayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
+        used: [first, second, ...rest],
+      };
+    }
+    const scope = which === 'weekend' ? 'this weekend' : 'this week';
+    if (Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
+      return {
+        lead: v.open(`No day stands out ${scope}: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
+        points: rest.map(templateLine),
+        used: [top, low, ...rest],
+      };
+    }
+    const second = days[1];
+    const close = Number(top.value.peakScore) - Number(second.value.peakScore) < HOUR_ORDERING_MIN_GAP;
+    const points = [`${dayName(second)} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
+    const used = [top, second];
+    if (low !== second) {
+      points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`);
+      used.push(low);
+    }
+    return {
+      lead: v.open(`${v.Your} busiest day ${scope} is ${dayName(top)}, with its peak ${peakAt(top)} on our 0 to 100 index.`),
+      points: [...points, ...rest.map(templateLine)],
+      used: [...used, ...rest],
+    };
+  };
+}
+
+function mainShapeMoneyMove(facts) {
+  const days = facts.filter(isPeakFact).sort(byScore);
+  if (!days.length) return null;
+  const top = days[0];
+  const low = days[days.length - 1];
+  const rest = facts.filter((f) => !isPeakFact(f));
+  const v = weekVoice(days);
+  if (days.length < 2 || Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
+    return {
+      lead: v.open(`No day stands out this week, so the money is in each check rather than in one day: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`),
+      points: rest.map(templateLine),
+      used: [...new Set([low, top]), ...rest],
+    };
+  }
+  return {
+    lead: `Fill ${dayName(low)}. ${v.open(`It is ${v.your} quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${dayName(top)}.`)}`,
+    points: rest.map(templateLine),
+    used: [low, top, ...rest],
+  };
+}
+
+const MAIN_TEMPLATE_SHAPERS = Object.freeze({
+  money_move: mainShapeMoneyMove,
+  tonight_outlook: shapeToday,
+  peak_hours: mainShapeWeek('week'),
+  quiet_nights: mainShapeWeek('quiet'),
+  weekend_outlook: mainShapeWeek('weekend'),
+  week_recap: shapeRecap,
+  last_night_verdict: shapeVerdict,
+});
+
 function renderTemplate(block, question = '') {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
-  const shaper = TEMPLATE_SHAPERS[block?.intent];
+  // Main's path, said as main said it (MAIN_TEMPLATE_SHAPERS above).
+  const onMain = Boolean(block) && block.dayReading === 'main';
+  const shaper = (onMain ? MAIN_TEMPLATE_SHAPERS : TEMPLATE_SHAPERS)[block?.intent];
   // The day the question asks about, as the route read it against the
   // venue's own today (routes/advisor.js readingFor: "tonight" is today's
   // weekday, "next Monday" on a Monday is none); else the day it names.
-  const named = block && Object.prototype.hasOwnProperty.call(block, 'askedDay')
+  let named = block && Object.prototype.hasOwnProperty.call(block, 'askedDay')
     ? block.askedDay
     : roostPlaybook.namedWeekday(question);
+  if (onMain) named = roostPlaybook.mainNamedWeekday(question);
   const both = block && Array.isArray(block.askedDays) ? block.askedDays : null;
   const comparing = COMPARES.test(String(question || ''));
-  const shaped = shaper ? shaper(facts, { named, both, comparing }) : null;
+  const shaped = shaper ? shaper(facts, onMain ? { named } : { named, both, comparing }) : null;
   let lead;
   let points;
   let used;

@@ -40,7 +40,9 @@
 //      another weekend in it, refuses what it could answer, or leads with a
 //      day where it must not
 // Every row must be P but those in OPEN, which must hold the level given
-// there or better. No answer may call another day's number today's.
+// there or better. A question whose day words the reader is not sure of is
+// answered exactly as main answers it, and holds main's level in OPEN. No
+// answer may call another day's number today's.
 
 process.env.TZ = 'UTC';
 
@@ -626,6 +628,14 @@ const OPEN = {
   // A lower-case "sun" with no day word around it is the word: the week is
   // ranked.
   '1025/model': 'S',
+  // Readings the reader is not sure of (roostDayReader.dayConfidence, third
+  // recheck, 2026-11-06), each answered exactly as main answers it, at
+  // main's level: a day beside a weekend ("Saturday ... next weekend",
+  // "Happy Friday! How busy will this weekend be?", a day said before the
+  // weekend asked), and two weekends.
+  '501/model': 'F', '502/model': 'F', '503/model': 'F', '640/model': 'F', '644/model': 'F',
+  '901/model': 'S', '901/offline': 'S', '902/model': 'S', '903/model': 'S', '904/model': 'S', '907/model': 'F',
+  '911/model': 'S', '913/model': 'S', '914/model': 'S',
 };
 
 const ROWS = CASES.map(([id, q, route, clock, venue, expect, extra = {}]) => ({
