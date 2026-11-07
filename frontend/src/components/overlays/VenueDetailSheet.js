@@ -70,6 +70,9 @@ import { CrowdForecastPanel } from '../venue/ConsumerVenueCard';
 // Google's catch-alls.
 import { openStatus } from '../../lib/venueHours';
 import { displayVenueTypes, placeTypeLabel } from '../../lib/venueTypes';
+// A Birdie answer's later day, over today's forecast (planDay, below).
+import UsualNightStrip from '../venue/UsualNightStrip';
+import { isLaterDay } from '../../lib/usualNight';
 
 // The header photo and Google's credit for it, as one piece, keyed by photo
 // so each photo starts clean. A photo that fails to load becomes the
@@ -544,9 +547,19 @@ const VenueDetailSheet = ({
                       this sheet has its own way out. */}
                   {venueDetailModal.place_id && (
                     <div style={{ marginBottom: '8px' }}>
+                      {/* A LATER DAY. Opened from a Birdie card about another
+                          day (BirdiePanel's Details hands planDay over), the
+                          sheet says how busy the place usually is that day
+                          first, and the forecast under it says its bars are
+                          today's: on Thursday the chart for "the 13th" was
+                          Thursday's hours under a heading that did not say so. */}
+                      {venueDetailModal.planDay && isLaterDay(venueDetailModal.planDay.date) && venueDetailModal.planDay.usual && (
+                        <UsualNightStrip usual={venueDetailModal.planDay.usual} withDate style={{ margin: '0 2px 8px' }} />
+                      )}
                       <CrowdForecastPanel
                         key={venueDetailModal.place_id}
                         venue={venueDetailModal}
+                        planDate={venueDetailModal.planDay ? venueDetailModal.planDay.date : null}
                         HOUR_ORDERING_MIN_GAP={HOUR_ORDERING_MIN_GAP}
                         crowdColorFor={crowdColorFor}
                         crowdInkFor={crowdInkFor}

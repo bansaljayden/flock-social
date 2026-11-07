@@ -383,7 +383,7 @@ describe('one forecast, wired once', () => {
     const open = APP_SRC.slice(APP_SRC.indexOf('const openVenueDetail = useCallback'), APP_SRC.indexOf('const handleVenueQueryChange'));
     expect(open).toMatch(/Promise\.allSettled\(\[\s*getVenueDetails\(placeId\),\s*getCrowdPrediction\(placeId\),\s*\]\)/);
     expect(open).toContain("setVenueDetailCrowd({ placeId: sheetPlaceId, read: crowd ? { ...crowd, forPlaceId: sheetPlaceId } : null, loading: false, failed: crowdResult.status !== 'fulfilled' });");
-    expect(BIRDIE_SRC).toMatch(/openVenueDetail\(v\.place_id, \{ name: v\.name, formatted_address: v\.address, place_id: v\.place_id, rating: v\.rating \}\);/);
+    expect(BIRDIE_SRC).toMatch(/openVenueDetail\(v\.place_id, \{ name: v\.name, formatted_address: v\.address, place_id: v\.place_id, rating: v\.rating, \.\.\.\(v\.usual \? \{ planDay: \{ date: v\.usual\.date, usual: v\.usual \} \} : \{\}\) \}\);/);
   });
 
   test('the map card draws the same panel, with its own nearby list and way back', () => {
@@ -529,5 +529,51 @@ describe('CrowdForecastPanel', () => {
     getContext.mockImplementation(() => null);
     const { container } = render(<CrowdForecastPanel {...panelProps()} />);
     expect(dialText(container)).toBe('30%');
+  });
+});
+
+// A LATER DAY (2026-11-06). Birdie's Details from a card about another day
+// hands the sheet that day (planDay): the sheet says how busy the place usually
+// is then, over a forecast whose bars it titles as today's. On Thursday the
+// chart for "the 13th" was Thursday's hours under a heading that did not say so.
+describe('a plan for another day', () => {
+  const later = (days) => {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const usualFor = (date) => ({
+    date, weekday: new Date(`${date}T12:00:00`).getDay(), source: 'venue_pattern',
+    busiest: { start: 19, end: 21 }, hours: [{ h: 17, v: 44 }, { h: 18, v: 61 }, { h: 19, v: 75 }, { h: 20, v: 75 }, { h: 21, v: 60 }],
+  });
+
+  test('the sheet leads with that day\'s usual night and titles the bars as today\'s', () => {
+    const date = later(7);
+    const planDay = { date, usual: usualFor(date) };
+    render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { ...VENUE, planDay } })} />);
+    const strip = document.querySelector('[data-usual-night]');
+    expect(strip).toBeTruthy();
+    const dd = new Date(`${date}T12:00:00`);
+    expect(strip.textContent).toBe(`${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dd.getDay()]} ${dd.getDate()} · Usually busiest 7-9 PM`);
+    const heading = screen.getByText(/Today's Crowd by Hour/);
+    expect(follows(strip, heading)).toBe(true);
+    expect(screen.queryByText(/Expected Crowd by Hour/)).toBeNull();
+  });
+
+  test('today, or no plan, is the sheet it was', () => {
+    const today = later(0);
+    const { unmount } = render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { ...VENUE, planDay: { date: today, usual: usualFor(today) } } })} />);
+    expect(screen.getByText(/Expected Crowd by Hour/)).toBeTruthy();
+    expect(document.querySelector('[data-usual-night]')).toBeNull();
+    unmount();
+    render(<VenueDetailSheet {...sheetProps()} />);
+    expect(screen.getByText(/Expected Crowd by Hour/)).toBeTruthy();
+    expect(document.querySelector('[data-usual-night]')).toBeNull();
+  });
+
+  test('openVenueDetail keeps the plan day through the swap to Place Details', () => {
+    const open = APP_SRC.slice(APP_SRC.indexOf('const openVenueDetail = useCallback'), APP_SRC.indexOf('const handleVenueQueryChange'));
+    expect(open).toContain('...(fallbackData && fallbackData.planDay ? { planDay: fallbackData.planDay } : {}),');
   });
 });

@@ -100,6 +100,8 @@ import { venuesByMention } from '../../lib/birdieCardOrder';
 import { landingTop, awayFromEnd } from '../../lib/threadLanding';
 // A venue's deal on its card, the line a vote option draws too.
 import VenueDealLine from '../venue/VenueDealLine';
+// How busy a place usually is on the later day an answer is about.
+import UsualNightStrip from '../venue/UsualNightStrip';
 
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
@@ -611,6 +613,13 @@ export default function BirdiePanel({
                                 drawn the way a vote option draws it. */}
                             {v.deal && <VenueDealLine deal={v.deal} iconColor={colors.steel} style={{ marginTop: '6px' }} />}
 
+                            {/* A LATER DAY (backend routes/ai.js): asked about
+                                another day, the card has no number for now and
+                                carries how busy the place usually is that
+                                weekday instead, as one line with its bars. A
+                                live number, when there is one, keeps its row. */}
+                            {crowd == null && v.usual && <UsualNightStrip usual={v.usual} style={{ marginTop: '10px' }} />}
+
                             {/* Crowd row — only when Birdie actually checked */}
                             {crowd != null && (
                               <div style={{ marginTop: '10px' }}>
@@ -627,7 +636,10 @@ export default function BirdiePanel({
                             <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
                               {v.place_id && (
                                 <button className="hit44 fab-press" onClick={() => {
-                                  openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating });
+                                  // The day the answer is about rides along, so
+                                  // the sheet titles its bars Today and draws
+                                  // that day's usual night over them.
+                                  openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating, ...(v.usual ? { planDay: { date: v.usual.date, usual: v.usual } } : {}) });
                                 }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                   Details
                                 </button>

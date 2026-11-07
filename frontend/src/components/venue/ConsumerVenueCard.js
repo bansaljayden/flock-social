@@ -88,6 +88,7 @@ import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { crowdLabelFor, cardSourceLine, compactHourLabel } from '../../lib/crowd';
+import { isLaterDay } from '../../lib/usualNight';
 import { submitVenueFeedback } from '../../services/api';
 // Tables at this venue, for venues whose Flux sensor watches them. The read
 // is lib/tableSummaries.js's (one GET a minute while the card is open, its
@@ -520,6 +521,10 @@ export function CrowdForecastPanel({
   setPartySize,
   setPaywallTrigger,
   venueOwnerView = false,
+  // The day a plan is for, as YYYY-MM-DD, when the sheet was opened for one
+  // (a Birdie card about another day). The bars are always the next hours, so
+  // on another day's plan they are titled as today's.
+  planDate = null,
   // The map card's own navigation, below.
   allVenues = [],
   crowdAlternatives = [],
@@ -1066,7 +1071,7 @@ export function CrowdForecastPanel({
                         when the two clocks differ, so someone in Pennsylvania
                         reading an LA bar knows why the chart starts at 8 PM. */}
                     <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', margin: 0 }}>
-                      Expected Crowd by Hour{venueLocalTime ? <span style={{ fontWeight: '500', textTransform: 'none' }}> · {venueLocalTime} there</span> : ''}
+                      {isLaterDay(planDate) ? "Today's Crowd by Hour" : 'Expected Crowd by Hour'}{venueLocalTime ? <span style={{ fontWeight: '500', textTransform: 'none' }}> · {venueLocalTime} there</span> : ''}
                     </p>
                     {(() => {
                       if (!cd) return null; // no trend claims without a read

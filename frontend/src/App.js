@@ -6440,6 +6440,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           photo_attributions: detailPhotos
             ? (venue.photo_attributions || [])
             : ((fallbackData && fallbackData.photo_attributions) || []),
+          // The later day a Birdie card was about (BirdiePanel's Details):
+          // not a Places field, so the swap would drop it, and the sheet
+          // titles its bars Today and draws that day's usual night from it.
+          ...(fallbackData && fallbackData.planDay ? { planDay: fallbackData.planDay } : {}),
           loading: false,
         });
       } else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
