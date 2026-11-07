@@ -168,7 +168,7 @@ export default function NestHero({
         )}
       </section>
       {sameNight.length > 0 && (
-        <ul role="list" style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+        <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
           {sameNight.map((row, i) => {
             const rowId = `nest-same-${row.id}`;
             return (

@@ -67,7 +67,7 @@ export default function NestComingUp({ groups = [] }) {
       {groups.map((g, gi) => (
         <div key={g.label} style={{ marginTop: gi === 0 ? 0 : '18px' }}>
           <h3 style={{ margin: '0 0 8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>{g.label}</h3>
-          <ul role="list" style={listReset}>
+          <ul style={listReset}>
             {g.cards.map((card) => <NestPlanCard key={card.id} card={card} level={4} />)}
           </ul>
         </div>
