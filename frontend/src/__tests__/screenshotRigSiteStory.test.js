@@ -3,13 +3,16 @@
  *
  * scripts/capture-screenshots.mjs --story=site --suffix=-v3 shoots the frames
  * the website ships. The run boots a whole local stack, so, as
- * screenshotRigNotes.test.js does with writeManifest, this lifts the two pure
+ * screenshotRigNotes.test.js does with writeManifest, this lifts the pure
  * functions out of the rig's source and runs them: siteClock, which puts the
  * browser at 7 PM by moving its time zone (tools/e2e/clock.js) and turns the
- * story's wall-clock times into instants, and siteRefusal, which stops a run
+ * story's wall-clock times into instants; siteRefusal, which stops a run
  * on a Friday (Friday Night Crew would be a week out, past the venue
- * dashboard's seven days) or late in the hour. Then the source, for what a
- * run may spend and where it may write.
+ * dashboard's seven days) or late in the hour; siteCrowdCard, the crowd card
+ * the browser is given, whose hours come from the server's crowd engine; and
+ * sheetRowOf, where a plate is cut down to its sheet. Then the source, for
+ * what a run may spend, where it may write, which pictures a pool may hand
+ * out and what the map's key changes.
  * FRONTEND test (jest via react-scripts).
  */
 const fs = require('fs');
@@ -55,6 +58,105 @@ test('a run is refused on a Friday there, and in the last ten minutes of the hou
   expect(siteRefusal(friday)).toMatch(/Friday Night Crew would be a week out/);
   const late = siteClock(new Date('2026-11-07T13:52:00Z'), zoneForLocalHour);
   expect(siteRefusal(late)).toMatch(/first fifty minutes/);
+});
+
+/* THE CROWD CARD the site story serves, run as the rig runs it: its figures
+   are the rig's, its quiet hour and busiest hours the server's crowd engine's
+   (backend/services/crowdEngine.js, which the rig requires). The first -v3
+   crowd frame said "Least crowded: 11 PM" over a chart whose midnight bar was
+   lower, because a rule written in the rig looked only four hours ahead. */
+function liftConst(name) {
+  const line = new RegExp(`^const ${name} = .*;$`, 'm').exec(RIG);
+  if (line) return line[0];
+  const start = RIG.indexOf(`const ${name} = [`);
+  if (start < 0) throw new Error(`no const ${name} in the rig`);
+  return RIG.slice(start, RIG.indexOf('\n];\n', start) + 3);
+}
+function siteCrowd(clock) {
+  const src = [
+    ...['SITE_VENUES', 'SITE_FINCH_CURVE', 'siteLabel', 'siteHourLabel', 'siteOpenAt', 'DAY_NAMES', 'siteClockWords', 'siteClockNow'].map(liftConst),
+    ...['siteOpeningHours', 'siteCrowdCard'].map((n) => {
+      const start = RIG.indexOf(`function ${n}(`);
+      return RIG.slice(start, RIG.indexOf('\n}\n', start) + 2);
+    }),
+  ].join('\n');
+  // eslint-disable-next-line no-new-func
+  return new Function('SITE_CLOCK', 'crowdEngine', 'RUN_T', `${src}\nreturn { siteCrowdCard, SITE_VENUES };`)(
+    clock,
+    // eslint-disable-next-line global-require
+    require('../../../backend/services/crowdEngine'),
+    new Date('2026-11-07T13:13:41Z'),
+  );
+}
+
+test('the crowd card names the hour its own chart shows is quietest, as the server would', () => {
+  const { siteCrowdCard, SITE_VENUES } = siteCrowd(siteClock(new Date('2026-11-07T13:13:41Z'), zoneForLocalHour));
+  const finch = siteCrowdCard(SITE_VENUES.find((v) => v.key === 'finch'));
+  // 7 PM to midnight, the hours The Copper Finch is open tonight.
+  expect(finch.hourly.filter((b) => b.open).map((b) => `${b.hour} ${b.score}`))
+    .toEqual(['7 PM 78', '8 PM 82', '9 PM 80', '10 PM 58', '11 PM 38', '12 AM 44']);
+  expect([finch.bestTime, finch.bestHour, finch.bestIndex, finch.bestIsNow]).toEqual(['11 PM', '11 PM', 4, false]);
+  expect(finch.peak).toBe('8 PM - 9 PM');
+  // Every place: the bar a card marks is the lowest open bar after now.
+  for (const v of SITE_VENUES) {
+    const card = siteCrowdCard(v);
+    if (card.bestIndex == null) continue;
+    const later = card.hourly.slice(1).filter((b) => b.open).map((b) => b.score);
+    expect(`${v.key} ${card.hourly[card.bestIndex].score}`).toBe(`${v.key} ${Math.min(...later)}`);
+    expect(card.bestTime).toBe(card.hourly[card.bestIndex].hour);
+  }
+});
+
+/* A sheet's first whole row, for the cut a plate down to its sheet takes. The
+   page put the bill's sheet at 374.5 CSS px, and row 749 is that edge blended
+   with the chat behind: a crop at 44.37% (749 of 1688) leaves a seam, and the
+   cut script refuses it. */
+test('a sheet is cut at its first whole row, not at the half pixel its edge falls on', () => {
+  const start = RIG.indexOf('function sheetRowOf(');
+  // eslint-disable-next-line no-new-func
+  const sheetRowOf = new Function(`${RIG.slice(start, RIG.indexOf('\n}\n', start) + 2)}\nreturn sheetRowOf;`)();
+  const W = 8;
+  const H = 1688;
+  const frame = (firstSheetRow, blendRow) => {
+    const data = new Uint8Array(W * H * 3);
+    for (let y = 0; y < H; y += 1) {
+      const c = y >= firstSheetRow ? [31, 42, 61] : y === blendRow ? [16, 29, 36] : [8, 12, 20];
+      for (let x = 0; x < W; x += 1) data.set(c, (y * W + x) * 3);
+    }
+    return { data, width: W, height: H, channels: 3 };
+  };
+  expect(sheetRowOf(frame(750, 749), 374.5, 844)).toMatchObject({ row: 750, crop: 44.43 });
+  expect(sheetRowOf(frame(610, -1), 305, 844)).toMatchObject({ row: 610, crop: 36.14 });
+});
+
+/* THE COPPER FINCH'S PICTURES ARE ITS OWN. It drew the burger until the site
+   story gave it the dining room; the dining room stayed in the pool and in two
+   screens' themes, so another venue in an App Store or web frame could carry
+   the same picture. */
+test('no pool or theme hands another venue one of The Copper Finch\'s pictures', () => {
+  const ART = fs.readFileSync(path.resolve(__dirname, '..', '..', 'scripts', 'shot-art.mjs'), 'utf8').replace(/\r\n/g, '\n');
+  const pinned = /const PINNED = \{([\s\S]*?)\};/.exec(ART)[1];
+  const finchArt = [...pinned.matchAll(/: '([a-z-]+)'/g)].map((m) => m[1]);
+  expect(finchArt).toEqual(['dining-room', 'counter', 'stage', 'wings', 'burger']);
+  expect(ART).toContain('const COPPER_FINCH_ONLY = new Set(Object.values(PINNED));');
+  expect(ART).toContain('const ALL = VENUE_ART.map((a) => a.id).filter((id) => !COPPER_FINCH_ONLY.has(id));');
+  expect(ART).toMatch(/ids\.filter\(\(id\) => BY_ID\.has\(id\) && !COPPER_FINCH_ONLY\.has\(id\)\)/);
+  const themes = [...RIG.matchAll(/setVenueArtTheme\(page\.context\(\), \[([^\]]*)\]\)/g)]
+    .flatMap((m) => [...m[1].matchAll(/'([a-z-]+)'/g)].map((x) => x[1]));
+  expect(themes.length).toBeGreaterThan(0);
+  expect(themes.filter((id) => finchArt.includes(id))).toEqual([]);
+});
+
+/* THE MAP'S KEY, the one key a site run can be given. With it the build draws
+   still maps on any screen (the plan card's strip, the venue sheet's header
+   while its first photo decodes), so the audit takes MapTiler's pictures on
+   any frame of such a run and on none without the key, and the plans keep
+   their places' coordinates, which the strip is drawn from. */
+test('a run with the map key can shoot the plan card\'s map, and a run without it cannot show one', () => {
+  expect(RIG).toContain("if (SITE_MAP_KEY && u.startsWith('https://api.maptiler.com/')) return { u, ok: true, kind: 'map' };");
+  expect(RIG).not.toMatch(/shot\.map && u\.startsWith/);
+  expect(RIG).toMatch(/INSERT INTO flocks \(name, creator_id, venue_id, venue_name, venue_address, venue_latitude, venue_longitude,/);
+  expect(RIG).toContain('spot ? spot.latitude : null, spot ? spot.longitude : null,');
 });
 
 test('the site story can reach no paid service, and writes nowhere the site ships from', () => {

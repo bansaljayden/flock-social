@@ -442,8 +442,11 @@ const PINNED = {
 /* Which pictures a screen draws from. A search for pizza that shows croissants
    and ice cream reads as broken, so a driver can narrow the pool to pictures
    that fit what its screen is about (setVenueArtTheme). Without a theme every
-   picture except the burger and the Copper Finch's own three is in play. */
-const COPPER_FINCH_ONLY = new Set(['burger', 'counter', 'stage', 'wings']);
+   picture except the Copper Finch's five (its dining room, its logo's burger
+   and its three further photos) is in play, so no other venue in a frame
+   carries The Copper Finch's picture, and setVenueArtTheme drops the five
+   from any theme that names one. */
+const COPPER_FINCH_ONLY = new Set(Object.values(PINNED));
 const ALL = VENUE_ART.map((a) => a.id).filter((id) => !COPPER_FINCH_ONLY.has(id));
 
 /* Same venue, same picture, for the whole run (every size and theme pass), and
@@ -466,9 +469,11 @@ function artIdForRef(ref, theme) {
   return assigned.get(key);
 }
 
-/* Narrow the pictures for every page in `context` to `ids` (null for all). */
+/* Narrow the pictures for every page in `context` to `ids` (null for all).
+   The Copper Finch's own pictures never join a pool, whatever a theme names. */
 export function setVenueArtTheme(context, ids) {
-  context.__venueArtTheme = ids && ids.length ? ids.filter((id) => BY_ID.has(id)) : null;
+  const pool = ids && ids.length ? ids.filter((id) => BY_ID.has(id) && !COPPER_FINCH_ONLY.has(id)) : [];
+  context.__venueArtTheme = pool.length ? pool : null;
 }
 
 /* Hand out the current pool's pictures to `refs` in that order. A list asks for

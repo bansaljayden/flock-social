@@ -35,7 +35,11 @@
  * --only narrows it to some frames. SHOTS_MAPTILER_KEY, the map's browser
  * key, is the one key it can be given: with it the build draws the map and
  * the site story shoots the Discover map (map-crowd) where it otherwise
- * shoots the search list (crowd-list).
+ * shoots the search list (crowd-list). A map frame ships with the site's own
+ * credit for the map beside it: the footer's MapTiler and OpenStreetMap line
+ * (SiteFooter.js; siteFooter.test.js asks for it once a map frame is wired)
+ * and WIRING.md's words for the map. The frames carry MapTiler's credit too,
+ * at a size nobody reads.
  *
  * --viewport and --scale shoot every screen asked for at one size of your own
  * instead of the sets (430x932 at 3 is 1290x2796, an App Store 6.9-inch
@@ -110,6 +114,11 @@ const requireFrontend = createRequire(path.join(FRONTEND_DIR, 'package.json'));
 
 const { Client } = requireBackend('pg');
 const bcrypt = requireBackend('bcryptjs');
+// The server's crowd engine (it requires nothing but its venue-clock helper).
+// The site story's crowd card takes its quiet hour and its busiest hours from
+// the same functions GET /api/crowd/:placeId calls (siteCrowdCard), so a frame
+// cannot name an hour the app would not.
+const crowdEngine = requireBackend('./services/crowdEngine');
 // The browser suite's clock helper (a local hour, by moving the time zone),
 // shared rather than copied so the two rigs cannot drift apart.
 const { zoneForLocalHour } = createRequire(import.meta.url)('../../tools/e2e/clock.js');
@@ -849,8 +858,14 @@ const sitePhoto = (ref, w = 400) => `/api/venues/photo?ref=${ref}&maxwidth=${w}`
    tomorrow, the acoustic night on Friday), and its logo, a fifth picture. */
 const SITE_FINCH_PHOTOS = ['shots-copper-finch', 'shots-copper-finch-counter', 'shots-copper-finch-wings', 'shots-copper-finch-stage'];
 const SITE_FINCH_LOGO = sitePhoto('shots-copper-finch-logo');
-// The Copper Finch's usual day by hour; hours it is shut are absent.
-const SITE_FINCH_CURVE = { 11: 24, 12: 41, 13: 37, 14: 22, 15: 19, 16: 27, 17: 46, 18: 63, 19: 78, 20: 82, 21: 74, 22: 58, 23: 41, 0: 26 };
+/* The Copper Finch's usual day by hour; hours it is shut are absent. The
+   dinner rush runs 8 to 9 (the two within the engine's three points of each
+   other, so the card's busiest hours are both), the room is quietest at 11,
+   and the late kitchen picks up again at midnight. The card's quiet hour is
+   the engine's pick, the quietest open hour left tonight outside the rush, so
+   a quieter midnight would be named instead: the first -v3 curve had one
+   (26), under a card that said 11 PM. */
+const SITE_FINCH_CURVE = { 11: 24, 12: 41, 13: 37, 14: 22, 15: 19, 16: 27, 17: 46, 18: 63, 19: 78, 20: 82, 21: 80, 22: 58, 23: 38, 0: 44 };
 // The crowd service's own ladder (backend services/crowdEngine.js getLabel).
 const siteLabel = (s) => (s <= 20 ? 'Quiet' : s <= 39 ? 'Not Busy' : s <= 69 ? 'Steady' : s <= 84 ? 'Busy' : 'Packed');
 const siteHourLabel = (h) => { const x = ((h % 24) + 24) % 24; return x === 0 ? '12 AM' : x < 12 ? `${x} AM` : x === 12 ? '12 PM' : `${x - 12} PM`; };
@@ -905,22 +920,46 @@ const siteClockNow = () => ({ hour: SITE_CLOCK.hour, day: SITE_CLOCK.dow, utcOff
    from the rule engine: what is typical for a place like it, which the card
    says in so many words ("An estimate from typical patterns for this kind of
    place."), and which is why its label is hedged ("Usually busy"). No
-   numberSource: none is sent for a rule-engine number. */
+   numberSource: none is sent for a rule-engine number.
+   The figures are written here; what the card says about them is not. The
+   route hands the engine a 24-hour forecast from the venue's hour and the
+   venue's hours by weekday, takes the busiest hours off the first twelve
+   (findPeakTime) and the quiet hour off every open hour left tonight
+   (recommendBestTime, where 12 AM after a 7 PM "now" is the same night), and
+   draws the twelve with each bar's open flag. This does the same with the
+   same functions. A hand-written rule here once looked four hours ahead and
+   put "Least crowded: 11 PM" over a chart whose midnight bar was lower. */
 function siteCrowdCard(v) {
   const now = SITE_CLOCK.hour;
+  const day = SITE_CLOCK.dow;
   const curve = v.key === 'finch' ? SITE_FINCH_CURVE : null;
-  const hourly = Array.from({ length: 12 }, (_, i) => {
+  // The venue as routes/crowd.js shapes it from Place Details: its hours from
+  // the same periods the search row carries.
+  const venue = {
+    types: v.types,
+    price_level: v.price,
+    ...crowdEngine.venueHoursForDay(siteOpeningHours(v).periods, day),
+    isOpen: siteOpenAt(v, now),
+  };
+  const fullDay = Array.from({ length: 24 }, (_, i) => {
     const h = (now + i) % 24;
     const open = siteOpenAt(v, h);
     const score = !open ? 6 : curve && curve[h] != null ? curve[h] : Math.max(8, Math.round(v.score - Math.abs(i - 1) * 7));
-    return { hour: siteHourLabel(h), score, label: siteLabel(score), predictionMethod: 'rule_engine', open };
+    return { hour: siteHourLabel(h), score, label: siteLabel(score), predictionMethod: 'rule_engine' };
   });
+  const bars = fullDay.slice(0, 12);
+  const barClock = crowdEngine.stripClock(bars, now);
+  const hourly = bars.map((b, i) => ({
+    ...b,
+    open: i === 0 ? venue.isOpen : crowdEngine.isOpenAt(venue, barClock[i].hour, day + barClock[i].dayOffset),
+  }));
   const score = v.score;
-  let peakIdx = 0;
-  hourly.forEach((b, i) => { if (b.open && b.score > hourly[peakIdx].score) peakIdx = i; });
-  const later = hourly.map((b, i) => ({ ...b, i })).filter((b) => b.i > 0 && b.open && b.i <= 4);
-  const quiet = later.reduce((a, b) => (b.score < a.score ? b : a), later[0] || hourly[0]);
-  const bestIsNow = !quiet || quiet.score >= score - 8;
+  const peak = crowdEngine.findPeakTime(bars, venue, { startDay: day });
+  const best = crowdEngine.recommendBestTime(fullDay, venue, peak.startIdx, peak.endIdx, venue.isOpen, {
+    currentHour: now,
+    currentDay: day,
+    currentScore: score,
+  });
   return {
     placeId: v.id,
     name: v.name,
@@ -933,19 +972,21 @@ function siteCrowdCard(v) {
     confidenceMeans: 'input_completeness',
     supported: false,
     capacity: null,
-    bestTime: bestIsNow ? (score > 69 ? "Now, but it's busy" : 'Now is good') : quiet.hour,
-    peak: `${hourly[Math.max(0, peakIdx - 1)].hour} - ${hourly[Math.min(11, peakIdx + 1)].hour}`,
+    // routes/crowd.js bestTimeFields: the hour named, and the bar it names
+    // when that bar is one of the twelve drawn.
+    bestTime: best.text,
+    peak: peak.text,
     waitEstimate: score < 40 ? 'No wait' : score <= 55 ? '~5 min' : score <= 69 ? '10-20 min' : score <= 84 ? '20-35 min' : '35+ min',
     venueTypes: v.types,
     priceLevel: v.price,
-    isOpen: siteOpenAt(v, now),
-    openHour: v.open,
-    closeHour: v.close,
-    hoursToday: [],
+    isOpen: venue.isOpen,
+    openHour: venue.openHour,
+    closeHour: venue.closeHour,
+    hoursToday: venue.hoursToday,
     hourly,
-    bestHour: bestIsNow ? null : quiet.hour,
-    bestIndex: bestIsNow ? null : quiet.i,
-    bestIsNow,
+    bestHour: best.dayOffset === 0 ? best.hourLabel : null,
+    bestIndex: (best.dayOffset === 0 && best.index >= 0 && best.index < hourly.length && best.hourLabel) ? best.index : null,
+    bestIsNow: best.hourLabel == null,
     factors: [],
     calibration: { feedbackUsed: false, reportCount: 0, predictionDrift: 0 },
     dataSourcesUsed: [],
@@ -1113,11 +1154,17 @@ async function seedSite(dbUrl) {
   await q(`INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source) VALUES ${week.join(',')} ON CONFLICT DO NOTHING`);
 
   // ---- The plans ------------------------------------------------------------
+  // Each plan keeps its place's coordinates, as a plan whose venue was picked
+  // from a search does: with the map's key the plan card heads the venue with
+  // the block it is on (FlockDetail.js), and without the key nothing reads
+  // them (StaticVenueMap draws nothing; "who is here" needs shared positions).
   const mkPlan = async (p) => {
+    const spot = p.venue ? siteLocation(p.venue) : null;
     const r = await q(
-      `INSERT INTO flocks (name, creator_id, venue_id, venue_name, venue_address, venue_photo_url, venue_rating, event_time, status, budget_enabled, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING id`,
+      `INSERT INTO flocks (name, creator_id, venue_id, venue_name, venue_address, venue_latitude, venue_longitude, venue_photo_url, venue_rating, event_time, status, budget_enabled, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING id`,
       [p.name, p.host, p.venue ? p.venue.id : null, p.venue ? p.venue.name : null, p.venue ? p.venue.addr : null,
+        spot ? spot.latitude : null, spot ? spot.longitude : null,
         p.photo || null, p.venue ? p.venue.rating : null, p.when, p.status, !!p.budget, p.created]
     );
     const id = r.rows[0].id;
@@ -1879,8 +1926,9 @@ const DRIVERS = {
     await settle(page, { quiet: 2500 });
   },
   async crowd(page) {
-    // Pictures that fit a list of pizza places.
-    setVenueArtTheme(page.context(), ['pizza', 'storefront', 'dining-room']);
+    // Pictures that fit a list of pizza places. Not the dining room: that is
+    // The Copper Finch's own picture (shot-art.mjs PINNED).
+    setVenueArtTheme(page.context(), ['pizza', 'storefront']);
     await tab(page, 'Discover').click();
     await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
     const search = page.locator('#search-input');
@@ -1907,8 +1955,9 @@ const DRIVERS = {
     await settle(page, { quiet: 800 });
   },
   async birdie(page) {
-    // Pictures that fit an answer about dinner for six.
-    setVenueArtTheme(page.context(), ['dining-room', 'pizza', 'noodles', 'tacos', 'sushi', 'salad', 'storefront']);
+    // Pictures that fit an answer about dinner for six (the dining room is
+    // The Copper Finch's own).
+    setVenueArtTheme(page.context(), ['pizza', 'noodles', 'tacos', 'sushi', 'salad', 'storefront']);
     await tab(page, 'Nest').click();
     // Birdie is a section of the Nest's page (components/nest/
     // NestBirdieSection.js); its field is the way in. An account that has not
@@ -2757,7 +2806,7 @@ async function installSiteStubs(context) {
    plate it is (landingAnnotations.js), measured as it is shot. */
 const SITE_SHOTS = [
   { id: 'nest', driver: 'nest', pass: 'main', nav: true, title: "The Nest: tonight's plan, what needs you, who is out tonight" },
-  { id: 'crowd-dial', driver: 'crowd-dial', pass: 'main', title: "The Copper Finch's crowd forecast: usually busy at 78, and the next twelve hours" },
+  { id: 'crowd-dial', driver: 'crowd-dial', pass: 'main', title: "The Copper Finch's crowd forecast: usually busy at 78, quietest at 11 PM, hour by hour until it closes" },
   { id: 'still-in', driver: 'stillin', frame: 'roster', pass: 'main', title: 'Trivia Night on the night: two of three already still in' },
   { id: 'birdie-pick', driver: 'birdie-pick', pass: 'main', nav: true, title: 'Birdie, asked for somewhere cheaper for five, answers with Bluewing Diner' },
   SITE_MAP_KEY
@@ -3016,7 +3065,11 @@ const SITE_DRIVERS = {
     await settle(page, { quiet: 900 });
   },
   /* THE VENUE SHEET from the chat's venue card, scrolled to Happening here:
-     each event over one of the venue's own (drawn) photos. */
+     each event over one of the venue's own (drawn) photos. The block above
+     the section (the crowd forecast) goes wholly under the sheet's fixed
+     photo, so the section opens under the photo by its own 8px margin;
+     scrolled to the heading with a gap, the forecast's rounded bottom edge
+     showed as a strip between the two, a card cut off. */
   async 'venue-card'(page, shoot) {
     await openSiteChat(page, DEMO.flockName);
     await settle(page);
@@ -3028,7 +3081,24 @@ const SITE_DRIVERS = {
     await heading.waitFor({ timeout: 15000 });
     await blurAll(page);
     await settle(page, { quiet: 1200 });
-    await scrollInBox(heading, 16);
+    const above = await heading.evaluate((el) => {
+      let box = el.parentElement;
+      while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+      if (!box) return null;
+      // The section the heading opens, and the block before it.
+      let section = el;
+      while (section.parentElement && section.parentElement !== box && !section.previousElementSibling) section = section.parentElement;
+      const prev = section.previousElementSibling;
+      if (!prev) return null;
+      box.scrollTop += Math.ceil(prev.getBoundingClientRect().bottom - box.getBoundingClientRect().top);
+      return Math.round((prev.getBoundingClientRect().bottom - box.getBoundingClientRect().top) * 10) / 10;
+    });
+    if (above == null) {
+      log('  venue-card: no block above Happening here; scrolled to the heading');
+      await scrollInBox(heading, 16);
+    } else if (above > 0) {
+      throw new Error(`the block above Happening here still shows ${above}px under the photo`);
+    }
     await settle(page, { quiet: 900 });
     await shoot('events');
     return true;
@@ -3039,8 +3109,9 @@ const SITE_DRIVERS = {
    that fails is not written.
    - Pictures: every visible <img>, <image>, <source> and CSS background is
      the rig's own page, a data: or blob: URL, the photo proxy asked for one
-     of the rig's drawings (a shots-* ref), the map's tiles and its pin (map
-     frames only). A Places photo name, a Google host or the generated
+     of the rig's drawings (a shots-* ref), or, in a run given the map's key,
+     MapTiler's tiles and still maps on any frame (the still map's pin is
+     Flock's own file). A Places photo name, a Google host or the generated
      photo-real cover (/venue-covers/) fails it, and so does anything else.
    - Words: no element whose own text is a LIVE or ESTIMATED badge (the shapes
      noLiveDotLabel.test.js refuses), and no real business from the earlier
@@ -3107,7 +3178,10 @@ async function auditSiteFrame(page, shot) {
     }
     if (own && pathOf(u).startsWith('/venue-covers/')) return { u, ok: false, kind: 'photo-real-cover' };
     if (u.startsWith(`${WEB_ORIGIN}/`)) return { u, ok: true, kind: 'site' };
-    if (shot.map && u.startsWith('https://api.maptiler.com/')) return { u, ok: true, kind: 'map' };
+    // The map's tiles, and the still maps a build with the key draws on any
+    // screen: the plan card's strip, the venue sheet's header while its first
+    // photo decodes. Only with the key; without it no request leaves for them.
+    if (SITE_MAP_KEY && u.startsWith('https://api.maptiler.com/')) return { u, ok: true, kind: 'map' };
     if (/^https:\/\/www\.flockcorp\.com\/map\/pin-[a-z0-9-]+\.svg$/.test(u)) return { u, ok: true, kind: 'map-pin' };
     return { u, ok: false, kind: 'foreign' };
   });
@@ -3141,7 +3215,8 @@ async function auditSiteFrame(page, shot) {
    a leader that ends on it would stop short). `boxes` is what the plates use,
    `dom` the page's boxes, `texts` every line of text in the frame (for placing
    a note's number where it covers none), `sheetTop` a sheet's top edge in CSS
-   px, for cutting a plate down to its sheet. Specs:
+   px and `sheetRow` its first whole row in the capture (sheetRowOf), for
+   cutting a plate down to its sheet: the crop is sheetRow's. Specs:
      text / texts   the characters of one needle, or of several, unioned
      row            only the hits on the same line as that needle
      exact          a text node that is the needle and nothing else
@@ -3274,6 +3349,7 @@ async function measureAnchors(page, kind) {
       result[s.key] = rect ? pct(rect) : null;
       if (s.box === 'sheet' && rect) result.sheetTop = Math.round(rect.top * 100) / 100;
     }
+    result.viewH = H;
     // Every line of text on screen, for placing the phone's numbers: the text
     // that is on top where it is drawn, not what a sheet or a scrim covers.
     const texts = [];
@@ -3296,6 +3372,29 @@ async function measureAnchors(page, kind) {
   const missing = spec.filter((s) => !out[s.key]).map((s) => s.key);
   if (missing.length) log(`  anchors ${kind}: not found on the page: ${missing.join(', ')}`);
   return out;
+}
+
+/* A sheet's first whole row in the capture, for cutting a plate down to its
+   sheet: the first row from the page's edge for it whose pixel a quarter of
+   the way across (clear of the rounded corner and the grab handle) is the
+   sheet's own colour, read eight rows inside it. The page can put that edge
+   on a half pixel (the bill's at 374.5), and the row there is the edge
+   blended with what is behind, so a cut at the page's figure (749 of 1688,
+   44.37%) leaves a seam where the first whole row (750, 44.43%) does not.
+   Device pixels, and the crop it makes in percent to two decimals. */
+function sheetRowOf(img, sheetTopCss, viewH) {
+  const { data, width: W, height: H, channels: C } = img;
+  const x = Math.round(W / 4);
+  const at = (y) => { const i = (y * W + x) * C; return [data[i], data[i + 1], data[i + 2]]; };
+  const top = Math.floor(sheetTopCss * (H / viewH));
+  const fill = at(Math.min(H - 1, top + 8));
+  for (let y = Math.max(0, top - 2); y < Math.min(H, top + 8); y += 1) {
+    const p = at(y);
+    if (Math.abs(p[0] - fill[0]) + Math.abs(p[1] - fill[1]) + Math.abs(p[2] - fill[2]) <= 3) {
+      return { row: y, crop: Math.round(y / H * 10000) / 100, fill };
+    }
+  }
+  return null;
 }
 
 /* The pixels of a text or an icon inside the box the page gave it, grown by
@@ -3350,8 +3449,12 @@ async function snapSite(page, shot, frames, report) {
       boxes[s.key] = s.ink ? inkBox(img, dom[s.key], s.pad) : dom[s.key];
       how[s.key] = s.ink ? 'ink' : 'element';
     }
-    const { texts, sheetTop, ...domBoxes } = dom;
-    report.anchors[shot.anchors] = { frame: shot.id, boxes, how, dom: domBoxes, sheetTop: sheetTop ?? null, texts };
+    const { texts, sheetTop, viewH, ...domBoxes } = dom;
+    report.anchors[shot.anchors] = {
+      frame: shot.id, boxes, how, dom: domBoxes, sheetTop: sheetTop ?? null,
+      sheetRow: sheetTop == null ? null : sheetRowOf(img, sheetTop, viewH),
+      texts,
+    };
   }
   if (audit.problems.length) throw new Error(`refused by the audit: ${audit.problems.slice(0, 4).join('; ')}`);
   frames.set(shot.id, raw);
@@ -3440,6 +3543,7 @@ async function captureSite(dbUrl, seeded) {
   await exportSite(sharp, frames, report);
   reportOverflow();
   log(`site story: ${kept} of ${wanted.length} frame(s) kept${failures.length ? `, ${failures.length} FAILURES` : ''}`);
+  if (SITE_MAP_KEY) log('site story: the map was drawn; a map frame ships with the footer\'s MapTiler and OpenStreetMap line (SiteFooter.js, siteFooter.test.js) and WIRING.md\'s words for it');
   for (const f of failures) log(`  FAIL ${f}`);
   if (failures.length) process.exitCode = 1;
 }
@@ -3447,9 +3551,12 @@ async function captureSite(dbUrl, seeded) {
 /* THE SHIPPED NAMES, cut from each frame's master: <frame>-dark<suffix>@2x.webp
    (780 wide, quality 82) and -480w.webp (480 wide, lanczos3), and for the
    home screen the PNG fallback (full colour: a 256-colour palette bands the
-   drawings) and the reel's AVIF, which siteSpeedPass.test.js holds under
-   40,000 bytes. Beside them: the audit, the anchors, a manifest of what was
-   written and a contact sheet of every frame. */
+   drawings and dithers the painted birds) and the reel's AVIF, which
+   siteSpeedPass.test.js holds under 40,000 bytes. `palette: false` is said
+   outright: sharp turns the palette on whenever a PNG is given an `effort`,
+   which is how the first -v3 PNG came out at 253 colours. Beside them: the
+   audit, the anchors, a manifest of what was written and a contact sheet of
+   every frame. */
 async function exportSite(sharp, frames, report) {
   const written = [];
   const put = async (file, buf, extra) => {
@@ -3466,7 +3573,7 @@ async function exportSite(sharp, frames, report) {
     await put(`${base}@2x.webp`, await sharp(raw).webp({ quality: 82 }).toBuffer(), { screen: shot.id, title: shot.title });
     await put(`${base}-480w.webp`, await sharp(raw).resize(480, null, { kernel: 'lanczos3' }).webp({ quality: 82 }).toBuffer(), { screen: shot.id, title: shot.title });
     if (shot.id === 'nest') {
-      await put(`${base}@2x.png`, await sharp(raw).png({ compressionLevel: 9, effort: 10 }).toBuffer(), { screen: shot.id, title: shot.title });
+      await put(`${base}@2x.png`, await sharp(raw).png({ compressionLevel: 9, palette: false }).toBuffer(), { screen: shot.id, title: shot.title });
       let avif = null;
       for (let quality = 50; quality >= 30; quality -= 4) {
         avif = await sharp(raw).flatten({ background: '#000000' }).removeAlpha().avif({ quality, effort: 9 }).toBuffer();
