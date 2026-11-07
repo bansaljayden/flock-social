@@ -15826,7 +15826,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const handleEmergencyAlert = useCallback(async () => {
     if (trustedContacts.length === 0 && trustedContactsLoaded) {
-      showToast("Add a trusted contact first. It's under You, then Safety.", 'error');
+      showToast("Add a trusted contact first. It's under You, then SOS and safety.", 'error');
       return;
     }
     // An EMPTY list because the read failed is not the same zero as nobody
@@ -16059,7 +16059,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadTrustedContacts();
         return;
       }
-      showToast("Add a trusted contact first. It's under You, then Safety.", 'error');
+      showToast("Add a trusted contact first. It's under You, then SOS and safety.", 'error');
       return;
     }
     if (!geolocationAvailable()) {

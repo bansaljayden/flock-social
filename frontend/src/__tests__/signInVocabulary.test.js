@@ -156,8 +156,24 @@ describe('the Safety screen has one name for its list', () => {
 
   test('the two no-contacts toasts say where the list is', () => {
     const toasts = COPY.filter((s) => s.file === 'frontend/src/App.js'
-      && s.value === "Add a trusted contact first. It's under You, then Safety.");
+      && s.value === "Add a trusted contact first. It's under You, then SOS and safety.");
     expect(toasts).toHaveLength(2);
+  });
+
+  // The row and its screen are SOS and safety since the settings went to
+  // sentence case (2026-11-06), and the toasts, the server's no-reachable-
+  // contact errors and the privacy policy with its crawler copy still sent
+  // people to a Safety label that is no longer on screen.
+  test('nothing a person reads sends them to a Safety row or screen that is no longer there', () => {
+    const hits = COPY
+      .filter((s) => /\bthen Safety\b|\bthe Safety screen\b/.test(s.value))
+      .map((s) => `${s.file}:${s.line} ${JSON.stringify(s.value.trim().slice(0, 100))}`);
+    expect(hits).toEqual([]);
+    const said = COPY.filter((s) => /under You, then SOS and safety\./.test(s.value)).map((s) => s.file);
+    expect(said.filter((f) => f === 'frontend/src/App.js')).toHaveLength(2);
+    expect(said.filter((f) => f === 'backend/routes/safety.js')).toHaveLength(2);
+    expect(COPY.filter((s) => /the SOS and safety screen/.test(s.value)).map((s) => s.file).sort())
+      .toEqual(['frontend/api/marketing-page.js', 'frontend/api/marketing-page.js', 'frontend/src/website/PrivacyPolicy.js', 'frontend/src/website/PrivacyPolicy.js']);
   });
 });
 

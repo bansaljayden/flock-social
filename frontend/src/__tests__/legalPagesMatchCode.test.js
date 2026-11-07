@@ -601,7 +601,7 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(safety).toMatch(/email_deliverable/);
     const app = APP_SOURCE;
     expect(app).toMatch(/c\.email_deliverable === false/);
-    expect(privacy).toMatch(/the Safety screen marks a trusted contact whose address has been failing/);
+    expect(privacy).toMatch(/the SOS and safety screen marks a trusted contact whose address has been\s+failing/);
   });
 
   test('the suppression check fails open, and the policy admits it', () => {

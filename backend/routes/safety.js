@@ -1584,7 +1584,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       if (!contacts.rows.some((c) => isMailableAddress(c.contact_email))) {
         await client.query('ROLLBACK');
         return res.status(400).json({
-          error: `None of your trusted contacts have an email address that can receive mail, so the alert cannot reach anyone. Add an email to a contact under You, then Safety. ${CALL_911}`,
+          error: `None of your trusted contacts have an email address that can receive mail, so the alert cannot reach anyone. Add an email to a contact under You, then SOS and safety. ${CALL_911}`,
           unreachableContacts: true,
         });
       }
@@ -2341,7 +2341,7 @@ router.post('/share-location', authenticate, async (req, res) => {
       // window on a share that could never have been delivered.
       shareCooldowns.set(req.user.id, last);
       return res.status(400).json({
-        error: 'None of your trusted contacts have an email address that can receive mail, so there is nowhere to send this. Add an email to a contact under You, then Safety.',
+        error: 'None of your trusted contacts have an email address that can receive mail, so there is nowhere to send this. Add an email to a contact under You, then SOS and safety.',
         unreachableContacts: true,
       });
     }

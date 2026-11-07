@@ -525,7 +525,7 @@ describe('the safety screen, which is the one that matters most', () => {
     // the authority on the list, answer (its zero-contact refusal names 911).
     const alert = region(APP, 'const handleEmergencyAlert = useCallback', 'cancelSosLocationFollowUp();');
     expect(alert).toMatch(/trustedContacts\.length === 0 && trustedContactsLoaded/);
-    expect(alert).toMatch(/Add a trusted contact first\. It's under You, then Safety\./);
+    expect(alert).toMatch(/Add a trusted contact first\. It's under You, then SOS and safety\./);
     expect(alert).not.toMatch(/return;\s*\}\s*\}/);
   });
 
