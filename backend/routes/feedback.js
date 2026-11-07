@@ -576,7 +576,10 @@ router.post('/',
       // exactly one row. The cap is therefore "10 DISTINCT venues an hour", not
       // "10 requests an hour" — request volume is the general apiLimiter's job
       // (server.js). That is the intended trade: corrections are free, breadth
-      // is not, and breadth is what steering a venue's numbers requires.
+      // is not, and breadth is what steering a venue's numbers requires. One
+      // exception, on purpose: an answer on a plan that does not count is
+      // filed beside the member's counted answer on that plan rather than
+      // over it (the plan-window dedupe below), so that pair holds two rows.
       const client = await pool.connect();
       let inserted;
       let refusal = null;
