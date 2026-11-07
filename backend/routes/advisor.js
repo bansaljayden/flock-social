@@ -1223,7 +1223,11 @@ async function pastDayRefusal(b, target) {
   if (today && target.date) {
     const enters = daysBetween(today, target.date) - 6;
     const name = WEEKDAY_NAMES_LONG[weekdayOf(addDaysTo(today, enters))];
-    if (enters === 1) comesIn = 'tomorrow';
+    // In the small hours the day it comes in is named, never "tomorrow": the
+    // owner still in last night could hear tomorrow as the calendar's today,
+    // as a question's "tomorrow" is read both ways then (seventh recheck,
+    // 2026-11-07).
+    if (enters === 1 && !await inSmallHours(b)) comesIn = 'tomorrow';
     else comesIn = enters >= 7 ? `on ${name} next week` : `on ${name}`;
   }
   return advisorFacts.dayPastForecastRefusal({ day, comesIn });

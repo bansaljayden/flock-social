@@ -4345,6 +4345,23 @@ test('the refusal for a weekend past the seven days never names today as the day
   }));
 });
 
+test('in the small hours a day past the seven days comes into them on a day said by name, never "tomorrow", which the owner still up could hear as today', async () => {
+  // It said "Sunday next week is past the seven days the forecast covers. It
+  // comes into them tomorrow." at 12:30 AM on a Sunday, with Saturday night
+  // still running, where it comes into them on Monday.
+  await withNightCurve('ChIJr9ComesInSmallHours0', () => pinnedAt('2026-11-08T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'How slow will Sunday be next week?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. Sunday next week is past the seven days the forecast covers. It comes into them on Monday.');
+  }));
+  // Past the small hours it is said as before.
+  await withNightCurve('ChIJr9ComesInAfternoon00', () => pinnedAt('2026-11-08T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'How slow will Sunday be next week?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. Sunday next week is past the seven days the forecast covers. It comes into them tomorrow.');
+  }));
+});
+
 test('in the small hours of a Friday next weekend is the coming one for every venue, as main reads its days, with crowd history and without', async () => {
   // At 12:30 AM on a Friday the bar with its own curve answered the coming
   // weekend, Nov 6 to 8, and the bar answered from its card said next weekend
