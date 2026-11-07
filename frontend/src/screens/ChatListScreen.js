@@ -405,7 +405,10 @@ export default function ChatListScreen({
                 // versions measured 2.02:1 ("Voting") to 2.28:1. These tokens are
                 // theme-aware and clear 4.5:1 on both the light and dark card.
                 const statusTextColor = f.status === 'completed' ? 'var(--accent-blue-text)' : f.status === 'cancelled' ? 'var(--text-secondary)' : f.status === 'confirmed' ? 'var(--accent-green-text)' : f.status === 'voting' ? 'var(--accent-amber-text)' : 'var(--accent-purple-text)';
-                const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.status === 'confirmed' ? 'Confirmed' : f.status === 'voting' ? 'Voting' : 'Planning';
+                // A locked-in plan is Locked in here as on the Nest, the plan
+                // screen, the chat's header and the guest page, where this chip
+                // alone called it Confirmed.
+                const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.status === 'confirmed' ? 'Locked in' : f.status === 'voting' ? 'Voting' : 'Planning';
 
                 return (
                   <div key={`flock-${f.id}`} style={{ display: 'flex', alignItems: 'stretch', gap: '0', marginBottom: '6px' }}>

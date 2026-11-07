@@ -43,5 +43,5 @@ test('a new plan counts only the host as going, and a cancelled plan reads as fi
   const detail = read('screens/FlockDetail.js');
   expect(create).toContain("members: [], invited: invitedNames, memberCount: 1,");
   expect(detail).toContain("const isCompleted = flock.status === 'completed' || flock.status === 'cancelled';");
-  expect(detail).toContain("{isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked In' : 'Planning'}");
+  expect(detail).toContain("{isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked in' : 'Planning'}");
 });

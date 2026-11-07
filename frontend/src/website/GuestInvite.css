@@ -874,11 +874,12 @@
   margin-top: 8px;
 }
 
+/* A venue row's tags, Locked in and Your vote, are in sentence case: the
+   app says a plan's status that way everywhere (the Nest, the plan screen,
+   the chat list), where this rule set them in capitals. */
 .gi-tag {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
   color: var(--gi-accent);
 }
 

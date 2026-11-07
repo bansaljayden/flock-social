@@ -8,7 +8,7 @@
  * routes/feedback.js then verified a member's report only while the plan's
  * time was within 12 hours, the same 12 hours the sweep waits. So on the usual
  * path the question appeared just after the answer stopped counting, and the
- * Nest went on calling last night's plan "Locked In" all morning.
+ * Nest went on calling last night's plan "Locked in" all morning.
  *
  * An hour after the plan's time is the earliest a report says something about
  * the night rather than about the door. From then on the plan screen asks, and

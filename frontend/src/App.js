@@ -13446,7 +13446,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           time: data.eventTime ? formatEventTime(data.eventTime) : 'TBD',
           eventTime: data.eventTime || null,
           // 'voting', the client's word for planning: 'planning' printed as
-          // "Locked In" on the optimistic row after an accept.
+          // "Locked in" on the optimistic row after an accept.
           status: 'voting',
           venue: data.venueName || 'TBD',
           messages: [],
@@ -18092,7 +18092,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     //
     // askHowItWas: a locked-in plan whose night was last night and that the
     // reader has not rated (lib/planNight.js nestAsksHowItWas). Its chip read
-    // "Locked In" until the sweep completed it the next day; then, from an
+    // "Locked in" until the sweep completed it the next day; then, from an
     // hour in, the hero asked "How was {venue}?" of a night the reader was
     // most likely still at. Now the Nest asks the morning after, from the
     // 4 AM roll, and the tap opens the plan screen, where the "How was

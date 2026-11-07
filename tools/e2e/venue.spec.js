@@ -748,7 +748,7 @@ test('only the host can lock the plan in, and locking it changes what everyone s
   await bravo.page.reload();
   await openDetail(bravo.page);
   await expect(bravo.page.getByText('Planning', { exact: true })).toHaveCount(0);
-  await expect(bravo.page.getByText('Locked In', { exact: true })).toBeVisible();
+  await expect(bravo.page.getByText('Locked in', { exact: true })).toBeVisible();
 
   expect(errors).toEqual([]);
   for (const p of [alpha, bravo, charlie]) await p.context.close();

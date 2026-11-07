@@ -340,7 +340,7 @@ export default function FlockDetail({
           {/* Status badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'rgba(34,197,94,0.25)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? '#86efac' : '#fcd34d' }}>
-              {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked In' : 'Planning'}
+              {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked in' : 'Planning'}
             </span>
             {/* WHEN, once, and for the host the way to change it. This pill
                 is the only place in the app where a plan's time can be set
