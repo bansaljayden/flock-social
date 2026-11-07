@@ -1407,10 +1407,11 @@ function lockForecastResult(result, { salesOff = false } = {}) {
 // WHAT A TOOL HANDS THE CARDS AND NOT THE MODEL. A tool result is two things:
 // the model's material for its answer, sent to Gemini whole, and the source of
 // the venue cards under that answer. Some things belong on a card and not in
-// the model's hands, like the bars of a usual night: numbers the rules give it
-// no way to word as anything but that night's crowd. They ride under this
-// symbol, which JSON leaves out, so nothing under it is ever in what Gemini is
-// sent, and the tool loop moves it onto the card.
+// the model's hands: the bars of a usual night (numbers the rules give it no
+// way to word as anything but that night's crowd), and when a closed venue
+// next opens (an instant in UTC, which the model would say as a UTC hour).
+// They ride under this symbol, which JSON leaves out, so nothing under it is
+// ever in what Gemini is sent, and the tool loop moves it onto the card.
 const BIRDIE_CARD_ONLY = Symbol('birdieCardOnly');
 
 // ---------------------------------------------------------------------------
@@ -1719,6 +1720,15 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // under Google's rules: Details opens the venue sheet, which loads the
         // credited photos from /api/venues/details.
         photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
+        // WHEN A CLOSED VENUE OPENS, for its card only (S19, 2026-11-06): a
+        // card read "Closed" at 3:44 PM for a place opening at 5. Google's
+        // own next opening, an instant, which the app says in its own clock
+        // ("Opens 5 PM") when it is later that day. Kept out of the model's
+        // hands (BIRDIE_CARD_ONLY), and fetched with the field mask's
+        // currentOpeningHours already, so it costs nothing.
+        ...(p.currentOpeningHours?.openNow === false && typeof p.currentOpeningHours?.nextOpenTime === 'string'
+          ? { [BIRDIE_CARD_ONLY]: { opens_at: p.currentOpeningHours.nextOpenTime } }
+          : {}),
       }));
       // Only a real answer is cached. An upstream error or an empty body is
       // returned to this caller and forgotten, so a 429 or a 5xx can never pin
@@ -3572,6 +3582,7 @@ router.post('/chat',
       let navigationAction = null; // Track navigation commands
       let flockDraftAction = null;  // draft_flock card, at most one per turn
       let venueVoteAction = null;   // add_venue_to_vote card, at most one
+      let turnAskedDate = null;     // a later day a crowd lookup asked about
       // THE FORECAST ALLOWANCE, PER VENUE, THE SAME WAY THE CARD SPENDS IT.
       //
       // Each venue the model looks up is its own question. A venue this account
@@ -3699,6 +3710,12 @@ router.post('/chat',
               const charged = await venueForecastAccess(meterVenue, true);
               if (charged.locked) lockForecastResult(result, { salesOff });
             }
+            // The later day a crowd lookup was asked about: every card under
+            // the answer is then about that day (THE CARDS OF A LATER DAY, at
+            // the cards).
+            if (name === 'get_crowd_prediction' && result && typeof result.date === 'string' && !turnAskedDate) {
+              turnAskedDate = result.date;
+            }
 
             // Collect venue data for cards. The cards get copies of their own,
             // because the crowd enrichment below writes onto them and
@@ -3747,6 +3764,7 @@ router.post('/chat',
               if (match && typeof result.date === 'string') {
                 const usual = result[BIRDIE_CARD_ONLY] && result[BIRDIE_CARD_ONLY].usual;
                 if (usual) match.usual = usual;
+                if (typeof result.hours_that_day === 'string') match.hours_that_day = result.hours_that_day;
               } else if (match && (result.clock !== SERVER_CLOCK || result.crowd_source === 'owner_report')) {
                 match.crowd = result.crowd_score;
                 match.crowd_label = result.crowd_label;
@@ -3904,6 +3922,12 @@ router.post('/chat',
 
       // Collect venue data from tool results to send as cards. None go with
       // the plain no: they were gathered to answer the drinking part.
+      // THE CARDS OF A LATER DAY (S19, 2026-11-06). When the answer is about
+      // another day, every card is about that day: none says whether the
+      // place is open right now (the 3:44 PM "Closed" under a plan for the
+      // 13th), each says which day it is about, and one looked up for that
+      // day says its posted hours then. Sent as is_open null, so the builds
+      // already in people's hands drop the pill as well.
       const venueCards = [];
       if (collectedVenues.length > 0 && !plainNo) {
         // Four cards at most, and the places the reply names are among them
@@ -3918,7 +3942,12 @@ router.post('/chat',
             reviews: v.reviews,
             price_level: v.price_level,
             types: v.types,
-            is_open: v.is_open,
+            is_open: turnAskedDate ? null : v.is_open,
+            ...(turnAskedDate ? { for_date: turnAskedDate } : {}),
+            ...(turnAskedDate && v.hours_that_day ? { hours_that_day: v.hours_that_day } : {}),
+            // When a place closed now opens next, for a card about now.
+            ...(!turnAskedDate && v.is_open === false && v[BIRDIE_CARD_ONLY] && v[BIRDIE_CARD_ONLY].opens_at
+              ? { opens_at: v[BIRDIE_CARD_ONLY].opens_at } : {}),
             lat: v.lat,
             lng: v.lng,
             photo_url: v.photo_url || null,

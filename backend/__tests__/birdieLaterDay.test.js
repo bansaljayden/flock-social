@@ -19,7 +19,11 @@
 //      is an error the model can act on;
 //   4. a spent month locks a later day the same way it locks now;
 //   5. the prompt tells Birdie to say it in plain words, never as that night's
-//      crowd and never by explaining how far ahead it can see.
+//      crowd and never by explaining how far ahead it can see;
+//   6. the cards of an answer about another day say nothing about right now
+//      (no open-now pill, on any build), say which day they are about and,
+//      when looked up for it, its posted hours then; a card about now that is
+//      closed says when it next opens, which the model is never handed (S19).
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -49,7 +53,7 @@ const PLACE = {
   id: 'ChIJlaterDayHearthBell1', displayName: { text: 'Hearth & Bell' }, formattedAddress: '12 Mill Rd, Bethlehem, PA 18015, USA',
   rating: 4.7, userRatingCount: 940, priceLevel: 'PRICE_LEVEL_EXPENSIVE', types: ['american_restaurant', 'restaurant', 'food'],
   location: { latitude: 40.59, longitude: -75.37 },
-  currentOpeningHours: { openNow: false, periods: PERIODS }, utcOffsetMinutes: -300, timeZone: { id: 'America/New_York' },
+  currentOpeningHours: { openNow: false, periods: PERIODS, nextOpenTime: '2026-11-05T22:00:00Z' }, utcOffsetMinutes: -300, timeZone: { id: 'America/New_York' },
 };
 
 // The venue's weekly curve, as ml_venue_baselines holds it: Friday dinner
@@ -269,14 +273,15 @@ test.before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
 })));
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-async function ask(text) {
+const LATER_DAY_SCRIPT = [
+  { call: { name: 'search_venues', args: { query: 'fine dining', location: '40.60,-75.37' } } },
+  { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id, date: '2026-11-13' } } },
+  { text: "Hearth & Bell. I can't see that night's crowd yet. Fridays there usually peak around 7." },
+];
+async function ask(text, steps = LATER_DAY_SCRIPT) {
   sends = [];
   chatConfigs = [];
-  script = [
-    { call: { name: 'search_venues', args: { query: 'fine dining', location: '40.60,-75.37' } } },
-    { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id, date: '2026-11-13' } } },
-    { text: "Hearth & Bell. I can't see that night's crowd yet. Fridays there usually peak around 7." },
-  ];
+  script = steps;
   const res = await fetch(`${base}/api/ai/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -339,4 +344,53 @@ test('the prompt: another day is looked up with its date and said as what usuall
   // The wording that taught "The crowd reads I have are only for tonight".
   assert.doesNotMatch(prompt, /say the read you have is for now/);
   assert.doesNotMatch(prompt, /there is no forecast: never give them/);
+});
+
+// ── 6. The cards of a later day, and when a closed place opens (S19) ───────
+
+test('the cards of an answer about the 13th: no pill for right now, the day they are about, and its posted hours', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const body = await ask('need a place on the 13th, somewhere good regardless of price');
+    const card = body.venues.find((v) => v.place_id === PLACE.id);
+    assert.strictEqual(card.is_open, null, 'a build that draws is_open draws nothing for 3:44 PM');
+    assert.strictEqual(card.for_date, '2026-11-13');
+    assert.strictEqual(card.hours_that_day, '5 PM to 10 PM');
+    assert.ok(!('opens_at' in card), 'when it opens today is about today');
+  });
+});
+
+test('a card about now that is closed says when it next opens, and the model is never handed it', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const body = await ask('somewhere good for dinner', [
+      { call: { name: 'search_venues', args: { query: 'fine dining', location: '40.60,-75.37' } } },
+      { text: 'Hearth & Bell.' },
+    ]);
+    const card = body.venues.find((v) => v.place_id === PLACE.id);
+    assert.strictEqual(card.is_open, false);
+    assert.strictEqual(card.opens_at, '2026-11-05T22:00:00Z');
+    assert.ok(!('for_date' in card) && !('hours_that_day' in card));
+    const searchSent = sentResponses().find((r) => r.name === 'search_venues');
+    const wire = JSON.stringify(searchSent.response);
+    assert.ok(!/opens_at|nextOpenTime|2026-11-05T22/.test(wire), wire);
+  });
+});
+
+test('an open place, or one Google gives no next opening for, carries no opening time', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const saved = PLACE.currentOpeningHours;
+    try {
+      for (const hours of [{ ...saved, openNow: true }, { openNow: false, periods: PERIODS }]) {
+        PLACE.currentOpeningHours = hours;
+        aiRouter.__testables.resetBirdieSearchCache?.();
+        const body = await ask(`dinner ${hours.openNow}`, [
+          { call: { name: 'search_venues', args: { query: `fine dining ${hours.openNow} ${'nextOpenTime' in hours}`, location: '40.60,-75.37' } } },
+          { text: 'Hearth & Bell.' },
+        ]);
+        const card = body.venues.find((v) => v.place_id === PLACE.id);
+        assert.ok(!('opens_at' in card), JSON.stringify(card));
+      }
+    } finally {
+      PLACE.currentOpeningHours = saved;
+    }
+  });
 });

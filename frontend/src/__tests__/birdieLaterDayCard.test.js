@@ -26,6 +26,7 @@ jest.mock('../components/ui/BirdieBird', () => {
 });
 
 const BirdiePanel = require('../components/birdie/BirdiePanel').default;
+const { cardOpenPill, opensLaterToday } = require('../lib/cardOpenPill');
 const {
   busiestWords, planDayLabel, usualNightText, usualNightSpoken, isLaterDay, inBusiest, localDayIso,
 } = require('../lib/usualNight');
@@ -169,5 +170,51 @@ describe('the card', () => {
     expect(openVenueDetail).toHaveBeenCalledWith('ChIJhearthBell', expect.objectContaining({
       name: 'Hearth & Bell', planDay: { date: '2026-11-13', usual: USUAL },
     }));
+  });
+});
+
+// S19: the card's open pill. At 3:44 PM on a Thursday a card read "Closed" for
+// a place opening at 5, under an answer about a plan on the 13th.
+describe('the open pill', () => {
+  // Thursday, November 5, 2026, 3:44 PM on this device.
+  const now = new Date(2026, 10, 5, 15, 44);
+  const fivePm = new Date(2026, 10, 5, 17, 0).toISOString();
+
+  test('closed now and opening later today: "Opens 5 PM"', () => {
+    expect(opensLaterToday(fivePm, now)).toBe('5 PM');
+    expect(opensLaterToday(new Date(2026, 10, 5, 17, 30).toISOString(), now)).toBe('5:30 PM');
+    expect(cardOpenPill({ is_open: false, opens_at: fivePm }, now)).toEqual({ text: 'Opens 5 PM', tone: 'later' });
+  });
+
+  test('closed now and opening tomorrow, or with no opening time, is Closed; open is Open', () => {
+    const tomorrow = new Date(2026, 10, 6, 11, 0).toISOString();
+    expect(opensLaterToday(tomorrow, now)).toBeNull();
+    expect(cardOpenPill({ is_open: false, opens_at: tomorrow }, now)).toEqual({ text: 'Closed', tone: 'closed' });
+    expect(cardOpenPill({ is_open: false }, now)).toEqual({ text: 'Closed', tone: 'closed' });
+    expect(cardOpenPill({ is_open: false, opens_at: new Date(2026, 10, 5, 15, 0).toISOString() }, now)).toEqual({ text: 'Closed', tone: 'closed' });
+    expect(cardOpenPill({ is_open: true }, now)).toEqual({ text: 'Open', tone: 'open' });
+    expect(cardOpenPill({ is_open: null }, now)).toBeNull();
+  });
+
+  test('a card about another day says nothing about now, unless that day it is shut', () => {
+    expect(cardOpenPill({ is_open: null, for_date: '2026-11-13', hours_that_day: '5 PM to 10 PM' }, now)).toBeNull();
+    // A card from a build-era answer that still carries is_open: the day wins.
+    expect(cardOpenPill({ is_open: false, opens_at: fivePm, for_date: '2026-11-13' }, now)).toBeNull();
+    expect(cardOpenPill({ is_open: null, for_date: '2026-11-09', hours_that_day: 'closed' }, now)).toEqual({ text: 'Closed Mon', tone: 'closed' });
+  });
+
+  test('the card draws it', () => {
+    jest.useFakeTimers().setSystemTime(now);
+    try {
+      const { container, unmount } = render(<BirdiePanel {...panelProps(answer([venue({ is_open: false, opens_at: fivePm })]))} />);
+      expect(container.querySelector('[data-open-pill]').textContent).toBe('Opens 5 PM');
+      expect(container.querySelector('[data-open-pill]').getAttribute('data-open-pill')).toBe('later');
+      unmount();
+      const later = render(<BirdiePanel {...panelProps(answer([venue({ is_open: null, for_date: '2026-11-13', hours_that_day: '5 PM to 10 PM', usual: USUAL })]))} />);
+      expect(later.container.querySelector('[data-open-pill]')).toBeNull();
+      expect(later.container.textContent).not.toMatch(/\bClosed\b/);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

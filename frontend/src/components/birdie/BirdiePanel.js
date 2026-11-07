@@ -102,6 +102,8 @@ import { landingTop, awayFromEnd } from '../../lib/threadLanding';
 import VenueDealLine from '../venue/VenueDealLine';
 // How busy a place usually is on the later day an answer is about.
 import UsualNightStrip from '../venue/UsualNightStrip';
+// What the card's open pill says: right now, later today, or that day.
+import { cardOpenPill } from '../../lib/cardOpenPill';
 
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
@@ -581,6 +583,11 @@ export default function BirdiePanel({
                         // photo_url is a proxy ref path from the backend — the
                         // old place-id URL never resolved (proxy takes ?ref=).
                         const photoUrl = v.photo_url ? `${BASE_URL}${v.photo_url}` : null;
+                        // "Open", "Opens 5 PM", "Closed", nothing about now
+                        // on a card about another day (lib/cardOpenPill.js).
+                        const pill = cardOpenPill(v);
+                        const pillBg = pill && (pill.tone === 'open' ? 'var(--accent-green-bg)' : pill.tone === 'later' ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)');
+                        const pillInk = pill && (pill.tone === 'open' ? 'var(--accent-green-text)' : pill.tone === 'later' ? 'var(--accent-amber-text)' : 'var(--accent-red-text)');
                         return (
                         <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: '280px', animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
                           {photoUrl && (
@@ -590,8 +597,8 @@ export default function BirdiePanel({
                           <div style={{ padding: '12px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                               <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, lineHeight: 1.25 }}>{v.name}</h4>
-                              {v.is_open != null && (
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 7px', borderRadius: '999px', backgroundColor: v.is_open ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: v.is_open ? 'var(--accent-green-text)' : 'var(--accent-red-text)', flexShrink: 0 }}>{v.is_open ? 'Open' : 'Closed'}</span>
+                              {pill && (
+                                <span data-open-pill={pill.tone} style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 7px', borderRadius: '999px', backgroundColor: pillBg, color: pillInk, flexShrink: 0, whiteSpace: 'nowrap' }}>{pill.text}</span>
                               )}
                             </div>
 
