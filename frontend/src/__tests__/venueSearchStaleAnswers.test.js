@@ -34,6 +34,9 @@ const SCOPE = [
   // Which query the rows answer, and the request a newer search aborts
   // (discoverSearchKeepsRows.test.js).
   'setVenueResultsFor', 'venueSearchAbortRef',
+  // The query Return committed, and the one way an answer becomes the pins
+  // (discoverSearchCommitsPins.test.js): a typed search no longer moves the map.
+  'pendingPinsCommitRef', 'commitSearchPins',
 ];
 
 function compileSearch(deps) {
@@ -71,8 +74,10 @@ function harness() {
     userMessage: jest.requireActual('../services/api').userMessage,
     setVenueResultsFor: (v) => { state.resultsFor = v; },
     venueSearchAbortRef: { current: null },
+    pendingPinsCommitRef: { current: null },
+    commitSearchPins: (vs) => { deps.pendingPinsCommitRef.current = null; state.pins = vs.map((v) => v.place_id); },
   };
-  return { box, state, pending, cache, doVenueSearch: compileSearch(deps) };
+  return { box, state, pending, cache, commit: deps.pendingPinsCommitRef, doVenueSearch: compileSearch(deps) };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -135,9 +140,10 @@ test('an older search that lands after a newer one does not overwrite it', async
   h.box.current = 'taco';
   const older = h.doVenueSearch('taco');
 
-  // "tacos" is answered from the cache at once.
+  // "tacos" is answered from the cache at once, and Return made it the map's.
   h.cache.current['tacos|'] = { data: [TACOS], timestamp: Date.now() };
   h.box.current = 'tacos';
+  h.commit.current = 'tacos';
   await h.doVenueSearch('tacos');
   expect(h.state.results).toEqual([TACOS]);
   expect(h.state.searching).toBe(false);
@@ -167,6 +173,8 @@ test('an older search still out does not switch the spinner off under the newer 
 test('the search for what the box says still answers as before', async () => {
   const h = harness();
   h.box.current = 'pizza';
+  // Return: the answer becomes the map's pins when it lands.
+  h.commit.current = 'pizza';
   const p = h.doVenueSearch('pizza');
   expect(h.state.dropdown).toBe(true);
   h.pending.get('pizza').resolve({ venues: [PIZZA] });

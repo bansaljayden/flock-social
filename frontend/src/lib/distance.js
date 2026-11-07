@@ -90,3 +90,25 @@ export const haversineKm = (lat1, lng1, lat2, lng2) => {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
+
+// NEAREST FIRST, for the four rows under the Discover search box. A prefix
+// like "tor" came back from Google with a chimney shop 40 km away and a state
+// park 125 km away above the restaurant 16 km away the person was looking
+// for. Rows with a position are ordered by their distance from `origin`
+// ({ lat, lng }); rows with none follow in the order the search gave them.
+// Stable, so two places the same distance away keep the search's order, and
+// with no origin the list comes back as it came. A new array either way.
+export const nearestFirst = (venues, origin) => {
+  if (!Array.isArray(venues)) return [];
+  if (!origin || !Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return venues.slice();
+  const kmTo = (v) => {
+    const loc = v && v.location;
+    const lat = loc && loc.latitude != null ? Number(loc.latitude) : NaN;
+    const lng = loc && loc.longitude != null ? Number(loc.longitude) : NaN;
+    return Number.isFinite(lat) && Number.isFinite(lng) ? haversineKm(origin.lat, origin.lng, lat, lng) : Infinity;
+  };
+  return venues
+    .map((v, i) => ({ v, i, km: kmTo(v) }))
+    .sort((a, b) => (a.km === b.km ? a.i - b.i : a.km - b.km))
+    .map((e) => e.v);
+};

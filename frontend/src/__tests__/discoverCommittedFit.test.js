@@ -7,7 +7,8 @@
  * search, Return in the box, See all, or the count chip, now frames the
  * results within 25 km of the person, or the cluster when none is that close
  * (lib/fitResults.js). Return also searches at once instead of waiting out the
- * typing pause, and the frame waits for that search's pins.
+ * typing pause, and the frame comes with that search's pins (App.js
+ * commitSearchPins).
  *
  * FRONTEND test (jest via react-scripts).
  */
@@ -66,7 +67,7 @@ const exploreProps = (over = {}) => {
     featuredEventsError: '', featuredEventsLoading: false, flockMemberLocations: {}, friendStatuses: {}, isDark: false, isExploreVisible: true,
     locationEnabled: true, locationError: '', locationLoading: false, mapVenuesLoaded: true, pickingVenueForCreate: false, pickingVenueForDm: false,
     pickingVenueForFlockId: null, sharingLocationForFlock: null, showConnectPanel: false, showEventsView: false, showSearchDropdown: true, tableParty: 2,
-    userLocation: null, venueLoadError: '', venueQuery: '', venueResults: [], venueResultsFor: '', venueSearching: false, mapFitRequestReady: null,
+    userLocation: null, venueLoadError: '', venueQuery: '', venueResults: [], venueResultsFor: '', venueSearching: false, mapFitRequest: null,
   }, over);
 };
 const box = () => screen.getByRole('textbox', { name: 'Search venues' });
@@ -88,28 +89,38 @@ describe('what commits a search', () => {
     expect(commitVenueSearch).not.toHaveBeenCalled();
   });
 
-  test('See all and the count chip ask for the frame', () => {
+  test('See all commits the answer on screen, and the count chip frames the pins already there', () => {
     const requestMapFit = jest.fn();
-    const { unmount } = render(<ExploreScreen {...exploreProps({ venueQuery: 'copper', venueResults: [ROW], venueResultsFor: 'copper', requestMapFit })} />);
+    const commitVenueResults = jest.fn();
+    const { unmount } = render(<ExploreScreen {...exploreProps({ venueQuery: 'copper', venueResults: [ROW], venueResultsFor: 'copper', requestMapFit, commitVenueResults })} />);
     fireEvent.click(screen.getByRole('button', { name: /See 1 result/ }));
-    expect(requestMapFit).toHaveBeenCalledTimes(1);
+    // commitVenueResults makes the rows the pins and asks for the frame with
+    // them (App.js commitSearchPins).
+    expect(commitVenueResults).toHaveBeenCalledTimes(1);
     unmount();
-    render(<ExploreScreen {...exploreProps({ showSearchDropdown: false, budgetFilteredVenues: [ROW], allVenues: [ROW], requestMapFit })} />);
+    render(<ExploreScreen {...exploreProps({ showSearchDropdown: false, budgetFilteredVenues: [ROW], allVenues: [ROW], requestMapFit, commitVenueResults })} />);
     fireEvent.click(screen.getByRole('button', { name: '1 result' }));
-    expect(requestMapFit).toHaveBeenCalledTimes(2);
+    expect(requestMapFit).toHaveBeenCalledTimes(1);
+    expect(commitVenueResults).toHaveBeenCalledTimes(1);
   });
 
-  test('the map is handed the request once it is ready', () => {
-    render(<ExploreScreen {...exploreProps({ mapFitRequestReady: { seq: 7, center: null, radiusKm: 25 } })} />);
+  test('the map is handed the request', () => {
+    render(<ExploreScreen {...exploreProps({ mapFitRequest: { seq: 7, center: null, radiusKm: 25 } })} />);
     expect(screen.getByTestId('map').getAttribute('data-fit')).toBe('7');
   });
 });
 
 describe('the wiring', () => {
-  test('App holds the request until the pins for the committed query are on the map', () => {
-    expect(APP_SRC).toMatch(/const mapFitRequestReady = mapFitRequest && \(!mapFitRequest\.waitFor \|\| mapFitRequest\.waitFor === venueResultsFor\) \? mapFitRequest : null;/);
-    const commit = APP_SRC.slice(APP_SRC.indexOf('const commitVenueSearch = useCallback('), APP_SRC.indexOf('}, [runVenueSearchNow, requestMapFit]);'));
-    expect(commit).toMatch(/runVenueSearchNow\(\);\s*requestMapFit\(q\);/);
+  test('App asks for the frame in the same render as the pins it frames', () => {
+    // The pins and the request are written together (commitSearchPins), so
+    // the map never frames the pins of an earlier answer; a Return that has
+    // to wait for its answer leaves the query in pendingPinsCommitRef, and
+    // the answer commits when it lands (discoverSearchCommitsPins.test.js).
+    const pins = APP_SRC.slice(APP_SRC.indexOf('const commitSearchPins = useCallback('), APP_SRC.indexOf('const doVenueSearch = useCallback('));
+    expect(pins).toMatch(/setAllVenues\(venues\.length > 0 \? venuesToMapPins\(venues\) : \[\]\);\s*setActiveVenue\(null\);\s*requestMapFit\(focus\);/);
+    const commit = APP_SRC.slice(APP_SRC.indexOf('const commitVenueSearch = useCallback('), APP_SRC.indexOf('const commitVenueResults = useCallback('));
+    expect(commit).toMatch(/pendingPinsCommitRef\.current = q;\s*runVenueSearchNow\(\);/);
+    expect(APP_SRC).not.toMatch(/mapFitRequestReady|waitFor: waitFor/);
   });
 
   test('the map frames a request once, after its marker effect, with the 25 km rule', () => {

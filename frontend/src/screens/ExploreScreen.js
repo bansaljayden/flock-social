@@ -90,7 +90,7 @@ import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 import { onVenuePhotoError } from '../lib/venuePhoto';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 // Miles or kilometres by the device's region (lib/distance.js).
-import { formatDistance, haversineKm } from '../lib/distance';
+import { formatDistance, haversineKm, nearestFirst } from '../lib/distance';
 // What kind of place, drawn, in a row with no photo yet (lib/categoryGlyph.js).
 import { CategoryGlyph, glyphCategoryFor } from '../lib/categoryGlyph';
 // Tables at the venues on the map and in the search dropdown, for the ones
@@ -214,12 +214,14 @@ export default function ExploreScreen({
   venueSearching,
   cancelPendingVenueSearch,
   runVenueSearchNow,
-  // A committed search: Return in the box, and the map frame that See all and
-  // the count chip ask for (App.js requestMapFit), handed to the map once its
-  // pins are there.
+  // A committed search: Return in the box; a row tap or See all, which make
+  // the answer on screen the map's pins (commitVenueResults); the count
+  // chip's frame of the pins already there (requestMapFit); and the request
+  // the map acts on (App.js mapFitRequest). Typing alone never moves the map.
   commitVenueSearch,
+  commitVenueResults,
   requestMapFit,
-  mapFitRequestReady = null,
+  mapFitRequest = null,
 }) {
   // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
   // it, open another's, and the first answer used to merge into the second
@@ -423,7 +425,7 @@ export default function ExploreScreen({
               {/* View All — first thing you see */}
               <button
                 className="hit44 glass-btn glass-navy"
-                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof requestMapFit === 'function') requestMapFit(); }}
+                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof commitVenueResults === 'function') commitVenueResults(); }}
                 style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
               >
                 {Icons.filter('white', 13)}
@@ -432,7 +434,11 @@ export default function ExploreScreen({
                 <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>{seeAllLabel(venueResults.length)}</span>
                 {Icons.arrowRight('white', 14)}
               </button>
-              {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
+              {/* The four NEAREST of the answer, nearest first
+                  (lib/distance.js nearestFirst): "tor" listed a chimney shop
+                  40 km away and a park 125 km away above the place 16 km
+                  away. With no position for the person, the search's order. */}
+              {nearestFirst(venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }), userLocation).slice(0, 4).map((venue) => (
                 <button
                   key={venue.place_id}
                   onClick={() => {
@@ -446,8 +452,11 @@ export default function ExploreScreen({
                     // under the sheet; the tap is the answer.
                     if (typeof cancelPendingVenueSearch === 'function') cancelPendingVenueSearch();
                     setShowSearchDropdown(false);
-                    // Pan map to this venue if it's in our markers
-                    if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
+                    // The answer becomes the map's pins and the map goes to
+                    // this place once its pin is there (App.js
+                    // commitVenueResults). Typing no longer moves the map, so
+                    // the pin may not be on it before this tap.
+                    if (typeof commitVenueResults === 'function') commitVenueResults(venue);
                     openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url, photo_attribution: venue.photo_attribution || null });
                   }}
                   style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
@@ -534,7 +543,7 @@ export default function ExploreScreen({
           tableSummaries={tableSummaries}
           tableParty={tableParty}
           bottomLeftClear={discoverMapLeftClear}
-          fitRequest={mapFitRequestReady}
+          fitRequest={mapFitRequest}
         />
 
         {/* Location sharing indicator on the map. Words, and Stop: no

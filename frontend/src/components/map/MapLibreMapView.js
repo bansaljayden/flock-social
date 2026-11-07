@@ -1779,6 +1779,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const map = mapInstanceRef.current;
     if (!fitRequest || !map || !mapReady || fitRequest.seq === lastFitSeqRef.current) return;
     lastFitSeqRef.current = fitRequest.seq;
+    // A row tapped in the search list: the map goes to that place instead of
+    // framing the set (the focus effect below, after the imperative API).
+    if (fitRequest.focus) return;
     const points = (venues || [])
       .filter(v => v.location?.latitude && v.location?.longitude)
       .map(v => [v.location.longitude, v.location.latitude]);
@@ -1971,6 +1974,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
   }, [venues, openVenueDetail, setActiveVenue, buildMarkerEl]);
+
+  /* A ROW TAPPED IN THE SEARCH LIST GOES TO ITS PLACE. The tap makes the
+     answer the map's pins and hands over the row's place (App.js
+     commitVenueResults); the map goes there as a tap on its pin would:
+     __flockPanToVenue finds the pin, eases to it and opens its card, and a
+     place with no pin gets the temporary one at the row's coordinates.
+     Declared after the imperative API above, on purpose: on the render that
+     brings the new pins, React runs every cleanup first, so the old
+     __flockPanToVenue is already gone, and the new one, built over this
+     render's markers, exists only once that effect has run. After the marker
+     effect too, so its frame of the new set is the motion this replaces. */
+  const lastFocusSeqRef = useRef(null);
+  useEffect(() => {
+    if (!fitRequest || !fitRequest.focus || !mapReady || fitRequest.seq === lastFocusSeqRef.current) return;
+    lastFocusSeqRef.current = fitRequest.seq;
+    if (typeof window.__flockPanToVenue === 'function') window.__flockPanToVenue(fitRequest.focus);
+  }, [fitRequest, venues, mapReady]);
 
   // ---------- flock member live location markers ----------
   //

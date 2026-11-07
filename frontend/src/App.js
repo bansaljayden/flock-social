@@ -6294,6 +6294,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
   }, [categorizeVenue, crowdPredictions]);
 
+  // A COMMITTED SEARCH FRAMES ITS RESULTS (MapLibreMapView fitRequest): the
+  // ones within 25 km of the person, or the cluster when none is that close.
+  // A row tap asks instead for the map to go to that row's place (`focus`),
+  // as a tap on its pin would. Each request is numbered so the map acts on it
+  // once. The request is made in the same render as the pins it is about
+  // (commitSearchPins), or over pins already on the map (the count chip), so
+  // the map never frames the pins of an earlier answer.
+  const [mapFitRequest, setMapFitRequest] = useState(null);
+  const mapFitSeqRef = useRef(0);
+  const requestMapFit = useCallback((focus = null) => {
+    mapFitSeqRef.current += 1;
+    setMapFitRequest({
+      seq: mapFitSeqRef.current,
+      focus: focus || null,
+      center: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null,
+      radiusKm: COMMITTED_FIT_RADIUS_KM,
+    });
+  }, [userLocation]);
+
+  // THE MAP MOVES WHEN THE PERSON COMMITS, NOT WHEN THEY PAUSE. Every search
+  // the typing pause fired used to swap the map's pins for its answer, and the
+  // map refits to every new set (MapLibreMapView's marker effect), so typing
+  // "torre" flew the map to "tor"'s namesake in New York over blank tiles
+  // while the person was still typing. A typed search now fills the list and
+  // nothing else. Its answer becomes the pins, and the map moves, only here:
+  // a row tap, Return in the box, or See all. A query Return committed before
+  // its answer landed waits in pendingPinsCommitRef, and typing again gives
+  // the wait up. An answer with nothing in it still empties the map (a
+  // committed search for Chicago from Bethlehem must not leave Bethlehem
+  // under "All 20 results"), and so does a committed search that failed.
+  const pendingPinsCommitRef = useRef(null);
+  const commitSearchPins = useCallback((venues, focus = null) => {
+    pendingPinsCommitRef.current = null;
+    setAllVenues(venues.length > 0 ? venuesToMapPins(venues) : []);
+    setActiveVenue(null);
+    requestMapFit(focus);
+  }, [venuesToMapPins, requestMapFit]);
+
   // ONLY THE SEARCH FOR WHAT THE BOX SAYS NOW MAY WRITE. The clear X, the
   // results overlay's X, Recenter and the All chip set the query straight to ''
   // without passing through handleVenueQueryChange, so the 800 ms debounce was
@@ -6327,7 +6365,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueSearching(false);
       setVenueResults(venues);
       setVenueResultsFor(q.trim());
-      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); requestCrowdScores(venues); }
+      if (venues.length > 0) requestCrowdScores(venues);
+      // The pins follow only a committed search (commitSearchPins).
+      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins(venues);
       setShowSearchDropdown(true);
       return;
     }
@@ -6346,27 +6386,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueResults(venues);
       setVenueResultsFor(q.trim());
       setVenueLoadError('');
-      if (venues.length > 0) {
-        setAllVenues(venuesToMapPins(venues));
-        setActiveVenue(null);
-        // Fire batch crowd prediction (non-blocking, dedupes, feeds the heatmap)
-        requestCrowdScores(venues);
-      } else {
-        // A search that found nothing must not leave the last city's pins on
-        // the map under "All N results". Someone searching Chicago from
-        // Bethlehem saw Bethlehem.
-        setAllVenues([]);
-        setActiveVenue(null);
-      }
+      // Fire batch crowd prediction (non-blocking, dedupes, feeds the heatmap)
+      if (venues.length > 0) requestCrowdScores(venues);
+      // The pins follow only a committed search, an empty answer included
+      // (commitSearchPins says why it empties the map).
+      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins(venues);
     } catch (err) {
       // An aborted search was replaced by a newer one, which says what it
       // needs to; so does any search that is no longer the newest.
       if (!current()) return;
       console.error('Venue search error:', err);
-      // Same for a search that failed: the banner says why, the map is not
-      // still showing somewhere else.
-      setAllVenues([]);
-      setActiveVenue(null);
+      // A committed search that failed: the banner says why, and the map is
+      // not left showing somewhere else. A typed one leaves the map alone.
+      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins([]);
       // The dropdown used to render "No venues found. Try a different search."
       // for this, blaming the user's spelling for a dead API key or a 502. The
       // backend answers every one of these with a real sentence
@@ -6385,7 +6417,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // then nothing newer is coming to let go of the spinner.
       if (seq === venueSearchSeqRef.current) setVenueSearching(false);
     }
-  }, [enhanceQuery, venuesToMapPins, userLocation, showToast, requestCrowdScores]);
+  }, [enhanceQuery, commitSearchPins, userLocation, showToast, requestCrowdScores]);
 
   // Open the full venue details modal
   // Two taps in a row raced: the first venue's slower reads landed after the
@@ -6507,6 +6539,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // sheet and card offer Add to Flock and Start Flock Here, not a
     // "Back to Chat" that retraces a tap from before the search.
     if (typeof val === 'string' && val.trim()) setVenueDetailReturnTo(null);
+    // A Return still waiting on its answer is given up: what is typed now is
+    // a new query, and it moves the map only when it is committed in turn.
+    pendingPinsCommitRef.current = null;
     if (!showSearchResults) setShowSearchDropdown(true);
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     // The wait follows the typing: three times this person's own gap between
@@ -6539,29 +6574,46 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (q && q.trim().length >= 2) doVenueSearch(q);
   }, [doVenueSearch]);
 
-  // A COMMITTED SEARCH FRAMES ITS RESULTS (MapLibreMapView fitRequest): the
-  // ones within 25 km of the person, or the cluster when none is that close.
-  // Return in the box commits the query typed (searched at once, with no
-  // wait) and the frame waits for its pins; See all and the count chip commit
-  // the pins already on the map. Each request is numbered so the map frames
-  // it once.
-  const [mapFitRequest, setMapFitRequest] = useState(null);
-  const mapFitSeqRef = useRef(0);
-  const requestMapFit = useCallback((waitFor = null) => {
-    mapFitSeqRef.current += 1;
-    setMapFitRequest({
-      seq: mapFitSeqRef.current,
-      waitFor: waitFor || null,
-      center: userLocation ? { lat: userLocation.lat, lng: userLocation.lng } : null,
-      radiusKm: COMMITTED_FIT_RADIUS_KM,
-    });
-  }, [userLocation]);
+  // RETURN COMMITS THE QUERY TYPED. Rows that already answer it become the
+  // pins at once, with no search sent and the one the typing pause still had
+  // waiting called off. Otherwise its search goes now, with no wait, and its
+  // answer becomes the pins when it lands (doVenueSearch reads
+  // pendingPinsCommitRef). A search for the same words already out is not
+  // paid twice: the server joins the second request to the first's Google
+  // call, or answers it from its five-minute cache.
   const commitVenueSearch = useCallback(() => {
     const q = (venueQueryRef.current || '').trim();
     if (q.length < 2) return;
+    if (venueResultsFor === q) {
+      cancelPendingVenueSearch();
+      commitSearchPins(venueResults);
+      return;
+    }
+    pendingPinsCommitRef.current = q;
     runVenueSearchNow();
-    requestMapFit(q);
-  }, [runVenueSearchNow, requestMapFit]);
+  }, [venueResultsFor, venueResults, commitSearchPins, cancelPendingVenueSearch, runVenueSearchNow]);
+
+  // A ROW TAPPED, OR SEE ALL: the answer on screen becomes the pins. A row
+  // also hands over its place, and the map goes there once its pin is on the
+  // map (MapLibreMapView's fit effect calls __flockPanToVenue with it, which
+  // finds the pin, eases to it and opens its card, as a pin tap does). The
+  // row used to ask for the pan itself, which found nothing when the pins
+  // were still the nearby ones.
+  const commitVenueResults = useCallback((focusVenue = null) => {
+    if (!venueResults.length) { requestMapFit(); return; }
+    const loc = focusVenue && focusVenue.location;
+    const focus = focusVenue ? {
+      place_id: focusVenue.place_id,
+      lat: loc ? loc.latitude : null,
+      lng: loc ? loc.longitude : null,
+      name: focusVenue.name,
+      address: focusVenue.formatted_address,
+      rating: focusVenue.rating,
+      photo_url: focusVenue.photo_url || null,
+      photo_attribution: focusVenue.photo_attribution || null,
+    } : null;
+    commitSearchPins(venueResults, focus);
+  }, [venueResults, commitSearchPins, requestMapFit]);
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
@@ -21525,10 +21577,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     venueSearching,
   };
 
-  // A committed search's frame, once the map holds that search's pins
-  // (venueResultsFor names the query the pins answer).
-  const mapFitRequestReady = mapFitRequest && (!mapFitRequest.waitFor || mapFitRequest.waitFor === venueResultsFor) ? mapFitRequest : null;
-
   // THE DISCOVER TAB'S EIGHTY-FIVE. Built here rather than in renderScreen
   // because Discover is not part of the switch: its layer is mounted from this
   // component's own tree, below, and kept alive rather than rebuilt on every
@@ -21636,8 +21684,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     cancelPendingVenueSearch,
     runVenueSearchNow,
     commitVenueSearch,
+    commitVenueResults,
     requestMapFit,
-    mapFitRequestReady,
+    mapFitRequest,
   };
 
   return (

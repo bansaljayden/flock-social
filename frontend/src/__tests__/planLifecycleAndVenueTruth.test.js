@@ -268,7 +268,7 @@ describe('a venue search that fails', () => {
   });
 
   test('a failed search is not reported as a search that found nothing', () => {
-    const fn = region(APP, 'setVenueSearching(true);', '}, [enhanceQuery, venuesToMapPins');
+    const fn = region(APP, 'setVenueSearching(true);', '}, [enhanceQuery, commitSearchPins');
     expect(fn).toMatch(/setVenueLoadError\(userMessage\(err, 'Search is not responding\. Try again in a moment\.'\)\)/);
     // The old copy survives, but only for a genuinely empty result.
     expect(APP).toMatch(/venueResults\.length === 0 && !venueLoadError/);
