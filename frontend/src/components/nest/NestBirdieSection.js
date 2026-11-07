@@ -103,7 +103,11 @@ export default function NestBirdieSection({
             <button type="button" onClick={onShowLastAnswer} style={{ ...textLink, display: 'block', margin: '-6px 0 2px' }}>Show the last answer</button>
           )}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
-            <div data-nest-birdie-field="" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px', minHeight: '52px', padding: '0 12px' }}>
+            {/* The field sets no outline: its keyboard ring is drawn on this
+                row, inside the card that clips it (index.css
+                .nest-birdie-field), and the suggestions below draw theirs
+                inside themselves the same way (.nest-row-btn). */}
+            <div data-nest-birdie-field="" className="nest-birdie-field" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px', minHeight: '52px', padding: '0 12px' }}>
               <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: '999px', objectFit: 'cover', flexShrink: 0, background: isDark ? '#162046' : '#e8eaf0' }} />
               {/* Uncontrolled, seeded from the ref: aiInputValueRef holds the
                   typed text of record, the same as Birdie's own box. 16px on
@@ -171,6 +175,7 @@ export default function NestBirdieSection({
               <button
                 type="button"
                 key={text}
+                className="nest-row-btn"
                 onClick={() => onChip(text)}
                 style={{ position: 'relative', width: '100%', minHeight: '44px', padding: '11px 14px 11px 18px', border: 'none', background: 'none', display: 'flex', alignItems: 'center', gap: '14px', textAlign: 'left', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500', lineHeight: 1.35 }}
               >

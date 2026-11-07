@@ -864,7 +864,9 @@ export default function BirdiePanel({
               all three, in a cool grey, under a shadow that grew as you typed,
               off the flat warm cards the Nest one tap back is made of. */}
           <div data-nest-birdie-field={isInline ? '' : undefined} style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
-            <div style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-tertiary)', padding: '6px' }}>
+            {/* The field sets no outline; the box draws its keyboard ring
+                on its own edge (index.css .birdie-compose-box). */}
+            <div className="birdie-compose-box" style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-tertiary)', padding: '6px' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
                 {/* maxLength is the server's own per-message ceiling. Without

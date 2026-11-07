@@ -1043,10 +1043,41 @@ code {
    its own corners, so the app's ring, 2px outside the button, was cut away on
    every side and a keyboard user saw no focus at all. 3px inside, on the
    inner curve of the group's corners, as a same-night row's is
-   (.nest-stretch--row). */
+   (.nest-stretch--row). Birdie's suggestion rows on the Nest
+   (components/nest/NestBirdieSection.js) are full-width rows of a card with
+   overflow: hidden too, where the ring lost its sides (and the last row its
+   bottom, so in dark mode it showed as one line), and take the same class. */
 .nest-row-btn:focus-visible {
   outline-offset: -3px;
   border-radius: 10px;
+}
+/* The Nest's Birdie field draws its ring on its row, the same way and in the
+   same place as the suggestion rows under it. The field sets no outline and
+   has no border, so its one sign of focus was App.js's input:focus shadow,
+   4px of navy at 10%: about 1.2:1 on the light card, nothing on the dark
+   one, and the card clipped its top. That shadow goes, as it does on the
+   chat and Roost composers, so there is one ring, not a ring and a haze. A
+   text field matches :focus-visible however it took focus, so the row is
+   ringed while someone types in it on a phone too, as a bordered field's
+   border turns the ring's colour (App.js input:focus). */
+.nest-birdie-field:has(.nest-birdie-input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+.nest-birdie-input:focus {
+  box-shadow: none !important;
+}
+/* Birdie's composer box (components/birdie/BirdiePanel.js): Ask a follow-up
+   under an answer in the Nest's page, and the box in the sheets. Its field
+   sets no outline either, inside a box with no border, so the same faint
+   shadow was all it had. The box rings its own edge, on the inside, where
+   nothing around it can cut it. */
+.birdie-compose-box:has(input:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+.birdie-compose-box input:focus {
+  box-shadow: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
   .nest-lock-fade { animation-duration: 200ms !important; }
