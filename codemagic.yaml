@@ -198,8 +198,7 @@ workflows:
         script: |
           # The marketing site's app screenshots stay out of the iPhone app. The
           # native shell boots the app at / and never shows the marketing pages,
-          # and the site's captures show Google Maps photos of real venues,
-          # which are for the website only.
+          # so the site's captures (about 2 MB) would only be weight in the IPA.
           rm -rf build/screenshots
           npx cap sync ios
       - name: Write and verify GoogleService-Info.plist (push notifications)
@@ -712,8 +711,7 @@ workflows:
         script: |
           # The marketing site's app screenshots stay out of the iPhone app. The
           # native shell boots the app at / and never shows the marketing pages,
-          # and the site's captures show Google Maps photos of real venues,
-          # which are for the website only.
+          # so the site's captures (about 2 MB) would only be weight in the IPA.
           rm -rf build/screenshots
           npx cap sync ios
       - name: Firebase config for the recording build, optional
