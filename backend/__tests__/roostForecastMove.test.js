@@ -3889,3 +3889,33 @@ test('a slow-day move is never given for the week\'s busiest day or one above it
   const alone = roostPlaybook.answer({ question: 'How do I fill Saturday?', intentId: 'quiet_nights', groundedFacts: one, askedFor: 'Saturday' });
   assert.ok(!alone.tactics.includes('slow_day_recurring_reason') && !/recurring reason/.test(alone.text), alone.text);
 });
+
+test('next weekend with a day of it past the seven days gives the days the forecast holds, and a day the venue is shut on is said to be', async () => {
+  // The cafe shut on Sundays: "Sunday of next weekend is past the seven
+  // days the forecast covers. It comes into them on Monday." before, which
+  // lost next Friday and implied a Sunday forecast was coming.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr9NextWeekendCafeSat0', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
+    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday next weekend. ${KIND_OPEN}next Friday peaks around 8 AM at 66 on our 0 to 100 index.\n• Next Saturday is past the seven days the forecast covers.`);
+    assert.deepStrictEqual(sourceIds(r), ['weekend_closed', 'typical_peak_2026-11-13', 'next_weekend_past_forecast']);
+  });
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr9NextWeekendCafeSun0', [1, 2, 3, 4, 5, 6]);
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
+    assert.strictEqual(r.body.text, `Your Google listing has you closed on Sunday next weekend. ${KIND_OPEN}no day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.`);
+  });
+  // A bar open on Sundays: next Friday, and the rest past the seven days.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9NextWeekendCardSat0', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be, especially Sunday?' });
+    assert.strictEqual(r.body.text, `${KIND_OPEN}next Friday peaks around 9 PM at 66 on our 0 to 100 index.\n• Next Saturday and Sunday are past the seven days the forecast covers.`);
+    // A day of next weekend asked in its own right is still its refusal.
+    r = await call('/api/venue/advisor/question', { question: 'How busy will Sunday be next weekend?' });
+    assert.strictEqual(r.body.mode, 'refusal');
+  });
+});

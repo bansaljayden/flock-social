@@ -1034,9 +1034,15 @@ async function targetsFor(b, question, intentId) {
       }
       if (inside) placedIn = placedIn || inside;
       const ahead = daysBetween(today, date);
+      // `weekendFirst`: the weekend said before the day ("How busy will next
+      // weekend be, especially Sunday?") is what the question asks about,
+      // the day after it what it dwells on (nextWeekendDayAnswer).
       out.push(ahead <= 6
         ? { kind: 'day', date, weekday: w.weekday, word: w }
-        : { kind: 'past', date, ahead, weekday: w.weekday, word: w, ofWeekend: Boolean(inside) });
+        : {
+          kind: 'past', date, ahead, weekday: w.weekday, word: w, ofWeekend: Boolean(inside),
+          weekendFirst: Boolean(inside) && words.indexOf(inside) < words.indexOf(w),
+        });
     } else if (w.kind === 'weekend') {
       out.push({ kind: 'weekend', scope: scopeOf(w), raw: raw(w), word: w });
     } else {
@@ -1298,6 +1304,62 @@ async function weekendShutSaid(res, b, question, targets) {
   return line ? { ...out, entries: [line, ...out.entries] } : out;
 }
 
+// A DAY OF NEXT WEEKEND PAST THE SEVEN DAYS, ASKED WITH NEXT WEEKEND (second
+// recheck, 2026-11-06). "How busy will next weekend be, especially Sunday?"
+// on a Saturday or a Sunday was "Sunday of next weekend is past the seven
+// days the forecast covers. It comes into them on Monday." alone: next
+// Friday, which the seven days hold and main gave, was lost, and of a cafe
+// shut on Sundays it implied a Sunday forecast was coming. A day the venue
+// is shut on is said to be, with every other day of next weekend it is shut
+// on, then next weekend's days the forecast holds, as next weekend is
+// answered (weekend_outlook): the listing's hours and the venue's own curve
+// are both by the week, so that weekday in the seven days says it. An open
+// day said after next weekend is next weekend's answer, which says the day
+// is past the seven days. Null for an open day asked in its own right ("How
+// busy will Saturday be next weekend?"), from Monday to Thursday, and when
+// the forecast holds none of next weekend, which the day's own refusal
+// answers (pastDayRefusal).
+async function nextWeekendDayAnswer(b, target) {
+  const { days, today, card, closed, asOf } = await daysFromToday(b);
+  // From Monday to Thursday next weekend's days say "next" of the coming
+  // weekend's, so the day's own refusal answers there, as before.
+  if (!today || !target.date || ![5, 6, 0].includes(weekdayOf(today))) return null;
+  const last = addDaysTo(today, 6);
+  const shutOn = (d) => closed.includes(d) || days.some((e) => entryDate(e) === d && advisorFacts.isShutDay(e));
+  const shutWeekly = (d) => {
+    let same = d;
+    while (same > last) same = addDaysTo(same, -7);
+    return same >= today && shutOn(same);
+  };
+  const plan = await INTENT_PLANS.weekend_outlook({ ...b, weekendScope: 'next' });
+  const held = plan.some((e) => isDayEntry(e) && !advisorFacts.isRefusal(e));
+  // An open day asked about in its own right ("How busy will Saturday be
+  // next weekend?") is its own refusal; one dwelt on after next weekend is
+  // next weekend's answer, which says it is past the seven days.
+  if (!shutWeekly(target.date)) return held && target.weekendFirst ? plan : null;
+  const ownSaid = new Set(roostDayReader.saidShut(b.question || ''));
+  const { from, to } = weekendWindow(today, 'next');
+  const weekend = [];
+  for (let d = from; d <= to; d = addDaysTo(d, 1)) if (!ownSaid.has(WEEKDAY_NAMES_LONG[weekdayOf(d)])) weekend.push(d);
+  // Every day of next weekend the venue is shut on, in the seven days or
+  // past them, in one line; the days past them it opens on, said to be past.
+  const shutDays = weekend.filter(shutWeekly);
+  if (!shutDays.length) return held && target.weekendFirst ? plan : null;
+  const pastDays = weekend.filter((d) => d > last && !shutWeekly(d));
+  const stamp = asOf || (b.now || new Date()).toISOString();
+  const named = (dates) => dates.map((d) => WEEKDAY_NAMES_LONG[weekdayOf(d)]);
+  const span = (dates) => ({ weekdays: named(dates), from: dates[0], through: dates[dates.length - 1], asOf: stamp });
+  // Next weekend's days the forecast holds, then the days of it past the
+  // seven days that the venue opens on, then the street.
+  const kept = plan.filter((e) => ![advisorFacts.PAST_FORECAST_ID, advisorFacts.WEEKEND_CLOSED_ID].includes(e.id) && !advisorFacts.isRefusal(e));
+  return [
+    advisorFacts.weekendClosedFact({ listing: card, scope: 'next', ...span(shutDays) }),
+    ...kept.filter(isDayEntry),
+    ...(pastDays.length ? [advisorFacts.pastForecastFact({ card, ...span(pastDays) })] : []),
+    ...kept.filter((e) => !isDayEntry(e)),
+  ];
+}
+
 // The bridge's step after a plan, for a typed question (readingFor above): a
 // day past the week ahead is said to be; two days are both answered
 // (bothAnswer); a day the route's plan does not hold (a weekday outside the
@@ -1314,6 +1376,14 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
     return intentId === 'weekend_outlook' ? weekendShutSaid(both, b, question, r.targets) : both;
   }
   const { askedFor, target } = r;
+  // A day of next weekend past the seven days, asked with next weekend ("How
+  // busy will next weekend be, especially Sunday?" on a Saturday): next
+  // weekend's days the forecast holds, and the day said to be past it, or
+  // shut (nextWeekendDayAnswer).
+  if (target && target.kind === 'past' && target.ofWeekend && intentId === 'weekend_outlook') {
+    const said = await nextWeekendDayAnswer(b, target);
+    if (said) return { entries: said, askedFor };
+  }
   if (askedFor === null && (NAMED_TODAY_INTENTS.has(intentId) || intentId === 'weekend_outlook')) {
     return { entries: [await pastDayRefusal(b, target)], askedFor };
   }
