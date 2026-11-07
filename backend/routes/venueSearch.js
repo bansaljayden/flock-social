@@ -675,7 +675,8 @@ function isPhotoRefShaped(ref) {
 // THE COPY. A missing key is not a blip. It is off until an operator turns it
 // back on, so a sentence ending "try again in a moment" would be a lie in the
 // one direction that wastes the user's time. The honest sentence says three
-// things: it is off, it is us, and retrying will not help.
+// things: it is off and it is ours to fix. Discover draws no Try again
+// beside it (ExploreScreen.js), since a retry gets the same answer.
 //
 // THE STATUS STAYS 500, DELIBERATELY, AND THIS IS THE SURPRISING HALF.
 // 503 is the better code for "not configured" and is what routes/emailWebhook.js
@@ -687,8 +688,8 @@ function isPhotoRefShaped(ref) {
 // minute that changes nothing. 500 is the only 5xx on which this file's copy
 // actually reaches the person reading it. Move this to 503 in the SAME change
 // that teaches buildHttpError to keep a JSON `error` string it was given.
-const SEARCH_OFF = 'Venue search is turned off right now. Nothing you typed caused it, and retrying will not help.';
-const DETAILS_OFF = 'Venue pages are turned off right now. Nothing you tapped caused it, and retrying will not help.';
+const SEARCH_OFF = "Venue search is turned off right now. We're on it.";
+const DETAILS_OFF = "Venue pages are turned off right now. We're on it.";
 // Google no longer has a listing under this venue's id (shapeDetails). Said
 // plainly, with no suggestion to retry, because a retry gets the same answer.
 const VENUE_GONE = 'This venue is no longer listed on Google, so its details cannot load.';

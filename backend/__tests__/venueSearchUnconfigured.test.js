@@ -111,8 +111,11 @@ test('venue search with no key answers a sentence, not the name of an environmen
   assertHuman(res, 'GET /search');
   // A missing key is not a blip. Telling somebody to try again in a moment
   // sends them back into the same wall for as long as the key is missing, so
-  // the sentence has to say that retrying is not the answer.
-  assert.match(res.body.error, /retrying will not help/i,
+  // the sentence says it is off and ours, and invites no retry (Discover
+  // draws no Try again beside it).
+  assert.match(res.body.error, /turned off right now\. We're on it\./i,
+    'the copy says search is off and that it is being fixed');
+  assert.doesNotMatch(res.body.error, /try again/i,
     'the copy invites a retry that cannot work');
   assert.strictEqual(res.status, 500,
     'the status must stay 500: services/api.js buildHttpError replaces the body message on 502, 503 and 504');

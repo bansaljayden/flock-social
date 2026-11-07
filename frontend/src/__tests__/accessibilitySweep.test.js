@@ -480,7 +480,7 @@ describe('icon-only controls on the hot paths are named', () => {
     // overflow button. Everything behind it is a tile in the composer's plus
     // sheet now. Discover is a different screen and keeps its own.
     ['discoverNavOpen'].forEach((state) => {
-      expect(app).toContain(`aria-label="Features" aria-expanded={${state}}`);
+      expect(app).toContain(`aria-label="Events and friends" aria-expanded={${state}}`);
     });
     // And neither chat grew one back.
     expect(app).not.toContain('aria-label="Features" aria-expanded={chatNavOpen}');

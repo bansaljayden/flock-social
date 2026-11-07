@@ -391,7 +391,7 @@ test('Discover hides its collapsed nav and its closed events panel from the keyb
     expect(stop.onScreen, `Tab landed off screen on "${stop.name}"`).toBe(true);
   }
 
-  await page.getByRole('button', { name: 'Features', exact: true }).click();
+  await page.getByRole('button', { name: 'Events and friends', exact: true }).click();
   await page.waitForTimeout(700);
   const opened = await focusableNames(page);
   for (const label of DISCOVER_NAV) {

@@ -65,8 +65,8 @@ test('the category filter drives pins, heat and an empty sentence from one predi
   expect(map).toMatch(/spots on this map\. Pick another filter or move the map\./);
 });
 
-test('a quota refusal that names its window does not offer a retry that cannot work', () => {
-  expect(explore).toMatch(/\{!\/again in \\d\+\/i\.test\(venueLoadError \|\| ''\) && <button className="hit44" onClick=\{\(\) => \{ setLocationError\(''\); setVenueLoadError\(''\);/);
+test('a quota refusal that names its window, or search turned off, does not offer a retry that cannot work', () => {
+  expect(explore).toMatch(/\{!\/again in \\d\+\|turned off right now\/i\.test\(venueLoadError \|\| ''\) && <button className="hit44" onClick=\{\(\) => \{ setLocationError\(''\); setVenueLoadError\(''\);/);
 });
 
 test('a category-shaped hourly curve says so under the bars', () => {
