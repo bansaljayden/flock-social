@@ -102,7 +102,7 @@
     {
       "file": "screenshots/crowd-dial-dark-v3-480w.webp",
       "screen": "crowd-dial",
-      "title": "The Copper Finch's crowd forecast: usually busy at 78, and the next twelve hours",
+      "title": "The Copper Finch's crowd forecast: usually busy at 78, quietest at 11 PM, hour by hour until it closes",
       "mode": "dark",
       "width": 480,
       "height": 1039
@@ -110,7 +110,7 @@
     {
       "file": "screenshots/crowd-dial-dark-v3@2x.webp",
       "screen": "crowd-dial",
-      "title": "The Copper Finch's crowd forecast: usually busy at 78, and the next twelve hours",
+      "title": "The Copper Finch's crowd forecast: usually busy at 78, quietest at 11 PM, hour by hour until it closes",
       "mode": "dark",
       "width": 780,
       "height": 1688

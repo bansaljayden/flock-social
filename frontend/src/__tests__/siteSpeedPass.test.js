@@ -105,6 +105,10 @@ describe('the hero screenshot preload lives on / only', () => {
         expect(webpInfo(buf).width).toBe(480);
       } else if (f.endsWith('.png')) {
         expect(`${f} ${buf.length <= 700000}`).toBe(`${f} true`);
+        // Full colour, IHDR colour type 2 or 6, never a palette (3): the first
+        // -v3 PNG came out at 253 colours (362,986 bytes), which banded the
+        // drawings and dithered the painted birds on the PWA's first screen.
+        expect(`${f} colour type ${buf.toString('ascii', 12, 16)} ${buf[25]}`).toMatch(/colour type IHDR [26]$/);
       } else {
         expect(f).toBe('home-reel-v3.avif');
         expect(buf.length).toBeLessThan(40000);

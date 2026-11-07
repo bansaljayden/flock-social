@@ -33,15 +33,18 @@ $28.52 each, which Asad paid.
 The crowd figures and Birdie's answer were written for the capture. The crowd
 card says what such a figure is, "An estimate from typical patterns for this
 kind of place.", and its label is hedged ("Usually busy"); no frame carries a
-LIVE or ESTIMATED badge. The frames are shot at 7 PM local: the browser's time
-zone is moved to where it is 7 PM, its clock is not.
+LIVE or ESTIMATED badge. What the card says about the figures is not written:
+its quietest hour and its busiest hours are the ones the server's crowd engine
+names for them (the rig calls the same functions). The frames are shot at 7 PM
+local: the browser's time zone is moved to where it is 7 PM, its clock is not.
 
 Every capture the site shows is the dark theme. Each ships as the 780 x 1688
-WebP plus a 480px WebP (`-480w`) for the plates, which paint at about 190 to
-310 CSS px (How it works 186 to 242, the reel 200 to 230, the home page's
-annotated phones 240 to 312). The home screen also ships as
-`home-reel-v3.avif` (under 40,000 bytes) and `nest-dark-v3@2x.png`. Every
-name carries `-v3`: the site's CDN keeps a same-named file for a day.
+WebP plus a 480px WebP (`-480w`) for the plates, which paint at about 186 to
+312 CSS px (How it works 186 to 242, the reel 200 to 230, the home page's
+annotated phones 224 to 312). The home screen also ships as
+`home-reel-v3.avif` (under 40,000 bytes) and `nest-dark-v3@2x.png` (full
+colour, not a palette). Every name carries `-v3`: the site's CDN keeps a
+same-named file for a day.
 
 ## src/website/HeroReel.js and reelShots.js
 
