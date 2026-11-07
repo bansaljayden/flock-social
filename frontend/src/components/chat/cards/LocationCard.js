@@ -33,6 +33,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CardShell } from './SystemRow';
 import Icons from '../../ui/Icons';
 import './cards.css';
+import { formatDistance, usesMiles, deviceLocale, KM_PER_MILE } from '../../../lib/distance';
 
 const TICK_MS = 15000;
 
@@ -55,11 +56,19 @@ export const remainingLabel = (endsAt, nowMs) => {
 // than 0.1 mi away" on every peer card rendered without one. That is a false
 // claim about where somebody is standing, which is worse than a cosmetic
 // invented figure, so the type is settled before anything touches the value.
-export const distanceLabel = (miles) => {
+//
+// In the reader's unit (lib/distance.js), where it was miles on every phone:
+// "0.4 mi away" on a US phone, "650 m away" on a French one, with the same
+// floor either way for someone a few steps off.
+export const distanceLabel = (miles, { locale } = {}) => {
   if (typeof miles !== 'number' || !Number.isFinite(miles) || miles < 0) return null;
-  if (miles < 0.1) return 'less than 0.1 mi away';
-  if (miles < 10) return `${miles.toFixed(1)} mi away`;
-  return `${Math.round(miles)} mi away`;
+  const km = miles * KM_PER_MILE;
+  if (usesMiles(locale === undefined ? deviceLocale() : locale)) {
+    if (miles < 0.1) return 'less than 0.1 mi away';
+  } else if (km < 0.1) {
+    return 'less than 100 m away';
+  }
+  return `${formatDistance(km, { locale })} away`;
 };
 
 export default function LocationCard({

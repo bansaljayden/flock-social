@@ -1359,6 +1359,16 @@ describe('LocationCard', () => {
     expect(distanceLabel(Number.NaN)).toBeNull();
   });
 
+  // Miles on every phone, where every other distance follows the region
+  // (lib/distance.js, review 2026-11-06).
+  test("the distance is in the reader's unit, with the same floor for someone a few steps off", () => {
+    expect(distanceLabel(0.4, { locale: 'en-US' })).toBe('0.4 mi away');
+    expect(distanceLabel(9.97, { locale: 'en-US' })).toBe('10 mi away');
+    expect(distanceLabel(0.4, { locale: 'fr-FR' })).toBe('640 m away');
+    expect(distanceLabel(3, { locale: 'fr-FR' })).toBe('4.8 km away');
+    expect(distanceLabel(0.04, { locale: 'fr-FR' })).toBe('less than 100 m away');
+  });
+
   test('own: the sentence, the countdown and one Stop', () => {
     const onStop = jest.fn();
     const endsAt = new Date(Date.now() + 47 * 60000 - 1000).toISOString();

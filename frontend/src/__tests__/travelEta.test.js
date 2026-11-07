@@ -72,10 +72,19 @@ describe('the estimate', () => {
     expect(formatEta(-3)).toBeNull();
   });
 
+  // The unit follows the reader's region through lib/distance.js (review,
+  // 2026-11-06): it printed kilometres on every phone, so a US reader saw
+  // "needs a ride · 2.1 km away" in the chat beside "1.3 mi" on Discover.
   it('a distance reads in the unit a person would use', () => {
-    expect(formatDistance(0.02)).toBe('50 m away');
-    expect(formatDistance(0.43)).toBe('450 m away');
-    expect(formatDistance(2.14)).toBe('2.1 km away');
+    const fr = { locale: 'fr-FR' };
+    expect(formatDistance(0.02, fr)).toBe('20 m away');
+    expect(formatDistance(0.43, fr)).toBe('430 m away');
+    expect(formatDistance(2.14, fr)).toBe('2.1 km away');
+    const us = { locale: 'en-US' };
+    expect(formatDistance(0.02, us)).toBe('50 ft away');
+    expect(formatDistance(0.43, us)).toBe('0.3 mi away');
+    expect(formatDistance(2.14, us)).toBe('1.3 mi away');
     expect(formatDistance('x')).toBeNull();
+    expect(formatDistance(null)).toBeNull();
   });
 });

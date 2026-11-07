@@ -32,6 +32,8 @@
  * waiting on.
  */
 
+import { formatDistance as formatDistanceIn } from './distance';
+
 export const TRAVEL_INTENTS = Object.freeze(['omw', 'need_ride']);
 export const TRAVEL_MODES = Object.freeze(['walk', 'drive', 'transit']);
 export const MAX_SEATS = 8;
@@ -94,10 +96,17 @@ export function formatEta(minutes) {
   return rest === 0 ? `about ${hrs} hr` : `about ${hrs} hr ${rest} min`;
 }
 
-/** "2.1 km away" / "400 m away", for a position with no mode. */
-export function formatDistance(distanceKm) {
+/**
+ * "1.3 mi away" / "400 ft away" on a phone that reads miles, "2.1 km away" /
+ * "400 m away" elsewhere, for a position with no mode: lib/distance.js's
+ * formatDistance, the one the Discover list and the map print with, plus
+ * "away". It printed kilometres on every phone, so a US reader saw "0.4 mi"
+ * on Discover and "needs a ride · 2.1 km away" in the flock chat.
+ */
+export function formatDistance(distanceKm, options) {
   if (distanceKm == null) return null;
   const d = Number(distanceKm);
   if (!Number.isFinite(d) || d < 0) return null;
-  return d < 1 ? `${Math.max(50, Math.round(d * 1000 / 50) * 50)} m away` : `${d.toFixed(1)} km away`;
+  const said = formatDistanceIn(d, options);
+  return said ? `${said} away` : null;
 }
