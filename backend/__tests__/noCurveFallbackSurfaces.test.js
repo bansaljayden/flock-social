@@ -433,6 +433,51 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
   for (const h of out.hourly_forecast) assert.strictEqual(h.crowd_method, 'category_typical', h.hour);
 });
 
+// A LATER DAY (routes/ai.js, 2026-11-06): a day after today is answered with
+// how busy the venue usually is that weekday. For a venue with no curve that
+// is the table's typical night, behind the same switch and said as typical
+// for this kind of place; with the switch off there is none to give.
+const dayAhead = (days) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+const tableBusiest = (weekday) => {
+  // The bar's night, 6 AM to 5 AM, open around the clock: its first busiest
+  // hour on the table, as the tool picks it.
+  let best = null;
+  for (let i = 0; i < 24; i++) {
+    const h = (6 + i) % 24;
+    const d = (weekday + (6 + i >= 24 ? 1 : 0)) % 7;
+    const v = barValue(d, h);
+    if (!best || v > best.v) best = { h, v };
+  }
+  return best.h;
+};
+
+test('Birdie, asked about a later day: the table\'s usual night for a venue with no curve, said as typical, and none with the switch off', async () => {
+  const date = dayAhead(7);
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const off = await executeTool('get_crowd_prediction', { place_id: freshId('LATER'), date }, ++nextUser, { includeForecast: true });
+  assert.strictEqual(off.usual_for_day, null, 'switched off, a venue with no curve has no usual night');
+  assert.match(off.day_note, /no usual pattern for this venue on that weekday/);
+  on();
+  const out = await executeTool('get_crowd_prediction', { place_id: freshId('LATER'), date }, ++nextUser, { includeForecast: true });
+  assert.strictEqual(out.usual_for_day.source, 'category_typical');
+  const busiest = out.usual_for_day.busiest.match(/^(\d{1,2}) (AM|PM)/);
+  assert.ok(busiest, out.usual_for_day.busiest);
+  assert.strictEqual((Number(busiest[1]) % 12) + (busiest[2] === 'PM' ? 12 : 0), tableBusiest(weekday));
+  assert.match(out.day_note, /what is typical for this kind of place, not this venue's own pattern and not a reading of it/);
+  assert.ok(!('crowd_score' in out) && !('hourly_forecast' in out) && !('crowd_method' in out));
+});
+
+test('Birdie, asked about a later day about a venue with a curve: its own curve, never the table', async () => {
+  on();
+  const id = freshId('LATERCURVE');
+  const date = dayAhead(7);
+  const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+  curves[id] = { [`${weekday}_20`]: 70, [`${weekday}_21`]: 90, [`${weekday}_22`]: 60 };
+  const out = await executeTool('get_crowd_prediction', { place_id: id, date }, ++nextUser, { includeForecast: true });
+  assert.strictEqual(out.usual_for_day.source, 'venue_pattern');
+  assert.strictEqual(out.usual_for_day.busiest, '9 PM');
+});
+
 test('Birdie\'s rules name the method and its source only while the switch can serve them', () => {
   const rule = /- When get_crowd_prediction returns `crowd_method` = "category_typical"[^\n]*/;
   const off = buildSystemPrompt('Ava', {}, { ageBracket: 'adult' });

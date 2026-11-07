@@ -547,6 +547,24 @@ mlPredictor.predictHourlyForecast = async (venue, weather, startHour, count, bas
   return out;
 };
 mlPredictor.agreeWithStrip = async (headline) => headline;
+// A later day's usual night (routes/ai.js A LATER DAY), from the fixture's
+// curve and hours: the venue's own for a venue with a curve, the same curve
+// standing in for the category table's for one without while the table is
+// on, and nothing otherwise, as usualDayCurve chooses. The night runs 6 AM to
+// 5 AM, open hours only.
+mlPredictor.usualDayCurve = async (venue, weekday) => {
+  const v = cases.byId.get(venue && venue.place_id);
+  const method = v ? methodOf(v) : null;
+  const source = method === 'ml' ? 'venue_pattern' : method === crowdEngine.NO_CURVE_FALLBACK_METHOD ? 'category_typical' : null;
+  if (!source) return null;
+  const hours = [];
+  for (let i = 0; i < 24; i++) {
+    const hour = (6 + i) % 24;
+    const day = (weekday + (6 + i >= 24 ? 1 : 0)) % 7;
+    if (cases.openAt(v, day, hour, 30)) hours.push({ day, hour, score: cases.levelAt(v, day, hour) });
+  }
+  return { source, weekday, hours };
+};
 
 // ── Gemini, watched (live) or replayed ──────────────────────────────────────
 

@@ -863,12 +863,15 @@ const toolDeclarations = [
   },
   {
     name: 'get_crowd_prediction',
-    description: 'Get the current crowd level, hourly forecast, best time to visit, and peak hours for a specific venue. Use this when the user asks about how busy a place is or when to go. best_time is the only answer to "when should I go" — the hourly scores say how busy each hour is, not which hour is better.',
+    description: 'Get the current crowd level, hourly forecast, best time to visit, and peak hours for a specific venue. Use this when the user asks about how busy a place is or when to go. best_time is the only answer to "when should I go" — the hourly scores say how busy each hour is, not which hour is better. For a later day, pass `date`: the result is then how busy the venue usually is on that weekday, not a forecast.',
     parameters: {
       type: 'OBJECT',
       properties: {
         place_id: { type: 'STRING', description: 'Google Places ID of the venue' },
         venue_name: { type: 'STRING', description: 'Name of the venue (for display)' },
+        // THE DAY THEY MEAN (2026-11-06). Without it the tool could only
+        // answer for now, and a plan for the 13th got no crowd answer at all.
+        date: { type: 'STRING', description: 'Only when they ask about a day after today (tomorrow, Friday, the 13th): that day on their calendar as YYYY-MM-DD. Leave it out for now, tonight and today.' },
       },
       required: ['place_id'],
     },
@@ -1391,9 +1394,114 @@ function lockForecastResult(result, { salesOff = false } = {}) {
   // The UTC note qualifies hours and a number this result no longer carries.
   delete result.clock;
   delete result.clock_note;
+  // A later day's usual night is the same paid half, said another way (A
+  // LATER DAY, below), and so is the card's copy of it.
+  delete result.usual_for_day;
+  delete result.day_note;
+  delete result[BIRDIE_CARD_ONLY];
   result.forecast_locked = true;
   result.forecast_note = salesOff ? LOCKED_FORECAST_NOTE_NO_SALES : LOCKED_FORECAST_NOTE;
   return result;
+}
+
+// WHAT A TOOL HANDS THE CARDS AND NOT THE MODEL. A tool result is two things:
+// the model's material for its answer, sent to Gemini whole, and the source of
+// the venue cards under that answer. Some things belong on a card and not in
+// the model's hands, like the bars of a usual night: numbers the rules give it
+// no way to word as anything but that night's crowd. They ride under this
+// symbol, which JSON leaves out, so nothing under it is ever in what Gemini is
+// sent, and the tool loop moves it onto the card.
+const BIRDIE_CARD_ONLY = Symbol('birdieCardOnly');
+
+// ---------------------------------------------------------------------------
+// A LATER DAY (2026-11-06)
+// ---------------------------------------------------------------------------
+// get_crowd_prediction's hours run twelve hours from now. Asked about a plan on
+// the 13th, Birdie had nothing to say about its crowd and said so in the tool's
+// own terms: "Crowds only read twelve hours out, so check back closer to the
+// 13th for the timing", over cards with no crowd row and a "Closed" pill for
+// 3:44 that afternoon. With `date`, a day after today at the venue is answered
+// with how busy the venue usually is on that weekday (mlPredictor
+// usualDayCurve: its own curve, else the category table), said as usual and
+// never as that night's crowd. No number, no level, no best time and nothing
+// live reaches the model: only when it is usually busiest that weekday, and
+// its posted hours that day. The card draws the usual night's bars (BirdiePanel
+// "Usually busiest 8-10 PM Fri"). No date, or today, is the lookup it was.
+const ASKED_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const ASKED_DATE_MAX_DAYS = 366;
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const ASKED_DATE_ERROR = 'date has to be the day they mean as YYYY-MM-DD, like 2026-11-13. Leave it out for today.';
+const ASKED_DATE_PAST = 'That day has already passed there.';
+const ASKED_DATE_FAR = 'That day is more than a year away, too far to say how busy it usually is then.';
+const USUAL_DAY_NOTE = 'There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when this venue is usually busiest on that weekday, from its own usual pattern. Say it as what usually happens there, never as that night\'s crowd, for example: "I can\'t see that night\'s crowd yet. Fridays there usually peak around 9."';
+const USUAL_DAY_CATEGORY_NOTE = 'There is no crowd level, best time or hour-by-hour forecast for that day yet, and nothing here is one. usual_for_day.busiest is when places like this one are usually busiest on that weekday: what is typical for this kind of place, not this venue\'s own pattern and not a reading of it. Say it that way, for example: "I can\'t see that night\'s crowd yet. Spots like this usually peak around 9 on Fridays."';
+const USUAL_DAY_NONE_NOTE = 'There is no crowd level or forecast for that day yet, and no usual pattern for this venue on that weekday. Say you can\'t see that night\'s crowd yet, and give no level and no hour for it.';
+
+// What `date` asks for, against the venue's own date (`wall`): { later: false }
+// for no date or today, { later: true, iso, weekday } for a day after it, or
+// { error }. On the server's clock nothing knows the venue's date to within a
+// day, so only a day two or more after UTC's today counts as later there, and
+// a day either side of it is the lookup without a date.
+function readAskedDay(value, wall, onServerClock) {
+  if (value == null || value === '') return { later: false };
+  const m = typeof value === 'string' ? ASKED_DATE_RE.exec(value.trim()) : null;
+  if (!m) return { error: ASKED_DATE_ERROR };
+  const [year, month, day] = m.slice(1).map(Number);
+  const at = Date.UTC(year, month - 1, day);
+  const probe = new Date(at);
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
+    return { error: ASKED_DATE_ERROR };
+  }
+  const days = Math.round((at - Date.UTC(wall.year, wall.month - 1, wall.day)) / 86400000);
+  if (days < (onServerClock ? -1 : 0)) return { error: ASKED_DATE_PAST };
+  if (days < (onServerClock ? 2 : 1)) return { later: false };
+  if (days > ASKED_DATE_MAX_DAYS) return { error: ASKED_DATE_FAR };
+  return { later: true, iso: `${m[1]}-${m[2]}-${m[3]}`, weekday: civilWeekday(year, month, day) };
+}
+
+// An hour of the venue's clock as people say it: "9 PM", "9:30 PM", "12 AM".
+function clockText(hour, minute = 0) {
+  const h = ((Number(hour) % 24) + 24) % 24;
+  const face = h % 12 === 0 ? 12 : h % 12;
+  const mins = Number.isInteger(minute) && minute > 0 ? `:${String(minute).padStart(2, '0')}` : '';
+  return `${face}${mins} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+// The venue's posted hours on a weekday, off Google's own periods: "5 PM to
+// 10 PM", two services joined by "and", "open all day", "closed" when no
+// period opens that day, or null when Google sent no hours at all.
+function hoursThatDay(periods, weekday) {
+  if (!Array.isArray(periods) || !periods.length) return null;
+  if (periods.some((pd) => pd && pd.open && !pd.close)) return 'open all day';
+  const windows = periods
+    .filter((pd) => pd && pd.open && pd.open.day === weekday && Number.isInteger(pd.open.hour))
+    .sort((a, b) => (a.open.hour * 60 + (a.open.minute || 0)) - (b.open.hour * 60 + (b.open.minute || 0)));
+  if (!windows.length) return 'closed';
+  return windows
+    .map((pd) => `${clockText(pd.open.hour, pd.open.minute)} to ${Number.isInteger(pd.close && pd.close.hour) ? clockText(pd.close.hour, pd.close.minute) : 'late'}`)
+    .join(' and ');
+}
+
+// When a usual night is busiest: its busiest open hour, and the hours right
+// after it within 3 points of it, the rule crowdEngine findPeakTime draws the
+// card's busiest hours with. { start, end } in hours of the clock, `end` the
+// hour the window closes at, or null when there is no open hour above zero.
+function usualBusiest(hours) {
+  if (!Array.isArray(hours) || !hours.length) return null;
+  let top = 0;
+  hours.forEach((h, i) => { if (h.score > hours[top].score) top = i; });
+  if (!(hours[top].score > 0)) return null;
+  let last = top;
+  while (last + 1 < hours.length
+    && (hours[last].hour + 1) % 24 === hours[last + 1].hour
+    && Math.abs(hours[last + 1].score - hours[top].score) <= 3) last += 1;
+  return { start: hours[top].hour, end: (hours[last].hour + 1) % 24 };
+}
+
+// The busiest stretch in the model's words: "9 PM" for one hour, "8 PM to 10
+// PM" for a longer one.
+function busiestText(b) {
+  return (b.end - b.start + 24) % 24 === 1 ? clockText(b.start) : `${clockText(b.start)} to ${clockText(b.end)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1777,6 +1885,43 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
 
       const lat = venue.location?.latitude;
       const lon = venue.location?.longitude;
+
+      // A LATER DAY (above): how busy it usually is that weekday, and nothing
+      // about now. No weather, no game, no owner's reading and no model run,
+      // all of which are about tonight.
+      const asked = readAskedDay(toolInput.date, wall, onServerClock);
+      if (asked.error) return { error: asked.error };
+      if (asked.later) {
+        const later = {
+          venue_name: promptSafe(venue.name, MAX_VENUE_NAME_CHARS),
+          date: asked.iso,
+          day: WEEKDAY_NAMES[asked.weekday],
+          // Google's posted hours, a fact like is_open, so a locked result
+          // keeps them.
+          hours_that_day: hoursThatDay(p.currentOpeningHours?.periods, asked.weekday),
+        };
+        const laterDistance = venueDistance(opts.distanceFrom, lat, lon);
+        if (laterDistance) Object.assign(later, laterDistance);
+        if (!opts.includeForecast) return lockForecastResult(later, { salesOff: opts.salesOff === true });
+        const curve = await mlPredictor.usualDayCurve(venue, asked.weekday, { userId });
+        const busiest = curve ? usualBusiest(curve.hours) : null;
+        later.usual_for_day = busiest ? { source: curve.source, busiest: busiestText(busiest) } : null;
+        later.day_note = !busiest ? USUAL_DAY_NONE_NOTE
+          : curve.source === 'category_typical' ? USUAL_DAY_CATEGORY_NOTE : USUAL_DAY_NOTE;
+        if (busiest) {
+          later[BIRDIE_CARD_ONLY] = {
+            usual: {
+              date: asked.iso,
+              weekday: asked.weekday,
+              source: curve.source,
+              busiest,
+              hours: curve.hours.map((h) => ({ h: h.hour, v: h.score })),
+            },
+          };
+        }
+        return later;
+      }
+
       // Charged to the steering account, like every other paid call in this
       // tool loop. `userId` has been in scope here all along and the get_weather
       // tool below already passes it; this one did not, which left an
@@ -2700,7 +2845,7 @@ The user's name is ${promptSafe(userName, MAX_CONTEXT_CHARS) || 'friend'}.${ageL
 
 What you can actually do (tools):
 - search_venues: find restaurants, cafes, bars, activities near them
-- get_crowd_prediction: live crowd level, best time to go, peak hours for a venue. The same numbers the Discover screen shows, and each result says what made its number.
+- get_crowd_prediction: live crowd level, best time to go, peak hours for a venue. The same numbers the Discover screen shows, and each result says what made its number. With \`date\`, when the venue is usually busiest on that later day.
 - get_user_flocks: their plans (name, venue, time, status, member count)
 - get_user_friends: their friends list
 - get_weather: current weather
@@ -2731,7 +2876,7 @@ How to answer:
 - Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
 - A crowd number runs 0 to 100 against that venue's own busiest hour of the week: 100 is as packed as that place gets, not a full room. Never call it capacity or say a place is some percent full.
 - WHEN TO GO IS \`best_time\`, ALWAYS. Never rank the hours in \`hourly_forecast\` yourself and never name a quieter hour \`best_time\` did not name. Those scores are how busy each hour is, and they were measured to order hours WORSE than the curve \`best_time\` ranks on: inside 10 points, ordering two hours is a coin flip. \`best_time\` already refuses to name an hour when the difference is that small, so "No quiet hour stands out" means the hours really do look alike and the honest answer is that it doesn't matter much when they go.
-- \`best_time\`, \`peak_hours\` and \`hourly_forecast\` cover the next twelve hours from now and nothing later. For a plan on another day (tomorrow night, next Friday) there is no forecast: never give them those hours or numbers as that day's, and say the read you have is for now.
+- \`best_time\`, \`peak_hours\` and \`hourly_forecast\` cover the next twelve hours from now and nothing later, so never give their hours or numbers as another day's. For a plan on another day (tomorrow night, Friday, the 13th), look the place up with get_crowd_prediction and \`date\` set to that day. That answers with \`usual_for_day\`: when the place is usually busiest on that weekday, which is what usually happens there and not that night's crowd. Say it in plain words, like "I can't see that night's crowd yet. Fridays there usually peak around 9." Give only the hours in \`usual_for_day\`, never a number, a crowd level or a best time for that day, and follow its \`day_note\`. When \`usual_for_day\` is null, say you can't see that night's crowd yet and leave the timing out. Never explain how far ahead you can see. A search result's \`is_open\` is about right now, so for that day say open or closed only from the lookup's \`hours_that_day\`.
 - If you have their coordinates, always pass location to search_venues. If not, ask where they are, once.
 - A search_venues result may carry \`tables\`: that venue's live table count from its own sensor. \`open_tables\` is how many tables are free now, \`party_of_two_fits_now\` whether a party of two can sit right away, and \`wait_minutes\` the likely wait in minutes when nothing fits (null when unknown). You may use it to suggest a place with a table free. Never mention tables for a venue whose result has no \`tables\`, never guess them, and never promise a table will still be free when they arrive.
 - A search_venues or get_crowd_prediction result may carry \`distance_miles\` and \`walk_minutes\`: how far that venue is in a straight line from the location in their message, and about how long that is on foot. That location is approximate, so say them as about ("about half a mile", "about a 10 minute walk"), and lean on them when they want somewhere near, walkable or the closest. They measure from where the person is now, not from a place they name. A venue whose result has no \`distance_miles\` has no known distance: never say or guess how near or far it is, how long it takes to get there, or that it is walkable.
@@ -3548,7 +3693,9 @@ router.post('/chat',
             // without it and all leave the meter alone. A charge that finds the
             // month spent (another turn took the last free venue after this
             // one's peek) locks the result instead of passing it on.
-            if (name === 'get_crowd_prediction' && Array.isArray(result?.hourly_forecast)) {
+            // A later day's usual night is the same paid half (A LATER DAY),
+            // charged on the same delivery: present only when one was made.
+            if (name === 'get_crowd_prediction' && (Array.isArray(result?.hourly_forecast) || result?.usual_for_day)) {
               const charged = await venueForecastAccess(meterVenue, true);
               if (charged.locked) lockForecastResult(result, { salesOff });
             }
@@ -3595,7 +3742,12 @@ router.post('/chat',
               // now, and that one is the current UTC hour's. An owner's live
               // reading is the venue's own now, and goes on the card as ever.
               const match = collectedVenues.find(v => v.place_id === args.place_id);
-              if (match && (result.clock !== SERVER_CLOCK || result.crowd_source === 'owner_report')) {
+              // A later day's lookup carries no number for now, and its card
+              // gets that day's usual night instead (A LATER DAY).
+              if (match && typeof result.date === 'string') {
+                const usual = result[BIRDIE_CARD_ONLY] && result[BIRDIE_CARD_ONLY].usual;
+                if (usual) match.usual = usual;
+              } else if (match && (result.clock !== SERVER_CLOCK || result.crowd_source === 'owner_report')) {
                 match.crowd = result.crowd_score;
                 match.crowd_label = result.crowd_label;
               }
@@ -3772,6 +3924,10 @@ router.post('/chat',
             photo_url: v.photo_url || null,
             crowd: typeof v.crowd === 'number' ? v.crowd : null,
             crowd_label: v.crowd_label || null,
+            // How busy it usually is on the later day the answer is about,
+            // for a venue whose crowd was looked up for that day (A LATER
+            // DAY). Only then, so every other card keeps exactly its keys.
+            ...(v.usual ? { usual: v.usual } : {}),
             // Only on a venue with a deal for this person (withVenueDeals).
             ...(v.deal ? { deal: v.deal } : {}),
           });

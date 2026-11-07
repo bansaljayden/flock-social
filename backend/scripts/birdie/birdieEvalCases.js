@@ -676,9 +676,11 @@ const BATTERY = [
   { id: 'P05', clock: 'fri_evening', persona: 'maya_ios', ctx: ctxHome, turns: ['hungry. cheap. now.'],
     expect: { tools: { must: ['search_venues'] }, pickOne: true, openOnly: true, quietPick: true } },
   // Tomorrow: the crowd tool's hours are tonight's, so no hour of them may be
-  // handed over as tomorrow's.
+  // handed over as tomorrow's. Since 2026-11-06 the place is looked up for
+  // that day (get_crowd_prediction with `date`), and the only hours it may
+  // name are when it is usually busiest then (laterDay).
   { id: 'P06', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['date night tomorrow, somewhere nice but not loud'],
-    expect: { tools: { must: ['search_venues'] }, pickOne: true, allowsBars: true, forbid: ['\\b\\d{1,2}\\s*(am|pm)\\b', 'best time'] } },
+    expect: { tools: { must: ['search_venues'] }, pickOne: true, allowsBars: true, laterDay: true } },
   { id: 'P07', clock: 'fri_evening', persona: 'nomad', ctx: ctxHome, turns: ['where should we go tonight'],
     expect: { asksBack: true, maxVenues: 0 } },
   { id: 'P08', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ["anything fun to do around here tonight that isn't just food"],
@@ -686,6 +688,22 @@ const BATTERY = [
   // No location shared, but the place is in the words: a search may go.
   { id: 'P09', clock: 'fri_evening', persona: 'nomad', ctx: ctxHome, turns: ['any good tacos in fishtown?'],
     expect: { tools: { must: ['search_venues'] }, pickOne: true } },
+
+  // A later day (routes/ai.js A LATER DAY, 2026-11-06). The answer that
+  // started it: a place "on the 13th" got "Crowds only read twelve hours out,
+  // so check back closer to the 13th", over cards with no crowd row. Each of
+  // these looks the place up for that day and says when it is usually
+  // busiest, in plain words, with no number and no best time for that night.
+  { id: 'F01', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['need a spot for dinner on the 13th, somewhere good regardless of price'],
+    expect: { tools: { must: ['search_venues', 'get_crowd_prediction'] }, pickOne: true, laterDay: true } },
+  { id: 'F02', clock: 'sat_morning', persona: 'marcus_22', ctx: ctxHome, turns: ['is pinwheel lanes busy friday'],
+    expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true } },
+  { id: 'F03', clock: 'fri_evening', persona: 'leo_minor', ctx: ctxHome, turns: ['how packed does lehigh lanes get tomorrow night'],
+    expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true } },
+  // No curve of its own: with the category table off there is no usual night
+  // to give, and with it on it is what is typical for places like it.
+  { id: 'F04', clock: 'fri_evening', persona: 'dani_miami', ctx: ctxHome, turns: ['how crowded is coral tide ceviche next saturday'],
+    expect: { tools: { must: ['get_crowd_prediction'] }, laterDay: true, honesty: { venue: 'coral', kind: 'category' } } },
 
   // How busy is it
   { id: 'B01', clock: 'fri_evening', persona: 'marcus_22', ctx: ctxHome, turns: ['how busy is thistle & crust right now'],

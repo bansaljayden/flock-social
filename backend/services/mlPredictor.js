@@ -1635,6 +1635,31 @@ function blendBaselineRows(rows, dayOfWeek, hour) {
 function primeBaselineCache(placeId, rows) {
   if (!placeId || !Array.isArray(rows) || rows.length === 0) return 0;
 
+  const blended = blendCurveRows(rows);
+  const ts = Date.now();
+  let primed = 0;
+  for (const [slot, entry] of blended) {
+    boundedSet(baselineCache, `${placeId}_${slot}`, { data: entry.data, ts, meta: entry.meta });
+    primed += 1;
+  }
+  // Rows of the venue's own curve, so the venue has one: the no-curve
+  // fallback's question, answered from rows the caller already paid for. This
+  // is also how the strip's remembered curve answers it on a replay
+  // (primeVenueCurve), as the read that fetched it did. Nothing while the
+  // switch is off.
+  if (primed > 0) noteCurvePresence(placeId, true, ts);
+  return primed;
+}
+
+// EVERY SLOT OF A WEEKLY CURVE, BLENDED THE WAY ONE SLOT'S QUERY BLENDS IT.
+// A map of "day_hour" to the entry blendBaselineRows makes for that slot from
+// the slot's own row and its two neighbours out of the same rows, for each slot
+// the rows hold and no other. Pure, so the prime above and a caller that wants
+// the curve itself (usualDayCurve) read one arithmetic.
+function blendCurveRows(rows) {
+  const out = new Map();
+  if (!Array.isArray(rows) || rows.length === 0) return out;
+
   // `Number(null)` is 0 and `Number('')` is 0, so a null hour would key itself
   // as midnight and a null weekday as Sunday — a row silently relocated rather
   // than skipped. ml_venue_baselines makes both columns part of its primary
@@ -1657,25 +1682,15 @@ function primeBaselineCache(placeId, rows) {
     });
   }
 
-  const ts = Date.now();
-  let primed = 0;
   for (const [slot, row] of bySlot) {
     const { prevHour, nextHour, prevDay, nextDay } = baselineNeighborSlots(row.day_of_week, row.hour);
     // Exactly the row set the single-slot query would have returned, in the
     // same order, so blendBaselineRows cannot tell the two paths apart.
     const trio = [row, bySlot.get(`${prevDay}_${prevHour}`), bySlot.get(`${nextDay}_${nextHour}`)]
       .filter(Boolean);
-    const entry = blendBaselineRows(trio, row.day_of_week, row.hour);
-    boundedSet(baselineCache, `${placeId}_${slot}`, { data: entry.data, ts, meta: entry.meta });
-    primed += 1;
+    out.set(slot, blendBaselineRows(trio, row.day_of_week, row.hour));
   }
-  // Rows of the venue's own curve, so the venue has one: the no-curve
-  // fallback's question, answered from rows the caller already paid for. This
-  // is also how the strip's remembered curve answers it on a replay
-  // (primeVenueCurve), as the read that fetched it did. Nothing while the
-  // switch is off.
-  if (primed > 0) noteCurvePresence(placeId, true, ts);
-  return primed;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -1780,6 +1795,86 @@ async function venueCurveRows(placeId, userId) {
   await primeVenueCurve(placeId, userId);
   const cached = curveCache.get(placeId);
   return cached && Date.now() - cached.ts < CURVE_CACHE_TTL ? cached.rows : null;
+}
+
+// ---------------------------------------------------------------------------
+// HOW BUSY A VENUE USUALLY IS ON ONE WEEKDAY (2026-11-06).
+// ---------------------------------------------------------------------------
+// For a day past the next twelve hours, where nothing in this file forecasts:
+// Birdie asked about a place "on the 13th" had no crowd answer at all and said
+// so in words nobody uses ("Crowds only read twelve hours out"). This is the
+// answer it can give instead, made only from the two sources the crowd routes
+// already serve and name:
+//   'venue_pattern'     the venue's own weekly curve (ml_venue_baselines),
+//                       each hour blended with its neighbours exactly as a
+//                       slot lookup blends it (blendCurveRows), read through
+//                       venueCurveRows, so it is the strips' read, charge and
+//                       cache;
+//   'category_typical'  for a venue with no curve at all, the category table
+//                       (noCurveFallbackValue), on the same gates and only
+//                       while CROWD_NO_CURVE_FALLBACK can serve it. A venue
+//                       with a curve is never given the table, on any hour.
+// No model runs and no live reading enters: a usual night is not a forecast,
+// and the callers say so.
+//
+// THE NIGHT, NOT THE CALENDAR DAY. The day runs from 6 AM to 5 AM the next
+// morning, the convention crowdEngine sameNightOffset keeps (the hours before
+// 5 AM belong to the night before), so Friday night's 1 AM is Friday's.
+// Hours the venue is closed at (crowdEngine isOpenAt, the card's hours) are
+// left out.
+//
+// Returns { source, weekday, hours: [{ day, hour, score }] } in night order,
+// or null when nothing can be said: a refused or failed curve read, or a venue
+// with no curve the table may not answer for. A venue with a curve and no open
+// hour on that weekday comes back with no hours.
+const USUAL_NIGHT_FIRST_HOUR = 6;
+// A week in which every weekday's date and hour exist on any host clock, for
+// asking the category table about a weekday and an hour (it reads getDay and
+// getHours, as buildFeatureMap does). January 4, 2026 is a Sunday, and January
+// has no clock change anywhere.
+const usualSlotDate = (day, hour) => new Date(2026, 0, 4 + day, hour);
+
+async function usualDayCurve(venue, weekday, options = {}) {
+  const placeId = venue && venue.place_id;
+  if (!placeId || !Number.isInteger(weekday) || weekday < 0 || weekday > 6) return null;
+  const userId = options && options.userId != null ? options.userId : undefined;
+  let rows;
+  try {
+    rows = await venueCurveRows(placeId, userId);
+  } catch (err) {
+    console.error('[MLPredictor] Usual night read failed:', err.message);
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+
+  const slots = Array.from({ length: 24 }, (_, i) => ({
+    day: (weekday + (USUAL_NIGHT_FIRST_HOUR + i >= 24 ? 1 : 0)) % 7,
+    hour: (USUAL_NIGHT_FIRST_HOUR + i) % 24,
+  }));
+  const open = (s) => crowdEngine.isOpenAt(venue, s.hour, s.day);
+
+  if (rows.length > 0) {
+    const blended = blendCurveRows(rows);
+    const hours = [];
+    for (const s of slots) {
+      const entry = blended.get(`${s.day}_${s.hour}`);
+      if (!entry || !open(s)) continue;
+      hours.push({ day: s.day, hour: s.hour, score: Math.max(0, Math.min(100, Math.round(entry.data))) });
+    }
+    return { source: 'venue_pattern', weekday, hours };
+  }
+
+  // No curve of its own: the category table, behind every gate it has.
+  if (!noCurveFallbackState().serving || venue.popular_times) return null;
+  // Null on every hour is a gate saying no (too few reviews, a kind of place
+  // the table has no row for); null on one hour is a slot the table lacks.
+  const values = slots.map((s) => noCurveFallbackValue(venue, usualSlotDate(s.day, s.hour)));
+  if (values.every((v) => v === null)) return null;
+  const hours = [];
+  slots.forEach((s, i) => {
+    if (values[i] !== null && open(s)) hours.push({ day: s.day, hour: s.hour, score: values[i] });
+  });
+  return { source: 'category_typical', weekday, hours };
 }
 
 // `userId` (optional) is the account a cache MISS is charged to — see
@@ -5763,6 +5858,10 @@ module.exports = {
   primeBaselineCache,
   // The venue's weekly curve as the strips read it (see venueCurveRows).
   venueCurveRows,
+  // How busy the venue usually is on one weekday's night, from its own curve
+  // or, for a venue with none, the category table: routes/ai.js answers a
+  // question about a later day with it (usualDayCurve).
+  usualDayCurve,
   getLabel,
   init,
   // Internals exported for backend/__tests__/mlPipeline.test.js — the

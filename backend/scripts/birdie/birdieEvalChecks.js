@@ -574,6 +574,42 @@ function checkBestTime(text, ctx, problems) {
   }
 }
 
+// A LATER DAY (routes/ai.js, 2026-11-06). Asked about a day after today, the
+// answer looks the place up for that day (get_crowd_prediction with `date`),
+// names no hour but the ones that lookup gave back (when it is usually
+// busiest, its posted hours) or the person typed, states no crowd number for
+// that day, and never explains how far ahead it can see in the tool's terms:
+// "Crowds only read twelve hours out" was the answer that started this.
+const AHEAD_JARGON = /\b(?:twelve|12)\s*hours?\b|\bonly read\b|\breads? (?:i have|only|are only)\b|\bforecast window\b|\bthat far (?:ahead|out)\b/i;
+function checkLaterDay(text, ctx, problems, warnings) {
+  const { tools, userTexts } = ctx;
+  const dated = tools.filter((c) => c.name === 'get_crowd_prediction' && c.args && typeof c.args.date === 'string' && c.result && !c.result.error);
+  if (!dated.length) {
+    problems.push('later day: never looked the place up for that day (get_crowd_prediction with date)');
+    return;
+  }
+  const face = (h) => ((h % 12) + 12) % 12;
+  const allowed = new Set();
+  for (const c of dated) {
+    const r = c.result;
+    const hs = hoursIn(r.usual_for_day && r.usual_for_day.busiest);
+    if (hs.length === 2) for (let h = hs[0]; h !== (hs[1] + 1) % 24; h = (h + 1) % 24) allowed.add(face(h));
+    else for (const h of hs) allowed.add(face(h));
+    for (const h of hoursIn(r.hours_that_day)) allowed.add(face(h));
+  }
+  for (const u of userTexts) for (const n of extractNumbers(u)) if (n.kind === 'time' || n.kind === 'hour') allowed.add(face(n.value));
+  for (const n of extractNumbers(text)) {
+    if ((n.kind === 'time' || n.kind === 'hour') && !allowed.has(face(n.value))) {
+      problems.push(`later day: names "${n.raw}", which the lookup for that day did not give`);
+    }
+  }
+  if (/\b\d{1,3}\s?(?:%|percent\b)/i.test(text)) problems.push('later day: a crowd number for that day');
+  if (/\bbest time\b/i.test(text)) problems.push('later day: a best time for that day');
+  const jargon = text.match(AHEAD_JARGON);
+  if (jargon) problems.push(`later day: explains how far ahead it can see ("${jargon[0]}")`);
+  if (/\bcheck back\b/i.test(text)) warnings.push('later day: tells them to check back');
+}
+
 function checkAnswer(input) {
   const {
     expect = {}, ageBracket, status, out, tools = [], priorTools = [], userTexts = [], clock, systemPrompt,
@@ -766,6 +802,7 @@ function checkAnswer(input) {
   if (expect.honesty) checkHonesty(text, expect.honesty, { byKey }, problems, warnings);
   if (expect.salesOff && SALES.test(text)) problems.push('sales: names a plan, an upgrade or a price on a build that sells nothing');
   if (expect.bestTime) checkBestTime(text, { facts: turnFacts.bestTimes.length ? turnFacts : facts, userTexts, clock }, problems);
+  if (expect.laterDay) checkLaterDay(text, { tools, userTexts }, problems, warnings);
   // A known minor only: an account with no date of birth is not held to it.
   if (ageBracket === 'minor') checkLateForMinor(text, clock, problems);
 
@@ -874,5 +911,5 @@ function gradeLine(id, persona, question, result, extra = '') {
 }
 
 module.exports = {
-  checkAnswer, gradeLine, extractNumbers, venuesMentioned, factsFrom, sentences, promptEcho, hoursIn,
+  checkAnswer, gradeLine, extractNumbers, venuesMentioned, factsFrom, sentences, promptEcho, hoursIn, AHEAD_JARGON,
 };

@@ -471,3 +471,33 @@ test('the 16-year-old hears the plan\'s bar named and nothing that sells it, and
   const nineteen = at('Stick with The Velvet Hour.', 'under21', card);
   assert.ok(!nineteen.problems.some((p) => /card/.test(p)) && !nineteen.warnings.some((w) => /card/.test(w)), [...nineteen.problems, ...nineteen.warnings].join('\n'));
 });
+
+// A LATER DAY (routes/ai.js, 2026-11-06): the eval's laterDay check.
+const palma = cases.byKey.get('palma');
+const laterLookup = (v, extra = {}) => ({
+  name: 'get_crowd_prediction',
+  args: { place_id: v.id, date: '2026-11-07' },
+  result: {
+    venue_name: v.name, date: '2026-11-07', day: 'Saturday', hours_that_day: '5 PM to 11 PM',
+    usual_for_day: { source: 'venue_pattern', busiest: '8 PM to 10 PM' }, day_note: 'note', ...extra,
+  },
+});
+
+test('a later day: the answers that started it fail, and the plain one passes', () => {
+  const later = { expect: { laterDay: true }, userTexts: ['date night tomorrow, somewhere nice but not loud'] };
+  // The 11-03 live run's P06 answer, scored against tonight's lookup it made.
+  const recorded = grade("Palma Pasta Bar. It sits at $$$, rates 4.7, and doesn't get mobbed the way the places closer to you do. The crowd reads I have are only for tonight, so check Discover tomorrow afternoon before you head out.", { ...later, tools: [search(palma), crowd(palma)] });
+  assert.ok(recorded.problems.some((p) => /later day: never looked the place up for that day/.test(p)), recorded.problems.join('\n'));
+  // The answer from the recording, with a lookup for the day this time.
+  const jargon = grade('Palma Pasta Bar. Crowds only read twelve hours out, so check back closer to Saturday for the timing.', { ...later, tools: [search(palma), laterLookup(palma)] });
+  assert.ok(jargon.problems.some((p) => /later day: explains how far ahead it can see \("only read"\)/.test(p)), jargon.problems.join('\n'));
+  assert.ok(jargon.warnings.some((w) => /later day: tells them to check back/.test(w)));
+  // Tonight's number or a best time given as that night's.
+  const tonight = grade('Palma Pasta Bar, at 52% tomorrow, best time 10 PM.', { ...later, tools: [search(palma), laterLookup(palma)] });
+  assert.ok(tonight.problems.some((p) => /later day: a crowd number for that day/.test(p)));
+  assert.ok(tonight.problems.some((p) => /later day: a best time for that day/.test(p)));
+  const offHour = grade("Palma Pasta Bar. I can't see tomorrow night's crowd yet. Saturdays there usually peak around 7.", { ...later, tools: [search(palma), laterLookup(palma)] });
+  assert.ok(offHour.problems.some((p) => /later day: names "around 7", which the lookup for that day did not give/.test(p)), offHour.problems.join('\n'));
+  const good = grade("Palma Pasta Bar. I can't see tomorrow night's crowd yet. Saturdays there usually peak around 9.", { ...later, tools: [search(palma), laterLookup(palma)] });
+  assert.deepStrictEqual(good.problems.filter((p) => /later day/.test(p)), []);
+});

@@ -142,8 +142,11 @@ test('the forecast is today\'s, and another day\'s plan is not handed it', () =>
   // The crowd tool's hours run twelve hours from now. On the Birdie eval,
   // "date night tomorrow" got "best time to pull up is around 10 PM": tonight's
   // hour, given as tomorrow's.
+  // Since 2026-11-06 another day is looked up with its date and said as what
+  // usually happens there (__tests__/birdieLaterDay.test.js); "say the read
+  // you have is for now" taught "The crowd reads I have are only for tonight".
   const prompt = adult();
-  assert.match(prompt, /`best_time`, `peak_hours` and `hourly_forecast` cover the next twelve hours from now and nothing later\. For a plan on another day \(tomorrow night, next Friday\) there is no forecast: never give them those hours or numbers as that day's, and say the read you have is for now\./);
+  assert.match(prompt, /`best_time`, `peak_hours` and `hourly_forecast` cover the next twelve hours from now and nothing later, so never give their hours or numbers as another day's\./);
   assert.ok(prompt.indexOf('WHEN TO GO IS `best_time`, ALWAYS') < prompt.indexOf('cover the next twelve hours from now'), 'the limit sits under the best-time rule it limits');
 });
 
