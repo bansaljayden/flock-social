@@ -12,12 +12,16 @@
  *     unit or a half. No arbitrary decimals.
  *   - CONTAINERS ARE CLOSED. The old signature cut every ring of r >= 7 with
  *     a 30 degree gap and deleted every rectangular container's bottom edge.
- *     That signature is retired - the brand-identity job moved to the bird
- *     mascots - and an open box now reads as unfinished, not as a voice. A
- *     gap survives only where the gap IS the glyph's meaning: doorOpen's
- *     doorway, the doors on home and building, share's open top and logout's
- *     open side (the arrow leaves through them), repeat's arc break (the loop
- *     restarts there), and the mug's rim.
+ *     That signature is retired, and an open box now reads as unfinished, not
+ *     as a voice. A gap survives only where the gap IS the glyph's meaning:
+ *     doorOpen's doorway, the doors on home and building, share's open top
+ *     and logout's open side (the arrow leaves through them), repeat's arc
+ *     break (the loop restarts there), and the mug's rim.
+ *   - CLEAR GAPS. Separate parts of one glyph stay at least 1.5 units apart,
+ *     edge to edge, at the family stroke: head to shoulders, a plus to a
+ *     head, a pebble to a rule, a cut in a filled glyph. That is 1.5 px at 24
+ *     and 0.75 px at 12, so a gap that has to survive at 12 px on a 1x screen
+ *     is drawn 3 units wide.
  *   - stroke-width is derived from the render size and applied with
  *     vector-effect: non-scaling-stroke. The exact contract, with the
  *     measurements behind it, is documented on sw() below - the short form is
@@ -25,14 +29,37 @@
  *     with a 1px floor and a 4.5px ceiling that does not engage until 47px.
  *   - a solid mark carries the same stroke as an outlined one, so a filled
  *     glyph does not read half a stroke smaller than its neighbours and a
- *     star/starFilled swap does not visibly shrink. The two exceptions below
- *     and the `dot` helper are the only unstroked paint in the file.
+ *     star/starFilled or nest/nestFilled swap does not visibly shrink. The
+ *     only unstroked paint in the file is the `dot` helper, the eye's pupil,
+ *     Birdie, and the SOS artwork in safetyBirds.
  *
- * Stated exceptions, and only these two:
+ * Stated exceptions, and only these three:
  *   1. `star` - five-fold symmetry cannot be built from 0/45/90.
- *   2. `birdie` - the punched eye is the only interior negative space here,
- *      it carries its own radii (6.5, 1.4), and it is the only glyph that
- *      stays unstroked, because a stroke would close the eye.
+ *   2. `birdie` - the punched eye carries its own radii (6.5, 1.4), and it is
+ *      the only glyph that stays unstroked, because a stroke would close the
+ *      eye.
+ *   3. the egg (`startFlock`, `nestEgg`) - a Moss egg, four circular arcs
+ *      that meet without a kink, so its cap radius is fixed by the
+ *      construction at 7(2 - sqrt 2) = 4.1, and its joins land on 4.1/9.1/14.9.
+ *
+ * THE BIRD SET (2026-11-07). The painted birds carry the brand at 40 px and
+ * up (birdBrandMoments.test.js); below that these glyphs do, each with one
+ * bird detail drawn into an everyday shape. README.md in ./icons has the
+ * rules in full; the short form:
+ *   - One cue per glyph, about a fifth of its ink at most, and it fails safe:
+ *     take the cue away and the glyph still says its plain meaning. The cues
+ *     come from one closed list: the birdhouse's entrance hole, binoculars,
+ *     the beak wedge, the egg, the pebble, the gull mark, a perched bird.
+ *   - No eyes except Birdie's, no faces, no feather texture, and never a
+ *     whole bird in side profile with a round head and a raised wing.
+ *   - The five tab glyphs come in pairs: outline when idle, `...Filled` when
+ *     selected. A filled glyph keeps its outline twin's silhouette exactly,
+ *     carries the same stroke so it does not shrink on the swap, and punches
+ *     its inner details out with fill-rule evenodd, so it needs no background
+ *     token. A cut is drawn half a stroke (1.14 units) wider than the gap it
+ *     shows, because the stroke runs along both of its edges.
+ *   - People stay people: the bust (`you`, `userPlus`, `users`) keeps a clear
+ *     neck gap between head and shoulders and carries no bird at all.
  *
  * Public API: Icons.name(color, size) returns JSX. `color` is honoured as a
  * CSS `color` on a wrapper and picked up through currentColor, so an icon also
@@ -106,7 +133,12 @@ const ring = (cx, cy, r) =>
 
 // A gull mark: the bird at distance. Two 45deg strokes meeting at a low peak.
 // Capped at five glyphs across the whole set - it is a spice, not a theme.
+// Never drawn alone below 22 px: on its own it reads as a caret.
 const gull = (cx, cy, w) => `M${cx - w} ${cy + w / 2} ${cx} ${cy - w / 2} ${cx + w} ${cy + w / 2}`;
+
+// A whole circle as path data, for the holes a filled glyph punches with
+// fill-rule evenodd (a <circle> cannot be one sub-path of a larger shape).
+const circlePath = (cx, cy, r) => `M${cx + r} ${cy}A${r} ${r} 0 1 0 ${cx - r} ${cy}A${r} ${r} 0 1 0 ${cx + r} ${cy}Z`;
 
 /**
  * Filled dot. Fill only, never stroked: Chrome renders a stroked circle whose
@@ -194,6 +226,20 @@ const PIN_D =
 const CHEVRON = <path d="M4 15 12 7 20 15" />;
 const ROT = (deg) => ({ transform: `rotate(${deg}deg)` });
 
+// The egg - startFlock (a new flock hatches) and nestEgg (the money set aside).
+// A Moss egg: a base circle r 7 at 12,14, two side arcs r 14 drawn from the
+// far ends of its diameter, and a cap r 7(2 - sqrt 2) = 4.1 at 12,7, each arc
+// meeting the next on a shared tangent, so the outline has no kink and needs
+// no ellipse. Top 2.9, bottom 21, 14 wide.
+const EGG_D = 'M5 14A7 7 0 0 0 19 14A14 14 0 0 0 14.9 4.1A4.1 4.1 0 0 0 9.1 4.1A14 14 0 0 0 5 14Z';
+
+// messages / messagesFilled - a speech bubble whose tail is a beak. The bubble's
+// lower-left corner is cut on the 45 degree axis and the beak stands on the
+// cut: two convex r 9 mandibles meeting in a point at 3,20. Straight sides read
+// as any tail; the convex pair reads as a bill. No eye, so it never becomes a
+// bird's head beside Birdie.
+const MESSAGES_D = 'M9.5 17.5 21 17.5 21 3.5 5.5 3.5 5.5 13.5A9 9 0 0 0 3 20A9 9 0 0 0 9.5 17.5Z';
+
 // birdie - the specimen's head alone: filled round head, square-cut wedge beak,
 // and the punched eye cut with fill-rule evenodd so it needs no background token.
 const BIRDIE_D =
@@ -247,6 +293,15 @@ const MUG_ICON = make(MUG);
 const STEM_ICON = make(STEM, { color: '#1a3a5c' });
 const CHAT_ICON = make(CHAT);
 const PARTY_ICON = make(PARTY);
+// pro - two gulls at two distances, which read as a double chevron climbing: a
+// level up. The drawing used to be called `sparkles`, the stock name for "AI",
+// which it never drew; Birdie's head is the AI mark.
+const PRO_ICON = make(
+  <>
+    <path d={gull(12, 15, 5)} />
+    <path d={gull(13, 8, 3)} />
+  </>
+);
 const BIRDIE_ICON = make(
   <path d={BIRDIE_D} fillRule="evenodd" fill="currentColor" stroke="none" />,
   { className: 'flock-icon--birdie' }
@@ -257,6 +312,141 @@ const BIRDIE_ICON = make(
  * ------------------------------------------------------------------ */
 
 const Icons = {
+  /* --- the bird set: the five tabs, outline idle and filled selected --- */
+
+  // nest / nestFilled - the Nest tab. A birdhouse: a 45 degree roof whose eaves
+  // overhang the walls by 3, a base plank that overhangs them by 2, and the
+  // dark entrance hole, which is the bird cue. The hole is solid on purpose: a
+  // ring there reads as a round window, and a perch under it makes a face. At
+  // r 2.25 it shows at r 3.4 with its stroke, about half the face: at r 2.5 it
+  // turned into a lens at 48. Selected, the house goes solid and the hole
+  // turns light. The light hole is cut at r 3.75 so it shows at r 2.6, smaller
+  // than the dark one, because a light hole on a dark ground looks larger
+  // than it is.
+  nest: make(
+    <>
+      <path d="M2.5 12 12 2.5 21.5 12" />
+      <path d="M5.5 9 5.5 21M18.5 9 18.5 21" />
+      <path d="M3.5 21 20.5 21" />
+      <circle cx="12" cy="13.5" r="2.25" fill="currentColor" />
+    </>
+  ),
+  nestFilled: make(
+    <>
+      <path fillRule="evenodd" fill="currentColor" d={`M5.5 9 12 2.5 18.5 9 18.5 21 5.5 21Z${circlePath(12, 13.5, 3.75)}`} />
+      <path d="M2.5 12 12 2.5 21.5 12" />
+      <path d="M3.5 21 20.5 21" />
+    </>
+  ),
+
+  // discover / discoverFilled - the Discover tab. Binoculars, front view:
+  // birdwatching, which is what looking around a city for a place is. Each
+  // barrel stands on its lens; the eyepieces sit on top, and the bridge runs
+  // 1.5 units above the lens tops so the pair never reads as eyeglasses. This
+  // was the heaviest of the five tab glyphs, so the eyepieces are 4 x 3 and
+  // the barrels 7 tall: wider than tall, the way binoculars stand. Selected,
+  // each barrel and its lens are one solid contour with the lens punched out,
+  // so the glass stays clear.
+  discover: make(
+    <>
+      <path d="M2.5 15.5 2.5 8.5 9.5 8.5 9.5 15.5M14.5 15.5 14.5 8.5 21.5 8.5 21.5 15.5" />
+      <path d="M4 8.5 4 5.5 8 5.5 8 8.5M16 8.5 16 5.5 20 5.5 20 8.5" />
+      <path d="M9.5 10.5 14.5 10.5" />
+      <circle cx="6" cy="15.5" r="3.5" />
+      <circle cx="18" cy="15.5" r="3.5" />
+    </>
+  ),
+  discoverFilled: make(
+    <>
+      <path fillRule="evenodd" fill="currentColor" d={`M2.5 15.5 2.5 8.5 9.5 8.5 9.5 15.5A3.5 3.5 0 0 1 2.5 15.5Z${circlePath(6, 15.5, 3.5)}`} />
+      <path fillRule="evenodd" fill="currentColor" d={`M14.5 15.5 14.5 8.5 21.5 8.5 21.5 15.5A3.5 3.5 0 0 1 14.5 15.5Z${circlePath(18, 15.5, 3.5)}`} />
+      <path fill="currentColor" d="M4 8.5 4 5.5 8 5.5 8 8.5ZM16 8.5 16 5.5 20 5.5 20 8.5Z" />
+      <path d="M9.5 10.5 14.5 10.5" />
+    </>
+  ),
+
+  // plans / plansFilled - the Plans tab. The calendar on the square keyline
+  // with its header rule (the line that stops a box being a chat bubble, as
+  // `calendar` says) and ONE pebble marking the day: the pebble the birds drop
+  // in the vote painting. One dot, never a row, so it can never be an
+  // ellipsis. Plain hangers: perched feet were tried on them and read as
+  // crowns at 48 and blobs at 24. The glyph rides 0.5 high because the
+  // hangers above it are light. Selected, the body goes solid, the header
+  // rule is carved out as a slit and the pebble is punched where it was.
+  plans: make(
+    <>
+      <path d="M3.5 6.5 20.5 6.5 20.5 20.5 3.5 20.5Z" />
+      <path d="M3.5 11 20.5 11" />
+      <path d="M8 6.5 8 2.5M16 6.5 16 2.5" />
+      {dot(15.5, 15.75, 1.75)}
+    </>
+  ),
+  plansFilled: make(
+    <>
+      <path fillRule="evenodd" fill="currentColor" d={`M3.5 6.5 20.5 6.5 20.5 20.5 3.5 20.5ZM3.5 9 20.5 9 20.5 13 3.5 13Z${circlePath(15.5, 15.75, 2.75)}`} />
+      <path d="M8 6.5 8 2.5M16 6.5 16 2.5" />
+    </>
+  ),
+
+  // messages / messagesFilled - the Messages tab. See MESSAGES_D: a bubble
+  // with sharp corners whose tail is a beak. Selected, the same contour solid.
+  messages: make(<path d={MESSAGES_D} />),
+  messagesFilled: make(<path d={MESSAGES_D} fill="currentColor" />),
+
+  // you / youFilled - the You tab. A bust with no bird in it, on purpose: the
+  // person is the meaning, and every wing or feather tried on it read as a
+  // cape, a hook or a creature. Head r 3.5, shoulders an r 7 arc open at the
+  // base, 1.7 units clear between them so the filled pair stays two shapes
+  // and never merges into a pawn.
+  you: make(
+    <>
+      <circle cx="12" cy="6.25" r="3.5" />
+      <path d="M5 20.75A7 7 0 0 1 19 20.75" />
+    </>
+  ),
+  youFilled: make(
+    <>
+      <circle cx="12" cy="6.25" r="3.5" fill="currentColor" />
+      <path d="M5 20.75A7 7 0 0 1 19 20.75Z" fill="currentColor" />
+    </>
+  ),
+
+  /* --- the bird set: what the Nest and a plan ask for --- */
+
+  // Start a flock: the egg with a plus in it. A new flock hatches. The plus
+  // keeps 2 units clear of the shell. Drawn from 15 px up; at 12-13 the call
+  // site uses `plus`, because the egg's curve is noise that small.
+  startFlock: make(
+    <>
+      <path d={EGG_D} />
+      <path d="M12 10.5 12 15.5M9.5 13 14.5 13" />
+    </>
+  ),
+
+  // A nest egg: the money a flock has set aside (the budget, the cash pool).
+  // The egg with a $ whose bowls are r 2. Drawn from 16 px up, where the $
+  // still clears the shell; below that the call site uses `dollar`, and
+  // `dollar` stays the mark for prices and amounts.
+  nestEgg: make(
+    <>
+      <path d={EGG_D} />
+      <path d="M14.5 9 10.5 9A2 2 0 0 0 10.5 13L13.5 13A2 2 0 0 1 13.5 17L9.5 17" />
+      <path d="M12 7.5 12 9M12 17 12 18.5" />
+    </>
+  ),
+
+  // Split the bill: a receipt with two lines and a torn foot drawn as a row
+  // of 45 degree Vs. `creditCard` stays for real card payments.
+  splitBill: make(
+    <>
+      <path d="M18 19.5 18 3 6 3 6 19.5 8 21.5 10 19.5 12 21.5 14 19.5 16 21.5Z" />
+      <path d="M9 8 15 8M9 12.5 15 12.5" />
+    </>
+  ),
+
+  // Flock Pro. See PRO_ICON.
+  pro: PRO_ICON,
+
   /* --- the top ten by usage, drawn to the spec's own coordinates --- */
 
   // 1. mapPin. Refuses the teardrop-with-a-hole: a ring above a chevron whose
@@ -286,12 +476,15 @@ const Icons = {
   // shared shoulder arc looked like an owl at every size: the arc's apex landed
   // in the gap between the heads and read as a beak. Staggering the pair fixes
   // it and is the only arrangement of five tested that read as two people.
+  // Drawn as the `you` bust (2026-11-07): each head keeps a clear neck gap over
+  // its shoulders, and the person behind shows only the shoulder arc that
+  // rises past the front one. The heads stay 1.7 units apart.
   users: make(
     <>
-      <circle cx="9" cy="8" r="3.5" />
-      <path d="M3 20A6 6 0 0 1 15 20" />
-      <circle cx="17" cy="7" r="2.5" />
-      <path d="M15 20 21 20A5 5 0 0 0 16 15" />
+      <circle cx="8" cy="7" r="3" />
+      <path d="M2 20.75A6 6 0 0 1 14 20.75" />
+      <circle cx="17.5" cy="6.5" r="2.5" />
+      <path d="M22 20.75A4.5 4.5 0 0 0 17.5 16.25" />
     </>
   ),
 
@@ -345,8 +538,9 @@ const Icons = {
 
   /* --- birdie, and the rest --- */
 
-  // The specimen's head. The only Tier C glyph with interior negative space,
-  // and the only one with character motion.
+  // The specimen's head. The only glyph with an eye, and the only one with
+  // character motion. It is the AI mark wherever Birdie is meant (never
+  // sparkles), and it is never redrawn as a whole bird in flight.
   birdie: BIRDIE_ICON,
 
   activity: make(
@@ -633,6 +827,19 @@ const Icons = {
 
   heart: make(<path d="M12 20 4 12A5 5 0 0 1 12 7A5 5 0 0 1 20 12Z" />),
 
+  // Help: the ring with a question mark, an r 3 hook over the top that turns
+  // down at 45 degrees. The mark is as large as the ring allows, so its dot
+  // keeps 1.1 units clear of the hook and of the ring instead of the set's
+  // 1.5: with a smaller hook (r 2, which would fit the 1.5) the bowl closes up
+  // and reads as a blot at 16 px.
+  helpCircle: make(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9 9.5A3 3 0 0 1 15 9.5L12 12.5 12 13.5" />
+      {dot(12, 17.25)}
+    </>
+  ),
+
   // Walls, floor and door are one contour: the floor runs wall-to-door on each
   // side, so the house is grounded and the doorway stays a real gap.
   home: make(
@@ -664,6 +871,17 @@ const Icons = {
       <path d="M4 12 20 12 20 20 4 20Z" />
       <path d="M6 9 18 9" />
       <path d="M8 6 16 6" />
+    </>
+  ),
+
+  // My location, on the map: the target the maps apps draw, a ring with four
+  // ticks running out to the edge and a dot where you are. Not `crosshair`
+  // (Share location), whose lines cross the ring like a sight.
+  locate: make(
+    <>
+      <circle cx="12" cy="12" r="7" />
+      <path d="M12 2 12 5M12 19 12 22M2 12 5 12M19 12 22 12" />
+      {dot(12, 12, 2)}
     </>
   ),
 
@@ -703,6 +921,18 @@ const Icons = {
     </>
   ),
 
+  // Full screen, for a panel: two 45 degree arrows out to the corners.
+  // `minimize` is the same two turned round.
+  maximize: make(
+    <>
+      <path d="M14 4 20 4 20 10M20 4 13.5 10.5" />
+      <path d="M10 20 4 20 4 14M4 20 10.5 13.5" />
+    </>
+  ),
+
+  // A venue's menu: four lines of a list, the last two shorter.
+  menuLines: make(<path d="M4 6 20 6M4 10 20 10M4 14 16 14M4 18 12 18" />),
+
   messageSquare: CHAT_ICON,
 
   mic: make(
@@ -710,6 +940,13 @@ const Icons = {
       <path d="M9 13 9 6A3 3 0 0 1 15 6L15 13A3 3 0 0 1 9 13Z" />
       <path d="M5 13A7 7 0 0 0 19 13" />
       <path d="M12 20 12 22" />
+    </>
+  ),
+
+  minimize: make(
+    <>
+      <path d="M4 14 10 14 10 20M10 14 3.5 20.5" />
+      <path d="M20 10 14 10 14 4M14 10 20.5 3.5" />
     </>
   ),
 
@@ -914,12 +1151,8 @@ const Icons = {
     </>
   ),
 
-  sparkles: make(
-    <>
-      <path d={gull(12, 15, 5)} />
-      <path d={gull(13, 8, 3)} />
-    </>
-  ),
+  // The old name of `pro`, kept only until its last two callers move.
+  sparkles: PRO_ICON,
 
   sports: make(
     <>
@@ -992,11 +1225,12 @@ const Icons = {
     </>
   ),
 
+  // The `you` bust moved left, with a plus 1.7 units clear of the head.
   userPlus: make(
     <>
-      <circle cx="9" cy="8" r="4" />
-      <path d="M2 20A7 7 0 0 1 16 20" />
-      <path d="M18 6 18 12M15 9 21 9" />
+      <circle cx="9" cy="6.25" r="3.5" />
+      <path d="M2 20.75A7 7 0 0 1 16 20.75" />
+      <path d="M19 6.5 19 11.5M16.5 9 21.5 9" />
     </>
   ),
 
@@ -1025,4 +1259,4 @@ const Icons = {
 };
 
 export default Icons;
-export { Icons, sw, ring, gull, dot, starSvgString };
+export { Icons, sw, ring, gull, dot, starSvgString, circlePath, EGG_D };
