@@ -1215,18 +1215,25 @@ function shapeWeek(which) {
     const base = shape(facts.filter((f) => !besides.includes(f)), { named });
     if (!base) return null;
     const said = new Set(base.used);
+    // On the weekend's route a day named is said by its own line unless the
+    // answer already names it: a level weekend's range ("every day peaks
+    // between 66 and 74") holds its number but not its name (second
+    // recheck, 2026-11-06).
+    const text = [base.lead, ...base.points].join(' ');
+    const told = (f) => (which === 'weekend' ? new RegExp(`\\b${f.value.weekday}\\b`).test(text) : said.has(f));
     const lines = [];
     const facts2 = [];
     for (const w of both || []) {
       const f = facts.find((x) => isPeakFact(x) && !besides.includes(x) && x.value.weekday === w);
-      if (f && !said.has(f) && !facts2.includes(f)) { lines.push(dayPeak(f)); facts2.push(f); }
+      if (f && !told(f) && !facts2.includes(f)) { lines.push(dayPeak(f)); facts2.push(f); }
     }
     for (const f of besides) {
       lines.push(weekendMarks().isNextWeekendDay(f) ? `next ${dayPeak(f)}` : dayPeak(f));
       facts2.push(f);
     }
     if (!lines.length) return base;
-    return { lead: base.lead, points: [...lines.map(sentenceCase), ...base.points], used: [base.used[0], ...facts2, ...base.used.slice(1)] };
+    // A day the range already used is its source once.
+    return { lead: base.lead, points: [...lines.map(sentenceCase), ...base.points], used: [...new Set([base.used[0], ...facts2, ...base.used.slice(1)])] };
   };
   // A COMPARISON LEADS WITH THE DAYS COMPARED, ORDERED BY THEIR OWN NUMBERS
   // (recheck, 2026-11-06). "Is Saturday busier than Friday?" asked on the

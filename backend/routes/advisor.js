@@ -1034,11 +1034,8 @@ async function targetsFor(b, question, intentId) {
       }
       if (inside) placedIn = placedIn || inside;
       const ahead = daysBetween(today, date);
-      // `weekendWord`: the question set the day in a weekend ("Sunday Funday
-      // is this weekend", "this weekend, especially Sunday"), so it asks about
-      // that weekend as well (forQuestion).
       out.push(ahead <= 6
-        ? { kind: 'day', date, weekday: w.weekday, word: w, ...(inside ? { weekendWord: true } : {}) }
+        ? { kind: 'day', date, weekday: w.weekday, word: w }
         : { kind: 'past', date, ahead, weekday: w.weekday, word: w, ofWeekend: Boolean(inside) });
     } else if (w.kind === 'weekend') {
       out.push({ kind: 'weekend', scope: scopeOf(w), raw: raw(w), word: w });
@@ -1164,8 +1161,11 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
           return d === null ? !advisorFacts.isRefusal(e) : dates.has(d);
         });
         const open = (d) => asked.some((e) => !advisorFacts.isRefusal(e) && entryDate(e) === d);
-        const shut = await namedShut(b, [...dates].filter((d) => !open(d)));
-        if (shut || [...dates].some(open)) {
+        // Every day named shut ("Which is busier, Saturday or Sunday?" of a
+        // cafe open Monday to Friday) is the weekend's answer, its shut days
+        // said first (weekendShutSaid), never the shut line alone.
+        if ([...dates].some(open)) {
+          const shut = await namedShut(b, [...dates].filter((d) => !open(d)));
           return { entries: [...(shut ? [shut] : []), ...asked, ...pasts], askedFor: undefined, askedDays: named.map((t) => t.weekday) };
         }
       }
@@ -1246,6 +1246,58 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
   return { entries: [...(shut ? [shut] : []), ...ranked, ...mentioned, ...besideToday, ...pasts], askedFor: undefined, askedDays: asked.map((t) => t.weekday) };
 }
 
+// ON THE WEEKEND'S ROUTE, A WEEKEND DAY NAMED THAT THE VENUE IS SHUT ON IS
+// SAID WITH THE WEEKEND'S OPEN DAYS (second recheck, 2026-11-06). The answer
+// to "how busy this wknd esp sunday", "Will we be busy on the weekend, esp.
+// Sunday?" or "At the weekend, will Sunday be busy?" of a cafe shut on
+// Sundays was "Your Google listing has you closed on Sunday." alone, and
+// Friday and Saturday were lost, where main had said both: the weekend's
+// answer was given only when the day reader had placed the day inside a
+// weekend word it knew. The route decides now, not the word. Whatever the
+// owner called the weekend, or if they named none, a question on this route
+// that names a day of the weekend the answer covers (this weekend, or the
+// weekends ahead for "weekends") that the venue is shut on is answered with
+// every day of it the venue is shut on, in one line ("closed on Saturday
+// and Sunday", so a shut Saturday asked about is said beside a shut
+// Sunday), then the weekend's answer. The days an owner says are shut are
+// left out of the line as they are of the weekend (weekend_outlook), and a
+// day named that the weekend holds open is said by name.
+// `targets` are the days the question was read for (readingFor), and a
+// weekday it names anywhere counts too (roostDayReader.weekdaysNamed:
+// "Weekend outlook? Particularly Saturday night."). An answer that already
+// says a closure, or is about another weekend or another route, is left as
+// it is.
+async function weekendShutSaid(res, b, question, targets) {
+  if ((res.intent || 'weekend_outlook') !== 'weekend_outlook' || res.entries.some(isClosedFact)) return res;
+  const weekends = targets.filter((t) => t.kind === 'weekend');
+  const primary = weekends.find((t) => t.scope === 'this') || weekends[0] || null;
+  const raw = primary ? primary.raw : 'this';
+  if (raw !== 'this' && raw !== 'habit') return res;
+  const { days, today, closed } = await daysFromToday(b);
+  if (!today) return res;
+  const last = addDaysTo(today, 6);
+  const covered = raw === 'habit'
+    ? [0, 1, 2, 3, 4, 5, 6].map((n) => addDaysTo(today, n)).filter((d) => [5, 6, 0].includes(weekdayOf(d)))
+    : weekendDates(today, 'this').filter((d) => d <= last);
+  const shut = (d) => closed.includes(d) || days.some((e) => entryDate(e) === d && advisorFacts.isShutDay(e));
+  const names = new Set([
+    ...targets.filter((t) => t.kind === 'day').map((t) => t.weekday),
+    ...roostDayReader.weekdaysNamed(question),
+  ]);
+  const nameOf = (d) => WEEKDAY_NAMES_LONG[weekdayOf(d)];
+  // A day named that the answer holds open is said by name too, where the
+  // weekend's answer would otherwise fold it into a range ("How busy will the
+  // wkend be? Especially Saturday": "every day peaks between 66 and 74", with
+  // Saturday's own line under it; advisorPhrasing shapeWeek).
+  const held = (d) => res.entries.some((e) => isDayEntry(e) && !advisorFacts.isRefusal(e) && entryDate(e) === d);
+  const open = covered.filter((d) => names.has(nameOf(d)) && !shut(d) && held(d)).map(nameOf);
+  const out = open.length && res.askedFor === undefined && !res.askedDays ? { ...res, askedDays: open } : res;
+  if (!covered.some((d) => names.has(nameOf(d)) && shut(d))) return out;
+  const saidShut = new Set(roostDayReader.saidShut(question));
+  const line = await namedShut(b, covered.filter((d) => shut(d) && !saidShut.has(nameOf(d))));
+  return line ? { ...out, entries: [line, ...out.entries] } : out;
+}
+
 // The bridge's step after a plan, for a typed question (readingFor above): a
 // day past the week ahead is said to be; two days are both answered
 // (bothAnswer); a day the route's plan does not hold (a weekday outside the
@@ -1257,7 +1309,10 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
 async function forQuestion(entries, intentId, b, question, reading = undefined) {
   if (!question || !DAY_INTENTS.has(intentId)) return { entries, askedFor: undefined };
   const r = reading || await readingFor(b, question, intentId);
-  if (r.targets) return bothAnswer(intentId, b, r.targets, r.todayCue);
+  if (r.targets) {
+    const both = await bothAnswer(intentId, b, r.targets, r.todayCue);
+    return intentId === 'weekend_outlook' ? weekendShutSaid(both, b, question, r.targets) : both;
+  }
   const { askedFor, target } = r;
   if (askedFor === null && (NAMED_TODAY_INTENTS.has(intentId) || intentId === 'weekend_outlook')) {
     return { entries: [await pastDayRefusal(b, target)], askedFor };
@@ -1267,27 +1322,10 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
     if (today && !inWeekend(target.date, today, 'this')) {
       return { entries: await withNamedToday(await INTENT_PLANS.peak_hours(b), 'peak_hours', b, askedFor), askedFor };
     }
-    // A day of this weekend the venue is shut on is said to be, never
-    // answered with another day of the weekend: "how busy will sunday be" of
-    // a cafe open Monday to Friday was "Friday peaks around 8 AM at 66"
-    // (acceptance, 2026-11-06). A weekend shut throughout already says so.
-    const holds = entries.some((e) => !advisorFacts.isRefusal(e) && entryDate(e) === target.date);
-    if (today && !holds && !entries.some((e) => e.id === advisorFacts.WEEKEND_CLOSED_ID)) {
-      const shut = await namedShut(b, [target.date]);
-      // A WEEKEND QUESTION THAT NAMES ONE DAY THE VENUE IS SHUT ON (recheck,
-      // 2026-11-06). "Sunday Funday is this weekend, how busy will it be?"
-      // and "How busy is this weekend, especially Sunday?" were answered with
-      // the shut line alone, and the weekend's open days were lost. Asked
-      // with the weekend, the answer is that weekend: every day of it the
-      // venue is shut on said in one line ("closed on Saturday and Sunday"),
-      // then its open days, as two days named are answered (bothAnswer). A
-      // day asked on its own ("how busy will sunday be") is its shut line.
-      if (shut && target.weekendWord) {
-        const reach = weekendDates(today, 'this').filter((d) => d <= addDaysTo(today, 6));
-        return { entries: [(await namedShut(b, reach)) || shut, ...entries], askedFor };
-      }
-      if (shut) return { entries: [shut], askedFor };
-    }
+    // A day of this weekend the venue is shut on is answered on the
+    // weekend's route as the weekend is, its shut days said first
+    // (weekendShutSaid below), whatever word, if any, the owner used for
+    // the weekend.
   }
   if (target && target.kind === 'day' && target.date && intentId !== 'weekend_outlook') {
     const todayDate = target.fromTonight ? await tonightOf(b) : await todayOf(b);
@@ -1320,7 +1358,8 @@ async function forQuestion(entries, intentId, b, question, reading = undefined) 
       return { entries: await withNamedToday(await INTENT_PLANS.peak_hours(b), 'peak_hours', b, askedFor), askedFor, ...intent };
     }
   }
-  return { entries: await withNamedToday(entries, intentId, b, askedFor), askedFor };
+  const answered = { entries: await withNamedToday(entries, intentId, b, askedFor), askedFor };
+  return intentId === 'weekend_outlook' ? weekendShutSaid(answered, b, question, target ? [target] : []) : answered;
 }
 
 // `question`, when there is one, is what the owner asked: a question that

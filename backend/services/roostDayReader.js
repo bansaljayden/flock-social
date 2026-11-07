@@ -347,6 +347,27 @@ function dayWords(question) {
   return out;
 }
 
+// THE WEEKDAYS A QUESTION NAMES ANYWHERE IN IT (recheck, 2026-11-06), for the
+// weekend's route, which says every day of the weekend the venue is shut on
+// when a question names one (routes/advisor.js weekendShutSaid): "Weekend
+// outlook? Particularly Saturday night." asks in its first sentence and names
+// Saturday in its second. A weekday counts as dayWords counts one, never a day
+// said as the past, a reason, a possessive, a habit or a day the owner says
+// the venue is shut on, and never next week's. Nor one in a part that says
+// when anyone closes ("Our competitor closes Sundays; how busy is this
+// weekend?"): that day is someone's hours, not a day asked.
+const CLOSING_SAID = /\b(?:clos(?:e|ed|es|ing)|shut(?:s|ting)?)\b/i;
+function weekdaysNamed(question) {
+  const text = normalize(question);
+  const shouting = !/[a-z]/.test(text);
+  const out = [];
+  for (const t of parts(text).all.filter((p) => !CLOSING_SAID.test(p)).flatMap((p) => tokensIn(p, shouting))) {
+    if (t.kind !== 'weekday' || t.weak || t.habit || t.next || t.nextWeek || t.afterNext) continue;
+    if (!out.includes(t.weekday)) out.push(t.weekday);
+  }
+  return out;
+}
+
 // TODAY IN THE WEEK RANKED, OR LEFT OUT OF IT (third review, 2026-11-06).
 // When a question says today beside the week, which days to rank is said in
 // so many words: "including today", "starting today", "Is tonight
@@ -373,4 +394,4 @@ function todayInRanking(question) {
   return TODAY_IN.test(text) ? 'in' : null;
 }
 
-module.exports = { dayWords, todayInRanking, saidShut, __parts: (q) => parts(normalize(q)) };
+module.exports = { dayWords, todayInRanking, saidShut, weekdaysNamed, __parts: (q) => parts(normalize(q)) };
