@@ -12,7 +12,8 @@
  * 3. The website's stylesheets put Fraunces first, then the metric-matched
  *    fallback, with the same metrics in every copy, and declare no face file
  *    of their own.
- * 4. The h1 is the display cut, opsz 144, the cut the fallback is matched to.
+ * 4. The h1, on the home page and on /tap, is the display cut, opsz 144, the
+ *    cut the fallback comes closest to.
  *
  * This is a FRONTEND test (jest via react-scripts).
  */
@@ -31,6 +32,10 @@ const fallbackOf = (css) => {
   const m = /@font-face\s*\{[^}]*font-family:\s*'Fraunces Fallback';([^}]*)\}/.exec(css);
   return m && m[1].replace(/\s+/g, ' ').trim();
 };
+
+// A font file in a url(): quoted either way or bare, with or without a query
+// or a fragment after the name.
+const FACE_FILE = /url\(\s*['"]?[^'")]*\.(?:woff2?|ttf|otf)(?:[?#][^'")]*)?['"]?\s*\)/i;
 
 describe('the website sets its display type in Fraunces', () => {
   test('the app declares Fraunces from Fraunces-var.woff2, and the landing page preloads that file', () => {
@@ -57,17 +62,43 @@ describe('the website sets its display type in Fraunces', () => {
     expect(fallbackOf(read('src/website/TapPage.css'))).toBe(landing);
   });
 
+  test('the face-file pattern sees a url() however it is written', () => {
+    // The first version wanted ".woff2)" straight after the name, so it never
+    // matched the quoted url('...') every @font-face here is written with.
+    for (const css of [
+      "src: url('../fonts/Literata-Display-600.woff2') format('woff2');",
+      'src: url("../fonts/Literata-Display-600.woff2") format("woff2");',
+      'src: url(../fonts/Literata-Display-600.woff2) format(woff2);',
+      "src: url( '../fonts/Face.woff' );",
+      "src: url('../fonts/Face.woff2?v=2#face') format('woff2');",
+      "src: url('../fonts/Face.ttf') format('truetype'), url('../fonts/Face.otf');",
+    ]) {
+      expect(`${css} ${FACE_FILE.test(css)}`).toBe(`${css} true`);
+    }
+    for (const css of [
+      "background: url('../art/bird.png') no-repeat;",
+      "src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif');",
+    ]) {
+      expect(`${css} ${FACE_FILE.test(css)}`).toBe(`${css} false`);
+    }
+  });
+
   test('no website stylesheet declares a face file of its own', () => {
     for (const file of websiteCss) {
       const css = fs.readFileSync(path.join(WEBSITE, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-      expect(`${file}: ${/url\([^)]*\.woff2?\)/.test(css)}`).toBe(`${file}: false`);
+      expect(`${file}: ${FACE_FILE.test(css)}`).toBe(`${file}: false`);
       expect(`${file}: ${/Literata/.test(css)}`).toBe(`${file}: false`);
     }
   });
 
-  test('the h1 is the display cut, the one the fallback is matched to', () => {
-    const rule = /\n\.lp h1 \{([^}]*)\}/.exec(read('src/website/LandingPage.css'));
-    expect(rule).not.toBeNull();
-    expect(rule[1]).toContain("font-variation-settings: 'opsz' 144;");
+  test('both h1s are the display cut, the one the fallback comes closest to', () => {
+    // The fallback sets an h1 within 3% of Fraunces at opsz 144. At opsz auto
+    // the /tap headline set 17 to 19% wider than the fallback and went from
+    // two lines to three when the face arrived.
+    for (const [file, selector] of [['src/website/LandingPage.css', '.lp h1'], ['src/website/TapPage.css', '.tap h1']]) {
+      const rule = new RegExp(`\\n${selector.replace('.', '\\.')} \\{([^}]*)\\}`).exec(read(file));
+      expect(`${selector}: ${rule !== null}`).toBe(`${selector}: true`);
+      expect(rule[1]).toContain("font-variation-settings: 'opsz' 144;");
+    }
   });
 });

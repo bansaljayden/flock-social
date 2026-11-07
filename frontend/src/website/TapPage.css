@@ -105,10 +105,18 @@
   border-radius: 50%;
 }
 
+/* The display cut, opsz 144, as on the home page's h1, and the cut the
+   fallback above comes closest to: it sets this line about 3% wider, near
+   enough that both faces set the same two lines at every width. Left to
+   opsz auto (29 to 44 here) Fraunces set it 17 to 19% wider than the
+   fallback: three lines where the fallback set two at 157 of 228 widths
+   from 320 to 2560, so the headline grew 31 to 48px when the face arrived
+   and the buttons under it dropped. */
 .tap h1 {
   font-family: var(--font-display);
   font-weight: 600;
   font-size: clamp(29px, 1.2rem + 3.2vw, 44px);
+  font-variation-settings: 'opsz' 144;
   line-height: 1.08;
   letter-spacing: -0.005em;
   margin: 0 0 16px;
