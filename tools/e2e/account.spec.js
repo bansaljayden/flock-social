@@ -610,7 +610,7 @@ function toastOnTop(text) {
  * leaves its clock alone). Auto mode repaints the whole app at 20:00, and a
  * safety confirmation that went missing at night would be found here.
  */
-for (const [when, hour, theme] of [['by day', 13, 'light'], ['at night', 22, 'dark']]) {
+for (const [when, hour, theme, part] of [['by day', 13, 'light', 'afternoon'], ['at night', 22, 'dark', 'night']]) {
   test.describe(when, () => {
     test.use({ timezoneId: zoneForLocalHour(hour) });
 
@@ -622,8 +622,11 @@ for (const [when, hour, theme] of [['by day', 13, 'light'], ['at night', 22, 'da
       await page.evaluate(() => window.localStorage.setItem('flock.sosAlertAt', String(Date.now() - 60_000)));
       await page.reload();
       await expect(page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
-      // The hour took in the app, not only in the browser: auto mode's theme.
+      // The hour took in the app, not only in the browser: auto mode's theme,
+      // and the Nest's own day line over the name (lib/nestTime.js dayLine),
+      // "{Weekday} afternoon" at 13:00 and "{Weekday} night" at 22:00.
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await expect(page.locator('[data-nest-band="header"] p').first()).toHaveText(new RegExp(`^(Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)day ${part}$`));
 
       await page.getByRole('button', { name: /safety and emergency sos/i }).click();
       const sheet = page.getByRole('alertdialog');
