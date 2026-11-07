@@ -6,20 +6,22 @@
  *
  * 1. "0 flocks · 0 friends". A tally of nothing, directly above an empty
  *    state that already says there are no flocks and offers Start a flock and
- *    Add friends at full size.
+ *    Add friends at full size. Since 2026-11-06 the Nest prints no count at
+ *    all: a friend count is a popularity number on a teenager's first screen,
+ *    and the flock count read "0 flocks" while the list was still loading.
  * 2. The Tonight? pulse, Down / Maybe / Not, captioned "Friends see your
  *    answer until it clears at 4 AM." With no friends that caption is false,
  *    and it was the first interactive thing on the screen.
- * 3. The greeting that cycles above the name. One of its lines was "Rounding
+ * 3. The greeting that cycled above the name. One of its lines was "Rounding
  *    up the group...", which on an empty screen reads as the app still
- *    loading, and every line arrived on an overshoot curve that bounced it
- *    past its slot and back.
+ *    loading. Since 2026-11-06 it does not cycle at all: it is one line that
+ *    says the day ("Friday evening", lib/nestTime.js).
  *
  * HomeScreen is declared inside FlockAppInner, so it cannot be rendered on its
- * own. What can be done without rendering it is done: the two guards are
+ * own. What can be done without rendering it is done: the pulse guard is
  * lifted out of App.js and run against the states that matter, including the
  * one where the stats read has not landed (friendCount null), which must not
- * be read as zero. The greeting list is lifted and every line is called.
+ * be read as zero.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test nestHeaderFirstRun --watchAll=false
@@ -27,13 +29,17 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
+const APP = read('App.js');
 const HOME = (() => {
   const at = APP.indexOf('const HomeScreen = () => {');
   expect(at).toBeGreaterThan(-1);
   return APP.slice(at, APP.indexOf('{/* Scrollable Content */}', at));
 })();
 const LINES = HOME.split('\n');
+// Source with its comments taken out, for the checks that a name is not USED:
+// the notes that explain why a thing went still name it.
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 // The JSX guard wrapping the element whose first line matches `opens`, where
 // the element's content includes `marker`. Returned as the expression text
@@ -55,20 +61,17 @@ const run = (expr, scope) => new Function('liveFlocks', 'friendCount', 'myPulse'
   scope.liveFlocks, scope.friendCount, scope.myPulse
 );
 
-describe('the stat line', () => {
-  const { expr } = guardAbove("{liveFlocks.length}</span> {liveFlocks.length === 1 ? 'flock' : 'flocks'}", /^\s*<p /);
-
-  test('is not drawn when there are no flocks and the stats read said no friends', () => {
-    expect(run(expr, { liveFlocks: [], friendCount: 0, myPulse: null })).toBe(false);
+describe('the Nest prints no count', () => {
+  test('no flock or friend tally is drawn in the header', () => {
+    expect(HOME).not.toMatch(/\{liveFlocks\.length\}<\/span>/);
+    expect(HOME).not.toMatch(/\{friendCount\}<\/span>/);
+    expect(HOME).not.toMatch(/'flock' : 'flocks'/);
+    expect(HOME).not.toMatch(/'friend' : 'friends'/);
   });
 
-  test('is drawn while the friend count is still unknown: null is not zero', () => {
-    expect(run(expr, { liveFlocks: [], friendCount: null, myPulse: null })).toBe(true);
-  });
-
-  test('is drawn as soon as either number is something', () => {
-    expect(run(expr, { liveFlocks: [], friendCount: 3, myPulse: null })).toBe(true);
-    expect(run(expr, { liveFlocks: [{ id: 1 }], friendCount: 0, myPulse: null })).toBe(true);
+  test('the numbers are still on You, where they were already shown', () => {
+    const profile = read('screens', 'ProfileSettings.js');
+    expect(profile).toMatch(/\{ l: 'Friends', v: friendCount \?\? '\\u2013' \}/);
   });
 });
 
@@ -102,31 +105,38 @@ describe('the Tonight? pulse', () => {
   });
 });
 
-describe('the cycling greeting', () => {
-  const src = APP.slice(APP.indexOf('const GREETINGS = ['), APP.indexOf('];', APP.indexOf('const GREETINGS = [')) + 2);
-  // eslint-disable-next-line no-new-func
-  const GREETINGS = new Function(`${src.replace('const GREETINGS =', 'return')}`)();
+describe('the line over the greeting', () => {
+  // It was CyclingGreeting: six lines, a new one every three seconds, each
+  // arriving on a slot-machine spin. Motion that starts by itself pulls the
+  // eye whether or not there is anything to see (WCAG 2.2.2 asks for no
+  // self-starting movement), and the line said nothing that changed.
+  const DAYLINE = read('components', 'nest', 'NestDayLine.js');
 
-  test('every line is a greeting, and none of them reads as something loading', () => {
-    expect(GREETINGS.length).toBeGreaterThan(1);
-    for (const line of GREETINGS) {
-      const said = line();
-      expect(typeof said).toBe('string');
-      expect(said).not.toMatch(/(\.\.\.|…)$/);
-      expect(said).not.toMatch(/Rounding up/i);
-    }
+  test('the cycling greeting and its spin are gone', () => {
+    expect(APP).not.toMatch(/CyclingGreeting/);
+    expect(APP).not.toMatch(/const GREETINGS = \[/);
+    expect(read('index.css')).not.toMatch(/slotSpin/);
   });
 
-  test('the spin eases out and stops, with no overshoot', () => {
-    const body = APP.slice(APP.indexOf('const CyclingGreeting = React.memo('), APP.indexOf('});', APP.indexOf('const CyclingGreeting = React.memo(')));
-    const curve = body.match(/animation: 'slotSpin [\d.]+s cubic-bezier\(([^)]+)\)'/);
-    expect(curve).not.toBeNull();
-    const [, y1, , y2] = curve[1].split(',').map(Number);
-    // A y outside 0..1 is a curve that runs past its end value and comes
-    // back, which is the bounce.
-    for (const y of [y1, y2]) {
-      expect(y).toBeGreaterThanOrEqual(0);
-      expect(y).toBeLessThanOrEqual(1);
-    }
+  test('nothing in the header runs a timer, and the line comes from dayLine', () => {
+    expect(HOME).toMatch(/<NestDayLine \/>/);
+    expect(HOME).not.toMatch(/setInterval/);
+    expect(DAYLINE).not.toMatch(/setInterval/);
+    expect(DAYLINE).toMatch(/import \{ dayLine, useNow \} from '\.\.\/\.\.\/lib\/nestTime';/);
+    expect(DAYLINE).toMatch(/const line = useNow\(60000, dayLine\);/);
+    // The words are swapped when the part of the day changes, never animated.
+    expect(code(DAYLINE)).not.toMatch(/animation|transition/);
+  });
+
+  test('the NIGHT chip is gone: auto night mode is the palette itself', () => {
+    expect(code(HOME)).not.toMatch(/ NIGHT\b/);
+    expect(code(HOME)).not.toMatch(/isNightModeActive/);
+  });
+
+  test('the name is a title, so a plan name can be the largest words on the page', () => {
+    const h1 = HOME.match(/<h1 style=\{\{([^}]*)\}\}>Hey, /);
+    expect(h1).not.toBeNull();
+    expect(h1[1]).toMatch(/fontSize: 'var\(--t-title\)'/);
+    expect(h1[1]).toMatch(/fontFamily: 'var\(--font-display\)'/);
   });
 });

@@ -25,7 +25,8 @@ test('card times are dated past this week, on load and on update', () => {
 test('the Nest counts, gates and lists one live, sorted array', () => {
   const home = app.slice(app.indexOf('const HomeScreen = () => {'), app.indexOf('const HomeScreen = () => {') + 30000);
   expect(home).toMatch(/const liveFlocks = flocks\s*\.filter\(f => f\.status !== 'completed' && f\.status !== 'cancelled'\)/);
-  expect(home).toMatch(/>\{liveFlocks\.length\}<\/span> \{liveFlocks\.length === 1 \? 'flock' : 'flocks'\}/);
+  // The count that read this array is gone (nestHeaderFirstRun, "the Nest
+  // prints no count"); the gates and the list still read it.
   expect(home).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(<>/);
   expect(home).toMatch(/!flocksLoading && !flocksError && liveFlocks\.length === 0 && \(/);
   expect(home).toMatch(/\{liveFlocks\.map\(\(f, idx\) => \{/);
@@ -55,7 +56,8 @@ test('a waiting invite is said on the badge and on the Nest, with when, where an
 });
 
 test('a friend count that was never read is not zero', () => {
+  // The Nest no longer prints the number; You does, and a read still in
+  // flight there is a dash, never a 0.
   expect(app).toMatch(/const \[friendCount, setFriendCount\] = useState\(null\);/);
-  expect(app).toMatch(/\{typeof friendCount === 'number' && \(<>/);
   expect(profile).toMatch(/\{ l: 'Friends', v: friendCount \?\? '\\u2013' \}/);
 });

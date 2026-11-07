@@ -166,6 +166,10 @@ import { isNightOver } from './lib/planNight';
 import { askedMemberIds } from './lib/planAsked';
 import { tablePartyForFlockId } from './lib/tableSummaries';
 import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks';
+// The Nest's own pieces (components/nest/). Module components fed by props,
+// mounted as JSX: HomeScreen is called, not mounted, so it cannot hold a hook,
+// and a piece that needs one (the day line's clock) keeps it to itself.
+import NestDayLine from './components/nest/NestDayLine';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -1867,57 +1871,6 @@ const EmptyMark = ({ name, height = 160, style }) => (
    five: it declared them and passed them to CreateScreen and FlockDetail,
    which are both lazy, so the definitions sat in the boot chunk to be drawn
    from a split one. Those two screens import them directly now. */
-
-// ---------------------------------------------------------------------------
-// The rotating greeting above "Hey, <name>" on the Nest tab.
-//
-// IT LIVES OUT HERE, AND THAT IS THE WHOLE POINT OF THE COMPONENT. The index
-// and its 3-second timer used to be `useState` + `useEffect` inside
-// FlockAppInner, which is the component that renders the entire application.
-// Two things followed from that and neither was intended. The timer was
-// created on mount with a stable dependency, so it ran for the whole session:
-// every three seconds, on the chat screen, on Discover, on the venue
-// dashboard, in the background of a flock somebody was mid-message in, it set
-// state on the root and re-rendered the app to advance a twelve-pixel line of
-// decoration that was not on screen. And even on the Nest tab, where the line
-// IS on screen, the cheapest correct scope for that re-render is this element
-// and not the other 584 KB of screen bodies FlockAppInner defines.
-//
-// As its own component the timer exists exactly as long as the greeting does:
-// HomeScreen is only called for the home tab, so leaving the tab unmounts this
-// and clears the interval. Nothing above it re-renders at all.
-//
-// The entries are functions, not strings, because the first one reads the
-// clock: a phone left open across 5 PM must say "evening" on the next tick.
-// `key={idx}` restarts the slot-machine animation on every change, which is
-// what makes it read as a spin rather than a text swap.
-//
-// Every line is a greeting. "Rounding up the group..." was one of them, and
-// on a first screen with nothing on it yet, a line ending in an ellipsis
-// reads as the app still loading something. The spin eases out and stops; it
-// used an overshoot curve, so each new line bounced past its slot and back,
-// which on a first screen with nothing else moving reads as a toy.
-const GREETINGS = [
-  () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
-  () => 'What\'s the move?',
-  () => 'Ready to flock up?',
-  () => 'Let\'s make plans',
-  () => 'Who\'s free tonight?',
-  () => 'Time to link up',
-];
-
-const CyclingGreeting = React.memo(function CyclingGreeting() {
-  const [idx, setIdx] = useState(0);
-  useEffect(() => {
-    const iv = setInterval(() => setIdx((i) => (i + 1) % GREETINGS.length), 3000);
-    return () => clearInterval(iv);
-  }, []);
-  return (
-    <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
-      <div key={idx} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.22, 1, 0.36, 1)' }}>{GREETINGS[idx]()}</div>
-    </div>
-  );
-});
 
 // The backend stores venue photo URLs as RELATIVE proxy paths
 // (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
@@ -7816,10 +7769,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Activity feed removed from home (redesign) — re-enable here if surfacing elsewhere
   // const [activityFeed, setActivityFeed] = useState([]);
 
-  // The cycling greeting is CyclingGreeting, defined at module scope. Its index
-  // and its timer used to be a piece of this component's state, which meant a
-  // decorative line advanced by re-rendering the whole app twenty times a
-  // minute for the life of the session. See the note on the component.
+  // The line over the Nest's greeting is components/nest/NestDayLine.js. It
+  // reads the clock in its own component, so the app never re-renders for it.
 
   // Flocks
   const [flocks, setFlocks] = useState([]);
@@ -18136,18 +18087,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         flexShrink: 0,
         transformOrigin: 'top center',
       }}>
-        {/* Greeting + avatar — tight */}
+        {/* The day, then the name. The name is a title, not the page's
+            biggest words: those belong to the plan the person is about to
+            go to. Auto night mode says itself in the palette; the NIGHT chip
+            that also said it is gone, and the theme setting is under You. */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
-            <CyclingGreeting />
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-              <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.005em', lineHeight: 1.1 }}>Hey, {profileName.split(' ')[0]}</h1>
-              {themeMode === 'auto' && isNightModeActive && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', padding: '2px 7px', borderRadius: '6px', backgroundColor: 'rgba(109,154,195,0.15)', fontSize: 'var(--t-meta)', fontWeight: '500', color: '#a9c7e4', letterSpacing: '0.3px' }}>
-                  {Icons.moon('#a9c7e4', 12)} NIGHT
-                </span>
-              )}
-            </div>
+            <NestDayLine />
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', margin: '2px 0 0', color: 'var(--text-primary)', letterSpacing: '-0.01em', lineHeight: 1.2 }}>Hey, {profileName.split(' ')[0]}</h1>
           </div>
           <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -18156,23 +18103,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </button>
         </div>
 
-        {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition).
-            Not drawn when both numbers are zero. "0 flocks · 0 friends" was
-            the second line a brand-new account read, a tally of nothing, and
-            the empty state below already says there are no flocks and offers
-            Start a flock and Add friends at full size. Zero means the stats
-            read landed and said zero: while friendCount is still null the
-            line is drawn as before, so an account with friends never loses
-            it to a slow read. */}
-        {!(liveFlocks.length === 0 && friendCount === 0) && (
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', fontWeight: '500', letterSpacing: '-0.1px' }}>
-          <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{liveFlocks.length}</span> {liveFlocks.length === 1 ? 'flock' : 'flocks'}
-          {typeof friendCount === 'number' && (<>
-          <span style={{ color: 'var(--text-tertiary)', margin: '0 7px' }}>·</span>
-          <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{friendCount}</span> {friendCount === 1 ? 'friend' : 'friends'}
-          </>)}
-        </p>
-        )}
+        {/* NO COUNT ON THE NEST (2026-11-06). "4 flocks · 4 friends" stood
+            here. A friend count on the first screen is a popularity number
+            for a teenager to compare, and the flock count read "0 flocks"
+            while the list was still loading and after a read that failed.
+            Both numbers are still on You, where they were already shown. */}
 
         {/* Tonight — full-width segmented pulse control (the actionable hero of the header).
             Only for an account with somebody to see it. The caption under it
