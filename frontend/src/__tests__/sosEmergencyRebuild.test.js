@@ -521,6 +521,32 @@ describe('SOS stand-down', () => {
     expect(body).toContain(`showToast(serverSaid || userMessage(err, "That didn't send. Your contacts still have your alert, so call them."), 'error');`);
   });
 
+  it('a stand-down the server never answered says the contacts may still have the alert', () => {
+    // Offline, no route, a timeout or a wifi sign-in page reach here as
+    // err.isNetworkError with no body. api.js's sentence for those ("Couldn't
+    // reach Flock. Give it a second and try again.") said nothing about the
+    // alert, so somebody standing down with no signal read only "try again"
+    // while their contacts still had the alarm.
+    const h = APP.slice(APP.indexOf('const handleStandDown'));
+    const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
+    const unreached = body.indexOf('if (!serverSaid && err?.isNetworkError) {');
+    const general = body.indexOf('showToast(serverSaid || userMessage(err,');
+    expect(unreached).toBeGreaterThan(-1);
+    // Asked before the general line, and only when the server said nothing:
+    // a 502 body of the server's own still wins.
+    expect(unreached).toBeLessThan(general);
+    expect(body).toContain("showToast(SOS_STAND_DOWN_UNREACHED, 'error');");
+    const line = APP.match(/const SOS_STAND_DOWN_UNREACHED = "([^"]+)";/);
+    expect(line).not.toBeNull();
+    // Starts with the same words api.js uses, so the e2e spec and a person who
+    // has seen the generic sentence recognise it; then says what is still true.
+    expect(line[1]).toMatch(/^Couldn't reach Flock, /);
+    expect(line[1]).toContain('may still have your alert');
+    expect(line[1]).toContain('Call them');
+    // The band stays: this is not a third place that clears it.
+    expect(body.match(/rememberSosAlert\(0\)/g)).toHaveLength(2);
+  });
+
   it('the sheet is handed the stand-down from App.js', () => {
     const region = APP.slice(APP.indexOf('<EmergencySheet'), APP.indexOf('/>', APP.indexOf('<EmergencySheet')));
     expect(region).toContain('alertLive={sosAlertLive}');

@@ -5122,6 +5122,12 @@ const SOS_FOLLOW_UP_FIX_MS = 45000;
 // CANCEL_WINDOW_MS). Module scope so rememberSosAlert can read it from a
 // callback with no dependencies.
 const SOS_CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
+// What a failed stand-down says when the server never answered at all: no
+// signal, no route, a timeout, a wifi sign-in page. api.js's own sentence for
+// those says to try again and stops there, which leaves out the one thing that
+// matters on this screen: the contacts may still have the alert. "May", not
+// "still": after a timeout the all-clear can have gone through anyway.
+const SOS_STAND_DOWN_UNREACHED = "Couldn't reach Flock, so your contacts may still have your alert. Call them, and tap again once you're back online.";
 
 /* ── HOW SURE THE PHONE WAS ABOUT AN SOS POSITION ──────────────────────────
    The alert email has called a fix coarser than a kilometre an area to search
@@ -16043,6 +16049,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // think they are in danger sit with an un-withdrawn alarm, is the one
       // substitution on this screen that could matter.
       const serverSaid = typeof err?.data?.error === 'string' ? err.data.error : null;
+      if (!serverSaid && err?.isNetworkError) {
+        showToast(SOS_STAND_DOWN_UNREACHED, 'error');
+        return;
+      }
       showToast(serverSaid || userMessage(err, "That didn't send. Your contacts still have your alert, so call them."), 'error');
     } finally {
       setSosStandingDown(false);
