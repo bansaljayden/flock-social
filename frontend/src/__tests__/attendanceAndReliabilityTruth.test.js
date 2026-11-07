@@ -75,13 +75,15 @@ test('a report from somebody the host marked absent is not verified evidence', (
 });
 
 test('the post-hangout thank-you says whether the report counts', () => {
-  // The sweep completes a flock 12 hours after the event and the verification
-  // window is the same 12 hours, so a report left the next morning is
-  // unverified by construction. Thanking everybody identically claimed
-  // otherwise on the majority path.
+  // Not every report counts, so thanking everybody identically claimed
+  // otherwise. A member of the plan has until noon the day after it, venue
+  // time (backend routes/feedback.js, the plan window); after that the server
+  // says the window shut and when, and the thanks names that moment.
   expect(detail).toMatch(/const filed = await submitVenueFeedback\(\{/);
   expect(detail).toMatch(/showToast\(filed\?\.verified/);
   expect(detail).toMatch(/Thanks\. Real reports sharpen the forecast for everyone\./);
+  expect(detail).toMatch(/const shutAt = filed\?\.plan_window_closed \? reportWindowWords\(filed\.plan_report_closes_at\) : null;/);
+  expect(detail).toMatch(/`Thanks\. Reports on this plan counted until \$\{shutAt\}; this one is noted\.`/);
   expect(detail).toMatch(/Thanks\. Reports from a night here with your flock go into the forecast; this one is noted\./);
   expect(detail).not.toMatch(/Thanks! This helps Flock get smarter/);
 });

@@ -5,14 +5,17 @@
  * screen, or services/flockSweep.js completes it 12 hours after its time. Most
  * hosts never slide, so most plans sit at 'confirmed' until the sweep, and the
  * plan screen used to ask "How was {venue}?" only once a plan was completed.
- * routes/feedback.js verifies a member's report only while the plan's time is
- * within 12 hours, which is the same 12 hours the sweep waits. So on the usual
+ * routes/feedback.js then verified a member's report only while the plan's
+ * time was within 12 hours, the same 12 hours the sweep waits. So on the usual
  * path the question appeared just after the answer stopped counting, and the
  * Nest went on calling last night's plan "Locked In" all morning.
  *
  * An hour after the plan's time is the earliest a report says something about
  * the night rather than about the door. From then on the plan screen asks, and
- * the Nest says so, while a report still counts.
+ * the Nest says so. Since 2026-11-06 an answer from somebody who was in the
+ * plan when it was locked in counts until noon the day after the plan on the
+ * venue's clock, never less than 12 hours from its start (routes/feedback.js,
+ * the plan window), so the morning after still counts.
  *
  * Both readers use this one function (screens/FlockDetail.js and the Nest in
  * App.js) so the chip that says "How was it?" and the card it opens cannot
@@ -60,4 +63,36 @@ export const nestAsksHowItWas = (flock, now = new Date()) => {
   const ended = flock.status === 'completed' || isNightOver(flock, n.getTime());
   if (!ended) return false;
   return nightsBetween(flock.eventTime, n) === 1;
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * WHEN A PLAN'S ANSWERS STOPPED COUNTING, IN WORDS.
+ *
+ * An answer filed after the plan window gets back plan_window_closed and the
+ * moment the window shut (plan_report_closes_at, an ISO instant), and the
+ * plan screen's thanks names it: "noon today", "2 PM yesterday", "noon
+ * Saturday", or a date once it is a week back. Read on this phone's clock,
+ * which for someone who was at the venue is the venue's. Null for a moment
+ * that cannot be read, so the caller falls back to its other sentence.
+ */
+export const reportWindowWords = (closesAt, now = new Date()) => {
+  if (closesAt == null || closesAt === '') return null;
+  const t = new Date(closesAt);
+  if (!Number.isFinite(t.getTime())) return null;
+  const n = now instanceof Date ? now : new Date(now);
+  const h = t.getHours();
+  const m = t.getMinutes();
+  const time = h === 12 && m === 0
+    ? 'noon'
+    : `${((h + 11) % 12) + 1}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'AM' : 'PM'}`;
+  const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const daysBack = Math.round((dayStart(n) - dayStart(t)) / DAY_MS);
+  let day;
+  if (daysBack === 0) day = 'today';
+  else if (daysBack === 1) day = 'yesterday';
+  else if (daysBack > 1 && daysBack < 7) day = t.toLocaleDateString('en-US', { weekday: 'long' });
+  else day = t.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${time} ${day}`;
 };

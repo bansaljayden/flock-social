@@ -14,11 +14,13 @@
 //
 //   A LOCKED-IN PLAN ASKS HOW IT WAS AN HOUR AFTER ITS TIME, not only once it
 //   is completed. Most hosts never slide "done", so most plans are completed
-//   by the sweep 12 hours after their time, and routes/feedback.js stops
-//   verifying a member's report at exactly that point. The card used to appear
-//   just after the answer stopped counting. lib/planNight.js decides the hour.
+//   by the sweep 12 hours after their time, which is when routes/feedback.js
+//   used to stop verifying a member's report. The card used to appear just
+//   after the answer stopped counting. lib/planNight.js decides the hour.
 //   The Nest asks later, the morning after (nestAsksHowItWas, built on the same
-//   function), because it is the screen every open lands on.
+//   function), because it is the screen every open lands on. Since 2026-11-06
+//   a member's answer counts until noon the day after the plan, venue time,
+//   and the thanks after the window says when it shut.
 //
 // The screen is rendered for real, from its own parameter list, so a prop
 // added to it arrives here as a function and cannot quietly take a falsy
@@ -254,6 +256,61 @@ describe('a plan called off while its card is open', () => {
     await waitFor(() => expect(props.setFeedbackSubmitting).toHaveBeenLastCalledWith(false));
     expect(props.rememberFeedbackDone).not.toHaveBeenCalled();
     expect(props.showToast).toHaveBeenCalledWith('Too many reports in a short time. Try again later.', 'error');
+  });
+});
+
+describe('the thanks says whether the answer counts, and when the window shut', () => {
+  // routes/feedback.js counts a member's answer until noon the day after the
+  // plan on the venue's clock, and on a later answer returns
+  // plan_window_closed with the moment it shut (plan_report_closes_at).
+  const { submitVenueFeedback } = require('../services/api');
+  const { fireEvent, waitFor } = require('@testing-library/react');
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const answered = { crowdLevel: 3, priceWorth: null, rating: null };
+
+  async function submitWith(answer) {
+    submitVenueFeedback.mockReset();
+    submitVenueFeedback.mockResolvedValue(answer);
+    const props = detailProps(endedFlock('completed', { eventTime: hoursAgo(20) }), {
+      authUser: { id: MEMBER },
+      feedbackState: answered,
+    });
+    render(React.createElement(FlockDetail, props));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(props.setFeedbackSubmitting).toHaveBeenLastCalledWith(false));
+    expect(props.rememberFeedbackDone).toHaveBeenCalledWith(41);
+    expect(props.showToast).toHaveBeenCalledTimes(1);
+    return props.showToast.mock.calls[0];
+  }
+
+  test('a counted answer is thanked as one', async () => {
+    const toast = await submitWith({ verified: true, plan_window_closed: false });
+    expect(toast).toEqual(['Thanks. Real reports sharpen the forecast for everyone.']);
+  });
+
+  test('an answer after the window names the moment it shut', async () => {
+    // Noon today on this machine's clock, built from local fields so the words
+    // do not depend on the zone the suite runs in.
+    const now = new Date();
+    const noonToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+    const toast = await submitWith({
+      verified: false,
+      plan_window_closed: true,
+      plan_report_closes_at: noonToday.toISOString(),
+    });
+    expect(toast).toEqual(['Thanks. Reports on this plan counted until noon today; this one is noted.']);
+  });
+
+  test('an answer that does not count for another reason keeps the general sentence', async () => {
+    for (const answer of [
+      { verified: false },
+      { verified: false, plan_window_closed: false, plan_report_closes_at: hoursAgo(-1) },
+      { verified: false, plan_window_closed: true, plan_report_closes_at: 'not a time' },
+    ]) {
+      const toast = await submitWith(answer);
+      expect(toast).toEqual(['Thanks. Reports from a night here with your flock go into the forecast; this one is noted.']);
+      cleanup();
+    }
   });
 });
 

@@ -476,7 +476,8 @@ describe('the chat and the plan', () => {
     expect(CHAT).toContain("import { isNightOver } from '../lib/planNight';");
     expect(PLAN).toContain(`const tablesOver = !!flock && (${gate});`);
     expect(PLAN).toContain('useTableSummary(tablesOver ? null : (flock?.venueId || null), tableParty)');
-    expect(PLAN).toContain("import { isNightOver } from '../lib/planNight';");
+    // The plan screen also takes the plan window's words from the same file.
+    expect(PLAN).toMatch(/import \{ isNightOver(?:, \w+)* \} from '\.\.\/lib\/planNight';/);
   });
 
   it("the vote row's and the venue card's accessible names carry the table line", () => {

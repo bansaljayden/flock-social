@@ -57,7 +57,7 @@ import React from 'react';
 import { FLOCK_DAY_CHOICES, FLOCK_HOUR_CHOICES } from '../components/ui/FormBits';
 import { submitVenueFeedback } from '../services/api';
 import { lsGet } from '../lib/storage';
-import { isNightOver } from '../lib/planNight';
+import { isNightOver, reportWindowWords } from '../lib/planNight';
 import { askedCount } from '../lib/planAsked';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -222,9 +222,11 @@ export default function FlockDetail({
     // that did not happen.
     const isDone = flock.status === 'completed';
     // A locked-in plan an hour past its time, which the host has not slid to
-    // done. Most never do, and the sweep completes the plan only once the
-    // server has stopped verifying reports on it, so the feedback card below
-    // waits for this OR done (lib/planNight.js has the whole account).
+    // done. Most never do, and the sweep completes the plan only 12 hours
+    // after its time, so the feedback card below waits for this OR done
+    // (lib/planNight.js has the whole account). A member's answer counts
+    // until noon the day after the plan, venue time (routes/feedback.js, the
+    // plan window).
     const nightOver = isNightOver(flock);
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
@@ -625,8 +627,9 @@ export default function FlockDetail({
 
           {/* Post-hangout feedback prompt, only once the night happened.
               isDone and not isCompleted: a cancelled plan has no night to
-              rate (see isDone above). nightOver asks while a report still
-              counts, rather than the morning after it stopped. */}
+              rate (see isDone above). nightOver asks from an hour in, and an
+              answer from a member counts until noon the next day on the
+              venue clock, so the morning after still counts. */}
           {(isDone || nightOver) && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: '0 0 10px' }}>How was {flock.venue}?</p>
@@ -688,16 +691,21 @@ export default function FlockDetail({
                       // own comment says why: "the submitter is told whether
                       // their report will count, rather than being thanked for
                       // something that was filed and ignored." This screen
-                      // thanked everybody the same way. It matters most on the
-                      // majority path: a host who never slides "done" gets the
-                      // flock completed by the 12 hour sweep, which is the same
-                      // 12 hours the verification window allows, so a report
-                      // left the next morning is unverified by construction and
-                      // every reader drops it. Same two sentences the venue
-                      // card already uses.
+                      // thanked everybody the same way. The first and last
+                      // sentences below are the two the venue card uses.
+                      //
+                      // A member of the plan has until noon the day after it,
+                      // venue time (never less than 12 hours from its start).
+                      // An answer after that is filed and does not count, and
+                      // the server says so (plan_window_closed) with the moment
+                      // the window shut, so the thanks names that moment rather
+                      // than suggesting the night was never evidence.
+                      const shutAt = filed?.plan_window_closed ? reportWindowWords(filed.plan_report_closes_at) : null;
                       showToast(filed?.verified
                         ? 'Thanks. Real reports sharpen the forecast for everyone.'
-                        : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.');
+                        : shutAt
+                          ? `Thanks. Reports on this plan counted until ${shutAt}; this one is noted.`
+                          : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.');
                     } catch (err) {
                       // The plan was called off after this screen drew the
                       // card. There is no night to rate and retrying cannot

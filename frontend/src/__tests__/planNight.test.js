@@ -40,3 +40,33 @@ test('no readable time is no night to be over', () => {
 test('a future plan is not over', () => {
   expect(isNightOver({ status: 'confirmed', eventTime: at(3 * 3600 * 1000) }, NOW)).toBe(false);
 });
+
+// The words for the moment a plan's answers stopped counting (the plan
+// screen's thanks after the plan window). Every instant is built from local
+// fields, so the words are the same in whatever zone the suite runs.
+describe('reportWindowWords', () => {
+  const { reportWindowWords } = require('../lib/planNight');
+  const SAT_NOON = new Date(2026, 10, 7, 12, 0, 0);
+
+  test('noon is noon, other times are hours and minutes', () => {
+    expect(reportWindowWords(SAT_NOON, new Date(2026, 10, 7, 13, 5))).toBe('noon today');
+    expect(reportWindowWords(new Date(2026, 10, 7, 14, 0), new Date(2026, 10, 7, 15, 0))).toBe('2 PM today');
+    expect(reportWindowWords(new Date(2026, 10, 7, 9, 30), new Date(2026, 10, 7, 15, 0))).toBe('9:30 AM today');
+  });
+
+  test('a day back is yesterday, a few days back is the weekday, a week back is the date', () => {
+    expect(reportWindowWords(SAT_NOON, new Date(2026, 10, 8, 10, 0))).toBe('noon yesterday');
+    expect(reportWindowWords(SAT_NOON, new Date(2026, 10, 10, 10, 0))).toBe('noon Saturday');
+    expect(reportWindowWords(SAT_NOON, new Date(2026, 10, 16, 10, 0))).toBe('noon Nov 7');
+  });
+
+  test('an ISO string reads the same as a Date', () => {
+    expect(reportWindowWords(SAT_NOON.toISOString(), new Date(2026, 10, 7, 13, 0))).toBe('noon today');
+  });
+
+  test('nothing readable is null, so the caller keeps its other sentence', () => {
+    for (const bad of [null, undefined, '', 'not a time']) {
+      expect(reportWindowWords(bad)).toBeNull();
+    }
+  });
+});

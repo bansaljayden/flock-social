@@ -3665,11 +3665,25 @@ export async function getCrowdAlternatives(placeId) {
 // snake_case here on purpose: routes/feedback.js validates `local_day` and
 // `local_hour`, while the crowd routes take camelCase. A caller that supplies
 // its own values keeps them.
+//
+// The device's zone rides along too, as `time_zone`. A plan member's report
+// counts until noon the day after the plan on the venue's clock
+// (routes/feedback.js, the plan window), and for a venue the server has no
+// zone for, the phone of someone who was there is the best clock it has. It
+// is used for that one sum and not stored. Left off when the runtime cannot
+// answer, or answers with something no zone name is; the server then keeps the
+// old 12 hours. 64 is the server's bound, as for push and Birdie.
 export async function submitVenueFeedback(data) {
   const now = new Date();
   const body = { ...data };
   if (body.local_day == null) body.local_day = now.getDay();
   if (body.local_hour == null) body.local_hour = now.getHours();
+  if (body.time_zone == null) {
+    try {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (typeof zone === 'string' && zone.length > 0 && zone.length <= 64) body.time_zone = zone;
+    } catch { /* no Intl zone */ }
+  }
   const res = await request('/api/feedback', {
     method: 'POST',
     body: JSON.stringify(body),
