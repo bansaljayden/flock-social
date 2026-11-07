@@ -46,6 +46,8 @@ import Icons from './ui/Icons';
 import { GoogleMapsMark } from './ui/GoogleCredit';
 import { crowdLabelFor } from '../lib/crowd';
 import { onVenuePhotoError } from '../lib/venuePhoto';
+// Miles or kilometres by the device's region (lib/distance.js).
+import { formatDistance } from '../lib/distance';
 // Tables at the listed venues, for the ones whose Flux sensor watches them:
 // one POST for the whole list, again each minute while it is open
 // (lib/tableSummaries.js), the words TableAvailability's.
@@ -313,7 +315,7 @@ export default function SearchResultsOverlay({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
                             {dist != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                {Icons.mapPin(colors.steel, 12)} {dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}
+                                {Icons.mapPin(colors.steel, 12)} {formatDistance(dist)}
                               </span>
                             )}
                             {!venue.photo_url && crowdScore != null && (

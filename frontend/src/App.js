@@ -216,6 +216,7 @@ import { useStableFn } from './components/chat/useStableFn';
 import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
 import { nextKeyGaps, searchWaitMs } from './lib/searchCadence';
+import { formatDistance } from './lib/distance';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -10628,10 +10629,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }, []);
 
-  const calcDistance = useCallback((lat1, lng1, lat2, lng2) => {
-    const d = distanceKm(lat1, lng1, lat2, lng2);
-    return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
-  }, [distanceKm]);
+  // Printed in miles or kilometres by the device's region (lib/distance.js),
+  // the one format the search list, the results list and the events share.
+  const calcDistance = useCallback((lat1, lng1, lat2, lng2) => formatDistance(distanceKm(lat1, lng1, lat2, lng2)), [distanceKm]);
 
   // Local YYYY-MM-DD. toISOString() would shift the key by a day for anyone
   // east of UTC, which put their plans on the wrong calendar cell.

@@ -22,6 +22,8 @@
  * it carries nothing, so the ordinary case reads exactly as it did.
  */
 
+import { formatDistance } from './distance';
+
 const EARTH_RADIUS_KM = 6371;
 
 // A coordinate is a finite number. Number(null) is 0, which is a real place,
@@ -46,10 +48,11 @@ export function eventDistanceKm(event, viewer) {
   return EARTH_RADIUS_KM * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** "800m" under a kilometre, "2.3km" from there: the card's own format. */
-export function formatEventDistance(km) {
+/** The distance in the app's one format: miles or kilometres by the
+ *  device's region (lib/distance.js), "1.4 mi" or "2.3 km". */
+export function formatEventDistance(km, options) {
   if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return null;
-  return km < 1 ? `${Math.round(km * 1000)}m` : `${km.toFixed(1)}km`;
+  return formatDistance(km, options);
 }
 
 // An Intl formatter costs far more to build than to use, and the card asks

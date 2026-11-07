@@ -74,9 +74,10 @@ describe('the distance is from the viewer', () => {
     expect(eventDistanceKm(null, { lat: 39.7, lng: -105 })).toBeNull();
   });
 
-  it("prints the card's own way", () => {
-    expect(formatEventDistance(0.8)).toBe('800m');
-    expect(formatEventDistance(2.345)).toBe('2.3km');
+  it("prints the app's one way: miles or kilometres by the device's region (lib/distance.js)", () => {
+    expect(formatEventDistance(0.8, { locale: 'fr-FR' })).toBe('800 m');
+    expect(formatEventDistance(2.345, { locale: 'fr-FR' })).toBe('2.3 km');
+    expect(formatEventDistance(2.345, { locale: 'en-US' })).toBe('1.5 mi');
     expect(formatEventDistance(null)).toBeNull();
     expect(formatEventDistance(NaN)).toBeNull();
   });
@@ -174,8 +175,9 @@ describe('the event detail screen', () => {
     const { getByText, queryByText } = renderOverlay({
       ...DENVER_SHOW, location: { latitude: 1, longitude: 0 }, distance_miles: 8.7,
     });
-    expect(getByText(/111\.2km away/)).toBeTruthy();
-    expect(queryByText(/14\.0 km away/)).toBeNull();
+    // 111.2 km, printed for this test's en-US device in miles.
+    expect(getByText(/69 mi away/)).toBeTruthy();
+    expect(queryByText(/14\.0 km away|8\.7 mi away/)).toBeNull();
   });
 
   it('has no distance line without a position for the viewer', () => {

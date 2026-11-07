@@ -89,6 +89,8 @@ import Icons from '../components/ui/Icons';
 import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 import { onVenuePhotoError } from '../lib/venuePhoto';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
+// Miles or kilometres by the device's region (lib/distance.js).
+import { formatDistance, haversineKm } from '../lib/distance';
 // Tables at the venues on the map and in the search dropdown, for the ones
 // whose Flux sensor watches them: one POST for all of them, again each minute
 // while Discover is on screen (lib/tableSummaries.js), the words
@@ -446,13 +448,9 @@ export default function ExploreScreen({
                       {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
                       {venue.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
-                      {userLocation && venue.location && (() => {
-                        const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
-                        const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
-                        const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-                        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                        return <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
-                      })()}
+                      {userLocation && venue.location && (
+                        <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{formatDistance(haversineKm(userLocation.lat, userLocation.lng, venue.location.latitude, venue.location.longitude))}</span>
+                      )}
                     </div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
                   </div>
