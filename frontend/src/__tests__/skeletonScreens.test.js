@@ -229,9 +229,10 @@ describe('the Nest, before anything is known', () => {
     expect(bars.some((b) => b.style.width === '36px' && b.style.borderRadius === '50%')).toBe(true);
     expect(bars.some((b) => b.style.height === '56px' && b.style.borderRadius === '14px')).toBe(true);
     expect(bars.some((b) => b.style.height === '52px' && b.style.borderRadius === '14px')).toBe(true);
-    // Three cards' status pills, and the five 22px tab icons.
+    // Three cards' status pills, and the five 24px tab icons the bar draws
+    // since it took the app's own icon set (App.js NavIcon).
     expect(bars.filter((b) => b.style.width === '76px' && b.style.height === '20px')).toHaveLength(3);
-    expect(bars.filter((b) => b.style.width === '22px' && b.style.height === '22px')).toHaveLength(5);
+    expect(bars.filter((b) => b.style.width === '24px' && b.style.height === '24px' && b.style.borderRadius === '6px')).toHaveLength(5);
     expectShapesHidden(container);
     expectNoSpinnerOrLoadingText(container);
   });
@@ -288,7 +289,7 @@ describe('a cold start paints the screen it opens on, Nest or venue dashboard', 
     expect(header.style.background).toBe('rgb(30, 41, 59)');
     expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '28px')).toHaveLength(5);
     expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '104px')).toHaveLength(3);
-    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '22px')).toHaveLength(0);
+    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '24px' && b.style.borderRadius === '6px')).toHaveLength(0);
     // The strip over the safe top is the header's navy, as the app paints it
     // over the dashboard.
     expect(root.children[1].firstChild.style.backgroundColor).toBe('rgb(30, 41, 59)');

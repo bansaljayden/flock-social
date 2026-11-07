@@ -349,12 +349,12 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
         </div>
       </div>
       {/* The tab bar: styles.bottomNav's padding and inset, and each tab's
-          22px icon over its label. */}
+          24px icon over its label, with no dot under it (App.js BottomNav). */}
       <div aria-hidden="true" style={{ display: 'flex', justifyContent: 'space-around', padding: '10px 8px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', borderTop: 'var(--nav-border)', boxShadow: 'var(--nav-shadow)', flexShrink: 0 }}>
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 14px' }}>
-            <SkeletonBar width={22} height={22} radius={6} />
-            <SkeletonBar width={30} height={9} radius={3} style={{ margin: '6px 0 3px' }} />
+            <SkeletonBar width={24} height={24} radius={6} />
+            <SkeletonBar width={30} height={9} radius={3} style={{ margin: '6px 0 0' }} />
           </div>
         ))}
       </div>

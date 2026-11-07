@@ -3923,20 +3923,17 @@ const Toggle = ({ on, onChange, label, pendingOn }) => {
   );
 };
 
-// SVG Icons for navigation. The stroke is `currentColor`: the tab button in
+// The tab bar's icons. The stroke is `currentColor`: the tab button in
 // BottomNav sets `color` from the theme-aware palette, which this module-scope
-// component cannot see (see the comment above Toggle).
+// component cannot see (see the comment above Toggle). They are the app's own
+// icons (components/ui/Icons.js) at 24. The bar had its own stroked set, the
+// stock Feather shapes, so it and every screen above it drew in two icon
+// geometries.
+const NAV_ICONS = { home: Icons.home, explore: Icons.map, calendar: Icons.calendar, chat: Icons.chat, profile: Icons.user };
 const NavIcon = ({ id }) => {
   const color = 'currentColor';
-  const icons = {
-    home: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>,
-    explore: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"></polygon><line x1="9" y1="3" x2="9" y2="18"></line><line x1="15" y1="6" x2="15" y2="21"></line></svg>,
-    calendar: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>,
-    chat: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>,
-    revenue: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>,
-    profile: <svg aria-hidden="true" focusable="false" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>,
-  };
-  return icons[id] || null;
+  const draw = NAV_ICONS[id];
+  return draw ? draw(color, 24) : null;
 };
 
 // The decorative phone bezel is a DESKTOP-ONLY preview shell. On the real device
@@ -4174,7 +4171,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     // need different spacing, change the numbers HERE. Do not add a second
     // `padding:` shorthand at the render site — React applies the later key
     // last, so a plain `padding: '10px 8px 12px'` silently deletes the
-    // inset and the active-tab dot lands under the home indicator. That
+    // inset and the tab labels land under the home indicator. That
     // exact regression is what this comment exists to prevent.
     padding: '10px 8px calc(12px + var(--safe-bottom))',
     backgroundColor: 'var(--bg-nav)',
@@ -9875,8 +9872,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      So the numbers below are the real heights of the bottom chrome. The
      home-indicator inset is added on top with var(--safe-bottom) rather than
      baked in, per the SAFE-AREA CONTRACT in index.css. */
-  // Both measured in a browser at 390x844 (no home-indicator inset).
-  const TAB_BAR_H = 89;             // nav[aria-label="Main"]
+  // Both measured in a browser at 390x844 (no home-indicator inset). The tab
+  // bar was 89 with its active dot; re-measured on 2026-11-06 at 82 once the
+  // dot went and the 24px icons sat in a flex row instead of a 24px line box.
+  const TAB_BAR_H = 82;             // nav[aria-label="Main"]
   const DISCOVER_FILTER_BAR_H = 49; // Discover's Filters row sits above the tab bar
   const FAB_DOCK_GAP = 12;
   // The docked buttons themselves: SafetyButton and AIBubble draw 52px discs.
@@ -15354,39 +15353,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
               ...styles.navItem,
-              backgroundColor: currentTab === t.id ? 'var(--icon-bg)' : 'transparent',
-              transition: 'background-color 0.2s ease',
               borderRadius: '14px',
               padding: '8px 14px',
               position: 'relative'
             }}>
+            {/* One flat red, white figures, 6.47:1. It was a gradient whose
+                light end measured 3.76:1 under the same white. The ring in the
+                bar's own colour keeps it off the icon it sits on. */}
             {t.id === 'chat' && messagesTabUnread > 0 && (
-              <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '8px', minWidth: '16px', height: '16px', borderRadius: '8px', padding: '0 4px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
+              <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '6px', minWidth: '18px', height: '18px', borderRadius: '9px', padding: '0 5px', boxSizing: 'border-box', backgroundColor: '#B91C1C', boxShadow: '0 0 0 2px var(--bg-nav)', color: '#ffffff', fontSize: 'var(--t-micro)', fontWeight: '700', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               {/* The icon strokes currentColor, so this is where its colour
                   comes from, and it has to be here: `colors` is the live
                   palette only inside FlockAppInner. */}
-              <div style={{ color: currentTab === t.id ? colors.navy : colors.textTertiary }}>
+              <div style={{ display: 'flex', color: currentTab === t.id ? colors.navy : colors.textTertiary }}>
                 <NavIcon id={t.id} />
               </div>
+              {/* One sign of the tab you are on: its icon and label in navy,
+                  the label at 600. There were two, a pill behind the tab
+                  (cream on white, 1.17:1, close to invisible) and a dot under
+                  it. */}
               <span style={{
                 fontSize: 'var(--t-meta)',
-                fontWeight: currentTab === t.id ? '500' : '500',
+                fontWeight: currentTab === t.id ? '600' : '500',
                 color: currentTab === t.id ? colors.navy : 'var(--text-tertiary)',
+                lineHeight: '16px',
                 marginTop: '3px',
-                transition: 'opacity 0.2s ease'
               }}>{t.label}</span>
-              <div style={{
-                width: '4px',
-                height: '4px',
-                borderRadius: '2px',
-                backgroundColor: colors.navy,
-                marginTop: '3px',
-                opacity: currentTab === t.id ? 1 : 0,
-                transform: currentTab === t.id ? 'scale(1)' : 'scale(0)',
-                transition: 'opacity 0.2s ease, transform 0.2s ease'
-              }} />
             </div>
           </button>
         ))}

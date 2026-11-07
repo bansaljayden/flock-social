@@ -159,13 +159,14 @@ describe('no function reads the light-only module palette', () => {
 });
 
 describe('the two components that moved out on 09-22', () => {
-  test('NavIcon strokes currentColor and reads no palette', () => {
+  test('NavIcon draws the app icon set in currentColor and reads no palette', () => {
+    // Since 2026-11-06 the bar draws components/ui/Icons.js at 24 instead of
+    // its own stroked set; the colour still comes in as currentColor.
     const src = topLevelSource('NavIcon');
     expect(src).toMatch(/const color = 'currentColor';/);
+    expect(src).toMatch(/return draw \? draw\(color, 24\) : null;/);
     expect(src).not.toMatch(/colors\./);
-    const strokes = [...src.matchAll(/stroke=\{([^}]+)\}/g)].map((m) => m[1]);
-    expect(strokes.length).toBeGreaterThanOrEqual(5);
-    strokes.forEach((s) => expect(s).toBe('color'));
+    expect(APP).toMatch(/const NAV_ICONS = \{ home: Icons\.home, explore: Icons\.map, calendar: Icons\.calendar, chat: Icons\.chat, profile: Icons\.user \};/);
   });
 
   test('the tab bar sets the icon colour from the live palette', () => {

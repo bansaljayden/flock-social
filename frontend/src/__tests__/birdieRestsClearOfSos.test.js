@@ -87,7 +87,8 @@ const birdieBox = (birdieCorner, sosCorner, vw, vh, width) => box(cornerStyle(bi
 test('the lifted geometry is App.js\'s: SOS and Birdie both go through cornerStyle, on the Nest\'s dock', () => {
   expect(birdieInsetExpr).not.toBeNull();
   expect(APP).toContain("const chrome = TAB_BAR_H + (currentTab === 'explore' ? DISCOVER_FILTER_BAR_H : 0) + FAB_DOCK_GAP;");
-  expect(cornerStyle('bottom-right', FAB_EDGE)).toEqual({ bottom: '101px', right: '12px' });
+  // The tab bar measures 82 since its dot went (2026-11-06), plus the 12px gap.
+  expect(cornerStyle('bottom-right', FAB_EDGE)).toEqual({ bottom: '94px', right: '12px' });
   expect(cornerStyle('top-left', FAB_EDGE)).toEqual({ top: '60px', left: '12px' });
   const sos = APP.slice(APP.indexOf('const SafetyButton = () =>'), APP.indexOf('const SafetyButton = () =>') + 1400);
   const birdie = APP.slice(APP.indexOf('const AIBubble = () =>'), APP.indexOf('const AIBubble = () =>') + 1400);
