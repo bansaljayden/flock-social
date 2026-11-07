@@ -17860,6 +17860,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     colors,
     confirmBirdieDraft,
     confirmBirdieVoteStage,
+    directMessages,
     entitlements,
     fabDockBottom,
     fillAiInput,
@@ -17881,10 +17882,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCurrentTab,
     setPaywallTrigger,
     setProfileScreen,
+    setSelectedDmId,
     setSelectedFlockId,
     setSelectedVenueForCreate,
     startNewAiChat,
     toggleAiFullscreen,
+    transmitDm,
     transmitFlockMessage,
   };
   /* fallback null rather than a skeleton, the same call every other overlay in

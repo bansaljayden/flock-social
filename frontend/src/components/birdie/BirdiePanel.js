@@ -154,6 +154,7 @@ export default function BirdiePanel({
   colors,
   confirmBirdieDraft,
   confirmBirdieVoteStage,
+  directMessages,
   entitlements,
   fabDockBottom,
   fillAiInput,
@@ -175,10 +176,12 @@ export default function BirdiePanel({
   setCurrentTab,
   setPaywallTrigger,
   setProfileScreen,
+  setSelectedDmId,
   setSelectedFlockId,
   setSelectedVenueForCreate,
   startNewAiChat,
   toggleAiFullscreen,
+  transmitDm,
   transmitFlockMessage,
 }) {
   // The thread's scroll box, and what the landing effect below knows about
@@ -801,11 +804,22 @@ export default function BirdiePanel({
           </div>
           </>)}
 
-          {/* Venue Share Picker */}
+          {/* Venue Share Picker.
+              IT SIZES ITSELF (S18, 2026-11-06). It was held to 60% of the
+              panel, and at the panel's smallest (380px) that left about 180px
+              for an empty state that needs about 230: "Start a flock here",
+              its one way forward, was cut in half by the panel's edge. It may
+              now take the panel's height less a strip of the dimmed answer
+              above it, and its body scrolls when a long list needs more.
+              SENT TO A FRIEND. Below the flocks (or the empty state), the
+              people this account already has a conversation with: a tap sends
+              the venue's card into that DM over the same reconciled path the
+              DM screen sends on (transmitDm: the optimistic bubble, the
+              socket or REST, a failed state with tap-to-retry) and opens it. */}
           {aiShareVenue && (
             <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: '24px 24px 0 0' }}>
               <DialogBehavior onClose={() => setAiShareVenue(null)} label="Share this venue" />
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: '60%', display: 'flex', flexDirection: 'column' }}>
+              <div data-share-sheet style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                 <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
@@ -817,7 +831,7 @@ export default function BirdiePanel({
                   </div>
                   <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
                 </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+                <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '8px' }}>
                   {aiShareVenue._shareToDm ? (
                     /* DM — navigate to DM tab with venue in clipboard */
                     <div style={{ padding: '20px', textAlign: 'center' }}>
@@ -864,10 +878,10 @@ export default function BirdiePanel({
                         </div>
                       </button>
                       )) : (
-                        <div style={{ padding: '24px 20px', textAlign: 'center' }}>
-                          <BirdieStill bird={WARM_BIRD} size={80} style={{ margin: '0 auto 10px' }} />
+                        <div data-share-empty style={{ padding: '14px 16px 12px', textAlign: 'center' }}>
+                          <BirdieStill bird={WARM_BIRD} size={56} style={{ margin: '0 auto 8px' }} />
                           <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>No flocks to send this to yet</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Start a flock and this venue can go straight into the chat.</p>
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Start a flock and this venue can go straight into the chat.</p>
                           <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
                             Start a flock here
                           </button>
@@ -875,6 +889,35 @@ export default function BirdiePanel({
                       );
                     })()
                   )}
+                  {!aiShareVenue._shareToDm && (() => {
+                    // The people this account already messages, newest
+                    // first as the Messages tab lists them, at most five.
+                    const friends = (Array.isArray(directMessages) ? directMessages : [])
+                      .filter((d) => d && d.userId != null && typeof d.name === 'string' && d.name.trim())
+                      .slice(0, 5);
+                    if (!friends.length) return null;
+                    return (
+                      <div data-share-friends style={{ borderTop: '1px solid var(--divider)', marginTop: '4px', paddingTop: '6px' }}>
+                        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', margin: '4px 12px 2px' }}>Or send it to a friend</p>
+                        {friends.map((d) => (
+                          <button className="hit44" key={`dm-${d.userId}`} onClick={() => {
+                            const venueData = { name: aiShareVenue.name, addr: aiShareVenue.address, stars: aiShareVenue.rating, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id };
+                            transmitDm(d.userId, { text: `Check out ${aiShareVenue.name}!`, message_type: 'venue_card', venue_data: venueData, image_url: null, reply_to_id: null, reply_to: null });
+                            setAiShareVenue(null);
+                            closeAiChat();
+                            setSelectedDmId(d.userId);
+                            setCurrentScreen('dmDetail');
+                          }} style={{ width: '100%', padding: '8px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
+                            <div aria-hidden="true" style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '700', flexShrink: 0 }}>
+                              {d.name.trim().charAt(0).toUpperCase()}
+                            </div>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
+                            {Icons.send('var(--text-tertiary)', 14)}
+                          </button>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             </div>
