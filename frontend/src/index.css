@@ -187,8 +187,6 @@
   /* The steel of the usual-night bars and Birdie's quick actions; it was
      used with a fallback and defined nowhere (UsualNightStrip.js). */
   --accent-steel: #2d5a87;
-  --accent-pink-bg: #fce7f3;
-  --accent-pink-text: #be185d;
   /* Keyboard focus ring. See the :focus-visible rule for the measurements. */
   --focus-ring: rgba(45,90,135,0.9);
 
@@ -382,8 +380,6 @@
   /* Light steel in dark: the light theme's #2d5a87 is --border-mid here, so
      the busiest bars of a usual night read the same as the rest. */
   --accent-steel: #a9c7e4;
-  --accent-pink-bg: rgba(190,24,93,0.15);
-  --accent-pink-text: #f472b6;
   /* Cream, not the light-mode steel navy: navy on navy measured 1.61:1 on
      --bg-hover and the ring was invisible. See the :focus-visible rule. */
   --focus-ring: rgba(241,237,224,0.9);
