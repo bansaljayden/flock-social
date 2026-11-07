@@ -77,8 +77,9 @@ const textLink = {
 
 // Plan with them is a blush pill under navy words (index.css --accent-blush):
 // it starts a plan with the friends who are down, the moment a plan begins to
-// come together. The pill hangs 9px past the end of its line and 2px into the
-// gap before it, so the names beside it and the line under it stay put.
+// come together. Its padding is given back on both sides (it hangs 9px past
+// the end of its line and 11px into the gap before it), so the names beside
+// it and the line under it lay out as they would without it.
 const PLAN_PILL = {
   gap: '2px',
   backgroundColor: 'var(--accent-blush)',
@@ -86,7 +87,7 @@ const PLAN_PILL = {
   borderRadius: '999px',
   padding: '0 9px 0 11px',
   minHeight: '32px',
-  margin: '0 -9px 0 -2px',
+  margin: '0 -9px 0 -11px',
 };
 
 export default function NestPulse({ active, saving, onSet, friends, onPlanWith, onAddFriends }) {

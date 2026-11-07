@@ -388,7 +388,7 @@ describe('3: Out tonight', () => {
       'border-radius': '999px',
       padding: '0 9px 0 11px',
       'min-height': '32px',
-      margin: '0 -9px 0 -2px',
+      margin: '0 -9px 0 -11px',
     });
     expect(styleOf(plan.querySelector('.flock-icon-wrap')).color).toBe('var(--on-accent-blush)');
   });
