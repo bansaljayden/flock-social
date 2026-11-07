@@ -34,13 +34,16 @@ test('the Nest counts, gates and lists one live, sorted array', () => {
   expect(home).toMatch(/const \{ hero: heroFlock, sameNight: heroNight \} = pickHero\(liveFlocks, nestNow\);/);
   expect(home).toMatch(/const heroIds = new Set\(\[heroFlock, \.\.\.heroNight\]\.filter\(Boolean\)\.map\(\(f\) => f\.id\)\);/);
   expect(home).toMatch(/const restFlocks = liveFlocks\.filter\(\(f\) => !heroIds\.has\(f\.id\)\);/);
-  expect(home).toMatch(/\{restFlocks\.map\(\(f, idx\) => \{/);
+  expect(home).toMatch(/const nestComing = comingGroups\(restFlocks, nestNow\)\.map\(/);
+  expect(home).toMatch(/<NestComingUp groups=\{nestComing\} \/>/);
   // Nothing after the split sorts again: the hero, its night and the rest
   // all keep the one order liveFlocks was given.
   const afterSplit = home.slice(home.indexOf('const restFlocks'), home.indexOf('// The past flocks screen was declared here'));
   expect(afterSplit).not.toMatch(/\.sort\(/);
   expect(home).toMatch(/\{flocks\.length > 0 \? 'Nothing coming up' : 'No flocks yet'\}/);
-  expect(home).toMatch(/\{f\.timePassed \? 'Time passed' : f\.status === 'voting' \? 'Needs Votes'/);
+  // The chip says the reader's state (lib/nestHero.js planChip): Time passed
+  // first, then the reader's vote, Voted, Voting, How was it?, Locked in.
+  expect(home).toMatch(/chip: planChip\(f, \{ needsVote: f\.status === 'voting' && !f\.timePassed && needsMyVote\(f\), voted: iHaveVoted\(f\) \}\),/);
   // The per-reader half is a named helper now, because the flock list read
   // answers it too: a tally that has not been read this session falls back to
   // the list's own iVoted rather than staying silent, which is what kept this

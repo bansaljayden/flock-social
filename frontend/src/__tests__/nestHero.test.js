@@ -21,7 +21,7 @@ import NestHero from '../components/nest/NestHero';
 const at = (day, h, m = 0) => new Date(2026, 10, day, h, m);
 const FRI_712 = at(6, 19, 12);
 // Intl puts a narrow no-break space before AM/PM; the words are what matter.
-const plain = (s) => String(s).replace(/ /g, ' ');
+const plain = (s) => String(s).replace(/\u202f/g, ' ');
 
 const plan = (id, when, extra = {}) => ({ id, name: `Plan ${id}`, status: 'voting', eventTime: when ? when.toISOString() : null, timePassed: false, ...extra });
 

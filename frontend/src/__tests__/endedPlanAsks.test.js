@@ -266,13 +266,22 @@ describe('the Nest reads the same hour', () => {
     expect(home).toMatch(/askHowItWas: isNightOver\(f\) && !!f\.venueId && !submittedFeedback\.has\(f\.id\),/);
   });
 
-  test('its chip asks instead of saying Locked In', () => {
-    expect(home).toMatch(/f\.askHowItWas \? 'How was it\?' : 'Locked In'/);
-    // Behind the statuses that already have their own word.
-    expect(home).toMatch(/f\.status === 'cancelled' \? 'Cancelled' : f\.askHowItWas \? 'How was it\?'/);
+  // Since 2026-11-06 the chip is lib/nestHero.js planChip, the reader's own
+  // state, and on the night itself the hero card asks with a button.
+  const { planChip } = require('../lib/nestHero');
+  const { heroAction } = require('../lib/nestHero');
+
+  test('its chip asks instead of saying Locked in', () => {
+    const over = { id: 1, status: 'confirmed', askHowItWas: true, venue: 'Juniper Bowl' };
+    expect(planChip(over).label).toBe('How was it?');
+    expect(planChip({ ...over, askHowItWas: false }).label).toBe('Locked in');
+    expect(home).toMatch(/chip: planChip\(f, \{/);
   });
 
-  test('the card still opens the plan screen, where the question lives', () => {
-    expect(home).toMatch(/onClick=\{\(\) => \{ setSelectedFlockId\(f\.id\); setCurrentScreen\('detail'\); \}\}/);
+  test('on its night the hero asks How was the venue?, and the card still opens the plan screen', () => {
+    expect(heroAction({ id: 1, status: 'confirmed', askHowItWas: true, venue: 'Juniper Bowl' }, [])).toEqual({ kind: 'how', label: 'How was Juniper Bowl?' });
+    expect(home).toMatch(/if \(kind === 'vote' \|\| kind === 'how'\) \{ setCurrentScreen\('detail'\); return; \}/);
+    expect(home).toMatch(/const openPlan = \(flockId\) => \{ setSelectedFlockId\(flockId\); setCurrentScreen\('detail'\); \};/);
+    expect(home).toMatch(/onClick: \(\) => openPlan\(f\.id\),/);
   });
 });

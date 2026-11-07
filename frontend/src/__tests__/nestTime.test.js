@@ -79,3 +79,43 @@ describe('nightKey and nightsBetween', () => {
     expect(nightsBetween(null, at(6, 1))).toBeNull();
   });
 });
+
+describe('comingGroups and cardTime', () => {
+  const { comingGroups, cardTime } = require('../lib/nestTime');
+  const FRI = at(6, 19, 12);
+  const f = (id, when, extra = {}) => ({ id, eventTime: when ? when.toISOString() : null, ...extra });
+  const plain = (s) => String(s).replace(/\u202f/g, ' ');
+
+  test('a partition of the list in its own order, empty bands left out', () => {
+    const list = [
+      f(1, at(7, 19, 0)),
+      f(2, at(8, 11, 0)),
+      f(3, at(13, 20, 0)),
+      f(4, null),
+      f(5, at(5, 20, 0)),
+      f(6, at(6, 18, 0), { timePassed: true }),
+      f(7, at(9, 9, 0)),
+    ];
+    const groups = comingGroups(list, FRI);
+    expect(groups.map((g) => [g.label, g.flocks.map((x) => x.id)])).toEqual([
+      ['Tomorrow', [1]],
+      ['This week', [2, 7]],
+      ['Later', [3]],
+      ['No date yet', [4]],
+      ['Earlier', [5, 6]],
+    ]);
+    // Every plan lands in exactly one band.
+    expect(groups.reduce((n, g) => n + g.flocks.length, 0)).toBe(list.length);
+  });
+
+  test('a plan after midnight is still that night', () => {
+    expect(comingGroups([f(1, at(8, 1, 0))], FRI)[0].label).toBe('Tomorrow');
+  });
+
+  test('the card time is short where the band already says the day', () => {
+    expect(plain(cardTime(at(7, 19, 0), 'Tomorrow'))).toBe('7:00 PM');
+    expect(plain(cardTime(at(8, 11, 0), 'This week'))).toBe('Sun 11:00 AM');
+    expect(plain(cardTime(at(21, 20, 0), 'Later'))).toBe('Nov 21, 8:00 PM');
+    expect(cardTime(null, 'No date yet')).toBe('');
+  });
+});

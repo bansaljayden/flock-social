@@ -173,7 +173,8 @@ import NestDayLine from './components/nest/NestDayLine';
 import NestHero from './components/nest/NestHero';
 import NestRows from './components/nest/NestRows';
 import NestPulse from './components/nest/NestPulse';
-import { pickHero, whenLine, alsoLine } from './lib/nestTime';
+import NestComingUp from './components/nest/NestComingUp';
+import { pickHero, whenLine, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
@@ -18131,6 +18132,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // held (lib/pulse.js friendsDownLine): never one who said Not, never a
     // note, and nothing from midnight to 4 AM.
     const nestFriendsOut = friendsDownLine(friendsPulses, nestNow);
+    // COMING UP: the plans after the hero's night, by when. Each card's faces
+    // come from member_previews (a name and an avatar for up to four
+    // accepted members, creator first, which GET /api/flocks sends), with
+    // `members` the fallback for a plan whose roster this session has read.
+    // The +N and the "N going" count from memberCount (accounts and link
+    // guests), never from the four-face preview.
+    const nestComing = comingGroups(restFlocks, nestNow).map((g) => ({
+      label: g.label,
+      cards: g.flocks.map((f) => ({
+        id: f.id,
+        name: f.name,
+        time: cardTime(f.eventTime, g.label),
+        place: placeLine(f.venue),
+        faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || [])),
+        total: f.memberCount || 1,
+        chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f) }),
+        onClick: () => openPlan(f.id),
+      })),
+    }));
     // Every other open loop, as rows: the asks the hero and its night do not
     // already carry, the invites, and last night's plans to rate.
     const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: [...heroIds] })
@@ -18262,9 +18282,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         )}
 
         {(flocksLoading || liveFlocks.length > 0) && (<>
-        {/* Flocks — header row with quiet Past + Add-friends ghosts */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
-          <h2 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Your Flocks</h2>
+        {/* Past and Add friends, until the footer takes them. */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', margin: '0 0 8px' }}>
           <div style={{ display: 'flex', gap: '6px' }}>
             <button className="hit44"
               onClick={() => setCurrentScreen('pastFlocks')}
@@ -18333,83 +18352,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </button>
             </div>
           )}
-          {/* Completed and cancelled plans leave Home: they are served by
-              Past and stay reachable from Messages, and without this filter
-              the morning after put yesterday's night next to tonight's,
-              labeled Locked In, forever, until Home was an archive of every
-              night ever. Filtered here at the render, not at the load,
-              because Messages and the completed detail screen read the same
-              array. */}
-          {restFlocks.map((f, idx) => {
-            // Faces come from member_previews: a name and an avatar for up to
-            // four accepted members, creator first, which GET /api/flocks sends
-            // and loadFlocks stores. The card never read it, so it drew from
-            // `members`, which is empty until a detail or chat screen has been
-            // opened once, and every card on a fresh Nest showed zero faces.
-            // members stays the fallback for a flock whose roster HAS been
-            // loaded this session. Both shapes are handled: preview rows are
-            // objects with a name, legacy members can be plain strings.
-            const previewSource = Array.isArray(f.memberPreviews) && f.memberPreviews.length
-              ? f.memberPreviews
-              : (f.members || []);
-            const faces = previewSource.slice(0, 4).map((m) => (typeof m === 'string'
-              ? { initial: m[0]?.toUpperCase() || '?', image: null }
-              : { initial: (m.name || '')[0]?.toUpperCase() || '?', image: m.profile_image_url || m.image || null }));
-            // going_count (accounts plus link guests) is the real headcount, so
-            // the overflow chip counts the rest from it rather than from the
-            // four-face preview, which would always read +0.
-            const extraFaces = Math.max(0, (f.memberCount || faces.length) - faces.length);
-            return (
-              <button className="hit44"
-                key={f.id}
-                onClick={() => { setSelectedFlockId(f.id); setCurrentScreen('detail'); }}
-                style={{
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '14px 16px',
-                  borderRadius: '14px',
-                  border: '1px solid var(--border-default)',
-                  backgroundColor: 'var(--bg-card-solid)',
-                  boxShadow: 'var(--card-shadow-sm)',
-                  cursor: 'pointer',
-                  transition: 'border-color 0.2s ease',
-                  overflow: 'hidden',
-                }}
-              >
-                {/* minWidth:0 + flexShrink:0 on the chip: at --t-title the flock
-                    name is big enough that a long one used to squeeze the status
-                    chip onto two lines. Now the name wraps and the chip holds. */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, lineHeight: 1.2 }}>{f.name}</h3>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {f.venue}</p>
-                  </div>
-                  <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : f.askHowItWas ? Icons.star('var(--text-secondary)', 12) : Icons.check('var(--text-secondary)', 12)} {f.timePassed ? 'Time passed' : f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.askHowItWas ? 'How was it?' : 'Locked In'}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  {/* The faces are a picture of the headcount, not a list of
-                      names: each one is a bare initial, so a screen reader read
-                      this card out as the flock name followed by "A" and "S".
-                      The device hierarchy confirmed it, the whole card being one
-                      button whose accessible name ran the initials together with
-                      the venue, the status and the time. Hide the letters and
-                      say the number instead, the way the unread badge does. */}
-                  <span className="sr-only">{f.memberCount || faces.length} going</span>
-                  <div aria-hidden="true" style={{ display: 'flex' }}>
-                    {faces.map((face, j) => (
-                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>
-                        {face.image ? <img src={face.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : face.initial}
-                      </div>
-                    ))}
-                    {extraFaces > 0 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{extraFaces}</div>}
-                  </div>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
-                </div>
-              </button>
-            );
-          })}
+          {/* COMING UP. Completed and cancelled plans leave Home: they are
+              served by Past and stay reachable from Messages, and without that
+              filter the morning after put yesterday's night next to tonight's
+              until Home was an archive of every night ever. Filtered at the
+              render, not at the load, because Messages and the completed
+              detail screen read the same array. What is left after the hero
+              and its night is grouped by when (lib/nestTime.js comingGroups),
+              a partition of the one sorted list. */}
+          <NestComingUp groups={nestComing} />
           {/* The cards name their venues, which is Google Maps data off a
               Google map, so the list ends on Google's attribution
               (components/ui/GoogleCredit.js), as the Explore list does. */}
