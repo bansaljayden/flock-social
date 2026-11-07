@@ -954,6 +954,16 @@ export default function ProfileSettings({
       );
     }
 
+    // A BRAND-NEW ACCOUNT READS ONE LINE, NOT FOUR EMPTY TILES. "0 Flocks,
+    // 0 Friends, 0 Streak" with a lit flame, and a dash for Reliable, was a
+    // tally of nothing on the first screen a new person checks. When every
+    // read has landed and every number is zero or not there yet, the tiles
+    // give way to one line, the rule the Nest's stat line keeps ("not drawn
+    // when both numbers are zero"). A read still out keeps its tile and its
+    // bar, a read that failed keeps its tile and its dash, and the flame is
+    // lit only for a streak above zero.
+    const statsPending = (flocksLoading && flocks.length === 0 && !flocksError) || !userStatsLoaded;
+    const statsNothingYet = !statsPending && !flocksError && flocks.length === 0 && friendCount === 0 && !(streak > 0) && reliabilityScore == null;
     return (
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '20px', textAlign: 'center', background: colors.navyBg, flexShrink: 0 }}>
@@ -965,8 +975,11 @@ export default function ProfileSettings({
         </div>
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
+          {statsNothingYet ? (
+            <p data-stats-empty="true" style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0 14px', lineHeight: 1.45 }}>Start a flock to get your streak going.</p>
+          ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocksError ? '\u2013' : flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak != null }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => {
+            {[{ l: 'Flocks', v: flocksError ? '\u2013' : flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak > 0 }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => {
               // NOT READ YET IS NEITHER A ZERO NOR A DASH. The flocks count was
               // flocks.length, a confident 0 for as long as the list took, and
               // the other three printed the failure dash before their read had
@@ -988,6 +1001,7 @@ export default function ProfileSettings({
               );
             })}
           </div>
+          )}
 
           {/* Add Friends Button */}
           <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative', overflow: 'hidden' }}>
