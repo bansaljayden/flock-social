@@ -1208,8 +1208,18 @@ function shapeWeek(which) {
   // among the points so the four the answer holds keep them.
   const withBoth = (facts, { named = null, both = null, comparing = false } = {}) => {
     const besides = facts.filter((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f));
-    if (which !== 'weekend' && Array.isArray(both) && new Set(both).size > 1) {
-      const compared = compare(facts, both, besides, comparing);
+    // ONE DAY OF THE SEVEN AGAINST A DAY PAST THEM (second recheck,
+    // 2026-11-06). "Is this Saturday busier than next Saturday?" asked on the
+    // card's Saturday names one weekday twice, so it was never compared, and
+    // led "the busiest day this week is Friday, 66" over "Saturday peaks at
+    // 74": a comparison whose other side is past the seven days leads with
+    // the day the forecast holds, as two days compared do, and one day said
+    // beside a ranking it beats is said the same way, so no claim about the
+    // week stands under a number that beats it.
+    const askedCount = Array.isArray(both) ? new Set(both).size : 0;
+    const pastSide = facts.some((f) => f && f.id === weekendMarks().PAST_FORECAST_ID);
+    if (which !== 'weekend' && askedCount >= 1) {
+      const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide));
       if (compared) return compared;
     }
     const base = shape(facts.filter((f) => !besides.includes(f)), { named });
@@ -1297,11 +1307,15 @@ function shapeWeek(which) {
     if (topOk && ordered[0] === top) first.push(`That makes it ${v.your} busiest day this week.`);
     else if (lowOk && ordered[0] === low) first.push(`That makes it ${v.your} quietest day this week.`);
     for (const f of ordered.slice(1)) points.push({ text: `${dayName(f)} peaks ${peakAt(f)}${suffix(f)}.`, fact: f });
+    // A side of the comparison past the seven days is said next, before
+    // the week's own claims: it is the other half of the answer.
+    const past = facts.filter((f) => f && f.id === marks.PAST_FORECAST_ID);
+    for (const f of past) points.push({ text: templateLine(f), fact: f });
     for (const f of besides) points.push({ text: sentenceCase(marks.isNextWeekendDay(f) ? `next ${dayPeak(f)}` : dayPeak(f)), fact: f });
     if (rangeOk) points.push({ text: `No day stands out this week: every day peaks ${peakRange(low, top)}.`, fact: top });
     if (topOk && !asked.includes(top)) points.push({ text: `${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`, fact: top });
     if (lowOk && !asked.includes(low) && low !== top) points.push({ text: `${dayName(low)} is the quietest, ${peakAt(low)}.`, fact: low });
-    const rest = facts.filter((f) => !isPeakFact(f) && f !== shut);
+    const rest = facts.filter((f) => !isPeakFact(f) && f !== shut && !past.includes(f));
     for (const f of rest) points.push({ text: templateLine(f), fact: f });
     const lead = v.open(dayPeak(ordered[0]));
     return {

@@ -3809,3 +3809,22 @@ test('tomorrow against the day after is answered with both days, the higher firs
     assert.ok(r.body.text.startsWith('Your Google listing has you closed on Saturday and Sunday.'), r.body.text);
   });
 });
+
+test('one day against the same weekday past the seven days leads with the day the forecast holds and claims no busiest day it beats', async () => {
+  // The card's Saturday, today 74 beside its week, whose busiest is Friday
+  // 66: "the busiest day this week is Friday, with its peak around 9 PM at
+  // 66 ... Saturday peaks around 9 PM at 74" before.
+  await pinnedAt('2026-11-07T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9SameWeekdayCardSat', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is this Saturday busier than next Saturday?' });
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 2), [
+      `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
+      '• Next Saturday is past the seven days the forecast covers.',
+    ]);
+    assert.ok(!/busiest day this week is Friday/.test(r.body.text), r.body.text);
+    const { all, busiest } = busiestClaims(r.body.text);
+    for (const n of busiest) assert.ok(all.every((x) => x <= n), r.body.text);
+  });
+});
