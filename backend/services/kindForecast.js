@@ -160,9 +160,31 @@ function besideWeek(fact, { quietEnd = null } = {}) {
   };
 }
 
-/** True for today's entry handed over beside the card's week (besideWeek). */
+// ── Tonight, the night still running, beside the calendar's week (2026-11-07)
+//
+// At 12:30 AM on a Saturday, with Friday night still running, a venue with its
+// own curve answers "tonight" with that night, and the seven days the
+// forecast covers are the calendar's, Saturday to next Friday. A question that
+// sets tonight beside another day ("Will tonight be busier than Friday?") is
+// answered from those seven days, with tonight beside them and never ranked
+// in them, as a card's today is (routes/advisor.js bothAnswer). The same note
+// tells the phrasing model, and every reader of besideWeek's mark reads this
+// one too (isBesideWeek).
+const BESIDE_NIGHT_NOTE = 'This is tonight, the night still running. The other days are the seven days from today, so tonight is not ranked against them.';
+
+/** Tonight's entry, the night still running, as a block carries it beside the calendar's week. */
+function besideNight(fact) {
+  return { ...fact, note: [fact.note, BESIDE_NIGHT_NOTE].filter(Boolean).join(' ') };
+}
+
+/** True for the night still running handed over beside the calendar's week (besideNight). */
+function isBesideNight(fact) {
+  return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(BESIDE_NIGHT_NOTE);
+}
+
+/** True for today's entry handed over beside the card's week (besideWeek), or tonight beside the calendar's (besideNight). */
 function isBesideWeek(fact) {
-  return Boolean(fact) && typeof fact.note === 'string' && fact.note.includes(BESIDE_WEEK_NOTE);
+  return Boolean(fact) && typeof fact.note === 'string' && (fact.note.includes(BESIDE_WEEK_NOTE) || fact.note.includes(BESIDE_NIGHT_NOTE));
 }
 
 // A PHRASED ANSWER NEVER RANKS TODAY (review, 2026-11-06). The model is handed
@@ -217,5 +239,8 @@ module.exports = {
   BESIDE_WEEK_NOTE,
   besideWeek,
   isBesideWeek,
+  BESIDE_NIGHT_NOTE,
+  besideNight,
+  isBesideNight,
   ranksToday,
 };

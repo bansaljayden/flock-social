@@ -4284,3 +4284,202 @@ test('in the small hours, advice about tomorrow or the day after leads as main l
     }
   });
 });
+
+// ── The calendar's seven days in the small hours (seventh recheck, 2026-11-07) ──
+//
+// A venue with its own curve reads tonight as the night still running, and
+// its week used to be counted from that night: at 12:30 AM on a Saturday,
+// Friday to Thursday, which leaves out the calendar's seventh day, next
+// Friday. The weekend and two days beside tonight now read the calendar's
+// seven days, as main and a single day do, with tonight said beside them.
+
+test('in the small hours of a Saturday or a Sunday next weekend is read from the calendar\'s seven days: the days of it they hold, the rest said past them, never a refusal', async () => {
+  for (const [n, q] of [[1, 'What does next weekend look like?'], [2, 'what will the following weekend look like']]) {
+    await withNightCurve(`ChIJr9NextWeekendSat${n}000`, () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question: q });
+      assert.deepStrictEqual(r.body.text.split('\n'), [
+        'Next Friday peaks around 9 PM at 66 on our 0 to 100 index.',
+        '• Next Saturday and Sunday are past the seven days the forecast covers.',
+      ], q);
+      assert.deepStrictEqual(sourceIds(r), ['peak_2026-11-13', 'next_weekend_past_forecast'], q);
+      // This weekend is still Friday night's: tonight, Saturday and Sunday.
+      const t = await call('/api/venue/advisor/question', { question: 'How busy will this weekend be?' });
+      assert.deepStrictEqual(sourceIds(t).sort(), ['peak_2026-11-06', 'peak_2026-11-07', 'peak_2026-11-08'], t.body.text);
+    }));
+    await withNightCurve(`ChIJr9NextWeekendSun${n}000`, () => pinnedAt('2026-11-08T00:30:00Z', async () => {
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question: q });
+      assert.deepStrictEqual(r.body.text.split('\n'), [
+        'No day stands out next weekend: every day peaks between 66 and 74 on our 0 to 100 index.',
+        '• Next Sunday is past the seven days the forecast covers.',
+      ], q);
+      assert.deepStrictEqual(sourceIds(r).sort(), ['next_weekend_past_forecast', 'peak_2026-11-13', 'peak_2026-11-14'], q);
+    }));
+  }
+});
+
+test('the refusal for a weekend past the seven days never names today as the day it comes into them: on a Saturday in the small hours it is no refusal at all', async () => {
+  // It said "Next weekend is past the seven days the forecast covers. Its
+  // Friday comes into them on Saturday." at 12:30 AM on a Saturday.
+  await withNightCurve('ChIJr9RefusalOnSaturday00', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    for (const q of ['How busy will next weekend be?', 'How busy will the following weekend be?']) {
+      const r = await call('/api/venue/advisor/question', { question: q });
+      assert.notStrictEqual(r.body.mode, 'refusal', `${q}: ${r.body.text}`);
+      assert.ok(!/comes into them on Saturday/.test(r.body.text), `${q}: ${r.body.text}`);
+    }
+    // The weekend after next is past them, and its Friday comes into them on
+    // next week's Saturday, "the Saturday before it".
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will the weekend after next be?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. The weekend after next is past the seven days the forecast covers. Its Friday comes into them the Saturday before it.');
+  }));
+  // On a Friday afternoon next weekend is past them, and its Friday comes
+  // into them on Saturday, tomorrow: said as before.
+  await withNightCurve('ChIJr9RefusalOnFriday000', () => pinnedAt('2026-11-06T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will next weekend be?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. Next weekend is past the seven days the forecast covers. Its Friday comes into them on Saturday.');
+  }));
+});
+
+test('in the small hours of a Friday next weekend is the coming one for every venue, as main reads its days, with crowd history and without', async () => {
+  // At 12:30 AM on a Friday the bar with its own curve answered the coming
+  // weekend, Nov 6 to 8, and the bar answered from its card said next weekend
+  // was past the seven days, where main gave that weekend's days.
+  const q = 'How busy is next weekend looking?';
+  for (const iso of ['2026-11-06T00:30:00Z', '2026-11-06T04:30:00Z']) {
+    await pinnedAt(iso, async () => {
+      setUp({ placeId: `ChIJr9NextWkndFriCard${iso.slice(11, 13)}0`, phrasing: true });
+      draftFor = () => null;
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question: q });
+      assert.ok(r.body.text.startsWith(`${KIND_OPEN}the busiest day of the coming weekend, Nov 6 to 8, is Saturday, `), `${iso}: ${r.body.text}`);
+      assert.deepStrictEqual(sourceIds(r).sort(), ['typical_peak_2026-11-06', 'typical_peak_2026-11-07', 'typical_peak_2026-11-08'], iso);
+    });
+    await withNightCurve(`ChIJr9NextWkndFriOwn${iso.slice(11, 13)}00`, () => pinnedAt(iso, async () => {
+      route = { mode: 'grounded', intentId: 'weekend_outlook' };
+      const r = await call('/api/venue/advisor/question', { question: q });
+      assert.ok(r.body.text.startsWith('Your busiest day of the coming weekend, Nov 6 to 8, is Saturday, '), `${iso}: ${r.body.text}`);
+      assert.deepStrictEqual(sourceIds(r).sort(), ['peak_2026-11-06', 'peak_2026-11-07', 'peak_2026-11-08'], iso);
+    }));
+  }
+  // On a Friday afternoon it is the one after, past the seven days.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9NextWkndFriCard16', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: q });
+    assert.strictEqual(r.body.mode, 'refusal', r.body.text);
+  });
+});
+
+test('tonight beside a weekday in the small hours: the calendar\'s seven days are ranked, tonight is said beside them, and the same weekday a week on is told apart from it', async () => {
+  // At 12:30 AM on a Saturday "Will tonight be busier than Friday?" dropped
+  // next Friday, the day asked, and said tonight under its name ("Friday is
+  // close behind, around 9 PM at 66" was tonight), from a week that ran
+  // Friday to Thursday.
+  await withNightCurve('ChIJr9TonightVsFriday000', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    let payload = null;
+    draftFor = (role, p) => { if (role === 'phrasing') payload = p; return null; };
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Will tonight be busier than Friday?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      'Tonight peaks around 9 PM at 66 on our 0 to 100 index.',
+      '• Next Friday peaks around 9 PM at 66.',
+      '• Your busiest day this week is Saturday, around 9 PM at 74.',
+      '• Sunday is the quietest, around 9 PM at 45.',
+      `• ${peakMove()}`,
+    ]);
+    assert.deepStrictEqual(sourceIds(r).slice(0, 4), ['peak_2026-11-06', 'peak_2026-11-13', 'peak_2026-11-07', 'peak_2026-11-08']);
+    // The phrasing model is handed the calendar's seven days and tonight,
+    // each said by the name the template says it by.
+    assert.deepStrictEqual(handedDates(payload), ['2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13']);
+    const facts = payloadFacts(payload);
+    assert.ok(facts.some((f) => f.value === '2026-11-06' && /This is tonight, the night still running\./.test(f.note || '')), payload);
+    assert.ok(facts.some((f) => f.value === '2026-11-13' && /This is next Friday, a week after tonight\./.test(f.note || '')), payload);
+  }));
+  // Tonight and next week's same night are both held at the small hours of
+  // the day after a Monday, a Wednesday and a Saturday night.
+  for (const [iso, night, next, score] of [
+    ['2026-11-10T00:30:00Z', '2026-11-09', '2026-11-16', 48],
+    ['2026-11-12T00:30:00Z', '2026-11-11', '2026-11-18', 48],
+    ['2026-11-08T00:30:00Z', '2026-11-07', '2026-11-14', 74],
+  ]) {
+    const weekday = LONG[SHORT[new Date(`${night}T12:00:00Z`).getUTCDay()]];
+    await withNightCurve(`ChIJr9TonightTwin${iso.slice(8, 10)}000`, () => pinnedAt(iso, async () => {
+      route = { mode: 'grounded', intentId: 'peak_hours' };
+      const r = await call('/api/venue/advisor/question', { question: `How busy will it be tonight or next ${weekday.toLowerCase()}?` });
+      assert.ok(sourceIds(r).includes(`peak_${night}`) && sourceIds(r).includes(`peak_${next}`), `${iso}: ${JSON.stringify(sourceIds(r))}`);
+      assert.ok(new RegExp(`Tonight peaks around 9 PM at ${score}\\b`).test(r.body.text), `${iso}: ${r.body.text}`);
+      assert.ok(new RegExp(`\\bnext ${weekday}\\b`, 'i').test(r.body.text), `${iso}: ${r.body.text}`);
+    }));
+  }
+  // Tonight left out of the week ranks the calendar's seven days, as main
+  // does: at 12:30 AM on a Sunday the busiest is next Saturday, not Friday.
+  await withNightCurve('ChIJr9BesidesTonightSun0', () => pinnedAt('2026-11-08T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Besides tonight, which day is busiest this week?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this week is Saturday, '), r.body.text);
+    assert.strictEqual(sourceIds(r)[0], 'peak_2026-11-14');
+    assert.ok(!sourceIds(r).includes('peak_2026-11-07'), JSON.stringify(sourceIds(r)));
+  }));
+});
+
+test('on today\'s route, tonight and the same weekday a week on are told apart: "tonight" and "next Friday", never "Friday" twice', async () => {
+  // At 12:30 AM on a Saturday it printed "Friday projects busiest around 9
+  // PM, at 66." twice, for Nov 6 and Nov 13.
+  await withNightCurve('ChIJr9TonightRouteTwins0', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is tonight going to be busier than Friday?' });
+    const lines = r.body.text.split('\n');
+    assert.strictEqual(lines[0], 'Tonight projects busiest around 9 PM, at 66 on our 0 to 100 index.');
+    assert.strictEqual(lines[1], '• Next Friday projects busiest around 9 PM, at 66 on our 0 to 100 index.');
+    assert.strictEqual(new Set(lines.map((l) => l.replace(/^• /, ''))).size, lines.length, r.body.text);
+    assert.deepStrictEqual(sourceIds(r).slice(0, 2), ['peak_2026-11-06', 'peak_2026-11-13']);
+    // Asked of another weekday, tonight keeps its own name, as the chip says it.
+    const o = await call('/api/venue/advisor/question', { question: 'Is tonight going to be busier than Monday?' });
+    assert.ok(o.body.text.startsWith('Friday projects busiest around 9 PM, at 66 on our 0 to 100 index.'), o.body.text);
+  }));
+});
+
+test('in the small hours a day said from today that reads two ways is answered as main answers it: next Saturday on a Saturday, and on a Monday Friday next week and the following weekend', async () => {
+  // At 12:30 AM on a Saturday, with Friday night still running, "next
+  // Saturday" is that Saturday or next week's; the reading said it was past
+  // the seven days, where main gave the coming Saturday.
+  await withNightCurve('ChIJr9NextSatOnSat00000', () => pinnedAt('2026-11-07T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'next sat packed?' });
+    assert.deepStrictEqual(r.body.text.split('\n'), [
+      'Your busiest day this week is Saturday, with its peak around 9 PM at 74 on our 0 to 100 index.',
+      '• Friday is close behind, around 9 PM at 66.',
+      '• Sunday is the quietest, around 9 PM at 45.',
+      `• ${peakMove()}`,
+    ]);
+    assert.deepStrictEqual(sourceIds(r).slice(0, 3), ['peak_2026-11-07', 'peak_2026-11-13', 'peak_2026-11-08']);
+  }));
+  // At 12:30 AM on a Monday, with Sunday night still running, "next week" is
+  // the week starting today or the one after it, and the following weekend
+  // the coming one or the one after it.
+  await withNightCurve('ChIJr9NextWeekOnMon00000', () => pinnedAt('2026-11-09T00:30:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    let r = await call('/api/venue/advisor/question', { question: 'How busy is Friday next week?' });
+    assert.ok(r.body.text.startsWith('Friday peaks around 9 PM at 66 on our 0 to 100 index.'), r.body.text);
+    assert.strictEqual(sourceIds(r)[0], 'peak_2026-11-13');
+    route = { mode: 'grounded', intentId: 'weekend_outlook' };
+    r = await call('/api/venue/advisor/question', { question: 'What will the following weekend look like?' });
+    assert.ok(r.body.text.startsWith('Your busiest day this weekend is Saturday, '), r.body.text);
+    assert.deepStrictEqual(sourceIds(r).sort(), ['peak_2026-11-13', 'peak_2026-11-14', 'peak_2026-11-15']);
+  }));
+  // Past the small hours each reads one way, and is said to be past the seven days.
+  await withNightCurve('ChIJr9NextSatOnSat16000', () => pinnedAt('2026-11-07T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'next sat packed?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. Next Saturday is past the seven days the forecast covers. It comes into them tomorrow.');
+  }));
+  await withNightCurve('ChIJr9NextWeekOnMon16000', () => pinnedAt('2026-11-09T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy is Friday next week?' });
+    assert.strictEqual(r.body.text, 'We can\'t answer that yet. Friday next week is past the seven days the forecast covers. It comes into them on Saturday.');
+  }));
+});

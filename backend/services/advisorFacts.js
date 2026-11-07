@@ -1419,6 +1419,26 @@ function pastForecastFact({ card, weekdays, from, through, asOf }) {
   });
 }
 
+// A DAY OF THE WEEK AHEAD SAID BY ANOTHER NAME THAN ITS WEEKDAY (seventh
+// recheck, 2026-11-07). At 12:30 AM on a Saturday the night still running is
+// Friday's and next Friday is in the seven days, so an answer that holds both
+// says "tonight" of the one and "next Friday" of the other (routes/advisor.js
+// sayApart): `sayAs` is the name the template says it by, the label leads with
+// it, and the note says it to the phrasing model.
+const LEADING_WEEKDAY = /^(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?: night)?\b/;
+function saidAs(fact, name) {
+  const v = fact.value || {};
+  const said = name === 'tonight' || v.afterMidnight !== true ? name : `${name} night`;
+  const lead = `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+  const told = name === 'tonight' ? 'This is tonight, the night still running.' : `This is ${said}, a week after tonight.`;
+  return {
+    ...fact,
+    sayAs: said,
+    ...(typeof fact.label === 'string' ? { label: fact.label.replace(LEADING_WEEKDAY, lead) } : {}),
+    note: [fact.note, String(fact.note || '').includes(told) ? null : told].filter(Boolean).join(' '),
+  };
+}
+
 // A DAY PAST THE WEEK AHEAD IS SAID TO BE (review, 2026-11-06). "How busy will
 // next Monday be?" asked on a Monday, "Friday next week" asked on a Monday and
 // "the Friday after next" ask about a day the seven days of the forecast do
@@ -2214,6 +2234,7 @@ module.exports = {
   weekendClosedFact,
   todayClosedFact,
   pastForecastFact,
+  saidAs,
   weekendRangeWords,
   comingWeekendDay,
   isComingWeekendDay,

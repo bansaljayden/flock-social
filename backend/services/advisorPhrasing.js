@@ -1158,14 +1158,19 @@ const isPeakFact = (f) => Boolean(f && f.value && typeof f.value.weekday === 'st
 const peakAt = (f) => `around ${clock12(Number(f.value.peakHour), 0)} at ${Number(f.value.peakScore)}`;
 // A peak in the small hours is named for its night: "Saturday night, around 1
 // AM", never "Saturday, around 1 AM", which reads as the night before
-// (advisorFacts.nightTailHours).
-const dayName = (f) => `${f.value.weekday}${f.value.afterMidnight === true ? ' night' : ''}`;
+// (advisorFacts.nightTailHours). A day the route names apart says the name it
+// was given: "tonight" for the night still running, "next Friday" for the
+// same weekday a week on (advisorFacts.saidAs, seventh recheck 2026-11-07).
+const dayName = (f) => (typeof f.sayAs === 'string' && f.sayAs ? f.sayAs
+  : `${f.value.weekday}${f.value.afterMidnight === true ? ' night' : ''}`);
+// A day's name at the start of a sentence.
+const DayName = (f) => sentenceCase(dayName(f));
 
 const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 
 // One day's peak said on its own: the lead of an answer about a named day,
 // and the whole answer when a block holds one day of the card.
-const dayPeak = (f) => `${dayName(f)} peaks ${peakAt(f)} on our 0 to 100 index.`;
+const dayPeak = (f) => `${DayName(f)} peaks ${peakAt(f)} on our 0 to 100 index.`;
 
 // The span of a level week's peaks: "between 66 and 74", or "at 74" when the
 // days peak alike ("every day peaks between 74 and 74" in a review's run,
@@ -1206,7 +1211,23 @@ function shapeWeek(which) {
   // line for each day the question names that the answer does not already
   // say, and for each day set beside it (advisorFacts.besideAnswer), first
   // among the points so the four the answer holds keep them.
-  const withBoth = (facts, { named = null, both = null, comparing = false } = {}) => {
+  // THE DAYS ASKED, BY DATE WHERE THE ROUTE GIVES THEM (seventh recheck,
+  // 2026-11-07): tonight beside the calendar's week holds two days of one
+  // weekday ("Will tonight be busier than Friday?" at 12:30 AM on a
+  // Saturday), so each day asked is found by its date (routes/advisor.js
+  // bothAnswer, `askedDates`), and by its weekday otherwise.
+  const askedIn = (facts, both, dates, besides) => {
+    const out = [];
+    both.forEach((w, i) => {
+      const d = Array.isArray(dates) ? dates[i] : null;
+      const f = facts.find((x) => isPeakFact(x) && !besides.includes(x) && (d ? x.value.date === d : x.value.weekday === w));
+      if (f && !out.includes(f)) out.push(f);
+    });
+    return out;
+  };
+  const withBoth = (facts, {
+    named = null, both = null, comparing = false, bothDates = null,
+  } = {}) => {
     const besides = facts.filter((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f));
     // ONE DAY OF THE SEVEN AGAINST A DAY PAST THEM (second recheck,
     // 2026-11-06). "Is this Saturday busier than next Saturday?" asked on the
@@ -1216,10 +1237,10 @@ function shapeWeek(which) {
     // the day the forecast holds, as two days compared do, and one day said
     // beside a ranking it beats is said the same way, so no claim about the
     // week stands under a number that beats it.
-    const askedCount = Array.isArray(both) ? new Set(both).size : 0;
+    const askedCount = Array.isArray(both) ? new Set(Array.isArray(bothDates) ? bothDates : both).size : 0;
     const pastSide = facts.some((f) => f && f.id === weekendMarks().PAST_FORECAST_ID);
     if (which !== 'weekend' && askedCount >= 1) {
-      const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide));
+      const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide), bothDates);
       if (compared) return compared;
     }
     const base = shape(facts.filter((f) => !besides.includes(f)), { named });
@@ -1233,9 +1254,8 @@ function shapeWeek(which) {
     const told = (f) => (which === 'weekend' ? new RegExp(`\\b${f.value.weekday}\\b`).test(text) : said.has(f));
     const lines = [];
     const facts2 = [];
-    for (const w of both || []) {
-      const f = facts.find((x) => isPeakFact(x) && !besides.includes(x) && x.value.weekday === w);
-      if (f && !told(f) && !facts2.includes(f)) { lines.push(dayPeak(f)); facts2.push(f); }
+    for (const f of askedIn(facts, both || [], bothDates, besides)) {
+      if (!told(f) && !facts2.includes(f)) { lines.push(dayPeak(f)); facts2.push(f); }
     }
     for (const f of besides) {
       lines.push(weekendMarks().isNextWeekendDay(f) ? `next ${dayPeak(f)}` : dayPeak(f));
@@ -1261,14 +1281,10 @@ function shapeWeek(which) {
   // said beats the ranking's claim, when they are said this way too. A day
   // the question names that the venue is shut on is said first
   // (routes/advisor.js bothAnswer).
-  const compare = (facts, both, besides, comparing) => {
+  const compare = (facts, both, besides, comparing, bothDates = null) => {
     const marks = weekendMarks();
     const shut = facts.find((f) => f && (f.id === marks.WEEKEND_CLOSED_ID || f.id === marks.TODAY_CLOSED_ID));
-    const asked = [];
-    for (const w of both) {
-      const f = facts.find((x) => isPeakFact(x) && !besides.includes(x) && x.value.weekday === w);
-      if (f && !asked.includes(f)) asked.push(f);
-    }
+    const asked = askedIn(facts, both, bothDates, besides);
     if (!asked.length) return null;
     const quiet = which === 'quiet';
     const score = (f) => Number(f.value.peakScore);
@@ -1310,7 +1326,7 @@ function shapeWeek(which) {
     };
     if (topOk && ordered[0] === top) first.push(`That makes it ${v.your} busiest day this week.`);
     else if (lowOk && ordered[0] === low) first.push(`That makes it ${v.your} quietest day this week.`);
-    for (const f of ordered.slice(1)) points.push({ text: `${dayName(f)} peaks ${peakAt(f)}${suffix(f)}.`, fact: f });
+    for (const f of ordered.slice(1)) points.push({ text: `${DayName(f)} peaks ${peakAt(f)}${suffix(f)}.`, fact: f });
     // A side of the comparison past the seven days is said next, before
     // the week's own claims: it is the other half of the answer.
     const past = facts.filter((f) => f && f.id === marks.PAST_FORECAST_ID);
@@ -1318,7 +1334,7 @@ function shapeWeek(which) {
     for (const f of besides) points.push({ text: sentenceCase(marks.isNextWeekendDay(f) ? `next ${dayPeak(f)}` : dayPeak(f)), fact: f });
     if (rangeOk) points.push({ text: `No day stands out this week: every day peaks ${peakRange(low, top)}.`, fact: top });
     if (topOk && !asked.includes(top)) points.push({ text: `${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`, fact: top });
-    if (lowOk && !asked.includes(low) && low !== top) points.push({ text: `${dayName(low)} is the quietest, ${peakAt(low)}.`, fact: low });
+    if (lowOk && !asked.includes(low) && low !== top) points.push({ text: `${DayName(low)} is the quietest, ${peakAt(low)}.`, fact: low });
     const rest = facts.filter((f) => !isPeakFact(f) && f !== shut && !past.includes(f));
     for (const f of rest) points.push({ text: templateLine(f), fact: f });
     const lead = v.open(dayPeak(ordered[0]));
@@ -1382,7 +1398,7 @@ function shapeWeek(which) {
     const comingDay = Boolean(lone) && weekendMarks().isComingWeekendDay(lone);
     if (lone && (isKindForecast(lone) || nextDay || comingDay)) {
       let said = nextDay ? `next ${dayPeak(lone)}` : dayPeak(lone);
-      if (comingDay) said = `${dayName(lone)} of the coming weekend, ${lone.comingWeekend}, peaks ${peakAt(lone)} on our 0 to 100 index.`;
+      if (comingDay) said = `${DayName(lone)} of the coming weekend, ${lone.comingWeekend}, peaks ${peakAt(lone)} on our 0 to 100 index.`;
       return {
         lead: isKindForecast(lone) ? weekVoice(days).open(said) : sentenceCase(said),
         points: rest.map(templateLine),
@@ -1426,7 +1442,7 @@ function shapeWeek(which) {
         used.push(top, low);
       } else {
         if (top !== asked) { points.push(`${v.Your} busiest day this week is ${dayName(top)}, ${peakAt(top)}.`); used.push(top); }
-        if (low !== asked && low !== top) { points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`); used.push(low); }
+        if (low !== asked && low !== top) { points.push(`${DayName(low)} is the quietest, ${peakAt(low)}.`); used.push(low); }
         if (top === asked) points.unshift(`That makes it ${v.your} busiest day this week.`);
         if (low === asked) points.unshift(`That makes it ${v.your} quietest day this week.`);
       }
@@ -1447,7 +1463,7 @@ function shapeWeek(which) {
         .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
       return {
         lead: v.open(`${v.Your} quietest day this week is ${dayName(first)}, with its peak ${peakAt(first)} on our 0 to 100 index.`),
-        points: [`${dayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
+        points: [`${DayName(second)} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
         used: [first, second, ...rest],
       };
     }
@@ -1469,10 +1485,10 @@ function shapeWeek(which) {
     }
     const second = days[1];
     const close = Number(top.value.peakScore) - Number(second.value.peakScore) < HOUR_ORDERING_MIN_GAP;
-    const points = [`${dayName(second)} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
+    const points = [`${DayName(second)} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
     const used = [top, second];
     if (low !== second) {
-      points.push(`${dayName(low)} is the quietest, ${peakAt(low)}.`);
+      points.push(`${DayName(low)} is the quietest, ${peakAt(low)}.`);
       used.push(low);
     }
     return {
@@ -1744,8 +1760,11 @@ function renderTemplate(block, question = '') {
     : roostPlaybook.namedWeekday(question);
   if (onMain) named = roostPlaybook.mainNamedWeekday(question);
   const both = block && Array.isArray(block.askedDays) ? block.askedDays : null;
+  const bothDates = block && Array.isArray(block.askedDates) ? block.askedDates : null;
   const comparing = COMPARES.test(String(question || ''));
-  const shaped = shaper ? shaper(facts, onMain ? { named } : { named, both, comparing }) : null;
+  const shaped = shaper ? shaper(facts, onMain ? { named } : {
+    named, both, comparing, bothDates,
+  }) : null;
   let lead;
   let points;
   let used;
