@@ -384,11 +384,29 @@ describe('icon-only controls on the hot paths are named', () => {
   const iconOnlyButtons = (() => {
     const BACKSLASH = String.fromCharCode(92);
     // Find the '>' that closes an opening <button tag, skipping any '>' that
-    // is inside a JSX expression (`(e) => ...`) or a string.
+    // is inside a JSX expression (`(e) => ...`) or a string, and any comment
+    // inside an expression. The comments were read as code, so an apostrophe
+    // in one ("Google's credit for that same photo", in the venue sheet's Add
+    // to Flock handler) opened a string that ran on through the next button,
+    // and the scan swallowed eleven icon-only controls in Birdie's panel and
+    // the chat composer: the count fell under the floor below on 2026-11-06
+    // with no control removed.
     const openTagEnd = (s, i) => {
       let depth = 0;
       for (let j = i + '<button'.length; j < s.length; j += 1) {
         const c = s[j];
+        if (depth > 0 && c === '/' && s[j + 1] === '/') {
+          const eol = s.indexOf('\n', j);
+          if (eol === -1) return -1;
+          j = eol;
+          continue;
+        }
+        if (depth > 0 && c === '/' && s[j + 1] === '*') {
+          const close = s.indexOf('*/', j + 2);
+          if (close === -1) return -1;
+          j = close + 1;
+          continue;
+        }
         if (c === '{') { depth += 1; continue; }
         if (c === '}') { depth -= 1; continue; }
         if (c === "'" || c === '"' || c === '`') {
@@ -435,7 +453,9 @@ describe('icon-only controls on the hot paths are named', () => {
     // each carries a visible LABEL under its glyph and so is correctly not an
     // icon-only control any more. The floor moves with the app rather than
     // being deleted: it exists so the assertion below cannot pass on an empty
-    // scan, and 65 still catches that.
+    // scan, and 65 still catches that. 81 on 2026-11-06 once comments inside
+    // a tag stopped being read as code (openTagEnd), on main and on the
+    // integration branch alike.
     expect(iconOnlyButtons.length).toBeGreaterThan(65);
   });
 
