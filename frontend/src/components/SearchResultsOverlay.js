@@ -114,6 +114,16 @@ export default function SearchResultsOverlay({
               const scoreB = (b.stars || 0) * 20 - (typeof b.crowd === 'number' ? b.crowd : 50) + (b.topRated ? 30 : 0);
               return scoreB - scoreA;
             });
+            // TOP RATED MEANS THE TOP. Every venue at 4.5 stars or more carried
+            // the chip, so in a city search all three cards on screen wore it
+            // and it said nothing. It goes on the two best-rated of those in
+            // this list, whatever the sort.
+            const topRatedIds = new Set(
+              [...sorted].filter((v) => v.topRated && v.stars)
+                .sort((a, b) => (b.stars || 0) - (a.stars || 0))
+                .slice(0, 2)
+                .map((v) => v.place_id || v.id)
+            );
 
             return (
               <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
@@ -235,10 +245,10 @@ export default function SearchResultsOverlay({
                             <>
                               <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
-                              {venue.topRated && (
+                              {topRatedIds.has(venue.place_id || venue.id) && (
                                 <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-plate)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                   {Icons.flame('var(--accent-amber-text)', 12)}
-                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top Rated</span>
+                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top rated</span>
                                 </div>
                               )}
                               {crowdScore != null && (
@@ -283,7 +293,6 @@ export default function SearchResultsOverlay({
                                   ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`
                                   : `Crowd level ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`}
                                 style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {/* An owner-asserted number carries its source
                                     even at list size — "{venue-type} says" is
                                     the label that keeps it honest (noun is
@@ -324,7 +333,6 @@ export default function SearchResultsOverlay({
                             )}
                             {!venue.photo_url && crowdScore != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {ownerReportShown(prediction) ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
                               </span>
                             )}

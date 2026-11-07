@@ -180,7 +180,7 @@ describe('crowd readings are readable text, not saturated swatch hues', () => {
   test('the Top Rated chip uses the amber token pair instead of white on translucent amber', () => {
     expect(APP).not.toContain("backgroundColor: 'rgba(245,158,11,0.9)'");
     expect(SEARCH).not.toContain("backgroundColor: 'rgba(245,158,11,0.9)'");
-    const at = SEARCH.indexOf('Top Rated');
+    const at = SEARCH.indexOf('Top rated');
     // Named, so a chip that moves again fails here instead of passing against
     // the slice a -1 index produces.
     expect(at).toBeGreaterThan(-1);
