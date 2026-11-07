@@ -167,10 +167,20 @@ const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHe
 // each hour instead of the one in force when this payload was fetched; see
 // utils/venueZone.js. An entry cached before a deploy has no zone and the
 // forecast keeps the fixed offset for it, exactly as before.
+//
+// `regularOpeningHours` (added 2026-11-06) is an Enterprise field, the tier of
+// currentOpeningHours beside it, so it raises no price either. It is the
+// venue's posted week with no special days in it, which is what Birdie reads
+// for a plan more than six days out (routes/ai.js THE HOURS OF THAT DATE):
+// currentOpeningHours covers only the next seven days and carries this
+// week's one-off closures, so read by weekday it made next Friday "Closed"
+// when this Friday was. An entry cached before the deploy has none, and that
+// reader falls back to the current periods for it.
 const PLACE_DETAILS_FIELD_MASK = [
   'id', 'displayName', 'formattedAddress', 'nationalPhoneNumber', 'websiteUri',
   'rating', 'userRatingCount', 'priceLevel', 'photos', 'currentOpeningHours',
   'types', 'location', 'googleMapsUri', 'utcOffsetMinutes', 'timeZone',
+  'regularOpeningHours',
 ].join(',');
 
 // ---------------------------------------------------------------------------

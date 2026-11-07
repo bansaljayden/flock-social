@@ -871,7 +871,10 @@ const toolDeclarations = [
         venue_name: { type: 'STRING', description: 'Name of the venue (for display)' },
         // THE DAY THEY MEAN (2026-11-06). Without it the tool could only
         // answer for now, and a plan for the 13th got no crowd answer at all.
-        date: { type: 'STRING', description: 'Only when they ask about a day after today (tomorrow, Friday, the 13th): that day on their calendar as YYYY-MM-DD. Leave it out for now, tonight and today.' },
+        // "tomorrow" and a weekday's name are read on the venue's own
+        // calendar (readAskedDay), which a date worked out from a UTC Now
+        // line is not.
+        date: { type: 'STRING', description: 'Only when they ask about a day after today (tomorrow, Friday, the 13th): that day on their calendar as YYYY-MM-DD, or the word tomorrow or the weekday\'s name, which the lookup reads on the venue\'s own calendar. Leave it out for now, tonight and today.' },
       },
       required: ['place_id'],
     },
@@ -1431,7 +1434,7 @@ const BIRDIE_CARD_ONLY = Symbol('birdieCardOnly');
 const ASKED_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ASKED_DATE_MAX_DAYS = 366;
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const ASKED_DATE_ERROR = 'date has to be the day they mean as YYYY-MM-DD, like 2026-11-13. Leave it out for today.';
+const ASKED_DATE_ERROR = 'date has to be the day they mean as YYYY-MM-DD, like 2026-11-13, or tomorrow or the weekday\'s name. Leave it out for today.';
 const ASKED_DATE_PAST = 'That day has already passed there.';
 const ASKED_DATE_FAR = 'That day is more than a year away, too far to say how busy it usually is then.';
 // The note's example is this venue's own day and hours, so the sentence the
@@ -1447,27 +1450,88 @@ function usualDayNote(source, dayName, busiest) {
 }
 const USUAL_DAY_NONE_NOTE = 'There is no crowd level or forecast for that day yet, and no usual pattern for this venue on that weekday. Say you can\'t see that night\'s crowd yet, and give no level and no hour for it.';
 
+// THE DAY WORDS (review, 2026-11-06). With no zone for the user, Birdie's Now
+// line is UTC, and after about 7 or 8 PM in New York UTC's date is already
+// tomorrow: "date night tomorrow" came in as a date two days past the venue's,
+// and the answer named the wrong weekday with confidence. "tomorrow" and a
+// weekday's name are read here, on the venue's own calendar: tomorrow is the
+// day after the venue's today, and a weekday is the next one from it, today's
+// own name being today.
+const ASKED_DAY_WORDS = new Map([['today', 0], ['tonight', 0], ['tomorrow', 1]]);
+const ASKED_DATE_UNSURE = 'Nothing here knows the date at this venue, so that day cannot be told apart from today and there is no crowd answer for it. Say you can\'t see that day\'s crowd yet, with no number, level or hour. If they meant right now, look it up again without date.';
+
 // What `date` asks for, against the venue's own date (`wall`): { later: false }
-// for no date or today, { later: true, iso, weekday } for a day after it, or
-// { error }. On the server's clock nothing knows the venue's date to within a
-// day, so only a day two or more after UTC's today counts as later there, and
-// a day either side of it is the lookup without a date.
+// for no date or today, { later: true, iso, weekday, daysOut } for a day after
+// it, { unsure: true, iso, weekday } for a day the server's clock cannot place,
+// or { error }. On the server's clock nothing knows the venue's date to within
+// a day, so only a day two or more after UTC's today counts as later there,
+// and a day either side of it is one this lookup cannot answer for: it used to
+// be answered with the next twelve hours' numbers and no date, while the model
+// believed it had asked about tomorrow.
 function readAskedDay(value, wall, onServerClock) {
   if (value == null || value === '') return { later: false };
-  const m = typeof value === 'string' ? ASKED_DATE_RE.exec(value.trim()) : null;
-  if (!m) return { error: ASKED_DATE_ERROR };
-  const [year, month, day] = m.slice(1).map(Number);
-  const at = Date.UTC(year, month - 1, day);
-  const probe = new Date(at);
-  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
-    return { error: ASKED_DATE_ERROR };
+  const word = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const weekdayAsked = WEEKDAY_NAMES.findIndex((n) => n.toLowerCase() === word);
+  let year;
+  let month;
+  let day;
+  if (ASKED_DAY_WORDS.has(word) || weekdayAsked !== -1) {
+    const ahead = ASKED_DAY_WORDS.has(word) ? ASKED_DAY_WORDS.get(word) : (weekdayAsked - wall.weekday + 7) % 7;
+    if (ahead === 0) return { later: false };
+    const at = new Date(Date.UTC(wall.year, wall.month - 1, wall.day + ahead));
+    [year, month, day] = [at.getUTCFullYear(), at.getUTCMonth() + 1, at.getUTCDate()];
+  } else {
+    const m = typeof value === 'string' ? ASKED_DATE_RE.exec(value.trim()) : null;
+    if (!m) return { error: ASKED_DATE_ERROR };
+    [year, month, day] = m.slice(1).map(Number);
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) {
+      return { error: ASKED_DATE_ERROR };
+    }
   }
-  const days = Math.round((at - Date.UTC(wall.year, wall.month - 1, wall.day)) / 86400000);
+  const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const days = Math.round((Date.UTC(year, month - 1, day) - Date.UTC(wall.year, wall.month - 1, wall.day)) / 86400000);
   if (days < (onServerClock ? -1 : 0)) return { error: ASKED_DATE_PAST };
-  if (days < (onServerClock ? 2 : 1)) return { later: false };
+  if (onServerClock && days < 2) return { unsure: true, iso, weekday: civilWeekday(year, month, day) };
+  if (days < 1) return { later: false };
   if (days > ASKED_DATE_MAX_DAYS) return { error: ASKED_DATE_FAR };
-  return { later: true, iso: `${m[1]}-${m[2]}-${m[3]}`, weekday: civilWeekday(year, month, day) };
+  return { later: true, iso, weekday: civilWeekday(year, month, day), daysOut: days };
 }
+
+// THE HOURS OF THAT DATE (review, 2026-11-06). Google's currentOpeningHours
+// covers the next seven days and carries this week's special hours, each
+// period with the date it opens on. Read by weekday alone, a one-off closure
+// this Friday made next Friday read "Closed Fri", and the 13th asked on the
+// 6th was given this week's Friday. Within the week the periods of that date
+// are used, with the next morning's for a night that runs past midnight; past
+// it, regularOpeningHours, the posted week with no special days in it (an
+// Enterprise field like currentOpeningHours, so it rides on the shared mask
+// at no extra price). A payload without either (cached before the mask
+// carried it, or periods with no dates) is read by weekday, as before.
+// { periods, dated }: `dated` when the periods are that date's own, so none
+// opening that day is a closed day and not a venue with no posted hours.
+function isoOfGoogleDate(d) {
+  if (!d || !Number.isInteger(d.year) || !Number.isInteger(d.month) || !Number.isInteger(d.day)) return null;
+  return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
+}
+function periodsOnDate(p, iso, daysOut) {
+  const current = Array.isArray(p?.currentOpeningHours?.periods) ? p.currentOpeningHours.periods : null;
+  const regular = Array.isArray(p?.regularOpeningHours?.periods) && p.regularOpeningHours.periods.length
+    ? p.regularOpeningHours.periods : null;
+  if (daysOut > 6) return { periods: regular || current, dated: false };
+  if (!current || !current.length || current.some((pd) => pd && pd.open && !pd.close)
+    || !current.some((pd) => isoOfGoogleDate(pd?.open?.date))) {
+    return { periods: current, dated: false };
+  }
+  const [y, mo, d] = iso.split('-').map(Number);
+  const next = new Date(Date.UTC(y, mo - 1, d + 1)).toISOString().slice(0, 10);
+  const own = current.filter((pd) => {
+    const at = isoOfGoogleDate(pd?.open?.date);
+    return at === iso || at === next;
+  });
+  return { periods: own, dated: true };
+}
+const CLOSED_WEEK = () => ({ 0: [], 1: [], 2: [], 3: [], 4: [], 5: [], 6: [] });
 
 // An hour of the venue's clock as people say it: "9 PM", "9:30 PM", "12 AM".
 function clockText(hour, minute = 0) {
@@ -1699,7 +1763,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': PLACES_API_KEY,
-          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location,places.photos',
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.priceLevel,places.types,places.currentOpeningHours,places.location,places.photos,places.timeZone',
         },
         body: JSON.stringify(searchBody),
       });
@@ -1731,12 +1795,15 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
         // WHEN A CLOSED VENUE OPENS, for its card only (S19, 2026-11-06): a
         // card read "Closed" at 3:44 PM for a place opening at 5. Google's
-        // own next opening, an instant, which the app says in its own clock
-        // ("Opens 5 PM") when it is later that day. Kept out of the model's
-        // hands (BIRDIE_CARD_ONLY), and fetched with the field mask's
-        // currentOpeningHours already, so it costs nothing.
+        // own next opening, an instant, which the app says on the venue's
+        // clock ("Opens 5 PM") when it is later that day there, from the
+        // venue's zone: on the phone's clock, a search about Los Angeles made
+        // from New York said 8 PM for a 5 PM opening. Kept out of the model's
+        // hands (BIRDIE_CARD_ONLY). currentOpeningHours was on the mask
+        // already, and timeZone is a Pro field riding on that Enterprise
+        // tier, so neither costs anything more.
         ...(p.currentOpeningHours?.openNow === false && typeof p.currentOpeningHours?.nextOpenTime === 'string'
-          ? { [BIRDIE_CARD_ONLY]: { opens_at: p.currentOpeningHours.nextOpenTime } }
+          ? { [BIRDIE_CARD_ONLY]: { opens_at: p.currentOpeningHours.nextOpenTime, ...(placeTimeZone(p) ? { opens_tz: placeTimeZone(p) } : {}) } }
           : {}),
       }));
       // Only a real answer is cached. An upstream error or an empty body is
@@ -1910,19 +1977,37 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // all of which are about tonight.
       const asked = readAskedDay(toolInput.date, wall, onServerClock);
       if (asked.error) return { error: asked.error };
+      // A day the server's clock cannot tell from today: said so, with no
+      // numbers for now standing in for it, nothing spent and nothing charged.
+      if (asked.unsure) {
+        return {
+          venue_name: promptSafe(venue.name, MAX_VENUE_NAME_CHARS),
+          date: asked.iso,
+          day: WEEKDAY_NAMES[asked.weekday],
+          date_note: ASKED_DATE_UNSURE,
+        };
+      }
       if (asked.later) {
+        const dayHours = periodsOnDate(p, asked.iso, asked.daysOut);
+        const shutThatDay = dayHours.dated && !dayHours.periods.length;
         const later = {
           venue_name: promptSafe(venue.name, MAX_VENUE_NAME_CHARS),
           date: asked.iso,
           day: WEEKDAY_NAMES[asked.weekday],
+          // The venue's own date today, so a day worked out from a UTC Now
+          // line can be checked against it (THE DAY WORDS).
+          today_there: `${wall.year}-${String(wall.month).padStart(2, '0')}-${String(wall.day).padStart(2, '0')} ${WEEKDAY_NAMES[wall.weekday]}`,
           // Google's posted hours, a fact like is_open, so a locked result
-          // keeps them.
-          hours_that_day: hoursThatDay(p.currentOpeningHours?.periods, asked.weekday),
+          // keeps them; that date's own where Google gave them (THE HOURS OF
+          // THAT DATE).
+          hours_that_day: shutThatDay ? 'closed' : hoursThatDay(dayHours.periods, asked.weekday),
         };
         const laterDistance = venueDistance(opts.distanceFrom, lat, lon);
         if (laterDistance) Object.assign(later, laterDistance);
         if (!opts.includeForecast) return lockForecastResult(later, { salesOff: opts.salesOff === true });
-        const curve = await mlPredictor.usualDayCurve(venue, asked.weekday, { userId });
+        // The night's open hours are that date's too.
+        const thatDay = shutThatDay ? { hoursByDay: CLOSED_WEEK() } : venueHoursForDay(dayHours.periods, asked.weekday);
+        const curve = await mlPredictor.usualDayCurve({ ...venue, hoursByDay: thatDay.hoursByDay }, asked.weekday, { userId });
         const busiest = curve ? usualBusiest(curve.hours) : null;
         later.usual_for_day = busiest ? { source: curve.source, busiest: busiestText(busiest) } : null;
         later.day_note = busiest ? usualDayNote(curve.source, later.day, busiest) : USUAL_DAY_NONE_NOTE;
@@ -2609,7 +2694,11 @@ function buildClockLine(clock) {
   if (zone) {
     return `${head}\n- Now: ${now}, ${zone} time, where the user is.\n- Read every day and time they give you as theirs, in that zone. Plan times from get_user_flocks are already in that zone, and draft_flock takes event_time as a date and time in it with no offset, like 2026-10-09T20:00.`;
   }
-  return `${head}\n- Now: ${now} UTC.\n- You do not know the user's time zone, so their date can be a different one. Plan times from get_user_flocks are in UTC. Leave event_time off draft_flock unless they tell you their time zone (then write the time with its UTC offset), and say they can set the time on the plan.`;
+  // THE DAY WORDS (readAskedDay): a crowd lookup's tomorrow or weekday is
+  // sent as the word and read on the venue's calendar, since UTC's date is
+  // already tomorrow on a US evening. Only on this branch, so a prompt that
+  // knows the user's zone grows by nothing.
+  return `${head}\n- Now: ${now} UTC.\n- You do not know the user's time zone, so their date can be a different one. Plan times from get_user_flocks are in UTC. Leave event_time off draft_flock unless they tell you their time zone (then write the time with its UTC offset), and say they can set the time on the plan.\n- For get_crowd_prediction, send tomorrow or a weekday as the word itself (\`date\`: "tomorrow", "friday"), never a date worked out from this UTC one; a result's \`today_there\` is the venue's own date.`;
 }
 
 // The other half of the context, carried in the USER turn as data. Same
@@ -3719,8 +3808,9 @@ router.post('/chat',
               if (charged.locked) lockForecastResult(result, { salesOff });
             }
             // The later day a crowd lookup was asked about: every card under
-            // the answer is then about that day (THE CARDS OF A LATER DAY, at
-            // the cards).
+            // the answer is then about a later day (THE CARDS OF A LATER DAY,
+            // at the cards), its own where it was looked up for one, else the
+            // first day asked.
             if (name === 'get_crowd_prediction' && result && typeof result.date === 'string' && !turnAskedDate) {
               turnAskedDate = result.date;
             }
@@ -3768,11 +3858,15 @@ router.post('/chat',
               // reading is the venue's own now, and goes on the card as ever.
               const match = collectedVenues.find(v => v.place_id === args.place_id);
               // A later day's lookup carries no number for now, and its card
-              // gets that day's usual night instead (A LATER DAY).
+              // gets that day's usual night instead (A LATER DAY), with the
+              // day it was looked up for: "Friday or Saturday?" looks one
+              // venue up for each, and each card is about its own day. A
+              // second lookup of the same venue replaces the first whole.
               if (match && typeof result.date === 'string') {
                 const usual = result[BIRDIE_CARD_ONLY] && result[BIRDIE_CARD_ONLY].usual;
-                if (usual) match.usual = usual;
-                if (typeof result.hours_that_day === 'string') match.hours_that_day = result.hours_that_day;
+                match.asked_date = result.date;
+                if (usual) match.usual = usual; else delete match.usual;
+                if (typeof result.hours_that_day === 'string') match.hours_that_day = result.hours_that_day; else delete match.hours_that_day;
               } else if (match && (result.clock !== SERVER_CLOCK || result.crowd_source === 'owner_report')) {
                 match.crowd = result.crowd_score;
                 match.crowd_label = result.crowd_label;
@@ -3935,13 +4029,20 @@ router.post('/chat',
       // place is open right now (the 3:44 PM "Closed" under a plan for the
       // 13th), each says which day it is about, and one looked up for that
       // day says its posted hours then. Sent as is_open null, so the builds
-      // already in people's hands drop the pill as well.
+      // already in people's hands drop the pill as well. A card looked up
+      // for a day of its own is about that day ("Friday or Saturday?"), and
+      // the rest about the first day the turn asked. None carries a number
+      // for now: "is it busy now, and Friday?" reads the venue for now as
+      // well, and "Steady 62%" under an answer about Friday read as Friday's
+      // crowd (review, 2026-11-06), so the card draws the usual night or no
+      // crowd row at all.
       const venueCards = [];
       if (collectedVenues.length > 0 && !plainNo) {
         // Four cards at most, and the places the reply names are among them
         // (THE CARDS THE REPLY NAMES), in the search's order.
         const carded = new Set(venuesByMention(planCardPool(collectedVenues, plan, responseText), responseText).slice(0, 4));
         for (const v of collectedVenues.filter((c) => carded.has(c))) {
+          const cardDay = typeof v.asked_date === 'string' ? v.asked_date : turnAskedDate;
           venueCards.push({
             place_id: v.place_id,
             name: v.name,
@@ -3950,17 +4051,18 @@ router.post('/chat',
             reviews: v.reviews,
             price_level: v.price_level,
             types: v.types,
-            is_open: turnAskedDate ? null : v.is_open,
-            ...(turnAskedDate ? { for_date: turnAskedDate } : {}),
-            ...(turnAskedDate && v.hours_that_day ? { hours_that_day: v.hours_that_day } : {}),
-            // When a place closed now opens next, for a card about now.
-            ...(!turnAskedDate && v.is_open === false && v[BIRDIE_CARD_ONLY] && v[BIRDIE_CARD_ONLY].opens_at
-              ? { opens_at: v[BIRDIE_CARD_ONLY].opens_at } : {}),
+            is_open: cardDay ? null : v.is_open,
+            ...(cardDay ? { for_date: cardDay } : {}),
+            ...(cardDay && v.hours_that_day ? { hours_that_day: v.hours_that_day } : {}),
+            // When a place closed now opens next, for a card about now, with
+            // the venue's zone to say it on the venue's clock.
+            ...(!cardDay && v.is_open === false && v[BIRDIE_CARD_ONLY] && v[BIRDIE_CARD_ONLY].opens_at
+              ? { opens_at: v[BIRDIE_CARD_ONLY].opens_at, ...(v[BIRDIE_CARD_ONLY].opens_tz ? { opens_tz: v[BIRDIE_CARD_ONLY].opens_tz } : {}) } : {}),
             lat: v.lat,
             lng: v.lng,
             photo_url: v.photo_url || null,
-            crowd: typeof v.crowd === 'number' ? v.crowd : null,
-            crowd_label: v.crowd_label || null,
+            crowd: !cardDay && typeof v.crowd === 'number' ? v.crowd : null,
+            crowd_label: (!cardDay && v.crowd_label) || null,
             // How busy it usually is on the later day the answer is about,
             // for a venue whose crowd was looked up for that day (A LATER
             // DAY). Only then, so every other card keeps exactly its keys.

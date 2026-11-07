@@ -23,7 +23,14 @@
 //   6. the cards of an answer about another day say nothing about right now
 //      (no open-now pill, on any build), say which day they are about and,
 //      when looked up for it, its posted hours then; a card about now that is
-//      closed says when it next opens, which the model is never handed (S19).
+//      closed says when it next opens, which the model is never handed (S19);
+//   7. (review, 2026-11-06) such a card carries no number for now even when
+//      the turn read the venue for now too, and each card is about the day it
+//      was looked up for; "tomorrow" and a weekday's name are read on the
+//      venue's calendar, a dated result says the venue's own today, and a day
+//      the server's clock cannot tell from today gets a note and no numbers;
+//      a date in the week reads that date's own hours, a date past it the
+//      posted week; a closed venue's next opening carries the venue's zone.
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -110,14 +117,52 @@ mlPredictor.predictHourlyForecast = async (_venue, _weather, startHour, count) =
 });
 mlPredictor.agreeWithStrip = async (headline) => headline;
 
+// A second stand-in, a late kitchen Thursday to Saturday; invented too.
+const PLACE_TWO = {
+  ...PLACE,
+  id: 'ChIJlaterDayLanternRm2', displayName: { text: 'Lantern Room' }, formattedAddress: '40 Main St, Bethlehem, PA 18018, USA',
+  types: ['italian_restaurant', 'restaurant', 'food'],
+  currentOpeningHours: { openNow: false, periods: [window_(4, 18, 23), window_(5, 18, 23), window_(6, 16, 23)] },
+};
+// The first stand-in as Google would send it with no zone and no offset, so
+// nothing knows the date there (the server's clock).
+const PLACE_NO_CLOCK = { ...PLACE, id: 'ChIJlaterDayNoClock003' };
+delete PLACE_NO_CLOCK.utcOffsetMinutes;
+delete PLACE_NO_CLOCK.timeZone;
+// The first stand-in with this week's dated periods, as currentOpeningHours
+// carries them (Thursday the 5th to Wednesday the 11th), and the posted week
+// beside them. This Friday it is shut for a private event, and this Saturday
+// it closes at 8; neither is its usual week.
+const dated = (date, day, open, close, closeMinute = 0) => ({
+  open: { day, hour: open, minute: 0, date: { year: 2026, month: 11, day: date } },
+  close: { day, hour: close, minute: closeMinute, date: { year: 2026, month: 11, day: date } },
+});
+const PLACE_THIS_WEEK = {
+  ...PLACE,
+  id: 'ChIJlaterDayThisWeek04',
+  currentOpeningHours: {
+    openNow: false,
+    periods: [dated(5, 4, 17, 21, 30), dated(7, 6, 17, 20), dated(8, 0, 10, 14), dated(11, 3, 17, 21, 30)],
+    nextOpenTime: '2026-11-05T22:00:00Z',
+  },
+  regularOpeningHours: { periods: PERIODS },
+};
+const PLACES_BY_ID = new Map([PLACE, PLACE_TWO, PLACE_NO_CLOCK, PLACE_THIS_WEEK].map((pl) => [pl.id, pl]));
+
 const realFetch = global.fetch;
 global.fetch = (url, opts) => {
   const u = String(url);
   if (u.startsWith('http://127.0.0.1')) return realFetch(url, opts);
   if (u.startsWith('https://places.googleapis.com/v1/places:searchText')) {
-    return Promise.resolve({ ok: true, status: 200, json: async () => ({ places: [PLACE] }) });
+    const query = JSON.parse((opts && opts.body) || '{}').textQuery || '';
+    const places = /two places/.test(query) ? [PLACE, PLACE_TWO] : [PLACE];
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ places }) });
   }
-  if (u.startsWith('https://places.googleapis.com/v1/places/')) return Promise.resolve({ ok: true, status: 200, json: async () => PLACE });
+  if (u.startsWith('https://places.googleapis.com/v1/places/')) {
+    const id = decodeURIComponent(u.slice('https://places.googleapis.com/v1/places/'.length).split('?')[0]);
+    const place = PLACES_BY_ID.get(id) || PLACE;
+    return Promise.resolve({ ok: true, status: 200, json: async () => place });
+  }
   return Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
 };
 test.after(() => { global.fetch = realFetch; });
@@ -201,7 +246,8 @@ test('what the model is sent holds no number for that day; the card\'s bars ride
   await at(t, THURSDAY_AFTERNOON, async () => {
     const out = await lookup({ date: '2026-11-13' });
     const sent = JSON.parse(JSON.stringify(out));
-    assert.deepStrictEqual(Object.keys(sent).sort(), ['date', 'day', 'day_note', 'hours_that_day', 'usual_for_day', 'venue_name']);
+    assert.deepStrictEqual(Object.keys(sent).sort(), ['date', 'day', 'day_note', 'hours_that_day', 'today_there', 'usual_for_day', 'venue_name']);
+    assert.strictEqual(sent.today_there, '2026-11-05 Thursday');
     assert.ok(!/\b(44|61|75|60)\b/.test(JSON.stringify(sent.usual_for_day)), JSON.stringify(sent));
     const hidden = Object.getOwnPropertySymbols(out);
     assert.strictEqual(hidden.length, 1, 'one card-only key');
@@ -241,7 +287,7 @@ test('today, or no date, is the lookup it was', async (t) => {
 test('a past day, a word, an impossible date and a day years off are errors the model can act on', async (t) => {
   await at(t, THURSDAY_AFTERNOON, async () => {
     assert.deepStrictEqual(await lookup({ date: '2026-11-04' }), { error: 'That day has already passed there.' });
-    assert.match((await lookup({ date: 'Friday' })).error, /YYYY-MM-DD, like 2026-11-13/);
+    assert.match((await lookup({ date: 'next week' })).error, /YYYY-MM-DD, like 2026-11-13, or tomorrow or the weekday's name/);
     assert.match((await lookup({ date: '2026-02-30' })).error, /YYYY-MM-DD/);
     assert.match((await lookup({ date: '2028-11-13' })).error, /more than a year away/);
     assert.strictEqual(modelRuns, 0);
@@ -369,10 +415,13 @@ test('a card about now that is closed says when it next opens, and the model is 
     const card = body.venues.find((v) => v.place_id === PLACE.id);
     assert.strictEqual(card.is_open, false);
     assert.strictEqual(card.opens_at, '2026-11-05T22:00:00Z');
+    // The venue's zone, so the app says 5 PM on the venue's clock and not
+    // the phone's.
+    assert.strictEqual(card.opens_tz, 'America/New_York');
     assert.ok(!('for_date' in card) && !('hours_that_day' in card));
     const searchSent = sentResponses().find((r) => r.name === 'search_venues');
     const wire = JSON.stringify(searchSent.response);
-    assert.ok(!/opens_at|nextOpenTime|2026-11-05T22/.test(wire), wire);
+    assert.ok(!/opens_at|opens_tz|nextOpenTime|2026-11-05T22|America\/New_York/.test(wire), wire);
   });
 });
 
@@ -394,4 +443,146 @@ test('an open place, or one Google gives no next opening for, carries no opening
       PLACE.currentOpeningHours = saved;
     }
   });
+});
+
+// ── 7. The review of 2026-11-06 ────────────────────────────────────────────
+
+test('the route: a card about a later day carries no number for now, even when the turn read the venue for now as well', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const body = await ask('is hearth and bell busy now, and on the 13th?', [
+      { call: { name: 'search_venues', args: { query: 'hearth and bell now and later', location: '40.60,-75.37' } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id, date: '2026-11-13' } } },
+      { text: "Hearth & Bell is quiet now. I can't see the 13th's crowd yet. Fridays there usually peak around 7." },
+    ]);
+    const nowSent = sentResponses().find((r) => r.name === 'get_crowd_prediction' && !('date' in r.response));
+    assert.strictEqual(nowSent.response.crowd_score, 22, 'the lookup for now was made and scored');
+    const card = body.venues.find((v) => v.place_id === PLACE.id);
+    assert.strictEqual(card.for_date, '2026-11-13');
+    assert.strictEqual(card.crowd, null, "tonight's number is not on a card about the 13th");
+    assert.strictEqual(card.crowd_label, null);
+    assert.ok(card.usual && card.usual.date === '2026-11-13', 'the usual night is drawn instead');
+  });
+});
+
+test('the same, with the dated lookup first: still no number for now on the card', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const body = await ask('the 13th, and how about right now?', [
+      { call: { name: 'search_venues', args: { query: 'hearth and bell later and now', location: '40.60,-75.37' } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id, date: '2026-11-13' } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id } } },
+      { text: 'Hearth & Bell.' },
+    ]);
+    const card = body.venues.find((v) => v.place_id === PLACE.id);
+    assert.strictEqual(card.crowd, null);
+    assert.strictEqual(card.crowd_label, null);
+    assert.strictEqual(card.for_date, '2026-11-13');
+  });
+});
+
+test('the route: "Friday or Saturday?" makes each card about the day it was looked up for', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    const body = await ask('two places for friday or saturday', [
+      { call: { name: 'search_venues', args: { query: 'two places friday or saturday', location: '40.60,-75.37' } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE.id, date: '2026-11-06' } } },
+      { call: { name: 'get_crowd_prediction', args: { place_id: PLACE_TWO.id, date: '2026-11-07' } } },
+      { text: 'Hearth & Bell on Friday, or Lantern Room on Saturday.' },
+    ]);
+    const hearth = body.venues.find((v) => v.place_id === PLACE.id);
+    const lantern = body.venues.find((v) => v.place_id === PLACE_TWO.id);
+    assert.ok(hearth && lantern, JSON.stringify(body.venues));
+    assert.strictEqual(hearth.for_date, '2026-11-06');
+    assert.strictEqual(hearth.hours_that_day, '5 PM to 10 PM');
+    assert.strictEqual(lantern.for_date, '2026-11-07', "Saturday's card is about Saturday, not the turn's first day");
+    assert.strictEqual(lantern.hours_that_day, '4 PM to 11 PM');
+  });
+});
+
+test('"tomorrow" and a weekday are read on the venue\'s calendar; today\'s own name is today', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    for (const [word, date, day] of [['tomorrow', '2026-11-06', 'Friday'], ['Friday', '2026-11-06', 'Friday'], [' wednesday ', '2026-11-11', 'Wednesday']]) {
+      reset();
+      const out = await lookup({ date: word });
+      assert.strictEqual(out.date, date, word);
+      assert.strictEqual(out.day, day, word);
+      assert.strictEqual(out.today_there, '2026-11-05 Thursday', word);
+    }
+    for (const word of ['Thursday', 'tonight', 'today']) {
+      reset();
+      const out = await lookup({ date: word });
+      assert.strictEqual(out.crowd_score, 22, word);
+      assert.ok(!('date' in out), word);
+    }
+  });
+});
+
+// Friday, November 6, 2026, 9 PM in Bethlehem, which is 2 AM Saturday UTC.
+const FRIDAY_NIGHT = Date.parse('2026-11-07T02:00:00Z');
+
+test('a UTC Now line past midnight: "tomorrow" is the venue\'s Saturday, and a date worked out from UTC shows against today_there', async (t) => {
+  await at(t, FRIDAY_NIGHT, async () => {
+    const out = await lookup({ date: 'tomorrow' });
+    assert.strictEqual(out.date, '2026-11-07');
+    assert.strictEqual(out.day, 'Saturday');
+    assert.strictEqual(out.today_there, '2026-11-06 Friday');
+    reset();
+    // What a model reading "Now: Saturday, November 7" sends for tomorrow.
+    const fromUtc = await lookup({ date: '2026-11-08' });
+    assert.strictEqual(fromUtc.day, 'Sunday');
+    assert.strictEqual(fromUtc.today_there, '2026-11-06 Friday', 'the venue\'s own today rides with it');
+  });
+});
+
+test('the prompt with no zone for the user asks for the word, and one with a zone grows by nothing', () => {
+  const utc = buildSystemPrompt('Sam', {}, { ageBracket: 'adult', clock: { nowMs: FRIDAY_NIGHT, timeZone: null } });
+  assert.match(utc, /For get_crowd_prediction, send tomorrow or a weekday as the word itself \(`date`: "tomorrow", "friday"\), never a date worked out from this UTC one; a result's `today_there` is the venue's own date\./);
+  const zoned = buildSystemPrompt('Sam', {}, { ageBracket: 'adult', clock: { nowMs: FRIDAY_NIGHT, timeZone: 'America/New_York' } });
+  assert.doesNotMatch(zoned, /as the word itself/);
+});
+
+test('no clock for the venue: a day that cannot be told from today gets a note and no numbers for now', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    for (const date of ['2026-11-06', 'tomorrow', '2026-11-05']) {
+      reset();
+      const out = await lookup({ place_id: PLACE_NO_CLOCK.id, date });
+      assert.strictEqual(typeof out.date, 'string', date);
+      assert.match(out.date_note, /cannot be told apart from today/, date);
+      for (const k of ['crowd_score', 'crowd_label', 'best_time', 'hourly_forecast', 'usual_for_day']) {
+        assert.ok(!(k in out), `${date}: no ${k}`);
+      }
+      assert.strictEqual(modelRuns, 0, date);
+    }
+    // Two days out is still a later day there, and no date is the lookup it was.
+    reset();
+    assert.strictEqual((await lookup({ place_id: PLACE_NO_CLOCK.id, date: '2026-11-07' })).day, 'Saturday');
+    reset();
+    assert.ok(!('date_note' in await lookup({ place_id: PLACE_NO_CLOCK.id })));
+  });
+});
+
+test('a date in the week reads that date\'s own hours; a date past it reads the posted week', async (t) => {
+  await at(t, THURSDAY_AFTERNOON, async () => {
+    // This Friday it is shut, so there is no usual night to give.
+    const friday = await lookup({ place_id: PLACE_THIS_WEEK.id, date: '2026-11-06' });
+    assert.strictEqual(friday.hours_that_day, 'closed');
+    assert.strictEqual(friday.usual_for_day, null);
+    reset();
+    // This Saturday it closes at 8.
+    assert.strictEqual((await lookup({ place_id: PLACE_THIS_WEEK.id, date: '2026-11-07' })).hours_that_day, '5 PM to 8 PM');
+    reset();
+    // The 13th is past the week Google dates: the posted Friday, open, and
+    // its usual night drawn over its posted hours.
+    const thirteenth = await lookup({ place_id: PLACE_THIS_WEEK.id, date: '2026-11-13' });
+    assert.strictEqual(thirteenth.hours_that_day, '5 PM to 10 PM');
+    assert.deepStrictEqual(thirteenth.usual_for_day, { source: 'venue_pattern', busiest: '7 PM to 9 PM' });
+    reset();
+    // The 14th, a Saturday past the week: the posted 5 to 10, not this week's 8.
+    assert.strictEqual((await lookup({ place_id: PLACE_THIS_WEEK.id, date: '2026-11-14' })).hours_that_day, '5 PM to 10 PM');
+  });
+});
+
+test('the shared details mask carries the posted week, on the tier it already pays for', () => {
+  const fields = placeDetailsCache.PLACE_DETAILS_FIELD_MASK.split(',');
+  assert.ok(fields.includes('regularOpeningHours'));
+  assert.ok(fields.includes('currentOpeningHours'), 'an Enterprise field beside it, so it raises no price');
 });
