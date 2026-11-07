@@ -26,7 +26,8 @@ test('a vote tally that could not be read says so, with a retry', () => {
 test('a streak that was never read is a dash, not a zero', () => {
   expect(app).toMatch(/const \[streak, setStreak\] = useState\(null\);/);
   expect(app).toMatch(/setStreak\(typeof d\.streak === 'number' \? d\.streak : null\);/);
-  expect(profile).toMatch(/\{ l: 'Streak', v: streak \?\? '\\u2013', hasIcon: streak != null \}/);
+  // The flame is lit only for a streak above zero (youScreenEmptyStats.test.js).
+  expect(profile).toMatch(/\{ l: 'Streak', v: streak \?\? '\\u2013', hasIcon: streak > 0 \}/);
 });
 
 test('a flocks list that failed to load is a dash on the profile too', () => {
