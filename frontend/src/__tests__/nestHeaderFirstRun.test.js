@@ -199,7 +199,8 @@ describe('the header scrolls with the page', () => {
   test('"Start a flock" sits in the header, in words, on the gate the old slab had', () => {
     const header = HOME.slice(HOME.indexOf('<header data-nest-band="header"'), HOME.indexOf('</header>'));
     expect(header).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(\s*<button type="button" className="hit44" onClick=\{\(\) => setCurrentScreen\('create'\)\}/);
-    expect(header).toMatch(/\{Icons\.plus\('var\(--accent-purple-text\)', 15\)\} Start a flock/);
+    // The bird set's egg, at the 18 floor the set holds for it (was a plus at 15).
+    expect(header).toMatch(/\{Icons\.startFlock\('var\(--accent-purple-text\)', 18\)\} Start a flock/);
     // The full-width navy slab is gone; its class went with it.
     expect(HOME).not.toMatch(/neo-btn-primary/);
   });
