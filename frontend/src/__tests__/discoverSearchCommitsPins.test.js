@@ -16,12 +16,24 @@
  *     row tap (the map goes to that place), Return (the results within 25 km
  *     are framed once they land), or See all (the same frame).
  *
+ * After review (2026-11-06):
+ *
+ *   - while the full results list is open, every answer for what the box
+ *     says becomes the pins: the list draws the pins under a search box of
+ *     its own, and a search typed there used to leave the old pins and their
+ *     count under the new words;
+ *   - the count chip follows the box: with words in it the pins do not
+ *     answer, it counts and opens the box's answer, and with no answer in
+ *     hand it is not drawn;
+ *   - Return after a search that failed sends it again (the one retry);
+ *   - a row named exactly what was searched leads the four rows.
+ *
  * FRONTEND test (jest via react-scripts).
  */
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import ExploreScreen from '../screens/ExploreScreen';
-import { nearestFirst } from '../lib/distance';
+import { nearestFirst, nameKey } from '../lib/distance';
 
 const fs = require('fs');
 const path = require('path');
@@ -60,6 +72,39 @@ describe('nearest first', () => {
   });
 });
 
+describe('the place the person named leads', () => {
+  // Four places nearer than Torre that Google matched on "torre" too.
+  const near = (id, name, dLat) => ({ place_id: id, name, location: at(ME.lat + dLat, ME.lng) });
+  const NEARER = [near('p_n1', 'Torre Pizza Bar', 0.01), near('p_n2', 'Torrefazione', 0.02), near('p_n3', 'Torres Liquors', 0.03), near('p_n4', 'Copper Finch Cantina', 0.001)];
+
+  test('a row whose name is the query comes first, the rest nearest first', () => {
+    expect(nearestFirst([...NEARER, TORRE], ME, 'torre').map((v) => v.place_id))
+      .toEqual(['p_torre', 'p_n4', 'p_n1', 'p_n2', 'p_n3']);
+  });
+  test('distance alone would have pushed it off the four rows', () => {
+    expect(nearestFirst([...NEARER, TORRE], ME).slice(0, 4).map((v) => v.place_id)).not.toContain('p_torre');
+  });
+  test('word for word: case, accents, apostrophes and spacing aside', () => {
+    expect(nameKey("  Joe's  Café ")).toBe('joes cafe');
+    expect(nameKey('JOES-CAFE')).toBe('joes cafe');
+    const joes = { place_id: 'p_joes', name: "Joe's Café", location: at(41.5, -75) };
+    expect(nearestFirst([COPPER, joes], ME, 'joes cafe')[0].place_id).toBe('p_joes');
+  });
+  test('a prefix is not a name: "tor" stays nearest first', () => {
+    expect(nearestFirst([HIGH_TOR, CHIMNEY, TORRE, COPPER], ME, 'tor').map((v) => v.place_id))
+      .toEqual(['p_copper', 'p_torre', 'p_chimney', 'p_hightor']);
+  });
+  test('with no position for the person, the named place first and the rest as the search gave them', () => {
+    expect(nearestFirst([HIGH_TOR, CHIMNEY, TORRE, COPPER], null, 'Torre').map((v) => v.place_id))
+      .toEqual(['p_torre', 'p_hightor', 'p_chimney', 'p_copper']);
+  });
+  test('two places of that name: the nearer first', () => {
+    const farTorre = { ...TORRE, place_id: 'p_torre_far', location: at(41.5, -74) };
+    expect(nearestFirst([farTorre, COPPER, TORRE], ME, 'torre').map((v) => v.place_id))
+      .toEqual(['p_torre', 'p_torre_far', 'p_copper']);
+  });
+});
+
 const EXPLORE_PARAMS = (() => {
   const start = EXPLORE_SRC.indexOf('export default function ExploreScreen({');
   return EXPLORE_SRC.slice(start, EXPLORE_SRC.indexOf('}) {', start)).split('\n').map((l) => l.trim())
@@ -79,7 +124,7 @@ const exploreProps = (over = {}) => {
     locationLoading: false, mapVenuesLoaded: true, pickingVenueForCreate: false, pickingVenueForDm: false, pickingVenueForFlockId: null,
     sharingLocationForFlock: null, showConnectPanel: false, showEventsView: false, showSearchDropdown: true, tableParty: 2,
     userLocation: null, venueLoadError: '', venueQuery: 'tor', venueResults: [], venueResultsFor: 'tor', venueSearching: false,
-    mapFitRequest: null,
+    mapFitRequest: null, pinsFor: 'tor',
   }, over);
 };
 const NAMES = [COPPER, TORRE, CHIMNEY, HIGH_TOR, NOWHERE].map((v) => v.name);
@@ -99,6 +144,12 @@ describe('the four rows under the box', () => {
   test('keep the search\'s order when the person\'s position is not known', () => {
     render(<ExploreScreen {...exploreProps({ venueResults: [HIGH_TOR, CHIMNEY, TORRE, COPPER] })} />);
     expect(rowNames()).toEqual(['High Tor State Park', 'Tor Chimney & Fireplace', 'Torre', 'Copper Finch Cantina']);
+  });
+
+  test('lead with the place named in full, read against the words the rows answer', () => {
+    const torreBar = { place_id: 'p_tb', name: 'Tor Chimney & Fireplace', location: at(ME.lat + 0.01, ME.lng) };
+    render(<ExploreScreen {...exploreProps({ userLocation: ME, venueQuery: 'torre', venueResultsFor: 'torre', pinsFor: 'torre', venueResults: [HIGH_TOR, torreBar, COPPER, TORRE] })} />);
+    expect(rowNames()[0]).toBe('Torre');
   });
 });
 
@@ -137,6 +188,55 @@ describe('what moves the map', () => {
     expect(commitVenueResults).not.toHaveBeenCalled();
   });
 
+  test('with words in the box the pins do not answer, the chip counts the box\'s answer and its tap makes it the pins', () => {
+    const commitVenueResults = jest.fn();
+    const requestMapFit = jest.fn();
+    const setShowSearchResults = jest.fn();
+    const nearby = [HIGH_TOR, CHIMNEY, NOWHERE];
+    render(<ExploreScreen {...exploreProps({
+      showSearchDropdown: false, venueQuery: 'torre', venueResultsFor: 'torre', pinsFor: '',
+      // A repeat is one pin (venuesToMapPins), so it is one in the count.
+      venueResults: [TORRE, COPPER, TORRE], budgetFilteredVenues: nearby, allVenues: nearby,
+      commitVenueResults, requestMapFit, setShowSearchResults,
+    })} />);
+    expect(screen.queryByRole('button', { name: 'All 3 results' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'All 2 results' }));
+    expect(setShowSearchResults).toHaveBeenCalledWith(true);
+    expect(commitVenueResults).toHaveBeenCalledTimes(1);
+    expect(commitVenueResults.mock.calls[0]).toEqual([]);
+    expect(requestMapFit).not.toHaveBeenCalled();
+  });
+
+  test('the box\'s answer is counted under the group\'s budget, as its pins would be', () => {
+    const pricey = { ...COPPER, place_id: 'p_pricey', name: 'Pricey', price_level: 4 };
+    render(<ExploreScreen {...exploreProps({
+      showSearchDropdown: false, venueQuery: 'torre', venueResultsFor: 'torre', pinsFor: '',
+      venueResults: [TORRE, pricey], budgetFilteredVenues: [HIGH_TOR], allVenues: [HIGH_TOR],
+      budgetStatus: { isReady: true, ceiling: 30 }, getMaxPriceLevel: () => 2,
+    })} />);
+    expect(screen.getByRole('button', { name: '1 result' })).toBeTruthy();
+  });
+
+  test('with no answer in hand for the box there is no count to promise, and no chip', () => {
+    const chip = () => screen.queryByRole('button', { name: /^(1 result|All \d+ results)$/ });
+    const nearby = [HIGH_TOR, CHIMNEY];
+    const base = { showSearchDropdown: false, venueQuery: 'torre', pinsFor: '', budgetFilteredVenues: nearby, allVenues: nearby };
+    // Still to go, or out: the rows answer an older query.
+    let r = render(<ExploreScreen {...exploreProps({ ...base, venueResultsFor: 'tor', venueResults: [CHIMNEY] })} />);
+    expect(chip()).toBeNull();
+    r.unmount();
+    r = render(<ExploreScreen {...exploreProps({ ...base, venueResultsFor: 'torre', venueResults: [TORRE], venueSearching: true })} />);
+    expect(chip()).toBeNull();
+    r.unmount();
+    // Failed.
+    r = render(<ExploreScreen {...exploreProps({ ...base, venueResultsFor: 'torre', venueResults: [], venueLoadError: 'Search is not responding. Try again in a moment.' })} />);
+    expect(chip()).toBeNull();
+    r.unmount();
+    // The box cleared to one letter: the pins are all there is to count.
+    render(<ExploreScreen {...exploreProps({ ...base, venueQuery: 't', venueResultsFor: '', venueResults: [] })} />);
+    expect(chip().textContent).toBe('All 2 results');
+  });
+
   test('the map is handed the request as App makes it', () => {
     let seen = null;
     const Map = (p) => { seen = p.fitRequest; return null; };
@@ -154,7 +254,7 @@ const SEARCH_SCOPE = [
   'venueQueryRef', 'venueSearchSeqRef', 'setVenueResults', 'setVenueSearching', 'enhanceQuery', 'userLocation',
   'searchCacheRef', 'requestCrowdScores', 'setShowSearchDropdown', 'searchVenues', 'setVenueLoadError', 'showToast',
   'userMessage', 'setVenueResultsFor', 'venueSearchAbortRef', 'pendingPinsCommitRef', 'commitSearchPins',
-  'setAllVenues', 'venuesToMapPins', 'setActiveVenue',
+  'setAllVenues', 'venuesToMapPins', 'setActiveVenue', 'searchResultsOpenRef',
 ];
 const compile = (re, scope, deps) => {
   const m = APP.match(re);
@@ -164,7 +264,7 @@ const compile = (re, scope, deps) => {
 };
 
 function searchHarness() {
-  const state = { results: [], resultsFor: '', pins: null, commits: [], dropdown: false, searching: false, error: '' };
+  const state = { results: [], resultsFor: '', pins: null, pinsFor: null, commits: [], dropdown: false, searching: false, error: '' };
   const pending = new Map();
   const deps = {
     venueQueryRef: { current: '' },
@@ -183,11 +283,12 @@ function searchHarness() {
     setVenueResultsFor: (v) => { state.resultsFor = v; },
     venueSearchAbortRef: { current: null },
     pendingPinsCommitRef: { current: null },
-    commitSearchPins: (venues, focus) => { state.commits.push({ venues, focus: focus || null }); state.pins = venues.map((v) => v.place_id); },
+    commitSearchPins: (venues, focus, forQuery) => { state.commits.push({ venues, focus: focus || null }); state.pins = venues.map((v) => v.place_id); state.pinsFor = forQuery; },
     // Writing the pins any other way is what this file is against.
     setAllVenues: (v) => { state.pins = ['set directly', v]; },
     venuesToMapPins: (vs) => vs,
     setActiveVenue: () => {},
+    searchResultsOpenRef: { current: false },
   };
   const doVenueSearch = compile(/const doVenueSearch = useCallback\((async \(q\) => \{[\s\S]*?\n {2}\}), \[[^\]]*\]\);/, SEARCH_SCOPE, deps);
   return { deps, state, pending, doVenueSearch };
@@ -239,6 +340,8 @@ describe('Return commits', () => {
     h.pending.get('torre').resolve({ venues: [TORRE, COPPER] });
     await p;
     expect(h.state.commits).toEqual([{ venues: [TORRE, COPPER], focus: null }]);
+    // The pins say which words they answer (the count chip reads it).
+    expect(h.state.pinsFor).toBe('torre');
   });
 
   test('from the cache at once', async () => {
@@ -271,13 +374,13 @@ describe('Return commits', () => {
   });
 
   const COMMIT_SCOPE = ['venueQueryRef', 'venueResultsFor', 'venueResults', 'pendingPinsCommitRef', 'commitSearchPins',
-    'cancelPendingVenueSearch', 'runVenueSearchNow'];
+    'cancelPendingVenueSearch', 'runVenueSearchNow', 'venueLoadError'];
   const commitHarness = (over) => {
     const calls = [];
     const deps = {
       venueQueryRef: { current: 'torre ' }, venueResultsFor: '', venueResults: [], pendingPinsCommitRef: { current: null },
-      commitSearchPins: (v) => calls.push(['commit', v]), cancelPendingVenueSearch: () => calls.push(['cancel']),
-      runVenueSearchNow: () => calls.push(['search']), ...over,
+      commitSearchPins: (v, focus, forQuery) => calls.push(['commit', v, forQuery]), cancelPendingVenueSearch: () => calls.push(['cancel']),
+      runVenueSearchNow: () => calls.push(['search']), venueLoadError: '', ...over,
     };
     const fn = compile(/const commitVenueSearch = useCallback\((\(\) => \{[\s\S]*?\n {2}\}), \[[^\]]*\]\);/, COMMIT_SCOPE, deps);
     return { deps, calls, fn };
@@ -286,8 +389,30 @@ describe('Return commits', () => {
   test('rows that already answer the box become the pins with no search sent', () => {
     const h = commitHarness({ venueResultsFor: 'torre', venueResults: [TORRE] });
     h.fn();
-    expect(h.calls).toEqual([['cancel'], ['commit', [TORRE]]]);
+    expect(h.calls).toEqual([['cancel'], ['commit', [TORRE], 'torre']]);
     expect(h.deps.pendingPinsCommitRef.current).toBeNull();
+  });
+
+  test('a search for these words that failed is sent again: Return is the retry', () => {
+    const h = commitHarness({ venueResultsFor: 'torre', venueResults: [], venueLoadError: 'Search is not responding. Try again in a moment.' });
+    h.fn();
+    expect(h.calls).toEqual([['search']]);
+    expect(h.deps.pendingPinsCommitRef.current).toBe('torre');
+  });
+
+  test('the retry\'s answer becomes the pins when it lands', async () => {
+    const h = searchHarness();
+    h.deps.venueQueryRef.current = 'torre';
+    const first = h.doVenueSearch('torre');
+    h.pending.get('torre').reject(new Error('down'));
+    await first;
+    expect(h.state.commits).toEqual([]);
+    h.deps.pendingPinsCommitRef.current = 'torre';
+    const again = h.doVenueSearch('torre');
+    h.pending.get('torre').resolve({ venues: [TORRE] });
+    await again;
+    expect(h.state.error).toBe('');
+    expect(h.state.commits).toEqual([{ venues: [TORRE], focus: null }]);
   });
 
   test('otherwise the box\'s search goes now and its answer is awaited', () => {
@@ -300,6 +425,73 @@ describe('Return commits', () => {
   test('typing again gives up a commit still waiting', () => {
     const typed = APP.slice(APP.indexOf('const handleVenueQueryChange = useCallback('), APP.indexOf('}, [doVenueSearch, showSearchResults]);'));
     expect(typed).toMatch(/pendingPinsCommitRef\.current = null;/);
+  });
+});
+
+describe('while the full results list is open, the list follows the box', () => {
+  test('a query typed in the list: its answer becomes the pins it draws', async () => {
+    const h = searchHarness();
+    h.deps.searchResultsOpenRef.current = true;
+    h.deps.venueQueryRef.current = 'torre';
+    const p = h.doVenueSearch('torre');
+    h.pending.get('torre').resolve({ venues: [TORRE, COPPER] });
+    await p;
+    expect(h.state.commits).toEqual([{ venues: [TORRE, COPPER], focus: null }]);
+    expect(h.state.pinsFor).toBe('torre');
+  });
+
+  test('from the cache too, and a search that failed leaves the list empty under its sentence', async () => {
+    const h = searchHarness();
+    h.deps.searchResultsOpenRef.current = true;
+    h.deps.searchCacheRef.current['torr|'] = { data: [TORRE], timestamp: Date.now() };
+    h.deps.venueQueryRef.current = 'torr';
+    await h.doVenueSearch('torr');
+    h.deps.venueQueryRef.current = 'bars';
+    const failing = h.doVenueSearch('bars');
+    h.pending.get('bars').reject(new Error('down'));
+    await failing;
+    expect(h.state.commits).toEqual([{ venues: [TORRE], focus: null }, { venues: [], focus: null }]);
+    expect(h.state.error).toBe('Search is not responding. Try again in a moment.');
+  });
+
+  test('read when the answer lands: the list opened over a search still out (See all over older rows) takes it', async () => {
+    const h = searchHarness();
+    h.deps.venueQueryRef.current = 'torre';
+    const p = h.doVenueSearch('torre');
+    h.deps.searchResultsOpenRef.current = true;
+    h.pending.get('torre').resolve({ venues: [TORRE] });
+    await p;
+    expect(h.state.commits).toEqual([{ venues: [TORRE], focus: null }]);
+  });
+
+  test('and the list closed before it landed leaves the map alone, as any typed search does', async () => {
+    const h = searchHarness();
+    h.deps.searchResultsOpenRef.current = true;
+    h.deps.venueQueryRef.current = 'torre';
+    const p = h.doVenueSearch('torre');
+    h.deps.searchResultsOpenRef.current = false;
+    h.pending.get('torre').resolve({ venues: [TORRE] });
+    await p;
+    expect(h.state.commits).toEqual([]);
+    expect(h.state.pins).toBeNull();
+  });
+
+  test('an answer for words the box no longer says still writes nothing', async () => {
+    const h = searchHarness();
+    h.deps.searchResultsOpenRef.current = true;
+    h.deps.venueQueryRef.current = 'tor';
+    const p = h.doVenueSearch('tor');
+    h.deps.venueQueryRef.current = 'torre';
+    h.pending.get('tor').resolve({ venues: [CHIMNEY] });
+    await p;
+    expect(h.state.commits).toEqual([]);
+  });
+
+  test('the ref is the list\'s own state, and the overlay types through handleVenueQueryChange', () => {
+    expect(APP).toMatch(/searchResultsOpenRef\.current = showSearchResults;/);
+    const overlay = read('components', 'SearchResultsOverlay.js');
+    expect(overlay).toMatch(/onCommit=\{handleVenueQueryChange\}/);
+    expect(overlay).toMatch(/budgetFilteredVenues/);
   });
 });
 
@@ -325,7 +517,20 @@ describe('the wiring', () => {
     expect(focusAt).toBeGreaterThan(MAP_SRC.indexOf('delete window.__flockPanToVenue;'));
   });
 
-  test('the rows under the box are drawn nearest first', () => {
-    expect(EXPLORE_SRC).toMatch(/nearestFirst\(venueResults\.filter\([\s\S]*?\), userLocation\)\.slice\(0, 4\)/);
+  test('the rows under the box are drawn nearest first, the place named in full leading', () => {
+    expect(EXPLORE_SRC).toMatch(/nearestFirst\(venueResults\.filter\(withinBudget\), userLocation, venueResultsFor\)\.slice\(0, 4\)/);
+  });
+
+  test('every way the pins change says which words they answer', () => {
+    const commit = APP.slice(APP.indexOf('const commitSearchPins = useCallback('), APP.indexOf('const doVenueSearch = useCallback('));
+    expect(commit).toMatch(/setPinsFor\(forQuery\);/);
+    const search = APP.slice(APP.indexOf('const doVenueSearch = useCallback('), APP.indexOf('// Open the full venue details modal'));
+    expect(search.match(/commitSearchPins\([^)]*, null, q\.trim\(\)\)/g)).toHaveLength(3);
+    const results = APP.slice(APP.indexOf('const commitVenueResults = useCallback('), APP.indexOf('// Invite user search with debounce'));
+    expect(results).toMatch(/commitSearchPins\(venueResults, focus, venueResultsFor\);/);
+    // The places around a point answer no words.
+    const near = APP.slice(APP.indexOf('const browseVenuesAt = useCallback('), APP.indexOf('const loadVenuesAtLocationRef = useRef('));
+    expect((near.match(/setAllVenues\(/g) || []).length).toBe((near.match(/setPinsFor\(''\);/g) || []).length);
+    expect(APP).toMatch(/\n {4}pinsFor,\n {2}\};/);
   });
 });

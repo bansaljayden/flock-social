@@ -222,6 +222,9 @@ export default function ExploreScreen({
   commitVenueResults,
   requestMapFit,
   mapFitRequest = null,
+  // The words the map's pins answer (App.js pinsFor): a committed query, or
+  // '' for the places around a point.
+  pinsFor = '',
 }) {
   // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
   // it, open another's, and the first answer used to merge into the second
@@ -277,6 +280,34 @@ export default function ExploreScreen({
   // Whether the results list under the box is on screen: the one test the
   // list and the count chip on the map both read.
   const searchListOpen = showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0));
+  // The group's price ceiling, the one App.js budgetMaxPL reads: the rows
+  // under the box and the chip's count of an answer both leave out what is
+  // above it, as the full list does.
+  const maxPriceLevel = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4;
+  const withinBudget = (v) => !v.price_level || v.price_level <= maxPriceLevel;
+
+  // THE COUNT CHIP FOLLOWS THE BOX (review, 2026-11-06). Typing no longer
+  // moves the pins, so the box can hold words the pins do not answer: torre
+  // typed and the map tapped, with the nearby places still pinned. The chip
+  // counted those pins and opened them, under a box that said torre. Now,
+  // while the box is ahead of the pins, the chip counts the box's own answer
+  // (budget and repeats left out, as the pins would leave them) and its tap
+  // makes that answer the pins, as See all does. With no answer in hand yet
+  // (the search still to go or out, or failed) there is no count to promise,
+  // and it is not drawn.
+  const boxWords = venueQuery.trim();
+  const boxAheadOfPins = boxWords.length >= 2 && boxWords !== pinsFor;
+  const boxAnswerInHand = boxAheadOfPins && venueResultsFor === boxWords && !venueSearching && !venueLoadError;
+  const chipCount = (() => {
+    if (!boxAheadOfPins) return (budgetFilteredVenues || []).length;
+    if (!boxAnswerInHand) return 0;
+    const seen = new Set();
+    return venueResults.filter((v) => {
+      if (!v || seen.has(v.place_id)) return false;
+      seen.add(v.place_id);
+      return withinBudget(v);
+    }).length;
+  })();
 
   // THE BOX TAPPED AGAIN BRINGS ITS LIST BACK. With a query in it and the
   // list closed (a row was tapped, or the map), a tap raised the keyboard over
@@ -438,7 +469,7 @@ export default function ExploreScreen({
                   (lib/distance.js nearestFirst): "tor" listed a chimney shop
                   40 km away and a park 125 km away above the place 16 km
                   away. With no position for the person, the search's order. */}
-              {nearestFirst(venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }), userLocation).slice(0, 4).map((venue) => (
+              {nearestFirst(venueResults.filter(withinBudget), userLocation, venueResultsFor).slice(0, 4).map((venue) => (
                 <button
                   key={venue.place_id}
                   onClick={() => {
@@ -591,13 +622,20 @@ export default function ExploreScreen({
             corner: "All 12 re..." was cut off under the + button. The list
             carries its own "See all" while it is open, and the left edge has
             no controls to collide with. */}
-        {(budgetFilteredVenues || []).length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && !searchListOpen && (
+        {/* THE CHIP FOLLOWS THE BOX (boxAheadOfPins above): it counts and
+            opens the box's answer when the pins are not that answer yet. */}
+        {chipCount > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && !searchListOpen && (
           <button
             className="hit44 glass-btn"
-            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof requestMapFit === 'function') requestMapFit(); }}
+            onClick={() => {
+              setShowSearchResults(true);
+              setShowSearchDropdown(false);
+              if (boxAheadOfPins) { if (typeof commitVenueResults === 'function') commitVenueResults(); }
+              else if (typeof requestMapFit === 'function') requestMapFit();
+            }}
             style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', left: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
-            {resultsChipLabel((budgetFilteredVenues || []).length)}
+            {resultsChipLabel(chipCount)}
           </button>
         )}
 

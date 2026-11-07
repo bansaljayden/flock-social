@@ -35,8 +35,9 @@ const SCOPE = [
   // (discoverSearchKeepsRows.test.js).
   'setVenueResultsFor', 'venueSearchAbortRef',
   // The query Return committed, and the one way an answer becomes the pins
-  // (discoverSearchCommitsPins.test.js): a typed search no longer moves the map.
-  'pendingPinsCommitRef', 'commitSearchPins',
+  // (discoverSearchCommitsPins.test.js): a typed search no longer moves the map,
+  // unless the full results list is open over it.
+  'pendingPinsCommitRef', 'commitSearchPins', 'searchResultsOpenRef',
 ];
 
 function compileSearch(deps) {
@@ -76,6 +77,7 @@ function harness() {
     venueSearchAbortRef: { current: null },
     pendingPinsCommitRef: { current: null },
     commitSearchPins: (vs) => { deps.pendingPinsCommitRef.current = null; state.pins = vs.map((v) => v.place_id); },
+    searchResultsOpenRef: { current: false },
   };
   return { box, state, pending, cache, commit: deps.pendingPinsCommitRef, doVenueSearch: compileSearch(deps) };
 }

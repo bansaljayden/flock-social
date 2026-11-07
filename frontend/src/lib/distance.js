@@ -91,6 +91,16 @@ export const haversineKm = (lat1, lng1, lat2, lng2) => {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+// A name or a query as words to compare: lower case, accents off,
+// apostrophes dropped ("Joe's" and "joes" are one word) and every other run
+// of punctuation or space one space. "Torre" and "torre " are the same.
+export const nameKey = (s) => (typeof s === 'string' ? s : '')
+  .normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase()
+  .replace(/['\u2018\u2019]/g, '')
+  .replace(/[^\p{L}\p{N}]+/gu, ' ')
+  .trim();
+
 // NEAREST FIRST, for the four rows under the Discover search box. A prefix
 // like "tor" came back from Google with a chimney shop 40 km away and a state
 // park 125 km away above the restaurant 16 km away the person was looking
@@ -98,17 +108,28 @@ export const haversineKm = (lat1, lng1, lat2, lng2) => {
 // ({ lat, lng }); rows with none follow in the order the search gave them.
 // Stable, so two places the same distance away keep the search's order, and
 // with no origin the list comes back as it came. A new array either way.
-export const nearestFirst = (venues, origin) => {
+//
+// THE PLACE THE PERSON NAMED LEADS (review, 2026-11-06). Given the `query`
+// the rows answer, a row whose name is that query, word for word (nameKey),
+// comes first, nearest first among such rows, and the rest follow nearest
+// first. Sorting by distance alone let a nearer partial match, or a business
+// Google matched on something else, push the place typed by its full name
+// down the four rows or off them. A prefix is not a name: "tor" leads with
+// nothing unless a place is called Tor.
+export const nearestFirst = (venues, origin, query = '') => {
   if (!Array.isArray(venues)) return [];
-  if (!origin || !Number.isFinite(origin.lat) || !Number.isFinite(origin.lng)) return venues.slice();
+  const want = nameKey(query);
+  const named = (v) => (want && v && nameKey(v.name) === want ? 0 : 1);
+  const hasOrigin = !!origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng);
   const kmTo = (v) => {
+    if (!hasOrigin) return 0;
     const loc = v && v.location;
     const lat = loc && loc.latitude != null ? Number(loc.latitude) : NaN;
     const lng = loc && loc.longitude != null ? Number(loc.longitude) : NaN;
     return Number.isFinite(lat) && Number.isFinite(lng) ? haversineKm(origin.lat, origin.lng, lat, lng) : Infinity;
   };
   return venues
-    .map((v, i) => ({ v, i, km: kmTo(v) }))
-    .sort((a, b) => (a.km === b.km ? a.i - b.i : a.km - b.km))
+    .map((v, i) => ({ v, i, tier: named(v), km: kmTo(v) }))
+    .sort((a, b) => (a.tier - b.tier) || (a.km === b.km ? a.i - b.i : a.km - b.km))
     .map((e) => e.v);
 };

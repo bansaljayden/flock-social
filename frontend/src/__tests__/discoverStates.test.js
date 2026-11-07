@@ -42,10 +42,12 @@ test('a committed search that found nothing or failed clears the last city\'s pi
   expect(end).toBeGreaterThan(start);
   const fn = app.slice(start, end);
   // The pins follow a search only once it is committed (Return, a row, See
-  // all: discoverSearchCommitsPins.test.js), and then an empty answer and a
-  // failure both leave an empty map, not the last city's pins.
-  expect(fn).toMatch(/if \(pendingPinsCommitRef\.current === q\.trim\(\)\) commitSearchPins\(venues\);/);
-  expect(fn).toMatch(/if \(pendingPinsCommitRef\.current === q\.trim\(\)\) commitSearchPins\(\[\]\);/);
+  // all: discoverSearchCommitsPins.test.js) or while the full list is open,
+  // and then an empty answer and a failure both leave an empty map, not the
+  // last city's pins.
+  expect(app).toMatch(/const commitsPins = \(\) => pendingPinsCommitRef\.current === q\.trim\(\) \|\| searchResultsOpenRef\.current;/);
+  expect(fn).toMatch(/if \(commitsPins\(\)\) commitSearchPins\(venues, null, q\.trim\(\)\);/);
+  expect(fn).toMatch(/if \(commitsPins\(\)\) commitSearchPins\(\[\], null, q\.trim\(\)\);/);
   const commit = app.slice(app.indexOf('const commitSearchPins = useCallback('), app.indexOf('const doVenueSearch = useCallback('));
   expect(commit).toMatch(/setAllVenues\(venues\.length > 0 \? venuesToMapPins\(venues\) : \[\]\);/);
 });

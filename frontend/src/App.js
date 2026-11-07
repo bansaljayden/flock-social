@@ -6325,8 +6325,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // committed search for Chicago from Bethlehem must not leave Bethlehem
   // under "All 20 results"), and so does a committed search that failed.
   const pendingPinsCommitRef = useRef(null);
-  const commitSearchPins = useCallback((venues, focus = null) => {
+  // THE FULL LIST FOLLOWS THE BOX (review, 2026-11-06). The results list
+  // (SearchResultsOverlay, from See all or the count chip) draws the map's
+  // pins under a search box of its own, so while it is open every answer for
+  // what the box says becomes the pins, as every typed search did before the
+  // map waited for a commit. A search typed in the list, or the one the box
+  // still owed when See all was tapped over rows for an older query, left the
+  // list on the old pins and their count under the new words. The list
+  // covers the map, so nothing is seen to move. A ref, because the answer
+  // lands after an await.
+  const searchResultsOpenRef = useRef(false);
+  searchResultsOpenRef.current = showSearchResults;
+  // THE WORDS THE PINS ANSWER: the committed query, or '' for the places
+  // around a point (loadVenuesAtLocation, browseVenuesAt). The count chip
+  // reads it to tell whether the box holds words typed since
+  // (ExploreScreen boxAheadOfPins).
+  const [pinsFor, setPinsFor] = useState('');
+  const commitSearchPins = useCallback((venues, focus = null, forQuery = '') => {
     pendingPinsCommitRef.current = null;
+    setPinsFor(forQuery);
     setAllVenues(venues.length > 0 ? venuesToMapPins(venues) : []);
     setActiveVenue(null);
     requestMapFit(focus);
@@ -6357,6 +6374,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const enhanced = enhanceQuery(q);
     const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
     const cacheKey = `${enhanced}|${loc || ''}`;
+    // The pins follow only a committed search (commitSearchPins), or any
+    // search while the full list is open (searchResultsOpenRef has why).
+    const commitsPins = () => pendingPinsCommitRef.current === q.trim() || searchResultsOpenRef.current;
 
     // Check cache (5 min TTL)
     const cached = searchCacheRef.current[cacheKey];
@@ -6366,8 +6386,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueResults(venues);
       setVenueResultsFor(q.trim());
       if (venues.length > 0) requestCrowdScores(venues);
-      // The pins follow only a committed search (commitSearchPins).
-      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins(venues);
+      if (commitsPins()) commitSearchPins(venues, null, q.trim());
       setShowSearchDropdown(true);
       return;
     }
@@ -6388,9 +6407,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueLoadError('');
       // Fire batch crowd prediction (non-blocking, dedupes, feeds the heatmap)
       if (venues.length > 0) requestCrowdScores(venues);
-      // The pins follow only a committed search, an empty answer included
-      // (commitSearchPins says why it empties the map).
-      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins(venues);
+      // An empty answer included (commitSearchPins says why it empties the
+      // map).
+      if (commitsPins()) commitSearchPins(venues, null, q.trim());
     } catch (err) {
       // An aborted search was replaced by a newer one, which says what it
       // needs to; so does any search that is no longer the newest.
@@ -6398,7 +6417,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       console.error('Venue search error:', err);
       // A committed search that failed: the banner says why, and the map is
       // not left showing somewhere else. A typed one leaves the map alone.
-      if (pendingPinsCommitRef.current === q.trim()) commitSearchPins([]);
+      if (commitsPins()) commitSearchPins([], null, q.trim());
       // The dropdown used to render "No venues found. Try a different search."
       // for this, blaming the user's spelling for a dead API key or a 502. The
       // backend answers every one of these with a real sentence
@@ -6580,18 +6599,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // answer becomes the pins when it lands (doVenueSearch reads
   // pendingPinsCommitRef). A search for the same words already out is not
   // paid twice: the server joins the second request to the first's Google
-  // call, or answers it from its five-minute cache.
+  // call, or answers it from its five-minute cache. A search for these words
+  // that FAILED is no answer: Return sends it again, as it always did. It is
+  // the one retry left under "Search is not responding. Try again in a
+  // moment.", since a tap on the box skips a search whose words already
+  // have rows (review, 2026-11-06).
   const commitVenueSearch = useCallback(() => {
     const q = (venueQueryRef.current || '').trim();
     if (q.length < 2) return;
-    if (venueResultsFor === q) {
+    if (venueResultsFor === q && !venueLoadError) {
       cancelPendingVenueSearch();
-      commitSearchPins(venueResults);
+      commitSearchPins(venueResults, null, q);
       return;
     }
     pendingPinsCommitRef.current = q;
     runVenueSearchNow();
-  }, [venueResultsFor, venueResults, commitSearchPins, cancelPendingVenueSearch, runVenueSearchNow]);
+  }, [venueResultsFor, venueResults, venueLoadError, commitSearchPins, cancelPendingVenueSearch, runVenueSearchNow]);
 
   // A ROW TAPPED, OR SEE ALL: the answer on screen becomes the pins. A row
   // also hands over its place, and the map goes there once its pin is on the
@@ -6612,8 +6635,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       photo_url: focusVenue.photo_url || null,
       photo_attribution: focusVenue.photo_attribution || null,
     } : null;
-    commitSearchPins(venueResults, focus);
-  }, [venueResults, commitSearchPins, requestMapFit]);
+    commitSearchPins(venueResults, focus, venueResultsFor);
+  }, [venueResults, venueResultsFor, commitSearchPins, requestMapFit]);
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
@@ -10436,6 +10459,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
       setAllVenues(venuesToMapPins(cached.data));
+      setPinsFor('');
       setMapVenuesLoaded(true);
       // A cache HIT is a successful answer and has to clear a failure the
       // same way the fetch path does. It did not, so one refused search left
@@ -10449,6 +10473,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const venues = data.venues || [];
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
         setAllVenues(venuesToMapPins(venues));
+        setPinsFor('');
         setMapVenuesLoaded(true);
         setVenueLoadError('');
         requestCrowdScores(venues);
@@ -10463,6 +10488,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // session with nothing on screen ever saying why.
         console.error('[Geo] Fallback venue browse failed:', err);
         setAllVenues([]);
+        setPinsFor('');
         setMapVenuesLoaded(true);
         setVenueLoadError(userMessage(err, 'Venues are not loading right now. Try again in a moment.'));
       });
@@ -10478,6 +10504,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const cached = searchCacheRef.current[cacheKey];
     if (cached && Date.now() - cached.timestamp < 300000) {
       setAllVenues(venuesToMapPins(cached.data));
+      setPinsFor('');
       setMapVenuesLoaded(true);
       // A cache HIT is a successful answer and has to clear a failure the
       // same way the fetch path does. It did not, so one refused search left
@@ -10493,6 +10520,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const venues = data.venues || [];
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
         setAllVenues(venuesToMapPins(venues));
+        setPinsFor('');
         setMapVenuesLoaded(true);
         setVenueLoadError('');
         // This is the very first venue list of a session, and it used to skip
@@ -10503,6 +10531,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => {
         console.error('[Geo] Nearby venue search failed:', err);
         setAllVenues([]);
+        setPinsFor('');
         setMapVenuesLoaded(true);
         // The server's own sentence, which is a real answer: a missing Places
         // key, "Searching too fast. Give it a few seconds.", a 502. It used to
@@ -18978,6 +19007,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } catch { /* the owner's own pin still renders; nearby stays empty */ }
       const raw = [ownerVenue, ...nearby];
       setAllVenues(venuesToMapPins(raw));
+      setPinsFor('');
       requestCrowdScores(raw);
       setVenueMapState({ available: true, center: { lat: loc.latitude, lng: loc.longitude } });
     } catch (e) {
@@ -21687,6 +21717,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     commitVenueResults,
     requestMapFit,
     mapFitRequest,
+    pinsFor,
   };
 
   return (
