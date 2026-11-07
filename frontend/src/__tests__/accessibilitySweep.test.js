@@ -914,7 +914,10 @@ describe('DialogBehavior hands focus back to something that can take it', () => 
     // the first control in it, which is the Features pill standing where the
     // opener was.
     expect(dialog).toMatch(/let hop = restoreTo\.parentElement;/);
-    expect(dialog).toMatch(/const near = Array\.from\(hop\.querySelectorAll\(FOCUSABLE_SELECTOR\)\)\.find\(isFocusable\);/);
+    // `takes` is isFocusable, minus a text field on a touch screen (a field
+    // there raises the keyboard; sheetCloseNoKeyboard.test.js).
+    expect(dialog).toMatch(/const takes = \(el\) => isFocusable\(el\) && !\(noKeyboard && isTextEntryField\(el\)\);/);
+    expect(dialog).toMatch(/const near = Array\.from\(hop\.querySelectorAll\(FOCUSABLE_SELECTOR\)\)\.find\(takes\);/);
   });
 
   it('the element that last held focus is remembered before the browser drops it', () => {

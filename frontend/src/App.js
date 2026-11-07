@@ -214,6 +214,7 @@ import EmailConfirmLine from './components/EmailConfirmLine';
 import { withSupportAddress } from './components/ui/SupportAddress';
 import { useStableFn } from './components/chat/useStableFn';
 import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
+import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -4987,16 +4988,29 @@ const isFocusable = (el) => {
  * which for that example is the "Features" button now standing where the
  * opener was. Only if that finds nothing does focus fall to <body>.
  */
-const restoreFocusTo = (restoreTo) => {
+/*
+ * NEVER BACK INTO A TEXT FIELD ON A TOUCH SCREEN. Focusing a field on a phone
+ * raises the keyboard, so a sheet opened from a search row put the keyboard
+ * back up the moment it closed: the venue search box still held focus from the
+ * typing, the sheet's close sent focus home to it, and the keyboard slid up
+ * over the crowd card the person had closed the sheet to look at. On a coarse
+ * pointer a text field is passed over, here and in the walk below, and focus
+ * lands on the nearest control beside it instead (the search box's clear
+ * button), which keeps a screen reader's place without the keyboard. A mouse
+ * and keyboard still get the field back, caret and all.
+ */
+export const restoreFocusTo = (restoreTo) => {
   if (!restoreTo || restoreTo === document.body) return;
-  if (isFocusable(restoreTo)) {
+  const noKeyboard = isCoarsePointer();
+  const takes = (el) => isFocusable(el) && !(noKeyboard && isTextEntryField(el));
+  if (takes(restoreTo)) {
     try { restoreTo.focus({ preventScroll: true }); } catch { /* gone */ }
     if (document.activeElement === restoreTo) return;
   }
   let hop = restoreTo.parentElement;
   while (hop && hop !== document.body) {
     if (isFocusable(hop)) {
-      const near = Array.from(hop.querySelectorAll(FOCUSABLE_SELECTOR)).find(isFocusable);
+      const near = Array.from(hop.querySelectorAll(FOCUSABLE_SELECTOR)).find(takes);
       if (near) { try { near.focus({ preventScroll: true }); } catch { /* gone */ } return; }
     }
     hop = hop.parentElement;

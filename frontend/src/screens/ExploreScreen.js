@@ -364,6 +364,12 @@ export default function ExploreScreen({
                 <button
                   key={venue.place_id}
                   onClick={() => {
+                    // The keyboard goes down with the list. The box kept focus
+                    // through the tap, so the keyboard stayed up under the
+                    // sheet and showed through it, and came back over the
+                    // crowd card when the sheet closed (App.js restoreFocusTo).
+                    const box = document.getElementById('search-input');
+                    if (box && typeof box.blur === 'function') box.blur();
                     setShowSearchDropdown(false);
                     // Pan map to this venue if it's in our markers
                     if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
