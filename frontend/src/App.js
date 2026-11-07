@@ -174,6 +174,8 @@ import NestHero from './components/nest/NestHero';
 import NestRows from './components/nest/NestRows';
 import NestPulse from './components/nest/NestPulse';
 import NestComingUp from './components/nest/NestComingUp';
+import NestBirdieSection from './components/nest/NestBirdieSection';
+import { birdieChips } from './lib/birdieChips';
 import { pickHero, whenLine, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
@@ -7684,7 +7686,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [aiRemaining, setAiRemaining] = useState(null); // free-tier daily chirps left, from the last reply
   const [aiResetsAt, setAiResetsAt] = useState(null); // ISO, when a spent day's box opens: from the 429, the reply that spent it, or the snapshot
   const outOfChirpsRef = useRef(false);
-  const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
+  // 'bubble' is closed; 'panel' and 'fullscreen' are the sheets over the
+  // screen; 'inline' is a thread shown in the Nest's own page
+  // (components/nest/NestBirdieSection.js), which counts as open.
+  const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen' | 'inline'
+  const aiChatModeRef = useRef('bubble');
+  aiChatModeRef.current = aiChatMode;
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
   // Whether this account has let Birdie send its data to Google's Gemini
   // (users.birdie_ai_consent_at, migration 100). Read off authUser, which the
@@ -10675,7 +10682,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The ask is for a device that has never answered; one that has gets
   // nothing from opening Birdie.
   useEffect(() => {
-    if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen') return;
+    if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen' && aiChatMode !== 'inline') return;
     if (localStorage.getItem('flock_location_enabled') === 'false') return;
     if (userLocation || localStorage.getItem('flock_user_lat') !== null) return;
     requestUserLocation();
@@ -11409,7 +11416,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       aiSendingRef.current = false;
       setAiTyping(false);
-      if (aiInputRef.current) aiInputRef.current.focus();
+      if (aiInputRef.current && aiChatModeRef.current !== 'inline') aiInputRef.current.focus();
     }
   }, [aiMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -16155,7 +16162,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // button's corner and left a sliver of red disc showing past its edge, a
   // few pixels of emergency control under a sheet (proportion pass,
   // 2026-10-20). Closing Birdie brings it straight back.
-  const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && aiChatMode === 'bubble' && (
+  // An answer in the Nest's page ('inline') covers nothing, so SOS stays.
+  const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && (aiChatMode === 'bubble' || aiChatMode === 'inline') && (
     <div
       className="fab-corner"
       role="button"
@@ -17794,6 +17802,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // AI Assistant — Expandable Chat (panel / fullscreen)
   const isAiPanel = aiChatMode === 'panel';
   const isAiFullscreen = aiChatMode === 'fullscreen';
+  const presentation = aiChatMode === 'inline' ? 'inline' : (isAiFullscreen ? 'fullscreen' : 'panel');
+  // The Nest's own scroll box, which an inline thread lands its question in.
+  const getPageScroller = () => scrollEls.current.home || null;
   // Where Birdie's memory starts in the transcript on screen, and whether the
   // send button can actually do anything. Both read once, here, so the marker
   // in the thread and the payload sendAiMessage builds come off the same
@@ -17914,6 +17925,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     fillAiInput,
     flocks,
     formatEventTime,
+    getPageScroller,
     isAiFullscreen,
     isAiPanel,
     isDark,
@@ -17923,6 +17935,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     openExternal,
     openVenueDetail,
     outOfChirps,
+    presentation,
     sendAiMessage,
     setAiInputHasText,
     setAiShareVenue,
@@ -17948,6 +17961,49 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      there a cold tap waits out one round trip, the same beat the wrap-up
      sheet's own warm comment names. A chunk that cannot be fetched at all
      resolves to BirdiePanelUnavailable rather than throwing at the root. */
+  // ASK BIRDIE ON THE NEST (components/nest/NestBirdieSection.js). The first
+  // focus or suggestion warms the panel's chunk, so the inline thread is in
+  // memory by the time a question goes. Before the account has said yes to
+  // Gemini, either one shows the consent question in place of the field; Not
+  // now puts the field back and asks again only on the next tap. A send puts
+  // the thread in the page ('inline') and lets the keyboard go.
+  const nestBirdieFocus = () => {
+    loadBirdiePanel().catch(() => {});
+    if (!birdieConsented) setAiChatMode('inline');
+  };
+  const nestBirdieSend = () => {
+    if (!aiInputValueRef.current.trim()) return;
+    loadBirdiePanel().catch(() => {});
+    setAiChatMode('inline');
+    if (!birdieConsented) return;
+    if (aiInputRef.current) aiInputRef.current.blur();
+    sendAiMessage();
+  };
+  const nestBirdieChip = (text) => {
+    loadBirdiePanel().catch(() => {});
+    setAiChatMode('inline');
+    if (!birdieConsented) {
+      // Kept in the box for after Allow, without raising the keyboard over
+      // the question.
+      aiInputValueRef.current = text;
+      aiInputHasTextRef.current = true;
+      setAiInputHasText(true);
+      return;
+    }
+    fillAiInput(text, { send: true });
+  };
+  const nestBirdieNewChat = () => {
+    startNewAiChat();
+    // startNewAiChat hands the box focus for the panel; on the Nest the field
+    // is part of the page and waits for a tap.
+    if (typeof document !== 'undefined' && document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  };
+  const nestBirdieInline = aiChatMode === 'inline' && (!birdieConsented || aiMessages.length > 0) && (
+    <React.Suspense fallback={<div style={{ minHeight: '52px' }} />}>
+      <BirdiePanel {...birdiePanelProps} />
+    </React.Suspense>
+  );
+
   const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
     <React.Suspense fallback={null}>
       <BirdiePanel {...birdiePanelProps} />
@@ -18132,6 +18188,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // held (lib/pulse.js friendsDownLine): never one who said Not, never a
     // note, and nothing from midnight to 4 AM.
     const nestFriendsOut = friendsDownLine(friendsPulses, nestNow);
+    // Birdie's thread is open in the page (NestBirdieSection).
+    const nestThreadOpen = aiChatMode === 'inline' && aiMessages.length > 0;
     // COMING UP: the plans after the hero's night, by when. Each card's faces
     // come from member_previews (a name and an avatar for up to four
     // accepted members, creator first, which GET /api/flocks sends), with
@@ -18175,7 +18233,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           chip under SOS, or under Birdie moved to that corner. The bottom
           padding is the docked row's height; the list's own 14px margin is the
           gap above it. */}
-      <div ref={feedScroll.home.ref} onScroll={handleScroll} style={{ flex: 1, padding: `0 var(--nest-gutter) ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      <div ref={feedScroll.home.ref} data-nest-scroll="" onScroll={handleScroll} style={{ flex: 1, padding: `0 var(--nest-gutter) ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* The day, then the name. The name is a title, not the page's
             biggest words: those belong to the plan the person is about to
@@ -18245,11 +18303,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             a first plan has: nobody else needs the app. */}
         {!flocksLoading && !flocksError && liveFlocks.length === 0 && (
           <div data-nest-band="empty" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '4px 0 0', marginBottom: '28px' }}>
-            {/* The painted crowd, its cut edges faded into the ground. */}
+            {/* The painted crowd, its cut edges faded into the ground. While
+                Birdie's thread is open in the page it folds away (200 ms, its
+                height and its opacity), so both buttons stay on the first
+                screen above the answer. */}
+            <div data-nest-art="" style={{ display: 'grid', width: '100%', gridTemplateRows: nestThreadOpen ? '0fr' : '1fr', opacity: nestThreadOpen ? 0 : 1, transition: 'grid-template-rows 200ms var(--ease-out), opacity 200ms var(--ease-out)' }}>
+              <div style={{ overflow: 'hidden', minHeight: 0, display: 'flex', justifyContent: 'center' }}>
             <EmptyMark name="crowd" height={100} style={{ maskImage: 'linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent)', WebkitMaskImage: 'linear-gradient(90deg, transparent 0, #000 9%, #000 91%, transparent)' }} />
+              </div>
+            </div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.01em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h2>
             <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '310px', lineHeight: 1.45 }}>{flocks.length > 0 ? 'Finished flocks are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
-            <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.plus('var(--btn-primary-fg)', 16)} Start a flock
             </button>
             <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
@@ -18333,6 +18398,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
           </button>
         )}
+
+        {/* ASK BIRDIE. A section of the page, never a panel over it: the
+            consent question, the latest question and its answer, and the
+            venue cards all render here, so Start a flock and Add friends stay
+            where they are and the answer gets the page's height. */}
+        <NestBirdieSection
+          isDark={isDark}
+          inline={nestBirdieInline}
+          hasThread={aiMessages.length > 0}
+          showLastAnswer={aiChatMode !== 'inline' && aiMessages.length > 0}
+          onShowLastAnswer={() => setAiChatMode('inline')}
+          onNewChat={nestBirdieNewChat}
+          newChatDisabled={aiTyping}
+          chips={birdieChips({ liveFlocks, now: nestNow, outOfChirps, firstRun: flocks.length === 0 })}
+          onChip={nestBirdieChip}
+          inputRef={aiInputRef}
+          inputValueRef={aiInputValueRef}
+          inputHasText={aiInputHasText}
+          inputHasTextRef={aiInputHasTextRef}
+          setInputHasText={setAiInputHasText}
+          maxChars={AI_CHAT_MAX_MESSAGE_CHARS}
+          onFocusField={nestBirdieFocus}
+          onSend={nestBirdieSend}
+          canSend={canSendAi}
+        />
 
         <div>
           {/* COMING UP. Completed and cancelled plans leave Home: they are

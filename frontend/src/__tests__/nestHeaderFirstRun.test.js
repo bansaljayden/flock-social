@@ -179,7 +179,7 @@ describe('nothing the Nest draws overshoots', () => {
 
 describe('the header scrolls with the page', () => {
   test('it is the first thing inside the Nest\'s scroll box', () => {
-    const box = HOME.indexOf('<div ref={feedScroll.home.ref} onScroll={handleScroll}');
+    const box = HOME.indexOf('<div ref={feedScroll.home.ref} data-nest-scroll="" onScroll={handleScroll}');
     expect(box).toBeGreaterThan(-1);
     const after = code(HOME.slice(box));
     const firstTag = after.slice(after.indexOf('>') + 1).match(/<([a-zA-Z]+)[\s>]/);

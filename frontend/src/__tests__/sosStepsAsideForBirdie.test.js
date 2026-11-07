@@ -12,10 +12,21 @@ import path from 'path';
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 
-test('the SOS button is drawn only while Birdie is closed to its bubble', () => {
+test('the SOS button steps aside for Birdie\'s sheets only: closed, or a thread in the Nest\'s page, it stays', () => {
+  // 'inline' (2026-11-06) is an answer in the Nest's own page, which covers
+  // nothing, so the emergency control stays beside it. The docked panel and
+  // the full screen are drawn over SOS's corner, and there it steps aside.
   expect(APP).toContain(
-    "const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && aiChatMode === 'bubble' && ("
+    "const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && (aiChatMode === 'bubble' || aiChatMode === 'inline') && ("
   );
+  const guard = APP.match(/const SafetyButton = \(\) => (safetyOn && [^\n]*?) && \(\n/);
+  expect(guard).not.toBeNull();
+  // eslint-disable-next-line no-new-func
+  const shown = (aiChatMode) => !!new Function('safetyOn', 'currentScreen', 'currentTab', 'showSOS', 'aiChatMode', `return (${guard[1]});`)(true, 'main', 'home', false, aiChatMode);
+  expect(shown('bubble')).toBe(true);
+  expect(shown('inline')).toBe(true);
+  expect(shown('panel')).toBe(false);
+  expect(shown('fullscreen')).toBe(false);
 });
 
 test("'bubble' is the closed state, the one closing Birdie returns to", () => {

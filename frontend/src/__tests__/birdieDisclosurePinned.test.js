@@ -156,3 +156,19 @@ test('the empty state line is two things, not a list of three', () => {
   expect(PANEL).toContain("where's good tonight and how packed it gets. ask away.");
   expect(PANEL).not.toContain('what your flock is up to');
 });
+
+describe('on the Nest\'s page (inline, 2026-11-06)', () => {
+  test('the section says the Terms\' Gemini sentence before anyone types, the same words as the panel', () => {
+    const { BIRDIE_STANDFIRST } = require('../components/nest/NestBirdieSection');
+    expect(BIRDIE_STANDFIRST).toBe(GEMINI);
+    expect(PANEL).toContain(`>${GEMINI}</p>`);
+  });
+
+  test('under the answer, the same line at full strength', () => {
+    const { container } = render(<BirdiePanel {...birdiePanelProps({ presentation: 'inline', isAiPanel: false, getPageScroller: () => null, aiMessages: [{ role: 'user', text: 'where to' }, { role: 'assistant', text: 'Larkspur Tap.' }] })} />);
+    const line = container.querySelector('[data-birdie-disclosure-inline]');
+    expect(line.textContent).toBe(UNDER);
+    expect(seenOpacity(line)).toBe(1);
+    expect(PANEL).toMatch(/<p data-birdie-disclosure-inline="" style=\{\{ margin: '0 0 4px', fontSize: 'var\(--t-label\)', fontWeight: '500', color: 'var\(--text-secondary\)' \}\}>Answers are generated and can be wrong\.<\/p>/);
+  });
+});

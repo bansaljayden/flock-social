@@ -88,7 +88,17 @@
  *
  * The JSX below is a character-for-character copy of the deleted lines,
  * original indentation included, so a diff against the removed block is empty.
+ *
+ * THREE PRESENTATIONS (2026-11-06). `presentation` is 'panel' (docked over the
+ * screen), 'fullscreen' (the sheet) or 'inline': a section of the Nest's own
+ * page (components/nest/NestBirdieSection.js), where the answer gets the page
+ * instead of the 230px a docked panel left it. Inline draws the consent block,
+ * the latest exchange with its cards, a line under the answer saying it can be
+ * wrong, and the composer, with no backdrop, sheet, header bar or
+ * DialogBehavior; older turns sit behind "Earlier in this chat", which opens
+ * the full screen. The venue cards are the same JSX in every presentation.
  */
+import { liftNestField, dropNestField } from '../../lib/nestKeyboard';
 import React, { useEffect, useRef } from 'react';
 import Icons from '../ui/Icons';
 import BirdieBird, { BirdieStill, WARM_BIRD } from '../ui/BirdieBird';
@@ -163,6 +173,7 @@ export default function BirdiePanel({
   fillAiInput,
   flocks,
   formatEventTime,
+  getPageScroller,
   isAiFullscreen,
   isAiPanel,
   isDark,
@@ -172,6 +183,7 @@ export default function BirdiePanel({
   openExternal,
   openVenueDetail,
   outOfChirps,
+  presentation,
   sendAiMessage,
   setAiInputHasText,
   setAiShareVenue,
@@ -187,6 +199,15 @@ export default function BirdiePanel({
   transmitDm,
   transmitFlockMessage,
 }) {
+  // Inline is a section of the Nest's page, not a sheet over it.
+  const isInline = presentation === 'inline';
+  // Inline shows the latest exchange: the reader's last question and what
+  // came after it. Older turns are a tap away in the full screen.
+  let inlineFrom = 0;
+  for (let k = aiMessages.length - 1; k >= 0; k -= 1) {
+    if (aiMessages[k].role === 'user') { inlineFrom = k; break; }
+  }
+  const lastTurn = aiMessages.length > 0 ? aiMessages[aiMessages.length - 1] : null;
   // The thread's scroll box, and what the landing effect below knows about
   // it: whether the reader scrolled away from the end on purpose, where it
   // last put the thread itself, and the mode it last landed in.
@@ -217,8 +238,11 @@ export default function BirdiePanel({
   // flags stay in the dependency list because expanding the panel to
   // fullscreen is the other thing that used to re-run this, and that happens
   // without a remount.
+  //
+  // Never inline: on the Nest the box is part of the page, and a keyboard
+  // rising by itself after a send would cover the answer it is waiting for.
   useEffect(() => {
-    if (aiMessages.length > 0
+    if (!isInline && aiMessages.length > 0
         && aiInputRef.current) {
       setTimeout(() => aiInputRef.current?.focus(), 200);
     }
@@ -250,8 +274,38 @@ export default function BirdiePanel({
   // costs nothing: a ref identity does not change for the life of
   // FlockAppInner, so this effect still runs exactly when the transcript, the
   // typing indicator or the mode changes.
+  //
+  // INLINE, THE PAGE IS THE THREAD. A question just asked is scrolled to
+  // 12px under the top of the Nest's own scroll box, so the answer arrives in
+  // the room below it, never under the strip or the tab bar; the answer itself
+  // moves nothing. With no plans on the page, the scroll stops where Start a
+  // flock is still on screen (the box's data-nest-keep marker). Under Reduce
+  // Motion the move is a jump.
   useEffect(() => {
-    if (!aiChatEndRef.current) return;
+    if (!isInline) return;
+    const seen = aiMsgCountRef.current;
+    const count = aiMessages.length;
+    aiMsgCountRef.current = count;
+    const last = count > 0 ? aiMessages[count - 1] : null;
+    if (!(count > seen && last?.role === 'user')) return;
+    requestAnimationFrame(() => {
+      const box = getPageScroller ? getPageScroller() : null;
+      const turn = box && box.querySelector(`[data-birdie-turn="${count - 1}"]`);
+      if (!box || !turn) return;
+      const boxTop = box.getBoundingClientRect().top;
+      let top = box.scrollTop + (turn.getBoundingClientRect().top - boxTop) - 12;
+      const keep = box.querySelector('[data-nest-keep]');
+      if (keep) top = Math.min(top, box.scrollTop + (keep.getBoundingClientRect().top - boxTop) - 12);
+      let still = false;
+      try { still = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { still = false; }
+      const to = Math.max(0, top);
+      if (typeof box.scrollTo === 'function') box.scrollTo({ top: to, behavior: still ? 'auto' : 'smooth' });
+      else box.scrollTop = to;
+    });
+  }, [aiMessages, isInline]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (isInline || !aiChatEndRef.current) return;
     const seen = aiMsgCountRef.current;
     const count = aiMessages.length;
     aiMsgCountRef.current = count;
@@ -277,7 +331,7 @@ export default function BirdiePanel({
         end.scrollIntoView({ behavior: 'auto' });
       }
     });
-  }, [aiMessages, aiTyping, isAiPanel, isAiFullscreen, aiChatEndRef, aiMsgCountRef]);
+  }, [aiMessages, aiTyping, isAiPanel, isAiFullscreen, isInline, aiChatEndRef, aiMsgCountRef]);
 
   // The reader's own scrolling: away from the end on purpose, or back at it. A
   // scroll the effect above made lands where it was put and says nothing about
@@ -291,7 +345,7 @@ export default function BirdiePanel({
   };
 
   return (
-      <div onClick={(e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={{
+      <div data-birdie-inline={isInline ? '' : undefined} onClick={isInline ? undefined : (e) => { if (e.target === e.currentTarget) closeAiChat(); }} style={isInline ? undefined : {
         /* Birdie used to follow you across every tab, sitting over 55% of the
            screen with no keyboard way out. It now closes when you navigate
            (see the effect next to aiChatMode) and DialogBehavior below adds
@@ -316,7 +370,7 @@ export default function BirdiePanel({
         paddingBottom: isAiFullscreen ? 'var(--kb-inset, 0px)' : undefined,
         transition: 'background-color 0.3s ease, padding-bottom 250ms cubic-bezier(0.38, 0.7, 0.125, 1)',
       }}>
-        <div style={{
+        <div style={isInline ? undefined : {
           backgroundColor: 'var(--bg-card-solid)',
           borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px',
           width: isAiFullscreen ? '100%' : 'calc(100% - 24px)',
@@ -350,12 +404,14 @@ export default function BirdiePanel({
           animation: 'birdieExpand 0.25s var(--ease-out)',
           overflow: 'hidden',
         }}>
-          <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
+          {!isInline && <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />}
           {/* Header. On the card's own surface with a hairline under it, where
               it was a navy bar: the panel is one sheet, and a coloured band
               across its top made it read as a chat widget bolted onto the
               page. The controls are painted at 32px, 8px apart, so their 44px
-              hit boxes (.hit44) no longer overlap one another. */}
+              hit boxes (.hit44) no longer overlap one another. Not drawn
+              inline: the Nest's section carries its own heading. */}
+          {!isInline && (
           <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: 'var(--bg-card-solid)', borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexShrink: 0 }}>
             {/* minWidth 0 and a one-line subtitle. The header gained a third
                 button, and without these the title block refuses to shrink: at
@@ -406,6 +462,7 @@ export default function BirdiePanel({
               <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-primary)', 14)}</button>
             </div>
           </div>
+          )}
 
           {/* ASKED ONCE, BEFORE THE FIRST MESSAGE. App Store Guideline
               5.1.2(i): personal data goes to a third-party AI only with the
@@ -421,12 +478,12 @@ export default function BirdiePanel({
               closes Birdie and touches nothing else in the app; the question
               comes back the next time Birdie opens. */}
           {!birdieConsented ? (
-            <div className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            <div className={isInline ? undefined : 'birdie-bg'} style={isInline ? { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px' } : { flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
               <div role="group" aria-labelledby="birdie-consent-title" style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', maxWidth: '320px', margin: '0 auto', padding: '4px 4px 8px', textAlign: 'center' }}>
                 {/* The still image, not the animated bird: a question is not
                     the place for a rAF loop, and birdBrandMoments.test.js keeps
                     the animated one to the two mounts that greet a chat. */}
-                <BirdieStill size={isAiPanel ? 64 : 96} eager />
+                <BirdieStill size={isAiPanel || isInline ? 64 : 96} eager />
                 <p id="birdie-consent-title" style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>Before Birdie answers</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range if your account has one, your time zone with the date and time it is there, and what you have open in Flock. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Your email, your exact location and your chats with friends are not sent. Answers are generated and can be wrong.</p>
@@ -435,18 +492,24 @@ export default function BirdiePanel({
                   <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '600', margin: 0, lineHeight: 1.4 }}>{birdieConsentError}</p>
                 )}
                 <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
-                  <button type="button" className="hit44" onClick={closeAiChat} disabled={birdieConsentBusy} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'default' : 'pointer' }}>Not now</button>
-                  <button type="button" className="hit44" onClick={() => answerBirdieConsent(true)} disabled={birdieConsentBusy} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'wait' : 'pointer', opacity: birdieConsentBusy ? 0.6 : 1 }}>{birdieConsentBusy ? 'Saving…' : 'Allow'}</button>
+                  <button type="button" className="hit44" onClick={closeAiChat} disabled={birdieConsentBusy} style={{ flex: 1, minHeight: '44px', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'default' : 'pointer' }}>Not now</button>
+                  <button type="button" className="hit44" onClick={() => answerBirdieConsent(true)} disabled={birdieConsentBusy} style={{ flex: 1, minHeight: '44px', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieConsentBusy ? 'wait' : 'pointer', opacity: birdieConsentBusy ? 0.6 : 1 }}>{birdieConsentBusy ? 'Saving…' : 'Allow'}</button>
                 </div>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.45 }}>You can turn this off later in You, under Safety and privacy.</p>
               </div>
             </div>
           ) : (<>
           {/* Messages */}
-          <div ref={threadRef} onScroll={onThreadScroll} data-birdie-thread="" className="birdie-bg" style={{ flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+          <div ref={threadRef} onScroll={isInline ? undefined : onThreadScroll} data-birdie-thread="" className={isInline ? undefined : 'birdie-bg'} style={isInline ? undefined : { flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            {/* Inline, older turns are one tap away in the full screen. */}
+            {isInline && inlineFrom > 0 && (
+              <button type="button" onClick={toggleAiFullscreen} style={{ display: 'block', minHeight: '44px', padding: 0, margin: '-8px 0 4px', border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                Earlier in this chat ({inlineFrom})
+              </button>
+            )}
             {/* Once the chat starts he steps aside: a whisper behind the
                 thread rather than a second thing to read. */}
-            {aiMessages.length > 0 && (
+            {!isInline && aiMessages.length > 0 && (
               <div style={{ position: 'absolute', inset: 0, zIndex: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: isDark ? 0.12 : 0.07, pointerEvents: 'none' }}>
                 <BirdieBird size={isAiPanel ? 148 : 200} dark={isDark} />
               </div>
@@ -454,7 +517,7 @@ export default function BirdiePanel({
 
             {/* Empty state: Birdie, then the greeting, then the chips — one
                 stack in normal flow so nothing overlaps him. */}
-            {aiMessages.length === 0 && (
+            {!isInline && aiMessages.length === 0 && (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '0 16px 12px', pointerEvents: 'none', zIndex: 1 }}>
                 <BirdieBird size={isAiPanel ? 120 : 168} dark={isDark} style={{ marginBottom: '2px' }} />
                 <p style={{ fontSize: isAiPanel ? 'var(--t-label)' : 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, textAlign: 'center' }}>hey, it's Birdie.</p>
@@ -483,7 +546,7 @@ export default function BirdiePanel({
               </div>
             )}
 
-            {aiMessages.map((msg, i) => (
+            {aiMessages.map((msg, i) => (isInline && i < inlineFrom ? null : (
               <React.Fragment key={i}>
               {/* Where Birdie's memory starts. The server takes the last 24
                   messages and this client sends exactly that, so past 24 the
@@ -506,12 +569,23 @@ export default function BirdiePanel({
                   </p>
                 </div>
               )}
-              <div data-birdie-turn={i} style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', position: 'relative', zIndex: 2 }}>
+              <div data-birdie-turn={i} style={{ display: 'flex', gap: isInline ? '6px' : '8px', marginBottom: isInline ? '14px' : '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : (isInline ? 'column' : 'row'), position: 'relative', zIndex: 2 }}>
+                {isInline && msg.role !== 'user' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '22px', height: '22px', borderRadius: '999px', objectFit: 'cover', background: isDark ? '#162046' : '#e8eaf0' }} />
+                    <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)' }}>Birdie</span>
+                  </div>
+                )}
+                {!isInline && (
                 <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
-                <div style={{ maxWidth: '78%' }}>
-                  <div className="selectable" style={{ borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.10)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
+                )}
+                <div style={{ maxWidth: isInline ? (msg.role === 'user' ? '85%' : '100%') : '78%' }}>
+                  <div className="selectable" style={isInline ? (msg.role === 'user'
+                    ? { borderRadius: '16px 16px 4px 16px', padding: '10px 14px', fontSize: 'var(--t-body)', lineHeight: '22px', backgroundColor: isDark ? '#1e3a5c' : '#1e293b', color: isDark ? '#f1ede0' : '#ffffff', whiteSpace: 'pre-wrap' }
+                    : { fontSize: 'var(--t-body)', fontWeight: '400', lineHeight: '22px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap' })
+                    : { borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-hover)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', boxShadow: msg.role === 'user' ? '0 2px 8px rgba(13,40,71,0.10)' : '0 1px 3px rgba(0,0,0,0.05)', whiteSpace: 'pre-wrap' }}>
                     {msg.text}
                   </div>
                   {/* Venue Cards from AI */}
@@ -689,7 +763,7 @@ export default function BirdiePanel({
                 </div>
               </div>
               </React.Fragment>
-            ))}
+            )))}
 
             {/* WHILE AN ANSWER IS ON ITS WAY: the still bird and what is
                 happening, in words. Three bouncing dots were a person typing,
@@ -703,12 +777,15 @@ export default function BirdiePanel({
                 <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Working on your answer</span>
               </div>
             )}
+            {isInline && lastTurn && lastTurn.role !== 'user' && !aiTyping && (
+              <p data-birdie-disclosure-inline="" style={{ margin: '0 0 4px', fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Answers are generated and can be wrong.</p>
+            )}
             <div ref={aiChatEndRef} />
           </div>
 
           {/* Suggested Questions — mid-conversation only; the empty state
               carries its own chips under the bird */}
-          {!aiTyping && aiMessages.length > 0 && !outOfChirps && (
+          {!isInline && !aiTyping && aiMessages.length > 0 && !outOfChirps && (
             <div style={{ padding: isAiPanel ? '6px 10px' : '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
               {isAiFullscreen && <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -726,8 +803,8 @@ export default function BirdiePanel({
               the bottom of the phone, so it carries the home indicator strip
               (SAFE-AREA rule 1); the docked panel floats above the tab bar and
               does not touch it. */}
-          <div style={{ padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
-            <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
+          <div style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
+            <div style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
                 {/* maxLength is the server's own per-message ceiling. Without
@@ -744,7 +821,7 @@ export default function BirdiePanel({
                     the ref: reopening after closing without sending, and a
                     re-armed chunk while it is open. Seeding off the ref reads
                     "" in every other case, because both senders clear it. */}
-                <input aria-label="Ask Birdie" enterKeyHint="send" ref={aiInputRef} type="text" defaultValue={aiInputValueRef.current || ''} maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder="Ask about a place or a night out" style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
+                <input aria-label="Ask Birdie" enterKeyHint="send" ref={aiInputRef} onFocus={isInline ? liftNestField : undefined} onBlur={isInline ? dropNestField : undefined} type="text" defaultValue={aiInputValueRef.current || ''} maxLength={AI_CHAT_MAX_MESSAGE_CHARS} onInput={(e) => { aiInputValueRef.current = e.target.value; const has = !!e.target.value; if (has !== aiInputHasTextRef.current) { aiInputHasTextRef.current = has; setAiInputHasText(has); } }} onKeyDown={(e) => e.key === 'Enter' && sendAiMessage()} placeholder={isInline ? 'Ask a follow-up' : 'Ask about a place or a night out'} style={{ flex: 1, padding: '11px 0', backgroundColor: 'transparent', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-body)', outline: 'none', fontWeight: '500', lineHeight: '1.4' }} autoComplete="off" />
                 {/* `!aiInputHasText && !aiTyping` left this ENABLED for the
                     whole time Birdie was answering, including over an empty
                     box, where pressing it did nothing; and it was drawn at 0.4
@@ -768,7 +845,7 @@ export default function BirdiePanel({
                     Get Flock Pro
                   </button>}
                 </div>
-              ) : (
+              ) : isInline ? null : (
               /* Action buttons row. Labels never wrap ("My Flocks" broke onto
                  two lines at 390px), and the line on the right drops to its
                  own row under the buttons instead of squeezing beside them. */
@@ -807,6 +884,12 @@ export default function BirdiePanel({
               )}
             </div>
           </div>
+          {isInline && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', marginTop: '4px' }}>
+              <button type="button" className="hit44" onClick={toggleAiFullscreen} style={{ minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Open the full chat</button>
+              <button type="button" className="hit44" onClick={closeAiChat} style={{ minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Done</button>
+            </div>
+          )}
           </>)}
 
           {/* Venue Share Picker.
@@ -816,6 +899,10 @@ export default function BirdiePanel({
               its one way forward, was cut in half by the panel's edge. It may
               now take the panel's height less a strip of the dimmed answer
               above it, and its body scrolls when a long list needs more.
+              INLINE, in the Nest's page, it is one sheet over the whole page
+              (the nearest positioned box is the screen), rising from the
+              bottom with a grabber, and never taller than the screen under
+              the status bar, so Start a flock here is never cut off.
               SENT TO A FRIEND. Below the flocks (or the empty state), the
               people this account already has a conversation with: a tap sends
               the venue's card into that DM over the same reconciled path the
@@ -833,9 +920,10 @@ export default function BirdiePanel({
               .filter((d) => !refused(dmBlocked, d.userId) && !refused(dmNotConnected, d.userId))
               .slice(0, 5);
             return (
-            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: '24px 24px 0 0' }}>
+            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: isInline ? 0 : '24px 24px 0 0' }}>
               <DialogBehavior onClose={() => setAiShareVenue(null)} label="Share this venue" />
-              <div data-share-sheet style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <div data-share-sheet className={isInline ? 'sheet-rise' : undefined} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: isInline ? 'calc(100% - var(--safe-top) - 24px)' : 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column', paddingBottom: isInline ? 'var(--safe-bottom)' : undefined }}>
+                {isInline && <div aria-hidden="true" style={{ width: '36px', height: '5px', borderRadius: '999px', backgroundColor: 'var(--border-mid)', margin: '8px auto 0', flexShrink: 0 }} />}
                 <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>

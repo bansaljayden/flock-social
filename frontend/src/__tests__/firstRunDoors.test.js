@@ -146,7 +146,8 @@ test('the empty calendar has a next action', () => {
 // "popular nearby" every time Birdie opened (app audit 2026-10-03).
 test('opening Birdie does not reload the map on a device that already has a location', () => {
   const app = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
-  const start = app.indexOf("if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen') return;");
+  // Birdie on the Nest's page ('inline', 2026-11-06) asks the same way.
+  const start = app.indexOf("if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen' && aiChatMode !== 'inline') return;");
   expect(start).toBeGreaterThan(-1);
   const effect = app.slice(start, app.indexOf('}, [aiChatMode]);', start));
   expect(effect).toMatch(/if \(userLocation \|\| localStorage\.getItem\('flock_user_lat'\) !== null\) return;\s*requestUserLocation\(\);/);

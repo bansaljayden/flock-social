@@ -167,12 +167,21 @@ const allFiles = () => {
 const styleOf = (opening) => {
   const attr = opening.attributes.find((a) => a.type === 'JSXAttribute' && a.name && a.name.name === 'style');
   if (!attr || !attr.value || attr.value.type !== 'JSXExpressionContainer') return null;
-  const expr = attr.value.expression;
-  if (expr.type !== 'ObjectExpression') return null;
+  // A style chosen by presentation (BirdiePanel's `isInline ? undefined :
+  // {...}`, 2026-11-06) is read as both of its objects, so the sheet branch is
+  // still swept.
+  const objects = [];
+  const collect = (expr) => {
+    if (!expr) return;
+    if (expr.type === 'ObjectExpression') objects.push(expr);
+    else if (expr.type === 'ConditionalExpression') { collect(expr.consequent); collect(expr.alternate); }
+  };
+  collect(attr.value.expression);
+  if (objects.length === 0) return null;
   const out = {};
-  expr.properties.forEach((p) => {
+  objects.forEach((expr) => expr.properties.forEach((p) => {
     if (p.type === 'ObjectProperty') out[p.key.name || p.key.value] = p.value;
-  });
+  }));
   return out;
 };
 
