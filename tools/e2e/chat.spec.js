@@ -346,13 +346,16 @@ async function openDmWith(page, personName) {
   } else {
     await page.getByRole('button', { name: 'New message' }).click();
     await page.getByRole('textbox', { name: /search people by name/i }).fill(personName);
-    // The search RESULT, by its own name: "<initial> <name> ›". The row check
-    // above is instant and the Messages list is a lazy screen, so an existing
-    // thread can render a moment after that check said "no row". It then sits
-    // behind the sheet under the same name (as a heading, and as a row whose
-    // name carries the time and last line, never the "›"), and a plain text
-    // lookup found it first and could not click through the sheet.
-    await page.getByRole('button', { name: new RegExp(`${escapeRe(personName)}\\s*›$`) }).first().click({ timeout: 25_000 });
+    // The search RESULT, inside the New message sheet. The row check above is
+    // instant and the Messages list is a lazy screen, so an existing thread
+    // can render a moment after that check said "no row". It then sits behind
+    // the sheet under the same name (as a heading, and as a row whose name
+    // carries the time and last line), and a page-wide lookup found it first
+    // and could not click through the sheet. The result rows used to end on a
+    // text "›" that told them apart; they draw Icons.chevronRight now, which
+    // has no name, so the sheet itself is the scope.
+    await page.getByRole('dialog', { name: 'New message' })
+      .getByRole('button', { name: new RegExp(`^\\s*\\S{0,2}\\s*${escapeRe(personName)}`) }).first().click({ timeout: 25_000 });
   }
   await expect(composer(page)).toBeVisible({ timeout: 25_000 });
 }
