@@ -197,7 +197,7 @@ describe('the four actions keep their original wiring', () => {
     expect(note.textContent).not.toMatch(/—/);
   });
 
-  it('Alert Contacts is two-step: first tap arms, second tap fires the handler', () => {
+  it('Alert contacts is two-step: first tap arms, second tap fires the handler', () => {
     const onArmedChange = jest.fn();
     const onAlertContacts = jest.fn();
     const { unmount } = renderSheet({ onArmedChange, onAlertContacts });
@@ -222,7 +222,7 @@ describe('the four actions keep their original wiring', () => {
     expect(onArmedChange).toHaveBeenCalledWith(false);
   });
 
-  it('Share Location arms first, then fires its handler on the second tap', () => {
+  it('Share location arms first, then fires its handler on the second tap', () => {
     // Armed since 2026-09-04: it emails an exact coordinate to every trusted
     // contact and sat one tap under a button that deliberately takes two.
     const onShareLocation = jest.fn();
@@ -260,7 +260,7 @@ describe('presentation pins (jsdom computes no layout, so the CSS is the record)
     expect(call).toContain('font-weight: 700');
   });
 
-  it('the old inverted pair is gone: Alert Contacts is a tinted secondary', () => {
+  it('the old inverted pair is gone: Alert contacts is a tinted secondary', () => {
     const alert = SHEET_CSS.slice(SHEET_CSS.indexOf('.es-alert {'), SHEET_CSS.indexOf('.es-alert.es-armed'));
     expect(alert).toContain('var(--accent-red-bg)');
     expect(alert).toContain('var(--accent-red-text)');
@@ -437,8 +437,8 @@ describe('SOS stand-down', () => {
 
   it('a stand-down in flight disables the two controls that would raise a new alarm', () => {
     render(<EmergencySheet {...baseProps} alertLive standingDown onStandDown={noop} />);
-    expect(screen.getByText('Alert Contacts').closest('button').disabled).toBe(true);
-    expect(screen.getByText('Share Location').closest('button').disabled).toBe(true);
+    expect(screen.getByText('Alert contacts').closest('button').disabled).toBe(true);
+    expect(screen.getByText('Share location').closest('button').disabled).toBe(true);
     expect(screen.getByText(/Telling them\.\.\./i)).toBeTruthy();
   });
 

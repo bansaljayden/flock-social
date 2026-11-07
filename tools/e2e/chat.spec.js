@@ -408,7 +408,7 @@ test.describe('flock chat, with two people watching it', () => {
     // Since fca69ed the Who group prints its label and its answer as two
     // texts, the count sitting at the right edge of the label row.
     await expect(ada.page.getByText('2 invited', { exact: true })).toBeVisible();
-    await ada.page.getByRole('button', { name: 'Create Flock' }).click();
+    await ada.page.getByRole('button', { name: 'Create flock' }).click();
     // CREATING ENDS ON A SHARE STEP, NOT IN THE CHAT, and every spec in this
     // describe was failing in this one line because of it. The guest-link work
     // put "<name> is made. / Now put it where your friends already are" between
@@ -775,7 +775,7 @@ test.describe('flock chat, with two people watching it', () => {
     // .last() because the empty-room body draws its own "Invite friends" as
     // well, and the sheet is drawn over it rather than instead of it.
     await ada.page.getByRole('button', { name: 'Invite friends' }).last().click();
-    await expect(ada.page.getByRole('heading', { name: 'Invite Friends' })).toBeVisible({ timeout: 15_000 });
+    await expect(ada.page.getByRole('heading', { name: 'Invite friends' })).toBeVisible({ timeout: 15_000 });
     await ada.page.getByRole('button', { name: 'Close', exact: true }).first().click();
 
     await ada.page.getByRole('button', { name: 'More to send' }).click();

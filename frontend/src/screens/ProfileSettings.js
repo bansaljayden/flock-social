@@ -618,7 +618,7 @@ export default function ProfileSettings({
 
                   {/* Add contact button */}
                   <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
-                    {Icons.plus(colors.navy, 14)} Add Trusted Contact
+                    {Icons.plus(colors.navy, 14)} Add trusted contact
                   </button>
                 </div>
 
@@ -814,7 +814,7 @@ export default function ProfileSettings({
                   {(phoneDiscoveryNeedsNumber || (!profilePhone && phoneDiscoverable === false)) && (
                     <div style={{ marginTop: '12px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.4' }}>There is no phone number on your account yet. Add one in Edit Profile and this switch will have something to match against.</p>
-                      <button className="hit44 glass-btn glass-secondary" onClick={() => setProfileScreen('edit')} style={{ padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Go to Edit Profile</button>
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => setProfileScreen('edit')} style={{ padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Go to Edit profile</button>
                     </div>
                   )}
                 </div>

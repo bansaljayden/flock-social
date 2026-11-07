@@ -1435,7 +1435,7 @@ describe('the Tables tab', () => {
     expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
     // The tab is the tables and nothing else: the sensor card stays on Analytics.
     expect(screen.queryByRole('heading', { name: 'Your sensor' })).toBeNull();
-    expect(screen.queryByText('Post a Deal')).toBeNull();
+    expect(screen.queryByText('Post a deal')).toBeNull();
   });
 
   test('a plan without Roost gets the same lock Analytics uses, named for the tab', async () => {

@@ -556,7 +556,7 @@ export default function FlockDetail({
                   const checkedIn = ts > 0 && now - ts < 2 * 60 * 60 * 1000;
                   return (
                     <button className="hit44 glass-btn glass-secondary" disabled={checkedIn || checkinSaving} onClick={() => handleCheckIn(flock.venueId)} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: checkedIn ? 'default' : 'pointer', opacity: checkedIn ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
-                      {Icons.check(colors.navyMid, 14)} {checkedIn ? 'Checked In' : checkinSaving ? 'Checking in…' : 'Check In'}
+                      {Icons.check(colors.navyMid, 14)} {checkedIn ? 'Checked in' : checkinSaving ? 'Checking in…' : 'Check in'}
                     </button>
                   );
                 })()}
@@ -1070,7 +1070,7 @@ export default function FlockDetail({
             under that row for it. */}
         <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '14px', display: 'flex', justifyContent: 'center', background: `linear-gradient(transparent, var(--bg-primary) 30%)`, pointerEvents: 'none' }}>
           <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ minHeight: '44px', padding: '0 20px', background: colors.navyBg, border: 'none', borderRadius: '22px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.16)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '7px', pointerEvents: 'auto' }}>
-            {Icons.chat('white', 16)} Open Chat
+            {Icons.chat('white', 16)} Open chat
           </button>
         </div>
 

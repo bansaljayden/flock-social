@@ -444,7 +444,7 @@ test('a group budget asked for at create time is there in the flock', async ({ b
   await host.context.close();
 });
 
-test('picking exactly one person turns Create Flock into a message, and says so first', async ({ browser }) => {
+test('picking exactly one person turns Create flock into a message, and says so first', async ({ browser }) => {
   test.slow();
   const host = await newPerson(browser, 'flock-dm', 'Ada');
   const mate = await newPerson(browser, 'flock-dm2', 'Bea');

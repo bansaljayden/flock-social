@@ -84,7 +84,7 @@ appId: com.flockcorp.flock
                 text: "More options"            # ChatDetail.js:536 aria-label
                 optional: true
             - tapOn:
-                text: "Leave Flock"             # ChatDetail.js:540 menu item
+                text: "Leave flock"             # ChatDetail.js:540 menu item
                 optional: true
             - tapOn:
                 text: "Leave"                   # ChatDetail.js:2202 confirm; "Leave Flock?" (:2166) is the heading and does not match

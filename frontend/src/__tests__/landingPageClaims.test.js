@@ -242,8 +242,8 @@ describe('the page only sells things that exist', () => {
     }
     expect(hits).toEqual([]);
 
-    expect(dashboard).toContain('>In Their Vote</p>');
-    expect(dashboard).toContain('Flocks With You in Their Vote</h3>');
+    expect(dashboard).toContain('>In their vote</p>');
+    expect(dashboard).toContain('Flocks with you in their vote</h3>');
     expect(dashboard).toContain('>No flock has you in its vote yet</p>');
     expect(dashboard).toContain("'See which flocks have you in their vote'");
     const text = (name) => surfaces.find(([n]) => n === name)[1];
@@ -253,7 +253,7 @@ describe('the page only sells things that exist', () => {
     expect(text('roostNoticeEmail.js')).toContain('seeing which flocks have your venue in their vote');
   });
 
-  test('the In Their Vote tile names the window the feed actually keeps', () => {
+  test('the In their vote tile names the window the feed actually keeps', () => {
     // The tile's line read "flocks, next 7 days", but GET /incoming-flocks
     // also keeps a plan whose time passed up to INCOMING_PAST_HOURS ago, the
     // party that may be inside right now, so the count was not only plans to
@@ -269,13 +269,13 @@ describe('the page only sells things that exist', () => {
       .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    const start = dashboard.indexOf('>In Their Vote</p>');
+    const start = dashboard.indexOf('>In their vote</p>');
     expect(start).toBeGreaterThan(-1);
     const tile = dashboard.slice(start, dashboard.indexOf('</div>', start));
     expect(tile).toContain('>flocks, now and the week ahead</p>');
     expect(tile).not.toMatch(/next \d+ days|this week/i);
     // The card it must not be confused with is still there, and still looks back.
-    expect(dashboard).toContain('>This Week</h3>');
+    expect(dashboard).toContain('>This week</h3>');
     expect(dashboard).toContain('Last {tw.windowDays} days.');
   });
 

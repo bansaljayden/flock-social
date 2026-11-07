@@ -211,7 +211,7 @@ appId: com.flockcorp.flock
     text: "Invite friends"                      # ChatDetail.js empty-state button
     optional: true
 - extendedWaitUntil:
-    visible: "Invite Friends"                   # ChatDetail.js invite modal <h3>
+    visible: "Invite friends"                   # ChatDetail.js invite modal <h3>
     timeout: 8000
     optional: true
 - assertVisible:
@@ -225,7 +225,7 @@ appId: com.flockcorp.flock
     optional: true
 - runFlow:
     when:
-      visible: "Invite Friends"
+      visible: "Invite friends"
     commands:
       - tapOn:
           text: "Close"
@@ -253,13 +253,13 @@ appId: com.flockcorp.flock
 # the same place with no seam in the footage.
 - runFlow:
     when:
-      notVisible: "Vote for a Venue"
+      notVisible: "Vote for a venue"
     commands:
       - tapOn:
           text: "Suggest a place"               # ChatDetail.js:1997 empty state
           optional: true
 - extendedWaitUntil:
-    visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
+    visible: "Vote for a venue"                 # ChatDetail.js:1727 <h2>
     timeout: 20000
 # EITHER HEADING IS A PASS, and which one appears says where the list came
 # from. "Popular Chains Nearby" means a real coordinate fed it. "Popular in
@@ -417,7 +417,7 @@ appId: com.flockcorp.flock
     visible: "Group Budget|Split the Bill"
     timeout: 20000
 - tapOn:
-    text: "Split the Bill"                      # ChatDetail.js:2939
+    text: "Split the bill"                      # ChatDetail.js:2939
     optional: true
 - waitForAnimationToEnd
 - assertVisible:
@@ -457,7 +457,7 @@ appId: com.flockcorp.flock
     optional: true
 - waitForAnimationToEnd
 - tapOn:
-    text: "Create Split"                        # ChatDetail.js:3547; enabled once the total is above zero
+    text: "Create split"                        # ChatDetail.js:3547; enabled once the total is above zero
     optional: true
 - waitForAnimationToEnd
 - extendedWaitUntil:

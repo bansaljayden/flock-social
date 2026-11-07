@@ -261,7 +261,7 @@ describe('the DM vote panel with nothing to vote on', () => {
 // The Share a Venue sheet, the only other door the panel offers.
 // ---------------------------------------------------------------------------
 
-describe('the DM Share a Venue sheet with an empty list', () => {
+describe('the DM Share a venue sheet with an empty list', () => {
   const openSheet = (over) => dmProps({ showDmVenueSearch: true, ...over });
 
   test('with a location, an empty list does mean venue search is down', () => {

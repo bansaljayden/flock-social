@@ -12,7 +12,7 @@ appId: com.flockcorp.flock
     text: "Type a message...|Message"
     optional: true
 - assertVisible:
-    text: "Start a Flock"                       # still on the create screen: creation did not go through
+    text: "Start a flock"                       # still on the create screen: creation did not go through
     optional: true
 - assertVisible:
     text: ".*didn't get created.*"              # CreateScreen.js error toast: the request failed and the form came back

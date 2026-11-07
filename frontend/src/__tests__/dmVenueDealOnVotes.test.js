@@ -177,7 +177,7 @@ const TALLY = () => ([
   { venue_name: 'Corvid Coffee', venue_id: 'p2', vote_count: 1, voters: ['Alex'] },
 ]);
 
-const sheetOf = () => screen.getByText('Vote for a Venue').closest('.modal-content');
+const sheetOf = () => screen.getByText('Vote for a venue').closest('.modal-content');
 const rowFor = (name) => within(sheetOf()).getByText(name).closest('button');
 
 describe('the harness above covers the screen it renders', () => {

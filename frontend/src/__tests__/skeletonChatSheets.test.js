@@ -413,7 +413,7 @@ describe('the harnesses cover the screens they render', () => {
 describe('the vote sheet', () => {
   test('while the tally is on the wire: three vote rows in the row\'s shape, and the count\'s line drawn rather than "0 votes cast"', () => {
     const { container } = render(React.createElement(ChatDetail, chatProps({ showVotePanel: true, votesLoading: true, votesLoaded: false })));
-    const sheet = screen.getByText('Vote for a Venue').closest('.modal-content');
+    const sheet = screen.getByText('Vote for a venue').closest('.modal-content');
     expect(within(sheet).getByText('Loading the votes')).toBeTruthy();
     // The 36px square at radius 10, once a row.
     const squares = Array.from(sheet.querySelectorAll('.skeleton')).filter((b) => b.style.width === '36px' && b.style.height === '36px' && b.style.borderRadius === '10px');
@@ -431,7 +431,7 @@ describe('the vote sheet', () => {
 
   test('once the tally lands with no votes in it, the count says so and the rows go', () => {
     render(React.createElement(ChatDetail, chatProps({ showVotePanel: true, votesLoading: false, votesLoaded: true })));
-    const sheet = screen.getByText('Vote for a Venue').closest('.modal-content');
+    const sheet = screen.getByText('Vote for a venue').closest('.modal-content');
     expect(within(sheet).getByText('0 votes cast')).toBeTruthy();
     expect(within(sheet).queryByText('Loading the votes')).toBeNull();
   });

@@ -333,7 +333,7 @@ describe('the group budget', () => {
     expect(APP).not.toMatch(/Waiting for more responses to set group budget/);
   });
 
-  test('Lock Budget appears only when locking can actually succeed', () => {
+  test('Lock budget appears only when locking can actually succeed', () => {
     // isReady is the server's own condition for the lock route (three
     // non-skipped amounts), so this is the same rule rather than a second copy
     // of it that can drift.
@@ -341,7 +341,7 @@ describe('the group budget', () => {
     expect(gate).toBeGreaterThan(-1);
     const gated = APP.slice(gate, APP.indexOf('</button>', gate));
     expect(gated).toMatch(/lockBudget\(selectedFlockId\)/);
-    expect(gated).toMatch(/Lock Budget/);
+    expect(gated).toMatch(/Lock budget/);
   });
 
   test('skipping is not a one-way door', () => {

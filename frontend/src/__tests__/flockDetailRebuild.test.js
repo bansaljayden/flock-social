@@ -108,11 +108,11 @@ describe('the banned tile pair is gone', () => {
     expect(R).toContain('setShowVotePanel(true)');
   });
 
-  it('Open Chat stays the single chat affordance', () => {
-    expect((R_CODE.match(/Open Chat/g) || []).length).toBe(1);
+  it('Open chat stays the single chat affordance', () => {
+    expect((R_CODE.match(/Open chat/g) || []).length).toBe(1);
   });
 
-  it('Open Chat is a pill, not the full-width bar', () => {
+  it('Open chat is a pill, not the full-width bar', () => {
     const cta = R.slice(R.indexOf('── Bottom CTA ──'));
     expect(cta).toContain("minHeight: '44px', padding: '0 20px'");
     expect(cta).toContain("display: 'inline-flex'");

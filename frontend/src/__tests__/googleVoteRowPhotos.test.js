@@ -420,7 +420,7 @@ describe('the flock chat', () => {
   test('the vote sheet: a suggestion draws its Google photo only with a place id, beside a door to its sheet', () => {
     const p = chatProps({ showVotePanel: true, popularVenues: [KOME, CORVID] });
     render(React.createElement(ChatDetail, p));
-    const sheet = sheetTitled('Vote for a Venue');
+    const sheet = sheetTitled('Vote for a venue');
     expectTheRule(sheet, p);
     // A Google place is in the list, so it ends on the mark.
     expect(within(sheet).getByTestId('google-maps-attribution').textContent).toBe('Google Maps');
@@ -428,7 +428,7 @@ describe('the flock chat', () => {
 
   test('the vote sheet: a list with no Google place in it carries no Google mark', () => {
     render(React.createElement(ChatDetail, chatProps({ showVotePanel: true, popularVenues: [CORVID] })));
-    const sheet = sheetTitled('Vote for a Venue');
+    const sheet = sheetTitled('Vote for a venue');
     expect(within(sheet).getByText('Corvid Coffee')).toBeTruthy();
     expect(within(sheet).queryByTestId('google-maps-attribution')).toBeNull();
   });
@@ -436,7 +436,7 @@ describe('the flock chat', () => {
   test('the share sheet: the same rule, and the row still shares', () => {
     const p = chatProps({ showVenueShareModal: true, budgetFilteredVenues: [KOME, CORVID] });
     render(React.createElement(ChatDetail, p));
-    const sheet = sheetTitled('Share a Venue');
+    const sheet = sheetTitled('Share a venue');
     expectTheRule(sheet, p);
     expect(within(sheet).getByTestId('google-maps-attribution')).toBeTruthy();
     fireEvent.click(within(sheet).getByText('Corvid Coffee').closest('button'));
@@ -445,7 +445,7 @@ describe('the flock chat', () => {
 
   test('the share sheet: no Google place, no Google mark', () => {
     render(React.createElement(ChatDetail, chatProps({ showVenueShareModal: true, budgetFilteredVenues: [CORVID] })));
-    expect(within(sheetTitled('Share a Venue')).queryByTestId('google-maps-attribution')).toBeNull();
+    expect(within(sheetTitled('Share a venue')).queryByTestId('google-maps-attribution')).toBeNull();
   });
 });
 
@@ -453,14 +453,14 @@ describe('the DM', () => {
   test('the vote panel: a suggestion draws its Google photo only with a place id, beside a door to its sheet', () => {
     const p = dmProps({ showDmVotePanel: true, popularVenues: [KOME, CORVID] });
     render(React.createElement(DmDetail, p));
-    const sheet = sheetTitled('Vote for a Venue');
+    const sheet = sheetTitled('Vote for a venue');
     expectTheRule(sheet, p);
     expect(within(sheet).getByTestId('google-maps-attribution')).toBeTruthy();
   });
 
   test('the vote panel: a list with no Google place in it carries no Google mark', () => {
     render(React.createElement(DmDetail, dmProps({ showDmVotePanel: true, popularVenues: [CORVID] })));
-    const sheet = sheetTitled('Vote for a Venue');
+    const sheet = sheetTitled('Vote for a venue');
     expect(within(sheet).getByText('Corvid Coffee')).toBeTruthy();
     expect(within(sheet).queryByTestId('google-maps-attribution')).toBeNull();
   });
@@ -468,7 +468,7 @@ describe('the DM', () => {
   test('the share sheet: the same rule, and the row still sends the venue', () => {
     const p = dmProps({ showDmVenueSearch: true, allVenues: [KOME, CORVID] });
     render(React.createElement(DmDetail, p));
-    const sheet = sheetTitled('Share a Venue');
+    const sheet = sheetTitled('Share a venue');
     expectTheRule(sheet, p);
     expect(within(sheet).getByTestId('google-maps-attribution')).toBeTruthy();
     fireEvent.click(within(sheet).getByText('Corvid Coffee').closest('button'));
@@ -478,6 +478,6 @@ describe('the DM', () => {
 
   test('the share sheet: no Google place, no Google mark', () => {
     render(React.createElement(DmDetail, dmProps({ showDmVenueSearch: true, allVenues: [CORVID] })));
-    expect(within(sheetTitled('Share a Venue')).queryByTestId('google-maps-attribution')).toBeNull();
+    expect(within(sheetTitled('Share a venue')).queryByTestId('google-maps-attribution')).toBeNull();
   });
 });

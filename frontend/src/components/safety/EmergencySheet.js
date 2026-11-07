@@ -294,7 +294,7 @@ const EmergencySheet = ({
                 ? 'Sending...'
                 : armed
                   ? 'Tap again to confirm'
-                  : 'Alert Contacts'}
+                  : 'Alert contacts'}
             </span>
           </button>
 
@@ -315,7 +315,7 @@ const EmergencySheet = ({
             }}
           >
             {Icons.mapPin('currentColor', 18)}
-            <span>{sending && pendingAction === 'share' ? 'Sending...' : shareArmed ? 'Tap again to send your location' : 'Share Location'}</span>
+            <span>{sending && pendingAction === 'share' ? 'Sending...' : shareArmed ? 'Tap again to send your location' : 'Share location'}</span>
           </button>
 
           {noContacts && (

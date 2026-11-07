@@ -105,7 +105,7 @@ async function createWith(answer) {
   api.createFlockInviteLink.mockResolvedValue({ url: 'https://flock.test/i/abc' });
   const p = props();
   render(React.createElement(CreateScreen, p));
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create Flock/ })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Create flock/ })); });
   expect(api.createFlock).toHaveBeenCalledTimes(1);
   expect(api.createFlock.mock.calls[0][0].invited_user_ids).toEqual([ANA.id, BEN.id]);
   return p;
@@ -128,7 +128,7 @@ test('a flock the server seats only partly says how many invites went out', asyn
   expect(partlyToasts(p)).toEqual(['Invited 1 of 2. The rest can join from the invite link.']);
   // The plan is still made, and the made step is up.
   expect(p.setSelectedFlockId).toHaveBeenCalledWith(FLOCK.id);
-  expect(screen.queryByRole('button', { name: /Create Flock/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Create flock/ })).toBeNull();
 });
 
 test('a flock the server seats nobody on says 0 of 2', async () => {

@@ -68,12 +68,12 @@ describe('the sheet\'s primary button follows the way back it is handed', () => 
   test('with none, the sheet offers Add to Flock', () => {
     render(<VenueDetailSheet {...sheetProps()} />);
     expect(screen.getByRole('button', { name: /Add to Flock/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Back to Chat/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Back to chat/ })).toBeNull();
   });
 
-  test('with one, Back to Chat', () => {
+  test('with one, Back to chat', () => {
     render(<VenueDetailSheet {...sheetProps({ venueDetailReturnTo: { tab: 'chat', screen: 'chatDetail', flockId: 7 } })} />);
-    expect(screen.getByRole('button', { name: /Back to Chat/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Back to chat/ })).toBeTruthy();
   });
 });
 
@@ -100,7 +100,7 @@ describe('the way back ends with the trip', () => {
     doors.forEach((d) => expect({ door: d.name, goesToDiscover: d.next.includes("setCurrentTab('explore');") }).toEqual({ door: d.name, goesToDiscover: true }));
   });
 
-  test('the sheet\'s X keeps it, for the map card\'s own Back to Chat under the sheet', () => {
+  test('the sheet\'s X keeps it, for the map card\'s own Back to chat under the sheet', () => {
     expect(SHEET).toContain('const closeVenueDetail = () => { setVenueDetailModal(null); };');
   });
 });

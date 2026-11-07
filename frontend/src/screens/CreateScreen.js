@@ -69,7 +69,7 @@
  * no longer a character-for-character copy of the deleted lines. handleCreate,
  * StarRating, priceLabel and dmTarget are untouched, every control is still
  * wired to exactly the prop it was wired to, and every string a test or the
- * Maestro flow reads is still here: the h1 "Start a Flock", the "Create
+ * Maestro flow reads is still here: the h1 "Start a flock", the "Create
  * Flock" submit, the "Movie night, dinner, party..." placeholder, the "Search
  * by name..." invite field and every aria-label.
  *
@@ -558,7 +558,7 @@ export default function CreateScreen({
               line box keeps the bar the height the arrow gave it, so nothing
               jumps when the form swaps out. */}
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 0 4px', lineHeight: '32px' }}>Start a Flock</h1>
+            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 0 4px', lineHeight: '32px' }}>Start a flock</h1>
           </div>
 
           <div style={{ flex: 1, padding: '24px 16px 16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
@@ -602,7 +602,7 @@ export default function CreateScreen({
         <DialogBehavior modal={false} onClose={leave} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
           <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-          <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a Flock</h1>
+          <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a flock</h1>
         </div>
 
         <div style={{ flex: 1, padding: '16px 16px 8px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
@@ -917,7 +917,7 @@ export default function CreateScreen({
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <IconBox>{Icons.eyeOff(colors.navy, 18)}</IconBox>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Ghost Mode</span>
+                      <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Ghost mode</span>
                       <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', lineHeight: 1.45, marginTop: '1px' }}>Members can quietly commit their share of the bill up front, before anyone pays, so the plan never waits on money</span>
                     </div>
                     <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
@@ -965,7 +965,7 @@ export default function CreateScreen({
               ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('currentColor', 16)}</span> Creating...</>
               : dmTarget
                 ? <>{Icons.chat('currentColor', 18)} Message {dmFirstName || dmTarget.name}</>
-                : <>{Icons.users('currentColor', 18)} Create Flock</>}
+                : <>{Icons.users('currentColor', 18)} Create flock</>}
           </button>
         </div>
       </div>

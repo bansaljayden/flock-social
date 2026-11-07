@@ -136,8 +136,8 @@ test('the made step says what happened, asks for one thing, and has no dead cont
   expect(step).toContain('<DialogBehavior modal={false} onClose={goToChat} />');
   // The form is still the other branch, with the strings the older suites
   // and the Maestro flow read.
-  expect(create).toContain('>Start a Flock</h1>');
-  expect(create).toContain('Create Flock</>');
+  expect(create).toContain('>Start a flock</h1>');
+  expect(create).toContain('Create flock</>');
 });
 
 test('the primary button is the Create button\'s shape, not a second style', () => {

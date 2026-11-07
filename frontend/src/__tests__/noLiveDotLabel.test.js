@@ -260,7 +260,7 @@ describe('the checks are not blind', () => {
   // nobody can write the word in a sentence.
   const PROSE = {
     'a sharing sentence': "'Sharing live location'",
-    'an events heading': '<span>Live Events</span>',
+    'an events heading': '<span>Live events</span>',
     'music as a category': "{ id: 'music', label: 'Live Music' }",
     'a carried reading said with its age': "\"From this venue's reading taken an hour ago.\"",
     'a mode compared in code': "if (mode === 'live') return 1;",

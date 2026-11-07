@@ -537,7 +537,7 @@ describe('the invite sheet offers no send until somebody is picked', () => {
 // one below" and then lists nothing, with no reason and no exit. The empty
 // state now says why and carries a real way out.
 // ---------------------------------------------------------------------------
-describe('the Share a Venue sheet when nothing loaded', () => {
+describe('the Share a venue sheet when nothing loaded', () => {
   const openShare = (over) => chatProps({ showVenueShareModal: true, ...over });
 
   test('an empty venue list says why, instead of a blank panel', () => {

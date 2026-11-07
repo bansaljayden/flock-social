@@ -602,7 +602,7 @@ describe('a quarantined bill shows who was on it and no figure, count or action'
     expect(screen.queryByText('That was a mistake, I have not paid')).toBeNull();
     expect(screen.queryByRole('button', { name: /Undo|Commit|Mark as paid/ })).toBeNull();
     // Nor a Split the Bill that would open a form the server refuses.
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
     const card = container.querySelector('[data-card="bill"]');
     expect(within(card).queryAllByRole('button')).toHaveLength(0);
   });
@@ -617,9 +617,9 @@ describe('a quarantined bill shows who was on it and no figure, count or action'
     expect(screen.getAllByText('not shown')).toHaveLength(3);
   });
 
-  test('without a budget, the sheet offers no Split the Bill over it either', () => {
+  test('without a budget, the sheet offers no Split the bill over it either', () => {
     mount(frozen({ hasPayer: false, paidBy: { id: null, name: null } }));
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
     expect(screen.queryByText('Split the bill after the night out')).toBeNull();
   });
 });
@@ -933,7 +933,7 @@ describe('the header counts the rows the viewer cannot see from the server\'s ta
 /* The tile set showCreateBill and nothing else. Every reader of that flag
    sits inside the cash pool sheet, which the tile never opened, so the tap
    closed the plus sheet onto nothing, and the flag stayed up for the next
-   Cash pool, which then opened as "Split the Bill" with the budget hidden.
+   Cash pool, which then opened as "Split the bill" with the budget hidden.
    Both flags live in App.js, so a wrapper holds them as real state here: with
    jest.fn setters a tap that sets one flag and not the other would pass. */
 describe('the composer\'s Split the bill tile', () => {
@@ -960,7 +960,7 @@ describe('the composer\'s Split the bill tile', () => {
     render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: () => planning }));
     tap('Split the bill');
     expect(screen.getByText('Who paid?')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create Split' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create split' })).toBeTruthy();
   });
 
   test('over a bill somebody paid, it opens the sheet on that bill and no form', () => {
@@ -1012,7 +1012,7 @@ describe('the composer\'s Split the bill tile', () => {
       startWithForm: true, billSplit: null, getSelectedFlock: () => budgetPlan, budgetStatus: openBudget,
     }));
     tap('Cash pool');
-    expect(screen.getByText('Group Budget')).toBeTruthy();
+    expect(screen.getByText('Group budget')).toBeTruthy();
     expect(screen.getByText('What\'s your budget tonight?')).toBeTruthy();
     expect(screen.queryByText('Who paid?')).toBeNull();
   });
@@ -1022,7 +1022,7 @@ describe('the composer\'s Split the bill tile', () => {
 // 9. A finished plan offers the creator no reminder and no start-over
 // ---------------------------------------------------------------------------
 /* Finishing a plan never closes its budget, so both controls stayed up after
-   the night. Send Reminder buzzed everyone who had not answered to submit a
+   the night. Send reminder buzzed everyone who had not answered to submit a
    budget /submit refuses on a finished plan, and Start the budget over deleted
    every answer and the number and then said everyone could answer again. The
    server refuses both now (FLOCK_CLOSED); the sheet stops offering them. */
@@ -1036,7 +1036,7 @@ describe('the creator\'s budget controls on a plan that has ended', () => {
 
   test('a live plan still offers both', () => {
     const { unmount } = mount(null, { getSelectedFlock: hostPlan('confirmed'), budgetStatus: answered });
-    expect(screen.getByRole('button', { name: 'Send Reminder' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Send reminder' })).toBeTruthy();
     unmount();
     mount(null, { getSelectedFlock: hostPlan('confirmed'), budgetStatus: settled });
     expect(screen.getByRole('button', { name: 'Start the budget over' })).toBeTruthy();
@@ -1045,7 +1045,7 @@ describe('the creator\'s budget controls on a plan that has ended', () => {
   test.each(['completed', 'cancelled'])('a %s plan offers neither', (status) => {
     // Fails without the fix: both buttons render on a finished plan.
     const { unmount } = mount(null, { getSelectedFlock: hostPlan(status), budgetStatus: answered });
-    expect(screen.queryByRole('button', { name: 'Send Reminder' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send reminder' })).toBeNull();
     unmount();
     mount(null, { getSelectedFlock: hostPlan(status), budgetStatus: settled });
     expect(screen.queryByRole('button', { name: 'Start the budget over' })).toBeNull();
@@ -1053,15 +1053,15 @@ describe('the creator\'s budget controls on a plan that has ended', () => {
     expect(screen.getByText('Group budget: up to $40 per person')).toBeTruthy();
   });
 
-  test('Lock Budget stays where the lock can still work, without the reminder beside it', () => {
+  test('Lock budget stays where the lock can still work, without the reminder beside it', () => {
     mount(null, { getSelectedFlock: hostPlan('completed'), budgetStatus: { ...answered, isReady: true, submissionCount: 3 } });
-    expect(screen.getByRole('button', { name: 'Lock Budget' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Send Reminder' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Lock budget' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send reminder' })).toBeNull();
   });
 });
 
 /* A double tap on Lock Budget came back 409 "Budget has been locked", and on
-   Send Reminder 429, each after the first tap had already said it worked.
+   Send reminder 429, each after the first tap had already said it worked.
    Skip had no pending state at all. */
 describe('the budget\'s buttons while one is on the wire', () => {
   const api = require('../services/api');
@@ -1071,45 +1071,45 @@ describe('the budget\'s buttons while one is on the wire', () => {
     submissionCount: 3, totalMembers: 4, memberCount: 4, userSubmitted: true, userAmount: 40, userSkipped: false,
   };
 
-  test('a double tap on Lock Budget is one request and one toast, and it says it is locking', async () => {
+  test('a double tap on Lock budget is one request and one toast, and it says it is locking', async () => {
     let answer;
     api.lockBudget.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
     const showToast = jest.fn();
     mount(null, { getSelectedFlock: hostPlan, budgetStatus: ready, showToast });
-    const lock = screen.getByRole('button', { name: 'Lock Budget' });
+    const lock = screen.getByRole('button', { name: 'Lock budget' });
     fireEvent.click(lock);
     fireEvent.click(lock);
     expect(api.lockBudget).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Locking...' })).toBeDisabled();
     // The reminder beside it waits too.
-    expect(screen.getByRole('button', { name: 'Send Reminder' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send reminder' })).toBeDisabled();
     answer({ ceiling: 40 });
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('Budget locked'));
     expect(showToast).toHaveBeenCalledTimes(1);
   });
 
-  test('a double tap on Send Reminder is one request, and a 429 is news, not an error', async () => {
+  test('a double tap on Send reminder is one request, and a 429 is news, not an error', async () => {
     let refuse;
     api.sendBudgetReminder.mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject; }));
     const showToast = jest.fn();
     mount(null, { getSelectedFlock: hostPlan, budgetStatus: { ...ready, isReady: false, submissionCount: 1 }, showToast });
-    const remind = screen.getByRole('button', { name: 'Send Reminder' });
+    const remind = screen.getByRole('button', { name: 'Send reminder' });
     fireEvent.click(remind);
     fireEvent.click(remind);
     expect(api.sendBudgetReminder).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Sending...' })).toBeDisabled();
     refuse(Object.assign(new Error('Please wait before sending another reminder'), { status: 429, userFacing: true }));
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('Please wait before sending another reminder'));
-    expect(screen.getByRole('button', { name: 'Send Reminder' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send reminder' })).not.toBeDisabled();
   });
 
   test('a failed lock says so in plain words, not in the error\'s own text', async () => {
     api.lockBudget.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'ceiling')"));
     const showToast = jest.fn();
     mount(null, { getSelectedFlock: hostPlan, budgetStatus: ready, showToast });
-    fireEvent.click(screen.getByRole('button', { name: 'Lock Budget' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Lock budget' }));
     await waitFor(() => expect(showToast).toHaveBeenCalledWith('Could not lock the budget. Try again.', 'error'));
-    expect(screen.getByRole('button', { name: 'Lock Budget' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Lock budget' })).not.toBeDisabled();
   });
 
   test('Skip says it is skipping and holds Submit, and a double tap is one answer', async () => {
@@ -1135,7 +1135,7 @@ describe('the budget\'s buttons while one is on the wire', () => {
 // ---------------------------------------------------------------------------
 /* A second tap before the answer sent a second POST, which rewrote the bill
    the first had just made and pushed "You owe" to everybody again. */
-describe('Create Split while it is on the wire', () => {
+describe('Create split while it is on the wire', () => {
   const api = require('../services/api');
   function OpenForm(over) {
     const [showChatPool, setShowChatPool] = React.useState(true);
@@ -1152,7 +1152,7 @@ describe('Create Split while it is on the wire', () => {
     render(React.createElement(OpenForm, {
       billSplit: null, billTotal: '120', setBillSplit, getSelectedFlock: () => ({ ...FLOCK, status: 'planning' }),
     }));
-    const button = screen.getByRole('button', { name: 'Create Split' });
+    const button = screen.getByRole('button', { name: 'Create split' });
     fireEvent.click(button);
     fireEvent.click(button);
     expect(api.createBillSplit).toHaveBeenCalledTimes(1);
@@ -1169,8 +1169,8 @@ describe('Create Split while it is on the wire', () => {
     render(React.createElement(OpenForm, {
       billSplit: null, billTotal: '120', getSelectedFlock: () => ({ ...FLOCK, status: 'planning' }),
     }));
-    fireEvent.click(screen.getByRole('button', { name: 'Create Split' }));
-    const again = await screen.findByRole('button', { name: 'Create Split' });
+    fireEvent.click(screen.getByRole('button', { name: 'Create split' }));
+    const again = await screen.findByRole('button', { name: 'Create split' });
     await waitFor(() => expect(again.disabled).toBe(false));
     api.createBillSplit.mockResolvedValueOnce({ bill: { id: 6, shares: [] } });
     fireEvent.click(again);
@@ -1213,11 +1213,11 @@ describe('a budget plan that has ended', () => {
     render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered }));
     tap('Split the bill');
     expect(screen.getByText('Who paid?')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Create Split' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create split' })).toBeTruthy();
     expect(screen.queryByText(QUESTION)).toBeNull();
   });
 
-  test('Cash pool offers Split the Bill there, and no budget question to be refused', () => {
+  test('Cash pool offers Split the bill there, and no budget question to be refused', () => {
     // Fails without the fix: Submit and Skip rendered, and no Split the Bill.
     render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered }));
     tap('Cash pool');
@@ -1225,7 +1225,7 @@ describe('a budget plan that has ended', () => {
     expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skip, any budget works' })).toBeNull();
     expect(screen.getByText('Budget answers are closed')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Split the Bill' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Split the bill' }));
     expect(screen.getByText('Who paid?')).toBeTruthy();
   });
 
@@ -1242,7 +1242,7 @@ describe('a budget plan that has ended', () => {
     mount(null, { getSelectedFlock: budgetPlan('cancelled'), budgetStatus: unanswered });
     expect(screen.queryByText(QUESTION)).toBeNull();
     expect(screen.queryByRole('button', { name: 'Skip, any budget works' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
     expect(screen.getByText('Budget answers are closed')).toBeTruthy();
   });
 
@@ -1302,7 +1302,7 @@ describe('a budget plan that has ended', () => {
 // 11. The budget section's Split the Bill follows the composer tile's rule
 // ---------------------------------------------------------------------------
 /* Section 10 put the budget status section on every ended plan, answered or
-   not, and the Split the Bill inside it checked only the plan's status and a
+   not, and the Split the bill inside it checked only the plan's status and a
    quarantined bill. A failed money read leaves billSplit null, which is also
    what "no bill yet" looks like, and bill_splits is UNIQUE(flock_id) with ON
    CONFLICT DO UPDATE behind it, so a total entered from that button replaced
@@ -1310,7 +1310,7 @@ describe('a budget plan that has ended', () => {
    well, and on an ended plan the section showed anyway, so a read that failed
    on both halves still offered the form. The button now reads billFormOffered,
    the tile's rule, which already stands down over a failed read. */
-describe('the budget section\'s Split the Bill', () => {
+describe('the budget section\'s Split the bill', () => {
   const budgetPlan = (status) => () => ({ ...FLOCK, budgetEnabled: true, status });
   const unanswered = {
     budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
@@ -1327,7 +1327,7 @@ describe('the budget section\'s Split the Bill', () => {
     mount(null, { getSelectedFlock: budgetPlan('completed'), budgetStatus, moneyError: FAILED });
     expect(screen.getByRole('alert').textContent).toContain(FAILED);
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
     expect(screen.queryByText('Who paid?')).toBeNull();
   });
 
@@ -1339,7 +1339,7 @@ describe('the budget section\'s Split the Bill', () => {
       moneyError: FAILED,
     });
     expect(screen.getByRole('alert').textContent).toContain(FAILED);
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
   });
 
   test('is not offered over a bill somebody paid, which stays readable below', () => {
@@ -1349,13 +1349,13 @@ describe('the budget section\'s Split the Bill', () => {
       getSelectedFlock: budgetPlan('completed'),
       budgetStatus: { ...unanswered, userSubmitted: true, userAmount: 40, submissionCount: 1 },
     });
-    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the bill' })).toBeNull();
     expect(screen.getByRole('button', { name: /Settle Up/ }).textContent).toBe('Settle Up · $100.00');
   });
 
   test('is still offered on a completed plan whose money loaded', () => {
     mount(null, { getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered });
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Split the Bill' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Split the bill' })).toBeTruthy();
   });
 });

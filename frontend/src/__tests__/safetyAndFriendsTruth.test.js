@@ -58,7 +58,7 @@ test('the flock alarm says whether the trusted contacts were actually reached', 
 test('sharing an exact location is armed, like the alert above it', () => {
   expect(sheet).toMatch(/const \[shareArmed, setShareArmed\] = useState\(false\);/);
   expect(sheet).toMatch(/if \(!shareArmed\) \{ setShareArmed\(true\); return; \}/);
-  expect(sheet).toMatch(/shareArmed \? 'Tap again to send your location' : 'Share Location'/);
+  expect(sheet).toMatch(/shareArmed \? 'Tap again to send your location' : 'Share location'/);
 });
 
 test('the safety card promises the channel and the location the code has', () => {

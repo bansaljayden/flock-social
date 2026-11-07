@@ -323,7 +323,7 @@ describe('the Monday email has one name, and the This Week card another', () => 
     expect(DASH).toContain('aria-label="Monday email"');
     expect(DASH).toContain("showToast(weekly ? 'Monday email on. The first one comes Monday morning.' : 'Monday email off.');");
     expect(DASH).toContain("'This Week: what your venue did over the last 7 days',");
-    expect(DASH).toContain('>This Week</h3>');
+    expect(DASH).toContain('>This week</h3>');
   });
 
   test('the Terms and the Privacy Policy name the email the way the switch does', () => {

@@ -190,7 +190,7 @@ describe('the host, on a plan still being made', () => {
   test('every control the screen had is still there', () => {
     const p = props(plan());
     render(React.createElement(FlockDetail, p));
-    for (const name of ['Back to your plans', 'Details', 'Directions', 'Invite', 'Open Chat']) {
+    for (const name of ['Back to your plans', 'Details', 'Directions', 'Invite', 'Open chat']) {
       expect(screen.getByRole('button', { name: new RegExp(`^${name}`) })).toBeInTheDocument();
     }
     expect(screen.getByRole('button', { name: /^Change the venue/ })).toBeInTheDocument();
@@ -200,8 +200,8 @@ describe('the host, on a plan still being made', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Lock it in' }));
     expect(p.confirmFlockPlan).toHaveBeenCalledWith(41);
     // One Open Chat, and it opens the chat.
-    expect(screen.getAllByRole('button', { name: /Open Chat/ })).toHaveLength(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Open Chat' }));
+    expect(screen.getAllByRole('button', { name: /Open chat/ })).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Open chat' }));
     expect(p.setCurrentScreen).toHaveBeenCalledWith('chatDetail');
   });
 

@@ -65,10 +65,10 @@ test('the event form says it, in an event\'s words', () => {
   expect(OVER21).toMatch(/const shown = foldTexts\(\[e\.title, e\.event_date, e\.event_time\]\);/);
 });
 
-test('the Post a Deal card says it, and its slot starts in All Day', () => {
+test('the Post a deal card says it, and its slot starts in All Day', () => {
   // The card is part of the whole dashboard, so it is read, not mounted: the
   // sentence sits between the slot chips and the Post Deal button.
-  const card = DASH.slice(DASH.indexOf('Post a Deal</h3>'), DASH.indexOf('Post Deal\n'));
+  const card = DASH.slice(DASH.indexOf('Post a deal</h3>'), DASH.indexOf('Post Deal\n'));
   expect(card).toMatch(/\{DRINK_DEAL_LINE_PROMO\}/);
   expect(card.indexOf('{DRINK_DEAL_LINE_PROMO}')).toBeGreaterThan(card.indexOf("['Happy Hour', 'Late Night', 'All Day'].map"));
   expect(APP).toMatch(/const \[dealTimeSlot, setDealTimeSlot\] = useState\('All Day'\);/);

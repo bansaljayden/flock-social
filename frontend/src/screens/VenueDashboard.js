@@ -653,7 +653,7 @@ export default function VenueDashboard({
       { id: 'map', label: 'Map', icon: Icons.map },
       // Was Icons.gift. A wrapped present means "a gift", and nothing on this
       // tab is one: it is the owner posting a happy-hour deal, and the tab's
-      // own first heading is "Post a Deal" under Icons.zap — so the tab and its
+      // own first heading is "Post a deal" under Icons.zap — so the tab and its
       // contents disagreed about what the tab was. Icons.tag is the price tag,
       // which is what an offer is, and it reads down to 12px.
       { id: 'promotions', label: 'Promotions', icon: Icons.tag },
@@ -1549,7 +1549,7 @@ export default function VenueDashboard({
                   route lists a plan going here, or still deciding with this venue
                   as its pick or in a member's vote, so every surface says "in their
                   vote" and nothing more. */}
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In Their Vote</p>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In their vote</p>
               {/* A read that never landed is not zero. The other three tiles on
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
@@ -1602,7 +1602,7 @@ export default function VenueDashboard({
             ];
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>Last {tw.windowDays} days. Counted from your venue's own activity, nothing modeled.</p>
                 {rows.map((r, i) => (
                   <div key={r.key} style={{ padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
@@ -1615,7 +1615,7 @@ export default function VenueDashboard({
           })()}
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
             </div>
           )}
@@ -1886,12 +1886,12 @@ export default function VenueDashboard({
                         measures. A sensor that sends its room estimate is
                         labelled for what that is, an estimate, with the
                         range the device gives around it. */}
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{hasOccupancy ? 'Estimated Inside' : 'In View Now'}</p>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{hasOccupancy ? 'Estimated inside' : 'In view now'}</p>
                     <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{hasOccupancy ? sd.occupancy : sd.thermal_headcount}</p>
                     {band && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{band}</p>}
                   </div>
                   <div>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise level</p>
                     {/* No dB figure here either, and for the venue owner it
                         matters more: a number with a unit on an operator's
                         dashboard is the kind of thing that ends up in a noise
@@ -1955,7 +1955,7 @@ export default function VenueDashboard({
               locked. A venue on the free plan does not see this tab's body,
               and posts from the Promotions tab, which is open to everyone. */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
-            <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a Deal</h3>
+            <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a deal</h3>
             <SearchInputLocal aria-label="Deal"
               type="text"
               maxLength={QUICK_DEAL_MAX}
@@ -2127,7 +2127,7 @@ export default function VenueDashboard({
               )}
               {/* Create New Promotion Button */}
               <button className="hit44 glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Create Promotion
+                {Icons.plus('white', 18)} Create promotion
               </button>
 
               {/* Your Promotions. NOT "Active Promotions" any more: a
@@ -2137,7 +2137,7 @@ export default function VenueDashboard({
                   counted it as active and the row was styled as if it were
                   running. */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your Promotions ({promotions.length})</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your promotions ({promotions.length})</h3>
                 {/* A BANNER, not a replacement for the list. The failed read
                     leaves whatever was already loaded on screen, and a
                     promotion created after the failure still renders — hiding
@@ -2246,12 +2246,12 @@ export default function VenueDashboard({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
               <button className="hit44 glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.plus('white', 18)} Create Event
+                {Icons.plus('white', 18)} Create event
               </button>
 
               {/* Flocks with you in their vote (GET /incoming-flocks) */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks With You in Their Vote</h3>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks with you in their vote</h3>
                 {/* An owner new to the app has no reason to know the word. */}
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>A flock is a group of friends planning a night out in the Flock app.</p>
                 {/* Banner above the list, never instead of it — same rule as
@@ -2400,7 +2400,7 @@ export default function VenueDashboard({
                 })}
               </div>
 
-              {/* The "This Week" calendar was deleted 2026-08-14. It rendered
+              {/* The "This week" calendar was deleted 2026-08-14. It rendered
                   the literal numbers 19 through 25 under S-M-T-W-T-F-S, with
                   the last two cells highlighted and dotted, no matter what day
                   it actually was and no matter whether the venue had a single
@@ -2513,7 +2513,7 @@ export default function VenueDashboard({
               {/* Reviews List */}
               {reviews.length > 0 && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent Reviews</h3>
+                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent reviews</h3>
                   {reviews.map(review => (
                     <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2539,7 +2539,7 @@ export default function VenueDashboard({
                       <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
-                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRemoved ? 'Your removed reply' : review.replyRetired ? 'Your earlier reply' : 'Owner Reply'}</p>
+                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRemoved ? 'Your removed reply' : review.replyRetired ? 'Your earlier reply' : 'Owner reply'}</p>
                           <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                           {review.replyRemoved ? (
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.4 }}>A moderator took this reply off your card after a report. Reply again to post a new one.</p>

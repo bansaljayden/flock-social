@@ -323,7 +323,7 @@ describe('Cancel plan, in the overflow menu beside Leave', () => {
   test('the host of a live plan is offered it, next to Leave', () => {
     mount({ showFlockMenu: true });
     expect(screen.getByRole('button', { name: 'Cancel plan' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Leave Flock/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leave flock/ })).toBeInTheDocument();
   });
 
   test('a locked-in plan can still be called off', () => {
@@ -336,7 +336,7 @@ describe('Cancel plan, in the overflow menu beside Leave', () => {
     // be refused is not offered.
     mount({ showFlockMenu: true, authUser: { id: MEMBER, name: 'Bo' } });
     expect(screen.queryByRole('button', { name: 'Cancel plan' })).toBeNull();
-    expect(screen.getByRole('button', { name: /Leave Flock/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Leave flock/ })).toBeInTheDocument();
   });
 
   test('a plan that has already ended, either way, offers no cancel', () => {

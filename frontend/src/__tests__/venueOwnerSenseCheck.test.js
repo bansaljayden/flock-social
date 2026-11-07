@@ -118,7 +118,7 @@ describe('the sign-in hint names only buttons the screen has', () => {
 
 describe('the dashboard says what its words mean', () => {
   test('the Events tab explains "flock" right under the heading that uses it', () => {
-    const at = DASH.indexOf('Flocks With You in Their Vote</h3>');
+    const at = DASH.indexOf('Flocks with you in their vote</h3>');
     expect(at).toBeGreaterThan(-1);
     expect(DASH.slice(at, at + 400)).toContain('A flock is a group of friends planning a night out in the Flock app.');
   });

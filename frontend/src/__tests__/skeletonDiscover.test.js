@@ -146,7 +146,7 @@ describe('the first-run row', () => {
   });
 });
 
-describe('Live Events', () => {
+describe('Live events', () => {
   test('the list waits with event cards in the card\'s own shape', () => {
     const { container } = render(<ExploreScreen {...exploreProps({ showEventsView: true, featuredEventsLoading: true, userLocation: { lat: 40, lng: -75 }, mapVenuesLoaded: true })} />);
     expect(screen.getByText('Finding events near you')).toBeTruthy();
@@ -157,7 +157,7 @@ describe('Live Events', () => {
   });
 });
 
-describe('Find Your People', () => {
+describe('Find your people', () => {
   test('a search waits with rows: the 42px face, two lines and the two buttons', () => {
     const { container } = render(<ExploreScreen {...exploreProps({ showConnectPanel: true, connectSearch: 'sam', connectSearching: true, userLocation: { lat: 40, lng: -75 }, mapVenuesLoaded: true })} />);
     expect(screen.getByText('Searching people')).toBeTruthy();

@@ -1656,7 +1656,7 @@ export default function ConsumerVenueCard({
                      It used to be the loudest thing on this sheet: full width,
                      14px padding, 12px radius, --t-body type and a 16px arrow,
                      all in solid navy, which made a roughly 48px slab sitting
-                     directly on top of a 10px outlined "Check In". On device
+                     directly on top of a 10px outlined "Check in". On device
                      that read as far too big, and the size was the smaller
                      half of the problem: this control only undoes the tap that
                      opened the sheet, and it was shouting over the one action a
@@ -1676,14 +1676,14 @@ export default function ConsumerVenueCard({
                     setCurrentScreen(ret.screen);
                     if (ret.flockId) setSelectedFlockId(ret.flockId);
                     if (ret.dmId) setSelectedDmId(ret.dmId);
-                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to Chat</button>
+                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to chat</button>
                 ) : (
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (() => {
                   const lastCheckin = lastCheckinAt(activeVenue.place_id);
                   const checkedIn = !!lastCheckin && (Date.now() - lastCheckin < 2 * 60 * 60 * 1000);
-                  const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
+                  const label = checkinJustSaved ? 'Checked in ✓' : checkedIn ? 'Checked in ✓' : 'Check in';
                   const disabled = checkedIn || checkinSaving;
                   // EXACTLY ONE FILLED BUTTON IN THIS STACK, AND IT IS THE ONE
                   // THAT DOES SOMETHING. The slot above renders a solid navy

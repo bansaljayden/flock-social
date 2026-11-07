@@ -262,7 +262,7 @@ const EditProfileForm = ({
                         {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
                       </button>
                       <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
-                        Edit Photo
+                        Edit photo
                       </button>
                     </div>
 

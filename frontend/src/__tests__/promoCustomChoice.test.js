@@ -104,8 +104,8 @@ describe('the promotion editor', () => {
   });
 });
 
-describe('the Post a Deal card', () => {
-  const card = DASH.slice(DASH.indexOf('Post a Deal</h3>'), DASH.indexOf('Post Deal\n'));
+describe('the Post a deal card', () => {
+  const card = DASH.slice(DASH.indexOf('Post a deal</h3>'), DASH.indexOf('Post Deal\n'));
 
   test('has a Custom chip that opens a box for when the deal runs, capped at the server limit', () => {
     expect(card).toMatch(/aria-pressed=\{dealTimeSlot === PROMO_CUSTOM\}/);

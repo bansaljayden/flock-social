@@ -1327,7 +1327,7 @@ export default function ChatDetail({
        repaint, and above the guard for the reason every hook here is. */
     const [reconfirmPending, setReconfirmPending] = React.useState(false);
 
-    /* "Create Split" WHILE IT IS ON THE WIRE. A double tap sent the bill
+    /* "Create split" WHILE IT IS ON THE WIRE. A double tap sent the bill
        twice: the second POST rewrote the bill the first had just made and ran
        its push loop again, so everyone who owed was told twice, and on a payer
        handoff it was judged against the new payer and came back as an error
@@ -1547,7 +1547,7 @@ export default function ChatDetail({
        showCreateBill and nothing else. Every reader of that flag sits inside
        the cash pool sheet, which the tile never opened, so the tap closed the
        plus sheet and showed nothing. The flag stayed up, and the next Cash
-       pool opened titled "Split the Bill" with every budget section hidden.
+       pool opened titled "Split the bill" with every budget section hidden.
 
        The tile opens the sheet now, and opens the form in it only where the
        sheet's own Split the Bill buttons would: not over a failed money read
@@ -3196,7 +3196,7 @@ export default function ChatDetail({
                     </button>
                   )}
                   <button className="hit44 glass-btn glass-danger" onClick={() => { setShowFlockMenu(false); setShowLeaveConfirm(true); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: '#EF4444' }}>
-                    {Icons.doorOpen('#EF4444', 16)} Leave Flock
+                    {Icons.doorOpen('#EF4444', 16)} Leave flock
                   </button>
                 </div>
               )}
@@ -4016,7 +4016,7 @@ export default function ChatDetail({
                       is what it should be called, so an open form wins the
                       title and the budget only takes it when no form is over
                       it. */}
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the Bill' : 'Group Budget'}</h2>
+                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the bill' : 'Group budget'}</h2>
                   <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
                 </div>
@@ -4242,7 +4242,7 @@ export default function ChatDetail({
                             } finally {
                               dropHold(budgetPendingRef, setBudgetPending, hold);
                             }
-                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'lock' ? 'Locking...' : 'Lock Budget'}</button>
+                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'lock' ? 'Locking...' : 'Lock budget'}</button>
                         )}
                         {!planClosed && (
                           <button className="hit44 glass-btn glass-secondary" disabled={!!budgetBusy} onClick={async () => {
@@ -4260,7 +4260,7 @@ export default function ChatDetail({
                             } finally {
                               dropHold(budgetPendingRef, setBudgetPending, hold);
                             }
-                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'remind' ? 'Sending...' : 'Send Reminder'}</button>
+                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'remind' ? 'Sending...' : 'Send reminder'}</button>
                         )}
                       </div>
                     )}
@@ -4321,7 +4321,7 @@ export default function ChatDetail({
                         seen replaces the live one through ON CONFLICT DO
                         UPDATE. */}
                     {billFormOffered && (
-                      <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                      <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the bill</button>
                     )}
                   </div>
                 )}
@@ -4345,7 +4345,7 @@ export default function ChatDetail({
                 {!moneyError && !hasBudget && !showCreateBill && (!billSplit || billSplitIsShell) && (
                   <div>
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '16px' }}>Split the bill after the night out</p>
-                    <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
+                    <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the bill</button>
                   </div>
                 )}
 
@@ -4468,7 +4468,7 @@ export default function ChatDetail({
                         setBillCreating(false);
                       }
                     }} style={{ ...styles.gradientButton, padding: '14px', opacity: (billCreating || !billTotal || parseFloat(billTotal) <= 0) ? 0.4 : 1 }}>
-                      {billCreating ? 'Creating...' : 'Create Split'}
+                      {billCreating ? 'Creating...' : 'Create split'}
                     </button>
                   </div>
                 )}
@@ -4704,7 +4704,7 @@ export default function ChatDetail({
                 <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
-                    <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
+                    <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a venue</h2>
                     {/* The tally is empty until it is read, and an empty tally
                         counted "0 votes cast" over votes that existed. The
                         count's line is drawn instead until the read lands. */}
@@ -4966,7 +4966,7 @@ export default function ChatDetail({
             {/* SAFE-AREA rule 1, as on the vote sheet above. */}
             <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
+                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
                 <button aria-label="Close" className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
 
@@ -4977,7 +4977,7 @@ export default function ChatDetail({
                     {Icons.mapPin('white', 18)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Venue</p>
+                    <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: colors.steel, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current venue</p>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</p>
                     {flock.venueAddress && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>}
                     {/* A Google place's name and address are Google Maps data,
@@ -4985,7 +4985,7 @@ export default function ChatDetail({
                         (components/ui/GoogleCredit.js). */}
                     {flock.venueId && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
                   </div>
-                  <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, price_level: flock.venuePriceLevel || null, price: flock.venuePriceLevel ? '$'.repeat(flock.venuePriceLevel) : null, crowd: (typeof crowdPredictions[flock.venueId]?.score === 'number' ? crowdPredictions[flock.venueId].score : null) }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
+                  <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, price_level: flock.venuePriceLevel || null, price: flock.venuePriceLevel ? '$'.repeat(flock.venuePriceLevel) : null, crowd: (typeof crowdPredictions[flock.venueId]?.score === 'number' ? crowdPredictions[flock.venueId].score : null) }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share this</button>
                 </div>
               ) : (
                 <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
@@ -5124,7 +5124,7 @@ export default function ChatDetail({
               <div className="sheet-grab" {...inviteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '20px 20px 0' }}>
               <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Invite Friends</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Invite friends</h3>
                 <button aria-label="Close" className="hit44" onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
               </div>
               </div>
@@ -5390,7 +5390,7 @@ export default function ChatDetail({
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Leave Flock?</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Leave flock?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   {flock.creatorId && String(flock.creatorId) === String(authUser?.id)
                     ? `You're the creator. Leaving will delete "${flock.name}" for everyone.`

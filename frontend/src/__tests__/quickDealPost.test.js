@@ -34,7 +34,7 @@ const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').replace(/\
 const DASH = read('frontend', 'src', 'screens', 'VenueDashboard.js');
 const ROUTE = read('backend', 'routes', 'venueDashboard.js');
 
-describe('what the Post a Deal card sends', () => {
+describe('what the Post a deal card sends', () => {
   test('the text is the title, once, with no description to repeat it', () => {
     const body = quickDealBody('2-for-1 drinks until 8pm', 'Happy Hour');
     expect(body).toEqual({ title: '2-for-1 drinks until 8pm', timeSlot: 'Happy Hour', days: 'Daily' });
@@ -42,7 +42,7 @@ describe('what the Post a Deal card sends', () => {
   });
 
   test('the card posts through that body, not an inline copy of the old one', () => {
-    const card = DASH.slice(DASH.indexOf('Post a Deal</h3>'), DASH.indexOf('Post Deal\n'));
+    const card = DASH.slice(DASH.indexOf('Post a deal</h3>'), DASH.indexOf('Post Deal\n'));
     // The slot is the chip, or the owner's words when the Custom chip is picked.
     expect(card).toMatch(/const slot = quickDealTimeSlot\(dealTimeSlot, dealCustomTime\);/);
     expect(card).toMatch(/createVenuePromotion\(quickDealBody\(text, slot\)\)/);
@@ -55,7 +55,7 @@ describe('what the Post a Deal card sends', () => {
     expect(cap).not.toBeNull();
     expect(QUICK_DEAL_MAX).toBe(Number(cap[1]));
 
-    const card = DASH.slice(DASH.indexOf('Post a Deal</h3>'), DASH.indexOf('Post Deal\n'));
+    const card = DASH.slice(DASH.indexOf('Post a deal</h3>'), DASH.indexOf('Post Deal\n'));
     expect(card).toMatch(/<SearchInputLocal aria-label="Deal"\s+type="text"\s+maxLength=\{QUICK_DEAL_MAX\}/);
     // And says so once it is close, so a box that stops taking letters is not
     // a box that looks broken.

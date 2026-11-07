@@ -550,7 +550,7 @@ describe('venue reviews', () => {
   });
 
   test('"Be the first" is only said about a venue the server answered for', () => {
-    const list = region(APP, '{venueDetailReviews && venueDetailReviews.length > 0 ?', 'Get Directions');
+    const list = region(APP, '{venueDetailReviews && venueDetailReviews.length > 0 ?', 'Get directions');
     expect(list).toMatch(/venueDetailReviewsError \?/);
     expect(list).toMatch(/role="alert"/);
     expect(list).toMatch(/No reviews yet\. Be the first!/);
@@ -562,7 +562,7 @@ describe('venue reviews', () => {
 
   test('the count is only printed once the reviews are known', () => {
     // The server total, when known, else the page length (2026-09-04).
-    expect(APP).toMatch(/Flock Reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviewTotal \?\? venueDetailReviews\.length\}\)` : ''\}/);
+    expect(APP).toMatch(/Flock reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviewTotal \?\? venueDetailReviews\.length\}\)` : ''\}/);
   });
 
   test('the retry runs the same read the screen does', () => {

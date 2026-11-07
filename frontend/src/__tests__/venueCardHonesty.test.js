@@ -34,7 +34,7 @@ test('a free venue does not read as "$"', () => {
 test('the review count is the server total', () => {
   expect(app).toMatch(/const \[venueDetailReviewTotal, setVenueDetailReviewTotal\] = useState\(null\);/);
   expect(app).toMatch(/setVenueDetailReviewTotal\(Number\.isFinite\(d\.total\) \? d\.total : null\)/);
-  expect(app).toMatch(/Flock Reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviewTotal \?\? venueDetailReviews\.length\}\)` : ''\}/);
+  expect(app).toMatch(/Flock reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviewTotal \?\? venueDetailReviews\.length\}\)` : ''\}/);
 });
 
 test('the reality check thanks by what the report will do, and says when it did not send', () => {
@@ -81,8 +81,8 @@ describe('the venue sheet fits its own buttons', () => {
     const open = sheet.indexOf("<div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>");
     expect(open).toBeGreaterThan(-1);
     // Everything the sheet scrolls is inside it, and the footer is not.
-    const promos = sheet.indexOf('Deals & Promotions');
-    const reviews = sheet.indexOf('Flock Reviews');
+    const promos = sheet.indexOf('Deals and promotions');
+    const reviews = sheet.indexOf('Flock reviews');
     const close = sheet.indexOf('end of the scrolling region');
     expect(promos).toBeGreaterThan(open);
     expect(reviews).toBeGreaterThan(promos);
@@ -97,7 +97,7 @@ describe('the venue sheet fits its own buttons', () => {
 
   test('the footer still refuses to shrink, so it keeps its full height', () => {
     const at = app.indexOf(FOOTER);
-    const footer = app.slice(at, app.indexOf('Get Directions', at));
+    const footer = app.slice(at, app.indexOf('Get directions', at));
     expect(footer).toMatch(/flexShrink: 0/);
   });
 

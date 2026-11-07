@@ -240,7 +240,7 @@ const VenueDetailSheet = ({
         };
         // THE FOOTER'S FILL BELONGS TO WHATEVER THE ROW ACTUALLY DOES.
         // The bottom row is [Get Directions][primary], and the primary's label
-        // is a four-way ternary: "Pin to DM", "Back to Chat", "Suggest to
+        // is a four-way ternary: "Pin to DM", "Back to chat", "Suggest to
         // flock", "Add to Flock". Three of those four are things that happen to
         // the world, so the fill is theirs and the row was always right. The
         // fourth is not an action at all. It appears when you reached this card
@@ -653,7 +653,7 @@ const VenueDetailSheet = ({
             {/* Active Promotions */}
             {venueDetailPromos.length > 0 && (
               <div style={{ padding: '0 16px 12px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals & Promotions</h4>
+                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals and promotions</h4>
                 {venueDetailPromos.map(p => (
                   <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
@@ -685,10 +685,10 @@ const VenueDetailSheet = ({
             {/* Flock Reviews */}
             <div style={{ padding: '0 16px 12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews{venueDetailReviews ? ` (${venueDetailReviewTotal ?? venueDetailReviews.length})` : ''}</h4>
+                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock reviews{venueDetailReviews ? ` (${venueDetailReviewTotal ?? venueDetailReviews.length})` : ''}</h4>
                 {!showReviewForm && (
                   <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
-                    Write Review
+                    Write review
                   </button>
                 )}
               </div>
@@ -842,7 +842,7 @@ const VenueDetailSheet = ({
                   the place's coordinates, address and name. */}
               {footerHasDirections ? (
                 <button type="button" onClick={openVenueDirections} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
-                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
+                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get directions
                 </button>
               ) : null}
               <button onClick={(e) => {
@@ -899,7 +899,7 @@ const VenueDetailSheet = ({
                     "Pin to DM": the icon said leave and the label said pin, on the
                     same button. Both read the branches in the same order now, so
                     they cannot disagree. */}
-                {pickingVenueForDm ? Icons.pin(directionsIsPrimary ? colors.navy : 'white', 16) : venueDetailReturnTo ? Icons.arrowLeft(directionsIsPrimary ? colors.navy : 'white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
+                {pickingVenueForDm ? Icons.pin(directionsIsPrimary ? colors.navy : 'white', 16) : venueDetailReturnTo ? Icons.arrowLeft(directionsIsPrimary ? colors.navy : 'white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
               </button>
             </div>
           </div>

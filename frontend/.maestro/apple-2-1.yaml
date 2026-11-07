@@ -129,7 +129,7 @@ appId: com.flockcorp.flock
     text: "Start a flock"                       # App.js:12374 header button (flocks exist) or :12434 empty state; same text, either opens the create screen
     index: 0
 - extendedWaitUntil:
-    visible: "Start a Flock"                    # CreateScreen.js:293 <h1>
+    visible: "Start a flock"                    # CreateScreen.js:293 <h1>
     timeout: 10000
 - tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
 - inputText: "Review night ${REVIEW_RUN}"
@@ -151,11 +151,11 @@ appId: com.flockcorp.flock
     optional: true
 - waitForAnimationToEnd
 - scrollUntilVisible:
-    element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
+    element: "Create flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
     direction: DOWN
     timeout: 8000
     optional: true
-- tapOn: "Create Flock"
+- tapOn: "Create flock"
 - waitForAnimationToEnd
 # Probes: which of these is on screen says what the tap did.
 - assertVisible:
@@ -165,14 +165,14 @@ appId: com.flockcorp.flock
     text: "Movie night, dinner, party..."       # placeholder visible = the field is empty
     optional: true
 - assertVisible:
-    text: "Create Flock"                        # still on the create screen
+    text: "Create flock"                        # still on the create screen
     optional: true
 - repeat:
     times: 2
     commands:
       - runFlow:
           when:
-            visible: "Create Flock"
+            visible: "Create flock"
           commands:
             - tapOn:
                 text: "Done"
@@ -180,7 +180,7 @@ appId: com.flockcorp.flock
             - pressKey: Enter
             - waitForAnimationToEnd
             - tapOn:
-                text: "Create Flock"
+                text: "Create flock"
                 optional: true
             - waitForAnimationToEnd
 # The create success path opens the chat directly (App.js newlyCreatedFlockRef,
@@ -306,7 +306,7 @@ appId: com.flockcorp.flock
     text: "Vote on a venue"                     # ChatDetail.js:528 aria-label
     optional: true
 - extendedWaitUntil:
-    visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
+    visible: "Vote for a venue"                 # ChatDetail.js:1727 <h2>
     timeout: 10000
     optional: true
 - extendedWaitUntil:
