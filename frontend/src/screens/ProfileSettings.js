@@ -472,8 +472,8 @@ export default function ProfileSettings({
       return (
         <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button aria-label="Back" className="hit44" onClick={backToYou} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || ''}</h1>
+            <button aria-label="Back" className="hit44" onClick={backToYou} style={{ width: '32px', height: '32px', borderRadius: '16px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || ''}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
             {profileScreen === 'edit' && (() => {
@@ -1026,7 +1026,7 @@ export default function ProfileSettings({
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Find people, scan a QR code, check your contacts</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
-            <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+            <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
           </button>
 
           {/* DESIGN-STANDARD sec S. Eight identical rows in one container was a
@@ -1093,7 +1093,7 @@ export default function ProfileSettings({
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, m.size || 18)}</div>
                     <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                     {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
-                    <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                    <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
                   </button>
                 ))}
                 {group.tail || null}
@@ -1571,7 +1571,7 @@ export default function ProfileSettings({
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.helpCircle(colors.navy, 18)}</div>
               <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Support</span>
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Questions and problems</span>
-              <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+              <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
             </button>
           </div>
 
@@ -1736,7 +1736,7 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
   const icon = <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.pro(colors.navy, 18)}</div>;
   const title = (text) => <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{text}</span>;
   const on = <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>;
-  const chevron = <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>›</span>;
+  const chevron = <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>;
   // Under the row, on its own line, while the last read failed.
   const statusError = statusFailed ? (
     <span role="alert" style={{ flexBasis: '100%', paddingLeft: '44px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>

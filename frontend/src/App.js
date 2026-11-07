@@ -18048,7 +18048,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>I'm Going Out</h3>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Coordinate with friends, find venues</p>
               </div>
-              <span style={{ fontSize: 'var(--t-title)', color: 'rgba(255,255,255,0.5)' }}>›</span>
+              <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('rgba(255,255,255,0.6)', 18)}</span>
             </button>
 
             {/* Venue Owner Mode */}
@@ -18058,7 +18058,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Venue Dashboard</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Your listing, your live number, your forecast</p>
                 </div>
-                <span style={{ fontSize: 'var(--t-title)', color: 'rgba(255,255,255,0.5)' }}>›</span>
+                <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('rgba(255,255,255,0.6)', 18)}</span>
               </button>
             )}
 
@@ -18069,7 +18069,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Admin Dashboard</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Analytics, revenue and moderation</p>
                 </div>
-                <span style={{ fontSize: 'var(--t-title)', color: 'rgba(255,255,255,0.5)' }}>›</span>
+                <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('rgba(255,255,255,0.6)', 18)}</span>
               </button>
             )}
           </div>
