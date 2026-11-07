@@ -79,7 +79,7 @@ import { foldSensorReading } from './lib/sensorHistory';
 import { freshCrowdReadFor } from './lib/crowdReadInHand';
 import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
-import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
+import { livePulse, pulseEndsAt, pulseTapAction, friendsDownLine, mergePlanFriends } from './lib/pulse';
 import { socketRefusalToShow } from './lib/socketRefusals';
 import { cameraErrorCopy } from './lib/cameraErrorCopy';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -172,6 +172,7 @@ import { nestAsks, nestRows, owesOnBill } from './lib/nestAsks';
 import NestDayLine from './components/nest/NestDayLine';
 import NestHero from './components/nest/NestHero';
 import NestRows from './components/nest/NestRows';
+import NestPulse from './components/nest/NestPulse';
 import { pickHero, whenLine, alsoLine } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
 // The create screen, the one the Nest points a brand new account at, left
@@ -18126,6 +18127,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const heroIds = new Set([heroFlock, ...heroNight].filter(Boolean).map((f) => f.id));
     const restFlocks = liveFlocks.filter((f) => !heroIds.has(f.id));
     const heroAsk = heroFlock ? heroAction(heroFlock, nestAskList) : null;
+    // The friends who said down or maybe tonight, from the answers already
+    // held (lib/pulse.js friendsDownLine): never one who said Not, never a
+    // note, and nothing from midnight to 4 AM.
+    const nestFriendsOut = friendsDownLine(friendsPulses, nestNow);
     // Every other open loop, as rows: the asks the hero and its night do not
     // already carry, the invites, and last night's plans to rate.
     const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeIds: [...heroIds] })
@@ -18182,72 +18187,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </div>
         </header>
 
-        {/* NO COUNT ON THE NEST (2026-11-06). "4 flocks · 4 friends" stood
-            here. A friend count on the first screen is a popularity number
-            for a teenager to compare, and the flock count read "0 flocks"
-            while the list was still loading and after a read that failed.
-            Both numbers are still on You, where they were already shown. */}
-
-        {/* Tonight — full-width segmented pulse control (the actionable hero of the header).
-            Only for an account with somebody to see it. The caption under it
-            says friends see the answer, and with no friends that sentence
-            is false and the control is the first interactive thing a new
-            account meets, asking a question nobody will read. Same rule as
-            the stat line for a read still in flight: null is not zero, so
-            the control stays while friendCount is unknown. An answer already
-            set keeps it too, so it can still be changed or cleared. */}
-        {(friendCount !== 0 || myPulse) && (<>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', boxShadow: 'var(--card-shadow-sm)' }}>
-          <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px', paddingLeft: '8px', flexShrink: 0 }}>Tonight?</span>
-          <div style={{ display: 'flex', flex: 1, gap: '4px' }}>
-            {[
-              // Fills are the ACTIVE background under white 11px text, so they have
-              // to clear 4.5:1 with white, not just "read as green/amber".
-              // #10b981 was 2.54:1 and #f59e0b was 2.15:1. #047857 = 5.48:1,
-              // #b45309 = 5.02:1.
-              { key: 'down', fill: '#047857', label: 'Down' },
-              { key: 'maybe', fill: '#b45309', label: 'Maybe' },
-              { key: 'not', fill: '#3f4a5a', label: 'Not' },
-            ].map(opt => {
-              // Lit only while the pulse is still on; friends stop seeing it
-              // at its expiry and so must this button.
-              const active = livePulse(myPulse)?.status === opt.key;
-              return (
-                <button className="hit44"
-                  key={opt.key}
-                  onClick={() => handleSetPulse(opt.key)}
-                  disabled={pulseSaving}
-                  aria-label={`Tonight: ${opt.label}`}
-                  aria-pressed={active}
-                  style={{
-                    flex: 1,
-                    // 44pt minimum tappable height (Apple HIG). This is the most
-                    // tapped control in the app and measured 34.5px.
-                    minHeight: '44px',
-                    padding: '10px 0',
-                    borderRadius: '9px',
-                    border: active ? '1px solid transparent' : '1px solid var(--border-default)',
-                    backgroundColor: active ? opt.fill : 'transparent',
-                    color: active ? '#ffffff' : 'var(--text-secondary)',
-                    fontSize: 'var(--t-meta)',
-                    fontWeight: '600',
-                    cursor: pulseSaving ? 'wait' : 'pointer',
-                    opacity: pulseSaving ? 0.6 : 1,
-                    transition: 'background-color 0.15s ease, color 0.15s ease',
-                  }}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-        {/* The audience, stated. This is the first screen's one social
-            disclosure and nothing said who reads it: a stranger either
-            guessed it was a mood widget or hesitated to tap. 4 AM is the
-            server's own default expiry (routes/availability.js). */}
-        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 4px 0', textAlign: 'right' }}>Friends see your answer until it clears at 4 AM.</p>
-        </>)}
 
 
         {/* An unconfirmed address, said before either button below is
@@ -18288,6 +18227,39 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             invite opens Messages, where the invite cards are. Drawn only
             when something needs the reader. */}
         <NestRows rows={nestOpenRows} />
+
+        {/* OUT TONIGHT? Only for an account with somebody to see the answer.
+            The caption under the control says friends see it, and with no
+            friends that sentence is false and the control is the first
+            interactive thing a new account meets, asking a question nobody
+            will read. Null is not zero: while friendCount is still being
+            read the control stays. An answer already set keeps it too, so it
+            can still be changed or cleared. The caption lives inside
+            NestPulse, so it is never drawn without the control. */}
+        {(friendCount !== 0 || myPulse) && (
+          <NestPulse
+            active={livePulse(myPulse)?.status || null}
+            saving={pulseSaving}
+            onSet={handleSetPulse}
+            friends={nestFriendsOut}
+            onPlanWith={() => {
+              setFlockFriends((prev) => mergePlanFriends(prev, nestFriendsOut ? nestFriendsOut.people : []));
+              setCurrentScreen('create');
+            }}
+          />
+        )}
+        {/* No friends yet, but plans: the way to the people who would answer.
+            The Nest's other Add friends doors all go through the same opener. */}
+        {friendCount === 0 && !myPulse && liveFlocks.length > 0 && (
+          <button type="button" onClick={openAddFriendsFromNest} style={{ width: '100%', minHeight: '60px', marginBottom: '28px', padding: '11px 14px 11px 16px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer' }}>
+            <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.userPlus('var(--text-secondary)', 18)}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Add friends</span>
+              <span style={{ display: 'block', marginTop: '2px', fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>See who's out tonight</span>
+            </span>
+            <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
+          </button>
+        )}
 
         {(flocksLoading || liveFlocks.length > 0) && (<>
         {/* Flocks — header row with quiet Past + Add-friends ghosts */}

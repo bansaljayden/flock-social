@@ -639,10 +639,14 @@ describe('what was left silent, and why it is safe', () => {
   });
 
   test('the Tonight control prints no sentence about the pulse it failed to read', () => {
-    const pulse = region(APP, "{ key: 'down', fill: '#047857', label: 'Down' }", 'aria-pressed={active}');
-    // livePulse: the button is lit only while the pulse has not expired
-    // (lib/pulse.js, pinned by tonightPulseExpiry.test.js).
-    expect(pulse).toMatch(/const active = livePulse\(myPulse\)\?\.status === opt\.key;/);
+    // The control is components/nest/NestPulse.js since 2026-11-06; App.js
+    // hands it the answer through livePulse, so it is lit only while the
+    // pulse has not expired (lib/pulse.js, pinned by tonightPulseExpiry).
+    const PULSE = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestPulse.js'), 'utf8');
+    const pulse = region(PULSE, "{ key: 'down', fill: '#047857', label: 'Down' }", 'aria-pressed={on}');
+    expect(pulse).toMatch(/const on = active === opt\.key;/);
+    expect(APP).toContain('active={livePulse(myPulse)?.status || null}');
+    expect(PULSE).not.toMatch(/You have no status set/);
     expect(APP).not.toMatch(/You have no status set/);
   });
 });

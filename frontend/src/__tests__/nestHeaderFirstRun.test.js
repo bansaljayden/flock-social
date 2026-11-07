@@ -81,7 +81,11 @@ describe('the Nest prints no count', () => {
 });
 
 describe('the Tonight? pulse', () => {
-  const { expr, line } = guardAbove('>Tonight?</span>', /^\s*<div /);
+  // The control moved into components/nest/NestPulse.js on 2026-11-06, under
+  // the heading Out tonight?; the guard that decides whether it is drawn is
+  // still App.js's, on the line above the element.
+  const { expr } = guardAbove('<NestPulse', /^\s*<NestPulse/);
+  const PULSE = read('components', 'nest', 'NestPulse.js');
 
   test('is not offered to an account with no friends to see the answer', () => {
     expect(run(expr, { liveFlocks: [], friendCount: 0, myPulse: null })).toBeFalsy();
@@ -100,13 +104,11 @@ describe('the Tonight? pulse', () => {
   });
 
   test('the caption goes with the control, not after it', () => {
-    // The fragment the guard opens closes after the caption, so "Friends see
-    // your answer" is never drawn under a control that is not there.
-    const rest = LINES.slice(line).join('\n');
-    const close = rest.indexOf('</>)}');
-    expect(close).toBeGreaterThan(-1);
-    expect(rest.slice(0, close)).toContain('Friends see your answer until it clears at 4 AM.');
-    expect(rest.slice(close)).not.toContain('Friends see your answer');
+    // The caption is inside NestPulse, the element the guard draws, so
+    // "Friends see your answer" is never on screen without the control.
+    expect(PULSE).toContain('Friends see your answer until it clears at 4 AM.');
+    expect(HOME).not.toContain('Friends see your answer');
+    expect(PULSE).toMatch(/aria-label=\{`Tonight: \$\{opt\.label\}`\}/);
   });
 });
 

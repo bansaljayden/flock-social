@@ -164,7 +164,11 @@ describe('the tap, as App.js ships it', () => {
 
 describe('the Nest shows what friends see', () => {
   test('the button is lit only while the pulse is on', () => {
-    expect(APP).toContain('const active = livePulse(myPulse)?.status === opt.key;');
+    // App.js hands the control the answer only while it is on; NestPulse
+    // lights the one segment that matches (components/nest/NestPulse.js).
+    expect(APP).toContain('active={livePulse(myPulse)?.status || null}');
+    const pulse = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestPulse.js'), 'utf8');
+    expect(pulse).toContain('const on = active === opt.key;');
   });
 
   test('the pulse is dropped when it ends, even with nothing else re-rendering', () => {

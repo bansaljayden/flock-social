@@ -10,7 +10,7 @@
  *   1. openAddFriendsFromNest, lifted out of App.js and executed: it picks
  *      Contacts only for a friend count that came back zero, only where the
  *      tab exists, only before a refusal this session, and only once.
- *   2. Both of the Nest's Add friends buttons go through it.
+ *   2. Every Add friends door on the Nest goes through it.
  *   3. Nothing else moved: the screen's own default is still Search, and the
  *      other ways in (Settings, Explore's See All) still open where they did.
  *
@@ -114,13 +114,15 @@ describe('openAddFriendsFromNest, lifted out of App.js and executed', () => {
 });
 
 describe('where it is used, and where it is not', () => {
-  test('both of the Nest\'s Add friends buttons go through it', () => {
+  test('every one of the Nest\'s Add friends doors goes through it', () => {
     const home = APP.slice(APP.indexOf('const HomeScreen = () => {'));
     const homeEnd = home.indexOf('\n  };\n');
     expect(homeEnd).toBeGreaterThan(0);
     const body = home.slice(0, homeEnd);
     expect(body).toContain("'No flocks yet'");
-    expect(body.match(/onClick=\{openAddFriendsFromNest\}/g)).toHaveLength(2);
+    // The empty state's button and the list's own link, and since 2026-11-06
+    // the row an account with plans but no friends gets under Out tonight?.
+    expect((body.match(/onClick=\{openAddFriendsFromNest\}/g) || []).length).toBeGreaterThanOrEqual(2);
     expect(body).not.toContain("setCurrentScreen('addFriends')");
   });
 
