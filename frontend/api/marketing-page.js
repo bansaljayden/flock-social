@@ -239,6 +239,7 @@ const PAGE_BLOCKS = {
     ["li", "November 4, 2026 Flock is on the App Store."],
     ["p", "Photos and the story behind each one are coming soon."],
     ["h2", "Honors"],
+    ["li", "November 6, 2026 2nd place in the Technology category and the Rising Entrepreneur Award at the LionCage Pitch Competition, Penn State Great Valley."],
     ["li", "2026 1st place in Innovation Plan at Pennsylvania DECA States."],
     ["h2", "Competitions"],
     ["p", "Where Flock has been entered, and what is being prepared."],

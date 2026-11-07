@@ -270,16 +270,20 @@ describe('Honors appear only when there is one', () => {
     unmount();
   });
 
-  test('today the Honors section holds the DECA result, and the milestones no longer do', () => {
+  test('today the Honors section holds the LionCage and DECA results, newest first, and the milestones no longer do', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
     const section = container.querySelector('section[aria-labelledby="ab-h-honors"]');
     expect(section).not.toBeNull();
     expect(bandOf(section)).toBe('lp-sec-sand');
     const items = Array.from(section.querySelectorAll('.ab-honors li'));
-    expect(items.map((li) => flat(li.textContent))).toEqual(['2026 1st place in Innovation Plan at Pennsylvania DECA States.']);
-    // A year alone gets no machine-readable date.
-    expect(items[0].querySelector('time')).toBeNull();
-    expect(flat(items[0].querySelector('.ab-when').textContent)).toBe('2026');
+    expect(items.map((li) => flat(li.textContent))).toEqual([
+      'November 6, 2026 2nd place in the Technology category and the Rising Entrepreneur Award at the LionCage Pitch Competition, Penn State Great Valley.',
+      '2026 1st place in Innovation Plan at Pennsylvania DECA States.',
+    ]);
+    // A dated honor carries its date; a year alone gets no machine-readable date.
+    expect(items[0].querySelector('time').getAttribute('datetime')).toBe('2026-11-06');
+    expect(items[1].querySelector('time')).toBeNull();
+    expect(flat(items[1].querySelector('.ab-when').textContent)).toBe('2026');
 
     const milestones = Array.from(container.querySelectorAll('.ab-milestones li')).map((li) => flat(li.textContent));
     expect(milestones.join(' | ')).not.toMatch(/DECA|\bAward\b/);

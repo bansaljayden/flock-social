@@ -133,5 +133,6 @@ export const COMPETITIONS = [
 // company's competition records. Its month is left out until the results page
 // or the certificate confirms it.
 export const HONORS = [
+  { when: 'November 6, 2026', date: '2026-11-06', what: '2nd place in the Technology category and the Rising Entrepreneur Award at the LionCage Pitch Competition, Penn State Great Valley.' },
   { when: '2026', what: '1st place in Innovation Plan at Pennsylvania DECA States.' },
 ];
