@@ -18333,26 +18333,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </button>
         )}
 
-        {(flocksLoading || liveFlocks.length > 0) && (<>
-        {/* Past and Add friends, until the footer takes them. */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', margin: '0 0 8px' }}>
-          <div style={{ display: 'flex', gap: '6px' }}>
-            <button className="hit44"
-              onClick={() => setCurrentScreen('pastFlocks')}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
-            >
-              {Icons.clock('var(--text-secondary)', 12)} Past
-            </button>
-            <button className="hit44"
-              onClick={openAddFriendsFromNest}
-              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
-            >
-              {Icons.userPlus('var(--text-secondary)', 12)} Add friends
-            </button>
-          </div>
-        </div>
-        </>)}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
+        <div>
           {/* COMING UP. Completed and cancelled plans leave Home: they are
               served by Past and stay reachable from Messages, and without that
               filter the morning after put yesterday's night next to tonight's
@@ -18362,15 +18343,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               and its night is grouped by when (lib/nestTime.js comingGroups),
               a partition of the one sorted list. */}
           <NestComingUp groups={nestComing} />
-          {/* The cards name their venues, which is Google Maps data off a
-              Google map, so the list ends on Google's attribution
-              (components/ui/GoogleCredit.js), as the Explore list does. */}
-          {liveFlocks.some((f) => f.venueId && f.venue && f.venue !== 'TBD') && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
-              <GoogleMapsMark />
-            </div>
-          )}
         </div>
+
+        {/* THE PAGE ENDS. After the plans, the two ways out that are not a
+            plan, as text links painted at their real 44px target, then
+            Google's credit, then nothing: no feed to keep scrolling. Past
+            flocks only when there is history to see. */}
+        {liveFlocks.length > 0 && (
+          <footer data-nest-band="footer" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: '20px', marginTop: '-12px' }}>
+            {flocks.length > liveFlocks.length && (
+              <button type="button" onClick={() => setCurrentScreen('pastFlocks')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                {Icons.clock('var(--accent-purple-text)', 14)} Past flocks
+              </button>
+            )}
+            <button type="button" onClick={openAddFriendsFromNest} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minHeight: '44px', padding: 0, border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+              {Icons.userPlus('var(--accent-purple-text)', 14)} Add friends
+            </button>
+          </footer>
+        )}
+        {/* The plans name their venues, which is Google Maps data off a
+            Google map, so the page ends on Google's attribution
+            (components/ui/GoogleCredit.js), as the Explore list does. */}
+        {liveFlocks.some((f) => f.venueId && f.venue && f.venue !== 'TBD') && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 0 0' }}>
+            <GoogleMapsMark />
+          </div>
+        )}
 
       </div>
 

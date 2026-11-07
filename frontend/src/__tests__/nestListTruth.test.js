@@ -27,7 +27,12 @@ test('the Nest counts, gates and lists one live, sorted array', () => {
   expect(home).toMatch(/const liveFlocks = flocks\s*\.filter\(f => f\.status !== 'completed' && f\.status !== 'cancelled'\)/);
   // The count that read this array is gone (nestHeaderFirstRun, "the Nest
   // prints no count"); the gates and the list still read it.
-  expect(home).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(<>/);
+  // The header's Start a flock keeps the gate the old slab had; the page's
+  // footer (Past flocks, Add friends) is drawn once there are plans.
+  expect(home).toMatch(/\{\(flocksLoading \|\| liveFlocks\.length > 0\) && \(\s*<button type="button" className="hit44" onClick=\{\(\) => setCurrentScreen\('create'\)\}/);
+  expect(home).toMatch(/\{liveFlocks\.length > 0 && \(\s*<footer data-nest-band="footer"/);
+  // Past flocks in the footer only when there is history to see.
+  expect(home).toMatch(/\{flocks\.length > liveFlocks\.length && \(\s*<button type="button" onClick=\{\(\) => setCurrentScreen\('pastFlocks'\)\}/);
   expect(home).toMatch(/!flocksLoading && !flocksError && liveFlocks\.length === 0 && \(/);
   // The list reads what the hero and its night did not take: one sorted
   // array split three ways and never sorted again (lib/nestTime.js pickHero).
