@@ -88,10 +88,14 @@ export const openStatus = (openingHours, { now = new Date(), utcOffsetMinutes } 
   const current = covering(at);
   if (current) {
     let end = current[1];
-    let guard = 0;
-    for (;;) {
-      const next = sorted.find(([s]) => s % WEEK_MIN === end % WEEK_MIN && end - current[0] < WEEK_MIN);
-      if (!next || guard++ > 14) break;
+    // At most one hop per period, so a week of back-to-back periods ends.
+    for (let hop = 0; hop < sorted.length && end - current[0] < WEEK_MIN; hop += 1) {
+      const endsAt = end % WEEK_MIN;
+      let next = null;
+      for (const span of sorted) {
+        if (span[0] % WEEK_MIN === endsAt) { next = span; break; }
+      }
+      if (!next) break;
       end += next[1] - next[0];
     }
     if (end - current[0] >= WEEK_MIN) return { open: true, text: 'Open 24 hours' };
