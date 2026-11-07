@@ -14,11 +14,19 @@
  * iOS segmented control always has a choice, so an empty one needs its own
  * sign of being tappable.
  *
- * The chosen answer is a tint of its hue with ink of the same hue (index.css
- * --pulse-{down,maybe,not}-{bg,ink}): every ink clears 4.5:1 on its tint and
- * every tint stands apart from the track (nestOutTonight.test.js). Down used
- * to fill its segment solid green under white, the loudest block on the page
- * after the hero and SOS, for an answer that is a quiet fact about tonight.
+ * Your chosen Down is blush under navy words (index.css --accent-blush,
+ * 9.63:1), the app's second accent, which goes only where a plan comes
+ * together and on the people in it: saying you are down tonight is the first
+ * step of that. A chosen Maybe or Not is a tint of its hue with ink of the
+ * same hue (--pulse-{maybe,not}-{bg,ink}). Every ink clears 4.5:1 on its fill
+ * and every fill stands apart from the track (nestOutTonight.test.js). Down
+ * was a green tint before blush, and before that it filled its segment solid
+ * green under white, the loudest block on the page after the hero and SOS.
+ *
+ * The keyboard ring is the app's own (index.css :focus-visible), 2px outside
+ * the segment, so a strip of the track always lies between the ring and the
+ * blush. The dark theme's cream ring measures 1.08:1 against blush and would
+ * melt into it; against the track it is 10.39:1 (the light ring 5.62:1).
  *
  * From midnight to 4 AM the heading is a statement, "Your answer for
  * tonight", not the question "Out tonight?": the Nest asks nobody to go out
@@ -45,10 +53,11 @@ import { BAND_HEAD, BAND_GAP } from './nestBand';
 import { useNow } from '../../lib/nestTime';
 import { pulseHeading } from '../../lib/pulse';
 
+// Each answer with the fill and ink it takes once chosen.
 export const PULSE_OPTIONS = [
-  { key: 'down', label: 'Down' },
-  { key: 'maybe', label: 'Maybe' },
-  { key: 'not', label: 'Not' },
+  { key: 'down', label: 'Down', bg: 'var(--accent-blush)', ink: 'var(--on-accent-blush)' },
+  { key: 'maybe', label: 'Maybe', bg: 'var(--pulse-maybe-bg)', ink: 'var(--pulse-maybe-ink)' },
+  { key: 'not', label: 'Not', bg: 'var(--pulse-not-bg)', ink: 'var(--pulse-not-ink)' },
 ];
 
 const textLink = {
@@ -100,8 +109,8 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
                 padding: 0,
                 border: 'none',
                 borderRadius: '10px',
-                backgroundColor: on ? `var(--pulse-${opt.key}-bg)` : 'transparent',
-                color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-primary)',
+                backgroundColor: on ? opt.bg : 'transparent',
+                color: on ? opt.ink : 'var(--text-primary)',
                 fontSize: 'var(--t-body)',
                 fontWeight: '600',
                 cursor: saving ? 'wait' : 'pointer',

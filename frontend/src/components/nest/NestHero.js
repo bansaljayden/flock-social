@@ -25,6 +25,13 @@
  * (.nest-stretch--hero, .nest-on-navy): the app's steel ring measures 1.89:1
  * on this navy in light mode, under the 3:1 a focus indicator needs.
  *
+ * THE SECOND ACCENT, BLUSH (index.css --accent-blush). A plan that is locked
+ * in says so on a blush pill under navy words and check, where a plan still
+ * voting says its status in plain words. The faces of the people in the plan
+ * wear a blush ring wherever they have a ring at all, so the card shows who is
+ * in as well as that it is on; the "+N" keeps the card's navy. Blush on this
+ * navy and navy on blush both measure 9.63:1 (7.62:1 on the dark navy).
+ *
  * The other plans on the same night sit in one white group under it, each a
  * row whose name is a heading too, with the reader's own state on its chip.
  *
@@ -44,6 +51,17 @@ const LOCK_STORE = { get: lsGet, set: lsSet };
 // The heading keeps the type it had as a span; the button inside it inherits
 // all of it (index.css .nest-stretch resets the button's own).
 const headingReset = { margin: 0, padding: 0 };
+
+// The Locked in pill. Its 3px above and below is given back by the same
+// negative margin, so the row keeps its height and the time beside it and the
+// name under it sit where they sit without the pill.
+const LOCKED_PILL = {
+  backgroundColor: 'var(--accent-blush)',
+  color: 'var(--on-accent-blush)',
+  borderRadius: '999px',
+  padding: '3px 10px 3px 8px',
+  margin: '-3px 0',
+};
 
 export default function NestHero({
   flock,
@@ -74,6 +92,7 @@ export default function NestHero({
     if (onLockMoment) onLockMoment();
   }, [lockId]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!flock) return null;
+  const locked = Boolean(status && status.key === 'locked');
   const base = `nest-hero-${flock.id}`;
   const ids = {
     title: base,
@@ -106,9 +125,9 @@ export default function NestHero({
               id={ids.status}
               data-nest-hero-status={status.key}
               className={settle ? 'nest-lock-fade' : undefined}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0, fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--nest-hero-meta)', whiteSpace: 'nowrap' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexShrink: 0, fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--nest-hero-meta)', whiteSpace: 'nowrap', ...(locked ? LOCKED_PILL : null) }}
             >
-              {status.key === 'locked' && Icons.check('var(--nest-hero-meta)', 13)}
+              {locked && Icons.check('var(--on-accent-blush)', 13)}
               {status.label}
             </span>
           )}
@@ -137,7 +156,7 @@ export default function NestHero({
         </h2>
         <p id={ids.place} style={{ margin: '3px 0 0', fontSize: 'var(--t-body)', fontWeight: '400', color: 'var(--nest-hero-meta)' }}>{place}</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '14px', minWidth: 0 }}>
-          <FaceRow people={faces} total={total} size={28} ring="var(--nest-hero-bg)" bg="var(--nest-hero-face)" ink="var(--nest-hero-ink)" />
+          <FaceRow people={faces} total={total} size={28} ring="var(--nest-hero-bg)" faceRing="var(--accent-blush)" bg="var(--nest-hero-face)" ink="var(--nest-hero-ink)" />
           <span id={ids.names} style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--nest-hero-meta)', minWidth: 0 }}>{names}</span>
         </div>
         {note && (

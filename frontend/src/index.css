@@ -259,12 +259,15 @@
                            tabs: navy at 14% over the cream, 1.30:1, where
                            --divider (#eeeeee) is lighter than the cream
                            and drew nothing
-       --pulse-*-bg/-ink   the chosen Tonight answer: its hue at 14% over
-                           the track with ink of the same hue (light), 22%
-                           with light ink (dark). Each ink clears 4.5:1 on
-                           its tint (4.95 to 11.8) and each tint stands
-                           1.1:1 or more apart from the track, where Down
-                           filled its segment solid green under white
+       --pulse-*-bg/-ink   the chosen Tonight answer when it is Maybe or
+                           Not: its hue at 14% over the track with ink of
+                           the same hue (light), 22% with light ink (dark).
+                           Each ink clears 4.5:1 on its tint (5.91 to
+                           10.25) and each tint stands 1.1:1 or more apart
+                           from the track. A chosen Down is blush, the
+                           second accent (--accent-blush, below), where it
+                           was a green tint and before that solid green
+                           under white
 
      Theme-free: --nest-gutter widens the side margin on bigger phones the
      way iOS lists do (16 at 320, 20 from 385 up), and --ease-out is the
@@ -282,14 +285,32 @@
   --nest-hero-action-fg: #1e293b;
   --nest-hero-skel: #d3d2c9;
   --nest-edge: #d3d2c9;
-  --pulse-down-bg: #c7d3c2;
-  --pulse-down-ink: #065f46;
   --pulse-maybe-bg: #e0ceb7;
   --pulse-maybe-ink: #78350f;
   --pulse-not-bg: #d0cdc2;
   --pulse-not-ink: #1e293b;
   --nest-gutter: clamp(16px, 5.2vw, 20px);
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ═════════════════════════════════════════════════════════════════
+     THE SECOND ACCENT: BLUSH (2026-11-07). A pale pink that is only ever
+     a fill under navy words or a ring on the navy, with the same values
+     in both themes. It marks a plan coming together and the people in
+     it, in four places and nowhere else (accentBlush.test.js keeps the
+     list):
+
+       the hero's Locked in pill                  NestHero.js
+       the hero's face rings                      NestHero.js
+       your own Down, once you have chosen it     NestPulse.js
+       the plan screen's Locked in badge          FlockDetail.js
+
+     Navy words on blush measure 9.63:1, and blush on the navy 9.63:1
+     (7.62:1 on the dark theme's #1e3a5c hero and header). On the cream
+     it is 1.30:1, so it is never words or a mark on the page. Every
+     other button, the links, the tab bar, Birdie, crowd levels, money,
+     errors and SOS keep their own colours. */
+  --accent-blush: #F4C6CF;
+  --on-accent-blush: #1e293b;
 }
 
 [data-theme="dark"] {
@@ -376,12 +397,14 @@
   --nest-hero-action-fg: #1e293b;
   --nest-hero-skel: #1e3a5c;
   --nest-edge: #1e3a5c;
-  --pulse-down-bg: #16373f;
-  --pulse-down-ink: #a7f3d0;
   --pulse-maybe-bg: #3d2f2e;
   --pulse-maybe-ink: #fde68a;
   --pulse-not-bg: #2b3a52;   /* 1.27:1 from the track, a card now (was #232d40 on --bg-inset); ink 9.8:1 */
   --pulse-not-ink: #f1ede0;
+  /* The second accent keeps its light values here: blush is a fill under
+     navy words in both themes. See the light block for where it goes. */
+  --accent-blush: #F4C6CF;
+  --on-accent-blush: #1e293b;
 }
 
 *,

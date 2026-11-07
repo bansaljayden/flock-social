@@ -643,7 +643,7 @@ describe('what was left silent, and why it is safe', () => {
     // hands it the answer through livePulse, so it is lit only while the
     // pulse has not expired (lib/pulse.js, pinned by tonightPulseExpiry).
     const PULSE = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestPulse.js'), 'utf8');
-    const pulse = region(PULSE, "{ key: 'down', label: 'Down' }", 'aria-pressed={on}');
+    const pulse = region(PULSE, "{ key: 'down', label: 'Down',", 'aria-pressed={on}');
     expect(pulse).toMatch(/const on = active === opt\.key;/);
     expect(APP).toContain('active={livePulse(myPulse)?.status || null}');
     expect(PULSE).not.toMatch(/You have no status set/);

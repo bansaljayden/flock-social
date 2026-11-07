@@ -339,7 +339,11 @@ export default function FlockDetail({
 
           {/* Status badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'rgba(34,197,94,0.25)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? '#86efac' : '#fcd34d' }}>
+            {/* Locked in wears the second accent: a blush badge under navy
+                words (index.css --accent-blush), 9.63:1, on this header,
+                which is navy in both themes. Planning stays amber, and Done
+                and Cancelled steel. */}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'var(--accent-blush)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? 'var(--on-accent-blush)' : '#fcd34d' }}>
               {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked in' : 'Planning'}
             </span>
             {/* WHEN, once, and for the host the way to change it. This pill

@@ -7,10 +7,12 @@
  *     to the footer, about 800px down at 390 with four plans.
  *   - "Plan with them" belongs to the names: when it wraps, it starts under
  *     their first letter, where it sat alone at the right edge at 320.
- *   - The chosen answer is a tint of its hue with dark ink (light) or a deeper
- *     tint with light ink (dark), where Down filled its segment solid green
- *     under white, the loudest block on the page after the hero and SOS. Each
- *     ink clears 4.5:1 on its tint, and each tint stands apart from the track.
+ *   - A chosen Maybe or Not is a tint of its hue with dark ink (light) or a
+ *     deeper tint with light ink (dark), where Down filled its segment solid
+ *     green under white, the loudest block on the page after the hero and
+ *     SOS. Since 2026-11-07 a chosen Down is blush under navy words, the
+ *     second accent (accentBlush.test.js). Each ink clears 4.5:1 on its fill,
+ *     and each fill stands apart from the track.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test nestOutTonight --watchAll=false
@@ -105,23 +107,36 @@ describe('the chosen answer', () => {
     .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
   const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
 
-  test.each([[':root'], ['[data-theme="dark"]']])('%s: each ink clears 4.5:1 on its tint, and each tint stands apart from the track', (sel) => {
+  test.each([[':root'], ['[data-theme="dark"]']])('%s: each ink clears 4.5:1 on its fill, and each fill stands apart from the track', (sel) => {
     const t = block(sel);
     // The track is the white group every Nest card is (--bg-card-solid).
     const track = t['--bg-card-solid'] || block(':root')['--bg-card-solid'];
-    for (const { key } of PULSE_OPTIONS) {
-      const bg = t[`--pulse-${key}-bg`];
-      const ink = t[`--pulse-${key}-ink`];
-      expect({ key, bg }).toEqual({ key, bg: expect.stringMatching(/^#[0-9a-f]{6}$/i) });
+    // Each option names its fill and ink as tokens of this file.
+    const token = (v) => t[(String(v).match(/^var\((--[a-z0-9-]+)\)$/) || [])[1]];
+    for (const opt of PULSE_OPTIONS) {
+      const { key } = opt;
+      const bg = token(opt.bg);
+      const ink = token(opt.ink);
+      expect({ key, bg, ink }).toEqual({ key, bg: expect.stringMatching(/^#[0-9a-f]{6}$/i), ink: expect.stringMatching(/^#[0-9a-f]{6}$/i) });
       expect({ key, ink: ratio(ink, bg) >= 4.5 }).toEqual({ key, ink: true });
       expect({ key, apart: ratio(bg, track) >= 1.1 }).toEqual({ key, apart: true });
     }
   });
 
-  test('the segment reads its tint and ink from those tokens, never white on a solid fill', () => {
-    expect(PULSE).toContain("backgroundColor: on ? `var(--pulse-${opt.key}-bg)` : 'transparent',");
-    expect(PULSE).toContain("color: on ? `var(--pulse-${opt.key}-ink)` : 'var(--text-primary)',");
+  test('the segment reads its fill and ink from its option, never white on a solid fill', () => {
+    expect(PULSE).toContain("backgroundColor: on ? opt.bg : 'transparent',");
+    expect(PULSE).toContain("color: on ? opt.ink : 'var(--text-primary)',");
     expect(PULSE).not.toMatch(/#ffffff|#047857/);
+  });
+
+  test('a chosen Down is blush under navy words; a chosen Maybe or Not keeps the tint of its hue', () => {
+    expect(PULSE_OPTIONS).toEqual([
+      { key: 'down', label: 'Down', bg: 'var(--accent-blush)', ink: 'var(--on-accent-blush)' },
+      { key: 'maybe', label: 'Maybe', bg: 'var(--pulse-maybe-bg)', ink: 'var(--pulse-maybe-ink)' },
+      { key: 'not', label: 'Not', bg: 'var(--pulse-not-bg)', ink: 'var(--pulse-not-ink)' },
+    ]);
+    // The green Down's tokens went with it.
+    expect(CSS).not.toMatch(/--pulse-down-(bg|ink)/);
   });
 
   test('with nothing chosen it still reads as three buttons: a white group, hairlines between, primary ink', () => {

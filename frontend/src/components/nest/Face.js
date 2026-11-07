@@ -12,7 +12,9 @@
  *
  * Faces that overlap (a row of them, `index` > 0) get a 2px ring in the colour
  * of the surface they sit on, so each one reads as its own circle; a face on
- * its own has no ring.
+ * its own has no ring. On the hero that ring is blush instead, the second
+ * accent marking the people in a plan (NestHero.js), and its "+N" keeps the
+ * card's navy.
  */
 import React from 'react';
 
@@ -68,15 +70,16 @@ export default function Face({
  * A row of up to `max` faces, then "+N" for the rest. `people` are
  * { name, image } in the order to draw them; `total` is the real head count
  * (accounts and link guests), so the +N counts from it and not from the
- * four-face preview.
+ * four-face preview. `ring` is the surface's colour; `faceRing`, when given,
+ * rings the faces in a colour of their own while the +N keeps `ring`.
  */
-export function FaceRow({ people = [], total = 0, size = 28, max = 4, ring, bg, ink }) {
+export function FaceRow({ people = [], total = 0, size = 28, max = 4, ring, faceRing = ring, bg, ink }) {
   const shown = people.slice(0, max);
   const extra = Math.max(0, (Number(total) || shown.length) - shown.length);
   return (
     <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
       {shown.map((p, i) => (
-        <Face key={p.key ?? i} name={p.name} image={p.image} size={size} index={shown.length > 1 || extra > 0 ? i : -1} ring={ring} bg={bg} ink={ink} />
+        <Face key={p.key ?? i} name={p.name} image={p.image} size={size} index={shown.length > 1 || extra > 0 ? i : -1} ring={faceRing} bg={bg} ink={ink} />
       ))}
       {extra > 0 && (
         <span
