@@ -219,16 +219,34 @@ export default function AboutPage() {
           <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-honors">
             <div className="lp-wrap">
               <h2 id="ab-h-honors">Honors</h2>
-              <ol className="ab-honors">
-                {HONORS.map((h) => (
-                  <li key={h.what}>
-                    {h.date
-                      ? <time className="ab-when" dateTime={h.date}>{h.when}</time>
-                      : <span className="ab-when">{h.when}</span>}{' '}
-                    <span className="ab-what">{h.what}</span>
-                  </li>
-                ))}
-              </ol>
+              {/* The rosette is generated art (Higgsfield, 2026-11-07): a navy
+                  ribbon with the fairywren in its medallion, no words in it.
+                  It is decoration beside the list, which says what the honor
+                  is, so it is hidden from screen readers. Drawn at 66 x 96,
+                  with a 2x file. */}
+              <div className="ab-honors-row">
+                <img
+                  className="ab-honors-badge"
+                  src="/art/honors-rosette-96.webp"
+                  srcSet="/art/honors-rosette-96.webp 1x, /art/honors-rosette-192.webp 2x"
+                  width={66}
+                  height={96}
+                  alt=""
+                  aria-hidden="true"
+                  decoding="async"
+                  loading="lazy"
+                />
+                <ol className="ab-honors">
+                  {HONORS.map((h) => (
+                    <li key={h.what}>
+                      {h.date
+                        ? <time className="ab-when" dateTime={h.date}>{h.when}</time>
+                        : <span className="ab-when">{h.when}</span>}{' '}
+                      <span className="ab-what">{h.what}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             </div>
           </section>
         )}

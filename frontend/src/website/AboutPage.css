@@ -66,6 +66,11 @@
    once there are any, are the same log on the stone band. */
 .ab-milestones, .ab-honors { list-style: none; margin: clamp(16px, 3vw, 24px) 0 20px; padding: 0; display: grid; gap: 16px; max-width: 46rem; }
 .ab-honors { margin-bottom: 0; }
+/* The rosette beside the honors list: a fixed 66 x 96 box that never shrinks,
+   level with the list's first line. */
+.ab-honors-row { display: flex; align-items: flex-start; gap: clamp(16px, 3vw, 28px); }
+.ab-honors-row .ab-honors { flex: 1 1 auto; min-width: 0; }
+.ab-honors-badge { flex: none; width: 66px; height: 96px; margin-top: clamp(16px, 3vw, 24px); }
 .ab-milestones li, .ab-honors li { display: grid; gap: 2px; font-size: 16.5px; line-height: 1.5; color: var(--ink-2); }
 @media (min-width: 640px) {
   .ab-milestones li, .ab-honors li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; }
