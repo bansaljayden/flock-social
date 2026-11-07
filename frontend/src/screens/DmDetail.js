@@ -1441,7 +1441,7 @@ export default function DmDetail({
                           src={resolveVenuePhoto(venue.photo_url)}
                           alt=""
                           style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
-                          onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                          onError={(e) => { e.target.onerror = null; e.target.src = VENUE_PHOTO_PLACEHOLDER; }}
                         />
                       ) : (
                         <div style={{ width: '44px', height: '44px', borderRadius: '12px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

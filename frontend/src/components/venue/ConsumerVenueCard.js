@@ -95,6 +95,7 @@ import { submitVenueFeedback } from '../../services/api';
 // 404 swallowed); the words are TableAvailability's.
 import { useTableSummary } from '../../lib/tableSummaries';
 import TableAvailability from './TableAvailability';
+import { VENUE_PHOTO_PLACEHOLDER } from '../../lib/venuePhoto';
 // REACT_APP_PURCHASES=off (the App Store build): a forecast the server
 // withholds is stated as a limit, with nothing offered and no Pro wording.
 // lib/purchasesBuild.js has the rules.
@@ -1395,7 +1396,7 @@ export default function ConsumerVenueCard({
                 /* Fall back to the shared placeholder rather than vanishing. A
                    failed load used to be the one case where the layout silently
                    changed shape under the reader. */
-                onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                onError={(e) => { e.target.onerror = null; e.target.src = VENUE_PHOTO_PLACEHOLDER; }}
               />
             )}
             <div style={{ padding: '8px 10px 10px', position: 'relative' }}>

@@ -9,6 +9,7 @@ import { GoogleMapsMark, PhotoCredit } from '../components/ui/GoogleCredit';
 import { demoNoteLead } from '../lib/crowd';
 import { buildFlockStyle } from '../components/map/flockStyle';
 import { keylessBasemapStyle } from '../components/map/keylessBasemap';
+import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 
 // A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
 // arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
@@ -985,7 +986,7 @@ export default function LiveDemo() {
   // Google genuinely has no photo of the place.
   const photoSrc = !selectedPhoto
     ? null
-    : (photoFailed ? '/marks/venue-placeholder.jpg' : photoHrefFor(selectedPhoto));
+    : (photoFailed ? VENUE_PHOTO_PLACEHOLDER : photoHrefFor(selectedPhoto));
 
   // Read once and used twice, so the "Best time to go" line and the locked
   // note can never both decide they are the right thing to draw.

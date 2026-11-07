@@ -552,8 +552,8 @@ async function seed(dbUrl) {
     price: '$$',
     price_level: 2,
     place_id: DEMO.venue.placeId,
-    // Without this the card falls through to /marks/venue-placeholder.jpg, the
-    // sparrow, and every screenshot of the vote flow shipped showing a bird
+    // Without this the card falls through to /marks/venue-placeholder.webp, the
+    // painted wren, and every screenshot of the vote flow shipped showing a bird
     // where a venue photo belongs. The Copper Finch is invented, so it has no
     // Google Places photo to fetch.
     //
@@ -575,7 +575,7 @@ async function seed(dbUrl) {
     // rig answers that request, like every other venue photo, with a drawing
     // from shot-art.mjs (the dining room). resolveVenuePhoto prefixes the API origin
     // for paths beginning "/api/", which is what routes it there. Outside the
-    // rig the proxy finds no such ref and the card shows the sparrow.
+    // rig the proxy finds no such ref and the card shows the painted wren.
     photo_url: '/api/venues/photo?ref=shots-copper-finch&maxwidth=400',
   };
   const msgs = [
