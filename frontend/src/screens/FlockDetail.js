@@ -224,9 +224,10 @@ export default function FlockDetail({
     // A locked-in plan an hour past its time, which the host has not slid to
     // done. Most never do, and the sweep completes the plan only 12 hours
     // after its time, so the feedback card below waits for this OR done
-    // (lib/planNight.js has the whole account). A member's answer counts
-    // until noon the day after the plan, venue time (routes/feedback.js, the
-    // plan window).
+    // (lib/planNight.js has the whole account). An answer counts until noon
+    // the day after the plan, venue time, from a member who had said yes by
+    // an hour after the plan began, the plan locked in and one other member
+    // in by then too (routes/feedback.js, the plan window).
     const nightOver = isNightOver(flock);
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
@@ -628,8 +629,9 @@ export default function FlockDetail({
           {/* Post-hangout feedback prompt, only once the night happened.
               isDone and not isCompleted: a cancelled plan has no night to
               rate (see isDone above). nightOver asks from an hour in, and an
-              answer from a member counts until noon the next day on the
-              venue clock, so the morning after still counts. */}
+              answer from a member who had said yes by an hour after the plan
+              began counts until noon the next day on the venue clock, so the
+              morning after still counts (nightOver above says who). */}
           {(isDone || nightOver) && hasVenue && flock.venueId && !submittedFeedback.has(flock.id) && (
             <div style={{ ...styles.card, marginBottom: '12px', overflow: 'hidden' }}>
               <p style={{ color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', margin: '0 0 10px' }}>How was {flock.venue}?</p>
@@ -694,12 +696,16 @@ export default function FlockDetail({
                       // thanked everybody the same way. The first and last
                       // sentences below are the two the venue card uses.
                       //
-                      // A member of the plan has until noon the day after it,
-                      // venue time (never less than 12 hours from its start).
-                      // An answer after that is filed and does not count, and
-                      // the server says so (plan_window_closed) with the moment
-                      // the window shut, so the thanks names that moment rather
-                      // than suggesting the night was never evidence.
+                      // A member who had said yes by an hour after the plan
+                      // began, the plan locked in and one other member in by
+                      // then too, has until noon the day after it, venue time
+                      // (never less than 12 hours from its start). An answer
+                      // from that member after the window is filed and does not
+                      // count, and the server says so (plan_window_closed) with
+                      // the moment the window shut, so the thanks names that
+                      // moment rather than suggesting the night was never
+                      // evidence. Anybody else gets no plan_window_closed and
+                      // the last sentence.
                       const shutAt = filed?.plan_window_closed ? reportWindowWords(filed.plan_report_closes_at) : null;
                       showToast(filed?.verified
                         ? 'Thanks. Real reports sharpen the forecast for everyone.'

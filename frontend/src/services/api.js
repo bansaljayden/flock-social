@@ -3666,13 +3666,16 @@ export async function getCrowdAlternatives(placeId) {
 // `local_hour`, while the crowd routes take camelCase. A caller that supplies
 // its own values keeps them.
 //
-// The device's zone rides along too, as `time_zone`. A plan member's report
-// counts until noon the day after the plan on the venue's clock
-// (routes/feedback.js, the plan window), and for a venue the server has no
-// zone for, the phone of someone who was there is the best clock it has. It
-// is used for that one sum and not stored. Left off when the runtime cannot
-// answer, or answers with something no zone name is; the server then keeps the
-// old 12 hours. 64 is the server's bound, as for push and Birdie.
+// The device's zone rides along too, as `time_zone`. A report on a plan
+// counts until noon the day after it on the venue's clock when the reporter
+// had said yes by an hour after the plan began, the plan was locked in and one
+// other member had said yes by then too (routes/feedback.js, the plan window),
+// and for a venue the server has no zone for, the phone of someone who was
+// there is the best clock it has. The server uses it only when it fits the
+// plan venue's longitude (within three hours of its solar time), for that one
+// sum, and does not store it. Left off when the runtime cannot answer, or
+// answers with something no zone name is; the server then keeps the old 12
+// hours. 64 is the server's bound, as for push and Birdie.
 export async function submitVenueFeedback(data) {
   const now = new Date();
   const body = { ...data };

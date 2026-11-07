@@ -76,9 +76,10 @@ test('a report from somebody the host marked absent is not verified evidence', (
 
 test('the post-hangout thank-you says whether the report counts', () => {
   // Not every report counts, so thanking everybody identically claimed
-  // otherwise. A member of the plan has until noon the day after it, venue
-  // time (backend routes/feedback.js, the plan window); after that the server
-  // says the window shut and when, and the thanks names that moment.
+  // otherwise. A member who had said yes by an hour after the plan began has
+  // until noon the day after it, venue time (backend routes/feedback.js, the
+  // plan window); after that the server says the window shut and when, and
+  // the thanks names that moment.
   expect(detail).toMatch(/const filed = await submitVenueFeedback\(\{/);
   expect(detail).toMatch(/showToast\(filed\?\.verified/);
   expect(detail).toMatch(/Thanks\. Real reports sharpen the forecast for everyone\./);

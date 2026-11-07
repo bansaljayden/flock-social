@@ -12,10 +12,11 @@
  *
  * An hour after the plan's time is the earliest a report says something about
  * the night rather than about the door. From then on the plan screen asks, and
- * the Nest says so. Since 2026-11-06 an answer from somebody who was in the
- * plan when it was locked in counts until noon the day after the plan on the
- * venue's clock, never less than 12 hours from its start (routes/feedback.js,
- * the plan window), so the morning after still counts.
+ * the Nest says so. Since 2026-11-06 an answer from somebody who had said yes
+ * by an hour after the plan began (the plan locked in, and one other member
+ * in, by then too) counts until noon the day after the plan on the venue's
+ * clock, never less than 12 hours from its start (routes/feedback.js, the
+ * plan window), so the morning after still counts.
  *
  * Both readers use this one function (screens/FlockDetail.js and the Nest in
  * App.js) so the chip that says "How was it?" and the card it opens cannot

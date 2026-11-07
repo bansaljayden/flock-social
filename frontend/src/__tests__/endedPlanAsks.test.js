@@ -19,8 +19,9 @@
 //   after the answer stopped counting. lib/planNight.js decides the hour.
 //   The Nest asks later, the morning after (nestAsksHowItWas, built on the same
 //   function), because it is the screen every open lands on. Since 2026-11-06
-//   a member's answer counts until noon the day after the plan, venue time,
-//   and the thanks after the window says when it shut.
+//   the answer of a member who had said yes by an hour after the plan began
+//   counts until noon the day after the plan, venue time, and the thanks after
+//   the window says when it shut.
 //
 // The screen is rendered for real, from its own parameter list, so a prop
 // added to it arrives here as a function and cannot quietly take a falsy
@@ -260,9 +261,10 @@ describe('a plan called off while its card is open', () => {
 });
 
 describe('the thanks says whether the answer counts, and when the window shut', () => {
-  // routes/feedback.js counts a member's answer until noon the day after the
-  // plan on the venue's clock, and on a later answer returns
-  // plan_window_closed with the moment it shut (plan_report_closes_at).
+  // routes/feedback.js counts the answer of a member who had said yes by an
+  // hour after the plan began until noon the day after it on the venue's
+  // clock, and on a later answer from that member returns plan_window_closed
+  // with the moment it shut (plan_report_closes_at).
   const { submitVenueFeedback } = require('../services/api');
   const { fireEvent, waitFor } = require('@testing-library/react');
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
