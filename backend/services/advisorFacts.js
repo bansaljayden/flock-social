@@ -495,6 +495,25 @@ async function getVenueContext(userId) {
 
 // ─── Clock helpers ───────────────────────────────────────────────────────────
 
+// One formatter per zone (fourth recheck, 2026-11-06): building one is most of
+// what reading a zone's offset costs, and a question reads its venue's offset
+// several times over. A zone the formatter refuses throws on every call, as
+// it did before, and is never kept.
+const ZONE_FORMATTERS = new Map();
+const ZONE_FORMATTERS_KEPT = 64;
+function zoneFormatter(timeZone) {
+  let dtf = ZONE_FORMATTERS.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    if (ZONE_FORMATTERS.size >= ZONE_FORMATTERS_KEPT) ZONE_FORMATTERS.delete(ZONE_FORMATTERS.keys().next().value);
+    ZONE_FORMATTERS.set(timeZone, dtf);
+  }
+  return dtf;
+}
+
 /**
  * UTC offset in minutes for an IANA zone at an instant, or null. ml_venues
  * stores the zone name; crowdEngine.venueLocalNow wants minutes. Same
@@ -503,10 +522,7 @@ async function getVenueContext(userId) {
 function tzOffsetMinutes(timeZone, at = new Date()) {
   if (!timeZone) return null;
   try {
-    const dtf = new Intl.DateTimeFormat('en-US', {
-      timeZone, hour12: false,
-      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-    });
+    const dtf = zoneFormatter(timeZone);
     const parts = {};
     for (const p of dtf.formatToParts(at)) parts[p.type] = p.value;
     const asUTC = Date.UTC(
@@ -617,14 +633,34 @@ function venueBaseDate(utcOffsetMinutes, now) {
  * reads a question's day against it (routes/advisor.js readingFor).
  */
 function venueToday(ctx, { now = new Date() } = {}) {
+  // Read once per venue context and instant (TODAY_READ below): the route asks
+  // for it several times a question.
+  const at = now && typeof now.getTime === 'function' ? now.getTime() : null;
+  const keep = Boolean(ctx) && typeof ctx === 'object' && at !== null;
+  const seen = keep ? TODAY_READ.get(ctx) : null;
+  if (seen && seen.has(at)) {
+    const kept = seen.get(at);
+    return kept ? { ...kept } : null;
+  }
   const venue = ctx && ctx.mlVenue ? venueForScoring(ctx, now) : null;
-  if (!venue) return null;
-  const base = venueBaseDate(venue.utcOffsetMinutes, now);
-  // The hour on the venue's clock too, for the small hours (routes/advisor.js
-  // inSmallHours), on the same fallback venueBaseDate reads.
-  const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
-  return { date: base.toISOString().slice(0, 10), weekday: WEEKDAY_NAMES[base.getDay()], hour: clock ? clock.hour : now.getHours() };
+  let today = null;
+  if (venue) {
+    const base = venueBaseDate(venue.utcOffsetMinutes, now);
+    // The hour on the venue's clock too, for the small hours (routes/advisor.js
+    // inSmallHours), on the same fallback venueBaseDate reads.
+    const clock = crowdEngine.venueLocalNow(venue.utcOffsetMinutes, now);
+    today = { date: base.toISOString().slice(0, 10), weekday: WEEKDAY_NAMES[base.getDay()], hour: clock ? clock.hour : now.getHours() };
+  }
+  if (keep) {
+    if (!TODAY_READ.has(ctx)) TODAY_READ.set(ctx, new Map());
+    TODAY_READ.get(ctx).set(at, today);
+  }
+  return today ? { ...today } : null;
 }
+// THE VENUE'S TODAY, ONCE A QUESTION (fourth recheck, 2026-11-06): kept for
+// each venue context and each instant it was read at. A context is one
+// request's (getVenueContext), so its entries go when it does.
+const TODAY_READ = new WeakMap();
 
 const intakeAsOf = (profile) =>
   profile.updated_at ? `owner-set ${toDateStr(profile.updated_at)}` : 'owner-set (date not recorded)';

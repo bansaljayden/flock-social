@@ -720,6 +720,18 @@ const INVENTORY = [
     why: 'Account-keyed, server-sized payloads, and the money leg is not even here: the global daily token wall is the Postgres row advisor_spend (migration 035), which survives deploys and instances, closing the "a brake, not a cap" gap birdieUsage documents in its own global figure.',
   },
 
+  // ── services/advisorFacts.js ─────────────────────────────────────────────
+  {
+    file: 'services/advisorFacts.js', name: 'ZONE_FORMATTERS', kind: 'cache',
+    key: 'an IANA time zone name: ml_venues.timezone of the venue the owner is linked to, or the literal UTC',
+    callerControls: 'nothing — the zone is a stored column of the linked venue (advisorFacts.getVenueContext, lastNightVerdict); no request field reaches it',
+    protects: 'milliseconds of the only thread: building an Intl.DateTimeFormat for a zone, which tzOffsetMinutes did on every call',
+    denominator: 'n/a (a pure memo, no counter)',
+    bound: 'ZONE_FORMATTERS_KEPT = 64, oldest-first; a zone the formatter refuses throws before it is stored',
+    verdict: 'SAFE',
+    why: 'A formatter is a pure function of its zone, so a kept one answers exactly as a new one would, and there are far fewer real zones than the cap; a miss costs one formatter build, the work every call did before the cache.',
+  },
+
   // ── services/roostDayReader.js ───────────────────────────────────────────
   {
     file: 'services/roostDayReader.js', name: 'READINGS', kind: 'cache',
