@@ -883,6 +883,17 @@
   color: var(--gi-accent);
 }
 
+/* Locked in wears the app's second accent: a blush pill under navy words
+   (index.css --accent-blush, 9.63:1), as on the Nest and the plan screen.
+   Its 1px above and below is given back, so the row keeps its height. */
+.gi-tag--locked {
+  background: var(--accent-blush);
+  color: var(--on-accent-blush);
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin: -1px 0;
+}
+
 /* ---------- footer ---------- */
 
 .gi-footer {

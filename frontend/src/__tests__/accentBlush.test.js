@@ -3,12 +3,18 @@
  *
  * Blush (#F4C6CF) is a pale pink that is only ever a fill under navy words
  * (#1e293b, 9.63:1) or a ring on the navy. It marks a plan coming together
- * and the people in it, in four places:
+ * and the people in it, in these places (a tad more of them since the same
+ * day's first pass, which had only the first four):
  *
  *   1. the Nest hero's Locked in pill          components/nest/NestHero.js
  *   2. the hero's face rings                   components/nest/NestHero.js
  *   3. your own Down, once you chose it        components/nest/NestPulse.js
  *   4. the plan screen's Locked in badge       screens/FlockDetail.js
+ *   5. every other Locked in chip: the Nest's  components/nest/NestChip.js
+ *      Coming up cards and same-night rows,    screens/ChatListScreen.js
+ *      the Messages list, the guest page's tag website/GuestInvite.css
+ *   6. the envelope's disc on an invite row    components/nest/NestRows.js
+ *   7. Plan with them, a pill in Out tonight   components/nest/NestPulse.js
  *
  * On the cream it is 1.30:1, so it is never words or a mark on the page, and
  * it stays off every other button, the links, the tab bar, Birdie, crowd
@@ -47,6 +53,9 @@ jest.mock('../services/api', () => ({
 
 const NestHero = require('../components/nest/NestHero').default;
 const NestPulse = require('../components/nest/NestPulse').default;
+const NestChip = require('../components/nest/NestChip').default;
+const NestRows = require('../components/nest/NestRows').default;
+const { planChip } = require('../lib/nestHero');
 const FlockDetail = require('../screens/FlockDetail').default;
 
 const SRC = path.join(__dirname, '..');
@@ -296,10 +305,57 @@ describe('1 and 2: the Nest hero', () => {
     expect(styleOf(discs[0])['box-shadow']).toBe('none');
   });
 
-  test('the plans under the hero on the same night carry no blush', () => {
-    const same = [{ id: 9, name: 'Friday Night Crew', line: 'Also tonight at 8:00 PM', chip: { label: 'Locked in', tone: 'neutral', icon: 'check' }, onClick: () => {} }];
+  test('a plan under the hero on the same night shows Locked in on a blush chip, and a vote on the quiet well', () => {
+    const same = [
+      { id: 9, name: 'Friday Night Crew', line: 'Also tonight at 8:00 PM', chip: planChip({ status: 'confirmed' }), onClick: () => {} },
+      { id: 10, name: 'Game Night', line: 'Also tonight at 9:00 PM', chip: planChip({ status: 'voting' }, { voted: true }), onClick: () => {} },
+    ];
     const hero = mount(<NestHero {...heroProps({ sameNight: same })} />);
-    expect(hero.querySelector('ul').innerHTML).not.toMatch(/accent-blush/);
+    const chips = [...hero.querySelectorAll('ul li span[id$="-chip"]')];
+    expect(chips.map((c) => c.textContent)).toEqual(['Locked in', 'Voted']);
+    expect(styleOf(chips[0])).toMatchObject({ 'background-color': 'var(--accent-blush)', color: 'var(--on-accent-blush)' });
+    expect(styleOf(chips[0].querySelector('.flock-icon-wrap')).color).toBe('var(--on-accent-blush)');
+    expect(styleOf(chips[1])['background-color']).toBe('var(--bg-inset)');
+  });
+});
+
+describe('5: every other Locked in chip', () => {
+  test("planChip names a locked-in plan's chip by its own tone, and no other chip gets it", () => {
+    expect(planChip({ status: 'confirmed' })).toEqual({ label: 'Locked in', tone: 'locked', icon: 'check' });
+    expect(planChip({ status: 'confirmed', askHowItWas: true }).tone).toBe('neutral');
+    expect(planChip({ status: 'voting' }, { needsVote: true }).tone).toBe('accent');
+  });
+
+  test('the Nest chip (Coming up, the same night) is a blush chip with navy words and check; its box is unchanged', () => {
+    const locked = mount(<NestChip chip={planChip({ status: 'confirmed' })} id="c" />).firstChild;
+    const plain = mount(<NestChip chip={{ label: 'Voted', tone: 'neutral', icon: null }} id="c" />).firstChild;
+    expect(styleOf(locked)).toMatchObject({ 'background-color': 'var(--accent-blush)', color: 'var(--on-accent-blush)' });
+    for (const k of ['padding', 'border-radius', 'font-size', 'line-height']) expect(styleOf(locked)[k]).toBe(styleOf(plain)[k]);
+  });
+
+  test("the Messages list's chip and the guest page's tag wear blush for Locked in only", () => {
+    const list = strip(read('screens', 'ChatListScreen.js'));
+    expect(list).toContain("const lockedIn = f.status === 'confirmed';");
+    expect(list).toContain("color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>");
+    expect(read('website', 'GuestInvite.js')).toContain('{chosen && <span className="gi-tag gi-tag--locked">Locked in</span>}');
+    expect(read('website', 'GuestInvite.js')).toContain('{mine && <span className="gi-tag">Your vote</span>}');
+    const css = strip(read('website', 'GuestInvite.css'), 'x.css');
+    expect(css).toMatch(/\n\.gi-tag--locked \{\n {2}background: var\(--accent-blush\);\n {2}color: var\(--on-accent-blush\);\n {2}border-radius: 999px;\n {2}padding: 1px 8px;\n {2}margin: -1px 0;\n\}/);
+  });
+});
+
+describe('6: the invite row', () => {
+  test("the envelope sits on a blush disc in navy, and gives the disc's room back; other rows keep a plain icon", () => {
+    const rows = [
+      { key: 'i', kind: 'invite', title: 'Leo invited you to Bowling Night', when: 'Tue 8:00 PM', venue: 'Juniper Bowl', onClick: () => {} },
+      { key: 'v', kind: 'vote', title: "Vote on Sam's Birthday", when: 'Today 2:00 PM', venue: 'Juniper Bowl', onClick: () => {} },
+    ];
+    const view = mount(<NestRows rows={rows} />);
+    const iconOf = (kind) => view.querySelector(`[data-nest-row="${kind}"] .flock-icon-wrap`).parentElement;
+    expect(styleOf(iconOf('invite'))).toMatchObject({ 'background-color': 'var(--accent-blush)', 'border-radius': '999px', padding: '7px', margin: '-7px' });
+    expect(styleOf(iconOf('invite').firstChild).color).toBe('var(--on-accent-blush)');
+    expect(styleOf(iconOf('vote'))['background-color']).toBeUndefined();
+    expect(count(view.innerHTML, 'var(--accent-blush)')).toBe(1);
   });
 });
 
@@ -315,18 +371,34 @@ describe('3: Out tonight', () => {
 
   test('a chosen Maybe or Not keeps its own tint, and the Down beside it carries no blush', () => {
     for (const [key, label] of [['maybe', 'Maybe'], ['not', 'Not']]) {
-      const band = mount(<NestPulse {...pulseProps({ active: key })} />);
+      const band = mount(<NestPulse {...pulseProps({ active: key, friends: null })} />);
       expect(styleOf(segment(band, label))).toMatchObject({ 'background-color': `var(--pulse-${key}-bg)`, color: `var(--pulse-${key}-ink)` });
       expect(styleOf(segment(band, 'Down'))).toMatchObject({ 'background-color': 'transparent', color: 'var(--text-primary)' });
       expect(band.innerHTML).not.toMatch(/accent-blush/);
     }
-    expect(mount(<NestPulse {...pulseProps()} />).innerHTML).not.toMatch(/accent-blush/);
+    expect(mount(<NestPulse {...pulseProps({ friends: null })} />).innerHTML).not.toMatch(/accent-blush/);
   });
 
-  test("blush is on the chosen Down only: not the friends' faces, Plan with them or Add friends", () => {
+  test('7: Plan with them is a blush pill with navy words and chevron, giving its padding back to the line', () => {
+    const band = mount(<NestPulse {...pulseProps()} />);
+    const plan = [...band.querySelectorAll('button')].find((b) => /^Plan with them/.test(b.textContent));
+    expect(styleOf(plan)).toMatchObject({
+      'background-color': 'var(--accent-blush)',
+      color: 'var(--on-accent-blush)',
+      'border-radius': '999px',
+      padding: '0 9px 0 11px',
+      'min-height': '32px',
+      margin: '0 -9px 0 -2px',
+    });
+    expect(styleOf(plan.querySelector('.flock-icon-wrap')).color).toBe('var(--on-accent-blush)');
+  });
+
+  test("blush in the band is the chosen Down and Plan with them: not the friends' faces or Add friends", () => {
     const band = mount(<NestPulse {...pulseProps({ active: 'down' })} />);
-    expect(count(band.innerHTML, 'var(--accent-blush)')).toBe(1);
-    expect(count(band.innerHTML, 'var(--on-accent-blush)')).toBe(1);
+    expect(count(band.innerHTML, 'var(--accent-blush)')).toBe(2);
+    expect(count(band.innerHTML, 'var(--on-accent-blush)')).toBe(3);
+    const add = [...band.querySelectorAll('button')].find((b) => b.textContent.includes('Add friends'));
+    expect(add.outerHTML).not.toMatch(/accent-blush/);
   });
 
   test('the keyboard ring is the app\'s, 2px outside the segment, and clears 3:1 on what it is drawn on', () => {
@@ -422,7 +494,29 @@ const tally = (re) => {
   return out;
 };
 
-describe('blush goes in those four places and nowhere else', () => {
+// Every use of each token, file by file.
+const USES = {
+  accent: {
+    'src/components/nest/NestHero.js': 2, // the pill, the face rings
+    'src/components/nest/NestPulse.js': 2, // the chosen Down, Plan with them
+    'src/components/nest/NestChip.js': 1, // Locked in on Coming up and the same night
+    'src/components/nest/NestRows.js': 1, // the invite's disc
+    'src/screens/ChatListScreen.js': 1, // Locked in on the Messages list
+    'src/screens/FlockDetail.js': 1, // the plan screen's badge
+    'src/website/GuestInvite.css': 1, // Locked in on the guest page
+  },
+  onAccent: {
+    'src/components/nest/NestHero.js': 2, // the pill's words and check
+    'src/components/nest/NestPulse.js': 3, // the Down's words, Plan with them's words and chevron
+    'src/components/nest/NestChip.js': 1, // the chip's words and check
+    'src/components/nest/NestRows.js': 1, // the envelope
+    'src/screens/ChatListScreen.js': 1,
+    'src/screens/FlockDetail.js': 1,
+    'src/website/GuestInvite.css': 1,
+  },
+};
+
+describe('blush goes in those places and nowhere else', () => {
   test('the scan reads the app and the site', () => {
     const names = FILES.map((f) => f.rel);
     for (const f of ['src/App.js', 'src/index.css', 'src/components/nest/NestHero.js', 'src/screens/FlockDetail.js', 'public/index.html']) {
@@ -432,26 +526,17 @@ describe('blush goes in those four places and nowhere else', () => {
     expect(names.some((n) => n.startsWith('src/__tests__/'))).toBe(false);
   });
 
-  test('var(--accent-blush) is used four times: the pill and the rings, the Down, the badge', () => {
-    expect(tally(/var\(--accent-blush\)/g)).toEqual({
-      'src/components/nest/NestHero.js': 2,
-      'src/components/nest/NestPulse.js': 1,
-      'src/screens/FlockDetail.js': 1,
-    });
+  test('var(--accent-blush) is used exactly where the list says', () => {
+    expect(tally(/var\(--accent-blush\)/g)).toEqual(USES.accent);
   });
 
-  test('var(--on-accent-blush) goes with it: the pill\'s words and check, the Down, the badge', () => {
-    expect(tally(/var\(--on-accent-blush\)/g)).toEqual({
-      'src/components/nest/NestHero.js': 2,
-      'src/components/nest/NestPulse.js': 1,
-      'src/screens/FlockDetail.js': 1,
-    });
+  test('var(--on-accent-blush) goes with it: the words and icons on each blush fill', () => {
+    expect(tally(/var\(--on-accent-blush\)/g)).toEqual(USES.onAccent);
   });
 
   test('past those uses the tokens are only defined, in index.css once a theme, and nothing aliases them', () => {
-    const uses = { 'src/components/nest/NestHero.js': 2, 'src/components/nest/NestPulse.js': 1, 'src/screens/FlockDetail.js': 1 };
-    expect(tally(/--accent-blush\b/g)).toEqual({ 'src/index.css': 2, ...uses });
-    expect(tally(/--on-accent-blush\b/g)).toEqual({ 'src/index.css': 2, ...uses });
+    expect(tally(/--accent-blush\b/g)).toEqual({ 'src/index.css': 2, ...USES.accent });
+    expect(tally(/--on-accent-blush\b/g)).toEqual({ 'src/index.css': 2, ...USES.onAccent });
     const css = FILES.find((f) => f.rel === 'src/index.css').src;
     expect(css).not.toMatch(/var\(--(on-)?accent-blush\)/);
     expect(css.match(/\n {2}--accent-blush: #F4C6CF;\n {2}--on-accent-blush: #1e293b;\n\}/g)).toHaveLength(2);
@@ -472,7 +557,9 @@ describe('blush goes in those four places and nowhere else', () => {
           let at = line.indexOf(`var(${token})`);
           while (at !== -1) {
             const before = line.slice(0, at).replace(/['"`]$/, '');
-            const icon = /Icons\.\w+\($/.test(before);
+            // An icon's colour argument: Icons.name(...) or Icons[KEY](...),
+            // straight or as one branch of a ternary.
+            const icon = /Icons(\.\w+|\[[^\]]*\]\])\([^()]*$/.test(before);
             const keys = [...before.matchAll(/(\w+)\s*[:=]\s*/g)];
             out.push(icon ? 'icon' : (keys.length ? keys[keys.length - 1][1] : '?'));
             at = line.indexOf(`var(${token})`, at + 1);
@@ -481,10 +568,17 @@ describe('blush goes in those four places and nowhere else', () => {
       }
       return out.sort();
     };
-    expect(roles('--accent-blush')).toEqual(['background', 'backgroundColor', 'bg', 'faceRing'].sort());
-    expect(roles('--on-accent-blush')).toEqual(['color', 'color', 'icon', 'ink'].sort());
-    // The Down is the one button: its option is the only one that names blush.
+    const fills = new Set(['background', 'backgroundColor', 'bg', 'faceRing']);
+    const words = new Set(['color', 'ink', 'icon']);
+    const a = roles('--accent-blush');
+    const b = roles('--on-accent-blush');
+    expect(a.filter((r) => !fills.has(r))).toEqual([]);
+    expect(b.filter((r) => !words.has(r))).toEqual([]);
+    expect(a).toHaveLength(Object.values(USES.accent).reduce((s, n) => s + n, 0));
+    expect(b).toHaveLength(Object.values(USES.onAccent).reduce((s, n) => s + n, 0));
+    // The two buttons that wear it are the chosen Down and Plan with them.
     const pulse = strip(read('components', 'nest', 'NestPulse.js'));
     expect(pulse).toContain("{ key: 'down', label: 'Down', bg: 'var(--accent-blush)', ink: 'var(--on-accent-blush)' },");
+    expect(pulse).toContain('style={{ ...textLink, ...PLAN_PILL }}');
   });
 });

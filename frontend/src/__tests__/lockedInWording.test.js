@@ -37,11 +37,11 @@ describe('a locked-in plan is Locked in wherever its status shows', () => {
 
   test('the Nest, the plan screen, the Messages list, the chat header and the guest page each say it', () => {
     expect(read('lib', 'nestHero.js')).toMatch(/return \{ key: 'locked', label: 'Locked in' \};/);
-    expect(read('lib', 'nestHero.js')).toMatch(/return \{ label: 'Locked in', tone: 'neutral', icon: 'check' \};/);
+    expect(read('lib', 'nestHero.js')).toMatch(/return \{ label: 'Locked in', tone: 'locked', icon: 'check' \};/);
     expect(read('screens', 'FlockDetail.js')).toContain("isConfirmed ? 'Locked in' : 'Planning'");
     expect(read('screens', 'ChatListScreen.js')).toContain("f.status === 'confirmed' ? 'Locked in'");
     expect(read('screens', 'ChatDetail.js')).toContain("flock.status === 'confirmed' ? 'Locked in'");
-    expect(read('website', 'GuestInvite.js')).toContain('<span className="gi-tag">Locked in</span>');
+    expect(read('website', 'GuestInvite.js')).toContain('<span className="gi-tag gi-tag--locked">Locked in</span>');
   });
 
   test('the Messages list never calls a plan Confirmed', () => {

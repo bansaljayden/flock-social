@@ -126,7 +126,7 @@ export const placeLine = (venue) => (venue && venue !== 'TBD' ? venue : 'No plac
  *   voting, voted                "Voted"             neutral
  *   voting, not known            "Voting"            neutral
  *   a night over, unrated        "How was it?"       neutral, star
- *   locked in                    "Locked in"         neutral, check
+ *   locked in                    "Locked in"         locked (blush), check
  *
  * The asks carry a verb, the way the Needs you heading does. "Your vote" had
  * none and read as "here is your vote", which is what the guest page's own
@@ -148,7 +148,7 @@ export function planChip(flock, { needsVote = false, voted = false, ask = null }
     return { label: 'Voting', tone: 'neutral', icon: null };
   }
   if (flock.askHowItWas) return { label: 'How was it?', tone: 'neutral', icon: 'star' };
-  if (flock.status === 'confirmed' || flock.status === 'locked') return { label: 'Locked in', tone: 'neutral', icon: 'check' };
+  if (flock.status === 'confirmed' || flock.status === 'locked') return { label: 'Locked in', tone: 'locked', icon: 'check' };
   return null;
 }
 

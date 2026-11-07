@@ -1,7 +1,9 @@
 /**
  * The chip on a Nest plan row or card (lib/nestHero.js planChip). One colour
- * means one thing: the steel tint is reserved for the reader's own ask, and
- * every other state sits on the quiet inset well.
+ * means one thing: the steel tint is reserved for the reader's own ask, a
+ * plan that is locked in wears blush under navy words (index.css
+ * --accent-blush, the second accent, 9.63:1), and every other state sits on
+ * the quiet inset well.
  */
 import React from 'react';
 import Icons from '../ui/Icons';
@@ -9,7 +11,8 @@ import Icons from '../ui/Icons';
 export default function NestChip({ chip, id }) {
   if (!chip) return null;
   const accent = chip.tone === 'accent';
-  const ink = accent ? 'var(--accent-purple-text)' : 'var(--text-secondary)';
+  const locked = chip.tone === 'locked';
+  const ink = accent ? 'var(--accent-purple-text)' : locked ? 'var(--on-accent-blush)' : 'var(--text-secondary)';
   return (
     <span
       id={id}
@@ -21,7 +24,7 @@ export default function NestChip({ chip, id }) {
         whiteSpace: 'nowrap',
         padding: '3px 10px',
         borderRadius: '999px',
-        backgroundColor: accent ? 'var(--accent-purple-bg)' : 'var(--bg-inset)',
+        backgroundColor: accent ? 'var(--accent-purple-bg)' : locked ? 'var(--accent-blush)' : 'var(--bg-inset)',
         color: ink,
         fontSize: 'var(--t-label)',
         fontWeight: accent ? '600' : '500',

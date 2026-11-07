@@ -41,6 +41,11 @@ import { BAND_HEAD, BAND_GAP } from './nestBand';
 // square, a to-do list's sign for done, on a row that is still open, and a
 // ballot going into a box drew as a printer at 18px.
 const ICON = { owe: 'dollar', budget: 'dollar', vote: 'mapPin', invite: 'mail', how: 'star' };
+// An invite is someone asking you into a plan, so its envelope sits on a
+// blush disc (index.css --accent-blush, the second accent) with the envelope
+// in navy, 9.63:1. The disc's 7px is given back by the same negative margin,
+// so the row's words and height stay where they are.
+const INVITE_DISC = { backgroundColor: 'var(--accent-blush)', borderRadius: '999px', padding: '7px', margin: '-7px' };
 export const NEST_ROW_LEAVE_MS = 220;
 
 const prefersReducedMotion = () => {
@@ -164,7 +169,7 @@ export default function NestRows({ rows = [] }) {
                 }}
               >
                 {i > 0 && <span aria-hidden="true" style={{ position: 'absolute', top: 0, left: '46px', right: 0, height: '1px', backgroundColor: 'var(--divider)' }} />}
-                <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons[ICON[row.kind]]('var(--text-secondary)', 18)}</span>
+                <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0, ...(row.kind === 'invite' ? INVITE_DISC : null) }}>{Icons[ICON[row.kind]](row.kind === 'invite' ? 'var(--on-accent-blush)' : 'var(--text-secondary)', 18)}</span>
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: 'block', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', overflowWrap: 'anywhere' }}>{row.title}</span>
                   <RowLine when={row.when} venue={row.venue} />

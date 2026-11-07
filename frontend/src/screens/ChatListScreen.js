@@ -408,6 +408,10 @@ export default function ChatListScreen({
                 // A locked-in plan is Locked in here as on the Nest, the plan
                 // screen, the chat's header and the guest page, where this chip
                 // alone called it Confirmed.
+                // Locked in wears the second accent, a blush chip under navy
+                // words (index.css --accent-blush), as on the Nest and the
+                // plan screen. The dot on the tile keeps its own colour.
+                const lockedIn = f.status === 'confirmed';
                 const statusLabel = f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : f.status === 'confirmed' ? 'Locked in' : f.status === 'voting' ? 'Voting' : 'Planning';
 
                 return (
@@ -462,7 +466,7 @@ export default function ChatListScreen({
 
                         {/* Venue + status row */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: statusTextColor, backgroundColor: `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
+                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px' }}>{statusLabel}</span>
                           {f.venue && f.venue !== 'TBD' && (
                             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
                           )}

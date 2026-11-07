@@ -82,7 +82,9 @@ describe('Plan with them stays with the names', () => {
     // space-between puts it at the end beside one line of names, and at the
     // start of its own line when it wraps.
     expect(line.style.justifyContent).toBe('space-between');
-    expect(plan.style.marginLeft).toBe('');
+    // Never an auto margin; the blush pill's -2px is its own padding given
+    // back to the gap before it (accentBlush.test.js).
+    expect(plan.style.marginLeft).toBe('-2px');
     // The faces are outside that line, so a wrapped button starts under the
     // names' first letter, not under the faces.
     expect(line.querySelector('[aria-hidden="true"] > span')).toBeNull();

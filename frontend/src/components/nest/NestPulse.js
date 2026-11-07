@@ -75,6 +75,20 @@ const textLink = {
   whiteSpace: 'nowrap',
 };
 
+// Plan with them is a blush pill under navy words (index.css --accent-blush):
+// it starts a plan with the friends who are down, the moment a plan begins to
+// come together. The pill hangs 9px past the end of its line and 2px into the
+// gap before it, so the names beside it and the line under it stay put.
+const PLAN_PILL = {
+  gap: '2px',
+  backgroundColor: 'var(--accent-blush)',
+  color: 'var(--on-accent-blush)',
+  borderRadius: '999px',
+  padding: '0 9px 0 11px',
+  minHeight: '32px',
+  margin: '0 -9px 0 -2px',
+};
+
 export default function NestPulse({ active, saving, onSet, friends, onPlanWith, onAddFriends }) {
   const heading = useNow(60000, pulseHeading);
   return (
@@ -134,8 +148,8 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
           </span>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: '10px', minHeight: '36px' }}>
             <span style={{ flex: '1 1 150px', minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '500', lineHeight: 1.4, color: 'var(--text-secondary)' }}>{friends.text}</span>
-            <button type="button" className="hit44" onClick={onPlanWith} style={{ ...textLink, gap: '2px' }}>
-              {friends.planLabel} {Icons.chevronRight('var(--accent-purple-text)', 14)}
+            <button type="button" className="hit44" onClick={onPlanWith} style={{ ...textLink, ...PLAN_PILL }}>
+              {friends.planLabel} {Icons.chevronRight('var(--on-accent-blush)', 14)}
             </button>
           </div>
         </div>

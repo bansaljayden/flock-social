@@ -296,13 +296,18 @@
      THE SECOND ACCENT: BLUSH (2026-11-07). A pale pink that is only ever
      a fill under navy words or a ring on the navy, with the same values
      in both themes. It marks a plan coming together and the people in
-     it, in four places and nowhere else (accentBlush.test.js keeps the
+     it, in these places and nowhere else (accentBlush.test.js keeps the
      list):
 
        the hero's Locked in pill                  NestHero.js
        the hero's face rings                      NestHero.js
        your own Down, once you have chosen it     NestPulse.js
+       Plan with them, under the friends down     NestPulse.js
        the plan screen's Locked in badge          FlockDetail.js
+       every other Locked in chip                 NestChip.js,
+                                                  ChatListScreen.js,
+                                                  GuestInvite.css
+       the envelope's disc on an invite row       NestRows.js
 
      Navy words on blush measure 9.63:1, and blush on the navy 9.63:1
      (7.62:1 on the dark theme's #1e3a5c hero and header). On the cream

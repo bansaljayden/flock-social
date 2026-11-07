@@ -2105,7 +2105,7 @@ export default function GuestInvite() {
                     </span>
                     {(chosen || mine) && (
                       <span className="gi-tags">
-                        {chosen && <span className="gi-tag">Locked in</span>}
+                        {chosen && <span className="gi-tag gi-tag--locked">Locked in</span>}
                         {mine && <span className="gi-tag">Your vote</span>}
                       </span>
                     )}
