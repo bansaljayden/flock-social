@@ -998,6 +998,20 @@ code {
   position: relative;
   z-index: 2;
 }
+/* NEVER A TRANSFORM ON THE BUTTON ITSELF. The app presses every button with
+   `button:active { transform: scale(0.96) }` (below), and a transformed
+   element becomes the box its absolutely placed children are laid out in: on
+   the press the layer shrank from the card to the name, the finger came up
+   over the heading beside it, and the click went to the heading, not the
+   button, so a tap anywhere but on the name's letters opened nothing (the
+   browser suite's "Going (2)" waits all timed out on it). The card takes the
+   press instead; the card is already the layer's box, so nothing moves out
+   from under the finger. */
+.nest-stretch:active { transform: none; }
+[data-nest-plan]:has(.nest-stretch:active) {
+  transform: scale(0.985);
+  transition: transform 0.1s ease;
+}
 .nest-stretch:focus-visible { outline: none; }
 .nest-stretch:focus-visible::after {
   outline: 2px solid var(--focus-ring);

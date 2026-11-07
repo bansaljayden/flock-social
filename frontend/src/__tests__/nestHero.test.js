@@ -316,6 +316,21 @@ describe('the card', () => {
     expect(screen.getByRole('button', { name: 'Add your budget' })).toHaveClass('nest-raise', 'nest-on-navy');
   });
 
+  test('a press never moves the button: the layer would shrink to the name and the tap would land on the heading', () => {
+    // The app presses every button with button:active { transform: scale(.96) },
+    // and a transformed element becomes the box its absolutely placed
+    // children are laid out in. In the browser suite every tap on a plan's
+    // heading away from its letters opened nothing.
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8');
+    expect(css).toMatch(/button:active, \[role="button"\]:active \{\s*transform: scale\(0\.96\);/);
+    expect(css).toMatch(/\.nest-stretch:active \{ transform: none; \}/);
+    // The card takes the press instead: it is already the layer's box.
+    expect(css).toMatch(/\[data-nest-plan\]:has\(\.nest-stretch:active\) \{\s*transform: scale\(0\.985\);/);
+    const p = props();
+    const { container } = render(<NestHero {...p} />);
+    expect(container.querySelector('section').getAttribute('data-nest-plan')).toBe('5');
+  });
+
   test('the keyboard ring on the navy is near-white, 3:1 or better, never the steel ring (1.89:1)', () => {
     const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'index.css'), 'utf8');
     expect(css).toMatch(/\.nest-stretch--hero:focus-visible::after \{[^}]*outline-color: rgba\(241, 237, 224, 0\.9\);[^}]*outline-offset: -4px;/);
