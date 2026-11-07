@@ -89,8 +89,12 @@ export const DELETE_BILLING_NEUTRAL = {
 
 // The one line under the switch. The privacy policy describes the same
 // collection and names the switch; usageAnalyticsSwitch.test.js holds the two
-// together.
-const USAGE_ANALYTICS_LINE = 'Which screens you open and a few actions, tied to your account number. No ads, no selling.';
+// together. It said "tied to your account number", a number nobody using the
+// app ever sees, so it reads as one they ought to know. It says the policy's
+// sentence ("tied to your account number, never to your name or your
+// email") with "account's ID number" for the number, the plainer name for
+// the same thing, and the policy's own words for what it is never tied to.
+const USAGE_ANALYTICS_LINE = "Which screens you open and a few actions, tied to your account's ID number, never to your name or your email. No ads, no selling.";
 
 /**
  * "SHARE USAGE ANALYTICS", the account's own switch for product analytics.

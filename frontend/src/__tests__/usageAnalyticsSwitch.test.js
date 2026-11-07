@@ -73,7 +73,7 @@ const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r
 const PROFILE_SRC = read('screens', 'ProfileSettings.js');
 const APP_SRC = read('App.js');
 
-const LINE = 'Which screens you open and a few actions, tied to your account number. No ads, no selling.';
+const LINE = "Which screens you open and a few actions, tied to your account's ID number, never to your name or your email. No ads, no selling.";
 
 // App.js's Toggle, the one every switch on this screen is drawn with. Copied
 // rather than imported (App.js does not export it); the first test pins the
@@ -276,6 +276,11 @@ test('the privacy policy sends people to this switch by its name, where it is', 
   // The switch is on the You tab's main screen, not behind a Settings screen
   // that does not exist.
   expect(policy).not.toMatch(/Settings &rarr; Share usage analytics/);
-  expect(PROFILE_SRC).toContain(`const USAGE_ANALYTICS_LINE = '${LINE}';`);
+  expect(PROFILE_SRC).toContain(`const USAGE_ANALYTICS_LINE = "${LINE}";`);
+  // The line says what the policy says the analytics are tied to, in the
+  // policy's words for what they are never tied to.
+  expect(policy).toContain('tied to your account number, never to your name or your email');
+  expect(LINE).toContain('never to your name or your email');
+  expect(LINE).not.toMatch(/tied to your account number\./);
   expect(PROFILE_SRC).toContain('<Toggle label="Share usage analytics"');
 });
