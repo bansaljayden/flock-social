@@ -597,16 +597,25 @@ const DAY_KINDS = new Set(['weekday', 'today', 'tomorrow', 'dayAfterTomorrow']);
 // day in a name or beside a thing ("Saturday Night Fever theme on Friday",
 // "Is the Saturday crew enough for Friday?") or a condition ("How busy will
 // tonight be if it rains tomorrow?"). So two days said one after the other
-// are sure only where the question joins them: in one part, with a word that
-// joins or compares them a few words apart ("Friday or Saturday", "Is Sunday
-// busier than Saturday", "Saturday and Sunday", "Is Monday as busy as
-// Tuesday", "compare tonight with tomorrow"); or the second at the head of a
-// part of its own after one ("Is Saturday going to be busy? Or Sunday?",
-// "How busy will today be? and tomorrow?").
-const JOIN_BETWEEN = /\b(?:or|and|n|nor|vs|versus|than|plus|compar\w*)\b|[&/+]|\bas\s+\S+\s+as\b/i;
-const JOIN_COMPARED = /\b(?:with|to|against)\b/i;
+// are sure only where the question joins them: in one part, a few words
+// apart, with a word that joins or compares them right before the second
+// ("Friday or Saturday", "Is Sunday busier than Saturday", "Saturday and
+// Sunday", "Is Monday as busy as Tuesday", "compare tonight with tomorrow",
+// never "Is Friday busy or should I ask about Thursday?"); or the second in
+// a short part of its own that starts with one ("Is Saturday going to be
+// busy? Or Sunday?", "How busy will today be? and tomorrow?", never "Is
+// Friday busy? Or should I ask about Thursday?").
+const JOIN_BETWEEN = /\b(?:or|and|n|nor|vs|versus|than|plus|compar\w*)\b|[&/+]|\bas\s+\S+\s+as\b/gi;
+const JOIN_COMPARED = /\b(?:with|to|against)\b/gi;
 const JOIN_LEADS = /^[^\p{L}\p{N}]*(?:(?:ok|okay|so|well|also)\b[^\p{L}\p{N}]*)*(?:(?:or|and|n|nor|vs|versus|plus)\b|[&/+])/iu;
+const WORDS = /[\p{L}\p{N}]+/gu;
+const wordCount = (s) => (s.match(WORDS) || []).length;
+// At most this many words between two days joined in one part, at most this
+// many after the word that joins them, and at most this many beside the
+// second day in a part of its own.
 const JOIN_MOST_WORDS = 6;
+const JOIN_MOST_AFTER = 2;
+const JOIN_PART_MOST_WORDS = 3;
 function daysJoined(a) {
   const days = a.kept.filter((t) => DAY_KINDS.has(t.kind)).sort((x, y) => x.at - y.at);
   for (let i = 1; i < days.length; i += 1) {
@@ -615,11 +624,16 @@ function daysJoined(a) {
     if (same(x, y) && x.part === y.part) continue;
     if (x.piece === y.piece) {
       const between = a.text.slice(x.end, y.at);
-      const many = (between.match(/[\p{L}\p{N}]+/gu) || []).length > JOIN_MOST_WORDS;
-      const compares = /\bcompar/i.test(a.all[x.piece].p) && JOIN_COMPARED.test(between);
-      if (many || !(JOIN_BETWEEN.test(between) || compares)) return false;
-    } else if (!JOIN_LEADS.test(a.text.slice(a.all[y.piece].at, y.at))) {
-      return false;
+      if (wordCount(between) > JOIN_MOST_WORDS) return false;
+      const joins = [...between.matchAll(JOIN_BETWEEN)];
+      if (/\bcompar/i.test(a.all[x.piece].p)) joins.push(...between.matchAll(JOIN_COMPARED));
+      if (!joins.length) return false;
+      const last = Math.max(...joins.map((m) => m.index + m[0].length));
+      if (wordCount(between.slice(last)) > JOIN_MOST_AFTER) return false;
+    } else {
+      const part = a.all[y.piece];
+      const rest = a.text.slice(part.at, y.at) + a.text.slice(y.end, part.at + part.p.length);
+      if (!JOIN_LEADS.test(a.text.slice(part.at, y.at)) || wordCount(rest) > JOIN_PART_MOST_WORDS) return false;
     }
   }
   return true;
@@ -749,8 +763,9 @@ function confidenceOf(a, question) {
 // Monday's line: the reading read the day the owner set aside as the day
 // asked. A day word straight after a word that leaves it out (besides, other
 // than, except, apart from, excluding, not counting, not, but, skip, forget,
-// never mind, instead of, rather than, without, minus, no) leaves the reader
-// unsure, as today does where the route ranks the week without it
+// never mind, instead of, rather than, without, minus, no), anywhere in the
+// question ("Is Friday or Saturday busier? Never mind Saturday."), leaves the
+// reader unsure, but today where the route ranks the week without it
 // (todayInRanking).
 const LEFT_OUT_BEFORE = /\b(?:besides|other\s+than|except(?:\s+for)?|apart\s+from|aside\s+from|excluding|not\s+counting|not\s+including|not|but|skip(?:ping)?|forget(?:\s+about)?|never\s*mind|instead\s+of|rather\s+than|without|minus|no)\s+(?:(?:the|this|next|on|a|an)\s+)?$/i;
 
@@ -824,10 +839,9 @@ function analyze(question) {
     }
   }
   used.push(...cued);
-  // A day the reading reads as asked that the question leaves out
-  // (LEFT_OUT_BEFORE above), other than today in a cue the route ranks the
-  // week by.
-  const leftOut = kept.some((t) => t.kind !== 'week' && LEFT_OUT_BEFORE.test(text.slice(0, t.at))
+  // A day the question leaves out (LEFT_OUT_BEFORE above), wherever it is
+  // said, other than today in a cue the route ranks the week by.
+  const leftOut = tokens.flat().some((t) => t.kind !== 'week' && LEFT_OUT_BEFORE.test(text.slice(0, t.at))
     && !cued.some(([at, end]) => at >= t.at && end <= t.end));
   return {
     text, shouting, all, asking, tokens, words, kept, todayCue, used, leftOut, maybe: maybeWordsIn(text, lower),

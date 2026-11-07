@@ -4076,10 +4076,16 @@ test('the reader says how sure it is: sure of a day, two days joined, a weekend 
     ['Saturday Night Fever theme on Friday, busy?', 'two days the question does not join'],
     ['Is the Saturday crew enough for Friday?', 'two days the question does not join'],
     ['How busy will tonight be if it rains tomorrow?', 'two days the question does not join'],
+    // A join word far from the second day, or a part of its own that says
+    // more than the day, is a pivot rather than a pair.
+    ['Is Friday busy or should I ask about Thursday?', 'two days the question does not join'],
+    ['Is Friday busy? Or should I ask about Thursday?', 'two days the question does not join'],
     // A day the question leaves out, read as the day asked (the follow-on
-    // "besides monday?" after "Which day is quietest this week?").
+    // "besides monday?" after "Which day is quietest this week?"), or said
+    // again to be left out.
     ['Which day is quietest this week? besides monday?', 'a day the question leaves out'],
     ['Which day is busiest besides Saturday?', 'a day the question leaves out'],
+    ['Is Friday or Saturday busier? Never mind Saturday.', 'a day the question leaves out'],
   ]) {
     assert.deepStrictEqual(dayConfidence(q), { sure: false, why }, q);
   }
