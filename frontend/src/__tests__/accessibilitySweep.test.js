@@ -455,8 +455,11 @@ describe('icon-only controls on the hot paths are named', () => {
     // being deleted: it exists so the assertion below cannot pass on an empty
     // scan, and 65 still catches that. 81 on 2026-11-06 once comments inside
     // a tag stopped being read as code (openTagEnd), on main and on the
-    // integration branch alike.
-    expect(iconOnlyButtons.length).toBeGreaterThan(65);
+    // integration branch alike, and the floor rose to 78 with it: at 65,
+    // sixteen named controls could leave the scan unseen, which is how the
+    // apostrophe that swallowed eleven went unnoticed. Three of slack, so
+    // one control turned into a labelled tile does not trip it.
+    expect(iconOnlyButtons.length).toBeGreaterThanOrEqual(78);
   });
 
   it('every button whose only child is an icon carries a name', () => {
