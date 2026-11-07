@@ -72,18 +72,21 @@ export function heroNote(flock, myId) {
 }
 
 /**
- * The one button, or null. The first of these the plan has:
+ * The one button, or null: the first ask the plan has (lib/nestAsks.js, in
+ * its order: owe, budget, vote).
  *
- *   an ask (lib/nestAsks.js, in its order: owe, budget, vote)
  *     owe     "Pay your share of the bill"
  *     budget  "Add your budget"
  *     vote    "Vote on a place"
- *   a night that is over and not yet rated
- *     how     "How was {venue}?"
+ *
+ * Never "How was {venue}?": a plan is the hero until the 4 AM after its
+ * night, so the night is still on, and the Nest asks that the morning after,
+ * as a Needs you row (lib/planNight.js nestAsksHowItWas). It asked from an
+ * hour in, of a night the reader was most likely still at.
  *
  * `asks` is nestAsks()'s list for the whole Nest; only this plan's entries
  * count. Where each one goes is the caller's (the money ones open the chat's
- * money sheet, the vote and the rating open the plan).
+ * money sheet, the vote opens the plan).
  */
 export const HERO_ACTION_LABEL = {
   owe: 'Pay your share of the bill',
@@ -95,9 +98,6 @@ export function heroAction(flock, asks) {
   if (!flock) return null;
   const mine = (Array.isArray(asks) ? asks : []).find((a) => a && a.flock && a.flock.id === flock.id);
   if (mine && HERO_ACTION_LABEL[mine.kind]) return { kind: mine.kind, label: HERO_ACTION_LABEL[mine.kind] };
-  if (flock.askHowItWas && flock.venue && flock.venue !== 'TBD') {
-    return { kind: 'how', label: `How was ${flock.venue}?` };
-  }
   return null;
 }
 

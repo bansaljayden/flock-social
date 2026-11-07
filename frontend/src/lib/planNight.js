@@ -19,6 +19,7 @@
  * disagree about the hour. It lives in src/lib for the reason lib/billShares.js
  * gives: App.js can import it without pulling a screen into the boot chunk.
  */
+import { nightsBetween } from './nestTime';
 
 export const NIGHT_OVER_AFTER_MS = 60 * 60 * 1000;
 
@@ -34,4 +35,29 @@ export const isNightOver = (flock, now = Date.now()) => {
   const at = new Date(flock.eventTime).getTime();
   if (!Number.isFinite(at)) return false;
   return now >= at + NIGHT_OVER_AFTER_MS;
+};
+
+/**
+ * WHEN THE NEST ASKS "HOW WAS {VENUE}?" (2026-11-06): THE MORNING AFTER.
+ *
+ * The plan screen asks from an hour in (isNightOver), for whoever opens the
+ * plan. The Nest is what a person sees on every open, and from an hour in
+ * its biggest button asked how the night was while the reader was most
+ * likely still out in it. A night is remembered by its peak and its end, so
+ * the Nest leaves the peak alone and asks once the night has rolled over at
+ * 4 AM (lib/nestTime.js, the hour the Tonight answer clears), all through
+ * the next day, until the 4 AM after that.
+ *
+ * Finished plans count: the sweep completes a plan 12 hours after its time
+ * (services/flockSweep.js), and the live list lets it go at that moment, so
+ * for an 8:30 PM plan a row read from live plans alone would have lasted from
+ * 4 AM to 8:30 AM. A plan nobody locked in, a cancelled one, and one with no
+ * place never ask: there is no night, or nothing to rate.
+ */
+export const nestAsksHowItWas = (flock, now = new Date()) => {
+  if (!flock || !flock.venueId || !flock.venue || flock.venue === 'TBD') return false;
+  const n = now instanceof Date ? now : new Date(now);
+  const ended = flock.status === 'completed' || isNightOver(flock, n.getTime());
+  if (!ended) return false;
+  return nightsBetween(flock.eventTime, n) === 1;
 };

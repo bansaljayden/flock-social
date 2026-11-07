@@ -156,7 +156,7 @@ describe('the names line', () => {
 describe('the one button', () => {
   const f = plan(1, at(6, 20, 33), { status: 'confirmed', venue: 'The Copper Finch' });
 
-  test('a bill owed comes before a budget, a budget before a vote, a vote before how was it', () => {
+  test('a bill owed comes before a budget, a budget before a vote', () => {
     const both = { ...f, iOwe: true, iBudgetOpen: true };
     const asks = nestAsks([both], [both]);
     expect(heroAction(both, asks)).toEqual({ kind: 'owe', label: 'Pay your share of the bill' });
@@ -164,8 +164,13 @@ describe('the one button', () => {
     expect(heroAction(budget, nestAsks([budget], [budget]))).toEqual({ kind: 'budget', label: 'Add your budget' });
     const vote = { ...f, status: 'voting' };
     expect(heroAction(vote, nestAsks([vote], [vote]))).toEqual({ kind: 'vote', label: 'Vote on a place' });
+  });
+
+  test('the hero never asks how the night was: the night is still on while a plan is the hero', () => {
+    // It asked "How was The Copper Finch?" an hour in. The Needs you row asks
+    // the morning after (lib/planNight.js nestAsksHowItWas).
     const over = { ...f, askHowItWas: true };
-    expect(heroAction(over, nestAsks([over], []))).toEqual({ kind: 'how', label: 'How was The Copper Finch?' });
+    expect(heroAction(over, nestAsks([over], []))).toBeNull();
   });
 
   test('nothing asked of the reader, no button', () => {

@@ -16,8 +16,9 @@
 //   is completed. Most hosts never slide "done", so most plans are completed
 //   by the sweep 12 hours after their time, and routes/feedback.js stops
 //   verifying a member's report at exactly that point. The card used to appear
-//   just after the answer stopped counting. lib/planNight.js decides the hour,
-//   and the Nest's chip reads the same function.
+//   just after the answer stopped counting. lib/planNight.js decides the hour.
+//   The Nest asks later, the morning after (nestAsksHowItWas, built on the same
+//   function), because it is the screen every open lands on.
 //
 // The screen is rendered for real, from its own parameter list, so a prop
 // added to it arrives here as a function and cannot quietly take a falsy
@@ -261,13 +262,50 @@ describe('the Nest reads the same hour', () => {
   const i = APP.indexOf('const HomeScreen = () => {');
   const home = APP.slice(i, i + 40000);
 
-  test('a plan is flagged from the shared helper, only with a venue to rate and no answer yet', () => {
-    expect(APP).toMatch(/import \{ isNightOver \} from '\.\/lib\/planNight';/);
-    expect(home).toMatch(/askHowItWas: isNightOver\(f\) && !!f\.venueId && !submittedFeedback\.has\(f\.id\),/);
+  // THE NEST ASKS THE MORNING AFTER (2026-11-06). The plan screen asks an
+  // hour after a plan's time, for whoever opens it. The Nest is different: it
+  // is what a person sees on every open, and from an hour in its biggest
+  // button asked "How was The Copper Finch?" of a night the reader was most
+  // likely still at. A night is judged by its peak and its end, so the Nest
+  // leaves the peak alone and asks once the night has rolled over at 4 AM,
+  // for the whole of the next day: lib/planNight.js nestAsksHowItWas, which
+  // reads finished plans too, because the sweep completes a plan 12 hours
+  // after its time and the live list lets it go at that moment.
+  const { nestAsksHowItWas } = require('../lib/planNight');
+  const at = (day, h, m = 0) => new Date(2026, 10, day, h, m);
+  const trivia = (over = {}) => ({ id: 1, status: 'confirmed', venue: 'The Copper Finch', venueId: 'p1', eventTime: at(6, 20, 33).toISOString(), ...over });
+
+  test.each([
+    ['an hour in', at(6, 21, 33), false],
+    ['at 12:40 AM, the same night', at(7, 0, 40), false],
+    ['at 3:59 AM', at(7, 3, 59), false],
+    ['at 4 AM, the morning after', at(7, 4, 0), true],
+    ['the afternoon after', at(7, 15, 0), true],
+    ['the next night after 4 AM', at(8, 4, 0), false],
+  ])('a locked-in plan, %s: %s', (_, now, want) => {
+    expect(nestAsksHowItWas(trivia(), now)).toBe(want);
   });
 
-  // Since 2026-11-06 the chip is lib/nestHero.js planChip, the reader's own
-  // state, and on the night itself the hero card asks with a button.
+  test('a plan the sweep or the host has completed is still asked about the morning after', () => {
+    expect(nestAsksHowItWas(trivia({ status: 'completed' }), at(7, 10, 0))).toBe(true);
+  });
+
+  test('never a cancelled plan, a plan nobody locked in, or one with no place to rate', () => {
+    expect(nestAsksHowItWas(trivia({ status: 'cancelled' }), at(7, 10, 0))).toBe(false);
+    expect(nestAsksHowItWas(trivia({ status: 'voting' }), at(7, 10, 0))).toBe(false);
+    expect(nestAsksHowItWas(trivia({ venueId: null }), at(7, 10, 0))).toBe(false);
+    expect(nestAsksHowItWas(trivia({ venue: 'TBD' }), at(7, 10, 0))).toBe(false);
+    expect(nestAsksHowItWas(trivia({ eventTime: null }), at(7, 10, 0))).toBe(false);
+  });
+
+  test('the Nest flags its plans from that rule, finished plans included, and never one already answered', () => {
+    expect(APP).toMatch(/import \{ nestAsksHowItWas \} from '\.\/lib\/planNight';/);
+    expect(home).toMatch(/askHowItWas: nestAsksHowItWas\(f\) && !submittedFeedback\.has\(f\.id\),/);
+    expect(home).toMatch(/const nestRateList = flocks\.filter\(\(f\) => nestAsksHowItWas\(f, nestNow\) && !submittedFeedback\.has\(f\.id\)\)\.map\(\(f\) => \(\{ \.\.\.f, askHowItWas: true \}\)\);/);
+    expect(home).toMatch(/howWasIt: nestRateList/);
+  });
+
+  // The chip is lib/nestHero.js planChip, the reader's own state.
   const { planChip } = require('../lib/nestHero');
   const { heroAction } = require('../lib/nestHero');
 
@@ -278,8 +316,8 @@ describe('the Nest reads the same hour', () => {
     expect(home).toMatch(/chip: planChip\(f, \{/);
   });
 
-  test('on its night the hero asks How was the venue?, and the card still opens the plan screen', () => {
-    expect(heroAction({ id: 1, status: 'confirmed', askHowItWas: true, venue: 'Juniper Bowl' }, [])).toEqual({ kind: 'how', label: 'How was Juniper Bowl?' });
+  test('the hero never asks how it was; the row the morning after opens the plan screen', () => {
+    expect(heroAction({ id: 1, status: 'confirmed', askHowItWas: true, venue: 'Juniper Bowl' }, [])).toBeNull();
     expect(home).toMatch(/if \(kind === 'vote' \|\| kind === 'how'\) \{ setCurrentScreen\('detail'\); return; \}/);
     expect(home).toMatch(/const openPlan = \(flockId\) => \{ setSelectedFlockId\(flockId\); setCurrentScreen\('detail'\); \};/);
     expect(home).toMatch(/onClick: \(\) => openPlan\(f\.id\),/);

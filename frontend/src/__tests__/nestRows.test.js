@@ -101,7 +101,7 @@ describe('nestRows', () => {
 
 describe('the Nest builds the rows', () => {
   test('leaving out only the hero button\'s own ask, and saying the time the short way', () => {
-    expect(HOME).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeKeys: heroAsk \? \[`\$\{heroAsk\.kind\}:\$\{heroFlock\.id\}`\] : \[\] \}\)/);
+    expect(HOME).toMatch(/const nestOpenRows = nestRows\(\{ asks: nestAskList, invites: pendingFlockInvites, howWasIt: nestRateList, excludeKeys: heroAsk \? \[`\$\{heroAsk\.kind\}:\$\{heroFlock\.id\}`\] : \[\] \}\)/);
     expect(HOME).toMatch(/when: shortWhen\(r\.eventTime, nestNow\),/);
   });
 

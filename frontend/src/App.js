@@ -162,7 +162,7 @@ import { owedOn } from './lib/billShares';
 // How a budget answer lands on the status, shared with the chat screen's own
 // answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
 import { mergeBudgetUpdate } from './lib/budgetStatus';
-import { isNightOver } from './lib/planNight';
+import { nestAsksHowItWas } from './lib/planNight';
 import { askedMemberIds } from './lib/planAsked';
 import { tablePartyForFlockId } from './lib/tableSummaries';
 import { nestAsks, nestRows, owesOnBill } from './lib/nestAsks';
@@ -18057,17 +18057,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // after its time last, and labelled as such, since nothing ages those
     // out.
     //
-    // askHowItWas: a locked-in plan whose night is over and that the reader
-    // has not rated. Its chip read "Locked In" until the sweep completed it
-    // the next day, which is also when a report on it stopped counting. Now
-    // it asks, and the tap opens the plan screen, where the same helper puts
-    // the "How was {venue}?" card. No venue, nothing to rate, so no ask.
+    // askHowItWas: a locked-in plan whose night was last night and that the
+    // reader has not rated (lib/planNight.js nestAsksHowItWas). Its chip read
+    // "Locked In" until the sweep completed it the next day; then, from an
+    // hour in, the hero asked "How was {venue}?" of a night the reader was
+    // most likely still at. Now the Nest asks the morning after, from the
+    // 4 AM roll, and the tap opens the plan screen, where the "How was
+    // {venue}?" card is. No venue, nothing to rate, so no ask.
     const liveFlocks = flocks
       .filter(f => f.status !== 'completed' && f.status !== 'cancelled')
       .map(f => ({
         ...f,
         timePassed: f.status === 'voting' && !!f.eventTime && (Date.now() - new Date(f.eventTime).getTime()) > 12 * 3600 * 1000,
-        askHowItWas: isNightOver(f) && !!f.venueId && !submittedFeedback.has(f.id),
+        askHowItWas: nestAsksHowItWas(f) && !submittedFeedback.has(f.id),
       }))
       .sort((a, b) => {
         if (a.timePassed !== b.timePassed) return a.timePassed ? 1 : -1;
@@ -18144,10 +18146,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         onClick: () => openPlan(f.id),
       })),
     }));
+    // Last night's plans to rate, read from `flocks` as the money is: the
+    // sweep completes a plan 12 hours after its time and the live list lets
+    // it go then, so a row read from live plans would have lasted from the
+    // 4 AM roll to about 8 AM. Asked all of the morning-after day.
+    const nestRateList = flocks.filter((f) => nestAsksHowItWas(f, nestNow) && !submittedFeedback.has(f.id)).map((f) => ({ ...f, askHowItWas: true }));
     // Every other open loop, as rows: the invites, every ask but the one the
     // hero's button carries (its plan's other asks and the asks of the plans
     // beside it that night included), and last night's plans to rate.
-    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: restFlocks, excludeKeys: heroAsk ? [`${heroAsk.kind}:${heroFlock.id}`] : [] })
+    const nestOpenRows = nestRows({ asks: nestAskList, invites: pendingFlockInvites, howWasIt: nestRateList, excludeKeys: heroAsk ? [`${heroAsk.kind}:${heroFlock.id}`] : [] })
       .map((r) => ({
         ...r,
         when: shortWhen(r.eventTime, nestNow),
