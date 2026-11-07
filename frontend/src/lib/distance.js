@@ -15,9 +15,15 @@
 // tenths under ten miles, whole miles after that. Kilometres: metres under
 // one kilometre (rounded to 10 m), tenths under ten, whole kilometres after.
 // A space before the unit, as both systems print it.
+//
+// THE UNIT IS CHOSEN AFTER THE ROUNDING (review, 2026-11-06). It was chosen
+// on the raw figure and the figure rounded after, so 0.0996 mi printed
+// "550 ft", more than the "0.1 mi" (528 ft) a slightly longer distance got,
+// 9.96 mi printed "10.0 mi" where the rule says "10 mi", and 0.996 km printed
+// "1000 m". A figure that rounds up to the next unit is printed in it.
 
 const MILE_REGIONS = new Set(['US', 'GB', 'LR', 'MM']);
-const KM_PER_MILE = 1.609344;
+export const KM_PER_MILE = 1.609344;
 const FEET_PER_MILE = 5280;
 
 const regionOf = (locale) => {
@@ -52,13 +58,17 @@ export const formatDistance = (km, { locale } = {}) => {
   if (typeof km !== 'number' || !Number.isFinite(km) || km < 0) return '';
   if (usesMiles(locale === undefined ? deviceLocale() : locale)) {
     const mi = km / KM_PER_MILE;
-    if (mi < 0.1) return `${Math.max(50, Math.round((mi * FEET_PER_MILE) / 50) * 50)} ft`;
-    if (mi < 10) return `${(Math.round(mi * 10) / 10).toFixed(1)} mi`;
-    return `${Math.round(mi)} mi`;
+    const tenths = Math.round(mi * 10) / 10;
+    if (tenths >= 10) return `${Math.round(mi)} mi`;
+    const feet = Math.max(50, Math.round((mi * FEET_PER_MILE) / 50) * 50);
+    if (mi < 0.1 && feet < FEET_PER_MILE / 10) return `${feet} ft`;
+    return `${Math.max(0.1, tenths).toFixed(1)} mi`;
   }
-  if (km < 1) return `${Math.max(10, Math.round((km * 1000) / 10) * 10)} m`;
-  if (km < 10) return `${(Math.round(km * 10) / 10).toFixed(1)} km`;
-  return `${Math.round(km)} km`;
+  const tenthsKm = Math.round(km * 10) / 10;
+  if (tenthsKm >= 10) return `${Math.round(km)} km`;
+  const metres = Math.max(10, Math.round((km * 1000) / 10) * 10);
+  if (km < 1 && metres < 1000) return `${metres} m`;
+  return `${Math.max(1, tenthsKm).toFixed(1)} km`;
 };
 
 // The great-circle distance in kilometres between two points.

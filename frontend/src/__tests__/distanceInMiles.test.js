@@ -55,6 +55,30 @@ describe('the unit follows the region', () => {
     expect(formatDistance(15.7, fr)).toBe('16 km');
   });
 
+  // Review, 2026-11-06: the unit was chosen before the rounding, so a figure
+  // that rounds up to the next unit was printed in the one below it.
+  test('a figure that rounds up to the next unit is printed in it', () => {
+    const us = { locale: 'en-US' };
+    const km = (mi) => mi * 1.609344;
+    expect(formatDistance(km(0.0999), us)).toBe('0.1 mi');
+    expect(formatDistance(km(0.0996), us)).toBe('0.1 mi');
+    expect(formatDistance(km(0.09), us)).toBe('500 ft');
+    expect(formatDistance(km(0.0949), us)).toBe('500 ft');
+    expect(formatDistance(km(9.96), us)).toBe('10 mi');
+    expect(formatDistance(km(9.94), us)).toBe('9.9 mi');
+    const fr = { locale: 'fr-FR' };
+    expect(formatDistance(0.996, fr)).toBe('1.0 km');
+    expect(formatDistance(0.994, fr)).toBe('990 m');
+    expect(formatDistance(9.96, fr)).toBe('10 km');
+    expect(formatDistance(9.95, fr)).not.toBe('10.0 km');
+    expect(formatDistance(9.94, fr)).toBe('9.9 km');
+    // Nothing ever prints a feet figure at or past a tenth of a mile.
+    for (let mi = 0.05; mi < 0.11; mi += 0.0001) {
+      const said = formatDistance(km(mi), us);
+      if (said.endsWith(' ft')) expect(Number(said.replace(' ft', ''))).toBeLessThan(528);
+    }
+  });
+
   test('nothing to print is printed as nothing', () => {
     expect(formatDistance(null)).toBe('');
     expect(formatDistance(NaN)).toBe('');
