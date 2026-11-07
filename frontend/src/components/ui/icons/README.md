@@ -69,3 +69,22 @@ beside the glyphs it sits next to.
 | `splitBill` | Split the bill | a receipt with a torn foot |
 | `pro` | Flock Pro | two gulls climbing |
 | `birdie` | Birdie, wherever the assistant is meant | the bird's head, the only eye in the set |
+
+## Second pass (2026-11-07)
+
+Drawn from Higgsfield concept sheets, then built by hand on the grid above.
+The everyday controls (rule 9) did not change.
+
+| Key | Drawing | Detail |
+|---|---|---|
+| `lock` | padlock | the keyhole is the entrance hole |
+| `clock` | dial and two hands | the hands turn on a pebble |
+| `award` | rosette on two tails | an egg as the medallion |
+| `image` | frame over hills | a gull where a stock picture puts a sun |
+| `cocktail` | triangle glass | a pebble olive |
+| `wine` | tall bowl on a stem | its own drawing (it was the cocktail glass) |
+| `beer` | mug with a head of foam | its own drawing (it was the coffee mug) |
+| `coffee` | cup with steam | its own drawing |
+| `vote` | a ballot going into a box | the old drawing was a checkbox |
+| `thumbsUp`, `gamepad`, `cloud` | redrawn shapes | no bird; the old ones read as a box or a dome |
+

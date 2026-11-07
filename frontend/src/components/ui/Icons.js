@@ -243,6 +243,8 @@ const ROT = (deg) => ({ transform: `rotate(${deg}deg)` });
 // meeting the next on a shared tangent, so the outline has no kink and needs
 // no ellipse. Top 2.9, bottom 21, 14 wide.
 const EGG_D = 'M5 14A7 7 0 0 0 19 14A14 14 0 0 0 14.9 4.1A4.1 4.1 0 0 0 9.1 4.1A14 14 0 0 0 5 14Z';
+// The same egg at 0.3 of its size, centred at 12,9: award's medallion.
+const AWARD_EGG_D = 'M9.9 9.62A2.1 2.1 0 0 0 14.1 9.62A4.2 4.2 0 0 0 12.87 6.64A1.23 1.23 0 0 0 11.13 6.64A4.2 4.2 0 0 0 9.9 9.62Z';
 
 // messages / messagesFilled - a speech bubble whose tail is a beak. The bubble's
 // lower-left corner is cut on the 45 degree axis and the beak stands on the
@@ -268,22 +270,40 @@ const BIRDIE_D =
   'M6.5 11 2 13 6.5 15Z' +
   'M13.6 9A1.4 1.4 0 1 1 16.4 9A1.4 1.4 0 1 1 13.6 9Z';
 
-// mug - beer and coffee are the same mark. Closed at the bottom (with r=2
-// corner arcs so it sits like crockery, not like a box), open at the rim -
-// the rim is where the drink is, so that gap is meaning. The handle is a full
-// semicircular loop, which is the single detail that says "mug" at 12px.
-const MUG = (
+// The drinks (2026-11-07, from the Higgsfield concept sheets). Beer and
+// coffee were one open-rimmed mug, and cocktail and wine one triangle glass,
+// so a coffee shop and a bar drew the same picture. Each now has its own.
+//   beer: the mug, its rim a head of foam (three r 2 arcs) that closes it.
+//   coffee: a cup with a round foot (r 6), a small r 2.5 handle and two
+//     short lines of steam, 1.7 units clear of the rim.
+//   cocktail: the triangle glass with a pebble olive (the bird set's pebble)
+//     sitting in it (r 1.1), 1.5 units clear of the walls.
+//   wine: a tall bowl, flat-topped, rounded at the foot (r 5), on a stem.
+const BEER = (
   <>
-    <path d="M5 8 5 18A2 2 0 0 0 7 20L15 20A2 2 0 0 0 17 18L17 8" />
+    <path d="M5 8A2 2 0 0 1 9 8A2 2 0 0 1 13 8A2 2 0 0 1 17 8L17 18A2 2 0 0 1 15 20L7 20A2 2 0 0 1 5 18Z" />
     <path d="M17 10A3 3 0 0 1 17 16" />
   </>
 );
-
-// stemware - cocktail and wine are the same mark.
-const STEM = (
+const COFFEE = (
   <>
-    <path d="M4 6 20 6 12 14Z" />
+    <path d="M5 9 17 9 17 14A6 6 0 0 1 5 14Z" />
+    <path d="M17 10.5A2.5 2.5 0 0 1 17 15.5" />
+    <path d="M9 2.5 9 5M13 2.5 13 5" />
+  </>
+);
+const COCKTAIL = (
+  <>
+    <path d="M3 5 21 5 12 14Z" />
     <path d="M12 14 12 20" />
+    <path d="M8 20 16 20" />
+    {dot(12, 8.75, 1.1)}
+  </>
+);
+const WINE = (
+  <>
+    <path d="M7 3.5 17 3.5 17 8A5 5 0 0 1 7 8Z" />
+    <path d="M12 13 12 20" />
     <path d="M8 20 16 20" />
   </>
 );
@@ -305,8 +325,6 @@ const PARTY = (
 
 /* Aliases are single-sourced: one make() per drawing, two names pointing at it,
    so an alias can never drift away from its twin. */
-const MUG_ICON = make(MUG);
-const STEM_ICON = make(STEM, { color: '#1a3a5c' });
 // The Messages tab's bubble, and every other "message" in the app: `chat` and
 // `messageSquare` draw it too (Open Chat, Message <name>, a friend's Message
 // button), where they drew a stock square bubble with a notch tail beside it.
@@ -549,10 +567,14 @@ const Icons = {
   }),
 
   // 9. clock. Hands at exactly 90 and 0, so the glyph is 0/90 plus one circle.
+  // The hands turn on a pebble (r 1.75), the bird set's dot, where a stock
+  // clock leaves the hub bare. Each hand stops 4 short of the ring, so it
+  // clears it by 1.7 (the hour hand used to run to 1.2).
   clock: make(
     <>
       <circle cx="12" cy="12" r="9" />
-      <path d="M12 6.5 12 12 17 12" />
+      <path d="M12 7 12 12 17 12" />
+      {dot(12, 12, 1.75)}
     </>
   ),
 
@@ -603,12 +625,15 @@ const Icons = {
     </>
   ),
 
-  // Ribbon starts at y=14, inside the disc, so the tails read as attached
-  // rather than floating just below it.
+  // The ribbon's tails start on the ring itself (x 8 and 16 meet r 7 at
+  // y 14.75), so they read as attached and stay one part with it. The
+  // medallion is the egg (EGG_D at 0.3 of its size, solid), 2 units clear of
+  // the ring and 1.5 of the tails.
   award: make(
     <>
       <circle cx="12" cy="9" r="7" />
-      <path d="M8 14 8 22 12 18 16 22 16 14" />
+      <path d="M8 14.75 8 22 12 18 16 22 16 14.75" />
+      <path d={AWARD_EGG_D} fill="currentColor" />
     </>
   ),
 
@@ -641,7 +666,7 @@ const Icons = {
     </>
   ),
 
-  beer: MUG_ICON,
+  beer: make(BEER),
 
   // A real bell: dome, flared skirt closing on its own bottom rule, clapper
   // tucked just under it. The old drawing ended the body in mid-air with two
@@ -710,13 +735,16 @@ const Icons = {
   // target, a slash would make it a ban.
   circle: make(<circle cx="12" cy="12" r="9" />),
 
-  cloud: make(<path d="M4 18 4 14A4 4 0 0 1 9 10A5 5 0 0 1 15 9A5 5 0 0 1 20 14L20 18Z" />, {
+  // Three lobes on one flat base: circles r 3.5 at 6.5,14.5, r 5 at 12,10.5
+  // and r 4 at 17.5,14, joined where they cross (the two crossings are the
+  // only off-grid points, fixed by the circles). The old outline was a dome.
+  cloud: make(<path d="M6.5 18 17.5 18A4 4 0 1 0 16.98 10.03A5 5 0 1 0 7.03 11.04A3.5 3.5 0 1 0 6.5 18Z" />, {
     color: '#9ca3af',
   }),
 
-  cocktail: STEM_ICON,
+  cocktail: make(COCKTAIL, { color: '#1a3a5c' }),
 
-  coffee: MUG_ICON,
+  coffee: make(COFFEE),
 
   // A ring bisected by a full-width diagonal read as the "prohibited" slash.
   // It is a short NE needle with a square arrowhead instead: direction, not denial.
@@ -845,11 +873,13 @@ const Icons = {
     color: '#F59E0B',
   }),
 
+  // A controller, not a box: a stadium (r 6 ends, 2 to 22 wide) with the
+  // cross pad and one button, each centred in an end, 1.7 clear of the body.
   gamepad: make(
     <>
-      <path d="M3 7 21 7 21 18 3 18Z" />
-      <path d="M7 11 7 15M5 13 9 13" />
-      <circle cx="16.5" cy="13" r="1.5" />
+      <path d="M8 6 16 6A6 6 0 0 1 16 18L8 18A6 6 0 0 1 8 6Z" />
+      <path d="M8 10 8 14M6 12 10 12" />
+      <circle cx="16" cy="12" r="1.5" />
     </>
   ),
 
@@ -902,11 +932,14 @@ const Icons = {
     </>
   ),
 
+  // A gull over the hills where a stock picture puts a sun. The hills run
+  // wall to wall on 45s, and the gull (w 2) keeps 1.5 clear of the frame and
+  // of the near peak. One of the five gull glyphs.
   image: make(
     <>
       <path d="M3 4 21 4 21 20 3 20Z" />
-      <circle cx="8" cy="9" r="3" />
-      <path d="M4 18 10 12 14 16 20 10" />
+      <path d={gull(9, 8.75, 2)} />
+      <path d="M3 19.5 8.5 14 11.5 17 17 11.5 21 15.5" />
     </>
   ),
 
@@ -938,10 +971,13 @@ const Icons = {
     </>
   ),
 
+  // The keyhole is the birdhouse's dark entrance hole (r 1.75), 1.6 clear of
+  // the body's floor.
   lock: make(
     <>
       <path d="M5 11 19 11 19 20 5 20Z" />
       <path d="M8 11 8 7A4 4 0 0 1 16 7L16 11" />
+      {dot(12, 15.5, 1.75)}
     </>
   ),
 
@@ -1237,10 +1273,12 @@ const Icons = {
     </>
   ),
 
+  // A cuff and a hand: the thumb rises on a 45 and rounds off (r 1.5), the
+  // fist steps in at the lower right on a 45.
   thumbsUp: make(
     <>
-      <path d="M7 10 18 10 18 20 7 20Z" />
-      <path d="M7 10 7 6 11 2 11 10" />
+      <path d="M4 11 8 11 8 20 4 20Z" />
+      <path d="M8 11 11.5 7.5 11.5 4A1.5 1.5 0 0 1 14.5 4L14.5 10 20 10 20 17 17 20 8 20" />
     </>
   ),
 
@@ -1288,12 +1326,15 @@ const Icons = {
     </>
   ),
 
-  // Ballot box, not a tray. At 9 units tall it stood barely a third the height
-  // of its neighbours, and it is called at sizes 9 and 10.
+  // A ballot going into the box: the slip (with its tick) stands in the slot
+  // and the box sits under it. The old drawing was a checkbox, the same
+  // picture as any to-do. The tick keeps 1.5 clear of the slip's walls and
+  // 1.7 of the box's lid. Called at 12 to 20.
   vote: make(
     <>
-      <path d="M4 7 20 7 20 20 4 20Z" />
-      <path d="M8 13 11 16 16 11" />
+      <path d="M3 14.5 21 14.5 21 20.5 3 20.5Z" />
+      <path d="M5 14.5 5 2.5 19 2.5 19 14.5" />
+      <path d="M8.75 8.25 11 10.5 15.25 6.25" />
     </>
   ),
 
@@ -1305,7 +1346,7 @@ const Icons = {
     </>
   ),
 
-  wine: STEM_ICON,
+  wine: make(WINE, { color: '#1a3a5c' }),
 
   // A lightning bolt cannot be built from 0/45/90 without collapsing on
   // itself, so zap is the same idea drawn as one 45deg zigzag.

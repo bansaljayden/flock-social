@@ -46,6 +46,10 @@ const TAB_PAIRS = [
   ['you', 'youFilled'],
 ];
 const TAB_KEYS = TAB_PAIRS.flat();
+// Redrawn 2026-11-07 from the Higgsfield concept sheets (the second pass over
+// the whole set): each takes one detail from the bird set's closed list, or
+// becomes its own picture where it had shared another key's.
+const REDRAWN_1107 = ['award', 'beer', 'clock', 'cloud', 'cocktail', 'coffee', 'gamepad', 'image', 'lock', 'thumbsUp', 'vote', 'wine'];
 const SET_KEYS = [...TAB_KEYS, 'startFlock', 'nestEgg', 'splitBill', 'pro', 'helpCircle', 'locate', 'maximize', 'minimize', 'menuLines'];
 // Stroke width in viewBox units at every size above 10.5 px, where sw() is
 // size / 10.5 and one unit is size / 24 px.
@@ -156,7 +160,8 @@ function shapes(span) {
       const cy = num(el.getAttribute('cy'));
       const r = num(el.getAttribute('r'));
       const samples = [];
-      for (let k = 0; k < 96; k += 1) samples.push([cx + r * Math.cos((k / 96) * 2 * Math.PI), cy + r * Math.sin((k / 96) * 2 * Math.PI)]);
+      // 720 points (half a degree), so a line that meets a ring is seen to touch it.
+      for (let k = 0; k < 720; k += 1) samples.push([cx + r * Math.cos((k / 720) * 2 * Math.PI), cy + r * Math.sin((k / 720) * 2 * Math.PI)]);
       return { el, stroked, samples, typed: [cx, cy, r], points: [[cx, cy]], filled: el.getAttribute('fill') === 'currentColor' };
     }
     const d = el.getAttribute('d');
@@ -335,7 +340,7 @@ describe('separate parts stay 1.5 units clear, across the set', () => {
   // The stated exceptions (the Icons.js header, README rule 5), each held to
   // the number its comment gives, so none of them can quietly shrink further.
   const GAP_FLOOR = { helpCircle: 1.1, nestEgg: 1.1, pro: 1.3 };
-  const GAP_KEYS = [...SET_KEYS, 'users', 'userPlus'];
+  const GAP_KEYS = [...SET_KEYS, 'users', 'userPlus', ...REDRAWN_1107];
 
   /** Edge-to-edge gaps between the parts of a glyph that do not touch. */
   function gaps(key) {
@@ -426,6 +431,44 @@ describe('the egg and the rest of the set', () => {
       [...draw(key).querySelectorAll('path[fill-rule="evenodd"]')].map((p) => p.getAttribute('d')).join(' ')
     ));
     expect(punched.sort()).toEqual(['discoverFilled', 'nestFilled', 'plansFilled']);
+  });
+});
+
+describe('the second pass (2026-11-07)', () => {
+  const inner = (key) => draw(key).querySelector('svg').innerHTML;
+
+  test('the four drinks are four drawings: a bar no longer draws a coffee shop', () => {
+    const drinks = ['beer', 'coffee', 'cocktail', 'wine'].map(inner);
+    expect(new Set(drinks).size).toBe(4);
+  });
+
+  test('each redrawn glyph carries its one detail from the closed list', () => {
+    const pebble = (key) => [...draw(key).querySelectorAll('circle[fill="currentColor"]')].length;
+    expect(pebble('lock')).toBe(1); // the entrance hole as the keyhole
+    expect(pebble('clock')).toBe(1); // the pebble at the hub
+    expect(pebble('cocktail')).toBe(1); // the pebble as the olive
+    const awardPaths = [...draw('award').querySelectorAll('path')].map((p) => p.getAttribute('d'));
+    expect(awardPaths.some((d) => parsePath(d).segs.filter((s) => s.type === 'A').length === 4)).toBe(true); // the egg medallion
+    expect(draw('image').querySelector('circle')).toBeNull(); // the sun is gone ...
+    expect([...draw('image').querySelectorAll('path')].map((p) => p.getAttribute('d'))).toContain('M7 9.75 9 7.75 11 9.75'); // ... for a gull
+  });
+
+  test('the gull stays a spice: five glyphs at most draw one', () => {
+    const SRC_ICONS = read('components', 'ui', 'Icons.js');
+    const keysWithGull = Object.keys(Icons).filter((key) => {
+      const start = SRC_ICONS.indexOf(`\n  ${key}: `);
+      if (start < 0) return false;
+      const rest = SRC_ICONS.slice(start + 1);
+      const end = rest.search(/\n  [a-zA-Z]+: /);
+      // Code only: the comment above the next key may name a gull glyph.
+      const body = (end < 0 ? rest : rest.slice(0, end)).split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+      return /gull\(/.test(body) || /PRO_ICON/.test(body);
+    });
+    expect(keysWithGull.sort()).toEqual(['activity', 'image', 'pro', 'wave']);
+  });
+
+  test('vote is a ballot going into a box, not a checkbox', () => {
+    expect(draw('vote').querySelectorAll('path')).toHaveLength(3);
   });
 });
 

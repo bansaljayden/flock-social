@@ -207,7 +207,7 @@ describe('glyphs that collided with each other', () => {
   it('barChart stands on a baseline rather than floating as three tallies', () => {
     const block = ICONS_SRC.slice(
       ICONS_SRC.indexOf('barChart: make('),
-      ICONS_SRC.indexOf('beer: MUG_ICON')
+      ICONS_SRC.indexOf('beer: make(BEER)')
     );
     expect(block).toContain('M3 20 21 20');
   });
