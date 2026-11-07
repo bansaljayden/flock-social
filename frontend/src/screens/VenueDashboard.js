@@ -723,7 +723,7 @@ export default function VenueDashboard({
                     <span style={{ fontSize: '34px', fontWeight: '600', lineHeight: 1.1, color: colors.navy, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>{sliderValue}</span>
                     <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', marginLeft: '2px' }}>%</span>
                     {live && venueBusyDraft != null && venueBusyDraft !== live.percent && (
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>live now: {live.percent}%</span>
+                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>users see {live.percent}%</span>
                     )}
                   </div>
                   <input

@@ -412,7 +412,7 @@ export default function PrivacyPolicy() {
                 about who is at it.
               </p>
               <p>
-                The occupancy card also shows how many Flock accounts checked in at that
+                The venue sensor card also shows how many Flock accounts checked in at that
                 venue in the last hour. That is a count of separate accounts. No names go
                 with it.
               </p>

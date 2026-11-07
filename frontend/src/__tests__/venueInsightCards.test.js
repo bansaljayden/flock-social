@@ -431,7 +431,7 @@ describe('Roost: the slider reflects instantly', () => {
     }));
     const rows = await screen.findAllByText('Users currently see 62% full, set by you.');
     expect(rows.length).toBeGreaterThan(0);
-    expect(screen.getAllByText('your reading, live now.').length).toBe(rows.length);
+    expect(screen.getAllByText('your reading, showing now.').length).toBe(rows.length);
   });
 });
 

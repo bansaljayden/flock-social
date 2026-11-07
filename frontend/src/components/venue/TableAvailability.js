@@ -42,7 +42,7 @@
  * TWO FORMS. The compact form is one truncating line for lists, under a
  * venue's name. The full form, for the venue sheet and the plan, adds the
  * busy hours under the live line and a caption saying where the figure came
- * from, "Live from the venue's Flux sensor", because a figure with no source
+ * from, "From the venue's Flux sensor", because a figure with no source
  * is the thing App Review rejects and DESIGN-STANDARD rule 5 forbids.
  *
  * NOTHING IS GUESSED. A summary with none of the figures draws nothing, and
@@ -241,7 +241,7 @@ export default function TableAvailability({ summary, party = TABLE_PARTY_DEFAULT
         <p style={{ margin: live ? '3px 0 0' : 0, fontSize: 'var(--t-meta)', fontWeight: 500, color: 'var(--text-secondary)', lineHeight: 1.35 }}>{busy}</p>
       )}
       <p style={{ margin: '4px 0 0', fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>
-        {live ? "Live from the venue's Flux sensor" : "From the venue's Flux sensor. Not live right now."}
+        {live ? "From the venue's Flux sensor" : "From the venue's Flux sensor. Not live right now."}
       </p>
     </div>
   );

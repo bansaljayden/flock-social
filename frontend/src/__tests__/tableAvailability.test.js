@@ -279,7 +279,7 @@ describe('a stale sensor', () => {
       expect(screen.queryByText(/open now/)).toBeNull();
       expect(screen.getByText('Usually full Fri 8 to 10 PM')).toBeInTheDocument();
       expect(screen.getByText("From the venue's Flux sensor. Not live right now.")).toBeInTheDocument();
-      expect(screen.queryByText("Live from the venue's Flux sensor")).toBeNull();
+      expect(screen.queryByText("From the venue's Flux sensor")).toBeNull();
     } finally {
       jest.useRealTimers();
     }
@@ -365,7 +365,7 @@ describe('busy hours', () => {
   it('the full form with no zone draws the live line and its caption, and no busy line', () => {
     const { container } = render(<TableAvailability summary={live({ busy_hours: [{ dow: 5, hour: 21 }], timeZone: null })} party={5} />);
     const lines = Array.from(container.querySelectorAll('p')).map((p) => p.textContent);
-    expect(lines).toEqual(['Table for 5 open now', "Live from the venue's Flux sensor"]);
+    expect(lines).toEqual(['Table for 5 open now', "From the venue's Flux sensor"]);
     // Stale and no zone: nothing at all, as with no hours.
     const stale = render(<TableAvailability summary={live({ stale: true, busy_hours: [{ dow: 5, hour: 21 }], timeZone: null })} party={5} />);
     expect(stale.container.firstChild).toBeNull();
@@ -400,7 +400,7 @@ describe('busy hours', () => {
     try {
       const { container } = render(<TableAvailability summary={live({ busy_hours: [{ dow: 5, hour: 21 }] })} party={5} />);
       const lines = Array.from(container.querySelectorAll('p')).map((p) => p.textContent);
-      expect(lines).toEqual(['Table for 5 open now', 'Usually full Fri 9 to 10 PM', "Live from the venue's Flux sensor"]);
+      expect(lines).toEqual(['Table for 5 open now', 'Usually full Fri 9 to 10 PM', "From the venue's Flux sensor"]);
       noEmDash(container.textContent);
     } finally {
       jest.useRealTimers();

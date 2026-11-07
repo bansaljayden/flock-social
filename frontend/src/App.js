@@ -18946,7 +18946,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
       refreshOwnerPublishedScore();
-      showToast('Live. Users see your number now.');
+      showToast('Users see your number now.');
     } catch (e) {
       showToast(userMessage(e, "That didn't save. Try again."), 'error');
     } finally {

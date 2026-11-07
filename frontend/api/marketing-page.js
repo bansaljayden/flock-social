@@ -390,7 +390,7 @@ const PAGE_BLOCKS = {
     ["h3", "What we do with the readings"],
     ["p", "They produce the venue sensor's people count and the 12-hour chart on that venue's page in the app, and the same figures in that venue owner's dashboard, along with the table figures when the venue has them. We keep them as a record of how busy the venue has been over time. Because they contain no identifiers, deleting your Flock account does not touch them and there is nothing in them belonging to you to delete. We do not currently delete them on a schedule."],
     ["p", "On a unit set up for tables, the venue owner can also get a notification when a table has gone a while with nobody stopping by, or has been left uncleared. It names the table and nothing about who is at it."],
-    ["p", "The occupancy card also shows how many Flock accounts checked in at that venue in the last hour. That is a count of separate accounts. No names go with it."],
+    ["p", "The venue sensor card also shows how many Flock accounts checked in at that venue in the last hour. That is a count of separate accounts. No names go with it."],
     ["p", "If we ever put anything in this device that can tell one person from another, this section is rewritten before the device goes in."],
     ["h2", "How we use your information"],
     ["li", "Operate the core product: accounts and sign-in, flocks, chat, voting, budgets, bill splits, the calendar, notifications."],

@@ -661,7 +661,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
       <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0, lineHeight: 1.45 }}>
         Users currently see {Number(liveReading?.percent)}% full, set by you.
       </p>
-      <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>your reading, live now.</p>
+      <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>your reading, showing now.</p>
     </div>
   );
 
