@@ -3106,8 +3106,8 @@ export default function ChatDetail({
             >
                 <span id="chat-header-name" style={{ maxWidth: '100%', fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</span>
                 <span id="chat-header-plan-state" style={{ maxWidth: '100%', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px', overflow: 'hidden' }}>
-                  {/* Reads the live socket, not a literal. The dot and the
-                      word both move, so the state is carried by more than a
+                  {/* Reads the live socket, not a literal. The word moves,
+                      so the state is carried by a word rather than a
                       tint, and "reconnecting" is the truth while socket.io
                       is still retrying: history is already on screen over
                       HTTP, and what is missing is anything said since. A total
@@ -3116,14 +3116,15 @@ export default function ChatDetail({
 
                       THE ORDER CHANGED AND THE WORDS DID NOT. The plan line
                       leads, because it is what a person came in to know, and
-                      it is the half that ellipsises last. The dot and its
-                      word close the line, together rather than a separator
-                      apart, so the tint sits beside the word it tints and the
-                      connection is the thing that gets cut on a narrow phone
-                      rather than the time of the plan. What the member count
+                      it does not shrink: the connection word closes the line
+                      after a separator and is the thing that gets cut on a
+                      narrow phone, where "Still voting" used to lose its end
+                      while "online" stayed whole. No dot: the word says it,
+                      and a status dot beside its word is the pattern the
+                      app no longer draws. What the member count
                       used to hold is this space; it is on the plan screen this
                       header opens, with names and RSVPs beside it. */}
-                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{typingUser} is typing...</span> : <><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.time && flock.time !== 'TBD' ? flock.time : 'Time still open'} · {flock.status === 'confirmed' ? 'Locked in' : flock.status === 'completed' ? 'Done' : flock.status === 'cancelled' ? 'Called off' : 'Still voting'}</span><span aria-hidden="true" style={{ width: '5px', height: '5px', borderRadius: '3px', flexShrink: 0, backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', flexShrink: 0 }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
+                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{typingUser} is typing...</span> : <><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', flexShrink: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.time && flock.time !== 'TBD' ? flock.time : 'Time still open'} · {flock.status === 'confirmed' ? 'Locked in' : flock.status === 'completed' ? 'Done' : flock.status === 'cancelled' ? 'Called off' : 'Still voting'}</span><span aria-hidden="true" style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', flexShrink: 0 }}>·</span><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
                 </span>
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
