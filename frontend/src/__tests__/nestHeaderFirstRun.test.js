@@ -140,3 +140,32 @@ describe('the line over the greeting', () => {
     expect(h1[1]).toMatch(/fontFamily: 'var\(--font-display\)'/);
   });
 });
+
+describe('nothing the Nest draws overshoots', () => {
+  // A cubic-bezier whose y runs outside 0..1 carries the value past its end and
+  // brings it back: the bounce. The greeting's spin used one, and so did the
+  // FAB corner snap, the FAB press, the Birdie sheet and its send button. Every
+  // curve in the files that draw the Nest and its floating buttons eases into
+  // place and stops (2026-11-06).
+  const FILES = ['App.js', 'index.css', 'lib/fabGlide.js', 'components/birdie/BirdiePanel.js'];
+
+  test.each(FILES)('every cubic-bezier in %s stays inside 0..1', (file) => {
+    const src = read(...file.split('/'));
+    const curves = [...src.matchAll(/cubic-bezier\(([^)]+)\)/g)].map((m) => m[1].split(',').map(Number));
+    expect(curves.length).toBeGreaterThan(0);
+    for (const [x1, y1, x2, y2] of curves) {
+      for (const v of [x1, y1, x2, y2]) expect(Number.isFinite(v)).toBe(true);
+      expect({ file, y1, y2, over: y1 > 1 || y1 < 0 || y2 > 1 || y2 < 0 }).toEqual({ file, y1, y2, over: false });
+    }
+  });
+
+  test('the tab icons do not bounce on a tap', () => {
+    expect(APP).not.toMatch(/tabBounce|tab-bounce/);
+  });
+
+  test('the FAB press grows on hover only where a pointer can hover', () => {
+    const css = read('index.css');
+    expect(css).toMatch(/@media \(hover: hover\) and \(pointer: fine\) \{\s*\.fab-press:hover \{\s*transform: scale\(1\.08\);/);
+    expect(css.replace(/@media \(hover: hover\) and \(pointer: fine\) \{\s*\.fab-press:hover/, '')).not.toMatch(/\.fab-press:hover/);
+  });
+});

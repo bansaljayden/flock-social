@@ -342,8 +342,12 @@ export default function BirdiePanel({
           boxShadow: isAiPanel ? '0 12px 48px rgba(0,0,0,0.25), 0 4px 16px rgba(0,0,0,0.12)' : 'none',
           border: isAiPanel ? '1px solid var(--border-subtle)' : 'none',
           pointerEvents: 'auto',
-          transition: 'all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
-          animation: 'birdieExpand 0.35s cubic-bezier(0.34, 1.56, 0.64, 1)',
+          /* Size and place only, on the keyboard's own curve (.kb-lift in
+             index.css), so the docked panel rides the keys and a switch to
+             full screen moves with them. It was `all` on an overshooting
+             spring: the sheet grew past full size and came back. */
+          transition: 'width 0.25s cubic-bezier(0.38, 0.7, 0.125, 1), height 0.25s cubic-bezier(0.38, 0.7, 0.125, 1), border-radius 0.25s cubic-bezier(0.38, 0.7, 0.125, 1), bottom 0.25s cubic-bezier(0.38, 0.7, 0.125, 1)',
+          animation: 'birdieExpand 0.25s var(--ease-out)',
           overflow: 'hidden',
         }}>
           <DialogBehavior modal={isAiFullscreen} onClose={closeAiChat} label="Birdie" />
@@ -686,27 +690,16 @@ export default function BirdiePanel({
               </React.Fragment>
             ))}
 
+            {/* WHILE AN ANSWER IS ON ITS WAY: the still bird and what is
+                happening, in words. Three bouncing dots were a person typing,
+                and Birdie is not a person: a human-presence cue raises what
+                people expect of a bot and costs more when it is wrong. The
+                line is true for as long as it shows, and a screen reader
+                hears it once. */}
             {aiTyping && (
-              <div style={{ display: 'flex', gap: '8px', position: 'relative', zIndex: 1, animation: 'fadeSlideIn 0.3s ease-out' }}>
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', border: '1.5px solid rgba(45,90,135,0.4)' }}>
-                  <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-hover)', borderRadius: '16px', borderTopLeftRadius: '4px', padding: '10px 16px', display: 'flex', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <svg aria-hidden="true" focusable="false" width="32" height="24" viewBox="0 0 32 24" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="6" cy="12" r="3" fill={isDark ? '#e8e4df' : '#9a958f'} opacity="0.9">
-                      <animate id="b1" begin="0;b3.end+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="0;b3.end+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                    <circle cx="16" cy="12" r="3" fill={isDark ? '#d5d0c9' : '#8a857f'} opacity="0.9">
-                      <animate begin="b1.begin+0.1s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="b1.begin+0.1s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                    <circle cx="26" cy="12" r="3" fill={isDark ? '#c2bdb6' : '#7a756f'} opacity="0.9">
-                      <animate id="b3" begin="b1.begin+0.2s" attributeName="cy" calcMode="spline" dur="0.6s" values="12;6;12" keySplines=".33,.66,.66,1;.33,0,.66,.33" />
-                      <animate begin="b1.begin+0.2s" attributeName="opacity" dur="0.6s" values="0.35;1;0.35" />
-                    </circle>
-                  </svg>
-                </div>
+              <div data-birdie-working="" role="status" aria-live="polite" style={{ display: 'flex', alignItems: 'center', gap: '8px', position: 'relative', zIndex: 1 }}>
+                <BirdieStill size={40} eager />
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)' }}>Working on your answer</span>
               </div>
             )}
             <div ref={aiChatEndRef} />
@@ -756,8 +749,8 @@ export default function BirdiePanel({
                     box, where pressing it did nothing; and it was drawn at 0.4
                     opacity the entire time, so it looked disabled and was not.
                     One value now drives both the look and the behaviour. */}
-                <button aria-label="Send" className="hit44 fab-press" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'scale(1)' : 'scale(0.85)', opacity: canSendAi ? 1 : 0.4, boxShadow: canSendAi ? '0 4px 12px rgba(30,58,92,0.30)' : 'none' }}>
-                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)', transform: canSendAi ? 'translateY(-1px)' : 'translateY(0)' }}>
+                <button aria-label="Send" className="hit44" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.15s ease, opacity 0.15s ease', opacity: canSendAi ? 1 : 0.4 }}>
+                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
                   </svg>
                 </button>

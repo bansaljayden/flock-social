@@ -916,23 +916,29 @@ code {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* FAB corner snap — smooth transition between corners */
+/* FAB corner snap: a smooth move between corners. It eases into the corner
+   and stops there. Its old curve had control points above 1, so a disc dropped
+   in a corner flew past it and came back: a bounce on the emergency button.
+   lib/fabGlide.js FAB_GLIDE_EASE is the same curve for the release glide, and
+   fabGlide.test.js keeps the two equal. */
 .fab-corner {
-  transition: top 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
-              bottom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
-              left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
-              right 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: top 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+              bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+              left 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+              right 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Birdie chat expand animation */
+/* Birdie's sheet arriving: a short rise and a fade, at full size almost from
+   the first frame. It grew from 85% and overshot into place. A sheet opened by
+   a tap carries no velocity to spend, so it has nothing to bounce with. */
 @keyframes birdieExpand {
   from {
     opacity: 0;
-    transform: scale(0.85) translateY(20px);
+    transform: translateY(8px) scale(0.98);
   }
   to {
     opacity: 1;
-    transform: scale(1) translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -969,13 +975,17 @@ code {
 :root { --roost-whisper: 0.05; }
 [data-theme="dark"] { --roost-whisper: 0.13; }
 
-/* FAB press animation */
+/* FAB press: down on the press and back, on the Nest's own ease-out. The
+   hover growth (1.08) is for a pointer that can hover; on a phone a tap left
+   it stuck grown until the next tap somewhere else. */
 .fab-press {
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
+  transition: transform 0.15s var(--ease-out), box-shadow 0.3s ease;
   will-change: transform;
 }
-.fab-press:hover {
-  transform: scale(1.08);
+@media (hover: hover) and (pointer: fine) {
+  .fab-press:hover {
+    transform: scale(1.08);
+  }
 }
 .fab-press:active {
   transform: scale(0.88) !important;
@@ -992,7 +1002,7 @@ button:active, [role="button"]:active {
 }
 
 .shimmer-btn, .shimmer-btn-light {
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+  transition: transform 0.2s var(--ease-out),
               filter 0.15s ease;
 }
 

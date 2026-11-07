@@ -4,7 +4,7 @@
  * Birdie's button and SOS are dragged by a transform that follows the finger
  * (App.js handleFabPointerMove), with their transition switched off so the
  * button never lags behind. The release then picks a corner, and the snap was
- * meant to glide: .fab-corner in index.css carries a 0.4s spring on top,
+ * meant to glide: .fab-corner in index.css carries a 0.4s ease on top,
  * bottom, left and right. It never played after a drag. The pointer down wrote
  * `transition: none` on the element and nothing wrote it back, so from the
  * first drag on, the button jumped to its corner on every release, and every
@@ -30,9 +30,10 @@
 
 // .fab-corner's own transition in index.css. Pinned to it by
 // __tests__/fabGlide.test.js, so the snap a drag plays and the one the
-// stylesheet plays cannot drift apart.
+// stylesheet plays cannot drift apart. An ease-out that lands and stops: the
+// spring it replaced overshot the corner and came back (2026-11-06).
 export const FAB_GLIDE_MS = 400;
-export const FAB_GLIDE_EASE = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
+export const FAB_GLIDE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 
 // Long enough past the glide that a missed transitionend (a tab in the
 // background, a transform that never changed) still lands it.

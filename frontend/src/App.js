@@ -7598,10 +7598,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => clearTimeout(t);
   }, [myPulse]);
 
-  // Animations. The tab icon's bounce is a class put on the DOM node by the
-  // tap and taken off by its own animationend (BottomNav), not state: as state
-  // it cost two renders of this whole component per tap, the second one 400ms
-  // later only to take the class away.
+  // The tab icon's bounce (a scale to 1.04 and back on every tap) is gone
+  // (2026-11-06): the tab bar is tapped more than anything else in the app,
+  // and motion on a control used that often stops reading as feedback.
   // scrollY removed — parallax now uses direct DOM manipulation via headerRef
   const headerRef = useRef(null);
   /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
@@ -15276,7 +15275,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (currentScreen === 'venueDashboard' || currentScreen === 'adminRevenue') return null;
     if (showVenueOnboarding || showModeSelection) return null;
 
-    const handleTabClick = (tabId, event) => {
+    const handleTabClick = (tabId) => {
       /* CONVENTION #9. Tapping the tab you are already on takes you back to the
          top of it. Everything below already pops to the tab root (screen,
          profile sub-screen, open venue), so the scroll is the missing half.
@@ -15287,12 +15286,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           TAB_SCROLL.set(tabId, 0);
           try { el.scrollTo({ top: 0, behavior: 'smooth' }); } catch { el.scrollTop = 0; }
         }
-      }
-      const face = event && event.currentTarget && event.currentTarget.querySelector('[data-tab-face]');
-      if (face) {
-        face.classList.remove('tab-bounce');
-        void face.offsetWidth; // restart the animation on a second tap
-        face.classList.add('tab-bounce');
       }
       setCurrentTab(tabId);
       setCurrentScreen('main');
@@ -15356,7 +15349,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button className="hit44 main-nav-tab" key={t.id} onClick={(e) => handleTabClick(t.id, e)}
+          <button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)}
             aria-current={currentTab === t.id ? 'page' : undefined}
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
@@ -15370,7 +15363,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             {t.id === 'chat' && messagesTabUnread > 0 && (
               <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '8px', minWidth: '16px', height: '16px', borderRadius: '8px', padding: '0 4px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
             )}
-            <div data-tab-face onAnimationEnd={(e) => e.currentTarget.classList.remove('tab-bounce')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               {/* The icon strokes currentColor, so this is where its colour
                   comes from, and it has to be here: `colors` is the live
                   palette only inside FlockAppInner. */}
@@ -22406,11 +22399,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           0%, 100% { box-shadow: 0 0 5px rgba(13,40,71,0.10); }
           50% { box-shadow: 0 0 20px rgba(13,40,71,0.5); }
         }
-        @keyframes tabBounce {
-          0% { transform: scale(0.92); }
-          60% { transform: scale(1.04); }
-          100% { transform: scale(1); }
-        }
         @keyframes ripple {
           0% { transform: scale(0); opacity: 0.5; }
           100% { transform: scale(4); opacity: 0; }
@@ -22435,9 +22423,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
         .screen-enter {
           animation: screenSlideIn 0.18s cubic-bezier(0.2, 0, 0, 1);
-        }
-        .tab-bounce {
-          animation: tabBounce 0.3s ease-out;
         }
         .modal-backdrop {
           backdrop-filter: blur(8px);

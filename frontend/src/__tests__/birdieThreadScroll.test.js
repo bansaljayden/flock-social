@@ -141,10 +141,18 @@ function asked(extra = {}) {
   return { ...utils, props, box };
 }
 
-test('the reader\'s question pins the thread to its end, typing dots and all', () => {
-  const { props } = asked();
+test('the reader\'s question pins the thread to its end, the working line and all', () => {
+  const { props, container } = asked();
   expect(pinned).toHaveBeenCalledTimes(1);
   expect(pinned.mock.instances[0]).toBe(props.aiChatEndRef.current);
+  // What shows while the answer is on its way says so in words, once, to a
+  // screen reader too. The three bouncing dots (SMIL, a person typing) are gone.
+  const working = container.querySelector('[data-birdie-working]');
+  expect(working).not.toBeNull();
+  expect(working.getAttribute('role')).toBe('status');
+  expect(working.getAttribute('aria-live')).toBe('polite');
+  expect(working.textContent).toBe('Working on your answer');
+  expect(container.querySelector('animate')).toBeNull();
 });
 
 test('an answer taller than the thread lands with its first line at the top, not its last card', () => {
