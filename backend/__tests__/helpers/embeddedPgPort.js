@@ -204,6 +204,10 @@ const SUITE_SLOTS = {
                                  // webhook, and what each one does to the
                                  // reconciled lines and the expense list
                                  // (migration 134).
+  feedbackPlanWindowRealDb: 74,  // new in 2026-11-06; a plan member's report
+                                 // counting until noon the next day (migration
+                                 // 136), through the real feedback router. No
+                                 // branch of 5-6 Nov held 74.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

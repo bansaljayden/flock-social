@@ -486,13 +486,28 @@ test('one report per member per plan: a counted report replaces the earlier ones
   await report('2026-11-07T15:30:00Z');
   const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
   assert.match(del.text, /OR flock_id = \$3::int/);
-  assert.deepEqual(del.params, [1, PLACE, 10]);
+  assert.deepEqual(del.params, [1, PLACE, 10, null]);
 });
 
-test('a late answer replaces nothing on the plan, so it cannot erase the one that counted', async () => {
+test('a late answer replaces nothing on the plan, and protects the one that counted', async () => {
   await report('2026-11-07T18:00:00Z'); // 1 PM, after noon
   const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
-  assert.deepEqual(del.params, [1, PLACE, null]);
+  assert.match(del.text, /AND NOT COALESCE\(verified IS TRUE AND flock_id = \$4::int, false\)/);
+  assert.deepEqual(del.params, [1, PLACE, null, 10]);
+});
+
+test('whether a report counts is settled before the dedupe that depends on it', async () => {
+  await report('2026-11-07T15:30:00Z');
+  const order = queries.map((q) => q.text);
+  const presence = order.findIndex((t) => /FROM venue_checkins/i.test(t));
+  const del = order.findIndex((t) => /^DELETE FROM venue_feedback/i.test(t));
+  assert.ok(presence >= 0 && presence < del);
+});
+
+test('a report that names no plan keeps the plain 2-hour dedupe', async () => {
+  await report('2026-11-07T15:30:00Z', { flock_id: null });
+  const del = queries.find((q) => /^DELETE FROM venue_feedback/i.test(q.text));
+  assert.deepEqual(del.params, [1, PLACE, null, null]);
 });
 
 test("the denominator is the card read in the plan's hour, from 12 hours either side of it", async () => {

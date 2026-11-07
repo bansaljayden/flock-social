@@ -682,22 +682,40 @@ router.post('/',
           }
         }
 
+        // Whether this report counts, settled BEFORE the dedupe below, which
+        // needs the answer. The presence check reads check-ins and plans and
+        // never venue_feedback, so the delete cannot change what it says.
+        const verifiedCheck = await client.query(VERIFIED_PRESENCE_SQL, [req.user.id, venue_place_id]);
+        // The plan window counts only a report filed under the plan's hour
+        // (planHour): the rule's whole reason is the night, so a report it
+        // admits must be readable as the night's. Without a zone there is no
+        // plan hour and no noon, and the old 12 hours above already cover
+        // everything the floor alone would.
+        const planCounts = Boolean(planStanding && planStanding.counts && planHour);
+        const verified = verifiedCheck.rows[0]?.verified === true || planCounts;
+
         // ONE REPORT PER MEMBER PER PLAN, under the plan window. The 2-hour
         // dedupe alone would let a member hold a counted report from the night
-        // and another from the morning after, two votes on one night. A report
-        // that counts under the window replaces every earlier report this
-        // person filed on the same plan (newest wins, as within the 2 hours:
-        // people can correct themselves). One that comes in after the window
-        // replaces nothing by this clause, so a late correction cannot erase
-        // the report that counted. $3 is NULL otherwise, and `flock_id = NULL`
-        // matches no row.
-        const replacesPlanReports = planStanding && planStanding.counts && planHour ? flockId : null;
+        // and another from the morning after, two votes on one night. So:
+        //   $3: a report that counts under the window replaces every earlier
+        //       report this person filed on the same plan (newest wins, as
+        //       within the 2 hours: people can correct themselves);
+        //   $4: a report on a plan that does NOT count (the window has shut)
+        //       erases none of their counted reports on that plan, not even
+        //       one inside the 2 hours, so a correction at 12:15 cannot wipe
+        //       out the answer that counted at 11:30. It is filed beside it.
+        // Each is NULL otherwise. `flock_id = NULL` matches no row, and the
+        // COALESCE makes a NULL comparison "not protected", so with $4 NULL
+        // the 2-hour dedupe is exactly what it was.
+        const replacesPlanReports = planCounts ? flockId : null;
+        const keepsCountedOnPlan = flockId !== null && !verified ? flockId : null;
         await client.query(
           `DELETE FROM venue_feedback
            WHERE user_id = $1
-             AND ((venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours')
+             AND ((venue_place_id = $2 AND created_at > NOW() - INTERVAL '2 hours'
+                   AND NOT COALESCE(verified IS TRUE AND flock_id = $4::int, false))
                   OR flock_id = $3::int)`,
-          [req.user.id, venue_place_id, replacesPlanReports]
+          [req.user.id, venue_place_id, replacesPlanReports, keepsCountedOnPlan]
         );
         const recentCount = await client.query(
           `SELECT COUNT(*)::int AS n FROM venue_feedback
@@ -708,15 +726,6 @@ router.post('/',
           refusal = { status: 429, body: { error: 'Too many reports in a short time. Try again later.' } };
           throw new Rollback();
         }
-
-        const verifiedCheck = await client.query(VERIFIED_PRESENCE_SQL, [req.user.id, venue_place_id]);
-        // The plan window counts only a report filed under the plan's hour
-        // (planHour): the rule's whole reason is the night, so a report it
-        // admits must be readable as the night's. Without a zone there is no
-        // plan hour and no noon, and the old 12 hours above already cover
-        // everything the floor alone would.
-        const planCounts = Boolean(planStanding && planStanding.counts && planHour);
-        const verified = verifiedCheck.rows[0]?.verified === true || planCounts;
 
         const result = await client.query(
           `INSERT INTO venue_feedback
