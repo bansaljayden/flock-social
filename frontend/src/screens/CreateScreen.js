@@ -551,14 +551,13 @@ export default function CreateScreen({
       return (
         <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
           <DialogBehavior modal={false} onClose={goToChat} />
-          {/* The same bar as the form, minus the back arrow. Back from a plan
-              that is already made cannot un-make it, and an arrow that lands
-              in the chat would point the wrong way; Escape and the system
-              back still work, and go where every door here goes. The 32px
-              line box keeps the bar the height the arrow gave it, so nothing
-              jumps when the form swaps out. */}
-          <div style={{ padding: '12px', display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 0 4px', lineHeight: '32px' }}>Start a flock</h1>
+          {/* The same bar as the form, back arrow included. Back from a plan
+              that is already made cannot un-make it, so it goes where every
+              door here goes, the plan's chat, as Escape and the system back
+              do. A bar with no way out read as a dead end. */}
+          <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
+            <button aria-label="Go to the chat" className="hit44" onClick={goToChat} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a flock</h1>
           </div>
 
           <div style={{ flex: 1, padding: '24px 16px 16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
@@ -571,14 +570,15 @@ export default function CreateScreen({
             <BirdieStill bird={WARM_BIRD} size={92} eager />
             <h2 ref={madeHeadingRef} tabIndex={-1} style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em', fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '14px 0 6px', lineHeight: 1.2, overflowWrap: 'anywhere' }}>{made.name} is made.</h2>
             <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Now put it where your friends already are.</p>
-          </div>
 
           {/* The commit, in the shape the Create button has: same class, same
               padding, same radius, same busy state. Not now is the quiet
               second door VerifyEmailSheet draws under its primary, and it is
               never disabled: a mint that hangs must not hold the person on
-              this screen. */}
-          <div style={{ padding: '10px 16px 16px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)' }}>
+              this screen. Both sit right under the line they answer, where
+              they were pinned to the foot of the screen under about 60% of
+              empty cream. */}
+          <div style={{ marginTop: '24px' }}>
             <button className="hit44 glass-btn glass-primary" onClick={sendLink} disabled={sending} style={{
               width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
               background: colors.navy,
@@ -592,6 +592,7 @@ export default function CreateScreen({
                 : <>{Icons.share('currentColor', 18)} Send the link</>}
             </button>
             <button className="hit44" onClick={goToChat} style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Not now</button>
+          </div>
           </div>
         </div>
       );
