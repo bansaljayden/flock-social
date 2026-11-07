@@ -233,14 +233,22 @@ describe('the chip says the reader\'s state', () => {
 
   test.each([
     [{ ...voting, timePassed: true }, {}, 'Time passed'],
-    [voting, { ask: 'owe' }, 'Your share'],
-    [voting, { needsVote: true }, 'Your vote'],
+    [voting, { ask: 'owe' }, 'Needs your share'],
+    [voting, { ask: 'budget' }, 'Needs your budget'],
+    [voting, { needsVote: true }, 'Needs your vote'],
     [voting, { voted: true }, 'Voted'],
     [voting, {}, 'Voting'],
     [{ ...voting, status: 'confirmed', askHowItWas: true }, {}, 'How was it?'],
     [{ ...voting, status: 'confirmed' }, {}, 'Locked in'],
   ])('%#', (f, opts, want) => {
     expect(planChip(f, opts).label).toBe(want);
+  });
+
+  test('an ask on a chip says what it needs, with a verb', () => {
+    // "Your vote" read as "here is your vote", the guest page's own meaning
+    // for it (the option already picked).
+    for (const ask of ['owe', 'budget', 'vote']) expect(planChip(voting, { ask }).label).toMatch(/^Needs your /);
+    expect(planChip(voting, { needsVote: true }).label).not.toBe('Your vote');
   });
 
   test('only the reader\'s own ask wears the accent', () => {

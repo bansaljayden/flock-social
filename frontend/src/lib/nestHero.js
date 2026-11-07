@@ -112,27 +112,32 @@ export const placeLine = (venue) => (venue && venue !== 'TBD' ? venue : 'No plac
  * "Needs Votes" sat on a plan the reader had voted on an hour before; this
  * says "Voted". The first that applies:
  *
- *   timePassed                   "Time passed"   neutral
- *   an ask on this plan          owe "Your share", budget "Your budget",
- *                                vote "Your vote" (accent)
- *   voting, the reader's vote    "Your vote"     accent
- *   voting, voted                "Voted"         neutral
- *   voting, not known            "Voting"        neutral
- *   a night over, unrated        "How was it?"   neutral, star
- *   locked in                    "Locked in"     neutral, check
+ *   timePassed                   "Time passed"       neutral
+ *   an ask on this plan          owe "Needs your share", budget "Needs
+ *                                your budget", vote "Needs your vote"
+ *                                (accent)
+ *   voting, the reader's vote    "Needs your vote"   accent
+ *   voting, voted                "Voted"             neutral
+ *   voting, not known            "Voting"            neutral
+ *   a night over, unrated        "How was it?"       neutral, star
+ *   locked in                    "Locked in"         neutral, check
+ *
+ * The asks carry a verb, the way the Needs you heading does. "Your vote" had
+ * none and read as "here is your vote", which is what the guest page's own
+ * "Your vote" tag means: the option the reader already picked.
  *
  * `needsVote` is App.js's needsMyVote(f) and `voted` its mirror: each is
  * true only when the plan's tally read this session, or the list read's own
  * i_voted, says so. Neither known, and the chip says only "Voting".
  */
-export const ASK_CHIP = { owe: 'Your share', budget: 'Your budget', vote: 'Your vote' };
+export const ASK_CHIP = { owe: 'Needs your share', budget: 'Needs your budget', vote: 'Needs your vote' };
 
 export function planChip(flock, { needsVote = false, voted = false, ask = null } = {}) {
   if (!flock) return null;
   if (flock.timePassed) return { label: 'Time passed', tone: 'neutral', icon: null };
   if (ask && ASK_CHIP[ask]) return { label: ASK_CHIP[ask], tone: 'accent', icon: null };
   if (flock.status === 'voting') {
-    if (needsVote) return { label: 'Your vote', tone: 'accent', icon: null };
+    if (needsVote) return { label: ASK_CHIP.vote, tone: 'accent', icon: null };
     if (voted) return { label: 'Voted', tone: 'neutral', icon: null };
     return { label: 'Voting', tone: 'neutral', icon: null };
   }
