@@ -3274,15 +3274,19 @@ async function measureAnchors(page, kind) {
       result[s.key] = rect ? pct(rect) : null;
       if (s.box === 'sheet' && rect) result.sheetTop = Math.round(rect.top * 100) / 100;
     }
-    // Every line of text on screen, for placing the phone's numbers.
+    // Every line of text on screen, for placing the phone's numbers: the text
+    // that is on top where it is drawn, not what a sheet or a scrim covers.
     const texts = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-      if (!n.textContent.trim() || !n.parentElement || !visible(n.parentElement)) continue;
+      const el = n.parentElement;
+      if (!n.textContent.trim() || !el || !visible(el)) continue;
       const range = document.createRange();
       range.selectNodeContents(n);
       for (const r of range.getClientRects()) {
         if (r.width < 1 || r.bottom <= 0 || r.top >= H) continue;
+        const hit = document.elementFromPoint(Math.min(W - 1, Math.max(0, (r.left + r.right) / 2)), Math.min(H - 1, Math.max(0, (r.top + r.bottom) / 2)));
+        if (!hit || !(hit === el || el.contains(hit) || hit.contains(el))) continue;
         texts.push(pct(r));
       }
     }
