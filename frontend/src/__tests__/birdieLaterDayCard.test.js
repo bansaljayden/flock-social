@@ -275,6 +275,25 @@ describe('the open pill', () => {
     expect(cardOpenPill({ is_open: null }, now)).toBeNull();
   });
 
+  // A search about Los Angeles made from New York: the pill read the opening
+  // on the phone's clock (8 PM for a 5 PM opening). The card now carries the
+  // venue's zone and the pill says the hour, and decides "today", there.
+  test('with the venue\'s zone: the hour and the day are the venue\'s, whatever the phone\'s clock', () => {
+    const askedFromNewYork = new Date(Date.parse('2026-11-05T20:44:00Z')); // 3:44 PM ET, 12:44 PM PT
+    const fivePmInLa = '2026-11-06T01:00:00Z'; // 5 PM PT, 8 PM ET
+    expect(opensLaterToday(fivePmInLa, askedFromNewYork, 'America/Los_Angeles')).toBe('5 PM');
+    expect(opensLaterToday(fivePmInLa, askedFromNewYork, 'America/New_York')).toBe('8 PM');
+    expect(cardOpenPill({ is_open: false, opens_at: fivePmInLa, opens_tz: 'America/Los_Angeles' }, askedFromNewYork))
+      .toEqual({ text: 'Opens 5 PM', tone: 'later' });
+    // 11:30 PM in New York is still 8:30 PM the same day in Los Angeles, so a
+    // 9 PM opening there is later today, though it is tomorrow in New York.
+    const lateInNewYork = new Date(Date.parse('2026-11-06T04:30:00Z'));
+    expect(opensLaterToday('2026-11-06T05:00:00Z', lateInNewYork, 'America/Los_Angeles')).toBe('9 PM');
+    expect(opensLaterToday('2026-11-06T05:00:00Z', lateInNewYork, 'America/New_York')).toBeNull();
+    // A zone this engine does not know is the phone's clock, as before.
+    expect(opensLaterToday(fivePmInLa, askedFromNewYork, 'Not/AZone')).toBe(opensLaterToday(fivePmInLa, askedFromNewYork));
+  });
+
   test('a card about another day says nothing about now, unless that day it is shut', () => {
     expect(cardOpenPill({ is_open: null, for_date: '2026-11-13', hours_that_day: '5 PM to 10 PM' }, now)).toBeNull();
     // A card from a build-era answer that still carries is_open: the day wins.
