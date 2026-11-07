@@ -69,13 +69,13 @@ const dataUri = (rel, type) => `data:${type};base64,${fs
 
 const logo = dataUri('public/flock-logo.png', 'image/png');
 const shot = dataUri('screenshots/chat-dark@2x.webp', 'image/webp');
-const display = dataUri('src/fonts/Literata-Display-600.woff2', 'font/woff2');
+const display = dataUri('src/fonts/Fraunces-var.woff2', 'font/woff2');
 const body = dataUri('src/fonts/HankenGrotesk-var.woff2', 'font/woff2');
 
 const html = `<!doctype html>
 <html><head><meta charset="utf-8">
 <style>
-  @font-face { font-family: 'Literata Display'; src: url(${display}) format('woff2'); font-weight: 400 700; }
+  @font-face { font-family: 'Fraunces'; src: url(${display}) format('woff2'); font-weight: 100 900; }
   @font-face { font-family: 'Hanken Grotesk'; src: url(${body}) format('woff2'); font-weight: 100 900; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
@@ -96,11 +96,13 @@ const html = `<!doctype html>
   .logo { width: 92px; height: 92px; margin-bottom: 40px; }
   .logo img { width: 100%; height: 100%; display: block; border-radius: 50%; }
   /* Two lines, broken after the comma. The guard below measures the lines
-     and refuses a third. */
+     and refuses a third. Fraunces in its display cut (opsz 144), as the
+     website's h1 sets it. */
   h1 {
-    font-family: 'Literata Display', Georgia, serif;
+    font-family: 'Fraunces', Georgia, serif;
+    font-variation-settings: 'opsz' 144;
     font-weight: 600;
-    font-size: 54px;
+    font-size: 68px;
     line-height: 1.12;
     letter-spacing: -0.4px;
     color: ${INK};
@@ -155,12 +157,12 @@ try {
   /* A missing face degrades to Georgia silently and the card still looks
      deliberate, so check rather than trust. */
   const loaded = await page.evaluate(() => ({
-    display: document.fonts.check('600 54px "Literata Display"'),
+    display: document.fonts.check('600 68px Fraunces'),
     body: document.fonts.check('600 25px "Hanken Grotesk"'),
   }));
   if (!loaded.display || !loaded.body) {
     throw new Error(
-      `fonts did not load (Literata Display: ${loaded.display}, Hanken Grotesk: ${loaded.body}). ` +
+      `fonts did not load (Fraunces: ${loaded.display}, Hanken Grotesk: ${loaded.body}). ` +
         'Refusing to write a card in fallback type.'
     );
   }

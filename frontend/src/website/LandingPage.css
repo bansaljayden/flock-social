@@ -25,55 +25,65 @@
    going out into) and paper (the planning you do in daylight), the product's
    own duality, not decoration. The navy is Flock's launch navy, the colour of
    the app's splash and theme, not a framework's slate.
-   Type: Literata Display (h1/h2 and a few large figures; no tnum, never for
-   live numbers) over Hanken Grotesk (body), both self-hosted. */
+   Type: Fraunces (h1/h2 and a few large figures, plus the small labels in its
+   text cut; no tnum, never for live numbers) over Hanken Grotesk (body). Both
+   are variable and self-hosted through src/index.css, the same two files the
+   app uses. */
 
 /* ============ the display face, and the fallback it is waited for in ============
 
-   Literata at its display optical size (opsz 72) and weight 600, cut to Latin
-   and nothing else: 19.5 KB as WOFF2 (src/fonts/Literata-Display-600.woff2,
-   SIL Open Font License, OFL-Literata.txt beside it). It replaced Fraunces on
-   the website on 2026-10-21, with the cream ground: Fraunces sits on every
-   list of the templated "tasteful" faces, and cream plus a display serif is
-   the look generated sites converged on in 2026. The app keeps Fraunces
-   (src/index.css); only these pages change.
+   Fraunces, from src/fonts/Fraunces-var.woff2 (67 KB, @font-face in
+   src/index.css, weights 100 to 900, the opsz axis 9 to 144). It is the app's
+   own file, so the website and the app download one face between them, and
+   the page sets it at the app's weight, 600. Literata Display set the website
+   from 2026-10-21 to 2026-11-06; the site is back on Fraunces since.
 
-   One static cut, so there is no optical-size axis to tune. Headings use it;
-   every caption, label and time that used the serif's small "text cut" is set
-   in Hanken Grotesk now, which holds at 13 to 15px where a display cut does
-   not. `font-weight: 400 700` on the face tells the browser this one file
-   covers the whole range, so nothing is ever synthesised from it.
+   OPTICAL SIZE IS THE SYSTEM. The bundled subset kept `opsz` and dropped SOFT
+   and WONK (setting 'opsz' 9 against 144 changes the same string from 1014px
+   to 817px; WONK and SOFT change nothing). So one family gives three voices:
 
-   The fallback is matched to it the way the Fraunces one was: advance widths
-   summed with fontTools over the hero and section headlines, Literata 600
-   43.557 em against Times New Roman 400 36.602 em, so size-adjust 119.00%;
-   ascent and descent are Literata's own 1.177 / 0.308 em divided by that same
-   figure, because size-adjust scales the overrides too. Times New Roman is
-   what the chain resolves to on iOS, macOS, Windows and Android; Liberation
-   and DejaVu cover Linux. With the face preloaded from the HTML the fallback
-   is rarely painted at all. */
+     opsz 144  h1        the display cut. Thin hairlines, high contrast.
+     opsz auto h2        tracks the size, lands mid-range. The reading cut.
+     opsz 9    labels    the text cut. Sturdy, slabby, holds at 14px.
+
+   Fraunces is loaded with font-display: swap, so there is a swap, and the
+   face the headlines wait in is matched to it. Measured with canvas
+   measureText at 100px over the hero string:
+
+     Fraunces 600            2696.2px advance
+     Times New Roman 400     2757.8px   (+2.3%)
+     Georgia 600             3492.2px  (+29.5%)
+     Fraunces Fallback       2696.3px   (+0.0%)   <- this block
+
+   Times New Roman exists on iOS, macOS, Windows and Android; Liberation and
+   DejaVu cover Linux. Georgia is deliberately NOT in the local() list: it is
+   29.5% wider, so matching it under the same size-adjust would be worse than
+   not trying. `font-weight: 100 900` makes one local face cover the whole
+   range, so Times is used at its regular width for the 600 headings with no
+   synthetic bold, and size-adjust is solved against Times 400: 2696.2 /
+   2757.8 = 97.77%. The overrides are the face's own 0.98 / 0.26 em divided by
+   that figure, because size-adjust scales the overrides too.
+
+   It is matched to the h1's cut (opsz 144). An h2 runs opsz auto, a slightly
+   different width at every size, so one constant cannot match it too; every
+   h2 is below the fold, where a reflow cannot score CLS, and with the face
+   preloaded the fallback is rarely painted at all. */
 @font-face {
-  font-family: 'Literata Display';
-  src: url('../fonts/Literata-Display-600.woff2') format('woff2');
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Literata Display Fallback';
+  font-family: 'Fraunces Fallback';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 119%;
-  ascent-override: 98.9%;
-  descent-override: 25.88%;
+  size-adjust: 97.77%;
+  ascent-override: 100.24%;
+  descent-override: 26.59%;
   line-gap-override: 0%;
   font-weight: 100 900;
 }
 
 .lp {
   /* Scoped to the website: the app's own --font-display (src/index.css) is
-     unchanged. The metric-matched face comes directly after Literata so it is
-     what the h1 and h2 render in for the moment before the real one arrives. */
-  --font-display: 'Literata Display', 'Literata Display Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+     the same face without the fallback. The metric-matched face comes
+     directly after Fraunces so it is what the h1 and h2 render in for the
+     moment before the real one arrives. */
+  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   --navy: #0b1a2e;
   --navy-deep: #07121f;
@@ -327,11 +337,12 @@
   overflow-wrap: anywhere;
   min-width: 0;
 }
-/* Literata's display cut carries the headlines. -0.03em tracking was tuned
-   for Satoshi's loose grotesque fitting; on a bracketed serif it jams the
-   serifs together, so headlines run near-neutral. Weight 600, not 700: the
-   serif brackets add their own mass. Captions and labels are Hanken (see the
-   face's note at the top of this file). */
+/* Fraunces carries the headlines. -0.03em tracking was tuned for Satoshi's
+   loose grotesque fitting; on a bracketed serif it jams the serifs together, so
+   headlines run near-neutral. Weight 600, not 700: the serif brackets add their
+   own mass. The h1 is the display cut (opsz 144), the h2 tracks its size, and
+   the labels further down are the text cut (opsz 9); the note at the top of
+   this file has the three. */
 .lp h1, .lp h2 {
   font-family: var(--font-display);
   font-weight: 600;
@@ -340,12 +351,14 @@
 /* Fluid ramps solved for their endpoints rather than eyeballed with vw, so the
    h1:h2 ratio holds across the range instead of collapsing to 1.1 on desktop.
    Was 64/54 = 1.19 at every width, which is why every heading on the page read
-   as equally important. Now 34/27.6 at 320px and 56/45.5 at 1280px: Literata
-   sets wider than Fraunces did, and the hero line has to hold to two lines in
-   the column beside the phone. Balanced, so the lines come out close in
-   length on a phone too. */
+   as equally important. Now 34/27.6 at 320px and 72/45.5 at 1280px. The cap
+   was 56px while the site was set in Literata, which runs about a quarter
+   wider; in Fraunces at 72px "Nurturing friendship," is 608px, the width the
+   Literata line had at 56, so the hero keeps its measure and its two lines.
+   Balanced, so the lines come out close in length on a phone too. */
 .lp h1 {
-  font-size: clamp(34px, 1.667rem + 2.292vw, 56px);
+  font-size: clamp(34px, 1.33rem + 3.96vw, 72px);
+  font-variation-settings: 'opsz' 144;
   text-wrap: balance;
 }
 .lp h2 { font-size: clamp(27px, 1.35rem + 1.87vw, 46px); }
@@ -761,15 +774,18 @@ html:has(.lp) body { overflow-x: clip; }
    and on /research. */
 .lp-sec-sand { background: var(--paper-2); }
 
-/* The kicker is the field guide's plate label, set in the body face at a
-   label's weight. (The home page no longer uses it; /research does.) It also appears
-   on four sections now instead of nine: it was above every single heading,
+/* The kicker is the field guide's plate label, so it is set in the serif's
+   text cut (opsz 9) rather than as another 14px sans eyebrow. (The home page
+   no longer uses it; /research does.) It also appears on four sections now
+   instead of nine: it was above every single heading,
    including "The problem" over a headline that states the problem and "Money"
    over a headline containing the word money. A label that narrates the sentence
    beneath it is scaffolding. The four that remain are the four the menu links
    to, so the label confirms where the jump landed. */
 .lp-kicker {
-  font-size: 14.5px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 15px;
   font-weight: 600;
   color: var(--steel);
   margin-bottom: 12px;
@@ -1792,6 +1808,8 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec.lp-beat-band { padding: clamp(44px, 6vw, 76px) 0; }
 .lp-beat { display: grid; justify-items: center; gap: 6px; max-width: 44rem; margin: 0 auto; text-align: center; }
 .lp-beat-when {
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;
   color: var(--steel);

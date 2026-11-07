@@ -325,13 +325,13 @@ describe('finishing an output directory', () => {
       'landing.css': '/static/css/landing.0f0f0f0f.chunk.css',
       'landing.js': '/static/js/landing.12ab34cd.chunk.js',
       'howitworks.js': '/static/js/howitworks.9e8d7c6b.chunk.js',
-      'static/media/Literata-Display-600.woff2': '/static/media/Literata-Display-600.5a5a5a5a.woff2',
+      'static/media/Fraunces-var.woff2': '/static/media/Fraunces-var.5a5a5a5a.woff2',
     };
     fs.writeFileSync(path.join(out, 'asset-manifest.json'), JSON.stringify({ files }));
     withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
     const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
     const source = build.headersFile();
-    const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
+    const font = '</static/media/Fraunces-var.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
     // A second block for the same path replaces the first on Pages (seen on
     // the website-flux preview: /how-it-works lost its canonical), so the
     // hints join each route's own Link and every path stays one block.
@@ -364,7 +364,7 @@ describe('finishing an output directory', () => {
       + '<link rel="stylesheet" type="text/css" href="/static/css/7788.9a0b.chunk.css">'
       + '<link rel="stylesheet" href="/static/css/9999.dead.chunk.css">'
       + '</head><body><div id="root"><main><h1>Flock is how a group decides where to go out.</h1></main></div></body></html>';
-    const font = '/static/media/Literata-Display-600.9f9f.woff2';
+    const font = '/static/media/Fraunces-var.9f9f.woff2';
     const sheets = {
       '/static/css/main.3c4d.css': 'body{margin:0}@font-face{src:url(/static/media/x.woff2)}',
       '/static/css/7788.9a0b.chunk.css': '.lp{color:$1}',
@@ -427,12 +427,12 @@ describe('finishing an output directory', () => {
       'landing.css': '/static/css/landing.0f0f0f0f.chunk.css',
       'landing.js': '/static/js/landing.12ab34cd.chunk.js',
       'howitworks.js': '/static/js/howitworks.9e8d7c6b.chunk.js',
-      'static/media/Literata-Display-600.woff2': '/static/media/Literata-Display-600.5a5a5a5a.woff2',
+      'static/media/Fraunces-var.woff2': '/static/media/Fraunces-var.5a5a5a5a.woff2',
     };
     fs.writeFileSync(path.join(out, 'asset-manifest.json'), JSON.stringify({ files }));
     withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out, { prerendered: ['/how-it-works'] }));
     const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
-    const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
+    const font = '</static/media/Fraunces-var.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
     const link = (p) => headerBlocks(text).find((b) => b.path === p).headers.Link;
     const own = (p) => headerBlocks(build.headersFile()).find((b) => b.path === p).headers.Link;
     expect(link('/')).toBe(`${own('/')}, </static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}`);

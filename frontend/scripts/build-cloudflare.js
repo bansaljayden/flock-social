@@ -130,6 +130,12 @@ const ROUTE_CHUNKS = [
   { route: '/ai', chunk: 'aipage' },
 ];
 
+// The website's display face as webpack emits it: Fraunces, the app's own
+// file (src/fonts/Fraunces-var.woff2, @font-face in src/index.css), which
+// sets every marketing page's h1. Preloaded with the HTML below and in each
+// prerendered page.
+const DISPLAY_FONT = /\/static\/media\/Fraunces-var\.[0-9a-f]+\.woff2$/;
+
 // Preload hints for those routes, appended to _headers. On a first visit the
 // browser otherwise discovers the page chunk only after main.js has downloaded
 // and run, and the display face only after that chunk has rendered; sent with
@@ -151,7 +157,7 @@ function routePreloads(out, prerendered = []) {
   const { files = {} } = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const urls = Object.values(files).filter((u) => typeof u === 'string');
   const find = (re) => urls.find((u) => re.test(u));
-  const font = find(/\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/);
+  const font = find(DISPLAY_FONT);
   const blocks = [];
   for (const { route, chunk } of ROUTE_CHUNKS) {
     const static_ = prerendered.includes(route);
@@ -334,7 +340,7 @@ async function prerender(out) {
   let font = null;
   try {
     const { files = {} } = JSON.parse(fs.readFileSync(path.join(out, 'asset-manifest.json'), 'utf8'));
-    font = Object.values(files).find((u) => /\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/.test(u)) || null;
+    font = Object.values(files).find((u) => DISPLAY_FONT.test(u)) || null;
   } catch (err) { /* no manifest: no font hint */ }
   const loader = paintFirst();
   const css = (href) => {
@@ -611,7 +617,7 @@ function finishOutput(out, { prerendered = [] } = {}) {
 
 module.exports = {
   outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads, joinHeaderBlocks,
-  servableSnapshot, paintFirst, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
+  servableSnapshot, paintFirst, prerender, ROUTE_CHUNKS, DISPLAY_FONT, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
   APP_ROUTES, parseRedirects, pagesAnswer, checkRedirects, servedFiles,
 };
 

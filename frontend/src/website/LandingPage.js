@@ -5,7 +5,7 @@ import AnnotatedShot from './AnnotatedShot';
 import HeroReel from './HeroReel';
 import { REEL } from './reelShots';
 import { ANNOTATIONS } from './landingAnnotations';
-import displayFontUrl from '../fonts/Literata-Display-600.woff2';
+import displayFontUrl from '../fonts/Fraunces-var.woff2';
 import { NAV_LINKS, MENU_LINKS } from './SiteNav';
 import AppStoreBadge from './AppStoreBadge';
 import AppStoreListing from './AppStoreListing';
@@ -22,11 +22,13 @@ const LiveDemo = React.lazy(() => import('./LiveDemo'));
 
 const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
-/* Literata Display sets the h1, this page's largest contentful element. The
-   Pages build already sends it as a preload with the HTML (build-cloudflare.js
-   routePreloads); this covers every other host and a local build. `crossorigin`
-   is not optional: fonts are fetched in CORS mode even same-origin, and a
-   preload without it is a second, wasted download rather than a hit. */
+/* Fraunces sets the h1, this page's largest contentful element. It is the
+   same file src/index.css declares for the app, so webpack emits it once and
+   this preload is a hit for that @font-face. The Pages build already sends it
+   as a preload with the HTML (build-cloudflare.js routePreloads); this covers
+   every other host and a local build. `crossorigin` is not optional: fonts
+   are fetched in CORS mode even same-origin, and a preload without it is a
+   second, wasted download rather than a hit. */
 if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-font]')) {
   const l = document.createElement('link');
   l.rel = 'preload';

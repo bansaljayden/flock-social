@@ -19,25 +19,25 @@
    is worst. components/auth/AuthShell.js already does exactly this and says
    so in its own comment. If a token changes there, change it here too. */
 
-/* The website's display face and the fallback it is waited for in, copied
-   from LandingPage.css along with its measurement (that file says how it was
-   cut and matched). font-display: swap, so there is a swap, and the matched
-   fallback keeps it from reflowing the headline and pushing the buttons down
-   under the reader's thumb. No preload on this route: the face is 19.5 KB and
-   the page reads fully without it on venue wifi. */
+/* The face the h1 waits in, copied from LandingPage.css along with its
+   measurement (that file says how it was matched). Fraunces itself is the
+   app's own face (@font-face in src/index.css). It loads with font-display:
+   swap, so there is a swap, and the matched fallback keeps it from reflowing
+   the headline and pushing the buttons down under the reader's thumb.
+   local() only: this costs nothing on the wire.
+
+   Deliberately NO <link rel=preload> for Fraunces on this route. The landing
+   page preloads it because its LCP element is a 72px headline and the
+   visitor is going to stay. Here the font is 67 KB competing with the JS chunk
+   and the logo on venue wifi, and with this fallback in place the page is
+   fully readable and dimensionally stable without it. The real face arrives
+   when it arrives. */
 @font-face {
-  font-family: 'Literata Display';
-  src: url('../fonts/Literata-Display-600.woff2') format('woff2');
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Literata Display Fallback';
+  font-family: 'Fraunces Fallback';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 119%;
-  ascent-override: 98.9%;
-  descent-override: 25.88%;
+  size-adjust: 97.77%;
+  ascent-override: 100.24%;
+  descent-override: 26.59%;
   line-gap-override: 0%;
   font-weight: 100 900;
 }
@@ -50,7 +50,7 @@
   --edge-cream: rgba(244, 239, 227, 0.30);
   --cream-hi: #fffaf0;
 
-  --font-display: 'Literata Display', 'Literata Display Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
