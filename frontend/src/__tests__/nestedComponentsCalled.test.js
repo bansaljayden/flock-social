@@ -14,7 +14,9 @@ const code = APP.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 test('no component declared inside the render is mounted as a JSX tag', () => {
   const nested = [...APP.matchAll(/^  const ([A-Z][A-Za-z]*) = \(\) =>/gm)].map((m) => m[1]);
-  expect(nested).toEqual(expect.arrayContaining(['AIBubble', 'Toast', 'MissingDmPanel', 'SafetyButton', 'BottomNav']));
+  // AIBubble was one of these until Birdie's disc left the Nest (2026-11-06).
+  expect(nested).toEqual(expect.arrayContaining(['Toast', 'MissingDmPanel', 'SafetyButton', 'BottomNav']));
+  expect(nested).not.toContain('AIBubble');
   for (const name of nested) {
     expect({ name, mounted: new RegExp(`<${name}\s*/>`).test(code) }).toEqual({ name, mounted: false });
   }

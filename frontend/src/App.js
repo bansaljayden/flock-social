@@ -175,6 +175,7 @@ import NestRows from './components/nest/NestRows';
 import NestPulse from './components/nest/NestPulse';
 import NestComingUp from './components/nest/NestComingUp';
 import NestBirdieSection from './components/nest/NestBirdieSection';
+import NestDock, { NEST_DOCK_EXTRA } from './components/nest/NestDock';
 import { birdieChips } from './lib/birdieChips';
 import { pickHero, whenLine, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
@@ -7610,6 +7611,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // It shows only while the page is scrolled (handleScroll below), the way an
   // iOS bar draws its line only when something is beneath it.
   const headerRef = useRef(null);
+  // And the hairline along the top of the strip above the tabs, drawn while
+  // page is scrolled beneath it.
+  const nestDockLineRef = useRef(null);
   /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
      outlives the unmount every navigation causes, and keyed by tab so the Nest,
      Plans and Messages do not share one number.
@@ -7641,6 +7645,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (!line) return;
     const under = e.currentTarget.scrollTop > 0;
     if ((line.style.opacity === '1') !== under) line.style.opacity = under ? '1' : '0';
+    const dock = nestDockLineRef.current;
+    if (!dock) return;
+    const box = e.currentTarget;
+    const below = box.scrollTop + box.clientHeight < box.scrollHeight - 1;
+    if ((dock.style.opacity === '1') !== below) dock.style.opacity = below ? '1' : '0';
   }, [feedScroll]);
 
   // FLOCK REPLY, PLUMBED FOR REAL on 2026-09-05.
@@ -9902,7 +9911,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const TAB_BAR_H = 82;             // nav[aria-label="Main"]
   const DISCOVER_FILTER_BAR_H = 49; // Discover's Filters row sits above the tab bar
   const FAB_DOCK_GAP = 12;
-  // The docked buttons themselves: SafetyButton and AIBubble draw 52px discs.
+  // The docked button itself: SafetyButton draws a 52px disc.
   const FAB_SIZE = 52;
   // How far a button keeps from the side of the screen it rests on.
   const FAB_EDGE = 12;
@@ -9911,6 +9920,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // scroll out from under the buttons (the Nest below, and the Messages list,
   // which is handed it).
   const dockedRowHeight = FAB_DOCK_GAP + FAB_SIZE;
+  // The Nest's strip above the tabs (components/nest/NestDock.js): the docked
+  // row and 8px over it. The Nest's scroll ends at its top, so nothing on the
+  // page ever passes under SOS.
+  const nestDockHeight = FAB_DOCK_GAP + FAB_SIZE + NEST_DOCK_EXTRA;
 
   // Distance from the bottom of the phone frame to the bottom of a docked FAB.
   const fabDockBottom = useMemo(() => {
@@ -9929,21 +9942,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return pos;
   }, [fabDockBottom]);
 
-  /* BIRDIE NEVER RESTS UNDER SOS (2026-11-04). SOS docks in a bottom corner,
-     Birdie can be dragged to any of the four, and both sit on the docked row
-     at the same 12px from the side. So Birdie dropped in SOS's corner,
-     remembered there, or joined there by SOS dragged across, took exactly
-     SOS's 52px box, and SOS is drawn after it: on the screenshot rig at
-     390x844 and 390x667 the two discs overlapped by all 2,704 px2 and no tap
-     reached Birdie. In that corner Birdie now rests beside SOS on the same
-     row, one 12px gap toward the middle. SOS never moves for it; the corner
-     remembered is still the one Birdie was given, so it takes the corner
-     itself again once SOS leaves it or Safety is off; and the row keeps its
-     height, so the lists that leave dockedRowHeight clear still clear both.
-     Keyed on Safety being on rather than on the button being drawn: the
-     button also hides while its own sheet is open, and Birdie should not
-     slide into the corner behind the sheet and back out. */
-  const birdieInset = safetyOn && birdieCorner === sosCorner ? FAB_EDGE + FAB_SIZE + FAB_EDGE : FAB_EDGE;
+  /* BIRDIE'S DISC IS GONE FROM THE NEST (2026-11-06), and with it the inset
+     that kept it beside SOS when the two shared a corner (it was 2026-11-04's
+     fix for the discs overlapping by all 2,704 px2). On the Nest, Birdie is a
+     section of the page and a pill in the strip above the tabs, on the side
+     opposite SOS (components/nest/NestDock.js); birdieCorner is still the
+     corner ChatDetail's docked panel anchors to. */
 
   /* THE MAP'S GOOGLE MARK NEVER RESTS UNDER SOS (2026-11-06). On Discover the
      docked row sits right on the map: the dock bottom counts the Filters row,
@@ -16208,74 +16212,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     </div>
   );
 
-  // AI Bubble — draggable floating widget, snaps to corners
-  const lastAiMessage = aiMessages.length > 0 ? aiMessages[aiMessages.length - 1] : null;
-  const birdieIsRight = birdieCorner.includes('right');
-  const AIBubble = () => currentScreen === 'main' && currentTab === 'home' && aiChatMode === 'bubble' && (
-    <div
-      className="fab-corner"
-      role="button"
-      tabIndex={0}
-      aria-label="Open Birdie assistant"
-      onPointerDown={(e) => handleFabPointerDown(e, 'birdie')}
-      onPointerMove={handleFabPointerMove}
-      onPointerUp={(e) => { const wasDrag = handleFabPointerUp(e); if (!wasDrag) setAiChatMode('panel'); }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setAiChatMode('panel'); } }}
-      style={{
-        position: 'absolute',
-        ...cornerStyle(birdieCorner, birdieInset),
-        display: 'flex',
-        flexDirection: birdieIsRight ? 'row-reverse' : 'row',
-        alignItems: 'center',
-        gap: '8px',
-        cursor: 'grab',
-        zIndex: 20,
-        touchAction: 'none',
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
-      }}
-      onDragStart={(e) => e.preventDefault()}
-    >
-      {/* Robot head */}
-      <div className="fab-press" style={{
-        width: '52px',
-        height: '52px',
-        minWidth: '52px',
-        borderRadius: '26px',
-        background: isDark ? '#162046' : '#e8eaf0',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: isDark ? '0 1px 2px rgba(0,0,0,0.20)' : '0 1px 2px rgba(30,41,59,0.10)',
-        overflow: 'hidden',
-        border: '2px solid #2d5a87',
-        position: 'relative',
-      }}>
-        <img draggable="false" src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="Birdie" style={{ width: '100%', height: '100%', objectFit: 'cover', pointerEvents: 'none' }} />
-        {/* Online dot */}
-        <div style={{ position: 'absolute', bottom: '0px', right: '0px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: '#22C55E', border: '2px solid var(--bg-primary)' }} />
-      </div>
-      {/* Last message preview pill */}
-      {lastAiMessage && lastAiMessage.role === 'assistant' && (
-        <div style={{
-          maxWidth: '180px',
-          padding: '8px 12px',
-          borderRadius: '16px',
-          borderTopLeftRadius: birdieIsRight ? '16px' : '4px',
-          borderTopRightRadius: birdieIsRight ? '4px' : '16px',
-          backgroundColor: 'var(--bg-card-solid)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-          border: '1px solid var(--border-subtle)',
-        }}>
-          <p style={{ margin: 0, fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {lastAiMessage.text.length > 50 ? lastAiMessage.text.slice(0, 50) + '...' : lastAiMessage.text}
-          </p>
-          <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>Tap to chat</p>
-        </div>
-      )}
-    </div>
-  );
-
   // The one thing a 403 with emailVerificationRequired needs: say what is
   // blocked, say it is fixable, and offer the fix. Never a generic failure.
   // Confirm your email lives in ./components/VerifyEmailSheet.js now. It was
@@ -18226,14 +18162,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <div ref={headerRef} aria-hidden="true" style={{ height: '1px', marginBottom: '-1px', flexShrink: 0, position: 'relative', zIndex: 1, backgroundColor: 'var(--divider)', opacity: (TAB_SCROLL.get('home') || 0) > 0 ? 1 : 0, transition: 'opacity 120ms ease' }} />
 
       {/* Scrollable Content */}
-      {/* THE LAST PLAN SCROLLS CLEAR OF THE DOCKED BUTTONS (2026-11-03).
-          Birdie and SOS dock 12px above the tab bar, and this list ended 30px
-          above it, so once it scrolled (a fourth plan at 390x844, or three on
-          a shorter phone) the last card's faces sat under Birdie and its time
-          chip under SOS, or under Birdie moved to that corner. The bottom
-          padding is the docked row's height; the list's own 14px margin is the
-          gap above it. */}
-      <div ref={feedScroll.home.ref} data-nest-scroll="" onScroll={handleScroll} style={{ flex: 1, padding: `0 var(--nest-gutter) ${dockedRowHeight}px`, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+      {/* NOTHING FLOATS OVER THE LIST (2026-11-06). The page scrolls in this
+          box, which ends at the top of the strip above the tabs (NestDock
+          below), so no card, name or time is ever under SOS: on 2026-11-03
+          the list padded its end by the docked row's height, which kept the
+          LAST card clear but let every other card scroll under the discs. */}
+      <div ref={feedScroll.home.ref} data-nest-scroll="" onScroll={handleScroll} style={{ flex: 1, padding: '0 var(--nest-gutter) 16px', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
         {/* The day, then the name. The name is a title, not the page's
             biggest words: those belong to the plan the person is about to
@@ -18463,12 +18397,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       </div>
 
-      {/* Called, not mounted as <AIBubble />: it is declared inside this
-          render, so as a component it was a NEW type on every app render and
-          React remounted it each time, which dropped a drag in progress
-          (pointer capture goes with the node). SafetyButton and BottomNav
-          beside it were already called for the same reason. */}
-      {AIBubble()}
+      <NestDock
+        height={nestDockHeight}
+        sosSide={safetyOn && sosCorner.includes('left') ? 'left' : 'right'}
+        getScroller={getPageScroller}
+        inputRef={aiInputRef}
+        isDark={isDark}
+        watchKey={`${aiChatMode}:${aiMessages.length > 0}:${birdieConsented}:${liveFlocks.length}:${flocksLoading}`}
+        lineRef={nestDockLineRef}
+      />
+      {/* Called, not mounted as <SafetyButton />: it is declared inside this
+          render, so as a component it would be a NEW type on every app
+          render and React would remount it each time, dropping a drag in
+          progress (pointer capture goes with the node). BottomNav beside it
+          is called for the same reason. SOS rests inside the strip above. */}
       {SafetyButton()}
       {BottomNav()}
     </div>

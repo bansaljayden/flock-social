@@ -803,7 +803,7 @@ export default function BirdiePanel({
               the bottom of the phone, so it carries the home indicator strip
               (SAFE-AREA rule 1); the docked panel floats above the tab bar and
               does not touch it. */}
-          <div style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
+          <div data-nest-birdie-field={isInline ? '' : undefined} style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
             <div style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>

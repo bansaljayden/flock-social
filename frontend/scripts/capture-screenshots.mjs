@@ -1291,19 +1291,19 @@ const DRIVERS = {
     // Pictures that fit an answer about dinner for six.
     setVenueArtTheme(page.context(), ['dining-room', 'pizza', 'noodles', 'tacos', 'sushi', 'salad', 'storefront']);
     await tab(page, 'Nest').click();
-    const fab = page.locator('[aria-label="Open Birdie assistant"]');
-    await fab.waitFor({ timeout: 15000 });
-    await fab.click();
-    // Expand to fullscreen: the unlabeled toggle sits right before Close.
-    await page.locator('button[aria-label="Close"]').locator('xpath=preceding-sibling::button[1]').click();
-    // An account that has not yet let Birdie use Gemini is asked first, and
-    // the box stays shut until it answers. Answer the way a person would.
+    // Birdie is a section of the Nest's page (components/nest/
+    // NestBirdieSection.js); its field is the way in. An account that has not
+    // yet let Birdie use Gemini is asked first, in the section, and the field
+    // comes back after Allow. Answer the way a person would.
+    let input = page.locator('[data-nest-band="birdie"] input[aria-label="Ask Birdie"]');
+    await input.waitFor({ timeout: 15000 });
+    await input.click();
     const allow = page.getByRole('button', { name: 'Allow', exact: true });
     if (await allow.isVisible().catch(() => false)) {
       await allow.click();
       await allow.waitFor({ state: 'detached', timeout: 15000 });
     }
-    const input = page.locator('input[aria-label="Ask Birdie"]');
+    input = page.locator('[data-nest-band="birdie"] input[aria-label="Ask Birdie"]');
     await input.waitFor({ timeout: 10000 });
     await input.fill(BIRDIE_ASK);
     // A Birdie turn is a real Gemini tool loop (up to ~45s server-side). Done
@@ -1313,6 +1313,8 @@ const DRIVERS = {
     await input.press('Enter');
     await reply;
     await page.locator('[data-birdie-working]').waitFor({ state: 'detached', timeout: 30000 }).catch(() => {});
+    // The answer lands in the page; the asset shows it in the full chat.
+    await page.getByRole('button', { name: 'Open the full chat' }).click();
     // Give venue-card images from the reply a beat to load, then hand the
     // cards their pictures in the order they are shown.
     await settle(page, { quiet: 2000 });

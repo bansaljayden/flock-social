@@ -25,23 +25,31 @@ const block = (start) => {
   return APP.slice(at, at + 2600);
 };
 
-test('the docked row is the dock gap plus the buttons\' own 52px', () => {
+test('the docked row is the dock gap plus the button\'s own 52px', () => {
   expect(APP).toContain('const FAB_DOCK_GAP = 12;');
   expect(APP).toContain('const FAB_SIZE = 52;');
   expect(APP).toContain('const dockedRowHeight = FAB_DOCK_GAP + FAB_SIZE;');
-  // FAB_SIZE is the discs SafetyButton and AIBubble actually draw.
+  // FAB_SIZE is the disc SafetyButton actually draws. (Birdie's disc left the
+  // Nest on 2026-11-06.)
   expect(block('const SafetyButton = () =>')).toMatch(/width: '52px',\s*height: '52px'/);
-  expect(block('const AIBubble = () =>')).toMatch(/width: '52px',\s*height: '52px'/);
-  // And both dock on the same row.
   expect(APP).toMatch(/if \(isTop\) \{ pos\.top = '60px'; \} else \{ pos\.bottom = fabDockBottom; \}/);
 });
 
-test('the Nest keeps the docked row clear under its last card', () => {
+test('the Nest\'s scroll ends at the strip above the tabs, and the strip is the docked row and 8px', () => {
+  // NOTHING FLOATS OVER THE LIST (2026-11-06). The list used to pad its end by
+  // the docked row, which kept only the LAST card clear: every card above it
+  // still scrolled under SOS. Now the scroll box ends at a strip that holds
+  // SOS, so no card can pass under it at any scroll position.
   const home = APP.slice(APP.indexOf('const HomeScreen = () => {'));
   const feed = home.slice(home.indexOf('<div ref={feedScroll.home.ref}'), home.indexOf('>', home.indexOf('<div ref={feedScroll.home.ref}')) + 1);
-  // The header scrolls inside this box since 2026-11-06, so it opens at 0
-  // on top; the bottom is still the docked row.
-  expect(feed).toContain('padding: `0 var(--nest-gutter) ${dockedRowHeight}px`');
+  expect(feed).toContain("padding: '0 var(--nest-gutter) 16px'");
+  expect(APP).toContain('const nestDockHeight = FAB_DOCK_GAP + FAB_SIZE + NEST_DOCK_EXTRA;');
+  const dock = fs.readFileSync(path.join(__dirname, '..', 'components', 'nest', 'NestDock.js'), 'utf8');
+  expect(dock).toContain('export const NEST_DOCK_EXTRA = 8;');
+  // A flex child between the scroll box and the tab bar, at one height.
+  expect(dock).toMatch(/style=\{\{ position: 'relative', flexShrink: 0, height: `\$\{height\}px`, backgroundColor: 'var\(--bg-primary\)' \}\}/);
+  expect(home.indexOf('<NestDock')).toBeGreaterThan(home.indexOf('<div ref={feedScroll.home.ref}'));
+  expect(home.indexOf('<NestDock')).toBeLessThan(home.indexOf('{BottomNav()}'));
 });
 
 // The same sweep found the Messages list doing it with SOS: on a 390x667
