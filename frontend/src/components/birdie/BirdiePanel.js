@@ -156,6 +156,8 @@ export default function BirdiePanel({
   confirmBirdieDraft,
   confirmBirdieVoteStage,
   directMessages,
+  dmBlocked,
+  dmNotConnected,
   entitlements,
   fabDockBottom,
   fillAiInput,
@@ -821,7 +823,18 @@ export default function BirdiePanel({
               the venue's card into that DM over the same reconciled path the
               DM screen sends on (transmitDm: the optimistic bubble, the
               socket or REST, a failed state with tap-to-retry) and opens it. */}
-          {aiShareVenue && (
+          {aiShareVenue && (() => {
+            // The people this account already messages, newest first as the
+            // Messages tab lists them, at most five. Not a pair the server
+            // refuses to carry (a block either way, or two accounts that are
+            // not connected): a tap there sent the card into a thread that
+            // could only come back refused.
+            const refused = (map, id) => Boolean(map && (map[String(id)] || map[id]));
+            const shareFriends = aiShareVenue._shareToDm ? [] : (Array.isArray(directMessages) ? directMessages : [])
+              .filter((d) => d && d.userId != null && typeof d.name === 'string' && d.name.trim())
+              .filter((d) => !refused(dmBlocked, d.userId) && !refused(dmNotConnected, d.userId))
+              .slice(0, 5);
+            return (
             <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: '24px 24px 0 0' }}>
               <DialogBehavior onClose={() => setAiShareVenue(null)} label="Share this venue" />
               <div data-share-sheet style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
@@ -831,7 +844,7 @@ export default function BirdiePanel({
                       Send {aiShareVenue.name}
                     </h3>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
-                      {aiShareVenue._shareToDm ? 'Choose a friend' : 'Choose a flock'}
+                      {aiShareVenue._shareToDm ? 'Choose a friend' : shareFriends.length ? 'Choose a flock or a friend' : 'Choose a flock'}
                     </p>
                   </div>
                   <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
@@ -895,11 +908,7 @@ export default function BirdiePanel({
                     })()
                   )}
                   {!aiShareVenue._shareToDm && (() => {
-                    // The people this account already messages, newest
-                    // first as the Messages tab lists them, at most five.
-                    const friends = (Array.isArray(directMessages) ? directMessages : [])
-                      .filter((d) => d && d.userId != null && typeof d.name === 'string' && d.name.trim())
-                      .slice(0, 5);
+                    const friends = shareFriends;
                     if (!friends.length) return null;
                     return (
                       <div data-share-friends style={{ borderTop: '1px solid var(--divider)', marginTop: '4px', paddingTop: '6px' }}>
@@ -913,8 +922,14 @@ export default function BirdiePanel({
                             setSelectedDmId(d.userId);
                             setCurrentScreen('dmDetail');
                           }} style={{ width: '100%', padding: '8px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
-                            <div aria-hidden="true" style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '700', flexShrink: 0 }}>
+                            {/* Their photo, as the Messages tab draws it, over
+                                the initial, which shows when there is none or
+                                it will not load. */}
+                            <div aria-hidden="true" style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '16px', overflow: 'hidden', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '700', flexShrink: 0 }}>
                               {d.name.trim().charAt(0).toUpperCase()}
+                              {typeof d.image === 'string' && d.image && (
+                                <img data-share-friend-photo src={d.image} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+                              )}
                             </div>
                             <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</span>
                             {Icons.send('var(--text-tertiary)', 14)}
@@ -926,7 +941,8 @@ export default function BirdiePanel({
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
   );

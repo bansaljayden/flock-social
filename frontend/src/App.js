@@ -17861,6 +17861,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     confirmBirdieDraft,
     confirmBirdieVoteStage,
     directMessages,
+    dmBlocked,
+    dmNotConnected,
     entitlements,
     fabDockBottom,
     fillAiInput,

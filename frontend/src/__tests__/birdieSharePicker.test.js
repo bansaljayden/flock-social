@@ -155,3 +155,38 @@ test('with flocks and people: the flocks first, then at most five people', () =>
   const friends = container.querySelector('[data-share-friends]');
   expect(within(friends).getAllByRole('button').length).toBe(5);
 });
+
+// Review, 2026-11-06: the subtitle named flocks only when friends were offered
+// too, friend rows drew initials though the Messages list carries photos, and a
+// pair the server refuses to carry (a block, or two accounts not connected) was
+// offered, so a tap sent the card into a thread that could only be refused.
+test('with people offered: the subtitle names both, a photo shows over the initial, and a refused pair is not offered', () => {
+  const p = props({
+    directMessages: [
+      { userId: 501, name: 'Rae Okafor', image: 'https://img.test.invalid/rae.jpg', messages: [] },
+      { userId: 502, name: 'Theo Lindqvist', messages: [] },
+      { userId: 503, name: 'Blocked Pair', messages: [] },
+      { userId: 504, name: 'Not Connected', messages: [] },
+    ],
+    dmBlocked: { 503: true },
+    dmNotConnected: { 504: true },
+  });
+  const { container } = render(<BirdiePanel {...p} />);
+  expect(screen.getByText('Choose a flock or a friend')).toBeTruthy();
+  const friends = container.querySelector('[data-share-friends]');
+  const rows = within(friends).getAllByRole('button');
+  expect(rows.map((b) => b.textContent)).toEqual(['RRae Okafor', 'TTheo Lindqvist']);
+  const photo = rows[0].querySelector('img[data-share-friend-photo]');
+  expect(photo.getAttribute('src')).toBe('https://img.test.invalid/rae.jpg');
+  expect(rows[1].querySelector('img')).toBeNull();
+  // A photo that will not load leaves the initial under it.
+  fireEvent.error(photo);
+  expect(photo.style.display).toBe('none');
+  expect(rows[0].textContent).toContain('R');
+});
+
+test('no one to offer: the subtitle is the flocks alone', () => {
+  render(<BirdiePanel {...props({ directMessages: [{ userId: 505, name: 'Only Blocked', messages: [] }], dmBlocked: { 505: true } })} />);
+  expect(screen.getByText('Choose a flock')).toBeTruthy();
+  expect(screen.queryByText('Or send it to a friend')).toBeNull();
+});
