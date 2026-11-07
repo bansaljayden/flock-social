@@ -464,7 +464,7 @@ test('the app asks nothing about analytics, and Share usage analytics is kept on
   await openSettings(page);
   const sw = page.getByRole('switch', { name: 'Share usage analytics' });
   await expect(sw).toHaveAttribute('aria-checked', 'true');
-  await expect(page.getByText('Which screens you open and a few actions, tied to your account number. No ads, no selling.')).toBeVisible();
+  await expect(page.getByText("Which screens you open and a few actions, tied to your account's ID number, never to your name or your email. No ads, no selling.")).toBeVisible();
   await sw.click();
   await expect(sw).toHaveAttribute('aria-checked', 'false');
   await expect(page.getByRole('alert')).toHaveCount(0);
