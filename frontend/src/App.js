@@ -175,7 +175,7 @@ import NestRows from './components/nest/NestRows';
 import NestPulse from './components/nest/NestPulse';
 import NestComingUp from './components/nest/NestComingUp';
 import NestBirdieSection from './components/nest/NestBirdieSection';
-import NestDock, { NEST_DOCK_EXTRA } from './components/nest/NestDock';
+import NestDock, { NEST_DOCK_EXTRA, contentBelow } from './components/nest/NestDock';
 import { birdieChips } from './lib/birdieChips';
 import { pickHero, whenLine, shortWhen, alsoLine, comingGroups, cardTime } from './lib/nestTime';
 import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, planChip } from './lib/nestHero';
@@ -7647,8 +7647,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if ((line.style.opacity === '1') !== under) line.style.opacity = under ? '1' : '0';
     const dock = nestDockLineRef.current;
     if (!dock) return;
-    const box = e.currentTarget;
-    const below = box.scrollTop + box.clientHeight < box.scrollHeight - 1;
+    // Content under the strip, not blank space (components/nest/NestDock.js).
+    const below = contentBelow(e.currentTarget);
     if ((dock.style.opacity === '1') !== below) dock.style.opacity = below ? '1' : '0';
   }, [feedScroll]);
 

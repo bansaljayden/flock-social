@@ -37,6 +37,42 @@ test('the strip renders between the page and the tabs', () => {
   expect(HOME).toMatch(/<NestDock\n\s+height=\{nestDockHeight\}/);
 });
 
+describe('the hairline over the strip', () => {
+  // It reads --nest-edge now, which shows on the cream, so its rule has to be
+  // right: content under the strip, not blank space. An empty Nest ends with
+  // the Birdie section's margin and the box's end padding 13px past the strip
+  // at 390, and the line drew over nothing.
+  const { contentBelow } = require('../components/nest/NestDock');
+  const rect = (el, top, height) => { el.getBoundingClientRect = () => ({ top, bottom: top + height, height }); };
+  const box = (children) => {
+    const b = document.createElement('div');
+    rect(b, 0, 600);
+    for (const [top, height] of children) {
+      const c = document.createElement('div');
+      rect(c, top, height);
+      b.appendChild(c);
+    }
+    return b;
+  };
+
+  test('drawn while something drawn runs past the strip', () => {
+    expect(contentBelow(box([[0, 300], [320, 400]]))).toBe(true);
+  });
+
+  test('not for blank space: margin and padding past the last thing drawn', () => {
+    expect(contentBelow(box([[0, 300], [320, 270]]))).toBe(false);
+    // An empty wrapper after the last section (Coming up with no plans) is
+    // not content, wherever its margin put it.
+    expect(contentBelow(box([[0, 300], [320, 270], [618, 0]]))).toBe(false);
+  });
+
+  test('the strip and the scroll handler read the same rule', () => {
+    const dock = require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'nest', 'NestDock.js'), 'utf8');
+    expect(dock).toMatch(/line\.style\.opacity = contentBelow\(root\) \? '1' : '0';/);
+    expect(APP).toMatch(/const below = contentBelow\(e\.currentTarget\);/);
+  });
+});
+
 describe('the Ask Birdie pill', () => {
   let observed;
   let fire;

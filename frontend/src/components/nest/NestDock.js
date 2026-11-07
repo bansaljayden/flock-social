@@ -23,6 +23,22 @@ import React, { useEffect, useState } from 'react';
 export const NEST_DOCK_EXTRA = 8;
 export const NEST_DOCK_FADE_MS = 160;
 
+/**
+ * Whether anything drawn runs under the strip: the bottom of the last thing
+ * in the scroll box with a height, against the box's own bottom. Blank space
+ * is not content: an empty Nest ends with its last section's margin and the
+ * box's end padding about 13px past the strip at 390, and the line drew over
+ * nothing once it could be seen (--nest-edge). App.js's scroll handler reads
+ * the same rule.
+ */
+export function contentBelow(box) {
+  if (!box || typeof box.getBoundingClientRect !== 'function') return false;
+  let el = box.lastElementChild;
+  while (el && !(el.getBoundingClientRect().height > 0)) el = el.previousElementSibling;
+  if (!el) return false;
+  return el.getBoundingClientRect().bottom > box.getBoundingClientRect().bottom + 1;
+}
+
 export default function NestDock({ height, sosSide, getScroller, inputRef, isDark, watchKey, lineRef }) {
   const [askShown, setAskShown] = useState(false);
 
@@ -44,13 +60,12 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
     return () => io.disconnect();
   }, [watchKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // The hairline: drawn while there is page left under the strip.
+  // The hairline: drawn while there is content under the strip.
   useEffect(() => {
     const root = getScroller ? getScroller() : null;
     const line = lineRef && lineRef.current;
     if (!root || !line) return;
-    const under = root.scrollTop + root.clientHeight < root.scrollHeight - 1;
-    line.style.opacity = under ? '1' : '0';
+    line.style.opacity = contentBelow(root) ? '1' : '0';
   });
 
   const ask = () => {
