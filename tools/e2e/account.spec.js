@@ -73,7 +73,10 @@ async function enterApp(page, name) {
  * settings sub-screen (Blocked accounts) first if it is not.
  */
 async function openSettings(page) {
-  const editRow = page.getByRole('button', { name: /^Edit Profile/ });
+  // Case-insensitive, like Add friends below: the settings rows are in
+  // sentence case since 2026-11-06 ("Edit profile"), and a role matcher that
+  // finds nothing waits out its timeout rather than saying which word moved.
+  const editRow = page.getByRole('button', { name: /^Edit profile/i });
   for (let i = 0; i < 6; i += 1) {
     if (await editRow.isVisible().catch(() => false)) return;
     const you = page.getByRole('button', { name: 'You', exact: true });
@@ -86,8 +89,8 @@ async function openSettings(page) {
 
 async function openEditProfile(page) {
   await openSettings(page);
-  await page.getByRole('button', { name: /^Edit Profile/ }).click();
-  await expect(page.getByLabel('Display Name *')).toBeVisible();
+  await page.getByRole('button', { name: /^Edit profile/i }).click();
+  await expect(page.getByLabel('Display name *')).toBeVisible();
 }
 
 /** The find-people screen, searched by name. Returns the row for that person. */
@@ -138,7 +141,7 @@ test('tapping the photo button does not throw away what you have typed', async (
   await openEditProfile(page);
 
   await page.getByLabel('Bio').fill('Half way through writing this.');
-  await page.getByLabel('Display Name *').fill('Half Typed Name');
+  await page.getByLabel('Display name *').fill('Half Typed Name');
 
   // The photo sits at the top of this screen, so tapping it partway through
   // filling the form in is an ordinary thing to do.
@@ -146,7 +149,7 @@ test('tapping the photo button does not throw away what you have typed', async (
   await expect(page.getByRole('heading', { name: /profile picture/i })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 
-  await expect(page.getByLabel('Display Name *')).toHaveValue('Half Typed Name');
+  await expect(page.getByLabel('Display name *')).toHaveValue('Half Typed Name');
   await expect(page.getByLabel('Bio')).toHaveValue('Half way through writing this.');
   expect(errors).toEqual([]);
 });
@@ -156,9 +159,9 @@ test('saving a new display name says so, and the new name sticks', async ({ page
   await openEditProfile(page);
 
   const newName = 'Renamed Tester';
-  await page.getByLabel('Display Name *').fill(newName);
+  await page.getByLabel('Display name *').fill(newName);
   await page.getByRole('textbox', { name: 'Current password' }).fill(PASSWORD);
-  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
 
   // Something has to confirm it. A form that answers a tap with no message at
   // all is indistinguishable from a broken one.
@@ -177,7 +180,7 @@ test('the bio you saved is still in the box when you come back', async ({ page }
   const bio = 'I run the trivia night at the diner on Fourth.';
   await page.getByLabel('Bio').fill(bio);
   await page.getByRole('textbox', { name: 'Current password' }).fill(PASSWORD);
-  await page.getByRole('button', { name: 'Save Changes' }).click();
+  await page.getByRole('button', { name: 'Save changes' }).click();
   await page.waitForResponse((r) => r.url().includes('/api/users/profile') && r.request().method() === 'PUT', { timeout: 15_000 });
 
   await page.reload();
