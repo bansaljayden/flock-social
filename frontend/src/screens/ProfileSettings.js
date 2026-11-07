@@ -1216,6 +1216,11 @@ export default function ProfileSettings({
             {(process.env.REACT_APP_PURCHASES !== 'off') && <ProRow isPro={isPro} entitlements={entitlements} colors={colors} setPaywallTrigger={setPaywallTrigger} showToast={showToast} />}
             {/* .glass-danger paints this solid red with white text (both !important),
                 so the icon must be white too — colors.red on red was invisible. */}
+            {/* THE LAST GROUP HAS A NAME. Sign out everywhere, Sign out, Get a
+                copy of my data and Delete account sat under Device with no
+                label of their own, as if they were device settings. Labelled
+                like Account, Safety and privacy, and Device above it. */}
+            <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '20px 0 6px' }}>Sign out and your data</h4>
             {/* Every device at once. The server route has existed since the
                 token-version claim shipped; nothing in the app reached it. */}
             <button className="hit44 glass-btn glass-secondary" disabled={signingOutEverywhere} aria-busy={signingOutEverywhere || undefined} onClick={async () => {
@@ -1243,7 +1248,7 @@ export default function ProfileSettings({
                 signOutAllRef.current = false;
                 setSigningOutEverywhere(false);
               }
-            }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: signingOutEverywhere ? 'wait' : 'pointer', fontWeight: '600', opacity: signingOutEverywhere ? 0.6 : 1 }}>
+            }} style={{ width: '100%', minHeight: '44px', marginTop: 0, padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: signingOutEverywhere ? 'wait' : 'pointer', fontWeight: '600', opacity: signingOutEverywhere ? 0.6 : 1 }}>
               Sign out everywhere
               {signingOutEverywhere && <span style={{ marginLeft: 'auto', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Signing out…</span>}
             </button>
@@ -1547,14 +1552,30 @@ export default function ProfileSettings({
             </button>
           )}
 
-          {/* Legal Links. The four buttons wrap: in one centered row they are
-              wider than a 375 px screen (the iPhone-compatibility size an iPad
-              gives the app), and a centered row's left overflow cannot be
-              scrolled to, so Terms of Service and Community Guidelines were
-              cut off at both edges. */}
-          <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${colors.creamDark}` }}>
-            <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center' }}>
+          {/* HELP, ON ITS OWN ROW. Support was the third of four pills under
+              "LEGAL", as if asking for help were a legal document. It is a row
+              like the settings rows above, and the page it opens is the one
+              App Store Connect lists as the Support URL (Guideline 1.2: a way
+              to reach someone about content, from inside the app). */}
+          <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '20px 0 6px' }}>Help</h4>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
+            <button className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/support')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.messageSquare(colors.navy, 18)}</div>
+              <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Support</span>
+              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Questions and problems</span>
+              <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+            </button>
+          </div>
+
+          {/* Legal Links. The three buttons wrap: in one row they are wider
+              than a 375 px screen (the iPhone-compatibility size an iPad gives
+              the app), and a row's overflow cannot be scrolled to, so Terms of
+              service and Community guidelines were cut off at both edges. The
+              label is the groups' own, where it was a centred uppercase
+              eyebrow unlike every other label on the screen. */}
+          <div style={{ marginTop: '20px' }}>
+            <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Legal</h4>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'flex-start' }}>
               <button
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/terms')}
                 style={{
@@ -1571,7 +1592,7 @@ export default function ProfileSettings({
                   gap: '6px'
                 }}
               >
-                {Icons.fileText(colors.navy, 14)} Terms of Service
+                {Icons.fileText(colors.navy, 14)} Terms of service
               </button>
               <button
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/privacy')}
@@ -1589,33 +1610,10 @@ export default function ProfileSettings({
                   gap: '6px'
                 }}
               >
-                {Icons.shield(colors.navy, 14)} Privacy Policy
+                {Icons.shield(colors.navy, 14)} Privacy policy
               </button>
-              {/* SUPPORT AND GUIDELINES, REACHABLE FROM INSIDE THE APP.
-                  Guideline 1.2 wants a way to contact someone about user
-                  content, and 1.2(d) is normally satisfied by the Support URL
-                  filed in App Store Connect. Both pages already exist and ship
-                  (/support publishes a real address, /guidelines is the same
-                  document the sign-in screen links), so leaving them reachable
-                  only from the website was a gap with no reason behind it. */}
-              <button
-                className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/support')}
-                style={{
-                  padding: '10px 16px',
-                  borderRadius: '10px',
-                  border: `1px solid ${colors.creamDark}`,
-                  backgroundColor: 'var(--bg-card-solid)',
-                  color: colors.navy,
-                  fontSize: 'var(--t-meta)',
-                  fontWeight: '600',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}
-              >
-                {Icons.helpCircle ? Icons.helpCircle(colors.navy, 14) : Icons.fileText(colors.navy, 14)} Support
-              </button>
+              {/* The guidelines are the same document the sign-in screen
+                  links, reachable from inside the app too. */}
               <button
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/guidelines')}
                 style={{
@@ -1632,7 +1630,7 @@ export default function ProfileSettings({
                   gap: '6px'
                 }}
               >
-                {Icons.users ? Icons.users(colors.navy, 14) : Icons.shield(colors.navy, 14)} Community Guidelines
+                {Icons.users ? Icons.users(colors.navy, 14) : Icons.shield(colors.navy, 14)} Community guidelines
               </button>
             </div>
             <VersionLine />
