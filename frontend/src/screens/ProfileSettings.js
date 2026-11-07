@@ -548,7 +548,7 @@ export default function ProfileSettings({
                   {/* The count is only shown once a read has landed. A "(0)"
                       over a list nobody could fetch is the same false claim as
                       the empty state underneath it. */}
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
 
                   {/* The rows that are coming, in the row's shape: the 40px
                       initial, the name and number lines, Edit and Remove,
@@ -639,7 +639,7 @@ export default function ProfileSettings({
                         pads for the keyboard, and 100% of what is left keeps
                         the heading on the screen and scrolls the form. */}
                     <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: 'min(80vh, 100%)', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
-                      <h3 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit Contact' : 'Add Trusted Contact'}</h3>
+                      <h3 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit contact' : 'Add trusted contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Name *</label>
@@ -647,7 +647,7 @@ export default function ProfileSettings({
                       </div>
 
                       <div style={{ marginBottom: '10px' }}>
-                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Number *</label>
+                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone number *</label>
                         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>So you can tell your contacts apart. Alerts go out by email; Flock never texts or calls this number.</p>
                         <SearchInputLocal aria-label="Phone number" type="tel" initialValue={newContact.phone} onCommit={(v) => setNewContact(prev => ({ ...prev, phone: v }))} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
@@ -672,7 +672,7 @@ export default function ProfileSettings({
 
                       <div style={{ display: 'flex', gap: '8px' }}>
                         <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', color: colors.navy }}>Cancel</button>
-                        <button className="hit44 glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save Changes' : 'Add Contact'}</button>
+                        <button className="hit44 glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save changes' : 'Add contact'}</button>
                       </div>
                     </div>
                   </div>
@@ -854,7 +854,7 @@ export default function ProfileSettings({
             {profileScreen === 'interests' && (
               <div>
                 <div style={styles.card}>
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Your Interests</h2>
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Your interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                     {userInterests.map(interest => (
                       <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
@@ -879,7 +879,7 @@ export default function ProfileSettings({
                   </div>
                 </div>
                 <div style={styles.card}>
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Suggested Interests</h2>
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Suggested interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
                       <button key={interest} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
@@ -970,7 +970,7 @@ export default function ProfileSettings({
           <button aria-label="Change your profile photo" className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
             {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
           </button>
-          <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit Photo</button>
+          <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit photo</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>{profileName}</h1>
         </div>
 
@@ -1042,7 +1042,7 @@ export default function ProfileSettings({
             {
               g: 'Account',
               rows: [
-                { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
+                { l: 'Edit profile', s: 'edit', icon: Icons.edit },
                 // The door the welcome screen promised. Owners and admins only.
                 ...((authUser?.role === 'venue_owner' || authUser?.role === 'admin') ? [{ l: 'Venue dashboard', s: 'venue', icon: Icons.mapPin }] : []),
                 // And the admin console, for the one account that has it.
@@ -1054,7 +1054,10 @@ export default function ProfileSettings({
             {
               g: 'Safety and privacy',
               rows: [
-                { l: 'Safety', s: 'safety', icon: Icons.shield },
+                // "SOS and safety": a row called "Safety" sat inside the group
+                // called "Safety and privacy", and what it opens is the SOS
+                // button's trusted contacts and settings.
+                { l: 'SOS and safety', s: 'safety', icon: Icons.shield },
                 { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban, v: blockedError ? null : (blockedUsers.length > 0 ? `${blockedUsers.length} ${blockedUsers.length === 1 ? 'person' : 'people'}` : 'None') },
                 // Who can add you to a flock, and whether Quick Add suggests
                 // you. The page reads the account's answer itself.
@@ -1103,16 +1106,16 @@ export default function ProfileSettings({
                 <Toggle label="Location services" on={locationEnabled} onChange={() => toggleLocation(!locationEnabled)} />
               </div>
             </div>
-            {/* Smart Night Mode */}
+            {/* Smart night mode */}
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               {/* Auto Night Mode toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moon(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
-                  <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Smart Night Mode</span>
+                  <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Smart night mode</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
                 </div>
-                <Toggle label="Smart Night Mode" on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
+                <Toggle label="Smart night mode" on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
               </div>
               {/* Night mode active badge */}
               {themeMode === 'auto' && isNightModeActive && (
@@ -1124,7 +1127,7 @@ export default function ProfileSettings({
               {themeMode !== 'auto' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                   <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
-                  <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Dark Mode</span>
+                  <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Dark mode</span>
                   <Toggle label="Dark mode" on={isDark} onChange={toggleTheme} />
                 </div>
               )}
@@ -1133,7 +1136,7 @@ export default function ProfileSettings({
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.bell(colors.navy, 18)}</div>
-                <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Push Notifications</span>
+                <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Push notifications</span>
                 {notifStatus === 'granted' ? (
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>On</span>
                 ) : notifStatus === 'denied' || notifStatus === 'unsupported' ? (

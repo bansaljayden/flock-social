@@ -713,7 +713,7 @@ describe('privacy claims that depend on how the code behaves', () => {
     const firebase = read('frontend', 'src', 'services', 'firebase.js');
     // The settings row offers Enable and a status. There is no in-app off
     // switch, so the page must not claim one.
-    expect(app).toMatch(/Push Notifications/);
+    expect(app).toMatch(/Push notifications/);
     expect(privacy).toMatch(/turn notifications off for Flock in your device settings/);
     expect(privacy).not.toMatch(/turn off in your device settings or inside Flock/);
     // Signing out really does drop the token.

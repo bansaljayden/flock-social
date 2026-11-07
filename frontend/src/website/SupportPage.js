@@ -42,7 +42,7 @@ const FAQ = [
     q: 'Why am I not getting Flock notifications?',
     a: 'Open Settings, then Notifications, then Flock, and confirm Allow Notifications is on. On iOS, '
       + "also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and "
-      + 'check that Push Notifications shows as enabled.',
+      + 'check that Push notifications says On.',
   },
   {
     q: "Why isn't the map showing my location?",
@@ -66,7 +66,7 @@ const FAQ = [
   },
   {
     q: 'What happens when I tap SOS?',
-    a: 'Your trusted contacts (the You tab, then Safety, then Trusted Contacts) get an email with the time '
+    a: 'Your trusted contacts (the You tab, then SOS and safety, then Trusted contacts) get an email with the time '
       + 'and, when your phone can find it, your location. People who, like you, have accepted '
       + 'a confirmed plan that starts within twelve hours of the alert also get an alert in the '
       + 'app, with the same location when there is one, unless they are banned or one of you '
@@ -154,7 +154,7 @@ export default function SupportPage() {
         <p>
           Open Settings, then Notifications, then Flock, and confirm Allow Notifications is on. On iOS,
           also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and
-          check that Push Notifications shows as enabled.
+          check that Push notifications says On.
         </p>
 
         <h3>Why isn't the map showing my location?</h3>
@@ -182,7 +182,7 @@ export default function SupportPage() {
 
         <h3>What happens when I tap SOS?</h3>
         <p>
-          Your trusted contacts (the You tab, then Safety, then Trusted Contacts) get an email with the time
+          Your trusted contacts (the You tab, then SOS and safety, then Trusted contacts) get an email with the time
           and, when your phone can find it, your location. People who, like you, have accepted
           a confirmed plan that starts within twelve hours of the alert also get an alert in the
           app, with the same location when there is one, unless they are banned or one of you

@@ -289,7 +289,7 @@ describe('form controls have a real accessible name', () => {
   // These three had a visible label with no htmlFor, no id, no aria-label and
   // no placeholder, so each announced as an unnamed "edit text".
   const PAIRS = [
-    ['profile-name-input', 'Display Name *'],
+    ['profile-name-input', 'Display name *'],
     ['profile-email-input', 'Email *'],
     ['contact-relationship', 'Relationship (optional)'],
     ['venue-info-name', 'Venue Name'],

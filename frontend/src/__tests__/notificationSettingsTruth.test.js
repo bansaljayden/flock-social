@@ -31,7 +31,7 @@ test('a setting that could not be saved to the account says so', () => {
 });
 
 test('the night-mode switch announces what it does, and an unsupported browser is not offered a button', () => {
-  expect(profile).toMatch(/<Toggle label="Smart Night Mode" on=\{themeMode === 'auto'\}/);
+  expect(profile).toMatch(/<Toggle label="Smart night mode" on=\{themeMode === 'auto'\}/);
   expect(profile).not.toMatch(/Match device appearance/);
   expect(profile).toMatch(/\) : notifStatus === 'denied' \|\| notifStatus === 'unsupported' \? \(/);
   // Until 2026-11-04 this said "The iPhone app can, once it is out.", because

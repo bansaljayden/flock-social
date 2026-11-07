@@ -513,7 +513,7 @@ describe('the safety screen, which is the one that matters most', () => {
   });
 
   test('the count is only printed once the list is known', () => {
-    expect(APP).toMatch(/Trusted Contacts\{trustedContactsLoaded \? ` \(\$\{trustedContacts\.length\}\)` : ''\}/);
+    expect(APP).toMatch(/Trusted contacts\{trustedContactsLoaded \? ` \(\$\{trustedContacts\.length\}\)` : ''\}/);
   });
 
   test('an emergency send is only refused on a zero that was actually measured', () => {

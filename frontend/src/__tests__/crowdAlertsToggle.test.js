@@ -88,7 +88,7 @@ describe('the settings row', () => {
   });
 
   it('lives inside the Push Notifications card, after the permission row', () => {
-    const cardAt = APP.indexOf('Push Notifications</span>');
+    const cardAt = APP.indexOf('Push notifications</span>');
     const rowAt = APP.indexOf('<Toggle label="Crowd alerts"');
     // The next card is the Flock Pro row. Its markup moved into the ProRow
     // component (bottom of ProfileSettings.js) when web checkout added states

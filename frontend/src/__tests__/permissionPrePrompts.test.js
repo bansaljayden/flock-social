@@ -85,7 +85,7 @@ describe('contacts', () => {
 
 describe('the Settings row', () => {
   test('keeps a plain label that is not a permission word', () => {
-    const start = settings.indexOf('Push Notifications</span>');
+    const start = settings.indexOf('Push notifications</span>');
     const row = settings.slice(start, settings.indexOf('{notifStatus === \'unsupported\'', start));
     expect(row).toMatch(/requestNotificationPermission\(\)/);
     expect(row).toMatch(/>Set up<\/button>/);

@@ -133,7 +133,7 @@ describe('editing a profile on an account that has no password', () => {
     expect(queryByLabelText('Current password')).toBeNull();
     expect(queryByLabelText('New password')).toBeNull();
 
-    fireEvent.click(getByText('Save Changes'));
+    fireEvent.click(getByText('Save changes'));
     await waitFor(() => expect(api.updateProfile).toHaveBeenCalledTimes(1));
     const payload = api.updateProfile.mock.calls[0][0];
     expect(payload.name).toBe('Sam');
@@ -147,13 +147,13 @@ describe('editing a profile on an account that has no password', () => {
     });
     expect(getByText('Security')).toBeTruthy();
 
-    fireEvent.click(getByText('Save Changes'));
+    fireEvent.click(getByText('Save changes'));
     await waitFor(() => expect(getByRole('alert').textContent).toBe('Current password is required to save changes'));
     expect(api.updateProfile).not.toHaveBeenCalled();
 
     api.updateProfile.mockResolvedValueOnce({ user: { name: 'Sam', email: 'sam@example.com', bio: '' } });
     fireEvent.change(getByLabelText('Current password'), { target: { value: 'Password1' } });
-    fireEvent.click(getByText('Save Changes'));
+    fireEvent.click(getByText('Save changes'));
     await waitFor(() => expect(api.updateProfile).toHaveBeenCalledTimes(1));
     expect(api.updateProfile.mock.calls[0][0].current_password).toBe('Password1');
   });

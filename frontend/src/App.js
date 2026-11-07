@@ -5182,9 +5182,9 @@ function getSosPosition(timeoutMs, maximumAge) {
 // fallback quietly mislabels every screen added after it, which is how a new
 // one arrives already broken.
 const PROFILE_SUBSCREEN_TITLES = {
-  edit: 'Edit Profile',
+  edit: 'Edit profile',
   interests: 'Interests',
-  safety: 'Safety',
+  safety: 'SOS and safety',
   blocked: 'Blocked accounts',
   payment: 'Pay-back handles',
   // Short, because this is a header row beside a back button. The pane's own

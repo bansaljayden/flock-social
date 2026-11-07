@@ -295,7 +295,7 @@ describe('edit profile on a 200 that carries no user', () => {
   it('says the profile did not come back, not a TypeError', async () => {
     api.updateProfile.mockResolvedValueOnce({});
     const { getByText, queryByText, props } = open();
-    fireEvent.click(getByText('Save Changes'));
+    fireEvent.click(getByText('Save changes'));
     await waitFor(() => expect(api.updateProfile).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(getByText('The profile did not come back from the server. Try again.')).toBeTruthy());
     expect(queryByText(/Cannot read properties/)).toBeNull();
@@ -310,14 +310,14 @@ describe('edit profile on a 200 that carries no user', () => {
     // for people (services/api.js userMessage), and plain copy otherwise.
     api.updateProfile.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'name')"));
     const first = open();
-    fireEvent.click(first.getByText('Save Changes'));
+    fireEvent.click(first.getByText('Save changes'));
     await waitFor(() => expect(first.getByText("Your changes didn't save. Try again.")).toBeTruthy());
     expect(first.queryByText(/Cannot read properties/)).toBeNull();
     first.unmount();
 
     api.updateProfile.mockRejectedValueOnce(Object.assign(new Error('That email is already in use.'), { status: 409, userFacing: true }));
     const second = open();
-    fireEvent.click(second.getByText('Save Changes'));
+    fireEvent.click(second.getByText('Save changes'));
     await waitFor(() => expect(second.getByText('That email is already in use.')).toBeTruthy());
   });
 });

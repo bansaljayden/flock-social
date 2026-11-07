@@ -107,7 +107,7 @@ describe('the sweep is reading the app', () => {
   test('it sees real copy, so a clean result is not an empty read', () => {
     const values = COPY.map((s) => s.value.trim());
     expect(values.includes('Sign out everywhere')).toBe(true);
-    expect(values.some((v) => /Trusted Contacts/.test(v))).toBe(true);
+    expect(values.some((v) => /Trusted contacts/.test(v))).toBe(true);
     expect(COPY.length).toBeGreaterThan(20000);
   });
 });
@@ -149,7 +149,7 @@ describe('the Safety screen has one name for its list', () => {
   test('the info card says what it explains, above the Trusted Contacts section', () => {
     const settings = fs.readFileSync(path.join(FRONTEND, 'src', 'screens', 'ProfileSettings.js'), 'utf8');
     const card = settings.indexOf('>How SOS works</p>');
-    const list = settings.indexOf('Trusted Contacts{trustedContactsLoaded');
+    const list = settings.indexOf('Trusted contacts{trustedContactsLoaded');
     expect(card).toBeGreaterThan(-1);
     expect(list).toBeGreaterThan(card);
   });

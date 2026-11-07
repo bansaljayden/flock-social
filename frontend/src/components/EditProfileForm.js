@@ -307,7 +307,7 @@ const EditProfileForm = ({
                     )}
 
                     <div style={{ marginBottom: '12px' }}>
-                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-name-input">Display Name *</label>
+                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-name-input">Display name *</label>
                       <input id="profile-name-input" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={styles.input} autoComplete="off" />
                     </div>
                     <div style={{ marginBottom: '12px' }}>
@@ -350,14 +350,14 @@ const EditProfileForm = ({
                       <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginBottom: '12px' }}>Security</p>
 
                       <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Current Password *</label>
+                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Current password *</label>
                         <div style={pwFieldStyle}>
                           <input aria-label="Current password" type={showCurrentPw ? 'text' : 'password'} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Required to save changes" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
                           <button className="hit44" type="button" aria-label={showCurrentPw ? 'Hide current password' : 'Show current password'} onClick={() => setShowCurrentPw(!showCurrentPw)} style={eyeBtnStyle}><EyeSvg show={showCurrentPw} /></button>
                         </div>
                       </div>
                       <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>New Password <span style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(optional)</span></label>
+                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>New password <span style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(optional)</span></label>
                         <div style={pwFieldStyle}>
                           <input aria-label="New password" type={showNewPw ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min 8 characters" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
                           <button className="hit44" type="button" aria-label={showNewPw ? 'Hide new password' : 'Show new password'} onClick={() => setShowNewPw(!showNewPw)} style={eyeBtnStyle}><EyeSvg show={showNewPw} /></button>
@@ -365,7 +365,7 @@ const EditProfileForm = ({
                       </div>
                       {newPw && (
                         <div style={{ marginBottom: '12px' }}>
-                          <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Confirm New Password</label>
+                          <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Confirm new password</label>
                           <input aria-label="Confirm new password" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter new password" style={styles.input} autoComplete="off" />
                           {confirmPw && newPw !== confirmPw && (
                             <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, margin: '4px 0 0' }}>Passwords do not match</p>
@@ -381,7 +381,7 @@ const EditProfileForm = ({
                       disabled={editLoading}
                       style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1, position: 'relative', overflow: 'hidden' }}
                     >
-                      {editLoading ? 'Saving...' : 'Save Changes'}
+                      {editLoading ? 'Saving...' : 'Save changes'}
                     </button>
                   </div>
                 );
