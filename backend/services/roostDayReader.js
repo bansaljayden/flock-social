@@ -16,7 +16,9 @@
 //     as a day (shortIsDay below), never where it is the word ("we sat 40
 //     covers", "the sun rush", "with this sun");
 //   * today, tonight, this morning, this afternoon, this evening;
-//   * tomorrow, and the day after tomorrow;
+//   * tomorrow, and the day after tomorrow, which "the day after" is too
+//     where the question says tomorrow ("Is tomorrow busier than the day
+//     after?", "Will tomorrow or the day after be busier?");
 //   * this weekend (any "weekend", never "last weekend"), next weekend, the
 //     following weekend, the weekend after next, and "weekends", the habit;
 //   * the week: this week, the week, our week, the whole week, the coming
@@ -82,6 +84,7 @@ const HOLDS_ASK = /^(?:(?:so|and|but|then|ok|okay|well|also|anyway)\s+)*(?:when|
 
 const TOKEN = new RegExp([
   "\\b(?<dat>(?:the\\s+)?day\\s+after\\s+tomorrow)\\b",
+  "\\b(?<dayAfter>the\\s+day\\s+after)\\b",
   "\\b(?<after>weekend\\s+after\\s+next|following\\s+weekend|weekend\\s+after\\s+this(?:\\s+one)?)\\b",
   "\\b(?<nextWeekend>next\\s+weekend)\\b(?<nwPoss>')?",
   "\\b(?<weekend>weekends?)\\b(?<wePoss>')?",
@@ -158,6 +161,18 @@ const HOLIDAY_BEFORE = /\b(?:black|cyber|easter|palm|ash|holy|maundy|super\s+bow
 const NAME_HOLIDAY_BEFORE = /\b(?:Good|Super|Giving)\s+$/;
 const holidayBefore = (before, day) => HOLIDAY_BEFORE.test(before) || (/^[A-Z]/.test(day) && NAME_HOLIDAY_BEFORE.test(before));
 
+// "THE DAY AFTER" IS THE DAY AFTER TOMORROW WHERE THE QUESTION SAYS TOMORROW
+// (recheck, 2026-11-06). "Is tomorrow busier than the day after?" and "Will
+// tomorrow or the day after be busier?" were answered with tomorrow alone,
+// where the week's ranking had held both days. "The day after" is a day
+// unless what follows it is what it comes after: "the day after the game",
+// "the day after that", "the day after we reopen", "the day after
+// Thanksgiving" or a date. It counts only where tomorrow is said in the
+// question (dayWords), as in "Is tomorrow slower than the day after at our
+// place?".
+const DAY_AFTER_OF = /^\s+(?:the|a|an|that|this|these|those|our|my|your|his|her|their|its|we|we're|i|i'm|you|they|he|she|it|next|last|each|every|thanksgiving|christmas|xmas|easter|halloween|new|memorial|labor|labour|independence|valentine'?s|mother'?s|father'?s|payday|game|show|event|concert|match|parade|holiday|holidays|festival|opening|launch|reopening|closing)\b/i;
+const DAY_AFTER_NAME = /^\s+[A-Z]|^\s*\d/;
+
 // The reason a question gives, after since or because in its own sentence.
 const GIVEN_BEFORE = /\b(?:since|because|cause|cuz|coz)\b/i;
 // A day said as the past ("Tonight was dead", "Saturday was packed") is no
@@ -222,6 +237,10 @@ function tokensIn(piece, shouting = false) {
     const given = GIVEN_BEFORE.test(before) || PAST_AFTER.test(after);
     const at = out.length;
     if (g.dat) out.push({ kind: 'dayAfterTomorrow' });
+    else if (g.dayAfter) {
+      if (DAY_AFTER_OF.test(after) || DAY_AFTER_NAME.test(after)) continue;
+      out.push({ kind: 'dayAfterTomorrow', loose: true });
+    }
     else if (g.after) out.push({ kind: 'weekend', scope: /after\s+next/i.test(g.after) ? 'after_next' : 'next' });
     else if (g.nextWeekend) out.push({ kind: 'weekend', scope: 'next_words', weak: Boolean(g.nwPoss) });
     else if (g.weekend) {
@@ -323,8 +342,11 @@ function dayWords(question) {
   const { asking, all } = parts(text);
   // A question in capitals throughout says nothing by its case.
   const shouting = !/[a-z]/.test(text);
-  let found = asking.flatMap((p) => tokensIn(p, shouting));
-  if (!found.length) found = all.flatMap((p) => tokensIn(p, shouting)).filter((t) => !t.habit);
+  // "The day after" is a day only where tomorrow is said (DAY_AFTER_OF).
+  const saysTomorrow = /\btomorrow\b/i.test(text);
+  const read = (p) => tokensIn(p, shouting).filter((t) => !t.loose || saysTomorrow);
+  let found = asking.flatMap(read);
+  if (!found.length) found = all.flatMap(read).filter((t) => !t.habit);
   const strong = found.filter((t) => !t.weak);
   let kept = strong.length ? strong : found;
   // Two weekdays or more in the possessive beside only a weekend or the week
@@ -341,7 +363,7 @@ function dayWords(question) {
   if (kept.some((t) => t.kind === 'weekday')) kept = kept.filter((t) => t.kind !== 'week');
   const out = [];
   for (const t of kept) {
-    const { weak, plural, habit, possessive, ...tok } = t;
+    const { weak, plural, habit, possessive, loose, ...tok } = t;
     if (!out.some((o) => same(o, tok))) out.push(tok);
   }
   return out;

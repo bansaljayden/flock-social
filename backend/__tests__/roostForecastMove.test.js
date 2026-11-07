@@ -3768,3 +3768,44 @@ test('on the weekend\'s route, a weekend day the venue is shut on is said with t
   assert.deepStrictEqual(weekdaysNamed('Weekend outlook? Particularly Saturday night.'), ['Saturday']);
   assert.deepStrictEqual(weekdaysNamed('Our competitor closes Sundays; how busy is this weekend?'), []);
 });
+
+test('"the day after" where the question says tomorrow is the day after tomorrow, and nowhere else', () => {
+  const { dayWords } = require('../services/roostDayReader');
+  for (const q of ['Is tomorrow busier than the day after?', 'Will tomorrow or the day after be busier?', 'tmrw or the day after?', 'How busy will tomorrow be, and the day after?', 'Is tomorrow slower than the day after at our place?', 'Will tomorrow be dead, or the day after?']) {
+    assert.deepStrictEqual(dayWords(q), [{ kind: 'tomorrow' }, { kind: 'dayAfterTomorrow' }], q);
+  }
+  assert.deepStrictEqual(dayWords('Tomorrow looks slow. What about the day after?'), [{ kind: 'dayAfterTomorrow' }]);
+  // Not a day: with no tomorrow said, or the day after something else.
+  assert.deepStrictEqual(dayWords('and the day after?'), []);
+  assert.deepStrictEqual(dayWords('Is tomorrow busier than the day after the game?'), [{ kind: 'tomorrow' }]);
+  assert.deepStrictEqual(dayWords('Is tomorrow busier than the day after that?'), [{ kind: 'tomorrow' }]);
+  assert.deepStrictEqual(dayWords('tomorrow or the day after we reopen?'), [{ kind: 'tomorrow' }]);
+  assert.deepStrictEqual(dayWords('Is the day after a holiday? How busy will tomorrow be?'), [{ kind: 'tomorrow' }]);
+});
+
+test('tomorrow against the day after is answered with both days, the higher first', async () => {
+  // The bar on its Thursday: tomorrow Friday 66, the day after Saturday 74.
+  // This was "Friday peaks around 9 PM at 66" alone, where main's ranking
+  // held both.
+  await pinnedAt('2026-11-12T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr9DayAfterCardThu000', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    for (const question of ['Is tomorrow busier than the day after?', 'Will tomorrow or the day after be busier?']) {
+      const r = await call('/api/venue/advisor/question', { question });
+      assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
+        `${KIND_OPEN}Saturday peaks around 9 PM at 74 on our 0 to 100 index.`,
+        '• That makes it the busiest day this week.',
+        '• Friday peaks around 9 PM at 66.',
+      ], question);
+      assert.deepStrictEqual(sourceIds(r).slice(0, 2), ['typical_peak_2026-11-14', 'typical_peak_2026-11-13'], question);
+    }
+  });
+  // The office cafe on its Friday: both days shut, and said so first.
+  await pinnedAt('2026-11-06T16:00:00Z', async () => {
+    cafeOpenOn('ChIJr9DayAfterOfficeFri00', [1, 2, 3, 4, 5]);
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'Is tomorrow busier than the day after?' });
+    assert.ok(r.body.text.startsWith('Your Google listing has you closed on Saturday and Sunday.'), r.body.text);
+  });
+});
