@@ -1226,7 +1226,7 @@ function shapeWeek(which) {
     return out;
   };
   const withBoth = (facts, {
-    named = null, both = null, comparing = false, bothDates = null, quietAsked = false,
+    named = null, both = null, comparing = false, bothDates = null, quietAsked = false, lead = null,
   } = {}) => {
     const besides = facts.filter((f) => isPeakFact(f) && weekendMarks().isBesideAnswer(f));
     // ONE DAY OF THE SEVEN AGAINST A DAY PAST THEM (second recheck,
@@ -1240,7 +1240,7 @@ function shapeWeek(which) {
     const askedCount = Array.isArray(both) ? new Set(Array.isArray(bothDates) ? bothDates : both).size : 0;
     const pastSide = facts.some((f) => f && f.id === weekendMarks().PAST_FORECAST_ID);
     if (which !== 'weekend' && askedCount >= 1) {
-      const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide), bothDates);
+      const compared = compare(facts, both, besides, comparing && (askedCount > 1 || pastSide), bothDates, which === 'week' && !comparing ? lead : null);
       if (compared) return compared;
     }
     const base = shape(facts.filter((f) => !besides.includes(f)), { named, quietAsked });
@@ -1281,7 +1281,14 @@ function shapeWeek(which) {
   // said beats the ranking's claim, when they are said this way too. A day
   // the question names that the venue is shut on is said first
   // (routes/advisor.js bothAnswer).
-  const compare = (facts, both, besides, comparing, bothDates = null) => {
+  // TWO DAYS ON THE PEAKS' ROUTE WITH NO COMPARISON LEAD WITH THE DAY MAIN
+  // LEADS WITH (seventh recheck, 2026-11-07). "How steady will it be today
+  // and Wednesday?" and "How busy will Sunday and Tuesday be?" opened on the
+  // week's busiest day, where main opens on the weekday its reader names, the
+  // last written out (roostPlaybook.mainNamedWeekday, `leadDay`). That day
+  // leads when the week holds it, and the other day and the week's busiest
+  // and quietest follow, said as a comparison says them.
+  const compare = (facts, both, besides, comparing, bothDates = null, leadDay = null) => {
     const marks = weekendMarks();
     const shut = facts.find((f) => f && (f.id === marks.WEEKEND_CLOSED_ID || f.id === marks.TODAY_CLOSED_ID));
     const asked = askedIn(facts, both, bothDates, besides);
@@ -1303,7 +1310,10 @@ function shapeWeek(which) {
     // PM at 48" under today's Sunday at 45; second recheck, 2026-11-06).
     const beaten = quiet ? Boolean(low) && said.some((s) => s < score(low))
       : (Boolean(top) && said.some((s) => s > score(top))) || (Boolean(low) && said.some((s) => s < score(low)));
-    if (!comparing && !beaten) return null;
+    // Main's day, as the week holds it (never a day said beside the week).
+    const mainLead = !comparing && !beaten && leadDay
+      ? asked.find((f) => f.value.weekday === leadDay && !isBesideWeek(f)) || null : null;
+    if (!comparing && !beaten && !mainLead) return null;
     // Days that peak alike keep the order the question asked them, but for
     // the week's own busiest (quietest on the quiet days' route), which goes
     // first so the claim about the week is the lead's: "Friday night peaks
@@ -1311,7 +1321,8 @@ function shapeWeek(which) {
     // Saturday peaks around 6 PM at 74.", never Saturday first and Friday
     // called the busiest under it.
     const claimed = quiet ? low : top;
-    const ordered = [...asked].sort((a, z) => (quiet ? -byScore(a, z) : byScore(a, z)) || (z === claimed) - (a === claimed));
+    const byOwn = [...asked].sort((a, z) => (quiet ? -byScore(a, z) : byScore(a, z)) || (z === claimed) - (a === claimed));
+    const ordered = mainLead ? [mainLead, ...byOwn.filter((f) => f !== mainLead)] : byOwn;
     const v = weekVoice([...asked, ...week]);
     const level = Boolean(top && low) && score(top) - score(low) < HOUR_ORDERING_MIN_GAP;
     const first = [];
@@ -1772,8 +1783,11 @@ function renderTemplate(block, question = '') {
   const bothDates = block && Array.isArray(block.askedDates) ? block.askedDates : null;
   const comparing = COMPARES.test(String(question || ''));
   const quietAsked = QUIET_ASKED.test(String(question || ''));
+  // Two days with no comparison lead with the day main's reader names, as main
+  // does (shapeWeek's compare, `leadDay`).
+  const mainLead = both && !comparing ? roostPlaybook.mainNamedWeekday(question) : null;
   const shaped = shaper ? shaper(facts, onMain ? { named } : {
-    named, both, comparing, bothDates, quietAsked,
+    named, both, comparing, bothDates, quietAsked, lead: mainLead,
   }) : null;
   let lead;
   let points;

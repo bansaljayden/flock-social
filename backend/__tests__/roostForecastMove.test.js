@@ -4628,3 +4628,32 @@ test('the week ranked on the weekend\'s route takes main\'s path: on a Sunday it
   }));
 });
 
+test('two days joined by "and" on the peaks\' route lead with the day main leads with, the other day and the week\'s ends after it', async () => {
+  // "How steady will it be today and Wednesday?" on a Sunday, and "How busy
+  // will Sunday and Monday be?" on a Friday, opened on the week's busiest
+  // day, where main opens on the weekday its reader names, the last written
+  // out.
+  await withNightCurve('ChIJr10PairAndLeadSun000', () => pinnedAt('2026-11-08T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'how steady will it be today and wednesday' });
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
+      'Wednesday peaks around 9 PM at 48 on our 0 to 100 index.',
+      '• Sunday peaks around 9 PM at 45, your quietest day this week.',
+      '• Your busiest day this week is Saturday, around 9 PM at 74.',
+    ]);
+    assert.deepStrictEqual(sourceIds(r).slice(0, 3), ['peak_2026-11-11', 'peak_2026-11-08', 'peak_2026-11-14']);
+  }));
+  await withNightCurve('ChIJr10PairAndLeadFri000', () => pinnedAt('2026-11-06T16:00:00Z', async () => {
+    route = { mode: 'grounded', intentId: 'peak_hours' };
+    const r = await call('/api/venue/advisor/question', { question: 'How busy will Sunday and Monday be?' });
+    assert.deepStrictEqual(r.body.text.split('\n').slice(0, 3), [
+      'Monday peaks around 9 PM at 48 on our 0 to 100 index.',
+      '• Sunday peaks around 9 PM at 45, your quietest day this week.',
+      '• Your busiest day this week is Saturday, around 9 PM at 74.',
+    ]);
+    // A comparison still leads with the higher of the two.
+    const c = await call('/api/venue/advisor/question', { question: 'Is Sunday busier than Monday?' });
+    assert.ok(c.body.text.startsWith('Monday peaks around 9 PM at 48 on our 0 to 100 index.'), c.body.text);
+  }));
+});
+
