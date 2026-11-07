@@ -75,14 +75,17 @@ export default function NestBirdieSection({
             <button type="button" onClick={onShowLastAnswer} style={{ ...textLink, display: 'block', margin: '-6px 0 2px' }}>Show the last answer</button>
           )}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
-            <div data-nest-birdie-field="" style={{ display: 'flex', alignItems: 'center', gap: '10px', minHeight: '52px', padding: '0 8px 0 12px' }}>
+            <div data-nest-birdie-field="" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px', minHeight: '52px', padding: '0 12px' }}>
               <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: '999px', objectFit: 'cover', flexShrink: 0, background: isDark ? '#162046' : '#e8eaf0' }} />
               {/* Uncontrolled, seeded from the ref: aiInputValueRef holds the
                   typed text of record, the same as Birdie's own box. 16px on
                   a field (the --t-body floor in index.css), so iOS does not
                   zoom the page when it takes focus. */}
+              {/* The send circle sits over the field's end rather than taking
+                  room beside it, so the whole placeholder fits at 320. */}
               <input
                 ref={inputRef}
+                className="nest-birdie-input"
                 type="text"
                 aria-label="Ask Birdie"
                 enterKeyHint="send"
@@ -98,7 +101,7 @@ export default function NestBirdieSection({
                   if (has !== inputHasTextRef.current) { inputHasTextRef.current = has; setInputHasText(has); }
                 }}
                 onKeyDown={(e) => { if (e.key === 'Enter') onSend(); }}
-                style={{ flex: 1, minWidth: 0, height: '44px', padding: 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500' }}
+                style={{ flex: 1, minWidth: 0, height: '44px', padding: inputHasText ? '0 40px 0 0' : 0, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500' }}
               />
               <button
                 type="button"
@@ -107,7 +110,8 @@ export default function NestBirdieSection({
                 onClick={onSend}
                 disabled={!canSend}
                 tabIndex={inputHasText ? undefined : -1}
-                style={{ width: '32px', height: '32px', flexShrink: 0, borderRadius: '999px', border: 'none', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', opacity: inputHasText ? 1 : 0, transition: 'opacity 150ms ease', pointerEvents: inputHasText ? 'auto' : 'none' }}
+                aria-hidden={inputHasText ? undefined : 'true'}
+                style={{ position: 'absolute', right: '10px', top: '10px', width: '32px', height: '32px', borderRadius: '999px', border: 'none', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', opacity: inputHasText ? 1 : 0, transition: 'opacity 150ms ease', pointerEvents: inputHasText ? 'auto' : 'none' }}
               >
                 <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
@@ -119,7 +123,7 @@ export default function NestBirdieSection({
                 type="button"
                 key={text}
                 onClick={() => onChip(text)}
-                style={{ position: 'relative', width: '100%', minHeight: '44px', padding: '0 14px 0 18px', border: 'none', background: 'none', display: 'flex', alignItems: 'center', gap: '14px', textAlign: 'left', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500' }}
+                style={{ position: 'relative', width: '100%', minHeight: '44px', padding: '11px 14px 11px 18px', border: 'none', background: 'none', display: 'flex', alignItems: 'center', gap: '14px', textAlign: 'left', cursor: 'pointer', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '500', lineHeight: 1.35 }}
               >
                 <span aria-hidden="true" style={{ position: 'absolute', top: 0, left: '50px', right: 0, height: '1px', backgroundColor: 'var(--divider)' }} />
                 <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.search('var(--accent-purple-text)', 16)}</span>

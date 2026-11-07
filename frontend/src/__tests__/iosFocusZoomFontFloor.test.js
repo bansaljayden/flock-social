@@ -476,6 +476,10 @@ describe('no stylesheet rule puts a focusable control under 16px', () => {
   const offenders = allStyleRules()
     .filter((r) => {
       if (!/font-size/i.test(r.body)) return false;
+      // A rule for a field's ::placeholder sizes the hint, not the field: iOS
+      // zooms by the focused control's own computed size, which stays 16px
+      // (the Nest's Birdie field draws its hint at 15px so it fits at 320).
+      if (r.selector.split(',').every((s) => /::placeholder\s*$/.test(s.trim()))) return false;
       const hitsControl =
         targetsControl(r.selector) ||
         r.selector

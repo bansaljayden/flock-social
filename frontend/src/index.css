@@ -930,6 +930,23 @@ code {
   .nest-lock-settle { animation-name: nestLockFade !important; animation-duration: 200ms !important; }
 }
 
+/* The Nest's Birdie field (components/nest/NestBirdieSection.js). The field
+   itself is 16px so iOS does not zoom when it takes focus; its hint is drawn a
+   size down, which iOS does not zoom for, so the whole of "Ask about a place
+   or a night out" fits on a 320px phone. */
+.nest-birdie-input::placeholder {
+  font-size: 15px;
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+/* While the Nest's Birdie field has focus (lib/nestKeyboard.js), the page's
+   scroll box gets room at its end the height of the keyboard, so the field can
+   be brought up above the keys. The WebView does not resize for them. */
+.nest-kb-open {
+  padding-bottom: calc(16px + var(--kb-inset, 0px)) !important;
+}
+
 /* Smooth fade + slide in */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }
