@@ -49,7 +49,9 @@ const TAB_KEYS = TAB_PAIRS.flat();
 // Redrawn 2026-11-07 from the Higgsfield concept sheets (the second pass over
 // the whole set): each takes one detail from the bird set's closed list, or
 // becomes its own picture where it had shared another key's.
-const REDRAWN_1107 = ['award', 'beer', 'clock', 'cloud', 'cocktail', 'coffee', 'gamepad', 'image', 'lock', 'thumbsUp', 'vote', 'wine'];
+// Each is drawn somewhere in the app (USAGE in the commit that added this):
+// award and thumbsUp were redrawn too and went back, having no caller.
+const REDRAWN_1107 = ['beer', 'clock', 'cloud', 'cocktail', 'coffee', 'gamepad', 'image', 'lock', 'vote', 'wine'];
 const SET_KEYS = [...TAB_KEYS, 'startFlock', 'nestEgg', 'splitBill', 'pro', 'helpCircle', 'locate', 'maximize', 'minimize', 'menuLines'];
 // Stroke width in viewBox units at every size above 10.5 px, where sw() is
 // size / 10.5 and one unit is size / 24 px.
@@ -447,8 +449,6 @@ describe('the second pass (2026-11-07)', () => {
     expect(pebble('lock')).toBe(1); // the entrance hole as the keyhole
     expect(pebble('clock')).toBe(1); // the pebble at the hub
     expect(pebble('cocktail')).toBe(1); // the pebble as the olive
-    const awardPaths = [...draw('award').querySelectorAll('path')].map((p) => p.getAttribute('d'));
-    expect(awardPaths.some((d) => parsePath(d).segs.filter((s) => s.type === 'A').length === 4)).toBe(true); // the egg medallion
     expect(draw('image').querySelector('circle')).toBeNull(); // the sun is gone ...
     expect([...draw('image').querySelectorAll('path')].map((p) => p.getAttribute('d'))).toContain('M7 9.75 9 7.75 11 9.75'); // ... for a gull
   });

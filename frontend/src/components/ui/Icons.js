@@ -243,8 +243,6 @@ const ROT = (deg) => ({ transform: `rotate(${deg}deg)` });
 // meeting the next on a shared tangent, so the outline has no kink and needs
 // no ellipse. Top 2.9, bottom 21, 14 wide.
 const EGG_D = 'M5 14A7 7 0 0 0 19 14A14 14 0 0 0 14.9 4.1A4.1 4.1 0 0 0 9.1 4.1A14 14 0 0 0 5 14Z';
-// The same egg at 0.3 of its size, centred at 12,9: award's medallion.
-const AWARD_EGG_D = 'M9.9 9.62A2.1 2.1 0 0 0 14.1 9.62A4.2 4.2 0 0 0 12.87 6.64A1.23 1.23 0 0 0 11.13 6.64A4.2 4.2 0 0 0 9.9 9.62Z';
 
 // messages / messagesFilled - a speech bubble whose tail is a beak. The bubble's
 // lower-left corner is cut on the 45 degree axis and the beak stands on the
@@ -625,15 +623,12 @@ const Icons = {
     </>
   ),
 
-  // The ribbon's tails start on the ring itself (x 8 and 16 meet r 7 at
-  // y 14.75), so they read as attached and stay one part with it. The
-  // medallion is the egg (EGG_D at 0.3 of its size, solid), 2 units clear of
-  // the ring and 1.5 of the tails.
+  // Ribbon starts at y=14, inside the disc, so the tails read as attached
+  // rather than floating just below it.
   award: make(
     <>
       <circle cx="12" cy="9" r="7" />
-      <path d="M8 14.75 8 22 12 18 16 22 16 14.75" />
-      <path d={AWARD_EGG_D} fill="currentColor" />
+      <path d="M8 14 8 22 12 18 16 22 16 14" />
     </>
   ),
 
@@ -1273,12 +1268,10 @@ const Icons = {
     </>
   ),
 
-  // A cuff and a hand: the thumb rises on a 45 and rounds off (r 1.5), the
-  // fist steps in at the lower right on a 45.
   thumbsUp: make(
     <>
-      <path d="M4 11 8 11 8 20 4 20Z" />
-      <path d="M8 11 11.5 7.5 11.5 4A1.5 1.5 0 0 1 14.5 4L14.5 10 20 10 20 17 17 20 8 20" />
+      <path d="M7 10 18 10 18 20 7 20Z" />
+      <path d="M7 10 7 6 11 2 11 10" />
     </>
   ),
 

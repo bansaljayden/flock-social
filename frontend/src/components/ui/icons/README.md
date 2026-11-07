@@ -79,12 +79,11 @@ The everyday controls (rule 9) did not change.
 |---|---|---|
 | `lock` | padlock | the keyhole is the entrance hole |
 | `clock` | dial and two hands | the hands turn on a pebble |
-| `award` | rosette on two tails | an egg as the medallion |
 | `image` | frame over hills | a gull where a stock picture puts a sun |
 | `cocktail` | triangle glass | a pebble olive |
 | `wine` | tall bowl on a stem | its own drawing (it was the cocktail glass) |
 | `beer` | mug with a head of foam | its own drawing (it was the coffee mug) |
 | `coffee` | cup with steam | its own drawing |
 | `vote` | a ballot going into a box | the old drawing was a checkbox |
-| `thumbsUp`, `gamepad`, `cloud` | redrawn shapes | no bird; the old ones read as a box or a dome |
+| `gamepad`, `cloud` | redrawn shapes | no bird; the old ones read as a box or a dome |
 

@@ -15,6 +15,7 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import ExploreScreen from '../screens/ExploreScreen';
 import { glyphPaths, glyphSvgGroup, categorizeVenueTypes, glyphCategoryFor, CategoryGlyph } from '../lib/categoryGlyph';
+import Icons from '../components/ui/Icons';
 
 const fs = require('fs');
 const path = require('path');
@@ -110,11 +111,33 @@ test('the glyph is the place mark for anything that is not food, drink, music or
   expect(glyphCategoryFor(undefined)).toBe('Place');
   expect(glyphCategoryFor(['mexican_restaurant', 'restaurant', 'food'])).toBe('Food');
   expect(glyphCategoryFor(['juice_shop', 'food'])).toBe('Food');
-  expect(glyphCategoryFor(['wine_bar', 'bar'])).toBe('Nightlife');
+  expect(glyphCategoryFor(['cocktail_bar', 'bar'])).toBe('Nightlife');
   expect(glyphCategoryFor(['performing_arts_theater'])).toBe('Live Music');
   expect(glyphCategoryFor(['bowling_alley'])).toBe('Sports');
   // The filters keep their fallback: every listing has a filter to sit under.
   expect(categorizeVenueTypes(['store', 'point_of_interest'])).toBe('Food');
+});
+
+// 2026-11-07: the drinks stopped sharing drawings, so the glyph reads four
+// finer kinds off whole types, and the filters keep their five categories.
+test('a wine bar draws the wine glass, a pub the mug, a coffee shop the cup and an arcade the controller', () => {
+  expect(glyphCategoryFor(['wine_bar', 'bar'])).toBe('Wine');
+  expect(glyphCategoryFor(['winery', 'bar'])).toBe('Wine');
+  expect(glyphCategoryFor(['irish_pub', 'bar'])).toBe('Beer');
+  expect(glyphCategoryFor(['brewery'])).toBe('Beer');
+  expect(glyphCategoryFor(['coffee_shop', 'cafe', 'food'])).toBe('Cafe');
+  expect(glyphCategoryFor(['cafe', 'restaurant', 'food'])).toBe('Food');
+  expect(glyphCategoryFor(['amusement_center', 'point_of_interest'])).toBe('Games');
+  expect(glyphCategoryFor(['night_club'])).toBe('Nightlife');
+  // The filters are unchanged: a pub is still Nightlife, a coffee shop Food.
+  expect(categorizeVenueTypes(['irish_pub', 'bar'])).toBe('Nightlife');
+  expect(categorizeVenueTypes(['coffee_shop', 'cafe', 'food'])).toBe('Food');
+  const keyOf = (c) => glyphPaths(c).join('|');
+  const drawn = ['Food', 'Nightlife', 'Cafe', 'Beer', 'Wine', 'Games', 'Place'].map(keyOf);
+  expect(new Set(drawn).size).toBe(7);
+  const { container: cup } = render(<CategoryGlyph category="Cafe" />);
+  const { container: coffee } = render(<span>{Icons.coffee('currentColor', 20)}</span>);
+  expect(cup.querySelector('svg').innerHTML).toBe(coffee.querySelector('svg').innerHTML);
 });
 
 test('bar is a type of its own, never the letters inside another', () => {

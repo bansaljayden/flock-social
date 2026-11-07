@@ -26,7 +26,17 @@ import Icons, { iconMarkup } from '../components/ui/Icons';
 // stemmed glass (`cocktail`), the note (`music`), the ball (`sports`) and the
 // map pin (`mapPin`) for anything else. This file kept a second set of path
 // data, drawn at its own strokes; the glyphs are the app's own now.
-const GLYPHS = { Food: 'food', Nightlife: 'cocktail', 'Live Music': 'music', Sports: 'sports', Place: 'mapPin' };
+//
+// FOUR FINER KINDS (2026-11-07). The drinks stopped sharing drawings, so a
+// coffee shop draws the steaming cup (`coffee`), a pub or a brewery the
+// foam-headed mug (`beer`), a wine bar or a winery the tall bowl (`wine`), and
+// an arcade the controller (`gamepad`), where the first three drew the fork
+// and knife or the cocktail glass and the arcade the plain place mark. Only
+// the glyph is finer: the filters keep their five categories.
+const GLYPHS = {
+  Food: 'food', Nightlife: 'cocktail', 'Live Music': 'music', Sports: 'sports', Place: 'mapPin',
+  Cafe: 'coffee', Beer: 'beer', Wine: 'wine', Games: 'gamepad',
+};
 const keyFor = (category) => (
   (typeof category === 'string' && Object.prototype.hasOwnProperty.call(GLYPHS, category) && GLYPHS[category]) || GLYPHS.Place
 );
@@ -84,12 +94,28 @@ export const categorizeVenueTypes = (types) => {
 // Food when the listing's types say so, by the rule above, and Place, the
 // place mark, for everything else (a shop, a park, a museum, a listing with
 // no types at all), where the filters' category falls back to Food.
+//
+// Within those, the finer kinds above, read off whole types only: a wine bar
+// or a winery is Wine, a pub, brewery or beer hall Beer (and stays Nightlife
+// to the filters), a coffee shop, cafe or tea house that is not also a
+// restaurant Cafe, and an arcade or amusement centre Games.
+const WINE_TYPE = /^(?:wine_bar|winery|wine_lounge)$/;
+const BEER_TYPE = /^(?:pub|[a-z_]+_pub|brewery|brewpub|beer_garden|beer_hall|taproom)$/;
+const CAFE_TYPE = /^(?:cafe|coffee_shop|tea_house|cafeteria_coffee|coffee)$/;
+const GAMES_TYPE = /^(?:amusement_center|video_arcade|arcade|game_store_arcade)$/;
 export const glyphCategoryFor = (types) => {
   const list = typeTokens(types);
   if (!list.length) return 'Place';
   const category = categorizeVenueTypes(list);
+  if (category === 'Nightlife') {
+    if (list.some((x) => WINE_TYPE.test(x))) return 'Wine';
+    if (list.some((x) => BEER_TYPE.test(x))) return 'Beer';
+    return category;
+  }
   if (category !== 'Food') return category;
+  if (list.some((x) => GAMES_TYPE.test(x))) return 'Games';
   const t = list.join(' ');
+  if (list.some((x) => CAFE_TYPE.test(x)) && !t.includes('restaurant')) return 'Cafe';
   const food = ['restaurant', 'cafe', 'bakery', 'food', 'pizza', 'meal', 'diner', 'juice', 'smoothie', 'brunch', 'breakfast'];
   return food.some((w) => t.includes(w)) ? 'Food' : 'Place';
 };
