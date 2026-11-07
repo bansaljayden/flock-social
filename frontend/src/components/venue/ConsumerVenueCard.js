@@ -1101,11 +1101,11 @@ export function CrowdForecastPanel({
                       const diff = next - cur;
                       const rising = diff >= HOUR_ORDERING_MIN_GAP;
                       const falling = diff <= -HOUR_ORDERING_MIN_GAP;
-                      const arrow = rising ? '↗' : falling ? '↘' : '→';
+                      const arrow = rising ? Icons.trendingUp : falling ? Icons.trendingDown : Icons.arrowRight;
                       const label = rising ? 'Rising' : falling ? 'Falling' : 'Steady';
                       const color = rising ? colors.red : falling ? colors.steel : 'var(--text-secondary)';
                       return (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: 'var(--t-meta)', fontWeight: '500', color }}>{arrow(color, 12)} {label}</span>
                       );
                     })()}
                   </div>
@@ -1673,7 +1673,7 @@ export default function ConsumerVenueCard({
                 {activeVenue.place_id && (() => {
                   const lastCheckin = lastCheckinAt(activeVenue.place_id);
                   const checkedIn = !!lastCheckin && (Date.now() - lastCheckin < 2 * 60 * 60 * 1000);
-                  const label = checkinJustSaved ? 'Checked in ✓' : checkedIn ? 'Checked in ✓' : 'Check in';
+                  const label = checkinJustSaved || checkedIn ? <>{Icons.check('currentColor', 14)} Checked in</> : 'Check in';
                   const disabled = checkedIn || checkinSaving;
                   // EXACTLY ONE FILLED BUTTON IN THIS STACK, AND IT IS THE ONE
                   // THAT DOES SOMETHING. The slot above renders a solid navy
@@ -1711,6 +1711,7 @@ export default function ConsumerVenueCard({
                         fontSize: 'var(--t-meta)',
                         opacity: checkinSaving ? 0.6 : 1,
                         transition: 'opacity 0.3s ease, background-color 0.2s ease',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
                       }}
                     >
                       {checkinSaving ? 'Checking in...' : label}

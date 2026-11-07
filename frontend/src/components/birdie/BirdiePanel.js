@@ -675,7 +675,7 @@ export default function BirdiePanel({
                       else if (nav.profile_section === 'edit') setProfileScreen('edit');
                       closeAiChat();
                     }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
-                      {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
+                      {Icons.arrowRight('white', 14)} Take me there
                     </button>
                   )}
                   {msg.flockDraft && (

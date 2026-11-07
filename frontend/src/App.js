@@ -21752,11 +21752,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <style>{`
         .btn-confirmed { position: relative !important; overflow: hidden !important; pointer-events: none !important; }
         .btn-confirmed::after {
-          content: '✓';
+          content: '';
           position: absolute; inset: 0;
-          display: flex; align-items: center; justify-content: center;
-          background: #22c55e; color: white;
-          font-size: 18px; font-weight: 800;
+          background: #15803d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.29' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 12.5 9.5 18 20 7.5'/%3E%3C/svg%3E") center / 20px 20px no-repeat;
           border-radius: inherit;
           animation: confirmPop 1.1s ease-out forwards;
         }
