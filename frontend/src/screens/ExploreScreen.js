@@ -429,7 +429,7 @@ export default function ExploreScreen({
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <BirdieStill size={48} style={{ flexShrink: 0 }} />
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
-          {!/again in \d+|turned off right now/i.test(venueLoadError || '') && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
+          {!/again in \d+/i.test(venueLoadError || '') && !(!locationError && /turned off right now/i.test(venueLoadError || '')) && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
         </div>
       )}
 
