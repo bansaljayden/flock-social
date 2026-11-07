@@ -255,7 +255,7 @@ export default function ChatListScreen({
           {filteredDms.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct messages</span>
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>Direct messages</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
               </div>
               {filteredDms.map((dm) => {
@@ -300,9 +300,9 @@ export default function ChatListScreen({
           {pendingFlockInvites.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Pending invites</span>
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>Pending invites</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: '#F59E0B', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
+                <span style={{ width: '18px', height: '18px', borderRadius: '9px', backgroundColor: 'var(--accent-amber-bg)', color: 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
               </div>
               {pendingFlockInvites.map((f) => {
                 // A notification tap for this invite lands on this list, so the
@@ -380,7 +380,7 @@ export default function ChatListScreen({
           {filteredFlocks.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Flocks</span>
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>Flocks</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
                 <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{filteredFlocks.length}</span>
               </div>
@@ -400,7 +400,8 @@ export default function ChatListScreen({
                 // default: a purple chip reading "Planning" on a plan that is
                 // off. It gets its own word, in the list's neutral grey.
                 const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'cancelled' ? '#9CA3AF' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
-                // statusColor is the DOT (decorative, keeps the vivid hue). The chip
+                // statusColor tints the chip (there is no avatar dot: it repeated the
+                // chip beside it). The chip
                 // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
                 // versions measured 2.02:1 ("Voting") to 2.28:1. These tokens are
                 // theme-aware and clear 4.5:1 on both the light and dark card.
@@ -448,10 +449,6 @@ export default function ChatListScreen({
                             </div>
                           );
                         })()}
-                        {/* Status dot */}
-                        <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '14px', height: '14px', borderRadius: '7px', backgroundColor: statusColor, border: '2px solid var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {f.status === 'confirmed' && <span style={{ fontSize: 'var(--t-meta)', color: 'white', fontWeight: '500' }}>&#10003;</span>}
-                        </div>
                       </div>
 
                       {/* Content */}
@@ -524,7 +521,7 @@ export default function ChatListScreen({
           {filteredDeclinedInvites.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Declined</span>
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>Declined</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
               </div>
               {filteredDeclinedInvites.map((f) => (
