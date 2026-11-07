@@ -19,6 +19,7 @@
  * pin that forgets this fails for reasons that have nothing to do with copy.
  */
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -86,6 +87,28 @@ describe('the social card says what the page says', () => {
     // Facebook and Twitter both fetch this on every share. It was 84 KB by
     // hand and 92 KB generated; 300 KB is room to redesign, not a target.
     expect(png.length).toBeLessThan(300 * 1024);
+  });
+
+  test('every og:image names the PNG by its hash, so a new card is a new URL', () => {
+    /* Cloudflare's edge keeps /og-image.png for a day (cloudflare/_headers)
+       and preview sites keep an image by its URL for longer, so a card
+       regenerated under the same name went on showing the old one after a
+       publish. Each og:image ends in ?v= and the first 8 hex digits of the
+       PNG's sha256. When this fails after a regeneration, put the hash it
+       names into all three files. */
+    const png = fs.readFileSync(path.join(FRONTEND, 'public', 'og-image.png'));
+    const v = crypto.createHash('sha256').update(png).digest('hex').slice(0, 8);
+    const url = `https://www.flockcorp.com/og-image.png?v=${v}`;
+
+    expect(indexHtml).toContain(`<meta property="og:image" content="${url}" />`);
+    expect(indexHtml).toContain(`<meta name="twitter:image" content="${url}" />`);
+    expect(marketingPage).toContain(`const OG_IMAGE = CANONICAL_HOST + '/og-image.png?v=${v}';`);
+    expect(invitePreview).toContain(`const OG_IMAGE = CANONICAL_HOST + '/og-image.png?v=${v}';`);
+    // and no other copy of the address, versioned or not, beside them
+    expect([...indexHtml.matchAll(/content="([^"]*og-image[^"]*)"/g)].map((m) => m[1])).toEqual([url, url]);
+    for (const text of [marketingPage, invitePreview]) {
+      expect([...text.matchAll(/'\/og-image\.png([^'\s]*)'/g)].map((m) => m[1])).toEqual([`?v=${v}`]);
+    }
   });
 
   test('the card is newer than the headline that is baked into it', () => {

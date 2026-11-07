@@ -136,6 +136,13 @@
          - og:image must be an ABSOLUTE url on the canonical host. www is
            canonical; the apex 308-redirects to it, and several scrapers do not
            follow redirects when fetching an image.
+         - og:image and twitter:image end in ?v= and the first 8 hex digits of
+           og-image.png's sha256. Cloudflare's edge keeps /og-image.png for a
+           day (cloudflare/_headers) and preview sites keep an image by its URL
+           for longer, so a card regenerated under the same name went on
+           showing the old one. A new hash is a new URL no cache holds.
+           ogImageCopy.test.js fails until this file, api/marketing-page.js
+           and api/invite-preview.js all name the PNG's current hash.
          - There is deliberately NO og:url. A static one would claim every
            invite link IS the homepage, and Facebook/Messenger would then
            collapse the preview onto flockcorp.com and send the tap there
@@ -152,7 +159,7 @@
          ═══════════════════════════════════════════════════════════════════ -->
     <meta property="og:title" content="Flock | Nurturing friendship, one flock at a time" />
     <meta property="og:description" content="Everyone gets a vote, and nobody has to say their budget out loud." />
-    <meta property="og:image" content="https://www.flockcorp.com/og-image.png" />
+    <meta property="og:image" content="https://www.flockcorp.com/og-image.png?v=a71b92de" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:type" content="image/png" />
@@ -163,7 +170,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Flock | Nurturing friendship, one flock at a time" />
     <meta name="twitter:description" content="Everyone gets a vote, and nobody has to say their budget out loud." />
-    <meta name="twitter:image" content="https://www.flockcorp.com/og-image.png" />
+    <meta name="twitter:image" content="https://www.flockcorp.com/og-image.png?v=a71b92de" />
     <meta name="twitter:image:alt" content="Flock. Nurturing friendship, one flock at a time." />
 
     <!-- Icons. The sizes below are the real contents of each file, not a wish

@@ -131,8 +131,10 @@ const CANONICAL_HOST = 'https://www.flockcorp.com';
 
 // Absolute, on the canonical host, because several scrapers do not follow the
 // apex -> www redirect when fetching an image. Same file and same dimensions as
-// the default tags in public/index.html; keep them in sync.
-const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
+// the default tags in public/index.html; keep them in sync. ?v= is the first
+// 8 hex digits of og-image.png's sha256, so a regenerated card is a URL no
+// cache holds yet; ogImageCopy.test.js holds all three copies to the file.
+const OG_IMAGE = CANONICAL_HOST + '/og-image.png?v=a71b92de';
 const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one flock at a time.';
 
 // The per-flock card URL carries a signature when OG_CARD_SECRET is set. The

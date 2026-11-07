@@ -101,7 +101,11 @@
 // ---------------------------------------------------------------------------
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
-const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
+// ?v= is the first 8 hex digits of og-image.png's sha256, so a regenerated
+// card is a URL no cache holds yet (public/index.html says why; the same
+// URL is there and in invite-preview.js, held to the file by
+// ogImageCopy.test.js).
+const OG_IMAGE = CANONICAL_HOST + '/og-image.png?v=a71b92de';
 const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one flock at a time.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
