@@ -155,9 +155,7 @@ export default function NestBirdieSection({
                 aria-hidden={inputHasText ? undefined : 'true'}
                 style={{ position: 'absolute', right: '10px', top: '10px', width: '32px', height: '32px', borderRadius: '999px', border: 'none', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', opacity: inputHasText ? 1 : 0, transition: 'opacity 150ms ease', pointerEvents: inputHasText ? 'auto' : 'none' }}
               >
-                <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-                </svg>
+                {Icons.send('currentColor', 15)}
               </button>
             </div>
             {outOfChirps && (

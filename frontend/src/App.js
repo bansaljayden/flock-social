@@ -18300,7 +18300,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 filled button. */}
             {(flocksLoading || liveFlocks.length > 0) && (
               <button type="button" className="hit44" onClick={() => setCurrentScreen('create')} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '0 2px', minHeight: '36px', border: 'none', background: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                {Icons.plus('var(--accent-purple-text)', 15)} Start a flock
+                {Icons.startFlock('var(--accent-purple-text)', 18)} Start a flock
               </button>
             )}
             <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
@@ -18372,7 +18372,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 create screen, where a plan can be drawn up and the gate is
                 met at Create, with the sheet that fixes it. */}
             <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: emailUnconfirmed ? 'var(--bg-card-solid)' : 'var(--btn-primary-bg)', color: emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              {Icons.plus(emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', 16)} Start a flock
+              {Icons.startFlock(emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', 20)} Start a flock
             </button>
             <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.userPlus('var(--text-primary)', 16)} Add friends

@@ -489,11 +489,7 @@ export default function BirdiePanel({
               )}
               {/* Expand/Collapse toggle */}
               <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {isAiFullscreen ? (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-                ) : (
-                  <svg aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" /></svg>
-                )}
+                {(isAiFullscreen ? Icons.minimize : Icons.maximize)('currentColor', 14)}
               </button>
               {/* Close */}
               <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-primary)', 14)}</button>
@@ -890,9 +886,7 @@ export default function BirdiePanel({
                     opacity the entire time, so it looked disabled and was not.
                     One value now drives both the look and the behaviour. */}
                 <button aria-label="Send" className="hit44" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.15s ease, opacity 0.15s ease', opacity: canSendAi ? 1 : 0.4 }}>
-                  <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
-                  </svg>
+                  {Icons.send('currentColor', 16)}
                 </button>
               </div>
               {/* OUT OF CHIRPS: say so, say when they come back, and offer the
