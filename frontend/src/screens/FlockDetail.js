@@ -815,7 +815,7 @@ export default function FlockDetail({
                   const guestReportId = isGuest ? (member.guestId ?? null) : null;
                   const canReport = guestReportId != null;
                   const tappable = canOpen || canReport;
-                  const bgColors = [colors.navy, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
+                  const bgColors = [colors.navyBg, colors.navyMid, colors.steel, colors.amber, '#4a7ba7', '#ec4899'];
                   const boxStyle = { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', minWidth: '54px' };
                   const inner = (
                     <>
