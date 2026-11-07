@@ -18140,7 +18140,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         name: f.name,
         time: cardTime(f.eventTime, g.label, nestNow),
         place: placeLine(f.venue),
-        faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || [])),
+        faces: heroFaces(Array.isArray(f.memberPreviews) && f.memberPreviews.length ? f.memberPreviews : (f.members || []), authUser?.id),
         total: f.memberCount || 1,
         chip: planChip(f, { needsVote: f.status === 'voting' && !f.timePassed && needsMyVote(f), voted: iHaveVoted(f) }),
         onClick: () => openPlan(f.id),
@@ -18279,7 +18279,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             when={whenLine(heroFlock.eventTime, nestNow)}
             status={heroStatus(heroFlock)}
             place={placeLine(heroFlock.venue)}
-            faces={heroFaces(Array.isArray(heroFlock.memberPreviews) && heroFlock.memberPreviews.length ? heroFlock.memberPreviews : (heroFlock.members || []))}
+            faces={heroFaces(Array.isArray(heroFlock.memberPreviews) && heroFlock.memberPreviews.length ? heroFlock.memberPreviews : (heroFlock.members || []), authUser?.id)}
             total={heroFlock.memberCount || 1}
             names={heroNames(heroFlock.memberPreviews, heroFlock.memberCount, authUser?.id)}
             note={heroNote(heroFlock, authUser?.id)}

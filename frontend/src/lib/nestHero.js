@@ -33,15 +33,18 @@ export function heroNames(previews, total, myId) {
 }
 
 /**
- * The faces to draw: the previews in their order (creator first), as
- * { key, name, image }. The reader's own face is one of them when they are in
- * the four.
+ * The faces to draw, as { key, name, image }: the previews in their order
+ * (creator first), except that the reader's own face, when they are among
+ * the four, leads, as "You" leads the names line beside it. On Sam's plan
+ * the faces read S, M while the line said "You and Sam".
  */
-export function heroFaces(previews) {
+export function heroFaces(previews, myId) {
   const list = Array.isArray(previews) ? previews : [];
-  return list.map((m, i) => (typeof m === 'string'
-    ? { key: `s${i}`, name: m, image: null }
-    : { key: m.id ?? `i${i}`, name: m.name || '', image: m.profile_image_url || m.image || null }));
+  const faces = list.map((m, i) => (typeof m === 'string'
+    ? { key: `s${i}`, name: m, image: null, me: false }
+    : { key: m.id ?? `i${i}`, name: m.name || '', image: m.profile_image_url || m.image || null, me: myId != null && m.id != null && String(m.id) === String(myId) }));
+  const ordered = [...faces.filter((f) => f.me), ...faces.filter((f) => !f.me)];
+  return ordered.map(({ me, ...face }) => face);
 }
 
 /**

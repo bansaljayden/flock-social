@@ -151,6 +151,25 @@ describe('the names line', () => {
     expect(heroFaces([{ id: 7, name: 'Jordan', profile_image_url: '/j.png' }, 'Sam']))
       .toEqual([{ key: 7, name: 'Jordan', image: '/j.png' }, { key: 's1', name: 'Sam', image: null }]);
   });
+
+  test("the reader's face leads, as You leads the names", () => {
+    // Sam's plan: the faces read S, M while the line beside them said "You
+    // and Sam".
+    const sams = [{ id: 7, name: 'Sam Rivera' }, { id: 3, name: 'Maya Chen' }];
+    expect(heroFaces(sams, 3).map((p) => p.name)).toEqual(['Maya Chen', 'Sam Rivera']);
+    expect(heroNames(sams, 2, 3)).toBe('You and Sam');
+    // Not among the four, or not known: the preview order stands.
+    expect(heroFaces(sams, 99).map((p) => p.key)).toEqual([7, 3]);
+    expect(heroFaces(sams).map((p) => p.key)).toEqual([7, 3]);
+  });
+
+  test('the Nest hands the reader to every face row it draws', () => {
+    const APP = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+    const home = APP.slice(APP.indexOf('const HomeScreen = () => {'), APP.indexOf('// The past flocks screen was declared here'));
+    const calls = home.match(/heroFaces\([^\n]*\)/g) || [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const c of calls) expect(c).toMatch(/, authUser\?\.id\)$/);
+  });
 });
 
 describe('the one button', () => {
