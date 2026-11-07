@@ -526,7 +526,7 @@ export default function FlockProfileSheet({
         <Group id="money" label="Money">
           {pool ? (
             <Row
-              glyph={Icons.dollar}
+              glyph={Icons.nestEgg}
               label={pool.line}
               value={pool.valueLabel}
               onClick={onOpenPool}
@@ -534,7 +534,7 @@ export default function FlockProfileSheet({
           ) : null}
           {bill ? (
             <Row
-              glyph={Icons.creditCard}
+              glyph={Icons.splitBill}
               label={bill.line}
               value={bill.valueLabel}
               onClick={onOpenBill}

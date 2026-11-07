@@ -890,7 +890,7 @@ export default function CreateScreen({
           <FormGroup>
             <FormRow>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <IconBox>{Icons.dollar(colors.navy, 18)}</IconBox>
+                <IconBox>{Icons.nestEgg(colors.navy, 18)}</IconBox>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Group budget</span>
                   <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', lineHeight: 1.45, marginTop: '1px' }}>

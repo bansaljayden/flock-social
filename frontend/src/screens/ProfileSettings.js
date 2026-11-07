@@ -1072,7 +1072,7 @@ export default function ProfileSettings({
                 { l: 'Find me by phone', s: 'phonediscovery', icon: Icons.phone, v: phoneDiscoverable === null ? null : (phoneDiscoverable ? 'On' : 'Off') },
                 // Where Birdie's yes to Gemini can be taken back. The panel
                 // asks once; this is the switch that answer lives behind.
-                { l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.messageSquare, v: birdieConsented ? 'On' : 'Off' },
+                { l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.birdie, size: 16, v: birdieConsented ? 'On' : 'Off' },
               ],
               // A switch rather than a row that opens a page, so it sits under
               // the rows in the same card, drawn like the Device switches. The
@@ -1086,7 +1086,11 @@ export default function ProfileSettings({
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
                 {group.rows.map((m, i) => (
                   <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } if (m.s === 'admin') { openAdminDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
+                    {/* A row may name its own size: Birdie's mark is the one
+                        solid glyph here and draws at 16, where it weighs what
+                        the outlines do at 18 (the composer's sheet does the
+                        same). */}
+                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, m.size || 18)}</div>
                     <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                     {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
                     <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -1564,7 +1568,7 @@ export default function ProfileSettings({
           <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '20px 0 6px' }}>Help</h4>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
             <button className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/support')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.messageSquare(colors.navy, 18)}</div>
+              <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.helpCircle(colors.navy, 18)}</div>
               <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Support</span>
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Questions and problems</span>
               <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -1729,7 +1733,7 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
 
   const premium = isPro || !!status?.isPremium;
   const rowStyle = { width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', textDecoration: 'none', boxSizing: 'border-box' };
-  const icon = <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>;
+  const icon = <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.pro(colors.navy, 18)}</div>;
   const title = (text) => <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{text}</span>;
   const on = <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>;
   const chevron = <span aria-hidden="true" style={{ color: 'var(--text-tertiary)' }}>›</span>;

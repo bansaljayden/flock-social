@@ -4800,7 +4800,7 @@ export default function RevenueScreen({
                   { lever: 'Venue Acquisition', impact: 'High', effort: 'Medium', icon: Icons.building },
                   { lever: 'User Referrals', impact: 'High', effort: 'Low', icon: Icons.users },
                   { lever: 'City Expansion', impact: 'Very High', effort: 'High', icon: Icons.globe },
-                  { lever: 'Premium Upsells', impact: 'Medium', effort: 'Low', icon: Icons.sparkles },
+                  { lever: 'Premium Upsells', impact: 'Medium', effort: 'Low', icon: Icons.pro },
                 ].map(item => (
                   <div key={item.lever} className="hub-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', minHeight: '40px', padding: '6px 0' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>

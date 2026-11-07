@@ -1151,9 +1151,6 @@ const Icons = {
     </>
   ),
 
-  // The old name of `pro`, kept only until its last two callers move.
-  sparkles: PRO_ICON,
-
   sports: make(
     <>
       <circle cx="12" cy="12" r="9" />

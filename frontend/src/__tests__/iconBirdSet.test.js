@@ -19,9 +19,24 @@
  *   cd frontend && CI=true npx react-scripts test iconBirdSet --watchAll=false
  */
 
+const fs = require('fs');
+const path = require('path');
 const { renderToStaticMarkup } = require('react-dom/server');
 const Icons = require('../components/ui/Icons').default;
 const { sw, EGG_D } = require('../components/ui/Icons');
+
+const SRC = path.join(__dirname, '..');
+const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
+/** Every .js file under src except the tests, as [relative path, text]. */
+function sources(dir = SRC, out = []) {
+  for (const name of fs.readdirSync(dir)) {
+    const full = path.join(dir, name);
+    if (name === '__tests__' || name === 'node_modules') continue;
+    if (fs.statSync(full).isDirectory()) sources(full, out);
+    else if (name.endsWith('.js')) out.push([path.relative(SRC, full).split(path.sep).join('/'), fs.readFileSync(full, 'utf8')]);
+  }
+  return out;
+}
 
 const TAB_PAIRS = [
   ['nest', 'nestFilled'],
@@ -357,5 +372,48 @@ describe('the egg and the rest of the set', () => {
       [...draw(key).querySelectorAll('path[fill-rule="evenodd"]')].map((p) => p.getAttribute('d')).join(' ')
     ));
     expect(punched.sort()).toEqual(['discoverFilled', 'nestFilled', 'plansFilled']);
+  });
+});
+
+describe('where the set is drawn', () => {
+  const ALL = sources();
+
+  test('sparkles is retired: Flock Pro draws pro, and Birdie is the AI mark', () => {
+    expect(Icons.sparkles).toBeUndefined();
+    const callers = ALL.filter(([, text]) => /Icons\.sparkles\b/.test(text)).map(([file]) => file);
+    expect(callers).toEqual([]);
+    expect(read('screens', 'ProfileSettings.js')).toContain('{Icons.pro(colors.navy, 18)}');
+    expect(read('screens', 'RevenueScreen.js')).toMatch(/lever: 'Premium Upsells'[^\n]*icon: Icons\.pro \}/);
+  });
+
+  test('the settings rows: Birdie and Google Gemini wears Birdie, Support wears help', () => {
+    const settings = read('screens', 'ProfileSettings.js');
+    expect(settings).toContain("icon: Icons.birdie, size: 16, v: birdieConsented ? 'On' : 'Off' }");
+    expect(settings).toContain('{m.icon(colors.navy, m.size || 18)}');
+    expect(settings).toMatch(/\{Icons\.helpCircle\(colors\.navy, 18\)\}<\/div>\s*<span[^>]*>Support<\/span>/);
+  });
+
+  test('a flock\'s money: the cash pool and the budget are a nest egg, the bill a torn receipt', () => {
+    const composer = read('components', 'chat', 'sheets', 'ComposerPlusSheet.js');
+    expect(composer).toContain("const moneyGlyph = isDm ? Icons.dollar : Icons.splitBill;");
+    expect(composer).toContain("{ key: 'pool', glyph: Icons.nestEgg, label: 'Cash pool', onClick: onCashPool },");
+    const profile = read('components', 'chat', 'sheets', 'FlockProfileSheet.js');
+    expect(profile).toMatch(/glyph=\{Icons\.nestEgg\}\s*label=\{pool\.line\}/);
+    expect(profile).toMatch(/glyph=\{Icons\.splitBill\}\s*label=\{bill\.line\}/);
+    expect(read('screens', 'CreateScreen.js')).toMatch(/\{Icons\.nestEgg\(colors\.navy, 18\)\}<\/IconBox>[\s\S]{0,260}Group budget/);
+  });
+
+  test('Start Flock hatches an egg, never at a size the egg cannot hold', () => {
+    expect(read('screens', 'ExploreScreen.js')).toContain("{Icons.startFlock('white', 15)} Start Flock");
+    expect(read('components', 'EventDetailOverlay.js')).toContain("{Icons.startFlock('white', 16)} Start Flock");
+  });
+
+  test('every literal size the egg glyphs are called at clears their floors (startFlock 15, nestEgg 16)', () => {
+    const floors = { startFlock: 15, nestEgg: 16 };
+    for (const [file, text] of ALL) {
+      for (const m of text.matchAll(/Icons\.(startFlock|nestEgg)\([^()]*?,\s*(\d+)\s*[,)]/g)) {
+        expect({ file, call: m[0], ok: Number(m[2]) >= floors[m[1]] }).toEqual({ file, call: m[0], ok: true });
+      }
+    }
   });
 });

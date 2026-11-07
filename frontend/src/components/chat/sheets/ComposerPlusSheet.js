@@ -100,7 +100,7 @@ export default function ComposerPlusSheet({
 
   const moneyHandler = isDm ? onRequestCash : onSplitBill;
   const moneyLabel = isDm ? 'Request cash' : 'Split the bill';
-  const moneyGlyph = isDm ? Icons.dollar : Icons.creditCard;
+  const moneyGlyph = isDm ? Icons.dollar : Icons.splitBill;
 
   // Order is the order of use, not of importance: the two photo actions are
   // what the "+" is opened for most, and Check in is the end of a night.
@@ -123,7 +123,7 @@ export default function ComposerPlusSheet({
        largest and darkest thing in the sheet. */
     { key: 'birdie', glyph: Icons.birdie, label: 'Ask Birdie', onClick: onAskBirdie, size: 20 },
     { key: 'votes', glyph: Icons.vote, label: 'Venue votes', onClick: onVenueVotes },
-    { key: 'pool', glyph: Icons.dollar, label: 'Cash pool', onClick: onCashPool },
+    { key: 'pool', glyph: Icons.nestEgg, label: 'Cash pool', onClick: onCashPool },
     { key: 'invite', glyph: Icons.userPlus, label: 'Invite friends', onClick: onInviteFriends },
     { key: 'search', glyph: Icons.search, label: 'Search chat', onClick: onSearchMessages },
     { key: 'checkin', glyph: Icons.checkCircle, label: 'Check in', onClick: onCheckIn },

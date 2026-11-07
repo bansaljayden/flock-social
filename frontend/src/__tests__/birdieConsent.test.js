@@ -355,7 +355,9 @@ describe('Settings: the answer can be taken back', () => {
 
   test('a row under Safety and privacy leads to it, showing the current answer', () => {
     const group = settings.slice(settings.indexOf("g: 'Safety and privacy'"), settings.indexOf("g: 'Safety and privacy'") + 1500);
-    expect(group).toContain("{ l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.messageSquare, v: birdieConsented ? 'On' : 'Off' }");
+    // The row carries Birdie's own mark (2026-11-07), a size under the
+    // outlined rows because it is the one solid glyph in the list.
+    expect(group).toContain("{ l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.birdie, size: 16, v: birdieConsented ? 'On' : 'Off' }");
     expect(read('App.js')).toContain("birdieai: 'Birdie and Google Gemini',");
   });
 
