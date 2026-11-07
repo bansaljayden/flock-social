@@ -4016,7 +4016,7 @@ export default function ChatDetail({
                       is what it should be called, so an open form wins the
                       title and the budget only takes it when no form is over
                       it. */}
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the bill' : 'Group budget'}</h2>
+                  <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the bill' : 'Group budget'}</h2>
                   <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
                 </div>
@@ -4704,7 +4704,7 @@ export default function ChatDetail({
                 <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
-                    <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a venue</h2>
+                    <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a venue</h2>
                     {/* The tally is empty until it is read, and an empty tally
                         counted "0 votes cast" over votes that existed. The
                         count's line is drawn instead until the read lands. */}
@@ -4966,7 +4966,7 @@ export default function ChatDetail({
             {/* SAFE-AREA rule 1, as on the vote sheet above. */}
             <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
                 <button aria-label="Close" className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
 
@@ -5124,7 +5124,7 @@ export default function ChatDetail({
               <div className="sheet-grab" {...inviteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '20px 20px 0' }}>
               <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Invite friends</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Invite friends</h3>
                 <button aria-label="Close" className="hit44" onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
               </div>
               </div>
@@ -5390,7 +5390,7 @@ export default function ChatDetail({
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Leave flock?</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Leave flock?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   {flock.creatorId && String(flock.creatorId) === String(authUser?.id)
                     ? `You're the creator. Leaving will delete "${flock.name}" for everyone.`
@@ -5447,7 +5447,7 @@ export default function ChatDetail({
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
                 <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.ban('var(--accent-red-text)', 24)}</div>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Cancel this plan?</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Cancel this plan?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   {`Cancelling tells everyone in "${flock.name}" that it's off. The chat stays open, but the plan can't be reopened.`}
                 </p>
@@ -5472,7 +5472,7 @@ export default function ChatDetail({
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
             <DialogBehavior onClose={() => { if (newLinkStep !== 'working') setNewLinkStep(null); }} label="Make a new invite link" />
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px', textAlign: 'center' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Make a new link?</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Make a new link?</h3>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
                 The current link stops working right away, for everyone who has it. People who already joined with it stay in the plan.
               </p>

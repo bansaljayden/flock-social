@@ -132,7 +132,7 @@ const PaymentSheets = ({
               </>
             ) : (
               <>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
                 {/* The money is the same whether or not there is a link to open. */}
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
               </>
@@ -221,7 +221,7 @@ const PaymentSheets = ({
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
             <DialogBehavior onClose={close} label={`Pay ${payTo || 'them'} with ${label}`} />
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>
                 {reason === 'instructions' ? `Pay ${payTo || 'them'} with ${label}` : `${label} did not open`}
               </h3>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>

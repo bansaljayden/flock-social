@@ -569,7 +569,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   if (state === 'locked') {
     return (
       <div style={CARD_STYLE}>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 4px' }}>{FEATURE_NAME}</h3>
+        <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '0 0 4px' }}>{FEATURE_NAME}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{lockedReason}</p>
       </div>
     );
@@ -578,7 +578,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   if (state === 'error') {
     return (
       <div style={CARD_STYLE}>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
+        <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
         <BirdNote
           layout="row"
           bird={WARM_BIRD}
@@ -622,7 +622,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   if (payload && payload.available === false) {
     return (
       <div style={CARD_STYLE}>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
+        <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
         <BirdNote layout="row" bird={WARM_BIRD} size={48} body={payload.unverified ? UNVERIFIED_NOTE : (payload.reason || 'Nothing to show yet.')} style={{ marginBottom: '10px' }} />
       </div>
     );
@@ -721,7 +721,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
 
   const renderCardShell = (card, children) => (
     <div key={card.id} style={CARD_STYLE}>
-      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 4px' }}>{card.title}</h3>
+      <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '0 0 4px' }}>{card.title}</h3>
       {children}
     </div>
   );
@@ -785,7 +785,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
           never restated. */}
       {showHero && (
         <div style={CARD_STYLE}>
-          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: heroSub ? '0 0 2px' : '0 0 4px' }}>{heroTitle}</h3>
+          <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: heroSub ? '0 0 2px' : '0 0 4px' }}>{heroTitle}</h3>
           {heroSub && <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>{heroSub}</p>}
           {hasLive && liveRowEl(true)}
           {heroDay && <EntryRow entry={heroDay.entry} first={!hasLive} navy={navy} />}

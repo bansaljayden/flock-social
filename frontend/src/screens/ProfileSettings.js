@@ -552,7 +552,7 @@ export default function ProfileSettings({
                   {/* The count is only shown once a read has landed. A "(0)"
                       over a list nobody could fetch is the same false claim as
                       the empty state underneath it. */}
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
+                  <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
 
                   {/* The rows that are coming, in the row's shape: the 40px
                       initial, the name and number lines, Edit and Remove,
@@ -770,7 +770,7 @@ export default function ProfileSettings({
                   <div onClick={() => { if (!unblockingId) setUnblockTarget(null); }} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
                     <DialogBehavior onClose={() => setUnblockTarget(null)} label={`Unblock ${unblockTarget.name || 'this account'}`} />
                     <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
-                      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Unblock {unblockTarget.name || 'this account'}?</h3>
+                      <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Unblock {unblockTarget.name || 'this account'}?</h3>
                       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 18px', lineHeight: 1.5 }}>They will be able to message you and see your activity again. You can block them again at any time.</p>
                       <div style={{ display: 'flex', gap: '10px' }}>
                         <button className="hit44" disabled={!!unblockingId} onClick={() => setUnblockTarget(null)} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
@@ -1290,7 +1290,7 @@ export default function ProfileSettings({
             <div onClick={() => !exportingData && setShowExportData(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
             <DialogBehavior onClose={() => setShowExportData(false)} label="Get a copy of my data" />
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Get a copy of my data</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Get a copy of my data</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>A JSON file with your profile, flocks, messages, votes, budgets, reviews, check-ins, friends and trusted contacts. Photos in messages and your profile photo are not included; they stay visible in the app. Our Privacy Policy lists the few things left out and why.</p>
                 {/* An Apple or Google account has no password here, and the box
                     invited them to type the one they use with Apple or Google
@@ -1361,7 +1361,7 @@ export default function ProfileSettings({
             <div onClick={() => !deletingAccount && setShowDeleteAccount(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
             <DialogBehavior onClose={() => setShowDeleteAccount(false)} label="Delete account" />
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. The exception is a plan whose bill somebody else paid and somebody besides you still owes on, which passes to the person who paid, or to another member if they have left the plan or been banned. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Only once there is a subscription to speak of; Apple expects
                     the sheet to say deletion does not cancel one. A

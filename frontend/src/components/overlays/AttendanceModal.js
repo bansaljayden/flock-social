@@ -79,7 +79,7 @@ const AttendanceModal = ({
             <DialogBehavior onClose={() => setShowAttendanceModal(false)} label="Who showed up" />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', maxHeight: '80vh', overflow: 'auto' }}>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 4px' }}>Who showed up?</h2>
+              <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>Who showed up?</h2>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Updates everyone's reliability score</p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>

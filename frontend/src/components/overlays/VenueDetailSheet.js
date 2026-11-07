@@ -598,7 +598,7 @@ const VenueDetailSheet = ({
                   {/* Hours */}
                   {venueDetailModal.opening_hours?.weekdayDescriptions && (
                     <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                      <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Hours</h4>
+                      <h4 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Hours</h4>
                       {venueDetailModal.opening_hours.weekdayDescriptions.map((day, i) => {
                         const today = new Date().getDay();
                         const isToday = i === (today === 0 ? 6 : today - 1);
@@ -610,7 +610,7 @@ const VenueDetailSheet = ({
                   {/* Contact */}
                   {(venueDetailModal.formatted_phone_number || venueDetailModal.website) && (
                     <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                      <h4 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Contact</h4>
+                      <h4 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Contact</h4>
                       {venueDetailModal.formatted_phone_number && (
                         <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
                           {Icons.phone(colors.navy, 16)}

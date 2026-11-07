@@ -187,7 +187,7 @@ export default function AddFriends({
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
             <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0, flex: 1 }}>Add friends</h1>
+            <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Add friends</h1>
             {pendingRequests.length > 0 && (
               <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length} new</span>
             )}
@@ -229,7 +229,7 @@ export default function AddFriends({
             <div style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <div style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('var(--accent-amber-text)', 14)}</div>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Friend requests</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Friend requests</h2>
                 <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>
               </div>
               {pendingRequests.map(req => (
@@ -393,7 +393,7 @@ export default function AddFriends({
                 />
               ) : (
                 <>
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h2>
+                  <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h2>
                   {friendSuggestions.map(user => {
                     const status = friendStatuses[user.id] || 'none';
                     return (
@@ -427,7 +427,7 @@ export default function AddFriends({
             <div>
               {/* My QR Code */}
               <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>My Flock code</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>My Flock code</h2>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 16px' }}>Friends can scan this to add you</p>
                 <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
                   {myFriendCode ? (
@@ -519,7 +519,7 @@ export default function AddFriends({
                   {/* Fixed overlay covers the Dynamic Island: pad the header by the top inset. */}
                   <div style={{ padding: 'calc(16px + var(--safe-top)) 16px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
                     <button aria-label="Close" className="hit44" onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
-                    <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Scan a Flock code</h3>
+                    <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>Scan a Flock code</h3>
                   </div>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
                     <div id={qrScannerDivId} style={{ width: '100%', maxWidth: '340px', borderRadius: '20px', overflow: 'hidden' }} />
@@ -625,7 +625,7 @@ export default function AddFriends({
                   <div style={styles.card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
                       <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 20)}</div>
-                      <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Find friends from your contacts</h2>
+                      <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Find friends from your contacts</h2>
                     </div>
                     {/* Every clause here is something services/contacts.js and
                         backend/routes/friends.js actually do: the projection is
@@ -643,7 +643,7 @@ export default function AddFriends({
                 {/* STATE 3: matches. Flock name and photo only. */}
                 {!contactsLoading && !contactsDenied && matched && (
                   <>
-                    <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Contacts on Flock</h2>
+                    <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Contacts on Flock</h2>
                     {partial ? (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>We checked {contactsResult.checked} of your {contactsResult.total} numbers. Try the rest in an hour.</p>
                     ) : (

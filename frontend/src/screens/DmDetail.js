@@ -1180,7 +1180,7 @@ export default function DmDetail({
               <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a venue</h2>
+                  <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a venue</h2>
                   {/* The tally is a count of other people, so it is only
                       printed when the read that produced it landed. */}
                   {!dmVenueVotesError && (
@@ -1353,7 +1353,7 @@ export default function DmDetail({
           {/* SAFE-AREA rule 1, as on the vote sheet above. */}
           <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
+              <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
               <button aria-label="Close" className="hit44" onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
 
@@ -1480,7 +1480,7 @@ export default function DmDetail({
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px' }}>Delete Conversation?</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Delete Conversation?</h3>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.name}? Messages will be removed from your view.</p>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -1647,7 +1647,7 @@ export default function DmDetail({
              same reason; this covers the other way a thread comes back empty. */
           <div role="alert" style={{ textAlign: 'center', padding: '40px 20px' }}>
             <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 12px' }} />
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This conversation did not load</h3>
+            <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This conversation did not load</h3>
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Nothing has been lost. The messages are on the server and this screen could not reach them.</p>
             <button className="hit44 glass-btn glass-navy" onClick={reloadDmMessages} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
           </div>
@@ -1660,7 +1660,7 @@ export default function DmDetail({
             <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: colors.navyBg, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
               {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
             </div>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>{dmBlocked[String(selectedDmId)] ? selectedDm.name : `Chat with ${selectedDm.name}`}</h3>
+            <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>{dmBlocked[String(selectedDmId)] ? selectedDm.name : `Chat with ${selectedDm.name}`}</h3>
             {/* A blocked pair is shown no messages at all, so this is where a
                 conversation with months of history landed. It must not read as
                 a fresh chat waiting for a hello. */}

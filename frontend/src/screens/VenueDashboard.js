@@ -691,7 +691,7 @@ export default function VenueDashboard({
             const saysLabel = venueBusyNow.attribution || 'the venue says';
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                 {venueBusyNow.suppressed ? (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
@@ -1183,7 +1183,7 @@ export default function VenueDashboard({
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }} aria-hidden>
           {Icons.lock('#2d5a87', 32)}
         </div>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
+        <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
         {(process.env.REACT_APP_PURCHASES !== 'off') && !native ? (<>
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
@@ -1346,7 +1346,7 @@ export default function VenueDashboard({
               this dashboard has already had to remove twice. */}
           {venueTab === 'analytics' && venueBusyNow && !venueBusyNow.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
               {/* While the intel card right below is on screen saying the
                   venue is not verified (with the button), this card says only
                   what is closed. Printing the server's sentence here too made
@@ -1380,7 +1380,7 @@ export default function VenueDashboard({
                   one sits where the slider would have been. */}
               {venueBusyNow && !venueBusyNow.available && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
+                  <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
                   {/* No tier condition here. This tab holds no intel card, so
                       there is nothing on it to duplicate. */}
@@ -1602,7 +1602,7 @@ export default function VenueDashboard({
             ];
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>Last {tw.windowDays} days. Counted from your venue's own activity, nothing modeled.</p>
                 {rows.map((r, i) => (
                   <div key={r.key} style={{ padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
@@ -1615,7 +1615,7 @@ export default function VenueDashboard({
           })()}
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
             </div>
           )}
@@ -1665,7 +1665,7 @@ export default function VenueDashboard({
               of a week of evenings. */}
           {intelReady && venueIntel.week?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>{weekByDay ? 'Week Ahead (projected peak)' : 'Week Ahead (projected evening peak)'}</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>{weekByDay ? 'Week Ahead (projected peak)' : 'Week Ahead (projected evening peak)'}</h3>
               {(() => {
                 // A busy venue's projected evenings all land in one band, and
                 // this chart used to colour by band alone (>70 red, >45 amber,
@@ -1747,7 +1747,7 @@ export default function VenueDashboard({
               no API. */}
           {venueStrip?.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>{stripAllDay ? 'Your Strip Today' : 'Your Strip Tonight'}</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>{stripAllDay ? 'Your Strip Today' : 'Your Strip Tonight'}</h3>
               {[{ ...venueStrip.you, you: true }, ...venueStrip.competitors].map((v, i) => (
                 <div key={`${v.name}-${i}`} style={{ padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1797,7 +1797,7 @@ export default function VenueDashboard({
               pill's own text says which it is. */}
           {intelReady && venueProfile?.google_place_id && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Crowd Badge for Your Website</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Crowd Badge for Your Website</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
               <button className="hit44"
                 onClick={async () => {
@@ -1863,7 +1863,7 @@ export default function VenueDashboard({
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                   {/* No pulsing dot (2026-11-06). Online or Offline and the
                       age of the last reading, beside this, are the state. */}
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Your sensor</h3>
+                  <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Your sensor</h3>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
                     {/* A sensor that has never reported has no timestamp, which
@@ -2028,7 +2028,7 @@ export default function VenueDashboard({
           {/* Today, hour by hour — from the model */}
           {intelReady && venueIntel.todayHourly?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Today, Hour by Hour</h3>
+              <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Today, Hour by Hour</h3>
               {/* Three fixes, all measured in a browser at 375px.
                   The bar sits in a fixed well and the hour label sits under
                   that well in flow, so no box here has a height its contents
@@ -2137,7 +2137,7 @@ export default function VenueDashboard({
                   counted it as active and the row was styled as if it were
                   running. */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your promotions ({promotions.length})</h3>
+                <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Your promotions ({promotions.length})</h3>
                 {/* A BANNER, not a replacement for the list. The failed read
                     leaves whatever was already loaded on screen, and a
                     promotion created after the failure still renders — hiding
@@ -2513,7 +2513,7 @@ export default function VenueDashboard({
               {/* Reviews List */}
               {reviews.length > 0 && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Recent reviews</h3>
+                  <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Recent reviews</h3>
                   {reviews.map(review => (
                     <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -3226,7 +3226,7 @@ export default function VenueDashboard({
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Venue plans</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Venue plans</h2>
 
                 {/* Free Tier */}
                 <div style={{ border: `2px solid ${venueTier === 'free' ? colors.navy : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px' }}>
@@ -3307,7 +3307,7 @@ export default function VenueDashboard({
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
               <DialogBehavior onClose={() => setVenueLogoPicker(null)} label="Venue logo" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px', textAlign: 'center' }}>Venue logo</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px', textAlign: 'center' }}>Venue logo</h2>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', textAlign: 'center', lineHeight: 1.5 }}>
                   Pick a photo from your Google listing.
                 </p>
@@ -3457,7 +3457,7 @@ export default function VenueDashboard({
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={cancelHoursEditor} label="Venue hours" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
-                <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit Operating Hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {operatingHours.map((slot, index) => (
                     <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
