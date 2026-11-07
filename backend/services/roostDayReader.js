@@ -454,7 +454,8 @@ function todayInRanking(question) {
 // more, two weekends, a day beside a weekend, weekends as a habit, a word
 // that may be a day this grammar does not read ("sat nite", "satday", "w/e")
 // beside one it does, a day or weekend word anywhere in the question the
-// reading does not use, and two days the question does not join.
+// reading does not use, two days the question does not join, and a day it
+// leaves out ("besides monday?").
 const DAY_FORM = '(?:(?:mon|tues|wednes|thurs|fri|satur|sun)days?|mon|tues?|weds?|thu(?:rs?)?|fri|sat|sun)';
 const SPAN_JOIN = '(?:-|\\u2013|\\u2014|through|thru|to|till|til|until|into)';
 // A range of days asked about ("Friday thru Sunday", "Thu-Sat", "from Friday
@@ -739,8 +740,19 @@ function confidenceOf(a, question) {
   const loose = unusedWord(a);
   if (loose) return unsure(`a ${loose} word the reading does not use`);
   if (!daysJoined(a)) return unsure('two days the question does not join');
+  if (a.leftOut) return unsure('a day the question leaves out');
   return { sure: true };
 }
+
+// A DAY THE QUESTION LEAVES OUT IS NO DAY ASKED (fourth recheck, 2026-11-06).
+// "Which day is quietest this week? besides monday?" was answered with
+// Monday's line: the reading read the day the owner set aside as the day
+// asked. A day word straight after a word that leaves it out (besides, other
+// than, except, apart from, excluding, not counting, not, but, skip, forget,
+// never mind, instead of, rather than, without, minus, no) leaves the reader
+// unsure, as today does where the route ranks the week without it
+// (todayInRanking).
+const LEFT_OUT_BEFORE = /\b(?:besides|other\s+than|except(?:\s+for)?|apart\s+from|aside\s+from|excluding|not\s+counting|not\s+including|not|but|skip(?:ping)?|forget(?:\s+about)?|never\s*mind|instead\s+of|rather\s+than|without|minus|no)\s+(?:(?:the|this|next|on|a|an)\s+)?$/i;
 
 // ONE READING OF A QUESTION, KEPT (fourth recheck, 2026-11-06). The route
 // reads a question's days several times over (dayGate, readingFor, the
@@ -805,13 +817,20 @@ function analyze(question) {
   let todayCue = null;
   if (TODAY_LEFT_OUT.test(lower)) todayCue = 'out';
   else if (TODAY_IN.test(lower)) todayCue = 'in';
+  const cued = [];
   if (todayCue && lower.length === text.length) {
     for (const m of lower.matchAll(todayCue === 'out' ? TODAY_LEFT_OUT_ALL : TODAY_IN_ALL)) {
-      for (const w of m[0].matchAll(TODAY_SAID)) used.push([m.index + w.index, m.index + w.index + w[0].length]);
+      for (const w of m[0].matchAll(TODAY_SAID)) cued.push([m.index + w.index, m.index + w.index + w[0].length]);
     }
   }
+  used.push(...cued);
+  // A day the reading reads as asked that the question leaves out
+  // (LEFT_OUT_BEFORE above), other than today in a cue the route ranks the
+  // week by.
+  const leftOut = kept.some((t) => t.kind !== 'week' && LEFT_OUT_BEFORE.test(text.slice(0, t.at))
+    && !cued.some(([at, end]) => at >= t.at && end <= t.end));
   return {
-    text, shouting, all, asking, tokens, words, kept, todayCue, used, maybe: maybeWordsIn(text, lower),
+    text, shouting, all, asking, tokens, words, kept, todayCue, used, leftOut, maybe: maybeWordsIn(text, lower),
   };
 }
 
