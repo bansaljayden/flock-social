@@ -4667,3 +4667,16 @@ test('in the small hours a day counted on from tonight takes main\'s path even w
   }));
 });
 
+test('a question about the quiet end that leaves today out is ranked from the quiet end on today\'s route', async () => {
+  // "How slow is the rest of the week after tonight?" given today's route
+  // led with the week's busiest day.
+  await pinnedAt('2026-11-08T16:00:00Z', async () => {
+    setUp({ placeId: 'ChIJr10QuietEndTonight00', phrasing: true });
+    draftFor = () => null;
+    route = { mode: 'grounded', intentId: 'tonight_outlook' };
+    const r = await call('/api/venue/advisor/question', { question: 'how slow is the rest of the week after tonight' });
+    assert.ok(r.body.text.startsWith(`${KIND_OPEN}the quietest day this week is Monday, `), r.body.text);
+    assert.ok(!/busiest/.test(r.body.text.split('\n')[0]), r.body.text);
+  });
+});
+

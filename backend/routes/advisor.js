@@ -1040,6 +1040,9 @@ const SHUT_DAY_INTENTS = TODAY_WORD_INTENTS;
 // The words of a question about a day's crowd, which an advice question
 // needs before "today" or "tonight" in it sets the day (the advice path).
 const CROWD_ASKED = /\b(?:busy|busier|busiest|slow|slower|slowest|quiet|quieter|quietest|dead|packed|full|empty|fill|filling|crowds?|crowded|covers?|guests?|people|customers?|traffic|turnout|rush|staff|staffed|staffing|expect|expecting|looks?|looking|peaks?|demand|walk[\s-]?ins?)\b/i;
+// A question about the quiet end of the days it asks about (the template's
+// QUIET_ASKED, advisorPhrasing).
+const QUIET_END = /\b(?:quiet|quieter|quietest|slow|slower|slowest|dead|deader|deadest|empty|emptier|emptiest)\b/i;
 const WEEKDAY_NAMES_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 // The venue's own today by the calendar ('YYYY-MM-DD'), or null: the card's,
 // or its own week's clock.
@@ -1347,7 +1350,13 @@ async function bothAnswer(intentId, b, targets, todayCue = null) {
     const night = await (b.tonight ? b.tonight() : b.week());
     const tonight = todayCue === 'out' ? null : (night.find((e) => isDay(e) && entryDate(e) === tonightDate) || null);
     const shut = tonight || todayCue === 'out' ? null : await shutToday(b, night);
-    if (!tonight && !shut) return { ...await bothAnswer('peak_hours', b, targets, todayCue), intent: 'peak_hours' };
+    // Today left out of a question about the quiet end ("How slow is the rest
+    // of the week after tonight?", given today's route by the router's own
+    // reading while the model is out) is ranked from the quiet end, as the
+    // quiet days' route ranks it; it led with the week's busiest day (seventh
+    // recheck, 2026-11-07).
+    const end = todayCue === 'out' && QUIET_END.test(String(b.question || '')) ? 'quiet_nights' : 'peak_hours';
+    if (!tonight && !shut) return { ...await bothAnswer(end, b, targets, todayCue), intent: end };
     const week = await b.week();
     const others = days.filter((t) => t.date !== tonightDate)
       .map((t) => week.find((e) => isDay(e) && entryDate(e) === t.date)).filter(Boolean);
