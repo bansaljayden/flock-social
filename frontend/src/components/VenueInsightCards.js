@@ -75,7 +75,7 @@ const FEATURE_NAME = 'Roost';
 
 const CARD_STYLE = {
   backgroundColor: 'var(--bg-card-solid)',
-  borderRadius: '12px',
+  borderRadius: 'var(--r-md)',
   padding: '12px',
   marginBottom: '12px',
   boxShadow: 'var(--card-shadow-sm)',
@@ -589,7 +589,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
             <button
               className="hit44"
               onClick={load}
-              style={{ padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
+              style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
             >
               Try again
             </button>
@@ -747,7 +747,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
           <button
             className="hit44"
             onClick={openSettings}
-            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
+            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
           >
             Open venue settings
           </button>
@@ -773,7 +773,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
           <button
             className="hit44"
             onClick={dismissNote}
-            style={{ padding: '6px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-micro)', cursor: 'pointer', flexShrink: 0 }}
+            style={{ padding: '6px 10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-micro)', cursor: 'pointer', flexShrink: 0 }}
           >
             Got it
           </button>

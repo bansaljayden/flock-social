@@ -352,13 +352,13 @@ export default function ExploreScreen({
       {pickingVenueForCreate && (
         <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
           <span style={{ color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: 'var(--r-md)', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
         </div>
       )}
 
       <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
         <div style={{ flex: 1, position: 'relative' }}>
-          <input aria-label="Search venues" key="search-input" id="search-input" type="text" enterKeyHint="search" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} onClick={reopenSearchList} onKeyDown={onSearchKeyDown} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <input aria-label="Search venues" key="search-input" id="search-input" type="text" enterKeyHint="search" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} onClick={reopenSearchList} onKeyDown={onSearchKeyDown} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
           <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
           {venueQuery && (
             <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
@@ -370,11 +370,11 @@ export default function ExploreScreen({
               me", "Events" and "Friends" while all three were painted at zero
               width behind a "Features" pill. */}
           <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, visibility: discoverNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${discoverNavOpen ? '0s' : '0.3s'}` }}>
-            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
-            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
-            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
+            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
+            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
+            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
           </div>
-          <button aria-label="Events and friends" aria-expanded={discoverNavOpen} className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 10px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Events &amp; friends</span>}</button>
+          <button aria-label="Events and friends" aria-expanded={discoverNavOpen} className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 10px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Events &amp; friends</span>}</button>
         </div>
       </div>
 
@@ -412,7 +412,7 @@ export default function ExploreScreen({
               row: the tap can lead straight to the system location prompt,
               and a message shown before that prompt goes on to it
               (Guideline 5.1.1(iv)). */}
-          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Continue</button>
+          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Continue</button>
         </div>
       )}
 
@@ -429,7 +429,7 @@ export default function ExploreScreen({
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <BirdieStill size={48} style={{ flexShrink: 0 }} />
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
-          {!/again in \d+/i.test(venueLoadError || '') && !(!locationError && /turned off right now/i.test(venueLoadError || '')) && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
+          {!/again in \d+/i.test(venueLoadError || '') && !(!locationError && /turned off right now/i.test(venueLoadError || '')) && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
         </div>
       )}
 
@@ -448,7 +448,7 @@ export default function ExploreScreen({
               Only when there are no rows to keep (rowsStale has why). */}
           {venueSearching && venueResults.length === 0 && (
             <div style={{ padding: '8px 12px 4px' }}>
-              <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
+              <ListSkeleton count={3} thumb={44} thumbRadius="var(--r-sm)" label="Searching venues" />
             </div>
           )}
           {venueResults.length > 0 && (
@@ -457,7 +457,7 @@ export default function ExploreScreen({
               <button
                 className="hit44 glass-btn glass-navy"
                 onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); if (typeof commitVenueResults === 'function') commitVenueResults(); }}
-                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
+                style={{ width: '100%', padding: '11px 14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
               >
                 {Icons.filter('white', 13)}
                 {/* "See all 12", or "See 1 result": it read "See All
@@ -490,7 +490,7 @@ export default function ExploreScreen({
                     if (typeof commitVenueResults === 'function') commitVenueResults(venue);
                     openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url, photo_attribution: venue.photo_attribution || null });
                   }}
-                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
+                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
                 >
@@ -498,7 +498,7 @@ export default function ExploreScreen({
                       place with no photo shows, and what the slot shows
                       while a photo is still on its way, where it used to be
                       an empty square. */}
-                  <div data-row-thumb="true" style={{ position: 'relative', width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                  <div data-row-thumb="true" style={{ position: 'relative', width: '48px', height: '48px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
                     <CategoryGlyph category={glyphCategoryFor(venue.types)} color={colors.navyMid || 'var(--text-secondary)'} size={20} />
                     {venue.photo_url && (
                       <img src={venue.photo_url} alt="" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
@@ -582,7 +582,7 @@ export default function ExploreScreen({
         {sharingLocationForFlock && (
           <div style={{
             position: 'absolute', top: '8px', left: '8px', right: '8px',
-            padding: '8px 12px', borderRadius: '14px',
+            padding: '8px 12px', borderRadius: 'var(--r-md)',
             backgroundColor: 'var(--nest-hero-bg)',
             display: 'flex', alignItems: 'center', gap: '8px',
             zIndex: 35, boxShadow: '0 1px 3px rgba(30,41,59,0.15)',
@@ -590,7 +590,7 @@ export default function ExploreScreen({
             <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
               Sharing your location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
             </p>
-            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
           </div>
         )}
 
@@ -633,7 +633,7 @@ export default function ExploreScreen({
               if (boxAheadOfPins) { if (typeof commitVenueResults === 'function') commitVenueResults(); }
               else if (typeof requestMapFit === 'function') requestMapFit();
             }}
-            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', left: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
+            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', left: '12px', padding: '5px 10px', borderRadius: 'var(--r-sm)', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
           >
             {resultsChipLabel(chipCount)}
           </button>
@@ -641,12 +641,12 @@ export default function ExploreScreen({
 
         {/* Find Your People Panel */}
         {showConnectPanel && (
-          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
               <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find your people</h2>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>See all</button>
-                <button aria-label="Close" className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>See all</button>
+                <button aria-label="Close" className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
               </div>
             </div>
 
@@ -661,7 +661,7 @@ export default function ExploreScreen({
                   initialValue={connectSearch}
                   onCommit={handleConnectSearch}
                   placeholder="Search by name..."
-                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
+                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: 'var(--r-sm)', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                   autoComplete="off"
                 />
                 <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
@@ -678,7 +678,7 @@ export default function ExploreScreen({
               {connectSearching && (
                 <SkeletonStatus label="Searching people">
                   {['44%', '36%', '50%'].map((w) => (
-                    <SkeletonRow key={w} thumb={42} round lines={[w, '58%']} trailing={[{ width: 72, height: 28, radius: 20 }, { width: 76, height: 28, radius: 20 }]} padding="10px" gap={10} radius={12} marginBottom={8} style={{ border: 'none' }} />
+                    <SkeletonRow key={w} thumb={42} round lines={[w, '58%']} trailing={[{ width: 72, height: 28, radius: 'var(--r-pill)' }, { width: 76, height: 28, radius: 'var(--r-pill)' }]} padding="10px" gap={10} radius="var(--r-md)" marginBottom={8} style={{ border: 'none' }} />
                   ))}
                 </SkeletonStatus>
               )}
@@ -696,9 +696,9 @@ export default function ExploreScreen({
               {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
                 const status = friendStatuses[user.id] || 'none';
                 return (
-                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
-                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
+                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                     </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
@@ -706,16 +706,16 @@ export default function ExploreScreen({
                     </div>
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                       {status === 'accepted' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                        <span style={{ padding: '6px 12px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
                       ) : status === 'pending' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                        <span style={{ padding: '6px 12px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
                       ) : (
-                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add friend</button>
+                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add friend</button>
                       )}
                       <button className="hit44 glass-btn glass-secondary" onClick={() => {
                         setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
                         startNewDmWithUser(user);
-                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Message</button>
+                      }} style={{ padding: '6px 12px', borderRadius: 'var(--r-pill)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Message</button>
                     </div>
                   </div>
                 );
@@ -723,7 +723,7 @@ export default function ExploreScreen({
 
               {!connectSearching && connectSearch.trim().length === 0 && (
                 <div style={{ textAlign: 'center', padding: '24px 16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
+                  <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
                   <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name</p>
                 </div>
@@ -760,7 +760,7 @@ export default function ExploreScreen({
           {/* Events header */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
             <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button aria-label="Back" className="hit44" onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+              <button aria-label="Back" className="hit44" onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                 {Icons.arrowLeft(colors.navy, 18)}
               </button>
               <div style={{ flex: 1, position: 'relative' }}>
@@ -788,7 +788,7 @@ export default function ExploreScreen({
                       fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
                     }
                   }}
-                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'opacity 0.2s' }}
+                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'opacity 0.2s' }}
                   autoComplete="off"
                 />
                 <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
@@ -830,7 +830,7 @@ export default function ExploreScreen({
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>{featuredEventsError}</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing is wrong with your plans. This is the events list only.</p>
                 {userLocation && (
-                  <button className="hit44 glass-btn glass-navy" onClick={() => fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, eventsSearchQuery)} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+                  <button className="hit44 glass-btn glass-navy" onClick={() => fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, eventsSearchQuery)} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
                 )}
               </div>
             )}
@@ -857,7 +857,7 @@ export default function ExploreScreen({
                 {/* The sentence used to be the whole screen: a request with no
                     control. Same Continue as the Discover banner, and for
                     the same reason (Guideline 5.1.1(iv)). */}
-                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Continue'}</button>
+                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Continue'}</button>
               </div>
             )}
             {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
@@ -892,7 +892,7 @@ export default function ExploreScreen({
               return (
                 <div
                   key={event.id}
-                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}
                 >
                   {/* Event header.
                       This used to be an <img> whose onError set the image to
@@ -932,9 +932,9 @@ export default function ExploreScreen({
                         A denser flat scrim suppresses the art underneath at
                         least as well as a thinner blurred one, and white on it
                         goes from about 3.1:1 in the bad case to about 5:1. */}
-                    <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
+                    <span style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
                     {dateStr && (
-                      <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
+                      <span style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(0,0,0,0.62)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
                     )}
                   </div>
                   {/* Event details */}
@@ -957,7 +957,7 @@ export default function ExploreScreen({
                         </span>
                       )}
                       {event.genre && event.genre !== event.category && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
+                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: 'var(--r-sm)' }}>{event.genre}</span>
                       )}
                       {event.price_range && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>
@@ -972,7 +972,7 @@ export default function ExploreScreen({
                         setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name, event_date: event.date || null, event_time: event.time || null, event_datetime_utc: event.datetime_utc || null });
                         setShowEventsView(false);
                         setCurrentScreen('create');
-                      }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      }} style={{ flex: 1, padding: '9px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.startFlock('white', 18)} Start Flock
                       </button>
                       <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
@@ -995,7 +995,7 @@ export default function ExploreScreen({
                           .then(data => { if (current()) setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), location: data?.event?.location ?? prev?.location ?? null } : null)); })
                           .catch((err) => { if (current()) setEventDetailError(err?.message || 'The rest of this event did not load.'); })
                           .finally(() => { if (current()) setEventDetailLoading(false); });
-                      }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      }} style={{ padding: '9px 14px', borderRadius: 'var(--r-sm)', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.eye(colors.navy, 13)} Details
                       </button>
                     </div>
@@ -1020,7 +1020,7 @@ export default function ExploreScreen({
                   if (c === 'All') { setCategory('All'); setVenueQuery(''); requestUserLocation(true); return; }
                   setCategory(c);
                 }} style={{
-                  padding: '6px 12px', borderRadius: '14px', border: 'none',
+                  padding: '6px 12px', borderRadius: 'var(--r-md)', border: 'none',
                   backgroundColor: category === c ? colors.navyBg : 'var(--bg-hover)',
                   color: category === c ? colors.cream : 'var(--text-primary)',
                   fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', whiteSpace: 'nowrap',
@@ -1033,7 +1033,7 @@ export default function ExploreScreen({
           )}
           <button className="hit44" onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
             height: '36px', minWidth: categoryExpanded ? '36px' : 'auto', width: categoryExpanded ? '36px' : '100%',
-            borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
+            borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
             padding: categoryExpanded ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)',
             flexShrink: 0, transition: 'all 0.3s ease',

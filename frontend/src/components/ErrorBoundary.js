@@ -263,7 +263,7 @@ const styles = {
     boxSizing: 'border-box',
     background: 'var(--bg-card-solid)',
     border: '1px solid var(--border-color)',
-    borderRadius: 16,
+    borderRadius: 'var(--r-lg)',
     boxShadow: 'var(--card-shadow)',
     padding: 24,
   },
@@ -289,7 +289,7 @@ const styles = {
   button: {
     flex: '1 1 140px',
     padding: '12px 16px',
-    borderRadius: 12,
+    borderRadius: 'var(--r-md)',
     fontSize: 14,
     fontWeight: 600,
   },

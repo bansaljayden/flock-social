@@ -806,12 +806,12 @@ const VenueLoginUnavailable = ({ onSwitchToUserLogin }) => {
   return (
     <div className="auth-root">
       <div className="auth-col">
-        <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '380px', boxSizing: 'border-box', margin: '0 auto' }}>
+        <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '380px', boxSizing: 'border-box', margin: '0 auto' }}>
           <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h1>
           <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
             The venue sign-in could not be downloaded, so you are not signed in. Check your connection and try again.
           </p>
-          <button className="hit44" onClick={back} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to sign in</button>
+          <button className="hit44" onClick={back} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to sign in</button>
         </div>
       </div>
     </div>
@@ -1162,12 +1162,12 @@ const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
       <DialogBehavior onClose={close} label="Attendance did not load" />
-      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The attendance sheet could not be downloaded, so nobody has been marked yet. Close this, check your connection and tap Mark it again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1185,12 +1185,12 @@ const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '16px' }}>
       <DialogBehavior onClose={close} label="Event did not load" />
-      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The event page could not be downloaded. Close this, check your connection and tap Details again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1208,12 +1208,12 @@ const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPay
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
       <DialogBehavior onClose={close} label="Payment options did not load" />
-      <div role="alert" onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
+      <div role="alert" onClick={e => e.stopPropagation()} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg) var(--r-lg) 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h3>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The payment options could not be downloaded, so nothing has been paid and nothing has been marked. Close this, check your connection and tap Settle Up again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1233,12 +1233,12 @@ const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults }) => {
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', padding: '16px' }}>
       <DialogBehavior modal={false} onClose={close} label="Results did not load" />
-      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', border: '1px solid var(--border-default)' }}>
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', border: '1px solid var(--border-default)' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The full list of results could not be downloaded. The map behind this still has every pin on it, so go back, check your connection and ask for the list again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to map</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to map</button>
       </div>
     </div>
   );
@@ -1258,12 +1258,12 @@ const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal }) => {
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <DialogBehavior onClose={close} label="Venue did not load" />
-      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The venue page could not be downloaded. Close this, check your connection and tap the venue again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1283,12 +1283,12 @@ const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <DialogBehavior onClose={close} label="Birdie did not load" />
-      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', marginBottom: '24px' }}>
+      <div role="alert" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '340px', boxSizing: 'border-box', marginBottom: '24px' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           Birdie could not be downloaded, so nothing was asked and nothing was sent. Close this, check your connection and tap him again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1308,12 +1308,12 @@ const ModerationSheetUnavailable = ({ onClose }) => {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <DialogBehavior onClose={close} label="Report did not load" />
-      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
+      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The report options could not be downloaded, so nothing has been reported and nobody has been blocked. Close this, check your connection and try again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1328,12 +1328,12 @@ const PaywallSheetUnavailable = ({ onClose }) => {
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
       <DialogBehavior onClose={close} label="Flock Pro did not load" />
-      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
+      <div role="alert" style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>This did not load</h2>
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           Flock Pro could not be downloaded, so nothing has been bought and nothing has been charged. Close this, check your connection and try again.
         </p>
-        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: '14px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+        <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
   );
@@ -1354,18 +1354,18 @@ const SearchResultsSkeleton = () => (
   <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
     <p className="sr-only" role="status">Loading results.</p>
     <div style={{ backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, boxShadow: '0 2px 12px rgba(0,0,0,0.06)', padding: '10px 12px' }}>
-      <div className="skeleton" style={{ height: '44px', borderRadius: '14px' }} />
+      <div className="skeleton" style={{ height: '44px', borderRadius: 'var(--r-md)' }} />
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px' }}>
-        <div className="skeleton" style={{ width: '54px', height: '20px', borderRadius: '8px' }} />
+        <div className="skeleton" style={{ width: '54px', height: '20px', borderRadius: 'var(--r-sm)' }} />
         <div style={{ flex: 1 }} />
-        <div className="skeleton" style={{ width: '72px', height: '22px', borderRadius: '8px' }} />
-        <div className="skeleton" style={{ width: '88px', height: '22px', borderRadius: '8px' }} />
+        <div className="skeleton" style={{ width: '72px', height: '22px', borderRadius: 'var(--r-sm)' }} />
+        <div className="skeleton" style={{ width: '88px', height: '22px', borderRadius: 'var(--r-sm)' }} />
       </div>
     </div>
     <div style={{ flex: 1, overflow: 'hidden', padding: '4px 12px 80px' }}>
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: '16px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
-          <div className="skeleton" style={{ width: '72px', height: '72px', borderRadius: '10px', flexShrink: 0 }} />
+        <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: 'var(--r-lg)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
+          <div className="skeleton" style={{ width: '72px', height: '72px', borderRadius: 'var(--r-sm)', flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0, paddingTop: '4px' }}>
             <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
             <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
@@ -1394,23 +1394,23 @@ const RevenueScreenSkeleton = ({ colors }) => (
     <p className="sr-only" role="status">Loading the admin console.</p>
     <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
-        <div style={{ width: '44px', height: '44px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
+        <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
+        <div style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ width: '55%', height: '16px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: '8px' }} />
           <div style={{ width: '40%', height: '11px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.14)' }} />
         </div>
       </div>
-      <div style={{ marginTop: '12px', height: '38px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.12)' }} />
+      <div style={{ marginTop: '12px', height: '38px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(255,255,255,0.12)' }} />
     </div>
     <div style={{ display: 'flex', gap: '8px', padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-default)' }}>
       {[0, 1, 2, 3].map((i) => (
-        <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: '8px' }} />
+        <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: 'var(--r-sm)' }} />
       ))}
     </div>
     <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', padding: '16px' }}>
       {[0, 1, 2].map((i) => (
-        <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: '16px', marginBottom: '12px' }} />
+        <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: 'var(--r-lg)', marginBottom: '12px' }} />
       ))}
     </div>
   </div>
@@ -1732,7 +1732,7 @@ const FlockBirdGame = () => {
 
   return (
     <div ref={wrapRef} style={{ touchAction: 'manipulation', cursor: 'pointer', userSelect: 'none', WebkitUserSelect: 'none' }}>
-      <canvas ref={canvasRef} style={{ width: '320px', height: '400px', maxWidth: '86vw', borderRadius: '16px', display: 'block' }} />
+      <canvas ref={canvasRef} style={{ width: '320px', height: '400px', maxWidth: '86vw', borderRadius: 'var(--r-lg)', display: 'block' }} />
       {best > 0 && (
         <p style={{ textAlign: 'center', fontSize: 'var(--t-meta)', color: 'rgba(241,237,224,0.5)', margin: '10px 0 0', fontWeight: '500' }}>Best: {best}</p>
       )}
@@ -1798,12 +1798,12 @@ const OfflineGate = () => {
           whole app whenever the browser says it is offline, which hid the SOS
           button and the sheet's own Call 911 from exactly the person in a
           dead zone who needs them. A phone call does not need the network. */}
-      <a className="hit44" href="tel:911" style={{ display: 'inline-block', padding: '12px 28px', borderRadius: '12px', backgroundColor: '#c8372d', color: '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', textDecoration: 'none' }}>Call 911</a>
+      <a className="hit44" href="tel:911" style={{ display: 'inline-block', padding: '12px 28px', borderRadius: 'var(--r-md)', backgroundColor: '#c8372d', color: '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', textDecoration: 'none' }}>Call 911</a>
       <FlockBirdGame />
       <button className="hit44"
         onClick={retry}
         disabled={checking}
-        style={{ padding: '12px 28px', borderRadius: '12px', border: 'none', backgroundColor: '#f1ede0', color: '#16283d', fontSize: 'var(--t-body)', fontWeight: '600', cursor: checking ? 'wait' : 'pointer', opacity: checking ? 0.7 : 1 }}
+        style={{ padding: '12px 28px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#f1ede0', color: '#16283d', fontSize: 'var(--t-body)', fontWeight: '600', cursor: checking ? 'wait' : 'pointer', opacity: checking ? 0.7 : 1 }}
       >
         {checking ? 'Checking...' : 'Try again'}
       </button>
@@ -2988,11 +2988,11 @@ const formatEventTime = (iso) => {
    flocks was told "No flocks yet" for as long as the network took. Empty
    states are a claim about the user's data and must not be made before the
    data arrives. (DESIGN-STANDARD.md rule 10: skeletons for feeds and pages.) */
-const ListSkeleton = ({ count = 3, thumb = 46, thumbRadius = 14, label = 'Loading' }) => (
+const ListSkeleton = ({ count = 3, thumb = 46, thumbRadius = 'var(--r-md)', label = 'Loading' }) => (
   <div role="status" aria-label={label}>
     {Array.from({ length: count }, (_, i) => (
-      <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
-        <div className="skeleton" style={{ width: `${thumb}px`, height: `${thumb}px`, borderRadius: `${thumbRadius}px`, flexShrink: 0 }} />
+      <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', marginBottom: '10px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
+        <div className="skeleton" style={{ width: `${thumb}px`, height: `${thumb}px`, borderRadius: thumbRadius, flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0, paddingTop: '4px' }}>
           <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
           <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
@@ -3020,8 +3020,8 @@ const ChatSkeleton = ({ label = 'Loading messages' }) => (
       { mine: true, w: '38%' },
     ].map((row, i) => (
       <div key={i} style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexDirection: row.mine ? 'row-reverse' : 'row' }}>
-        <div className="skeleton" style={{ width: '32px', height: '32px', borderRadius: '16px', flexShrink: 0 }} />
-        <div className="skeleton" style={{ width: row.w, height: '38px', borderRadius: '16px' }} />
+        <div className="skeleton" style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', flexShrink: 0 }} />
+        <div className="skeleton" style={{ width: row.w, height: '38px', borderRadius: 'var(--r-lg)' }} />
       </div>
     ))}
   </div>
@@ -3059,17 +3059,17 @@ export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
             <button className="hit44 plan-head-control" aria-label="Back to your plans" onClick={onBack} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
             <div aria-hidden="true" style={{ flex: 1, minWidth: 0 }}>
-              <SkeletonBar dark width="55%" height={18} radius={5} style={{ margin: '2px 0 3px' }} />
+              <SkeletonBar dark width="55%" height={18} radius="var(--r-xs)" style={{ margin: '2px 0 3px' }} />
               <SkeletonBar dark width="40%" height={13} style={{ margin: '5px 0 1px' }} />
             </div>
           </div>
           <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <SkeletonBar dark width={78} height={24} radius={20} />
-            <SkeletonBar dark width={150} height={24} radius={20} />
+            <SkeletonBar dark width={78} height={24} radius="var(--r-pill)" />
+            <SkeletonBar dark width={150} height={24} radius="var(--r-pill)" />
           </div>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '14px' }}>
-          <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '18px', padding: '12px 16px', boxShadow: 'var(--card-shadow)', border: 'var(--card-border)' }}>
+          <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: 'var(--r-lg)', padding: '12px 16px', boxShadow: 'var(--card-shadow)', border: 'var(--card-border)' }}>
             <SkeletonBar width={92} height={16} style={{ margin: '0 0 14px' }} />
             <RosterSkeleton label={label} />
           </div>
@@ -3084,14 +3084,14 @@ export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button aria-label="Back" className="hit44" onClick={onBack} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={onBack} style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           {kind === 'dm' ? <SkeletonCircle dark size={34} /> : null}
           <div aria-hidden="true" style={{ flex: 1, minWidth: 0, padding: '0 2px' }}>
             {kind === 'dm' ? (
-              <SkeletonBar dark width="45%" height={17} radius={5} style={{ margin: '4px 0' }} />
+              <SkeletonBar dark width="45%" height={17} radius="var(--r-xs)" style={{ margin: '4px 0' }} />
             ) : (
               <>
-                <SkeletonBar dark width="50%" height={17} radius={5} style={{ margin: '3px 0' }} />
+                <SkeletonBar dark width="50%" height={17} radius="var(--r-xs)" style={{ margin: '3px 0' }} />
                 <SkeletonBar dark width="38%" height={10} style={{ margin: '5px 0 2px' }} />
               </>
             )}
@@ -3929,8 +3929,8 @@ const Toggle = ({ on, onChange, label, pendingOn }) => {
   const saving = pending !== null;
   const shown = saving ? pending : !!on;
   return (
-    <button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange} style={{ width: '44px', height: '24px', flexShrink: 0, borderRadius: '12px', border: 'none', backgroundColor: shown ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1, position: 'relative', transition: 'background-color 0.2s, opacity 0.2s' }}>
-      <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: shown ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+    <button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange} style={{ width: '44px', height: '24px', flexShrink: 0, borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: shown ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1, position: 'relative', transition: 'background-color 0.2s, opacity 0.2s' }}>
+      <div style={{ width: '20px', height: '20px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: shown ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
     </button>
   );
 };
@@ -4028,7 +4028,7 @@ const NfcCheckinView = ({ placeId, sig, onViewVenue, onOpenApp }) => {
   })();
   const canRetry = !failure || failure.offline || failure.status === 0 || failure.status >= 500;
 
-  const btn = { padding: '14px 32px', borderRadius: '14px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' };
+  const btn = { padding: '14px 32px', borderRadius: 'var(--r-md)', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' };
   const ghost = { padding: '12px 28px', background: 'none', border: 'none', color: 'rgba(241,237,224,0.7)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' };
 
   return (
@@ -4117,7 +4117,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     paddingBottom: 'var(--cb-height, 0px)',
     boxSizing: 'border-box',
     margin: '20px auto',
-    borderRadius: '44px',
+    borderRadius: 'var(--r-frame)',
     border: `6px solid ${isDark ? '#1e293b' : colorsLight.navy}`,
     overflow: 'hidden',
     display: 'flex',
@@ -4140,7 +4140,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     paddingBottom: 'var(--cb-height, 0px)',
     boxSizing: 'border-box',
     margin: '20px auto',
-    borderRadius: '16px',
+    borderRadius: 'var(--r-lg)',
     border: `1px solid ${isDark ? '#1e293b' : 'rgba(13,40,71,0.18)'}`,
     overflow: 'hidden',
     display: 'flex',
@@ -4169,7 +4169,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     width: '120px',
     height: '24px',
     backgroundColor: 'black',
-    borderRadius: '20px',
+    borderRadius: 'var(--r-pill)',
   },
   content: {
     flex: 1,
@@ -4204,7 +4204,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     alignItems: 'center',
     gap: '2px',
     padding: '6px 12px',
-    borderRadius: '12px',
+    borderRadius: 'var(--r-md)',
     border: 'none',
     cursor: 'pointer',
     backgroundColor: 'transparent',
@@ -4215,7 +4215,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
       : colorsLight.navy,
     color: 'white',
     border: 'none',
-    borderRadius: '14px',
+    borderRadius: 'var(--r-md)',
     padding: '14px 24px',
     fontWeight: '600',
     fontSize: 'var(--t-body)',
@@ -4231,7 +4231,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   },
   card: {
     backgroundColor: 'var(--bg-card)',
-    borderRadius: '18px',
+    borderRadius: 'var(--r-lg)',
     padding: '16px',
     marginBottom: '12px',
     boxShadow: 'var(--card-shadow)',
@@ -4241,7 +4241,7 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   input: {
     width: '100%',
     padding: '14px 16px',
-    borderRadius: '14px',
+    borderRadius: 'var(--r-md)',
     border: `2px solid var(--border-color)`,
     fontSize: 'var(--t-body)',
     outline: 'none',
@@ -4305,7 +4305,7 @@ const ModerationHiddenNotice = ({ kind }) => (
     style={{
       marginTop: '8px',
       padding: '8px 10px',
-      borderRadius: '8px',
+      borderRadius: 'var(--r-sm)',
       backgroundColor: 'var(--accent-red-bg)',
       border: '1px solid var(--accent-red-text)',
     }}
@@ -4647,7 +4647,7 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
   const daysValue = joinPromoChoice(form.days, form.daysCustom);
   const canSave = !saving && !!form.title.trim() && !!timeValue && !!daysValue;
 
-  const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
+  const input = { width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
 
   return (
@@ -4657,7 +4657,7 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
           not, so Escape did nothing and Tab walked straight out of the dialog
           into the dashboard behind it. */}
       <DialogBehavior onClose={onCancel} label={editing ? 'Edit promotion' : 'New promotion'} />
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '320px' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Promotion' : 'New Promotion'}</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div><label style={label}>Title</label>
@@ -4704,7 +4704,7 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
         </div>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           {/* Only the title is required among the typed fields, as it is on the
               server. A deal from the Post a Deal card has no description, and
               requiring one here left the owner unable to save any edit to it
@@ -4712,7 +4712,7 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
               something, because Custom with nothing typed is not a schedule.
               What is handed up is the resolved schedule: the chosen value, or
               the typed words in its place. */}
-          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, time: timeValue, days: daysValue })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, time: timeValue, days: daysValue })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -4767,14 +4767,14 @@ export const EventModal = React.memo(function EventModal({ editing, onSave, onCa
   // does not send), which is what an untouched older date needs.
   const sentDate = editing && !form.date && !dateRequired ? undefined : form.date;
 
-  const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
+  const input = { width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
   const note = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.45 };
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
       <DialogBehavior onClose={onCancel} label={editing ? 'Edit event' : 'New event'} />
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
         {/* Who will see it, before a word is typed: the first thing an owner
             wants to know about a form that publishes something. */}
@@ -4796,8 +4796,8 @@ export const EventModal = React.memo(function EventModal({ editing, onSave, onCa
         </div>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_EVENT_LINE}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, date: sentDate })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, date: sentDate })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -5321,7 +5321,7 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
         maxWidth: 'min(420px, calc(100vw - 32px))',
         boxSizing: 'border-box',
         padding: '12px 12px 12px 16px',
-        borderRadius: '12px',
+        borderRadius: 'var(--r-md)',
         backgroundColor: toast.type === 'error' ? colors.red : colors.navyBg,
         color: 'white',
         fontSize: 'var(--t-label)',
@@ -7444,10 +7444,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return (
       <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => prev.some(s => String(s.id) === String(friend.id)) ? prev : [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
         <div style={{ position: 'relative', flexShrink: 0 }}>
-          <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
-            {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name?.[0]?.toUpperCase()}
+          <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
+            {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : friend.name?.[0]?.toUpperCase()}
           </div>
-          {dot && <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: dot, border: '2px solid var(--bg-card-solid)' }} />}
+          {dot && <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: 'var(--r-pill)', backgroundColor: dot, border: '2px solid var(--bg-card-solid)' }} />}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{friend.name}</p>
@@ -7457,7 +7457,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </p>
           )}
         </div>
-        <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>Add</div>
+        <div style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>Add</div>
       </button>
     );
   }, [friendsPulses, colors]);
@@ -15414,7 +15414,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
               ...styles.navItem,
-              borderRadius: '14px',
+              borderRadius: 'var(--r-md)',
               padding: '8px 14px',
               position: 'relative'
             }}>
@@ -15422,7 +15422,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 light end measured 3.76:1 under the same white. The ring in the
                 bar's own colour keeps it off the icon it sits on. */}
             {t.id === 'chat' && messagesTabUnread > 0 && (
-              <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '6px', minWidth: '18px', height: '18px', borderRadius: '9px', padding: '0 5px', boxSizing: 'border-box', backgroundColor: '#B91C1C', boxShadow: '0 0 0 2px var(--bg-nav)', color: '#ffffff', fontSize: 'var(--t-micro)', fontWeight: '700', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
+              <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '6px', minWidth: '18px', height: '18px', borderRadius: 'var(--r-pill)', padding: '0 5px', boxSizing: 'border-box', backgroundColor: '#B91C1C', boxShadow: '0 0 0 2px var(--bg-nav)', color: '#ffffff', fontSize: 'var(--t-micro)', fontWeight: '700', lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
             )}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               {/* The icon strokes currentColor, so this is where its colour
@@ -16226,7 +16226,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <div className="fab-press" style={{
         width: '52px',
         height: '52px',
-        borderRadius: '26px',
+        borderRadius: 'var(--r-pill)',
         border: 'none',
         background: colors.red,
         display: 'flex',
@@ -16297,7 +16297,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const ProfilePicModal = () => showPicModal && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowPicModal(false)} label="Profile photo" />
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Profile Picture</h2>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <label style={{ ...styles.gradientButton, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -16371,8 +16371,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: '12px', marginTop: '20px', width: '280px' }}>
-        <button className="hit44 glass-btn glass-secondary" onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
-        <button className="hit44 glass-btn glass-navy" onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Confirm</button>
+        <button className="hit44 glass-btn glass-secondary" onClick={() => setCropImageSrc(null)} style={{ flex: 1, padding: '14px', borderRadius: 'var(--r-md)', border: '1px solid rgba(255,255,255,0.2)', backgroundColor: 'transparent', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
+        <button className="hit44 glass-btn glass-navy" onClick={confirmCrop} style={{ flex: 1, padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Confirm</button>
       </div>
     </div>
   );
@@ -16397,18 +16397,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const adminPromptModal = showAdminPrompt && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowAdminPrompt(false)} label="Admin access" />
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '280px' }}>
         <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>
             {Icons.shield(colors.navy, 24)}
           </div>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Admin Access</h2>
           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{authUser?.role === 'admin' ? 'Switch to admin mode?' : 'Admin access is restricted'}</p>
         </div>
         <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAdminPrompt(false)} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           {authUser?.role === 'admin' && (
-            <button className="hit44 glass-btn glass-navy" onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
+            <button className="hit44 glass-btn glass-navy" onClick={handleAdminModeSelect} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Access</button>
           )}
         </div>
       </div>
@@ -18020,7 +18020,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => {
     const modeBtn = {
-      width: '100%', padding: '16px 20px', borderRadius: '16px',
+      width: '100%', padding: '16px 20px', borderRadius: 'var(--r-lg)',
       border: '1px solid rgba(255,255,255,0.18)',
       background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
       boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.2)',
@@ -18045,7 +18045,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <div style={{ width: '100%', maxWidth: '340px' }}>
             {/* User Mode */}
             <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('user')} style={modeBtn}>
-              <div style={{ width: '44px', height: '44px', borderRadius: '12px', overflow: 'hidden', flexShrink: 0 }}>
+              <div style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', overflow: 'hidden', flexShrink: 0 }}>
                 <img src="/flock-logo.png" alt="Flock" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               </div>
               <div style={{ flex: 1 }}>
@@ -18308,7 +18308,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </button>
             )}
             <button className="hit44" aria-label="Your profile" onClick={() => setCurrentTab('profile')} style={{ position: 'relative', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '999px', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--face-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {profilePic ? <img src={profilePic} alt="" style={{ width: '36px', height: '36px', objectFit: 'cover', display: 'block' }} /> : Icons.user('var(--text-secondary)', 18)}
               </div>
             </button>
@@ -18334,7 +18334,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ("This is the list failing to load, not the list being empty"). */}
         {flocksLoading && flocks.length === 0 && <NestHeroSkeleton label="Loading your flocks" />}
         {!flocksLoading && flocksError && (
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '16px 18px', marginBottom: BAND_GAP }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '16px 18px', marginBottom: BAND_GAP }}>
             <BirdNote
               layout="row"
               size={48}
@@ -18342,7 +18342,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               role="alert"
               title={flocksError}
               body="Your plans are still there."
-              action={<button className="hit44" onClick={loadFlocks} style={{ padding: '0 16px', minHeight: '40px', borderRadius: '12px', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+              action={<button className="hit44" onClick={loadFlocks} style={{ padding: '0 16px', minHeight: '40px', borderRadius: 'var(--r-md)', border: 'none', background: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
             />
           </div>
         )}
@@ -18375,10 +18375,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 what the confirm line says is gated. It still opens the
                 create screen, where a plan can be drawn up and the gate is
                 met at Create, with the sheet that fixes it. */}
-            <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: '12px', border: 'none', background: emailUnconfirmed ? 'var(--bg-card-solid)' : 'var(--btn-primary-bg)', color: emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <button data-nest-keep="" className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', height: '48px', borderRadius: 'var(--r-md)', border: 'none', background: emailUnconfirmed ? 'var(--bg-card-solid)' : 'var(--btn-primary-bg)', color: emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.startFlock(emailUnconfirmed ? 'var(--text-primary)' : 'var(--btn-primary-fg)', 20)} Start a flock
             </button>
-            <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '12px', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: 'var(--r-md)', border: 'none', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
               {Icons.userPlus('var(--text-primary)', 16)} Add friends
             </button>
             {/* Only when there is something past to see: on a brand-new
@@ -18456,7 +18456,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         {/* No friends yet, but plans: the way to the people who would answer.
             The Nest's other Add friends doors all go through the same opener. */}
         {nestNoFriendsRow && (
-          <button type="button" onClick={openAddFriendsFromNest} style={{ width: '100%', minHeight: '60px', marginBottom: BAND_GAP, padding: '11px 14px 11px 16px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer' }}>
+          <button type="button" onClick={openAddFriendsFromNest} style={{ width: '100%', minHeight: '60px', marginBottom: BAND_GAP, padding: '11px 14px 11px 16px', border: 'none', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer' }}>
             <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.userPlus('var(--text-secondary)', 18)}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>Add friends</span>
@@ -18716,7 +18716,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <button
         className="hit44"
         onClick={() => { setCurrentScreen('main'); setSelectedDmId(null); }}
-        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
       >
         Back to Messages
       </button>
@@ -18746,7 +18746,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <button
         className="hit44"
         onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
-        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
       >
         Back to your plans
       </button>
@@ -20095,7 +20095,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 else onChange(on ? '' : opt.value);
               }}
               style={{
-                padding: '10px 14px', borderRadius: '20px', fontSize: 'var(--t-label)', fontWeight: '600',
+                padding: '10px 14px', borderRadius: 'var(--r-xl)', fontSize: 'var(--t-label)', fontWeight: '600',
                 cursor: capped ? 'not-allowed' : 'pointer', opacity: capped ? 0.4 : 1, transition: 'all 0.15s',
                 ...(on ? t.chipOn : t.chipOff),
               }}
@@ -20129,7 +20129,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           value={value} placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off" data-lpignore="true" data-form-type="other"
-          style={{ width: suffix ? '140px' : '100%', padding: '12px 14px', borderRadius: '12px', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+          style={{ width: suffix ? '140px' : '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
         />
         {suffix && <span style={{ fontSize: 'var(--t-label)', color: t.hint }}>{suffix}</span>}
       </div>
@@ -20145,7 +20145,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <input
         type="time" aria-label={ariaLabel} value={value || ''}
         onChange={(e) => onChange(e.target.value)}
-        style={{ padding: '12px 14px', borderRadius: '12px', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+        style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
       />
     );
   };
@@ -21394,7 +21394,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               type="button"
               className="hit44"
               onClick={() => { rearmLazyScreens(); reset(); }}
-              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
             >
               Try again
             </button>
@@ -21402,7 +21402,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               type="button"
               className="hit44"
               onClick={() => { reset(); leaveCrashedScreen(); }}
-              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
             >
               Go to Nest
             </button>
@@ -21412,7 +21412,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 componentStack={componentStack}
                 label={label}
                 className="hit44"
-                style={{ flex: '1 1 100%', padding: '13px 16px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+                style={{ flex: '1 1 100%', padding: '13px 16px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
               />
             )}
           </div>
@@ -21475,7 +21475,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                each fail on their own, and this button is the only way back into
                either. */
             onClick={() => { rearmExploreScreen(); rearmMapLibreMapView(); reset(); }}
-            style={{ padding: '13px 20px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+            style={{ padding: '13px 20px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
           >
             Try again
           </button>
@@ -21486,7 +21486,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 componentStack={componentStack}
                 label={label}
                 className="hit44"
-                style={{ display: 'block', marginTop: '10px', padding: '13px 20px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+                style={{ display: 'block', marginTop: '10px', padding: '13px 20px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
               />
               <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '10px 0 0' }}>
                 {CRASH_REPORT_NOTE}
@@ -21872,9 +21872,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '14px 16px 16px' }}>
                   {userProfileTarget.image ? (
-                    <img src={userProfileTarget.image} alt="" style={{ width: '68px', height: '68px', borderRadius: '34px', objectFit: 'cover' }} />
+                    <img src={userProfileTarget.image} alt="" style={{ width: '68px', height: '68px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} />
                   ) : (
-                    <div style={{ width: '68px', height: '68px', borderRadius: '34px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '600', fontSize: 'var(--t-title)' }}>
+                    <div style={{ width: '68px', height: '68px', borderRadius: 'var(--r-pill)', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '600', fontSize: 'var(--t-title)' }}>
                       {userProfileTarget.name[0]?.toUpperCase() || '?'}
                     </div>
                   )}
@@ -21898,8 +21898,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       They won't be able to message you or see your activity, and you won't see theirs. Blocking is mutual, and it ends the friendship if you have one. You can undo the block in Settings, under Blocked accounts.
                     </p>
                     <div style={{ display: 'flex', gap: '10px' }}>
-                      <button className="hit44" onClick={() => setProfileBlockStep(false)} disabled={profileBlocking} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: profileBlocking ? 'not-allowed' : 'pointer' }}>Cancel</button>
-                      <button className="hit44" onClick={confirmProfileBlock} disabled={profileBlocking} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: profileBlocking ? 'not-allowed' : 'pointer', opacity: profileBlocking ? 0.6 : 1 }}>
+                      <button className="hit44" onClick={() => setProfileBlockStep(false)} disabled={profileBlocking} style={{ flex: 1, padding: '13px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: profileBlocking ? 'not-allowed' : 'pointer' }}>Cancel</button>
+                      <button className="hit44" onClick={confirmProfileBlock} disabled={profileBlocking} style={{ flex: 2, padding: '13px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: profileBlocking ? 'not-allowed' : 'pointer', opacity: profileBlocking ? 0.6 : 1 }}>
                         {profileBlocking ? 'Blocking...' : `Block ${userProfileTarget.name}`}
                       </button>
                     </div>
@@ -22036,11 +22036,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               these insets (SAFE-AREA CONTRACT in index.css). */}
           <DialogBehavior onClose={closeCameraViewfinder} label="Camera" />
           <div style={{ padding: 'calc(12px + var(--safe-top)) 16px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'absolute', top: 0, left: 0, right: 0, zIndex: 3 }}>
-            <button aria-label="Close the camera" className="hit44" onClick={closeCameraViewfinder} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
+            <button aria-label="Close the camera" className="hit44" onClick={closeCameraViewfinder} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 20)}</button>
             {/* Torch is drawn only when the track reports it. On iOS Safari and
                 every desktop browser it never appears, which is correct. */}
             {cameraCaps.torch && !cameraReview ? (
-              <button aria-label={cameraTorch ? 'Turn the flash off' : 'Turn the flash on'} aria-pressed={cameraTorch} className="hit44" onClick={toggleCameraTorch} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: cameraTorch ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button aria-label={cameraTorch ? 'Turn the flash off' : 'Turn the flash on'} aria-pressed={cameraTorch} className="hit44" onClick={toggleCameraTorch} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: cameraTorch ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.zap(cameraTorch ? '#0f172a' : 'white', 20)}
               </button>
             ) : <div style={{ width: '44px' }} />}
@@ -22071,7 +22071,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               />
             )}
             {cameraFocusPoint && (
-              <div aria-hidden="true" style={{ position: 'absolute', left: cameraFocusPoint.x - 34, top: cameraFocusPoint.y - 34, width: '68px', height: '68px', borderRadius: '34px', border: '2px solid rgba(255,255,255,0.9)', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)', pointerEvents: 'none' }} />
+              <div aria-hidden="true" style={{ position: 'absolute', left: cameraFocusPoint.x - 34, top: cameraFocusPoint.y - 34, width: '68px', height: '68px', borderRadius: 'var(--r-pill)', border: '2px solid rgba(255,255,255,0.9)', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)', pointerEvents: 'none' }} />
             )}
             {/* Shutter blink. Short, and it only ever runs on a tap. */}
             {cameraShutter && <div aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.85)', pointerEvents: 'none' }} />}
@@ -22102,14 +22102,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <button
                 onClick={retakePhoto}
                 disabled={cameraBusy}
-                style={{ flex: 1, height: '52px', borderRadius: '26px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: cameraBusy ? 'default' : 'pointer' }}
+                style={{ flex: 1, height: '52px', borderRadius: 'var(--r-pill)', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: cameraBusy ? 'default' : 'pointer' }}
               >
                 Retake
               </button>
               <button
                 onClick={acceptCameraPhoto}
                 disabled={cameraBusy}
-                style={{ flex: 1, height: '52px', borderRadius: '26px', border: 'none', backgroundColor: cameraBusy ? 'rgba(255,255,255,0.5)' : '#ffffff', color: '#0f172a', fontSize: 'var(--t-body)', fontWeight: '700', cursor: cameraBusy ? 'default' : 'pointer' }}
+                style={{ flex: 1, height: '52px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: cameraBusy ? 'rgba(255,255,255,0.5)' : '#ffffff', color: '#0f172a', fontSize: 'var(--t-body)', fontWeight: '700', cursor: cameraBusy ? 'default' : 'pointer' }}
               >
                 {cameraBusy ? 'Preparing…' : 'Use Photo'}
               </button>
@@ -22122,7 +22122,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               const target = showCameraViewfinder;
               closeCameraViewfinder();
               setTimeout(() => (target === 'dm' ? dmGalleryInputRef : chatGalleryInputRef).current?.click(), 120);
-            }} style={{ width: '44px', height: '44px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            }} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.image('white', 20)}
             </button>
 
@@ -22135,12 +22135,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               onPointerDown={(e) => { e.currentTarget.style.transform = 'scale(0.9)'; }}
               onPointerUp={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
               onPointerLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-              style={{ width: '72px', height: '72px', borderRadius: '36px', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform 0.12s ease' }}
+              style={{ width: '72px', height: '72px', borderRadius: 'var(--r-pill)', border: '4px solid white', backgroundColor: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, transition: 'transform 0.12s ease' }}
             >
-              <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: '#ffffff' }} />
+              <div style={{ width: '56px', height: '56px', borderRadius: 'var(--r-pill)', backgroundColor: '#ffffff' }} />
             </button>
 
-            <button aria-label="Switch between the front and back camera" className="hit44" onClick={flipCamera} style={{ width: '44px', height: '44px', borderRadius: '22px', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Switch between the front and back camera" className="hit44" onClick={flipCamera} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', border: '1px solid rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.12)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.repeat('white', 20)}
             </button>
           </div>
@@ -22306,7 +22306,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               DialogBehavior moves focus in, traps Tab, handles Escape, and
               restores focus, like every other overlay in the stack. */}
           <DialogBehavior onClose={() => setSafetyAlert(null)} label={`${safetyAlert.name} needs help`} />
-          <div role="alertdialog" aria-modal="true" aria-label={`${safetyAlert.name} needs help`} style={{ width: '100%', maxWidth: '340px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', border: '2px solid #b91c1c' }}>
+          <div role="alertdialog" aria-modal="true" aria-label={`${safetyAlert.name} needs help`} style={{ width: '100%', maxWidth: '340px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', border: '2px solid #b91c1c' }}>
             <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>{safetyAlert.name} needs help</h2>
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
               They pressed SOS on a plan you are both on.
@@ -22332,7 +22332,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {(() => { const t = new Date(safetyAlert.at).getTime(); return Number.isFinite(t) ? ` As of ${localeTime(new Date(t), [], { hour: 'numeric', minute: '2-digit' })}.` : ''; })()}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: '10px', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
+              <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: 'var(--r-sm)', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
                 {Icons.phone('currentColor', 18)} Call 911
               </a>
               {/* Apple Maps or Google Maps (components/ui/MapsChooser.js),
@@ -22343,11 +22343,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <button type="button" className="hit44" onClick={() => openMapsChooser({
                   place: { lat: safetyAlert.lat, lng: safetyAlert.lng },
                   googleUrl: `https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`,
-                })} style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'none', color: 'var(--text-primary)', fontSize: 'inherit', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
+                })} style={{ minHeight: '44px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', background: 'none', color: 'var(--text-primary)', fontSize: 'inherit', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
                   {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES || safetyAlert.approximate === true ? 'See the area they are in' : 'See where they are'}
                 </button>
               )}
-              <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: '10px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>
+              <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: 'var(--r-sm)', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>
             </div>
           </div>
         </div>
@@ -23098,7 +23098,7 @@ const FlockApp = () => {
               type="button"
               className="hit44"
               onClick={() => window.location.reload()}
-              style={{ padding: '12px 22px', borderRadius: '14px', border: '1px solid rgba(244,239,227,0.3)', background: 'rgba(244,239,227,0.1)', color: '#f1ede0', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', fontFamily: 'inherit' }}
+              style={{ padding: '12px 22px', borderRadius: 'var(--r-md)', border: '1px solid rgba(244,239,227,0.3)', background: 'rgba(244,239,227,0.1)', color: '#f1ede0', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', fontFamily: 'inherit' }}
             >
               Try again
             </button>

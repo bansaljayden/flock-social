@@ -106,9 +106,9 @@ export default function EventDetailOverlay({
               <img src={eventDetail.photos?.[0] || eventDetail.image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
             )}
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 30%, rgba(0,0,0,0.8) 100%)' }} />
-            <button aria-label="Back" className="hit44" onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button aria-label="Back" className="hit44" onClick={() => setEventDetail(null)} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '12px', width: '36px', height: '36px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             {eventDetail.status === 'onsale' && (
-              <div style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', right: '12px', padding: '5px 12px', borderRadius: '10px', backgroundColor: '#22C55E' }}>
+              <div style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', right: '12px', padding: '5px 12px', borderRadius: 'var(--r-sm)', backgroundColor: '#22C55E' }}>
                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>On Sale</span>
               </div>
             )}
@@ -128,7 +128,7 @@ export default function EventDetailOverlay({
             {/* Date & Time */}
             <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
               {eventDetail.date && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', flex: 1, minWidth: '140px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', flex: 1, minWidth: '140px' }}>
                   {Icons.calendar(colors.navy, 18)}
                   <div>
                     <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{new Date(eventDetail.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
@@ -137,7 +137,7 @@ export default function EventDetailOverlay({
                 </div>
               )}
               {eventDetail.price_range && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)' }}>
                   {Icons.dollar(colors.navy, 18)}
                   <div>
                     <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${fmtMoney(eventDetail.price_range.min)}{eventDetail.price_range.max ? ` – $${fmtMoney(eventDetail.price_range.max)}` : '+'}</p>
@@ -149,7 +149,7 @@ export default function EventDetailOverlay({
 
             {/* Venue info */}
             {(eventDetail.venue_details || eventDetail.venue_name) && (
-              <div style={{ padding: '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', marginBottom: '16px' }}>
+              <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', marginBottom: '16px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                   {Icons.mapPin(colors.navy, 18)}
                   <div style={{ flex: 1 }}>
@@ -171,7 +171,7 @@ export default function EventDetailOverlay({
             {eventDetail.seatmap_url && (
               <div key={eventDetail.seatmap_url} style={{ marginBottom: '16px' }}>
                 <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Seat Map</p>
-                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }} />
+                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)' }} onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }} />
               </div>
             )}
 
@@ -197,7 +197,7 @@ export default function EventDetailOverlay({
               </div>
             )}
             {eventDetail.please_note && (
-              <div style={{ marginBottom: '16px', padding: '12px', borderRadius: '12px', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
+              <div style={{ marginBottom: '16px', padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: '#FEF3C7', border: '1px solid #FDE68A' }}>
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E', margin: '0 0 4px' }}>Please note</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: '#78350F', lineHeight: '1.4', margin: 0 }}>{eventDetail.please_note}</p>
               </div>
@@ -224,11 +224,11 @@ export default function EventDetailOverlay({
               setEventDetail(null);
               setShowEventsView(false);
               setCurrentScreen('create');
-            }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+            }} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
               {Icons.startFlock('white', 18)} Start Flock
             </button>
             {httpUrl(eventDetail.url) && (
-              <button className="hit44" onClick={() => openExternal(eventDetail.url)} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="hit44" onClick={() => openExternal(eventDetail.url)} style={{ padding: '12px 20px', borderRadius: 'var(--r-md)', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 Tickets {Icons.arrowRight(colors.navy, 14)}
               </button>
             )}

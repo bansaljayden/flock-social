@@ -82,7 +82,7 @@ function ThoughtDots({ colour }) {
           gap: '2px',
           padding: '0 4px',
           height: '10px',
-          borderRadius: '5px',
+          borderRadius: 'var(--r-pill)',
           border: `1px solid ${colour}`,
         }}
       >
@@ -139,7 +139,7 @@ export default function TypingRow({ members, ground = 'var(--chat-ground)' }) {
                   height: '20px',
                   padding: m.present ? '0 8px 0 16px' : '0 8px',
                   marginLeft: m.present ? '10px' : 0,
-                  borderRadius: '10px',
+                  borderRadius: 'var(--r-pill)',
                   border: `2px solid ${colour}`,
                   position: 'relative',
                   whiteSpace: 'nowrap',
@@ -156,7 +156,7 @@ export default function TypingRow({ members, ground = 'var(--chat-ground)' }) {
                       top: '-7px',
                       width: '22px',
                       height: '22px',
-                      borderRadius: '11px',
+                      borderRadius: 'var(--r-pill)',
                       border: `2px solid ${ground}`,
                       background: colour,
                       color: 'var(--chat-ground)',

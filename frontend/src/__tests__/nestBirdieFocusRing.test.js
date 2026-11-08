@@ -224,7 +224,7 @@ describe('Birdie\'s composer box', () => {
       expect(field.style.outline).toBe('none');
       const box = field.closest('.birdie-compose-box');
       expect(box).not.toBeNull();
-      expect(box.style.borderRadius).toBe(presentation === 'inline' ? '12px' : '20px');
+      expect(box.style.borderRadius).toBe(presentation === 'inline' ? 'var(--r-md)' : 'var(--r-xl)');
       unmount();
     }
   });

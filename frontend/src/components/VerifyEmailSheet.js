@@ -61,7 +61,7 @@ const VerifyEmailSheet = ({
       {/* The one sheet in the file that was missing this: no Escape, no focus
           trap, and Tab walked straight out into the screen behind it. */}
       <DialogBehavior onClose={() => setVerifyPrompt(null)} label="Confirm your email" />
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))' }}>
         <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Confirm your email first</h3>
         <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
           We sent a link to {authUser?.email || 'your inbox'} when you signed up. Open it and you can {verifyPrompt} right away.
@@ -71,7 +71,7 @@ const VerifyEmailSheet = ({
           className="hit44"
           onClick={resendVerification}
           disabled={verifyCooldown > 0 || verifyRefused}
-          style={{ width: '100%', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyCooldown > 0 ? 'not-allowed' : 'pointer', opacity: verifyCooldown > 0 ? 0.5 : 1 }}
+          style={{ width: '100%', height: '48px', borderRadius: 'var(--r-md)', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyCooldown > 0 ? 'not-allowed' : 'pointer', opacity: verifyCooldown > 0 ? 0.5 : 1 }}
         >
           {/* A suppressed address cannot be helped by pressing this, and the
               note above it now says so. Offering the control anyway is the
@@ -84,14 +84,14 @@ const VerifyEmailSheet = ({
           className="hit44"
           onClick={checkEmailConfirmedNow}
           disabled={verifyChecking}
-          style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyChecking ? 'default' : 'pointer', opacity: verifyChecking ? 0.6 : 1 }}
+          style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyChecking ? 'default' : 'pointer', opacity: verifyChecking ? 0.6 : 1 }}
         >
           {verifyChecking ? 'Checking' : "I've confirmed"}
         </button>
         <button
           className="hit44"
           onClick={() => setVerifyPrompt(null)}
-          style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}
+          style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: 'var(--r-md)', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}
         >
           Not now
         </button>

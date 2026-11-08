@@ -375,7 +375,7 @@ function MessageRow({
     /* Known ratio: an exact box. Unknown: a 4:5 box the photo is drawn
        inside. Either way the box exists before the bytes do. */
     aspectRatio: ratio ? String(ratio) : '4 / 5',
-    borderRadius: '10px',
+    borderRadius: 'var(--r-sm)',
     overflow: 'hidden',
     background: 'var(--chat-media-ph)',
     marginBottom: message && message.text ? '4px' : 0,
@@ -605,7 +605,7 @@ function MessageRow({
                     gap: '2px',
                     height: 'var(--chat-reaction-h)',
                     padding: '0 5px',
-                    borderRadius: '8px',
+                    borderRadius: 'var(--r-sm)',
                     border: `1px solid ${mine ? colour : 'var(--chat-reaction-border)'}`,
                     background: 'var(--chat-reaction-bg)',
                     color: 'var(--chat-reaction-ink)',
@@ -653,7 +653,7 @@ function MessageRow({
             display: 'inline-flex',
             alignItems: 'center',
             padding: '0 4px',
-            borderRadius: '6px',
+            borderRadius: 'var(--r-xs)',
             background: 'var(--chat-ground)',
             color: 'var(--chat-meta)',
             fontSize: '10px',

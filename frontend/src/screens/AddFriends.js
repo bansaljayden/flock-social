@@ -176,7 +176,7 @@ export default function AddFriends({
     // none), and disabled until the code it sends has loaded, as it is there.
     const inviteButton = (
       <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleInviteFriend(); }} disabled={!myFriendCode}
-        style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
+        style={{ padding: '12px 24px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
         {Icons.share('white', 16)} Invite a friend
       </button>
     );
@@ -186,10 +186,10 @@ export default function AddFriends({
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
+            <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowLeft('white', 18)}</button>
             <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0, flex: 1 }}>Add friends</h1>
             {pendingRequests.length > 0 && (
-              <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length} new</span>
+              <span style={{ padding: '4px 10px', borderRadius: 'var(--r-md)', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length} new</span>
             )}
           </div>
 
@@ -197,7 +197,7 @@ export default function AddFriends({
           <div style={{ display: 'flex', gap: '4px', paddingBottom: '2px' }}>
             {tabs.map(tab => (
               <button className="hit44" key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
-                flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
+                flex: 1, padding: '8px 4px', borderRadius: 'var(--r-lg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
                 backgroundColor: activeTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
                 // navyBg, not navy: the chip is white in both themes, and in
                 // dark mode colors.navy is cream, which left the active tab's
@@ -218,9 +218,9 @@ export default function AddFriends({
               rendered as "no requests" (friends audit, 2026-09-05). Plain
               text, no bird: an error must not read like an empty inbox. */}
           {pendingRequestsError && (
-            <div role="status" style={{ marginBottom: '16px', padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+            <div role="status" style={{ marginBottom: '16px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{pendingRequestsError}</p>
-              <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
+              <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
             </div>
           )}
 
@@ -228,17 +228,17 @@ export default function AddFriends({
           {pendingRequests.length > 0 && (
             <div style={{ marginBottom: '16px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                <div style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('var(--accent-amber-text)', 14)}</div>
+                <div style={{ width: '28px', height: '28px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('var(--accent-amber-text)', 14)}</div>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Friend requests</h2>
-                <span style={{ padding: '2px 8px', borderRadius: '10px', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>
+                <span style={{ padding: '2px 8px', borderRadius: 'var(--r-sm)', backgroundColor: colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>
               </div>
               {pendingRequests.map(req => (
-                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', border: `1.5px solid #fde68a`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', border: `1.5px solid #fde68a`, boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
                   {/* An incoming request from a stranger is one of the places
                       someone most needs the block, and there is no content to
                       hang it off. The face opens the person card. */}
-                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
+                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{req.name}</p>
@@ -249,8 +249,8 @@ export default function AddFriends({
                         would be clipped — this pair gets the real 44px box. */}
                     {/* No success tick on the tap: the row leaves at once, and
                         "accepted" is said when the server has said it. */}
-                    <button aria-label="Accept friend request" onClick={() => handleAcceptFriendRequest(req.id)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: '#047857', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
-                    <button aria-label="Decline friend request" className="hit44" onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 16)}</button>
+                    <button aria-label="Accept friend request" onClick={() => handleAcceptFriendRequest(req.id)} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: '#047857', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
+                    <button aria-label="Decline friend request" className="hit44" onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 16)}</button>
                   </div>
                 </div>
               ))}
@@ -262,15 +262,15 @@ export default function AddFriends({
             <div style={{ marginBottom: '16px' }}>
               <h4 style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Sent requests</h4>
               {outgoingRequests.map(req => (
-                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px' }}>
-                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '38px', height: '38px', borderRadius: '19px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '38px', height: '38px', borderRadius: '19px', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
+                <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '6px' }}>
+                  <button className="hit44" aria-label={`About ${req.name}`} onClick={() => openUserProfile({ id: req.id, name: req.name, image: req.profile_image_url })} style={{ width: '38px', height: '38px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                    {req.profile_image_url ? <img src={req.profile_image_url} alt="" style={{ width: '38px', height: '38px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : req.name[0]?.toUpperCase()}
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{req.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>Pending</p>
                   </div>
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => handleCancelOutgoingRequest(req.id)} style={{ padding: '6px 12px', borderRadius: '16px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => handleCancelOutgoingRequest(req.id)} style={{ padding: '6px 12px', borderRadius: 'var(--r-lg)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                 </div>
               ))}
             </div>
@@ -281,7 +281,7 @@ export default function AddFriends({
             <div>
               <div style={{ position: 'relative', marginBottom: '12px' }}>
                 <SearchInputLocal aria-label="Search by name" type="text" initialValue={addFriendsSearch} onCommit={handleAddFriendsSearch} placeholder="Search by name..." autoComplete="off"
-                  style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
+                  style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: 'var(--r-md)', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : colors.textTertiary, 16)}</span>
                 {addFriendsSearch && <button aria-label="Clear search" className="hit44" onClick={() => handleAddFriendsSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
@@ -293,7 +293,7 @@ export default function AddFriends({
               {addFriendsSearching && (
                 <SkeletonStatus label="Searching people">
                   {['46%', '38%', '52%'].map((w) => (
-                    <SkeletonRow key={w} thumb={44} round lines={[w]} trailing={[{ width: 56, height: 32, radius: 20 }, { width: 40, height: 32, radius: 20 }]} padding="10px" gap={10} radius={14} marginBottom={8} style={{ border: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }} />
+                    <SkeletonRow key={w} thumb={44} round lines={[w]} trailing={[{ width: 56, height: 32, radius: 'var(--r-pill)' }, { width: 40, height: 32, radius: 'var(--r-pill)' }]} padding="10px" gap={10} radius="var(--r-md)" marginBottom={8} style={{ border: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }} />
                   ))}
                 </SkeletonStatus>
               )}
@@ -313,22 +313,22 @@ export default function AddFriends({
               {!addFriendsSearching && addFriendsResults.map(user => {
                 const status = friendStatuses[user.id] || 'none';
                 return (
-                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                     </button>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
                     </div>
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                       {status === 'accepted' ? (
-                        <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                        <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
                       ) : status === 'pending' ? (
-                        <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                        <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
                       ) : (
-                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                       )}
-                      <button aria-label="Message" className="hit44 glass-btn glass-secondary" onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
+                      <button aria-label="Message" className="hit44 glass-btn glass-secondary" onClick={() => { setCurrentScreen('main'); startNewDmWithUser(user); }} style={{ padding: '8px 12px', borderRadius: 'var(--r-xl)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>{Icons.messageSquare(colors.navy, 14)}</button>
                     </div>
                   </div>
                 );
@@ -364,9 +364,9 @@ export default function AddFriends({
                   over a read that never landed told a person with twenty
                   friends they had none (friends audit, 2026-09-05). */}
               {friendSuggestionsError && (
-                <div role="status" style={{ padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                <div role="status" style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{friendSuggestionsError}</p>
-                  <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
+                  <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
                 </div>
               )}
               {friendSuggestionsError ? null : friendSuggestions.length === 0 ? (
@@ -385,7 +385,7 @@ export default function AddFriends({
                   body="Quick Add shows people your friends already know, so it starts working once you have a friend or two here."
                   action={(
                     <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setAddFriendsTab(contactsSupported ? 'contacts' : 'username'); }}
-                      style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                      style={{ padding: '12px 24px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
                       {contactsSupported ? 'Check your contacts' : 'Search for people'}
                     </button>
                   )}
@@ -397,9 +397,9 @@ export default function AddFriends({
                   {friendSuggestions.map(user => {
                     const status = friendStatuses[user.id] || 'none';
                     return (
-                      <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                        <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                      <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                        <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                         </button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
@@ -408,11 +408,11 @@ export default function AddFriends({
                             : `${user.mutual_count} mutual friend${parseInt(user.mutual_count) !== 1 ? 's' : ''}`}</p>
                         </div>
                         {status === 'accepted' ? (
-                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                          <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
                         ) : status === 'pending' ? (
-                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                          <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
                         ) : (
-                          <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                          <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                         )}
                       </div>
                     );
@@ -426,10 +426,10 @@ export default function AddFriends({
           {activeTab === 'qr' && (
             <div>
               {/* My QR Code */}
-              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
+              <div style={{ textAlign: 'center', padding: '20px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', marginBottom: '16px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>My Flock code</h2>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 16px' }}>Friends can scan this to add you</p>
-                <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
+                <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', border: `3px solid ${colors.cream}` }}>
                   {myFriendCode ? (
                     <React.Suspense fallback={<div style={{ width: '180px', height: '180px' }} />}>
                     {/* Dark modules on white in both themes: colors.navy is cream in
@@ -441,7 +441,7 @@ export default function AddFriends({
                     // said, with a retry, instead of a spinner that never ends.
                     <div role="status" style={{ width: '180px', height: '180px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, textAlign: 'center' }}>Your code did not load.</p>
-                      <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                      <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
                     </div>
                   ) : (
                     /* The code's square while the server mints it, where a
@@ -457,7 +457,7 @@ export default function AddFriends({
                 {!myFriendCode && !myFriendCodeFailed && (
                   <div aria-hidden="true" style={{ marginTop: '14px' }}>
                     <SkeletonBar width={64} height={9} radius={3} style={{ margin: '2px auto 8px' }} />
-                    <SkeletonBar width={140} height={36} radius={10} style={{ margin: '0 auto' }} />
+                    <SkeletonBar width={140} height={36} radius="var(--r-sm)" style={{ margin: '0 auto' }} />
                     <SkeletonBar width={70} height={10} radius={3} style={{ margin: '9px auto 0' }} />
                   </div>
                 )}
@@ -471,19 +471,19 @@ export default function AddFriends({
                         word "copied". Every other clipboard write in the app
                         already does it this way. */}
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your code</p>
-                    <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { await navigator.clipboard.writeText(myFriendCode); showToast('Code copied.'); } catch { showToast('Could not copy. Read it off the button instead.', 'error'); } }} style={{ padding: '8px 20px', borderRadius: '10px', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { await navigator.clipboard.writeText(myFriendCode); showToast('Code copied.'); } catch { showToast('Could not copy. Read it off the button instead.', 'error'); } }} style={{ padding: '8px 20px', borderRadius: 'var(--r-sm)', border: `2px solid ${colors.cream}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', letterSpacing: '2px', fontFamily: 'monospace' }}>{myFriendCode}</button>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>Tap to copy</p>
                   </div>
                 )}
               </div>
 
               {/* Scan button */}
-              <button className="hit44 glass-btn glass-navy" onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={startQrScanner} style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '16px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)' }}>
                 {Icons.camera('white', 18)} Scan a Friend's Code
               </button>
 
               {/* Enter friend's code */}
-              <div style={{ padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+              <div style={{ padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
                 <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Or enter a code</h4>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Ask your friend for their Flock code</p>
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -493,10 +493,10 @@ export default function AddFriends({
                       the code from App.js on the tap, and the box publishes a
                       pending value on pointerdown for exactly that reason. */}
                   <SearchInputLocal aria-label="Friend code" type="text" initialValue={friendCodeInput} onCommit={setFriendCodeInput} transform={upperCase} placeholder="FLOCK-XXXXXXXX" maxLength={15}
-                    style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
+                    style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `1.5px solid ${friendCodeInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', fontFamily: 'monospace', letterSpacing: '1px', outline: 'none', boxSizing: 'border-box', textAlign: 'center' }}
                   />
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
-                    style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: friendCodeInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: friendCodeInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
+                    style={{ padding: '12px 20px', borderRadius: 'var(--r-md)', border: 'none', background: friendCodeInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: friendCodeInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
                     {/* The small inline ring for an action running, over the
                         word held invisible so the button keeps its width,
                         with the words for a screen reader. It was a bare
@@ -518,13 +518,13 @@ export default function AddFriends({
             <DialogBehavior onClose={() => stopQrScanner()} label="Scan Flock code" />
                   {/* Fixed overlay covers the Dynamic Island: pad the header by the top inset. */}
                   <div style={{ padding: 'calc(16px + var(--safe-top)) 16px 16px', display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0 }}>
-                    <button aria-label="Close" className="hit44" onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
+                    <button aria-label="Close" className="hit44" onClick={stopQrScanner} style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('white', 18)}</button>
                     <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>Scan a Flock code</h3>
                   </div>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-                    <div id={qrScannerDivId} style={{ width: '100%', maxWidth: '340px', borderRadius: '20px', overflow: 'hidden' }} />
+                    <div id={qrScannerDivId} style={{ width: '100%', maxWidth: '340px', borderRadius: 'var(--r-xl)', overflow: 'hidden' }} />
                     {qrScanError && (
-                      <div role="alert" style={{ marginTop: '16px', padding: '10px 20px', borderRadius: '12px', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)' }}>
+                      <div role="alert" style={{ marginTop: '16px', padding: '10px 20px', borderRadius: 'var(--r-md)', backgroundColor: 'rgba(239,68,68,0.2)', border: '1px solid rgba(239,68,68,0.4)' }}>
                         <p style={{ fontSize: 'var(--t-label)', color: '#fca5a5', margin: 0, textAlign: 'center' }}>{qrScanError}</p>
                       </div>
                     )}
@@ -568,27 +568,27 @@ export default function AddFriends({
             const personRow = (user, subtitle) => {
               const status = friendStatuses[user.id] || user.friendship_status || 'none';
               return (
-                <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                  <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                    {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                    {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{subtitle}</p>
                   </div>
                   {status === 'accepted' ? (
-                    <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                    <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
                   ) : status === 'pending' ? (
-                    <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                    <span style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
                   ) : (
-                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
                   )}
                 </div>
               );
             };
 
             const checkAgainButton = (
-              <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '8px', position: 'relative', overflow: 'hidden' }}>Check again</button>
+              <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading} style={{ width: '100%', padding: '12px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '8px', position: 'relative', overflow: 'hidden' }}>Check again</button>
             );
 
             return (
@@ -596,7 +596,7 @@ export default function AddFriends({
                 {/* The list is feed-shaped, so the wait draws the layout it is
                     about to fill rather than a spinner (DESIGN-STANDARD rule 10). */}
                 {contactsLoading && (
-                  <ListSkeleton count={3} thumb={44} thumbRadius={22} label="Checking your contacts" />
+                  <ListSkeleton count={3} thumb={44} thumbRadius="var(--r-pill)" label="Checking your contacts" />
                 )}
 
                 {!contactsLoading && contactsDenied && (
@@ -624,7 +624,7 @@ export default function AddFriends({
                 {!contactsLoading && !contactsDenied && !contactsUnavailable && !contactsResult && (
                   <div style={styles.card}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 20)}</div>
+                      <div style={{ width: '40px', height: '40px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 20)}</div>
                       <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Find friends from your contacts</h2>
                     </div>
                     {/* Every clause here is something services/contacts.js and
@@ -634,7 +634,7 @@ export default function AddFriends({
                         written down. */}
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: '1.5' }}>Flock sends only phone numbers, checks them against people who chose to be findable, and keeps nothing. Names and everything else stay on your phone.</p>
                     <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
-                      style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                      style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
                       Continue
                     </button>
                   </div>
@@ -687,10 +687,10 @@ export default function AddFriends({
                       onCommit={(value) => { setPhoneLookupInput(value); setPhoneLookupError(''); setPhoneLookupUsers(null); }}
                       onKeyDown={(e) => { if (e.key === 'Enter' && !phoneLookupLoading) handleLookupByNumber(e.currentTarget.value); }}
                       placeholder="(555) 555-0123" maxLength={20}
-                      style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${phoneLookupInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                      style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `1.5px solid ${phoneLookupInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                     <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!phoneLookupLoading && phoneLookupInput.trim()) { confirmClick(e); handleLookupByNumber(); } }} disabled={phoneLookupLoading || !phoneLookupInput.trim()}
-                      style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: phoneLookupInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: phoneLookupInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: phoneLookupInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: phoneLookupLoading ? 0.7 : 1 }}>
+                      style={{ padding: '12px 20px', borderRadius: 'var(--r-md)', border: 'none', background: phoneLookupInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: phoneLookupInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: phoneLookupInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: phoneLookupLoading ? 0.7 : 1 }}>
                       {/* The same inline ring as Add above, for the same reason. */}
                       {phoneLookupLoading ? (
                         <>
@@ -730,7 +730,7 @@ export default function AddFriends({
                   <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nobody there yet?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Send someone your code and they can add you the moment they sign up</p>
                   <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleInviteFriend(); }} disabled={!myFriendCode}
-                    style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
+                    style={{ width: '100%', padding: '12px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
                     {Icons.share(colors.navy, 16)} Invite a friend
                   </button>
                 </div>

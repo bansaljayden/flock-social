@@ -69,7 +69,7 @@ export default function MapsChooserHost({ DialogBehavior }) {
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10050, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
       {DialogBehavior ? <DialogBehavior onClose={close} label="Open in a maps app" /> : null}
-      <div style={{ width: '100%', maxWidth: '420px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '16px 16px calc(16px + var(--safe-bottom))', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ width: '100%', maxWidth: '420px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '16px 16px calc(16px + var(--safe-bottom))', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <p style={{ margin: '0 0 4px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600' }}>Open in</p>
         {choices.map((c) => (
           <button
@@ -77,7 +77,7 @@ export default function MapsChooserHost({ DialogBehavior }) {
             type="button"
             className="hit44 glass-btn"
             onClick={() => { openInNewWindow(c.url); close(); }}
-            style={{ minHeight: '48px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+            style={{ minHeight: '48px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
           >
             {c.label}
           </button>
@@ -86,7 +86,7 @@ export default function MapsChooserHost({ DialogBehavior }) {
           type="button"
           className="hit44"
           onClick={close}
-          style={{ minHeight: '44px', borderRadius: '12px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+          style={{ minHeight: '44px', borderRadius: 'var(--r-md)', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
         >
           Cancel
         </button>

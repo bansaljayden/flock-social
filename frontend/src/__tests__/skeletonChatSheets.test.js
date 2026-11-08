@@ -416,10 +416,10 @@ describe('the vote sheet', () => {
     const sheet = screen.getByText('Vote for a venue').closest('.modal-content');
     expect(within(sheet).getByText('Loading the votes')).toBeTruthy();
     // The 36px square at radius 10, once a row.
-    const squares = Array.from(sheet.querySelectorAll('.skeleton')).filter((b) => b.style.width === '36px' && b.style.height === '36px' && b.style.borderRadius === '10px');
+    const squares = Array.from(sheet.querySelectorAll('.skeleton')).filter((b) => b.style.width === '36px' && b.style.height === '36px' && b.style.borderRadius === 'var(--r-sm)');
     expect(squares).toHaveLength(3);
     // The cards at radius 14.
-    const rows = Array.from(sheet.querySelectorAll('div')).filter((d) => d.style.borderRadius === '14px' && d.style.padding === '12px 14px');
+    const rows = Array.from(sheet.querySelectorAll('div')).filter((d) => d.style.borderRadius === 'var(--r-md)' && d.style.padding === '12px 14px');
     expect(rows).toHaveLength(3);
     // The header's count line is a bar, not a count of an empty tally.
     expect(within(sheet).queryByText(/votes? cast/)).toBeNull();
@@ -478,7 +478,7 @@ describe('the photo viewers', () => {
     // Both viewers, from their source: the block for a row with no thumbnail,
     // and the failure sentence kept as it was. Only the wait changed.
     for (const src of [CHAT_SRC, DM_SRC]) {
-      expect(src).toContain('<SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />');
+      expect(src).toContain('<SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius="var(--r-sm)" />');
       expect(src).toContain('{imageViewer.error}</p>');
       expect(src).not.toContain("'Loading the full photo\\u2026'");
     }

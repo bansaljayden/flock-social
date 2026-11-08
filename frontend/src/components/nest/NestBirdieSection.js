@@ -102,13 +102,13 @@ export default function NestBirdieSection({
           {showLastAnswer && (
             <button type="button" onClick={onShowLastAnswer} style={{ ...textLink, display: 'block', margin: '-6px 0 2px' }}>Show the last answer</button>
           )}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
             {/* The field sets no outline: its keyboard ring is drawn on this
                 row, inside the card that clips it (index.css
                 .nest-birdie-field), and the suggestions below draw theirs
                 inside themselves the same way (.nest-row-btn). */}
             <div data-nest-birdie-field="" className="nest-birdie-field" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px', minHeight: '52px', padding: '0 12px' }}>
-              <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: '999px', objectFit: 'cover', flexShrink: 0, background: isDark ? '#162046' : '#e8eaf0' }} />
+              <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: 'var(--r-pill)', objectFit: 'cover', flexShrink: 0, background: isDark ? '#162046' : '#e8eaf0' }} />
               {/* Uncontrolled, seeded from the ref: aiInputValueRef holds the
                   typed text of record, the same as Birdie's own box. 16px on
                   a field (the --t-body floor in index.css), so iOS does not
@@ -153,7 +153,7 @@ export default function NestBirdieSection({
                 disabled={!canSend}
                 tabIndex={inputHasText ? undefined : -1}
                 aria-hidden={inputHasText ? undefined : 'true'}
-                style={{ position: 'absolute', right: '10px', top: '10px', width: '32px', height: '32px', borderRadius: '999px', border: 'none', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', opacity: inputHasText ? 1 : 0, transition: 'opacity 150ms ease', pointerEvents: inputHasText ? 'auto' : 'none' }}
+                style={{ position: 'absolute', right: '10px', top: '10px', width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: canSend ? 'pointer' : 'default', opacity: inputHasText ? 1 : 0, transition: 'opacity 150ms ease', pointerEvents: inputHasText ? 'auto' : 'none' }}
               >
                 {Icons.send('currentColor', 15)}
               </button>
@@ -165,7 +165,7 @@ export default function NestBirdieSection({
                   {Number.isFinite(dailyLimit) ? `You've used today's ${dailyLimit} messages.` : "You've used today's messages."} They come back {birdieBackText(resetsAt)}.
                 </p>
                 {onGetPro && (
-                  <button type="button" className="hit44" onClick={onGetPro} style={{ flexShrink: 0, minHeight: '36px', padding: '0 14px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Get Flock Pro</button>
+                  <button type="button" className="hit44" onClick={onGetPro} style={{ flexShrink: 0, minHeight: '36px', padding: '0 14px', border: 'none', borderRadius: 'var(--r-md)', backgroundColor: 'var(--btn-primary-bg)', color: 'var(--btn-primary-fg)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap' }}>Get Flock Pro</button>
                 )}
               </div>
             )}

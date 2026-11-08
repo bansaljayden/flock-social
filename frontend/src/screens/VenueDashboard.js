@@ -393,7 +393,7 @@ export function SavingCheckbox({ checked, onSave, ...rest }) {
 // pill) or an event (title, when, the status line, Edit and Delete). The
 // sentence is for screen readers, and it sits beside the busy rows rather
 // than inside them (components/ui/Skeleton.js SkeletonStatus says why).
-const ROW_SKELETON_BOX = { padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' };
+const ROW_SKELETON_BOX = { padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', marginBottom: '8px' };
 const skeletonBar = (width, height, extra = {}) => (
   <div aria-hidden="true" className="skeleton" style={{ width, height, borderRadius: '4px', ...extra }} />
 );
@@ -411,11 +411,11 @@ export function OwnerListSkeleton({ kind, label }) {
                 {kind === 'event' && skeletonBar('60%', '12px', { marginTop: '6px' })}
               </div>
               {kind === 'flock'
-                ? skeletonBar('84px', '24px', { borderRadius: '12px', flexShrink: 0 })
+                ? skeletonBar('84px', '24px', { borderRadius: 'var(--r-md)', flexShrink: 0 })
                 : (
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    {skeletonBar('26px', '26px', { borderRadius: '6px' })}
-                    {skeletonBar('26px', '26px', { borderRadius: '6px' })}
+                    {skeletonBar('26px', '26px', { borderRadius: 'var(--r-xs)' })}
+                    {skeletonBar('26px', '26px', { borderRadius: 'var(--r-xs)' })}
                   </div>
                 )}
             </div>
@@ -437,7 +437,7 @@ export function ReviewStatsSkeleton() {
       <p className="sr-only" role="status">Loading your reviews.</p>
       <div aria-busy="true" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-          {skeletonBar('40px', '28px', { borderRadius: '6px' })}
+          {skeletonBar('40px', '28px', { borderRadius: 'var(--r-xs)' })}
           {skeletonBar('78px', '14px')}
           {skeletonBar('56px', '12px')}
         </div>
@@ -690,7 +690,7 @@ export default function VenueDashboard({
             // fallback below is the one phrase that is true of any venue.
             const saysLabel = venueBusyNow.attribution || 'the venue says';
             return (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                 {venueBusyNow.suppressed ? (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
@@ -751,7 +751,7 @@ export default function VenueDashboard({
                     // reading is live, re-posting the same number is a no-op,
                     // so the draft check still applies there.
                     disabled={venueBusySaving || (!!live && venueBusyDraft == null)}
-                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
+                    style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
                   >
                     {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
                   </button>
@@ -759,7 +759,7 @@ export default function VenueDashboard({
                     <button className="hit44"
                       onClick={handleClearBusyNow}
                       disabled={venueBusySaving}
-                      style={{ padding: '12px 10px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: venueBusySaving ? 'default' : 'pointer', opacity: venueBusySaving ? 0.5 : 1 }}
+                      style={{ padding: '12px 10px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: venueBusySaving ? 'default' : 'pointer', opacity: venueBusySaving ? 0.5 : 1 }}
                     >
                       Clear
                     </button>
@@ -963,7 +963,7 @@ export default function VenueDashboard({
             className="hit44"
             onClick={handleRequestVerification}
             disabled={verificationRequestBusy}
-            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
+            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
           >
             Request verification
           </button>
@@ -1174,7 +1174,7 @@ export default function VenueDashboard({
     // otherwise the one constant in App.js. Inside the app it names no price
     // and offers no upgrade (`native` above).
     const LockedTab = ({ featureName, description }) => (
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: '2px dashed #2d5a87' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: '2px dashed #2d5a87' }}>
         {/* The last hand-drawn icon on this surface. It was a padlock with
             rounded caps and a rounded rect, which is a different drawing
             language from every other mark in the app; components/ui/Icons.js
@@ -1187,7 +1187,7 @@ export default function VenueDashboard({
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
         {(process.env.REACT_APP_PURCHASES !== 'off') && !native ? (<>
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
-        <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+        <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: 'var(--r-sm)', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
           Upgrade to Roost
         </button>
         </>) : (
@@ -1216,16 +1216,16 @@ export default function VenueDashboard({
             it clear of a category line that runs long. */}
         <div style={{ position: 'relative', padding: coverCredit ? '16px 16px 34px' : '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, ${colors.navyBg}, transparent 26%), linear-gradient(to bottom, rgba(10,18,32,0.3), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               {venueBillingOn && (process.env.REACT_APP_PURCHASES !== 'off') && (
-              <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
+              <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
                 {tierBadge[venueData.tier].label}
               </span>
               )}
-              <button aria-label="Sign out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button aria-label="Sign out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.logout('white', 14)}
               </button>
             </div>
@@ -1345,7 +1345,7 @@ export default function VenueDashboard({
               back. An unexplained gap where a control belongs is the shape
               this dashboard has already had to remove twice. */}
           {venueTab === 'analytics' && venueBusyNow && !venueBusyNow.available && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
               {/* While the intel card right below is on screen saying the
                   venue is not verified (with the button), this card says only
@@ -1379,7 +1379,7 @@ export default function VenueDashboard({
                   card says nothing about WHICH control is missing, and this
                   one sits where the slider would have been. */}
               {venueBusyNow && !venueBusyNow.available && (
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
                   {/* No tier condition here. This tab holds no intel card, so
@@ -1388,10 +1388,10 @@ export default function VenueDashboard({
                 </div>
               )}
               {!venueMapState && (
-                <div className="skeleton" style={{ flex: 1, borderRadius: '12px' }} />
+                <div className="skeleton" style={{ flex: 1, borderRadius: 'var(--r-md)' }} />
               )}
               {venueMapState && !venueMapState.available && (
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '16px', boxShadow: 'var(--card-shadow-sm)' }}>
                   {/* Warm bird: this card is about the owner's own listing. */}
                   <BirdieStill bird={WARM_BIRD} size={64} style={{ marginBottom: '8px' }} />
                   <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
@@ -1406,14 +1406,14 @@ export default function VenueDashboard({
                         || 'The venue lookup failed. Check your connection and try again.')}
                   </p>
                   {venueMapState.reason === 'load_failed' && (
-                    <button className="hit44" onClick={loadVenueMap} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+                    <button className="hit44" onClick={loadVenueMap} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
                       Try again
                     </button>
                   )}
                 </div>
               )}
               {venueMapState?.available && (
-                <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: '12px', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: 'var(--r-md)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm)' }}>
                   <MapLibreMapView
                     venues={allVenues}
                     filterCategory="All"
@@ -1452,12 +1452,12 @@ export default function VenueDashboard({
               the lock's opening text. */}
           {venueTab === 'analytics' && !tierKnown && (
             <div aria-hidden="true">
-              <div className="skeleton" style={{ height: '120px', borderRadius: '12px', marginBottom: '12px' }} />
+              <div className="skeleton" style={{ height: '120px', borderRadius: 'var(--r-md)', marginBottom: '12px' }} />
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
-                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
-                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
-                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
-                <div className="skeleton" style={{ height: '78px', borderRadius: '12px' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: 'var(--r-md)' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: 'var(--r-md)' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: 'var(--r-md)' }} />
+                <div className="skeleton" style={{ height: '78px', borderRadius: 'var(--r-md)' }} />
               </div>
             </div>
           )}
@@ -1483,7 +1483,7 @@ export default function VenueDashboard({
               lies. This card used to be the server's sentence set in bold and
               nothing else, one screen away from the better version. */}
           {venueIntel && !venueIntel.available && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               {/* Cobalt Birdie: the forecast is Flock's read on the room,
                   not the owner's own copy, so it gets the Flock bird. */}
               <BirdieStill size={64} style={{ marginBottom: '8px' }} />
@@ -1499,7 +1499,7 @@ export default function VenueDashboard({
                   state the press just left. */}
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{verificationRequestNote || venueIntel.reason || 'Nothing we track grounds a forecast for your venue so far.'}</p>
               {(venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed') && (
-                <button className="hit44" onClick={retryVenueIntel} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+                <button className="hit44" onClick={retryVenueIntel} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
                   Try again
                 </button>
               )}
@@ -1513,7 +1513,7 @@ export default function VenueDashboard({
                   className="hit44"
                   onClick={handleRequestVerification}
                   disabled={verificationRequestBusy}
-                  style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
+                  style={{ marginTop: '10px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
                 >
                   Request verification
                 </button>
@@ -1524,24 +1524,24 @@ export default function VenueDashboard({
             </div>
           )}
           {!venueIntel && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Building your forecast...</p>
             </div>
           )}
 
           {/* Key metrics — all computed, none invented */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: intelReady && venueIntel.now.score > 84 ? colors.red : colors.steel, margin: '4px 0 0' }}>{intelReady ? `${venueIntel.now.score}` : '–'}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? (venueIntel.now.method === 'ml' ? venueIntel.now.label : `${venueIntel.now.label} · typical for your category`) : ''}</p>
             </div>
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{todayByDay ? "Today's Peak" : "Tonight's Peak"}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${spokenHourLabel(tonightPeak.hour)}` : (todayIntel && todayIntel.closed ? 'Closed today' : '')}</p>
             </div>
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               {/* One name for one list. This tile, the section on the Events
                   tab and its empty state were "Groups Eyeing You", "Incoming
                   Flocks" and "No incoming flocks yet": three names for
@@ -1557,7 +1557,7 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified || !venueListLoaded.incomingFlocks) ? '–' : realIncomingFlocks.length}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{weekByDay ? 'Biggest Day Ahead' : 'Biggest Night Ahead'}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
               {/* Each night runs into its small hours and keeps its evening's
@@ -1601,7 +1601,7 @@ export default function VenueDashboard({
               },
             ];
             return (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>Last {tw.windowDays} days. Counted from your venue's own activity, nothing modeled.</p>
                 {rows.map((r, i) => (
@@ -1614,7 +1614,7 @@ export default function VenueDashboard({
             );
           })()}
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
             </div>
@@ -1664,7 +1664,7 @@ export default function VenueDashboard({
               server read it on (weekByDay above), so "evening" is said only
               of a week of evenings. */}
           {intelReady && venueIntel.week?.length > 0 && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>{weekByDay ? 'Week Ahead (projected peak)' : 'Week Ahead (projected evening peak)'}</h3>
               {(() => {
                 // A busy venue's projected evenings all land in one band, and
@@ -1746,7 +1746,7 @@ export default function VenueDashboard({
               Google's busyness chart can't do this: per-venue, read-only,
               no API. */}
           {venueStrip?.available && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>{stripAllDay ? 'Your Strip Today' : 'Your Strip Tonight'}</h3>
               {[{ ...venueStrip.you, you: true }, ...venueStrip.competitors].map((v, i) => (
                 <div key={`${v.name}-${i}`} style={{ padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
@@ -1796,7 +1796,7 @@ export default function VenueDashboard({
               pasted onto the venue's site, so it names no state at all. The
               pill's own text says which it is. */}
           {intelReady && venueProfile?.google_place_id && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Crowd badge for your website</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
               <button className="hit44"
@@ -1804,7 +1804,7 @@ export default function VenueDashboard({
                   const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? From Flock" height="36">`;
                   try { await navigator.clipboard.writeText(snippet); showToast('Embed code copied'); } catch { showToast('Could not copy', 'error'); }
                 }}
-                style={{ width: '100%', padding: '10px', borderRadius: '10px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
+                style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
               >
                 Copy embed code
               </button>
@@ -1816,7 +1816,7 @@ export default function VenueDashboard({
               almost every venue. The count used to render only inside the
               sensor block, so it was never shown. */}
           {ownerSensorData && !ownerSensorData.sensor_data && (
-            <div style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '12px' }}>
+            <div style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '12px' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
               <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People who checked in from the app or tapped a Flock tag at your venue.</p>
@@ -1859,13 +1859,13 @@ export default function VenueDashboard({
             const dwell = typeof sd.dwell_minutes === 'number' ? sd.dwell_minutes : null;
             const max24 = Math.max(1, ...ownerSensorHistory.map(r => people(r) || 0));
             return (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
                   {/* No pulsing dot (2026-11-06). Online or Offline and the
                       age of the last reading, beside this, are the state. */}
                   <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Your sensor</h3>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '8px', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: 'var(--r-sm)', backgroundColor: online ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)', color: online ? 'var(--accent-green-text)' : 'var(--accent-red-text)' }}>{online ? 'Online' : 'Offline'}</span>
                     {/* A sensor that has never reported has no timestamp, which
                         made lastSeenMin Infinity and printed "last seen Infinity
                         min ago". Same guard as the break-even figure. */}
@@ -1954,7 +1954,7 @@ export default function VenueDashboard({
           {/* Post a Deal. Deals are free on every plan, so nothing here is
               locked. A venue on the free plan does not see this tab's body,
               and posts from the Promotions tab, which is open to everyone. */}
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative' }}>
             <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 14)} Post a deal</h3>
             <SearchInputLocal aria-label="Deal"
               type="text"
@@ -1962,7 +1962,7 @@ export default function VenueDashboard({
               initialValue={dealDescription}
               onCommit={setDealDescription}
               placeholder="e.g., Half-price appetizers until 8pm"
-              style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+              style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             />
             {/* The limit, shown once it is close, so a box that stops taking
                 letters says why instead of looking stuck. */}
@@ -1976,11 +1976,11 @@ export default function VenueDashboard({
                 "Weekend" left this row when the editor dropped it as a slot. */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'All Day'].map(slot => (
-                <button key={slot} aria-pressed={dealTimeSlot === slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                <button key={slot} aria-pressed={dealTimeSlot === slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: 'var(--r-lg)', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   {slot}
                 </button>
               ))}
-              <button aria-pressed={dealTimeSlot === PROMO_CUSTOM} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(PROMO_CUSTOM)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === PROMO_CUSTOM ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === PROMO_CUSTOM ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === PROMO_CUSTOM ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+              <button aria-pressed={dealTimeSlot === PROMO_CUSTOM} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(PROMO_CUSTOM)} style={{ padding: '6px 10px', borderRadius: 'var(--r-lg)', border: `1px solid ${dealTimeSlot === PROMO_CUSTOM ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === PROMO_CUSTOM ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === PROMO_CUSTOM ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                 Custom
               </button>
             </div>
@@ -1991,7 +1991,7 @@ export default function VenueDashboard({
                 initialValue={dealCustomTime}
                 onCommit={setDealCustomTime}
                 placeholder="e.g., 5 to 7pm, Tuesday to Thursday"
-                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+                style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
               />
             )}
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
@@ -2020,14 +2020,14 @@ export default function VenueDashboard({
                 setDealDescription(text);
                 showToast(userMessage(e, "That deal didn't post. Try again."), 'error');
               }
-            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim() || !quickDealTimeSlot(dealTimeSlot, dealCustomTime)}>
+            }} style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim() || !quickDealTimeSlot(dealTimeSlot, dealCustomTime)}>
               Post Deal
             </button>
           </div>
 
           {/* Today, hour by hour — from the model */}
           {intelReady && venueIntel.todayHourly?.length > 0 && (
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Today, hour by hour</h3>
               {/* Three fixes, all measured in a browser at 375px.
                   The bar sits in a fixed well and the hour label sits under
@@ -2097,8 +2097,8 @@ export default function VenueDashboard({
               the tab. */}
           {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && !tierKnown && (
             <div aria-hidden="true">
-              <div className="skeleton" style={{ height: '220px', borderRadius: '12px', marginBottom: '12px' }} />
-              <div className="skeleton" style={{ height: '120px', borderRadius: '12px', marginBottom: '12px' }} />
+              <div className="skeleton" style={{ height: '220px', borderRadius: 'var(--r-md)', marginBottom: '12px' }} />
+              <div className="skeleton" style={{ height: '120px', borderRadius: 'var(--r-md)', marginBottom: '12px' }} />
             </div>
           )}
           {venueTab === 'tables' && ownerTablesSeen && (ownerTablesLocked || (!can.analytics && tierKnown)) && (
@@ -2116,7 +2116,7 @@ export default function VenueDashboard({
                   the same shape as the reviews tab's banner, instead of a
                   deal that reads "0 views" forever with no reason given. */}
               {!venueIsVerified && (
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     {venueVerificationPending || verificationRequestNote
                       ? 'Deals show on your venue card once your venue is verified. Your request is in. Until then a deal you post stays here and nobody sees it.'
@@ -2126,7 +2126,7 @@ export default function VenueDashboard({
                 </div>
               )}
               {/* Create New Promotion Button */}
-              <button className="hit44 glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.plus('white', 18)} Create promotion
               </button>
 
@@ -2136,7 +2136,7 @@ export default function VenueDashboard({
                   reason given) and it is the opposite of active. The heading
                   counted it as active and the row was styled as if it were
                   running. */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Your promotions ({promotions.length})</h3>
                 {/* A BANNER, not a replacement for the list. The failed read
                     leaves whatever was already loaded on screen, and a
@@ -2145,13 +2145,13 @@ export default function VenueDashboard({
                     direction. Only the "create your first one" empty state is
                     suppressed, because that is the line that is not true. */}
                 {venueListErrors.promotions && (
-                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                     <BirdNote
                       layout="row"
                       size={48}
                       bird={WARM_BIRD}
                       body="We couldn't load your promotions. Nothing has been deleted."
-                      action={<button className="hit44" onClick={() => loadVenuePromotions()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44" onClick={() => loadVenuePromotions()} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                     />
                   </div>
                 )}
@@ -2176,7 +2176,7 @@ export default function VenueDashboard({
                 ) : promotions.map(promo => {
                   const hidden = isModerationHidden(promo);
                   return (
-                  <div key={promo.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
+                  <div key={promo.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1 }}>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{promo.title}</h4>
@@ -2197,9 +2197,9 @@ export default function VenueDashboard({
                             cannot succeed does not render; the notice below
                             says why and names the two things that do work. */}
                         {!hidden && (
-                          <button aria-label={promo.title ? `Edit ${promo.title}` : 'Edit this deal'} className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                          <button aria-label={promo.title ? `Edit ${promo.title}` : 'Edit this deal'} className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <BusyButton aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" ask={() => confirmDelete('deal', promo.title)} onPress={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
+                        <BusyButton aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" ask={() => confirmDelete('deal', promo.title)} onPress={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="promotion" />}
@@ -2245,25 +2245,25 @@ export default function VenueDashboard({
           {venueTab === 'events' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
-              <button className="hit44 glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => openEventModal()} style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.plus('white', 18)} Create event
               </button>
 
               {/* Flocks with you in their vote (GET /incoming-flocks) */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks with you in their vote</h3>
                 {/* An owner new to the app has no reason to know the word. */}
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>A flock is a group of friends planning a night out in the Flock app.</p>
                 {/* Banner above the list, never instead of it — same rule as
                     the promotions and events tabs. */}
                 {venueListErrors.incomingFlocks && (
-                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                     <BirdNote
                       layout="row"
                       size={48}
                       bird={BIRDIE}
                       body="We couldn't load the flocks with you in their vote."
-                      action={<button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                     />
                   </div>
                 )}
@@ -2275,13 +2275,13 @@ export default function VenueDashboard({
                     server would refuse the retry identically, so the control
                     offered is the one that can work. */}
                 {venueListErrors.incomingFlocksLocked && (
-                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include this list.</p>
-                    {(process.env.REACT_APP_PURCHASES !== 'off') && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
+                    {(process.env.REACT_APP_PURCHASES !== 'off') && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
                   </div>
                 )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
-                  <div key={flock.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
+                  <div key={flock.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
@@ -2300,7 +2300,7 @@ export default function VenueDashboard({
                           'confirmed' here means coming here. Anything else is
                           a plan still deciding with this venue in the running,
                           which "Active" did not say. */}
-                      <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? 'var(--accent-purple-bg)' : 'var(--accent-amber-bg)', color: flock.status === 'confirmed' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
+                      <span style={{ padding: '4px 8px', borderRadius: 'var(--r-md)', backgroundColor: flock.status === 'confirmed' ? 'var(--accent-purple-bg)' : 'var(--accent-amber-bg)', color: flock.status === 'confirmed' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Considering you'}
                       </span>
                     </div>
@@ -2329,7 +2329,7 @@ export default function VenueDashboard({
               </div>
 
               {/* Your Events */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your events ({venueEventsList.length})</h3>
                 {/* Who sees these, said once above the list. It used to say
                     nobody did, which was true until GET /public-events shipped
@@ -2345,13 +2345,13 @@ export default function VenueDashboard({
                 {/* Banner, not a replacement for the list — same reasoning as
                     the promotions tab above. */}
                 {venueListErrors.events && (
-                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                  <div style={{ padding: '10px', marginBottom: '8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                     <BirdNote
                       layout="row"
                       size={48}
                       bird={WARM_BIRD}
                       body="We couldn't load your events. Nothing has been deleted."
-                      action={<button className="hit44" onClick={() => loadVenueEvents()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44" onClick={() => loadVenueEvents()} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                     />
                   </div>
                 )}
@@ -2372,7 +2372,7 @@ export default function VenueDashboard({
                   const statusLine = hidden ? null : (EVENT_STATUS_LINE[event.public_status] || null);
                   const when = eventWhenLine(event.date, event.time);
                   return (
-                  <div key={event.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
+                  <div key={event.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflowWrap: 'anywhere' }}>{event.title}</h4>
@@ -2389,9 +2389,9 @@ export default function VenueDashboard({
                             render. Delete still works on a hidden row, which is
                             why it stays. */}
                         {!hidden && (
-                          <button aria-label={event.title ? `Edit ${event.title}` : 'Edit this event'} className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                          <button aria-label={event.title ? `Edit ${event.title}` : 'Edit this event'} className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <BusyButton aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" ask={() => confirmDelete('event', event.title)} onPress={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
+                        <BusyButton aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" ask={() => confirmDelete('event', event.title)} onPress={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="event" />}
@@ -2422,18 +2422,18 @@ export default function VenueDashboard({
               {/* Above the rating card and the list, not instead of either, so
                   a partial load still shows what it has. */}
               {venueListErrors.reviews && (
-                <div style={{ padding: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
+                <div style={{ padding: '10px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                   <BirdNote
                     layout="row"
                     size={48}
                     bird={BIRDIE}
                     body="We couldn't load your reviews. Nothing has been deleted."
-                    action={<button className="hit44" onClick={() => loadVenueReviews()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                    action={<button className="hit44" onClick={() => loadVenueReviews()} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                   />
                 </div>
               )}
               {/* Rating Overview */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 {reviewStats && reviewStats.total > 0 ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <div style={{ textAlign: 'center' }}>
@@ -2500,7 +2500,7 @@ export default function VenueDashboard({
                   DESIGN-STANDARD H5 names, and it was one per review.
                   Said once, above the list, instead of failed once per row. */}
               {reviews.length > 0 && !venueIsVerified && (
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     {venueVerificationPending || verificationRequestNote
                       ? 'Replies go live once your venue is verified. We confirm ownership by hand, and your request is in.'
@@ -2512,13 +2512,13 @@ export default function VenueDashboard({
 
               {/* Reviews List */}
               {reviews.length > 0 && (
-                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 10px' }}>Recent reviews</h3>
                   {reviews.map(review => (
-                    <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
+                    <div key={review.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                          <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                             {review.user.charAt(0)}
                           </div>
                           <div>
@@ -2538,7 +2538,7 @@ export default function VenueDashboard({
                       </div>
                       <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
-                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
+                        <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)' }}>
                           <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRemoved ? 'Your removed reply' : review.replyRetired ? 'Your earlier reply' : 'Owner reply'}</p>
                           <p className="selectable" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                           {review.replyRemoved ? (
@@ -2549,15 +2549,15 @@ export default function VenueDashboard({
                         </div>
                       )}
                       {!review.replied && venueIsVerified && replyingToReview !== review.id && (
-                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                           Reply
                         </button>
                       )}
                       {replyingToReview === review.id && (
                         <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
-                          <SearchInputLocal aria-label="Your reply" initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                          <BusyButton className="hit44 glass-btn glass-navy" onPress={() => handleReplyToReview(review.id)} busyLabel="Sending" style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Send</BusyButton>
-                          <button className="hit44 glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
+                          <SearchInputLocal aria-label="Your reply" initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                          <BusyButton className="hit44 glass-btn glass-navy" onPress={() => handleReplyToReview(review.id)} busyLabel="Sending" style={{ padding: '6px 12px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Send</BusyButton>
+                          <button className="hit44 glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
                         </div>
                       )}
                       {/* A "Replied" badge used to render here, on a condition
@@ -2583,7 +2583,7 @@ export default function VenueDashboard({
                         const ok = await loadOlderVenueReviews(venueReviewsData.nextBefore);
                         if (!ok) showToast('Could not load older reviews. Try again.', 'error');
                       }}
-                      style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '4px' }}
+                      style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '4px' }}
                     >
                       {venueReviewsData.loadingOlder ? 'Loading older reviews' : 'Show older reviews'}
                     </button>
@@ -2607,7 +2607,7 @@ export default function VenueDashboard({
                   it for, and nothing else: review replies, the live number,
                   deals on the venue card, and the venue's own forecast where
                   the plan includes it (verificationLine above). */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.shield(colors.navy, 14)} Verification</h3>
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: '0 0 2px' }}>
                   {venueIsVerified ? 'Verified' : venueVerificationPending ? 'Requested' : 'Not verified yet'}
@@ -2623,11 +2623,11 @@ export default function VenueDashboard({
               </div>
 
               {/* Venue Info */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.building(colors.navy, 14)} Venue Information</h3>
                   {!editingVenueInfo ? (
-                    <button className="hit44" onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
+                    <button className="hit44" onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
                     <BusyButton className="hit44" busyLabel="Saving" onPress={async () => {
                       // Was fire-and-forget: it closed the editor first and
@@ -2648,27 +2648,27 @@ export default function VenueDashboard({
                       } catch (e) {
                         showToast(userMessage(e, "Those details didn't save. Try again."), 'error');
                       }
-                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Save</BusyButton>
+                    }} style={{ padding: '4px 8px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Save</BusyButton>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   <div>
                     <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }} htmlFor="venue-info-name">Venue Name</label>
-                    <SearchInputLocal id="venue-info-name" type="text" initialValue={venueInfo.name} onCommit={(v) => setVenueInfo(prev => ({ ...prev, name: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal id="venue-info-name" type="text" initialValue={venueInfo.name} onCommit={(v) => setVenueInfo(prev => ({ ...prev, name: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: 'var(--r-xs)', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }} htmlFor="venue-info-address">Address</label>
-                    <SearchInputLocal id="venue-info-address" type="text" initialValue={venueInfo.address} onCommit={(v) => setVenueInfo(prev => ({ ...prev, address: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal id="venue-info-address" type="text" initialValue={venueInfo.address} onCommit={(v) => setVenueInfo(prev => ({ ...prev, address: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: 'var(--r-xs)', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                   <div>
                     <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }} htmlFor="venue-info-phone">Phone</label>
-                    <SearchInputLocal id="venue-info-phone" type="text" initialValue={venueInfo.phone} onCommit={(v) => setVenueInfo(prev => ({ ...prev, phone: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
+                    <SearchInputLocal id="venue-info-phone" type="text" initialValue={venueInfo.phone} onCommit={(v) => setVenueInfo(prev => ({ ...prev, phone: v }))} disabled={!editingVenueInfo} style={{ width: '100%', padding: '8px', borderRadius: 'var(--r-xs)', border: `1px solid ${editingVenueInfo ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-meta)', boxSizing: 'border-box', backgroundColor: editingVenueInfo ? 'var(--bg-card-solid)' : 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
                   </div>
                 </div>
               </div>
 
               {/* Operating Hours */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Operating Hours</h3>
                 {operatingHours.length > 0 ? operatingHours.map((slot, i) => (
                   // Index, not slot.days. "+ Add Hours" in the editor appends
@@ -2683,7 +2683,7 @@ export default function VenueDashboard({
                 )) : (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0', fontStyle: 'italic' }}>No hours set. Tap Edit Hours to add</p>
                 )}
-                <button className="hit44" onClick={openHoursEditor} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                <button className="hit44" onClick={openHoursEditor} style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   Edit Hours
                 </button>
               </div>
@@ -2700,14 +2700,14 @@ export default function VenueDashboard({
                   went 21+ on weekends, or started a Tuesday quiz, had no way to
                   tell us. Advice read off a stale profile is worse than advice
                   read off an empty one, because nobody can tell it is stale. */}
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.building(colors.navy, 14)} About Your Venue</h3>
                   {!venueIntakeDraft ? (
-                    <button className="hit44" onClick={() => setVenueIntakeDraft(venueProfileToIntake(venueProfile))} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
+                    <button className="hit44" onClick={() => setVenueIntakeDraft(venueProfileToIntake(venueProfile))} style={{ padding: '4px 8px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
                     <div style={{ display: 'flex', gap: '6px' }}>
-                      <button className="hit44" onClick={() => setVenueIntakeDraft(null)} disabled={savingVenueIntake} style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
+                      <button className="hit44" onClick={() => setVenueIntakeDraft(null)} disabled={savingVenueIntake} style={{ padding: '4px 8px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
                       <button className="hit44" disabled={savingVenueIntake} onClick={async () => {
                         // The editor stays open on failure with every answer
                         // still in it, and the toast is the server's own
@@ -2726,7 +2726,7 @@ export default function VenueDashboard({
                         } finally {
                           setSavingVenueIntake(false);
                         }
-                      }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: savingVenueIntake ? 'wait' : 'pointer', opacity: savingVenueIntake ? 0.6 : 1 }}>{savingVenueIntake ? 'Saving' : 'Save'}</button>
+                      }} style={{ padding: '4px 8px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: savingVenueIntake ? 'wait' : 'pointer', opacity: savingVenueIntake ? 0.6 : 1 }}>{savingVenueIntake ? 'Saving' : 'Save'}</button>
                     </div>
                   )}
                 </div>
@@ -2755,7 +2755,7 @@ export default function VenueDashboard({
                         and the boxes publish anything pending on pointerdown,
                         so the tap cannot save a sentence one letter short. */}
                     {renderVenueField({ dark: false, label: 'Description', children: (
-                      <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} rows={3} initialValue={venueIntakeDraft.description} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, description: v }))} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                      <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} rows={3} initialValue={venueIntakeDraft.description} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, description: v }))} style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
                     ) })}
                     {renderVenueField({ dark: false, label: 'Goals', children: renderVenueChips({ dark: false, label: 'Goals', options: venueGoals.map(g => ({ value: g, label: g })), value: venueIntakeDraft.goals, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, goals: v })), multi: true }) })}
 
@@ -2780,18 +2780,18 @@ export default function VenueDashboard({
 
                     {renderVenueField({ dark: false, label: 'Nights you run something', children: renderVenueChips({ dark: false, label: 'Event nights', options: venueWeekdays, value: venueIntakeDraft.eventNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, eventNights: v })), multi: true }) })}
                     {venueIntakeDraft.eventNights.length > 0 && renderVenueField({ dark: false, label: 'What runs on those nights', children: (
-                      <SearchInputLocal aria-label="What runs on those nights" maxLength={120} initialValue={venueIntakeDraft.eventNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, eventNote: v }))} placeholder="e.g. Trivia at 8" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <SearchInputLocal aria-label="What runs on those nights" maxLength={120} initialValue={venueIntakeDraft.eventNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, eventNote: v }))} placeholder="e.g. Trivia at 8" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                     ) })}
                     {renderVenueField({ dark: false, label: 'Nights you think are your busiest', children: renderVenueChips({ dark: false, label: 'Busy nights', options: venueWeekdays, value: venueIntakeDraft.ownerBusyNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, ownerBusyNights: v })), multi: true }) })}
                     {renderVenueField({ dark: false, label: 'The one night you want fuller', children: renderVenueChips({ dark: false, label: 'Night you want fuller', options: venueWeekdays, value: venueIntakeDraft.targetNight, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, targetNight: v })) }) })}
 
                     {renderVenueField({ dark: false, label: `Within a short walk (pick up to ${VENUE_MAX_ANCHORS})`, children: renderVenueChips({ dark: false, label: 'Nearby anchors', options: venueAnchorTypes, value: venueIntakeDraft.anchorTypes, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, anchorTypes: v })), multi: true, max: VENUE_MAX_ANCHORS }) })}
                     {venueIntakeDraft.anchorTypes.length > 0 && renderVenueField({ dark: false, label: 'Name it', children: (
-                      <SearchInputLocal aria-label="Nearby anchor detail" maxLength={200} initialValue={venueIntakeDraft.anchorNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, anchorNote: v }))} placeholder="e.g. Across from the arena" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <SearchInputLocal aria-label="Nearby anchor detail" maxLength={200} initialValue={venueIntakeDraft.anchorNote} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, anchorNote: v }))} placeholder="e.g. Across from the arena" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                     ) })}
 
                     {renderVenueField({ dark: false, label: 'Anything a stranger would not guess', children: (
-                      <SearchInputLocal as="textarea" aria-label="What a stranger would not guess" maxLength={1000} rows={4} initialValue={venueIntakeDraft.quirks} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, quirks: v }))} placeholder="e.g. Parking fills by seven." style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                      <SearchInputLocal as="textarea" aria-label="What a stranger would not guess" maxLength={1000} rows={4} initialValue={venueIntakeDraft.quirks} onCommit={(v) => setVenueIntakeDraft(d => ({ ...d, quirks: v }))} placeholder="e.g. Parking fills by seven." style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
                     ) })}
                   </div>
                 )}
@@ -2817,7 +2817,7 @@ export default function VenueDashboard({
                 onRoost,
                 hasListing: !!venueProfile?.google_place_id,
               }) && (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 {/* ONE NAME: "the Monday email". This switch said "Weekly
                     reports", the unsubscribe page asked "Turn off the Monday
                     digest?" and pointed at "the Weekly reports switch", and the
@@ -2885,7 +2885,7 @@ export default function VenueDashboard({
                   failed and it never does, there is no card, rather than a
                   heading over nothing. */}
               {ownerTablesSeen && ownerVenuePlaceId && (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users ? Icons.users(colors.navy, 14) : null} Tables</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {!ownerTablesLocked && can.analytics && tierKnown && (
@@ -2911,7 +2911,7 @@ export default function VenueDashboard({
                   </label>
                   )}
                   {ownerTableSettings === undefined && (
-                    <div aria-hidden="true" data-testid="tables-settings-loading" className="skeleton" style={{ height: '44px', borderRadius: '8px' }} />
+                    <div aria-hidden="true" data-testid="tables-settings-loading" className="skeleton" style={{ height: '44px', borderRadius: 'var(--r-sm)' }} />
                   )}
                   {ownerTableSettings === null && (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Couldn't load whether your tables show in the Flock app. Open Settings again to retry.</p>
@@ -3005,7 +3005,7 @@ export default function VenueDashboard({
                   screen can say what actually happened instead. */}
               {/* Not in a REACT_APP_PURCHASES=off build at all. */}
               {(process.env.REACT_APP_PURCHASES !== 'off') && (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
                 {/* Billing off: every feature is on and nothing is a plan the
                     owner holds, so "Pro Plan / Set by us / No end date" with a
@@ -3015,7 +3015,7 @@ export default function VenueDashboard({
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Every feature is on while venue plans are being set up. Nothing is charged, and we will email you before anything is.</p>
                 )}
                 {venueBillingOn && (<>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)' }}>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
                     {/* WHERE THE PLAN CAME FROM, when the server told us. Four
@@ -3086,7 +3086,7 @@ export default function VenueDashboard({
                       Manage billing to a venue that has already subscribed
                       (components/venue/VenueBillingControl.js). */}
                   {(!onRoost || inNoticeWindow) && !native && (
-                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
+                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: 'var(--r-xs)', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
                       {onRoost ? 'See plans' : 'Upgrade'}
                     </button>
                   )}
@@ -3159,7 +3159,7 @@ export default function VenueDashboard({
                               showToast(userMessage(err, "Billing didn't open. Try again."), 'error');
                             }
                             return false;
-                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                             Change or cancel this plan
                           </BusyButton>
                         ) : (
@@ -3169,13 +3169,13 @@ export default function VenueDashboard({
                               `Business: ${venueProfile?.business_name || ''}\nCurrent plan: ${tierBadge[venueData.tier].label}\nWhat I want: (change plan / cancel)\n`
                             );
                             try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is printed below */ }
-                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                             Change or cancel this plan
                           </button>
                         ))}
                       </VenueBillingStatus>
                       {!native && (
-                      <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ flex: '1 1 130px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                      <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ flex: '1 1 130px', minWidth: 0, padding: '10px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         See plans and pricing
                       </button>
                       )}
@@ -3198,7 +3198,7 @@ export default function VenueDashboard({
               )}
 
               {/* Danger Zone */}
-              <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: '12px', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
+              <div style={{ backgroundColor: 'var(--accent-red-bg)', borderRadius: 'var(--r-md)', padding: '12px', border: `1px solid var(--accent-red-text)22` }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.redText, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.alertCircle(colors.red, 14)} Danger Zone</h3>
                 {/* This button used to answer a window.confirm with a green
                     "Venue deactivated" toast and change nothing at all: no
@@ -3210,7 +3210,7 @@ export default function VenueDashboard({
                   const subject = encodeURIComponent('Flock venue listing: please deactivate');
                   const body = encodeURIComponent(`Business: ${venueProfile?.business_name || ''}\n`);
                   try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is in the line below */ }
-                }} style={{ width: '100%', padding: '8px', borderRadius: '6px', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.redText, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                }} style={{ width: '100%', padding: '8px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.red}`, backgroundColor: 'var(--bg-card-solid)', color: colors.redText, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   Ask us to deactivate this listing
                 </button>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
@@ -3225,11 +3225,11 @@ export default function VenueDashboard({
           {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off') && !native && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Venue plans</h2>
 
                 {/* Free Tier */}
-                <div style={{ border: `2px solid ${venueTier === 'free' ? colors.navy : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px' }}>
+                <div style={{ border: `2px solid ${venueTier === 'free' ? colors.navy : colors.creamDark}`, borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '10px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontWeight: '700', color: colors.navy }}>Free</span>
                     <span style={{ fontWeight: '700', color: colors.navy }}>$0/mo</span>
@@ -3249,7 +3249,7 @@ export default function VenueDashboard({
                     constant in App.js, as before. The free card
                     above lists everything free, so this one does not open
                     with "everything in" another plan. */}
-                <div style={{ border: '2px solid #2d5a87', borderRadius: '12px', padding: '12px', marginBottom: '16px', backgroundColor: 'var(--accent-purple-bg)' }}>
+                <div style={{ border: '2px solid #2d5a87', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '16px', backgroundColor: 'var(--accent-purple-bg)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>Roost</span>
                     <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}><VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></span>
@@ -3261,7 +3261,7 @@ export default function VenueDashboard({
                       While it is not on sale, the control hands back the
                       email request below unchanged. This sheet never opens
                       inside the iOS shell. */}
-                  {venueBillingOn && onRoost ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Roost')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Roost</button>} />}
+                  {venueBillingOn && onRoost ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Roost')} style={{ width: '100%', padding: '8px', borderRadius: 'var(--r-sm)', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Roost</button>} />}
                 </div>
 
                 {/* THE OTHER AXIS, said once rather than in three lists.
@@ -3294,7 +3294,7 @@ export default function VenueDashboard({
                   )}
                 </VenueBillingStatus>
 
-                <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
+                <button className="hit44" onClick={() => setShowUpgradeModal(false)} style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
               </div>
             </div>
           )}
@@ -3306,7 +3306,7 @@ export default function VenueDashboard({
           {venueLogoPicker && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
               <DialogBehavior onClose={() => setVenueLogoPicker(null)} label="Venue logo" />
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 6px', textAlign: 'center' }}>Venue logo</h2>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', textAlign: 'center', lineHeight: 1.5 }}>
                   Pick a photo from your Google listing.
@@ -3319,7 +3319,7 @@ export default function VenueDashboard({
                     <p className="sr-only" role="status">Loading photos</p>
                     <div aria-busy="true" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
                       {[0, 1, 2, 3].map((i) => (
-                        <div key={i} aria-hidden="true" className="skeleton" style={{ height: '96px', borderRadius: '12px' }} />
+                        <div key={i} aria-hidden="true" className="skeleton" style={{ height: '96px', borderRadius: 'var(--r-md)' }} />
                       ))}
                     </div>
                   </>
@@ -3330,7 +3330,7 @@ export default function VenueDashboard({
                       size={64}
                       bird={WARM_BIRD}
                       body="Couldn't load your listing's photos."
-                      action={<button className="hit44" onClick={() => openVenueLogoPicker()} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44" onClick={() => openVenueLogoPicker()} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                       style={{ padding: '0 0 4px' }}
                     />
                   </div>
@@ -3357,7 +3357,7 @@ export default function VenueDashboard({
                             className="hit44"
                             onClick={() => handleVenueLogoPick(url)}
                             aria-label={`Use listing photo ${i + 1} as your logo`}
-                            style={{ display: 'block', width: '100%', padding: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
+                            style={{ display: 'block', width: '100%', padding: 0, border: 'none', borderRadius: 'var(--r-md)', overflow: 'hidden', cursor: 'pointer', backgroundColor: 'var(--bg-primary)' }}
                           >
                             <img src={url} alt="" loading="lazy" style={{ width: '100%', height: '96px', objectFit: 'cover', display: 'block' }} />
                           </button>
@@ -3371,7 +3371,7 @@ export default function VenueDashboard({
                     })}
                   </div>
                 )}
-                <button className="hit44" onClick={() => setVenueLogoPicker(null)} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
+                <button className="hit44" onClick={() => setVenueLogoPicker(null)} style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '500', cursor: 'pointer' }}>Close</button>
               </div>
             </div>
           )}
@@ -3456,22 +3456,22 @@ export default function VenueDashboard({
           {showHoursModal && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={cancelHoursEditor} label="Venue hours" />
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '340px', maxHeight: '80%', overflowY: 'auto' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>Edit operating hours</h2>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {operatingHours.map((slot, index) => (
-                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                      <input aria-label={`Days for hours row ${index + 1}`} value={slot.days} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], days: e.target.value}; setOperatingHours(updated); }} style={{ width: '70px', padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                      <input aria-label={`Opening time for hours row ${index + 1}`} value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], open: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)' }}>
+                      <input aria-label={`Days for hours row ${index + 1}`} value={slot.days} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], days: e.target.value}; setOperatingHours(updated); }} style={{ width: '70px', padding: '6px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <input aria-label={`Opening time for hours row ${index + 1}`} value={slot.open} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], open: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>to</span>
-                      <input aria-label={`Closing time for hours row ${index + 1}`} value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], close: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                      <input aria-label={`Closing time for hours row ${index + 1}`} value={slot.close} onChange={(e) => { const updated = [...operatingHours]; updated[index] = {...updated[index], close: e.target.value}; setOperatingHours(updated); }} style={{ flex: 1, padding: '6px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
                       <button aria-label={`Delete hours row ${index + 1}`} className="hit44" onClick={() => setOperatingHours(operatingHours.filter((_, i) => i !== index))} style={{ padding: '4px', border: 'none', background: 'none', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                     </div>
                   ))}
-                  <button className="hit44" onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: '6px', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
+                  <button className="hit44" onClick={() => setOperatingHours([...operatingHours, { days: '', open: '', close: '' }])} style={{ padding: '8px', borderRadius: 'var(--r-xs)', border: `1px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>+ Add Hours</button>
                 </div>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-                  <button className="hit44" onClick={cancelHoursEditor} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44" onClick={cancelHoursEditor} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                   {/* Same fix as the Venue Information Save above: the modal
                       used to close before the request and discard its failure,
                       so rejected hours vanished looking saved. */}
@@ -3483,7 +3483,7 @@ export default function VenueDashboard({
                     } catch (e) {
                       showToast(userMessage(e, "Those hours didn't save. Try again."), 'error');
                     }
-                  }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</BusyButton>
+                  }} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</BusyButton>
                 </div>
               </div>
             </div>

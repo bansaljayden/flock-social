@@ -440,7 +440,7 @@ const TRAVEL_MODE_CHIPS = Object.freeze([
    with the chosen chip inverted so the mode reads at a glance. */
 const travelChipStyle = (pressed) => ({
   padding: '4px 8px',
-  borderRadius: '10px',
+  borderRadius: 'var(--r-sm)',
   border: pressed ? '1px solid white' : '1px solid rgba(255,255,255,0.3)',
   background: pressed ? 'white' : 'rgba(255,255,255,0.15)',
   color: pressed ? '#047857' : 'white',
@@ -2911,7 +2911,7 @@ export default function ChatDetail({
               className="hit44"
               disabled={olderLoading}
               onClick={loadOlderHere}
-              style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
+              style={{ padding: '8px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
             >
               {olderLoading ? 'Loading' : 'Load earlier messages'}
             </button>
@@ -2946,7 +2946,7 @@ export default function ChatDetail({
         <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
           Nothing has been lost. The messages are on the server and this screen could not reach them.
         </p>
-        <button className="hit44 glass-btn glass-navy" onClick={reloadFlockMessages} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+        <button className="hit44 glass-btn glass-navy" onClick={reloadFlockMessages} style={{ padding: '10px 16px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
       </div>
     ) : (!messagesLoading && flock.messages.length === 0 ? (
       /* A brand-new flock lands you here with nothing on screen at all, which
@@ -2971,14 +2971,14 @@ export default function ChatDetail({
         </p>
         {!planClosed && (
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-          <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.userPlus('white', 14)} Invite friends
           </button>
           {/* "Put 3 places up for a vote" was here and it wrote nothing to
               the server. See the long note in the vote panel below: an option
               nobody has voted for has nowhere to live. Suggest a place, on the
               right, opens the panel that really does offer places to vote on. */}
-          <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
             {Icons.mapPin(colors.navy, 14)} Suggest a place
           </button>
         </div>
@@ -3065,7 +3065,7 @@ export default function ChatDetail({
       <div key="chat-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
             {/* THE NAME IS ALWAYS THE NAME, AND IT IS NOW THE DOOR TO THE PLAN.
                 It used to be swapped out for a rail of five controls whenever
                 the "Features" pill was pressed, so reaching for a feature cost
@@ -3157,7 +3157,7 @@ export default function ChatDetail({
                      reader hears the total and the tally as well as the door. */
                   aria-describedby="chat-bill-pill"
                   onClick={() => setShowChatPool(true)}
-                  style={{ height: '24px', padding: '0 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: billBar.all ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  style={{ height: '24px', padding: '0 10px', borderRadius: 'var(--r-pill)', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: billBar.all ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   <span id="chat-bill-pill">{billPillLabel}</span>
                 </button>
@@ -3179,9 +3179,9 @@ export default function ChatDetail({
                 hand is already on. */}
             </div>
             <div style={{ position: 'relative', flexShrink: 0 }}>
-              <button aria-label="More options" className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+              <button aria-label="More options" className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
               {showFlockMenu && (
-                <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '180px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                   {/* CANCEL PLAN, the host's way out that is not Leave. For a
                       host, Leave deletes the plan for everyone, chat and all;
                       this keeps the flock and its chat and only moves the
@@ -3242,7 +3242,7 @@ export default function ChatDetail({
               )}
             </p>
             {!flock.reconfirm.me && (
-              <button type="button" className="hit44" aria-label="I'm still in" disabled={reconfirmPending} aria-disabled={reconfirmPending} onClick={answerStillIn} style={{ marginLeft: 'auto', flexShrink: 0, padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reconfirmPending ? 'default' : 'pointer', opacity: reconfirmPending ? 0.6 : 1 }}>I'm still in</button>
+              <button type="button" className="hit44" aria-label="I'm still in" disabled={reconfirmPending} aria-disabled={reconfirmPending} onClick={answerStillIn} style={{ marginLeft: 'auto', flexShrink: 0, padding: '4px 10px', borderRadius: 'var(--r-sm)', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reconfirmPending ? 'default' : 'pointer', opacity: reconfirmPending ? 0.6 : 1 }}>I'm still in</button>
             )}
           </div>
         )}
@@ -3283,7 +3283,7 @@ export default function ChatDetail({
                 initialValue={chatSearch}
                 onCommit={setChatSearch}
                 placeholder="Search messages in this flock..."
-                style={{ width: '100%', padding: '10px 36px 10px 36px', borderRadius: '20px', border: `2px solid ${chatSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'border-color 0.2s' }}
+                style={{ width: '100%', padding: '10px 36px 10px 36px', borderRadius: 'var(--r-xl)', border: `2px solid ${chatSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'border-color 0.2s' }}
                 autoComplete="off"
               />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(chatSearch ? colors.navy : colors.textTertiary, 14)}</span>
@@ -3405,7 +3405,7 @@ export default function ChatDetail({
         {((flock.memberCount || 1) > 1 || (isCreator && !planClosed)) && notifStatus !== 'granted' && notifStatus !== 'denied'
           && notifStatus !== 'unsupported' && !notifAskDismissed && (
           <div style={{ padding: '10px 14px', background: 'var(--bg-primary)', borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {Icons.bell(colors.navy, 18)}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -3428,7 +3428,7 @@ export default function ChatDetail({
                   }
                 }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'));
               }}
-              style={{ padding: '8px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}
+              style={{ padding: '8px 14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}
             >
               Continue
             </button>
@@ -3439,9 +3439,9 @@ export default function ChatDetail({
         {imageViewer && (
           <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 400, backgroundColor: 'rgba(6,16,31,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
           <DialogBehavior onClose={() => setImageViewer(null)} label="Photo" />
-            <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
+            <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: 'var(--r-pill)', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
             {imageViewer.src ? (
-              <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+              <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 'var(--r-sm)' }} />
             ) : imageViewer.error ? (
               <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error}</p>
             ) : (
@@ -3457,9 +3457,9 @@ export default function ChatDetail({
                 <span className="sr-only" role="status">Loading the full photo</span>
                 <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   {imageViewer.thumb ? (
-                    <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+                    <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'var(--r-sm)', filter: 'blur(4px)' }} />
                   ) : (
-                    <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+                    <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius="var(--r-sm)" />
                   )}
                 </div>
               </>
@@ -3473,14 +3473,14 @@ export default function ChatDetail({
              emerald gradient disc, the loudest colour on the chat and in no
              token family the rest of the app draws from. */
           <div style={{ padding: '10px 14px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {Icons.mapPin(colors.steel, 18)}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: 0 }}>Share your location with the group?</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
-            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
             <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: flock.eventTime || true }; lsSet('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
@@ -3498,7 +3498,7 @@ export default function ChatDetail({
               {sharingHere > 0 && (
                 <span style={{ fontSize: 'var(--t-meta)', color: 'var(--nest-hero-meta)', fontWeight: '500' }}>{sharingHere} sharing</span>
               )}
-              <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+              <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
             </div>
             {/* THE INTENT ROW. A plain share offers one upgrade, "On my way".
                 Said, it asks how, and a car is asked for spare seats. Somebody
@@ -3735,7 +3735,7 @@ export default function ChatDetail({
                 gap: '4px',
                 padding: '6px 10px',
                 backgroundColor: 'var(--bg-card-solid)',
-                borderRadius: '24px',
+                borderRadius: 'var(--r-pill)',
                 boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
                 animation: 'reactionPop 0.25s ease-out',
               }}
@@ -3744,7 +3744,7 @@ export default function ChatDetail({
                 <button aria-label={`React with ${r}`} className="hit44"
                   key={r}
                   onClick={() => { closeMessageActions(); addReactionToMessage(flock.id, actionsMessage.id, r); }}
-                  style={{ background: 'none', border: 'none', fontSize: 'var(--t-title)', cursor: 'pointer', padding: '6px', borderRadius: '10px', transition: 'transform 0.15s ease, background-color 0.15s ease' }}
+                  style={{ background: 'none', border: 'none', fontSize: 'var(--t-title)', cursor: 'pointer', padding: '6px', borderRadius: 'var(--r-sm)', transition: 'transform 0.15s ease, background-color 0.15s ease' }}
                 >{r}</button>
               ))}
               {/* The other way in. A swipe is faster once you know it is
@@ -3753,7 +3753,7 @@ export default function ChatDetail({
                   sending or failed, because a quote of a placeholder id can
                   never be sent (canQuote). */}
               {canQuote(actionsMessage) && (
-                <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
+                <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
               )}
               {/* PIN, and only on a row the server has actually stored: a
                   message it has never seen has no id to pin. One control, and
@@ -3770,24 +3770,24 @@ export default function ChatDetail({
                       if (alreadyPinned) unpinMessage(flock.id, actionsMessage.id);
                       else pinMessage(flock.id, actionsMessage.id);
                     }}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }}
                     title={alreadyPinned ? 'Unpin' : 'Pin'}
                   >{alreadyPinned ? 'Unpin' : 'Pin'}</button>
                 );
               })()}
               {(actionsMessage.image || actionsMessage.thumb) && (
-                <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
+                <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
               )}
               {/* Not on a row already being unsent: one request per message. */}
               {actionsMessage.sender === 'You' && typeof actionsMessage.id === 'number' && actionsMessage.id <= 2147483647 && !actionsMessage.unsending && (
-                <button aria-label="Unsend message" className="hit44" onClick={() => { closeMessageActions(); handleUnsendFlockMessage(flock.id, actionsMessage.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
+                <button aria-label="Unsend message" className="hit44" onClick={() => { closeMessageActions(); handleUnsendFlockMessage(flock.id, actionsMessage.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
               )}
               {actionsMessage.sender !== 'You' && (
                 /* The token, not the literal this line carried across from the
                    old picker. index.css defines --accent-red-text in BOTH
                    themes and the dark value was picked to clear 4.5:1; a fixed
                    #EF4444 is a light mode red shipped into dark mode. */
-                <button aria-label="Report" className="hit44" onClick={() => { closeMessageActions(); setModerationTarget({ userId: actionsMessage.senderId, userName: actionsMessage.sender, contentType: 'flock_message', contentId: actionsMessage.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-body)', color: 'var(--accent-red-text)' }} title="Report">{Icons.flag('var(--accent-red-text)', 15)}</button>
+                <button aria-label="Report" className="hit44" onClick={() => { closeMessageActions(); setModerationTarget({ userId: actionsMessage.senderId, userName: actionsMessage.sender, contentType: 'flock_message', contentId: actionsMessage.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-body)', color: 'var(--accent-red-text)' }} title="Report">{Icons.flag('var(--accent-red-text)', 15)}</button>
               )}
             </div>
           </>
@@ -3995,7 +3995,7 @@ export default function ChatDetail({
           return (
             <div className="modal-backdrop kb-lift" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => { setShowChatPool(false); setShowCreateBill(false); }} label="Cash pool" />
-              <div ref={poolSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
+              <div ref={poolSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
                 {/* The handle: the grabber and the header row under it, run
                     out to the edges of the sheet so the whole top of it can
                     be pulled down. Taps on Close still land (useSheetDrag,
@@ -4017,7 +4017,7 @@ export default function ChatDetail({
                       title and the budget only takes it when no form is over
                       it. */}
                   <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the bill' : 'Group budget'}</h2>
-                  <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                  <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
                 </div>
 
@@ -4032,7 +4032,7 @@ export default function ChatDetail({
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                       {presets.map(p => (
                         <button key={p} className="hit44 glass-btn glass-secondary" aria-pressed={budgetAmount === p} onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
-                          style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-body)', fontWeight: '600', color: budgetAmount === p ? colors.steel : colors.navy, cursor: 'pointer' }}>
+                          style={{ flex: 1, padding: '12px 4px', borderRadius: 'var(--r-md)', border: budgetAmount === p ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-body)', fontWeight: '600', color: budgetAmount === p ? colors.steel : colors.navy, cursor: 'pointer' }}>
                           ${p}{p === presets[presets.length - 1] ? '+' : ''}
                         </button>
                       ))}
@@ -4126,7 +4126,7 @@ export default function ChatDetail({
                 {hasBudget && (userSubmitted || budgetStatus?.budgetLocked || planClosed) && !showCreateBill && (
                   <div>
                     {budgetStatus?.ceiling ? (
-                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.steel}10`, border: `1px solid ${colors.steel}30`, marginBottom: '14px' }}>
+                      <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: `${colors.steel}10`, border: `1px solid ${colors.steel}30`, marginBottom: '14px' }}>
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.steel, margin: 0 }}>
                           Group budget: up to ${budgetStatus.ceiling} per person
                         </p>
@@ -4141,7 +4141,7 @@ export default function ChatDetail({
                          vanishing as somebody left told the room they had shared.
                          Say what is true rather than leave a screen reading
                          "waiting" when answers are closed. */
-                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                      <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>The group number is not being shown</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
                           Flock only shows one when at least three people's amounts are behind it, and this budget does not have three. The budget is closed, so nobody can add an amount now.
@@ -4152,7 +4152,7 @@ export default function ChatDetail({
                          plan never closes its budget, but /submit refuses a
                          finished plan, so "waiting on more answers" would be
                          waiting on answers nobody can give. */
-                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                      <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Budget answers are closed</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
                           This plan has ended, so nobody can add or change an amount now.
@@ -4169,7 +4169,7 @@ export default function ChatDetail({
                          answer binds the number but never counts toward three,
                          so two members and a guest are too small however many
                          of them answer. */
-                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                      <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                         {budgetCrowdSize(budgetStatus) > 0 && budgetCrowdSize(budgetStatus) < 3 ? (
                           <>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No group number for a flock this size</p>
@@ -4242,7 +4242,7 @@ export default function ChatDetail({
                             } finally {
                               dropHold(budgetPendingRef, setBudgetPending, hold);
                             }
-                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'lock' ? 'Locking...' : 'Lock budget'}</button>
+                          }} style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-sm)', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'lock' ? 'Locking...' : 'Lock budget'}</button>
                         )}
                         {!planClosed && (
                           <button className="hit44 glass-btn glass-secondary" disabled={!!budgetBusy} onClick={async () => {
@@ -4260,7 +4260,7 @@ export default function ChatDetail({
                             } finally {
                               dropHold(budgetPendingRef, setBudgetPending, hold);
                             }
-                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'remind' ? 'Sending...' : 'Send reminder'}</button>
+                          }} style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-sm)', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'remind' ? 'Sending...' : 'Send reminder'}</button>
                         )}
                       </div>
                     )}
@@ -4335,10 +4335,10 @@ export default function ChatDetail({
                     quietly replaces the one the group agreed on. Say what
                     happened and offer the read again instead. */}
                 {moneyError && !showCreateBill && (
-                  <div role="alert" style={{ padding: '16px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px' }}>
+                  <div role="alert" style={{ padding: '16px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)' }}>
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', fontWeight: '500' }}>{moneyError}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing has been lost. Any bill or budget for this plan is still on the server.</p>
-                    <button className="hit44 glass-btn glass-navy" onClick={reloadMoneyState} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+                    <button className="hit44 glass-btn glass-navy" onClick={reloadMoneyState} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
                   </div>
                 )}
                 {/* Budget disabled — direct to bill split */}
@@ -4394,7 +4394,7 @@ export default function ChatDetail({
                             accepted. */}
                         {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id) && (!m.status || m.status === 'accepted')).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
                           <button key={m.id || m.name} className="hit44 glass-btn glass-secondary" aria-pressed={(billPaidBy || authUser?.id) === m.id} onClick={() => setBillPaidBy(m.id || authUser?.id)}
-                            style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
+                            style={{ padding: '8px 14px', borderRadius: 'var(--r-pill)', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {m.name}
                           </button>
                         ))}
@@ -4412,14 +4412,14 @@ export default function ChatDetail({
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {[0, 15, 18, 20, 25].map(t => (
                           <button key={t} className="hit44 glass-btn glass-secondary" aria-pressed={billTip === t} onClick={() => setBillTip(t)}
-                            style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: billTip === t ? colors.steel : colors.navy, cursor: 'pointer' }}>
+                            style={{ flex: 1, padding: '8px 2px', borderRadius: 'var(--r-sm)', border: billTip === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: billTip === t ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {t === 0 ? 'None' : `${t}%`}
                           </button>
                         ))}
                       </div>
                     </div>
                     {billTotal && parseFloat(billTotal) > 0 && (
-                      <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                      <div style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                           <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Subtotal</span>
                           <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>${parseFloat(billTotal).toFixed(2)}</span>
@@ -4478,7 +4478,7 @@ export default function ChatDetail({
                     the sheet shows an estimate and the real total at once. */}
                 {billSplit && !(showCreateBill && billSplitIsShell) && (
                   <div>
-                    <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                    <div style={{ padding: '14px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                         {/* A shell's one honest figure is the per-person
                             estimate, the same one the header pill and the card
@@ -4564,7 +4564,7 @@ export default function ChatDetail({
                         );
                       }
                       return (
-                        <button className="hit44 glass-btn glass-secondary" disabled={remindState === 'working'} onClick={remindUnpaid} style={{ width: '100%', padding: '12px', marginBottom: '8px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: remindState === 'working' ? 'wait' : 'pointer', opacity: remindState === 'working' ? 0.6 : 1 }}>
+                        <button className="hit44 glass-btn glass-secondary" disabled={remindState === 'working'} onClick={remindUnpaid} style={{ width: '100%', padding: '12px', marginBottom: '8px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: remindState === 'working' ? 'wait' : 'pointer', opacity: remindState === 'working' ? 0.6 : 1 }}>
                           {remindState === 'working'
                             ? 'Sending the reminder…'
                             : (waiting === 1 ? "Remind the one who hasn't paid" : `Remind the ${waiting} who haven't paid`)}
@@ -4697,7 +4697,7 @@ export default function ChatDetail({
             <DialogBehavior onClose={() => setShowVotePanel(false)} label="Vote on a venue" />
               {/* SAFE-AREA rule 1: the last venue row sat in the home
                   indicator strip under a flat 20px. */}
-              <div ref={voteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+              <div ref={voteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
                 {/* Header, and the handle: grabber plus header row, as on
                     the cash pool sheet above. */}
                 <div className="sheet-grab" {...voteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '12px 20px 0' }}>
@@ -4714,7 +4714,7 @@ export default function ChatDetail({
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` · You voted for ${myVote}` : ''}</p>
                     )}
                   </div>
-                  <button aria-label="Close" className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                  <button aria-label="Close" className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
                 </div>
 
@@ -4757,16 +4757,16 @@ export default function ChatDetail({
                       The vote is the left button, Confirm is the right
                       one, and the container just draws the card. */
                       return (
-                        <div key={v.venue} className="glass-btn glass-secondary" style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                        <div key={v.venue} className="glass-btn glass-secondary" style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: 'var(--r-md)', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
-                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
+                          <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: 'var(--r-md)' }} />
                           {/* Wraps under 360px: the count and Lock it in drop
                               under the name rather than squeezing it, which
                               at 320 left "The Copper Finch" a column of
                               single letters. */}
                           <div style={{ position: 'relative', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px 10px' }}>
                             <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}${dealSaid ? `, ${dealSaid}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: '1 1 180px', minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
-                            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
@@ -4775,8 +4775,8 @@ export default function ChatDetail({
                                     Confirm button one line held only "The Coppe..."
                                     at 390px. */}
                                 <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, minWidth: 0, wordBreak: 'break-word', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>{v.venue}</h4>
-                                {isAssigned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
-                                {(isLeading || isTiedTop) && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>{isLeading ? 'Leading' : 'Tied'}</span>}
+                                {isAssigned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: 'var(--r-xs)', flexShrink: 0 }}>Assigned</span>}
+                                {(isLeading || isTiedTop) && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: 'var(--r-xs)', flexShrink: 0 }}>{isLeading ? 'Leading' : 'Tied'}</span>}
                               </div>
                               {/* The table line, under the name, for a venue
                                   whose Flux sensor answered; a legacy vote
@@ -4799,9 +4799,9 @@ export default function ChatDetail({
                             </button>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
                               {count > 0 && <span aria-hidden="true" style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
-                              {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
+                              {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !planLocked && (
-                                <button type="button" aria-label={`Lock in ${v.venue}`} className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap' }}>Lock it in</button>
+                                <button type="button" aria-label={`Lock in ${v.venue}`} className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', whiteSpace: 'nowrap' }}>Lock it in</button>
                               )}
                             </div>
                           </div>
@@ -4820,8 +4820,8 @@ export default function ChatDetail({
                      lines and the count, empty, where a sentence used to sit. */
                   <SkeletonStatus label="Loading the votes" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
                     {['58%', '44%', '66%'].map((w) => (
-                      <div key={w} aria-hidden="true" style={{ padding: '12px 14px', borderRadius: '14px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <SkeletonBar width={36} height={36} radius={10} />
+                      <div key={w} aria-hidden="true" style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <SkeletonBar width={36} height={36} radius="var(--r-sm)" />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <SkeletonBar width={w} height={15} style={{ margin: '2px 0 3px' }} />
                           <SkeletonBar width="34%" height={11} style={{ margin: '4px 0 2px' }} />
@@ -4831,14 +4831,14 @@ export default function ChatDetail({
                     ))}
                   </SkeletonStatus>
                 ) : votesError ? (
-                  <div role="alert" style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
+                  <div role="alert" style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', marginBottom: '16px' }}>
                     <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', fontWeight: '500' }}>{votesError}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nobody's vote has been lost. This is the tally failing to load.</p>
-                    <button className="hit44 glass-btn glass-navy" onClick={() => loadFlockVotes(selectedFlockId)} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+                    <button className="hit44 glass-btn glass-navy" onClick={() => loadFlockVotes(selectedFlockId)} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
                   </div>
                 ) : (
-                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
+                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', marginBottom: '16px' }}>
                     {suggestedVenues.length > 0 || (popularVenues || []).length > 0 ? (
                       <>
                         <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
@@ -4895,7 +4895,7 @@ export default function ChatDetail({
                       <>
                         <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                         <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet, and no places to suggest just now. Search for one instead.</p>
-                        <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveChatScreen(); setShowVotePanel(false); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveChatScreen(); setShowVotePanel(false); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
                       </>
                     )}
                   </div>
@@ -4917,11 +4917,11 @@ export default function ChatDetail({
                         const showPhoto = !!(venue.photo_url && venue.place_id);
                         return (
                           <div key={venue.id || venue.name} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                            <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                            <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                               {showPhoto ? (
-                                <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                                <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                               ) : (
-                                <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                   {Icons.mapPin('white', 14)}
                                 </div>
                               )}
@@ -4929,11 +4929,11 @@ export default function ChatDetail({
                                 <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> · {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                               </div>
-                              <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
+                              <div style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                                 {Icons.vote(colors.navy, 12)} Vote
                               </div>
                             </button>
-                            {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="8px" />}
+                            {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="var(--r-sm)" />}
                           </div>
                         );
                       })}
@@ -4951,7 +4951,7 @@ export default function ChatDetail({
                 )}
 
                 {/* Browse more button */}
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(false); setShowVenueShareModal(true); }} style={{ width: '100%', padding: '12px', borderRadius: 'var(--r-md)', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                   {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
                 </button>
               </div>
@@ -4964,16 +4964,16 @@ export default function ChatDetail({
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowVenueShareModal(false)} label="Share a venue" />
             {/* SAFE-AREA rule 1, as on the vote sheet above. */}
-            <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+            <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
-                <button aria-label="Close" className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                <button aria-label="Close" className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
 
               {/* Current venue display */}
               {flock.venue && flock.venue !== 'TBD' ? (
-                <div style={{ padding: '12px', borderRadius: '14px', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <div style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '40px', height: '40px', borderRadius: 'var(--r-sm)', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {Icons.mapPin('white', 18)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -4985,10 +4985,10 @@ export default function ChatDetail({
                         (components/ui/GoogleCredit.js). */}
                     {flock.venueId && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
                   </div>
-                  <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, price_level: flock.venuePriceLevel || null, price: flock.venuePriceLevel ? '$'.repeat(flock.venuePriceLevel) : null, crowd: (typeof crowdPredictions[flock.venueId]?.score === 'number' ? crowdPredictions[flock.venueId].score : null) }); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share this</button>
+                  <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, { name: flock.venue, addr: flock.venueAddress, place_id: flock.venueId, stars: flock.venueRating, photo_url: flock.venuePhoto, price_level: flock.venuePriceLevel || null, price: flock.venuePriceLevel ? '$'.repeat(flock.venuePriceLevel) : null, crowd: (typeof crowdPredictions[flock.venueId]?.score === 'number' ? crowdPredictions[flock.venueId].score : null) }); }} style={{ padding: '8px 12px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share this</button>
                 </div>
               ) : (
-                <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
+                <div style={{ padding: '10px 12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontStyle: 'italic' }}>No venue selected. Pick one below:</p>
                 </div>
               )}
@@ -5005,7 +5005,7 @@ export default function ChatDetail({
                      reloads the nearby list, so this does not fake a "Try again"
                      that could not refill it; the honest action is to close and
                      use the venue map instead. */
-                  <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                  <div style={{ padding: '16px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
                     <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>{userLocation
                       ? 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.'
@@ -5013,7 +5013,7 @@ export default function ChatDetail({
                          coordinate told a fresh account a working feature was
                          broken. Say the true reason and the fix. */
                       : "No venues to show yet, because Flock doesn't have your location. Turn it on from the Discover tab and this list fills in."}</p>
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowVenueShareModal(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowVenueShareModal(false)} style={{ padding: '10px 20px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                   </div>
                 ) : budgetFilteredVenues.map(venue => (
                   /* The row's tap shares, so the photo has its own button to
@@ -5029,7 +5029,7 @@ export default function ChatDetail({
                         alignItems: 'center',
                         gap: '12px',
                         padding: '12px',
-                        borderRadius: '14px',
+                        borderRadius: 'var(--r-md)',
                         border: '1px solid var(--border-default)',
                         backgroundColor: 'var(--bg-card-solid)',
                         cursor: 'pointer',
@@ -5047,14 +5047,14 @@ export default function ChatDetail({
                         <img
                           src={resolveVenuePhoto(venue.photo_url)}
                           alt=""
-                          style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                          style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', objectFit: 'cover', flexShrink: 0 }}
                           onError={(e) => { e.target.onerror = null; e.target.src = VENUE_PHOTO_PLACEHOLDER; }}
                         />
                       ) : (
                         <div style={{
                           width: '44px',
                           height: '44px',
-                          borderRadius: '12px',
+                          borderRadius: 'var(--r-md)',
                           backgroundColor: getCategoryColor(venue.category),
                           display: 'flex',
                           alignItems: 'center',
@@ -5084,7 +5084,7 @@ export default function ChatDetail({
                         if (score === null) return null;
                         return <div style={{
                           padding: '4px 10px',
-                          borderRadius: '12px',
+                          borderRadius: 'var(--r-md)',
                           backgroundColor: score > 84 ? '#FEE2E2' : score > 39 ? '#FEF3C7' : '#D1FAE5',
                           color: crowdColorFor(score, colors),
                           fontSize: 'var(--t-meta)',
@@ -5095,7 +5095,7 @@ export default function ChatDetail({
                         </div>;
                       })()}
                     </button>
-                    {venue.photo_url && venue.place_id && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="12px" />}
+                    {venue.photo_url && venue.place_id && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="var(--r-md)" />}
                   </div>
                 ))}
               </div>
@@ -5117,7 +5117,7 @@ export default function ChatDetail({
              the Invite button under the list, were under the keys. */
           <div className="modal-backdrop kb-lift" onClick={(e) => { if (e.target === e.currentTarget) setShowFlockInviteModal(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowFlockInviteModal(false)} label="Invite friends" />
-            <div ref={inviteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+            <div ref={inviteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               {/* The grabber was drawn here with nothing behind it. It and the
                   header row are the handle now, run out to the edges of the
                   sheet; the layout is the same as before. */}
@@ -5212,13 +5212,13 @@ export default function ChatDetail({
                   setCopiedInviteUrl(swap.to);
                   showToast('That link was just replaced and no longer works. Tap Share invite link to send the new one.', 'error');
                 }}
-                style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: 'var(--r-md)', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
                 {Icons.share ? Icons.share(colors.steel, 15) : null}
                 Share invite link (no account needed)
               </button>
               {copiedInviteUrl && (
-                <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
+                <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
                   {/* Whole sentences rather than a swapped first word, so
                       the grant and the expiry read the same every way. The
                       first is for a link just replaced: nothing was copied
@@ -5253,9 +5253,9 @@ export default function ChatDetail({
               {flockInviteSelected.length > 0 && (
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
                   {flockInviteSelected.map(f => (
-                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
-                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', overflow: 'hidden' }}>
-                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: 'var(--r-xl)', backgroundColor: colors.navyBg, color: 'white' }}>
+                      <div style={{ width: '22px', height: '22px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', overflow: 'hidden' }}>
+                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
                       </div>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>{f.name.split(' ')[0]}</span>
                       <button aria-label="Remove" className="hit44" onClick={() => setFlockInviteSelected(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
@@ -5271,7 +5271,7 @@ export default function ChatDetail({
                   value={flockInviteSearch}
                   onChange={(e) => handleFlockInviteSearch(e.target.value)}
                   placeholder="Search friends..."
-                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: `2px solid ${flockInviteSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'border-color 0.2s' }}
+                  style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: 'var(--r-md)', border: `2px solid ${flockInviteSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'border-color 0.2s' }}
                   autoComplete="off"
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
@@ -5286,7 +5286,7 @@ export default function ChatDetail({
                   request did not land" are two different things to be told,
                   and the catch here used to answer both with the first. */}
               {flockInviteFriendsLoading && !flockInviteAllFriends && (
-                <ListSkeleton count={3} thumb={36} thumbRadius={18} label="Loading your friends" />
+                <ListSkeleton count={3} thumb={36} thumbRadius="var(--r-pill)" label="Loading your friends" />
               )}
 
               {!flockInviteFriendsLoading && flockInviteFriendsError && (
@@ -5297,7 +5297,7 @@ export default function ChatDetail({
                   role="alert"
                   title={flockInviteFriendsError}
                   body="Nobody has been lost. The share link above still works while this is down."
-                  action={<button className="hit44 glass-btn glass-navy" onClick={loadFlockInviteFriends} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                  action={<button className="hit44 glass-btn glass-navy" onClick={loadFlockInviteFriends} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
                   style={{ padding: '8px 0' }}
                 />
               )}
@@ -5305,7 +5305,7 @@ export default function ChatDetail({
               {/* Typing: matches out of the list already in hand. */}
               {!flockInviteFriendsError && flockInviteAllFriends && flockInviteSearch.trim().length > 0 && (
                 flockInviteResults.length > 0 ? (
-                  <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
                     {flockInviteResults.map(renderFlockInviteRow)}
                   </div>
                 ) : (
@@ -5328,7 +5328,7 @@ export default function ChatDetail({
                   {flockInvitePulses.length > 0 && (
                     <div style={{ marginTop: '4px' }}>
                       <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
-                      <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                      <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
                         {flockInvitePulses.map(renderFlockInviteRow)}
                       </div>
                     </div>
@@ -5337,7 +5337,7 @@ export default function ChatDetail({
                   {flockInviteRest.length > 0 && (
                     <div style={{ marginTop: flockInvitePulses.length > 0 ? '14px' : '4px' }}>
                       <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your friends</p>
-                      <div style={{ maxHeight: '260px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                      <div style={{ maxHeight: '260px', overflowY: 'auto', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
                         {flockInviteRest.map(renderFlockInviteRow)}
                       </div>
                     </div>
@@ -5374,7 +5374,7 @@ export default function ChatDetail({
                 <button
                   onClick={handleSendFlockInvites}
                   disabled={flockInviteSending}
-                  className="hit44 glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', opacity: flockInviteSending ? 0.7 : 1 }}
+                  className="hit44 glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', opacity: flockInviteSending ? 0.7 : 1 }}
                 >
                   {flockInviteSending ? 'Sending...' : `Invite ${flockInviteSelected.length} Friend${flockInviteSelected.length > 1 ? 's' : ''}`}
                 </button>
@@ -5387,9 +5387,9 @@ export default function ChatDetail({
         {showLeaveConfirm && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowLeaveConfirm(false)} label="Leave flock" />
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
+                <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.doorOpen('#EF4444', 24)}</div>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Leave flock?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   {flock.creatorId && String(flock.creatorId) === String(authUser?.id)
@@ -5398,7 +5398,7 @@ export default function ChatDetail({
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowLeaveConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
                 <button disabled={isLoading} onClick={async () => {
                   try {
                     setIsLoading(true);
@@ -5425,7 +5425,7 @@ export default function ChatDetail({
                   } finally {
                     setIsLoading(false);
                   }
-                }} className="hit44 glass-btn glass-danger" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
+                }} className="hit44 glass-btn glass-danger" style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
                   {isLoading ? 'Leaving...' : 'Leave'}
                 </button>
               </div>
@@ -5444,17 +5444,17 @@ export default function ChatDetail({
         {cancelPlanStep && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => { if (cancelPlanStep !== 'working') setCancelPlanStep(null); }} label="Cancel this plan" />
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '300px' }}>
               <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.ban('var(--accent-red-text)', 24)}</div>
+                <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.ban('var(--accent-red-text)', 24)}</div>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Cancel this plan?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>
                   {`Cancelling tells everyone in "${flock.name}" that it's off. The chat stays open, but the plan can't be reopened.`}
                 </p>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button type="button" className="hit44 glass-btn glass-secondary" disabled={cancelPlanStep === 'working'} onClick={() => setCancelPlanStep(null)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep plan</button>
-                <button type="button" className="hit44 glass-btn glass-danger" disabled={cancelPlanStep === 'working'} onClick={confirmCancelPlan} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
+                <button type="button" className="hit44 glass-btn glass-secondary" disabled={cancelPlanStep === 'working'} onClick={() => setCancelPlanStep(null)} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep plan</button>
+                <button type="button" className="hit44 glass-btn glass-danger" disabled={cancelPlanStep === 'working'} onClick={confirmCancelPlan} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
                   {cancelPlanStep === 'working' ? 'Cancelling...' : 'Cancel plan'}
                 </button>
               </div>
@@ -5471,16 +5471,16 @@ export default function ChatDetail({
         {newLinkStep && (
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
             <DialogBehavior onClose={() => { if (newLinkStep !== 'working') setNewLinkStep(null); }} label="Make a new invite link" />
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px', textAlign: 'center' }}>
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '300px', textAlign: 'center' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Make a new link?</h3>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.4' }}>
                 The current link stops working right away, for everyone who has it. People who already joined with it stay in the plan.
               </p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button type="button" className="hit44 glass-btn glass-danger" disabled={newLinkStep === 'working'} onClick={makeNewInviteLink} style={{ padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
+                <button type="button" className="hit44 glass-btn glass-danger" disabled={newLinkStep === 'working'} onClick={makeNewInviteLink} style={{ padding: '12px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>
                   {newLinkStep === 'working' ? 'Making a new link...' : 'Make a new link'}
                 </button>
-                <button type="button" className="hit44 glass-btn glass-secondary" disabled={newLinkStep === 'working'} onClick={() => setNewLinkStep(null)} style={{ padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep this link</button>
+                <button type="button" className="hit44 glass-btn glass-secondary" disabled={newLinkStep === 'working'} onClick={() => setNewLinkStep(null)} style={{ padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Keep this link</button>
               </div>
             </div>
           </div>

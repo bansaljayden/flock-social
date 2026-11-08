@@ -213,7 +213,7 @@ export default function PollCard({
                   alignItems: 'center',
                   gap: '8px',
                   padding: '0 12px',
-                  borderRadius: '12px',
+                  borderRadius: 'var(--r-md)',
                   boxSizing: 'border-box',
                   border: o.voted
                     ? '1.5px solid var(--chat-accent)'
@@ -291,7 +291,7 @@ export default function PollCard({
                       position: 'relative',
                       flexShrink: 0,
                       padding: '5px 10px',
-                      borderRadius: '10px',
+                      borderRadius: 'var(--r-sm)',
                       border: 'none',
                       background: 'var(--btn-primary-bg)',
                       color: 'var(--btn-primary-fg)',

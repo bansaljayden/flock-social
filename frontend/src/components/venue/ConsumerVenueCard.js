@@ -195,7 +195,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
           canvas frame would force the browser to re-rasterize the drop-shadow. */}
       <div aria-hidden style={{ position: 'absolute', inset: 0, borderRadius: '50%', boxShadow: `0 4px 12px rgba(0,0,0,0.3), 0 0 8px ${color}30`, pointerEvents: 'none' }} />
       <canvas ref={canvasRef} style={{ width: '60px', height: '60px', position: 'absolute', top: 0, left: 0, transform: 'translateZ(0)' }} />
-      <div style={{ position: 'absolute', inset: '6px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ position: 'absolute', inset: '6px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <span ref={textRef} style={{ fontSize: 'var(--t-body)', fontWeight: '600', color, lineHeight: 1 }}>0%</span>
       </div>
     </div>
@@ -208,7 +208,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 // tap looked like nothing until the thank-you landed.
 const realityOptionStyle = (on, busy) => ({
   padding: '4px 12px',
-  borderRadius: '8px',
+  borderRadius: 'var(--r-sm)',
   border: `1.5px solid ${on ? 'var(--text-primary)' : 'var(--border-default)'}`,
   backgroundColor: on ? 'var(--text-primary)' : 'var(--bg-card-solid)',
   color: on ? 'var(--bg-card-solid)' : 'var(--text-primary)',
@@ -246,7 +246,7 @@ export const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId
     return (
       <button className="hit44"
         onClick={() => setOpen(true)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
       >
         {/* When the number on screen is the bar's own claim, the check is the
             counterweight: reports from people in the room outrank the owner
@@ -550,8 +550,8 @@ export function CrowdForecastPanel({
                 if (cdTagged && cdTagged.forecastAccess?.locked === true && !Number.isFinite(cdTagged.score)) {
                   const limit = Number.isFinite(cdTagged.forecastAccess.limit) ? cdTagged.forecastAccess.limit : null;
                   return (
-                    <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '12px', marginBottom: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div aria-hidden="true" style={{ width: '48px', height: '48px', borderRadius: '24px', flexShrink: 0, border: '3px dashed var(--border-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '6px', border: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div aria-hidden="true" style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', flexShrink: 0, border: '3px dashed var(--border-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {Icons.lock('var(--text-tertiary)', 18)}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -839,7 +839,7 @@ export function CrowdForecastPanel({
                 })();
 
                 return (
-              <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '8px 10px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
+              <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', padding: '8px 10px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
                 {/* While the read is out the dial and the bars draw their own
                     grey shapes; this says so in words a screen reader gets and
                     nobody else sees. */}
@@ -889,7 +889,7 @@ export function CrowdForecastPanel({
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>The {cd.ownerReport.noun || 'venue'} says {cd.ownerReport.percent}%.</span>
                     )}
                     {Math.abs(cd.calibration.predictionDrift) > 15 && (
-                      <span style={{ fontSize: 'var(--t-meta)', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '500' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', padding: '1px 6px', borderRadius: 'var(--r-sm)', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '500' }}>
                         {cd.calibration.predictionDrift > 0 ? 'Trending busier than expected' : 'Trending quieter than expected'}
                       </span>
                     )}
@@ -899,17 +899,17 @@ export function CrowdForecastPanel({
                 {/* Crowd Meter */}
                 <m.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25, type: 'spring', damping: 18, stiffness: 260 }} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
                   {isClosed ? (
-                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: '60px', height: '60px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
                   ) : (!cd && noEstimate) ? (
-                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: '60px', height: '60px', borderRadius: 'var(--r-pill)', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
                     </div>
                   ) : !cd ? (
-                    <div className="skeleton" style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0 }} />
+                    <div className="skeleton" style={{ width: '60px', height: '60px', borderRadius: 'var(--r-pill)', flexShrink: 0 }} />
                   ) : (
                     /* `score`, not a second variable for the same number. A
                        separate `dialScore` let the dial and the sentence beside
@@ -1002,7 +1002,7 @@ export function CrowdForecastPanel({
                       <div style={{ display: 'flex', gap: '4px', flex: 1 }}>
                         {[1, 2, 3, 4, 5, 6, '7+'].map(n => (
                           <button className="hit44" key={n} onClick={() => setPartySize(typeof n === 'number' ? n : 7)}
-                            style={{ flex: 1, padding: '3px 0', borderRadius: '6px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                            style={{ flex: 1, padding: '3px 0', borderRadius: 'var(--r-xs)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s ease' }}
                             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(45,90,135,0.14)'; e.currentTarget.style.borderColor = '#2d5a87'; e.currentTarget.style.color = '#2d5a87'; }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-card-solid)'; e.currentTarget.style.borderColor = 'var(--border-default)'; e.currentTarget.style.color = 'var(--text-primary)'; }}>
                             {n}
@@ -1041,12 +1041,12 @@ export function CrowdForecastPanel({
                     is behind it and opens the sheet, the same tap target as the
                     locked best-time line. */}
                 {cd?.forecastAccess?.locked && !(process.env.REACT_APP_PURCHASES !== 'off') ? (
-                  <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
+                  <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>You've reached this month's limit for hourly charts.</span>
                   </m.div>
                 ) : cd?.forecastAccess?.locked && (process.env.REACT_APP_PURCHASES !== 'off') ? (
                   <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px' }}>
-                    <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
+                    <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>The hour-by-hour chart is part of Flock Pro.</span>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, whiteSpace: 'nowrap' }}>See Pro</span>
                     </button>
@@ -1247,7 +1247,7 @@ export function CrowdForecastPanel({
                         } else {
                           setActiveVenue(v);
                         }
-                      }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '8px', cursor: 'pointer', textAlign: 'left' }}>
+                      }} style={{ flex: 1, padding: '6px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--r-sm)', cursor: 'pointer', textAlign: 'left' }}>
                         <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{v.name}</p>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                           <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColorFor(v.score ?? v.crowd, colors) || 'var(--border-mid)' }} />
@@ -1289,7 +1289,7 @@ export function CrowdForecastPanel({
                         window.__flockPanToVenue({ place_id: prev.activeVenue.place_id, lat: loc?.latitude, lng: loc?.longitude, name: prev.activeVenue.name, address: prev.activeVenue.addr || prev.activeVenue.formatted_address, rating: prev.activeVenue.stars || prev.activeVenue.rating, photo_url: prev.activeVenue.photo_url });
                       }
                     }
-                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: '10px', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '8px', marginTop: '8px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.navy}30`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
                     {Icons.arrowLeft(colors.navy, 14)} Back to {venueDetailHistory[venueDetailHistory.length - 1]?.activeVenue?.name || 'Previous Venue'}
                   </button>
                 )}
@@ -1379,7 +1379,7 @@ export default function ConsumerVenueCard({
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 40, opacity: 0 }}
             transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
-            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
             {/* THE CARD THAT HAD THE PHOTO AND NEVER SHOWED IT. This is the
                 primary consumer venue card, the one the map opens on a pin tap
                 and the one the venue dashboard's map tab reuses, and until
@@ -1400,7 +1400,7 @@ export default function ConsumerVenueCard({
               />
             )}
             <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
-              <button aria-label="Close" className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
+              <button aria-label="Close" className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
               <m.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeVenue.name}</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '1px' }}>
@@ -1466,7 +1466,7 @@ export default function ConsumerVenueCard({
                   initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}
-                  style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', padding: '14px 16px', boxShadow: 'var(--card-shadow)', marginBottom: '8px' }}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: 'var(--r-md)', padding: '14px 16px', boxShadow: 'var(--card-shadow)', marginBottom: '8px' }}
                 >
                   <TableAvailability summary={tableSummary} party={tableLineParty} />
                 </m.div>
@@ -1539,7 +1539,7 @@ export default function ConsumerVenueCard({
                     style={{
                       backgroundColor: 'var(--bg-card-solid)',
                       border: '1px solid var(--border-default)',
-                      borderRadius: '14px',
+                      borderRadius: 'var(--r-md)',
                       padding: '14px 16px',
                       boxShadow: 'var(--card-shadow)',
                       marginBottom: '8px',
@@ -1641,7 +1641,7 @@ export default function ConsumerVenueCard({
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
                     }
-                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('currentColor', 14)} Select Venue</button>
+                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('currentColor', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
                   /* BACK TO CHAT IS NAVIGATION, SO IT IS DRAWN AS NAVIGATION.
                      It used to be the loudest thing on this sheet: full width,
@@ -1667,9 +1667,9 @@ export default function ConsumerVenueCard({
                     setCurrentScreen(ret.screen);
                     if (ret.flockId) setSelectedFlockId(ret.flockId);
                     if (ret.dmId) setSelectedDmId(ret.dmId);
-                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to chat</button>
+                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to chat</button>
                 ) : (
-                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
+                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
                 {activeVenue.place_id && (() => {
                   const lastCheckin = lastCheckinAt(activeVenue.place_id);
@@ -1703,7 +1703,7 @@ export default function ConsumerVenueCard({
                       style={{
                         width: '100%',
                         padding: '10px',
-                        borderRadius: '10px',
+                        borderRadius: 'var(--r-sm)',
                         border: isTopAction ? 'none' : '1.5px solid var(--border-default)',
                         backgroundColor: isTopAction ? colors.navyBg : disabled ? 'var(--bg-tertiary)' : 'var(--bg-card-solid)',
                         color: isTopAction ? 'white' : disabled ? 'var(--text-tertiary)' : colors.navy,
@@ -1721,7 +1721,7 @@ export default function ConsumerVenueCard({
                 })()}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {activeVenue.place_id && (
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url, photo_attribution: activeVenue.photo_attribution || null, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url, photo_attribution: activeVenue.photo_attribution || null, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); }} style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
                   )}
                   {/* No "Add to Calendar" here. It saved "Visit <venue>" for today at
                       8 PM whatever the plan, which is a calendar entry nobody made.

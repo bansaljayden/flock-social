@@ -93,7 +93,7 @@ export default function PastFlocksScreen({
       <div key="past-flocks-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <DialogBehavior modal={false} onClose={leave} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Past flocks</h1>
         </div>
 
@@ -112,7 +112,7 @@ export default function PastFlocksScreen({
                 role="alert"
                 title={pastFlocksError}
                 body="Nothing has been lost. Your finished flocks are still there."
-                action={<button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                action={<button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
               />
             </div>
           )}
@@ -139,7 +139,7 @@ export default function PastFlocksScreen({
                 const busy = rerunningFlockId === pf.id;
                 const cancelled = pf.status === 'cancelled';
                 return (
-                  <div key={pf.id} style={{ padding: '14px 16px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <div key={pf.id} style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, lineHeight: 1.2 }}>{pf.name}</h3>
@@ -147,7 +147,7 @@ export default function PastFlocksScreen({
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {pf.venue_name}</p>
                         )}
                       </div>
-                      <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: 'var(--r-sm)', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                         {cancelled ? Icons.x('var(--text-secondary)', 12) : Icons.check('var(--text-secondary)', 12)} {cancelled ? 'Cancelled' : 'Happened'}
                       </span>
                     </div>
@@ -166,14 +166,14 @@ export default function PastFlocksScreen({
                           ))}
                           {members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{members.length - 4}</div>}
                         </div>
-                        {dateLabel && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy, whiteSpace: 'nowrap' }}>{dateLabel}</span>}
+                        {dateLabel && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', color: colors.navy, whiteSpace: 'nowrap' }}>{dateLabel}</span>}
                       </div>
                       <button
                         className="hit44 glass-btn glass-navy"
                         aria-label={`Do ${pf.name} again`}
                         disabled={busy}
                         onClick={() => handleRerunFlock(pf)}
-                        style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
+                        style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
                       >{busy ? 'Starting…' : 'Do it again'}</button>
                     </div>
                   </div>

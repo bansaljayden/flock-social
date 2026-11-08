@@ -85,7 +85,7 @@ const PLAN_PILL = {
   gap: '2px',
   backgroundColor: 'var(--accent-blush)',
   color: 'var(--on-accent-blush)',
-  borderRadius: '999px',
+  borderRadius: 'var(--r-pill)',
   padding: '0 9px 0 11px',
   minHeight: '32px',
   margin: '0 -9px 0 -11px',
@@ -103,7 +103,7 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
           </button>
         )}
       </div>
-      <div data-nest-pulse-track="" style={{ display: 'flex', gap: '2px', padding: '2px', minHeight: '48px', boxSizing: 'border-box', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)' }}>
+      <div data-nest-pulse-track="" style={{ display: 'flex', gap: '2px', padding: '2px', minHeight: '48px', boxSizing: 'border-box', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)' }}>
         {PULSE_OPTIONS.map((opt, i) => {
           const on = active === opt.key;
           // A hairline between two segments neither of which is chosen.
@@ -124,7 +124,7 @@ export default function NestPulse({ active, saving, onSet, friends, onPlanWith, 
                 minHeight: '44px',
                 padding: 0,
                 border: 'none',
-                borderRadius: '10px',
+                borderRadius: 'var(--r-sm)',
                 backgroundColor: on ? opt.bg : 'transparent',
                 color: on ? opt.ink : 'var(--text-primary)',
                 fontSize: 'var(--t-body)',

@@ -43,7 +43,7 @@ export default function Face({
       style={{
         width: `${px}px`,
         height: `${px}px`,
-        borderRadius: '999px',
+        borderRadius: 'var(--r-pill)',
         flexShrink: 0,
         display: 'inline-flex',
         alignItems: 'center',
@@ -88,7 +88,7 @@ export function FaceRow({ people = [], total = 0, size = 28, max = 4, ring, face
             height: `${size}px`,
             padding: '0 6px',
             boxSizing: 'border-box',
-            borderRadius: '999px',
+            borderRadius: 'var(--r-pill)',
             marginLeft: shown.length ? '-8px' : 0,
             display: 'inline-flex',
             alignItems: 'center',

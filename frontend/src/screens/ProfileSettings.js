@@ -168,7 +168,7 @@ function UsageAnalyticsRow({ Toggle, colors }) {
   return (
     <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.barChart(colors.navy, 18)}</div>
+        <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.barChart(colors.navy, 18)}</div>
         <div style={{ flex: 1 }}>
           <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Share usage analytics</span>
           <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{USAGE_ANALYTICS_LINE}</span>
@@ -176,7 +176,7 @@ function UsageAnalyticsRow({ Toggle, colors }) {
         <Toggle label="Share usage analytics" on={optOut === false} onChange={flip} />
       </div>
       {error && (
-        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
           <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{error}</p>
         </div>
       )}
@@ -278,12 +278,12 @@ function InvitesAndSuggestions({ Toggle, colors, styles }) {
   // Until the answer is in, the switch's own shape stands where it will be.
   const control = (label, on, onChange) => (settings
     ? <Toggle label={label} on={on} onChange={() => { if (!busy) onChange(); }} />
-    : <SkeletonBar width={44} height={24} radius={12} />);
+    : <SkeletonBar width={44} height={24} radius="var(--r-pill)" />);
 
   const row = (icon, label, on, onChange, line) => (
     <div style={styles.card}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon(colors.navy, 18)}</div>
+        <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon(colors.navy, 18)}</div>
         <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>{label}</h2>
         {control(label, on, onChange)}
       </div>
@@ -296,10 +296,10 @@ function InvitesAndSuggestions({ Toggle, colors, styles }) {
       {!settings && !loadError && <span className="sr-only" role="status">Loading your settings</span>}
       {loadError && (
         <div style={styles.card}>
-          <div role="alert" style={{ padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <div role="alert" style={{ padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
             <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{loadError}</p>
           </div>
-          <button className="hit44 glass-btn glass-secondary" onClick={load} style={{ marginTop: '10px', padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+          <button className="hit44 glass-btn glass-secondary" onClick={load} style={{ marginTop: '10px', padding: '10px 16px', borderRadius: 'var(--r-sm)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
         </div>
       )}
       {!loadError && (
@@ -309,7 +309,7 @@ function InvitesAndSuggestions({ Toggle, colors, styles }) {
         </>
       )}
       {error && (
-        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
           <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{error}</p>
         </div>
       )}
@@ -472,7 +472,7 @@ export default function ProfileSettings({
       return (
         <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button aria-label="Back" className="hit44" onClick={backToYou} style={{ width: '32px', height: '32px', borderRadius: '16px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+            <button aria-label="Back" className="hit44" onClick={backToYou} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
             <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || ''}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
@@ -533,7 +533,7 @@ export default function ProfileSettings({
 
                 {/* Info card */}
                 <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
+                  <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
                   <div>
                     {/* Titled for what it explains. It said "Emergency
                         Contacts" directly above a section titled "Trusted
@@ -578,7 +578,7 @@ export default function ProfileSettings({
                       title={trustedContactsError}
                       body="Nothing has been lost. Anyone you have added is still on your account."
                       style={{ padding: '14px 0' }}
-                      action={<button className="hit44 glass-btn glass-navy" onClick={loadTrustedContacts} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44 glass-btn glass-navy" onClick={loadTrustedContacts} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
                     />
                   )}
 
@@ -591,7 +591,7 @@ export default function ProfileSettings({
 
                   {trustedContacts.map(c => (
                     <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 0', borderBottom: '1px solid var(--border-light)' }}>
-                      <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, flexShrink: 0 }}>{c.contact_name?.[0]?.toUpperCase() || '?'}</div>
+                      <div style={{ width: '40px', height: '40px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, flexShrink: 0 }}>{c.contact_name?.[0]?.toUpperCase() || '?'}</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{c.contact_name}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{c.contact_phone}</p>
@@ -609,7 +609,7 @@ export default function ProfileSettings({
                             Mail to this address has been failing. Check it with them and update it, or alerts may not arrive.
                           </p>
                         )}
-                        {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: 'var(--icon-bg)', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{c.relationship}</span>}
+                        {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: 'var(--icon-bg)', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{c.relationship}</span>}
                       </div>
                       <button className="hit44" onClick={() => handleEditContact(c)} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit</button>
                       <button className="hit44" onClick={() => handleDeleteContact(c.id)} style={{ background: 'none', border: 'none', color: colors.redText, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Remove</button>
@@ -617,7 +617,7 @@ export default function ProfileSettings({
                   ))}
 
                   {/* Add contact button */}
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowAddContact(true)} style={{ width: '100%', padding: '12px', borderRadius: 'var(--r-sm)', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '12px' }}>
                     {Icons.plus(colors.navy, 14)} Add trusted contact
                   </button>
                 </div>
@@ -642,7 +642,7 @@ export default function ProfileSettings({
                     {/* min(80vh, 100%): 80vh does not shrink when the backdrop
                         pads for the keyboard, and 100% of what is left keeps
                         the heading on the screen and scrolls the form. */}
-                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: 'min(80vh, 100%)', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
+                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px', maxHeight: 'min(80vh, 100%)', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
                       <h3 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit contact' : 'Add trusted contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>
@@ -675,8 +675,8 @@ export default function ProfileSettings({
                       </div>
 
                       <div style={{ display: 'flex', gap: '8px' }}>
-                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', color: colors.navy }}>Cancel</button>
-                        <button className="hit44 glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save changes' : 'Add contact'}</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', color: colors.navy }}>Cancel</button>
+                        <button className="hit44 glass-btn glass-navy" disabled={safetyLoading} onClick={handleSaveContact} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: safetyLoading ? 0.6 : 1 }}>{safetyLoading ? 'Saving...' : editingContact ? 'Save changes' : 'Add contact'}</button>
                       </div>
                     </div>
                   </div>
@@ -686,7 +686,7 @@ export default function ProfileSettings({
             {profileScreen === 'blocked' && (
               <div>
                 <div style={{ ...styles.card, display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.ban(colors.red, 18)}</div>
+                  <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.ban(colors.red, 18)}</div>
                   <div>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>What blocking does</p>
                     {/* Every clause here is something the server actually
@@ -699,7 +699,7 @@ export default function ProfileSettings({
                 </div>
 
                 {blockedLoading && blockedUsers.length === 0 && (
-                  <ListSkeleton count={2} thumb={40} thumbRadius={20} label="Loading blocked accounts" />
+                  <ListSkeleton count={2} thumb={40} thumbRadius="var(--r-pill)" label="Loading blocked accounts" />
                 )}
 
                 {!blockedLoading && blockedError && (
@@ -710,7 +710,7 @@ export default function ProfileSettings({
                       role="alert"
                       title={blockedError}
                       body="Nobody has been unblocked. This is the list failing to load, not the list being empty."
-                      action={<button className="hit44 glass-btn glass-navy" onClick={loadBlockedUsers} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                      action={<button className="hit44 glass-btn glass-navy" onClick={loadBlockedUsers} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
                     />
                   </div>
                 )}
@@ -738,7 +738,7 @@ export default function ProfileSettings({
                       const busy = unblockingId === id;
                       return (
                         <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 0', borderBottom: i === blockedUsers.length - 1 ? 'none' : '1px solid var(--border-light)' }}>
-                          <div style={{ width: '40px', height: '40px', borderRadius: '20px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
                             {b.profile_image_url
                               ? <img src={b.profile_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               : <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{b.name?.[0]?.toUpperCase() || '?'}</span>}
@@ -758,7 +758,7 @@ export default function ProfileSettings({
                             aria-label={`Unblock ${b.name || 'this account'}`}
                             disabled={busy}
                             onClick={() => setUnblockTarget(b)}
-                            style={{ padding: '8px 14px', borderRadius: '10px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
+                            style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
                           >{busy ? 'Unblocking…' : 'Unblock'}</button>
                         </div>
                       );
@@ -769,12 +769,12 @@ export default function ProfileSettings({
                 {unblockTarget && (
                   <div onClick={() => { if (!unblockingId) setUnblockTarget(null); }} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
                     <DialogBehavior onClose={() => setUnblockTarget(null)} label={`Unblock ${unblockTarget.name || 'this account'}`} />
-                    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
+                    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
                       <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Unblock {unblockTarget.name || 'this account'}?</h3>
                       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 18px', lineHeight: 1.5 }}>They will be able to message you and see your activity again. You can block them again at any time.</p>
                       <div style={{ display: 'flex', gap: '10px' }}>
-                        <button className="hit44" disabled={!!unblockingId} onClick={() => setUnblockTarget(null)} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                        <button className="hit44" disabled={!!unblockingId} onClick={() => handleUnblock(unblockTarget)} style={{ flex: 2, padding: '13px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: unblockingId ? 'wait' : 'pointer', opacity: unblockingId ? 0.6 : 1 }}>{unblockingId ? 'Unblocking…' : 'Unblock'}</button>
+                        <button className="hit44" disabled={!!unblockingId} onClick={() => setUnblockTarget(null)} style={{ flex: 1, padding: '13px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                        <button className="hit44" disabled={!!unblockingId} onClick={() => handleUnblock(unblockTarget)} style={{ flex: 2, padding: '13px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: unblockingId ? 'wait' : 'pointer', opacity: unblockingId ? 0.6 : 1 }}>{unblockingId ? 'Unblocking…' : 'Unblock'}</button>
                       </div>
                     </div>
                   </div>
@@ -785,7 +785,7 @@ export default function ProfileSettings({
               <div>
                 <div style={styles.card}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 18)}</div>
+                    <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 18)}</div>
                     {/* The privacy policy names this control in exactly these
                         words. A policy that describes a switch nobody can find
                         under that name is not one anybody can act on, so the
@@ -802,7 +802,7 @@ export default function ProfileSettings({
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>People who already have your number in their contacts can find your Flock account. Off until you turn it on. Turning it off erases the code we match against.</p>
 
                   {phoneDiscoveryError && (
-                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{phoneDiscoveryError}</p>
                     </div>
                   )}
@@ -814,7 +814,7 @@ export default function ProfileSettings({
                   {(phoneDiscoveryNeedsNumber || (!profilePhone && phoneDiscoverable === false)) && (
                     <div style={{ marginTop: '12px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.4' }}>There is no phone number on your account yet. Add one in Edit Profile and this switch will have something to match against.</p>
-                      <button className="hit44 glass-btn glass-secondary" onClick={() => setProfileScreen('edit')} style={{ padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Go to Edit profile</button>
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => setProfileScreen('edit')} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Go to Edit profile</button>
                     </div>
                   )}
                 </div>
@@ -827,7 +827,7 @@ export default function ProfileSettings({
               <div>
                 <div style={styles.card}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.birdie(colors.navy, 16)}</div>
+                    <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.birdie(colors.navy, 16)}</div>
                     <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>Let Birdie use Google's Gemini</h2>
                     {/* The same answer Birdie's own question records, and the
                         way to take it back (DELETE /api/ai/consent). Off means
@@ -848,7 +848,7 @@ export default function ProfileSettings({
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range if your account has one, and what you have open in Flock. It also sends your time zone with the date and time it is there, but only when your device reports its time zone. A yes to an earlier version of Birdie's question, which did not name them, keeps them out until you turn this off and on again. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>Off means Birdie sends nothing and cannot answer. The rest of Flock works the same either way.</p>
                   {birdieConsentError && (
-                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{birdieConsentError}</p>
                     </div>
                   )}
@@ -861,7 +861,7 @@ export default function ProfileSettings({
                   <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Your interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                     {userInterests.map(interest => (
-                      <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: '20px', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                      <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: 'var(--r-pill)', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {interest}
                         <button aria-label="Remove interest" className="hit44" onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex', position: 'relative', overflow: 'hidden' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
                       </div>
@@ -879,14 +879,14 @@ export default function ProfileSettings({
                       if (!draft) { interestInputRef.current?.focus(); return; }
                       if (userInterests.includes(draft)) { showToast(`${draft} is already on your list`, 'info'); return; }
                       confirmClick(e); setUserInterests([...userInterests, draft]); setNewInterest('');
-                    }} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: newInterest.trim() ? 1 : 0.55 }}>Add</button>
+                    }} style={{ padding: '0 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: newInterest.trim() ? 1 : 0.55 }}>Add</button>
                   </div>
                 </div>
                 <div style={styles.card}>
                   <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Suggested interests</h2>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                     {suggestedInterests.filter(s => !userInterests.includes(s)).map(interest => (
-                      <button key={interest} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
+                      <button key={interest} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); setUserInterests([...userInterests, interest]); }} style={{ padding: '6px 12px', borderRadius: 'var(--r-pill)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>
                         {Icons.plus(colors.navy, 12)} {interest}
                       </button>
                     ))}
@@ -971,10 +971,10 @@ export default function ProfileSettings({
     return (
       <div key="profile-main-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '20px', textAlign: 'center', background: colors.navyBg, flexShrink: 0 }}>
-          <button aria-label="Change your profile photo" className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
+          <button aria-label="Change your profile photo" className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: 'var(--r-pill)', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.2)', border: '4px solid rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', cursor: 'pointer' }}>
             {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
           </button>
-          <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: '6px', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit photo</button>
+          <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ display: 'block', margin: '4px auto 8px', padding: '2px 10px', borderRadius: 'var(--r-xs)', border: 'none', backgroundColor: 'transparent', color: 'rgba(255,255,255,0.7)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit photo</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'white', margin: 0 }}>{profileName}</h1>
         </div>
 
@@ -991,11 +991,11 @@ export default function ProfileSettings({
               // a read that failed still shows the dash.
               const pending = s.l === 'Flocks' ? (flocksLoading && flocks.length === 0 && !flocksError) : !userStatsLoaded;
               return (
-                <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                   {pending ? (
                     <div aria-busy="true">
                       <span className="sr-only">Loading</span>
-                      <SkeletonBar width={28} height={20} radius={5} style={{ margin: '2px auto 1px' }} />
+                      <SkeletonBar width={28} height={20} radius="var(--r-xs)" style={{ margin: '2px auto 1px' }} />
                     </div>
                   ) : (
                     <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
@@ -1008,7 +1008,7 @@ export default function ProfileSettings({
           )}
 
           {/* Add Friends Button */}
-          <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative', overflow: 'hidden' }}>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative', overflow: 'hidden' }}>
             {/* The inline navy background on this button has been dead since
                 .glass-secondary started forcing a light surface with
                 !important (index.css:534), so the row paints cream while the
@@ -1016,7 +1016,7 @@ export default function ProfileSettings({
                 white-on-cream chip. Repainted in the same language as the
                 grouped rows below it, which is the one visual system this
                 screen has. */}
-            <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus(colors.navy, 18)}</div>
+            <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus(colors.navy, 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add friends</span>
               {/* This used to drop "contacts" inside the iOS app, which was
@@ -1025,7 +1025,7 @@ export default function ProfileSettings({
                   ships to, so the line names all three ways in. */}
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Find people, scan a QR code, check your contacts</span>
             </div>
-            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
+            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: 'var(--r-md)', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
             <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
           </button>
 
@@ -1083,14 +1083,14 @@ export default function ProfileSettings({
           ].map(group => (
             <div key={group.g} style={{ marginBottom: '16px' }}>
               <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>{group.g}</h4>
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
                 {group.rows.map((m, i) => (
                   <button key={m.s} className="hit44 glass-btn glass-secondary press-row" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } if (m.s === 'admin') { openAdminDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                     {/* A row may name its own size: Birdie's mark is the one
                         solid glyph here and draws at 16, where it weighs what
                         the outlines do at 18 (the composer's sheet does the
                         same). */}
-                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, m.size || 18)}</div>
+                    <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, m.size || 18)}</div>
                     <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                     {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
                     <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
@@ -1102,11 +1102,11 @@ export default function ProfileSettings({
           ))}
 
           <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Device</h4>
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
             {/* Location Toggle */}
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 18)}</div>
+                <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Location</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{locationEnabled ? 'Venues and maps use your location' : 'Location is turned off'}</span>
@@ -1118,7 +1118,7 @@ export default function ProfileSettings({
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               {/* Auto Night Mode toggle */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moon(colors.navy, 18)}</div>
+                <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moon(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Smart night mode</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
@@ -1127,14 +1127,14 @@ export default function ProfileSettings({
               </div>
               {/* Night mode active badge */}
               {themeMode === 'auto' && isNightModeActive && (
-                <div style={{ marginTop: '8px', marginLeft: '44px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--accent-purple-bg)', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-purple-text)' }}>
+                <div style={{ marginTop: '8px', marginLeft: '44px', display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--accent-purple-bg)', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-purple-text)' }}>
                   {Icons.moon('var(--accent-purple-text)', 12)} Night mode active
                 </div>
               )}
               {/* Manual dark mode toggle — only when auto is off */}
               {themeMode !== 'auto' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
+                  <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{isDark ? Icons.moon(colors.navy, 18) : Icons.sun(colors.navy, 18)}</div>
                   <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Dark mode</span>
                   <Toggle label="Dark mode" on={isDark} onChange={toggleTheme} />
                 </div>
@@ -1143,7 +1143,7 @@ export default function ProfileSettings({
             {/* Notifications */}
             <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.bell(colors.navy, 18)}</div>
+                <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.bell(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Push notifications</span>
                 {notifStatus === 'granted' ? (
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>On</span>
@@ -1166,7 +1166,7 @@ export default function ProfileSettings({
                       // "enabled" without a registered token was a lie.
                       if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
                       else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
-                    }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Set up</button>
+                    }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Set up</button>
                 )}
               </div>
               {notifStatus === 'unsupported' && (
@@ -1203,14 +1203,14 @@ export default function ProfileSettings({
                   alerts are not available, and no switch that would sit on
                   for alerts the backend will not send. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
+                <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Crowd alerts</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{entitlements?.paywallEnabled && !isPro && process.env.REACT_APP_PURCHASES === 'off' ? "Crowd alerts aren't available on this account" : "A heads up before your flock's venue gets busy"}</span>
                 </div>
                 {entitlements?.paywallEnabled && !isPro ? (
                   (process.env.REACT_APP_PURCHASES !== 'off') ? (
-                    <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: '999px', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: 'var(--r-pill)', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       Pro
                     </button>
                   ) : null
@@ -1256,11 +1256,11 @@ export default function ProfileSettings({
                 signOutAllRef.current = false;
                 setSigningOutEverywhere(false);
               }
-            }} style={{ width: '100%', minHeight: '44px', marginTop: 0, padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: signingOutEverywhere ? 'wait' : 'pointer', fontWeight: '600', opacity: signingOutEverywhere ? 0.6 : 1 }}>
+            }} style={{ width: '100%', minHeight: '44px', marginTop: 0, padding: '12px', textAlign: 'left', borderRadius: 'var(--r-md)', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: signingOutEverywhere ? 'wait' : 'pointer', fontWeight: '600', opacity: signingOutEverywhere ? 0.6 : 1 }}>
               Sign out everywhere
               {signingOutEverywhere && <span style={{ marginLeft: 'auto', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Signing out…</span>}
             </button>
-            <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
+            <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: 'var(--r-md)', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
               {/* "Sign out", the verb the button above it and every session
                   message in App.js already use. "Log out" under "Sign out
@@ -1289,7 +1289,7 @@ export default function ProfileSettings({
           {showExportData && (
             <div onClick={() => !exportingData && setShowExportData(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
             <DialogBehavior onClose={() => setShowExportData(false)} label="Get a copy of my data" />
-              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Get a copy of my data</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>A JSON file with your profile, flocks, messages, votes, budgets, reviews, check-ins, friends and trusted contacts. Photos in messages and your profile photo are not included; they stay visible in the app. Our Privacy Policy lists the few things left out and why.</p>
                 {/* An Apple or Google account has no password here, and the box
@@ -1321,7 +1321,7 @@ export default function ProfileSettings({
                     placeholder="Your password"
                     aria-label="Your password"
                     disabled={exportingData}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '10px', boxSizing: 'border-box' }}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '10px', boxSizing: 'border-box' }}
                   />
                 )}
                 {/* An Apple or Google session older than five minutes is not
@@ -1329,7 +1329,7 @@ export default function ProfileSettings({
                     The account's own sign-in runs right here, and a fresh
                     session is all the retry needs; see OAuthReconfirm. */}
                 {exportNeedsReauth && (
-                  <div role="alert" style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '12px' }}>
+                  <div role="alert" style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '12px' }}>
                     <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)', margin: '0 0 4px' }}>{canReconfirmHere(authUser?.sign_in_method) ? "Confirm it's you first" : 'Sign in again first'}</p>
                     {canReconfirmHere(authUser?.sign_in_method) ? (
                       <>
@@ -1350,8 +1350,8 @@ export default function ProfileSettings({
                   <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '0 0 10px' }}>{exportError}</p>
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="hit44 glass-btn glass-secondary" disabled={exportingData} onClick={() => setShowExportData(false)} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-                  <button className="hit44 glass-btn glass-primary" disabled={exportingData || exportNeedsReauth} onClick={handleExportData} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: 'none', backgroundColor: colors.navy, color: '#ffffff', fontWeight: '700', cursor: exportingData ? 'default' : 'pointer' }}>{exportingData ? 'Preparing…' : exportReady ? 'Save my data' : 'Get my data'}</button>
+                  <button className="hit44 glass-btn glass-secondary" disabled={exportingData} onClick={() => setShowExportData(false)} style={{ flex: 1, minHeight: '44px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44 glass-btn glass-primary" disabled={exportingData || exportNeedsReauth} onClick={handleExportData} style={{ flex: 1, minHeight: '44px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: colors.navy, color: '#ffffff', fontWeight: '700', cursor: exportingData ? 'default' : 'pointer' }}>{exportingData ? 'Preparing…' : exportReady ? 'Save my data' : 'Get my data'}</button>
                 </div>
               </div>
             </div>
@@ -1360,7 +1360,7 @@ export default function ProfileSettings({
           {showDeleteAccount && (
             <div onClick={() => !deletingAccount && setShowDeleteAccount(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
             <DialogBehavior onClose={() => setShowDeleteAccount(false)} label="Delete account" />
-              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. The exception is a plan whose bill somebody else paid and somebody besides you still owes on, which passes to the person who paid, or to another member if they have left the plan or been banned. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Only once there is a subscription to speak of; Apple expects
@@ -1423,7 +1423,7 @@ export default function ProfileSettings({
                       placeholder="Password"
                       enterKeyHint="done"
                       onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-                      style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${deleteError ? '#EF4444' : 'var(--border-default)'}`, backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '6px' }}
+                      style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: 'var(--r-md)', border: `1px solid ${deleteError ? '#EF4444' : 'var(--border-default)'}`, backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '6px' }}
                     />
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>Signed in with Google or Apple? Leave this blank.</p>
                   </>
@@ -1434,7 +1434,7 @@ export default function ProfileSettings({
                     but never announced, a screen-reader user heard the Delete
                     button go dead and nothing else. */}
                 {deleteNeedsReauth && (
-                  <div role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
+                  <div role="alert" tabIndex={-1} ref={deleteAlertRef} style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--accent-amber-bg)', marginBottom: '14px' }}>
                     {/* Guideline 5.1.1(v) wants deletion easy to finish, and
                         "sign out, sign back in, then come straight here" sent
                         the person out of the app to do it. Where this device
@@ -1474,9 +1474,9 @@ export default function ProfileSettings({
                     characters typed once in the life of an account are not
                     worth a dead tap on the one screen where a second attempt
                     feels like the app refusing. */}
-                <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" enterKeyHint="done" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
+                <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" enterKeyHint="done" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button className="hit44" onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44" onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                   <button className="hit44"
                     aria-label="Delete account, permanently"
                     disabled={deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
@@ -1524,7 +1524,7 @@ export default function ProfileSettings({
                         setDeletingAccount(false);
                       }
                     }}
-                    style={{ flex: 1.6, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: (deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 'not-allowed' : 'pointer', opacity: (deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 0.5 : 1 }}
+                    style={{ flex: 1.6, padding: '13px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: (deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 'not-allowed' : 'pointer', opacity: (deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE') ? 0.5 : 1 }}
                   >{deletingAccount ? 'Deleting…' : 'Delete account'}</button>
                 </div>
               </div>
@@ -1544,7 +1544,7 @@ export default function ProfileSettings({
               style={{
                 marginTop: '8px',
                 padding: '8px 12px',
-                borderRadius: '8px',
+                borderRadius: 'var(--r-sm)',
                 border: '1px solid #EF4444',
                 backgroundColor: 'rgba(239,68,68,0.1)',
                 color: '#EF4444',
@@ -1566,9 +1566,9 @@ export default function ProfileSettings({
               App Store Connect lists as the Support URL (Guideline 1.2: a way
               to reach someone about content, from inside the app). */}
           <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '20px 0 6px' }}>Help</h4>
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
             <button className="hit44 glass-btn glass-secondary press-row" onClick={() => openExternal('https://www.flockcorp.com/support')} style={{ width: '100%', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.helpCircle(colors.navy, 18)}</div>
+              <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.helpCircle(colors.navy, 18)}</div>
               <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Support</span>
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Questions and problems</span>
               <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
@@ -1588,7 +1588,7 @@ export default function ProfileSettings({
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/terms')}
                 style={{
                   padding: '10px 16px',
-                  borderRadius: '10px',
+                  borderRadius: 'var(--r-sm)',
                   border: `1px solid ${colors.creamDark}`,
                   backgroundColor: 'var(--bg-card-solid)',
                   color: colors.navy,
@@ -1606,7 +1606,7 @@ export default function ProfileSettings({
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/privacy')}
                 style={{
                   padding: '10px 16px',
-                  borderRadius: '10px',
+                  borderRadius: 'var(--r-sm)',
                   border: `1px solid ${colors.creamDark}`,
                   backgroundColor: 'var(--bg-card-solid)',
                   color: colors.navy,
@@ -1626,7 +1626,7 @@ export default function ProfileSettings({
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/guidelines')}
                 style={{
                   padding: '10px 16px',
-                  borderRadius: '10px',
+                  borderRadius: 'var(--r-sm)',
                   border: `1px solid ${colors.creamDark}`,
                   backgroundColor: 'var(--bg-card-solid)',
                   color: colors.navy,
@@ -1732,8 +1732,8 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
   }, [native, isPro, loadStatus]);
 
   const premium = isPro || !!status?.isPremium;
-  const rowStyle = { width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', textDecoration: 'none', boxSizing: 'border-box' };
-  const icon = <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.pro(colors.navy, 18)}</div>;
+  const rowStyle = { width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: 'var(--r-md)', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', textDecoration: 'none', boxSizing: 'border-box' };
+  const icon = <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.pro(colors.navy, 18)}</div>;
   const title = (text) => <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{text}</span>;
   const on = <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>Active</span>;
   const chevron = <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>;

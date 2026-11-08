@@ -76,7 +76,7 @@ test('the parameter list was read', () => {
 test('while the details load: three stat tiles, Hours, Contact\'s two rows, View Menu and three tags, no ring', () => {
   const { container } = render(<VenueDetailSheet {...props()} />);
   expect(screen.getByText('Loading details')).toBeTruthy();
-  const tiles = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '62px' && d.style.borderRadius === '12px');
+  const tiles = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '62px' && d.style.borderRadius === 'var(--r-md)');
   expect(tiles).toHaveLength(3);
   const s = sizes(container);
   // Contact's phone and website rows.

@@ -61,7 +61,7 @@ export function SkeletonCircle({ size = 40, dark = false, style }) {
 }
 
 /** A card-sized area: a photo, a control strip, a whole button. */
-export function SkeletonBlock({ width = '100%', height = 64, radius = 12, dark = false, style }) {
+export function SkeletonBlock({ width = '100%', height = 64, radius = 'var(--r-md)', dark = false, style }) {
   return <SkeletonBar width={width} height={height} radius={radius} dark={dark} style={style} />;
 }
 
@@ -76,14 +76,14 @@ export function SkeletonBlock({ width = '100%', height = 64, radius = 12, dark =
 export function SkeletonRow({
   thumb = 44,
   round = false,
-  thumbRadius = 10,
+  thumbRadius = 'var(--r-sm)',
   lines = ['60%', '40%'],
   trailing = [],
   bare = false,
   divider = false,
   padding = bare ? '10px 8px' : '12px',
   gap = 12,
-  radius = bare ? 12 : 14,
+  radius = 'var(--r-md)',
   marginBottom = bare ? 4 : 10,
   dark = false,
   style,
@@ -111,7 +111,7 @@ export function SkeletonRow({
         ))}
       </div>
       {trailing.map((t, i) => (
-        <SkeletonBar key={i} width={t.width} height={t.height ?? 28} radius={t.radius ?? 14} dark={dark} />
+        <SkeletonBar key={i} width={t.width} height={t.height ?? 28} radius={t.radius ?? 'var(--r-pill)'} dark={dark} />
       ))}
     </div>
   );
@@ -156,11 +156,11 @@ export function SkeletonStatus({ label = 'Loading', children, style }) {
 export function FlockCardSkeleton({ past = false }) {
   if (!past) {
     return (
-      <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxSizing: 'border-box' }}>
+      <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxSizing: 'border-box' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
           {/* The name, a --t-title line in the display face. */}
-          <SkeletonBar width="55%" height={19} radius={5} style={{ margin: '2px 0' }} />
-          <SkeletonBar width={72} height={24} radius={12} />
+          <SkeletonBar width="55%" height={19} radius="var(--r-xs)" style={{ margin: '2px 0' }} />
+          <SkeletonBar width={72} height={24} radius="var(--r-pill)" />
         </div>
         {/* When and where, a --t-label line. */}
         <SkeletonBar width="50%" height={13} style={{ margin: '6px 0 0' }} />
@@ -176,15 +176,15 @@ export function FlockCardSkeleton({ past = false }) {
     );
   }
   return (
-    <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden', boxSizing: 'border-box' }}>
+    <div aria-hidden="true" style={{ padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           {/* The name, a --t-title line (19px on 1.2). */}
-          <SkeletonBar width="55%" height={18} radius={5} style={{ margin: '2px 0 3px' }} />
+          <SkeletonBar width="55%" height={18} radius="var(--r-xs)" style={{ margin: '2px 0 3px' }} />
           {/* The venue, a --t-meta line 3px under it. */}
           <SkeletonBar width="40%" height={12} style={{ margin: '5px 0 2px' }} />
         </div>
-        <SkeletonBar width={84} height={20} radius={10} />
+        <SkeletonBar width={84} height={20} radius="var(--r-pill)" />
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
@@ -193,9 +193,9 @@ export function FlockCardSkeleton({ past = false }) {
               <SkeletonCircle key={j} size={24} style={{ border: '2px solid var(--bg-card-solid)', marginLeft: j > 0 ? '-6px' : 0 }} />
             ))}
           </div>
-          <SkeletonBar width={52} height={20} radius={10} />
+          <SkeletonBar width={52} height={20} radius="var(--r-pill)" />
         </div>
-        <SkeletonBar width={92} height={32} radius={10} />
+        <SkeletonBar width={92} height={32} radius="var(--r-sm)" />
       </div>
     </div>
   );
@@ -219,7 +219,7 @@ const NEST_HERO_SKELETON = { background: 'var(--nest-hero-skel)' };
 function NestRowSkeleton({ first }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minHeight: '60px', padding: '0 14px 0 16px', boxSizing: 'border-box', boxShadow: first ? 'none' : 'inset 46px 1px 0 var(--bg-card-solid), inset 0 1px 0 var(--divider)' }}>
-      <SkeletonBar width={18} height={18} radius={5} />
+      <SkeletonBar width={18} height={18} radius="var(--r-xs)" />
       <div style={{ flex: 1, minWidth: 0 }}>
         <SkeletonBar width="62%" height={15} />
         <SkeletonBar width="38%" height={12} style={{ marginTop: '6px' }} />
@@ -231,8 +231,8 @@ function NestRowSkeleton({ first }) {
 export function NestHeroSkeleton({ label = 'Loading your flocks' }) {
   return (
     <SkeletonStatus label={label} style={{ marginBottom: '28px' }}>
-      <SkeletonBlock height={196} radius={16} style={NEST_HERO_SKELETON} />
-      <div aria-hidden="true" style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+      <SkeletonBlock height={196} radius="var(--r-lg)" style={NEST_HERO_SKELETON} />
+      <div aria-hidden="true" style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
         <NestRowSkeleton first />
         <NestRowSkeleton />
       </div>
@@ -275,19 +275,19 @@ export function RosterSkeleton({ count = 4, label = 'Loading who is going' }) {
  */
 export function EventCardSkeleton() {
   return (
-    <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
+    <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}>
       <SkeletonBlock height={132} radius={0} />
       <div style={{ padding: '12px 14px' }}>
-        <SkeletonBar width="70%" height={18} radius={5} style={{ margin: '3px 0 7px' }} />
+        <SkeletonBar width="70%" height={18} radius="var(--r-xs)" style={{ margin: '3px 0 7px' }} />
         <SkeletonBar width="45%" height={12} style={{ margin: '2px 0 8px' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <SkeletonBar width={64} height={14} />
-          <SkeletonBar width={56} height={18} radius={8} />
+          <SkeletonBar width={56} height={18} radius="var(--r-sm)" />
           <SkeletonBar width={44} height={14} />
         </div>
         <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-          <SkeletonBar width="auto" height={34} radius={10} style={{ flexGrow: 1 }} />
-          <SkeletonBar width={84} height={34} radius={10} />
+          <SkeletonBar width="auto" height={34} radius="var(--r-sm)" style={{ flexGrow: 1 }} />
+          <SkeletonBar width={84} height={34} radius="var(--r-sm)" />
         </div>
       </div>
     </div>
@@ -349,7 +349,7 @@ function BootFrame({ mark, label, top, children }) {
         margin: '20px auto',
         boxSizing: 'border-box',
         flexShrink: 0,
-        borderRadius: '44px',
+        borderRadius: 'var(--r-frame)',
         border: '6px solid #1e293b',
         overflow: 'hidden',
         display: 'flex',
@@ -360,7 +360,7 @@ function BootFrame({ mark, label, top, children }) {
           : '0 25px 80px -12px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(13,40,71,0.10), inset 0 1px 0 rgba(255,255,255,0.1)',
       }}>
         <div style={{ height: '28px', backgroundColor: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <div style={{ width: '120px', height: '24px', backgroundColor: 'black', borderRadius: '20px' }} />
+          <div style={{ width: '120px', height: '24px', backgroundColor: 'black', borderRadius: 'var(--r-pill)' }} />
         </div>
         {children}
       </div>
@@ -386,15 +386,15 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
           <div>
             {/* The day line at --t-label, then the title at --t-title. */}
             <SkeletonBar width={104} height={13} style={{ margin: '2px 0' }} />
-            <SkeletonBar width={128} height={19} radius={5} style={{ marginTop: '6px' }} />
+            <SkeletonBar width={128} height={19} radius="var(--r-xs)" style={{ marginTop: '6px' }} />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <SkeletonBar width={92} height={13} />
             <SkeletonCircle size={36} />
           </div>
         </div>
-        <SkeletonBlock height={196} radius={16} style={NEST_HERO_SKELETON} />
-        <div style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+        <SkeletonBlock height={196} radius="var(--r-lg)" style={NEST_HERO_SKELETON} />
+        <div style={{ marginTop: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
           <NestRowSkeleton first />
           <NestRowSkeleton />
         </div>
@@ -406,7 +406,7 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
       <div aria-hidden="true" style={{ display: 'flex', justifyContent: 'space-around', padding: '10px 8px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', borderTop: 'var(--nav-border)', boxShadow: 'var(--nav-shadow)', flexShrink: 0 }}>
         {[0, 1, 2, 3, 4].map((i) => (
           <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 14px' }}>
-            <SkeletonBar width={24} height={24} radius={6} />
+            <SkeletonBar width={24} height={24} radius="var(--r-xs)" />
             <SkeletonBar width={30} height={9} radius={3} style={{ margin: '6px 0 0' }} />
           </div>
         ))}
@@ -435,11 +435,11 @@ function VenueDashboardShapes({ navyBg }) {
     <>
       <div aria-hidden="true" style={{ padding: '16px', background: navyBg, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
-          <div style={{ width: '96px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
+          <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)' }} />
+          <div style={{ width: '96px', height: '24px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)' }} />
         </div>
         <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
+          <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-md)', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ width: '60%', height: '16px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: '8px' }} />
             <div style={{ width: '40%', height: '11px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.14)' }} />
@@ -448,12 +448,12 @@ function VenueDashboardShapes({ navyBg }) {
       </div>
       <div aria-hidden="true" style={{ display: 'flex', gap: '8px', padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-default)' }}>
         {[0, 1, 2, 3, 4].map((i) => (
-          <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: '8px' }} />
+          <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: 'var(--r-sm)' }} />
         ))}
       </div>
       <div aria-hidden="true" style={{ flex: 1, minWidth: 0, overflow: 'hidden', padding: '16px' }}>
         {[0, 1, 2].map((i) => (
-          <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: '16px', marginBottom: '12px' }} />
+          <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: 'var(--r-lg)', marginBottom: '12px' }} />
         ))}
       </div>
     </>

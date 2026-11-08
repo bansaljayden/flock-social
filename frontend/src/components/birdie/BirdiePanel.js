@@ -125,7 +125,7 @@ const consentChoice = {
   flex: 1,
   minHeight: '44px',
   padding: '10px',
-  borderRadius: '10px',
+  borderRadius: 'var(--r-sm)',
   border: 'none',
   background: 'var(--bg-tertiary)',
   color: 'var(--text-primary)',
@@ -226,7 +226,7 @@ export default function BirdiePanel({
   // And in the page they are flat, the Nest's own card: no border, no
   // shadow, its 12px radius. In the chat's panel and full screen they keep
   // the sheet's raised card.
-  const venueCardSurface = isInline ? { borderRadius: '12px', border: 'none', boxShadow: 'none' } : null;
+  const venueCardSurface = isInline ? { borderRadius: 'var(--r-md)', border: 'none', boxShadow: 'none' } : null;
   // Inline shows the latest exchange: the reader's last question and what
   // came after it. Older turns are a tap away in the full screen.
   let inlineFrom = 0;
@@ -409,7 +409,7 @@ export default function BirdiePanel({
       }}>
         <div style={isInline ? undefined : {
           backgroundColor: 'var(--bg-card-solid)',
-          borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px',
+          borderRadius: isAiFullscreen ? 'var(--r-xl) var(--r-xl) 0 0' : 'var(--r-xl)',
           width: isAiFullscreen ? '100%' : 'calc(100% - 24px)',
           maxWidth: isAiPanel ? '360px' : '100%',
           height: isAiFullscreen ? '85%' : '55%',
@@ -449,7 +449,7 @@ export default function BirdiePanel({
               hit boxes (.hit44) no longer overlap one another. Not drawn
               inline: the Nest's section carries its own heading. */}
           {!isInline && (
-          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: 'var(--bg-card-solid)', borderRadius: isAiFullscreen ? '24px 24px 0 0' : '20px 20px 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexShrink: 0 }}>
+          <div style={{ padding: isAiPanel ? '10px 12px' : '12px', borderBottom: '1px solid var(--divider)', background: 'var(--bg-card-solid)', borderRadius: isAiFullscreen ? 'var(--r-xl) var(--r-xl) 0 0' : 'var(--r-xl) var(--r-xl) 0 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexShrink: 0 }}>
             {/* minWidth 0 and a one-line subtitle. The header gained a third
                 button, and without these the title block refuses to shrink: at
                 320px the tagline wrapped to three lines and pushed the header
@@ -482,17 +482,17 @@ export default function BirdiePanel({
                   title="New chat"
                   onClick={startNewAiChat}
                   disabled={aiTyping}
-                  style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease' }}
+                  style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: aiTyping ? 'default' : 'pointer', opacity: aiTyping ? 0.45 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease' }}
                 >
                   {Icons.plus('var(--text-primary)', 14)}
                 </button>
               )}
               {/* Expand/Collapse toggle */}
-              <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button aria-label="Toggle full screen" className="hit44" onClick={toggleAiFullscreen} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {(isAiFullscreen ? Icons.minimize : Icons.maximize)('currentColor', 14)}
               </button>
               {/* Close */}
-              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-primary)', 14)}</button>
+              <button aria-label="Close" className="hit44" onClick={closeAiChat} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-inset)', border: 'none', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-primary)', 14)}</button>
             </div>
           </div>
           )}
@@ -511,7 +511,7 @@ export default function BirdiePanel({
               closes Birdie and touches nothing else in the app; the question
               comes back the next time Birdie opens. */}
           {!birdieConsented ? (
-            <div className={isInline ? undefined : 'birdie-bg'} style={isInline ? { backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px' } : { flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
+            <div className={isInline ? undefined : 'birdie-bg'} style={isInline ? { backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '16px' } : { flex: 1, padding: '12px', overflowY: 'auto', position: 'relative' }}>
               {/* Inline, the question reads like the page around it: left
                   aligned, where ten centred lines of body text were the
                   centred-stack template. The sheets keep their centred card. */}
@@ -583,7 +583,7 @@ export default function BirdiePanel({
                 {!outOfChirps && (
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'center', pointerEvents: 'auto' }}>
                   {aiSuggestedQuestions.slice(0, isAiPanel ? 2 : 4).map((q, i) => (
-                    <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: '7px 12px', borderRadius: 'var(--r-lg)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '600', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {q.icon(colors.navy, 12)}
                       {q.text}
                     </button>
@@ -619,20 +619,20 @@ export default function BirdiePanel({
               <div data-birdie-turn={i} style={{ display: 'flex', gap: isInline ? '6px' : '8px', marginBottom: isInline ? '14px' : '12px', flexDirection: msg.role === 'user' ? 'row-reverse' : (isInline ? 'column' : 'row'), position: 'relative', zIndex: 2 }}>
                 {isInline && msg.role !== 'user' && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '22px', height: '22px', borderRadius: '999px', objectFit: 'cover', background: isDark ? '#162046' : '#e8eaf0' }} />
+                    <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '22px', height: '22px', borderRadius: 'var(--r-pill)', objectFit: 'cover', background: isDark ? '#162046' : '#e8eaf0' }} />
                     <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)' }}>Birdie</span>
                   </div>
                 )}
                 {!isInline && (
-                <div style={{ width: '30px', height: '30px', borderRadius: '15px', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
+                <div style={{ width: '30px', height: '30px', borderRadius: 'var(--r-pill)', background: msg.role === 'user' ? colors.navyBg : isDark ? '#162046' : '#e8eaf0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', overflow: 'hidden', border: msg.role === 'user' ? 'none' : '1.5px solid rgba(45,90,135,0.4)' }}>
                   {msg.role === 'user' ? Icons.user('white', 14) : <img src={isDark ? "/birdie-avatar.png" : "/birdie-avatar-light.png"} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
                 </div>
                 )}
                 <div style={{ maxWidth: isInline ? (msg.role === 'user' ? '85%' : '100%') : '78%' }}>
                   <div className="selectable" style={isInline ? (msg.role === 'user'
-                    ? { borderRadius: '16px 16px 4px 16px', padding: '10px 14px', fontSize: 'var(--t-body)', lineHeight: '22px', backgroundColor: isDark ? '#1e3a5c' : '#1e293b', color: isDark ? '#f1ede0' : '#ffffff', whiteSpace: 'pre-wrap' }
+                    ? { borderRadius: 'var(--r-lg) var(--r-lg) 4px var(--r-lg)', padding: '10px 14px', fontSize: 'var(--t-body)', lineHeight: '22px', backgroundColor: isDark ? '#1e3a5c' : '#1e293b', color: isDark ? '#f1ede0' : '#ffffff', whiteSpace: 'pre-wrap' }
                     : { fontSize: 'var(--t-body)', fontWeight: '400', lineHeight: '22px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap' })
-                    : { borderRadius: '16px', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-tertiary)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', whiteSpace: 'pre-wrap' }}>
+                    : { borderRadius: 'var(--r-lg)', padding: '10px 12px', fontSize: 'var(--t-label)', backgroundColor: msg.role === 'user' ? colors.navyBg : 'var(--bg-tertiary)', color: msg.role === 'user' ? 'white' : colors.navy, borderTopRightRadius: msg.role === 'user' ? '4px' : '16px', borderTopLeftRadius: msg.role === 'user' ? '16px' : '4px', whiteSpace: 'pre-wrap' }}>
                     {msg.text}
                   </div>
                   {/* In the page, the caveat sits right under the answer's
@@ -674,12 +674,12 @@ export default function BirdiePanel({
                       else if (nav.profile_section === 'payment') setProfileScreen('payment');
                       else if (nav.profile_section === 'edit') setProfileScreen('edit');
                       closeAiChat();
-                    }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
+                    }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: 'var(--r-md)', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
                       {Icons.arrowRight('white', 14)} Take me there
                     </button>
                   )}
                   {msg.flockDraft && (
-                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
+                    <div style={{ marginTop: '8px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
                       <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.flockDraft.name}</p>
                       <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                         {msg.flockDraft.event_time ? formatEventTime(msg.flockDraft.event_time) : 'Time still open'}
@@ -693,21 +693,21 @@ export default function BirdiePanel({
                           It used to stay "Start this flock", and a second tap
                           after reopening Birdie made a second plan. */}
                       {msg.flockDraft.startedFlockId ? (
-                        <button className="hit44" onClick={() => { setSelectedFlockId(msg.flockDraft.startedFlockId); setCurrentScreen('chatDetail'); closeAiChat(); }} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                        <button className="hit44" onClick={() => { setSelectedFlockId(msg.flockDraft.startedFlockId); setCurrentScreen('chatDetail'); closeAiChat(); }} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', background: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                           Started. Open it
                         </button>
                       ) : (
-                        <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
+                        <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
                           {birdieActionBusy ? 'Starting\u2026' : 'Start this flock'}
                         </button>
                       )}
                     </div>
                   )}
                   {msg.voteStage && (
-                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
+                    <div style={{ marginTop: '8px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
                       <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.voteStage.venue.name}</p>
                       <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Your vote in {msg.voteStage.flock_name} goes to this spot. One vote each, so it replaces any vote you already cast there.</p>
-                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieVoteStage(msg.voteStage)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
+                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieVoteStage(msg.voteStage)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: 'var(--r-sm)', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
                         {birdieActionBusy ? 'Voting\u2026' : 'Vote for it'}
                       </button>
                     </div>
@@ -730,7 +730,7 @@ export default function BirdiePanel({
                         const pillBg = pill && (pill.tone === 'open' ? 'var(--accent-green-bg)' : pill.tone === 'later' ? 'var(--accent-amber-bg)' : 'var(--accent-red-bg)');
                         const pillInk = pill && (pill.tone === 'open' ? 'var(--accent-green-text)' : pill.tone === 'later' ? 'var(--accent-amber-text)' : 'var(--accent-red-text)');
                         return (
-                        <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: venueCardMax, animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both`, ...venueCardSurface }}>
+                        <div key={vi} style={{ borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: venueCardMax, animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both`, ...venueCardSurface }}>
                           {photoUrl && (
                             <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                           )}
@@ -739,7 +739,7 @@ export default function BirdiePanel({
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
                               <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, lineHeight: 1.25 }}>{v.name}</h4>
                               {pill && (
-                                <span data-open-pill={pill.tone} style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 7px', borderRadius: '999px', backgroundColor: pillBg, color: pillInk, flexShrink: 0, whiteSpace: 'nowrap' }}>{pill.text}</span>
+                                <span data-open-pill={pill.tone} style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 7px', borderRadius: 'var(--r-pill)', backgroundColor: pillBg, color: pillInk, flexShrink: 0, whiteSpace: 'nowrap' }}>{pill.text}</span>
                               )}
                             </div>
 
@@ -792,11 +792,11 @@ export default function BirdiePanel({
                                   // the sheet titles its bars Today and draws
                                   // that day's usual night over them.
                                   openVenueDetail(v.place_id, { name: v.name, formatted_address: v.address, place_id: v.place_id, rating: v.rating, ...(v.usual ? { planDay: { date: v.usual.date, usual: v.usual } } : {}) });
-                                }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                                }} style={{ flex: 1, padding: '9px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                   Details
                                 </button>
                               )}
-                              <button className="hit44 fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                              <button className="hit44 fab-press" onClick={() => setAiShareVenue(v)} style={{ flex: 1, padding: '9px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                                 {Icons.send('white', 12)} Share
                               </button>
                             </div>
@@ -843,7 +843,7 @@ export default function BirdiePanel({
               {isAiFullscreen && <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Try asking</p>}
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {(isAiPanel ? aiSuggestedQuestions.slice(0, 2) : aiSuggestedQuestions).map((q, i) => (
-                  <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: '16px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <button className="hit44" key={i} onClick={() => fillAiInput(q.text, { send: true })} style={{ padding: isAiPanel ? '5px 8px' : '6px 10px', borderRadius: 'var(--r-lg)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: isAiPanel ? 'var(--t-micro)' : 'var(--t-micro)', color: colors.navy, fontWeight: '500', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     {q.icon(colors.navy, isAiPanel ? 10 : 12)}
                     {q.text}
                   </button>
@@ -862,7 +862,7 @@ export default function BirdiePanel({
           <div data-nest-birdie-field={isInline ? '' : undefined} style={isInline ? { marginTop: '10px' } : { padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
             {/* The field sets no outline; the box draws its keyboard ring
                 on its own edge (index.css .birdie-compose-box). */}
-            <div className="birdie-compose-box" style={isInline ? { borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: '20px', backgroundColor: 'var(--bg-tertiary)', padding: '6px' }}>
+            <div className="birdie-compose-box" style={isInline ? { borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-card-solid)', padding: '4px 4px 4px 6px' } : { borderRadius: 'var(--r-xl)', backgroundColor: 'var(--bg-tertiary)', padding: '6px' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
                 {/* maxLength is the server's own per-message ceiling. Without
@@ -885,7 +885,7 @@ export default function BirdiePanel({
                     box, where pressing it did nothing; and it was drawn at 0.4
                     opacity the entire time, so it looked disabled and was not.
                     One value now drives both the look and the behaviour. */}
-                <button aria-label="Send" className="hit44" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.15s ease, opacity 0.15s ease', opacity: canSendAi ? 1 : 0.4 }}>
+                <button aria-label="Send" className="hit44" onClick={sendAiMessage} disabled={!canSendAi} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: 'var(--r-pill)', border: 'none', background: canSendAi ? '#1e293b' : 'transparent', color: 'white', cursor: canSendAi ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.15s ease, opacity 0.15s ease', opacity: canSendAi ? 1 : 0.4 }}>
                   {Icons.send('currentColor', 16)}
                 </button>
               </div>
@@ -897,7 +897,7 @@ export default function BirdiePanel({
                   <p style={{ flex: 1, minWidth: 0, margin: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
                     {Number.isFinite(entitlements?.birdie?.limit) ? `You've used today's ${entitlements.birdie.limit} messages.` : "You've used today's messages."} They come back {chirpsBackText(aiResetsAt)}.
                   </p>
-                  {(process.env.REACT_APP_PURCHASES !== 'off') && <button type="button" className="hit44 glass-btn glass-primary" onClick={() => setPaywallTrigger('birdie')} style={{ padding: '8px 12px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '700', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                  {(process.env.REACT_APP_PURCHASES !== 'off') && <button type="button" className="hit44 glass-btn glass-primary" onClick={() => setPaywallTrigger('birdie')} style={{ padding: '8px 12px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-meta)', fontWeight: '700', whiteSpace: 'nowrap', flexShrink: 0 }}>
                     Get Flock Pro
                   </button>}
                 </div>
@@ -911,7 +911,7 @@ export default function BirdiePanel({
                   { icon: Icons.mapPin, label: 'Crowds', prefix: 'How busy is ', color: 'var(--accent-steel, #2d5a87)' },
                   { icon: Icons.users, label: 'My Flocks', prefix: 'What are my upcoming plans?', color: 'var(--accent-steel, #2d5a87)' },
                 ].map((action, i) => (
-                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}
+                  <button key={i} className="hit44 fab-press" onClick={() => fillAiInput(action.prefix, { send: action.prefix.endsWith('?') })} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 10px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', transition: 'all 0.25s ease', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', whiteSpace: 'nowrap' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(45,90,135,0.08)'; e.currentTarget.style.color = action.color; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-tertiary)'; }}
                   >
@@ -979,10 +979,10 @@ export default function BirdiePanel({
               .filter((d) => !refused(dmBlocked, d.userId) && !refused(dmNotConnected, d.userId))
               .slice(0, 5);
             return (
-            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: isInline ? 0 : '24px 24px 0 0' }}>
+            <div onClick={(e) => { if (e.target === e.currentTarget) setAiShareVenue(null); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', zIndex: 60, borderRadius: isInline ? 0 : 'var(--r-xl) var(--r-xl) 0 0' }}>
               <DialogBehavior onClose={() => setAiShareVenue(null)} label="Share this venue" />
-              <div data-share-sheet className={isInline ? 'sheet-rise' : undefined} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', width: '100%', maxHeight: isInline ? 'calc(100% - var(--safe-top) - 24px)' : 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column', paddingBottom: isInline ? 'var(--safe-bottom)' : undefined }}>
-                {isInline && <div aria-hidden="true" style={{ width: '36px', height: '5px', borderRadius: '999px', backgroundColor: 'var(--border-mid)', margin: '8px auto 0', flexShrink: 0 }} />}
+              <div data-share-sheet className={isInline ? 'sheet-rise' : undefined} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', width: '100%', maxHeight: isInline ? 'calc(100% - var(--safe-top) - 24px)' : 'calc(100% - 16px)', minHeight: 0, display: 'flex', flexDirection: 'column', paddingBottom: isInline ? 'var(--safe-bottom)' : undefined }}>
+                {isInline && <div aria-hidden="true" style={{ width: '36px', height: '5px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--border-mid)', margin: '8px auto 0', flexShrink: 0 }} />}
                 <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>
@@ -992,7 +992,7 @@ export default function BirdiePanel({
                       {aiShareVenue._shareToDm ? 'Choose a friend' : shareFriends.length ? 'Choose a flock or a friend' : 'Choose a flock'}
                     </p>
                   </div>
-                  <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
+                  <button aria-label="Close" className="hit44" onClick={() => setAiShareVenue(null)} style={{ width: '28px', height: '28px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('var(--text-secondary)', 14)}</button>
                 </div>
                 <div style={{ flex: '1 1 auto', minHeight: 0, overflowY: 'auto', padding: '8px' }}>
                   {aiShareVenue._shareToDm ? (
@@ -1004,7 +1004,7 @@ export default function BirdiePanel({
                         closeAiChat();
                         setCurrentTab('chat');
                         setCurrentScreen('main');
-                      }} style={{ padding: '10px 24px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
+                      }} style={{ padding: '10px 24px', borderRadius: 'var(--r-md)', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
                         Go to DMs
                       </button>
                     </div>
@@ -1031,8 +1031,8 @@ export default function BirdiePanel({
                         closeAiChat();
                         setSelectedFlockId(f.id);
                         setCurrentScreen('chatDetail');
-                      }} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
-                        <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      }} style={{ width: '100%', padding: '10px 12px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
+                        <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {Icons.users('white', 16)}
                         </div>
                         <div style={{ minWidth: 0 }}>
@@ -1045,7 +1045,7 @@ export default function BirdiePanel({
                           <BirdieStill bird={WARM_BIRD} size={56} style={{ margin: '0 auto 8px' }} />
                           <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>No flocks to send this to yet</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Start a flock and this venue can go straight into the chat.</p>
-                          <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
+                          <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
                             Start a flock here
                           </button>
                         </div>
@@ -1066,11 +1066,11 @@ export default function BirdiePanel({
                             closeAiChat();
                             setSelectedDmId(d.userId);
                             setCurrentScreen('dmDetail');
-                          }} style={{ width: '100%', padding: '8px 12px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
+                          }} style={{ width: '100%', padding: '8px 12px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', textAlign: 'left' }}>
                             {/* Their photo, as the Messages tab draws it, over
                                 the initial, which shows when there is none or
                                 it will not load. */}
-                            <div aria-hidden="true" style={{ position: 'relative', width: '32px', height: '32px', borderRadius: '16px', overflow: 'hidden', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '700', flexShrink: 0 }}>
+                            <div aria-hidden="true" style={{ position: 'relative', width: '32px', height: '32px', borderRadius: 'var(--r-pill)', overflow: 'hidden', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '700', flexShrink: 0 }}>
                               {d.name.trim().charAt(0).toUpperCase()}
                               {typeof d.image === 'string' && d.image && (
                                 <img data-share-friend-photo src={d.image} alt="" loading="lazy" onError={(e) => { e.currentTarget.style.display = 'none'; }} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />

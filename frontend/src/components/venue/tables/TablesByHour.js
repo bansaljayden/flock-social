@@ -35,7 +35,7 @@ export default function TablesByHour({ hours, colors, wellPx, timeZone }) {
   // loaded", and the owner would never know a retry was coming. An empty
   // week or nothing usable draws nothing: there is nothing to say.
   if (hours === undefined) {
-    return <div aria-hidden="true" data-testid="tables-hours-loading" className="skeleton" style={{ height: `${LOADING_HEIGHT_PX}px`, borderRadius: '12px', marginBottom: '12px' }} />;
+    return <div aria-hidden="true" data-testid="tables-hours-loading" className="skeleton" style={{ height: `${LOADING_HEIGHT_PX}px`, borderRadius: 'var(--r-md)', marginBottom: '12px' }} />;
   }
   if (hours === null) {
     return (

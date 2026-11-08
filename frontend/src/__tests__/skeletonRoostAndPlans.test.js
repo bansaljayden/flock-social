@@ -68,9 +68,9 @@ describe('Roost\'s card', () => {
 describe('the Pro sheet\'s plans', () => {
   const expectPlanSkeleton = (container) => {
     expect(screen.getByRole('status').textContent).toBe('Loading plans');
-    const cards = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '92px' && d.style.borderRadius === '14px');
+    const cards = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '92px' && d.style.borderRadius === 'var(--r-md)');
     expect(cards).toHaveLength(2);
-    const cta = Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '49px' && b.style.borderRadius === '14px');
+    const cta = Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '49px' && b.style.borderRadius === 'var(--r-md)');
     expect(cta).toHaveLength(1);
     // No price, no sentence standing in for the plans.
     expect(container.textContent).not.toMatch(/\$|Loading plans…|Loading plans\.\.\./);

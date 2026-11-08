@@ -157,7 +157,7 @@ export default function SearchResultsOverlay({
                            raised the keyboard over the bottom two thirds of
                            the list they had just asked for. A field they can
                            tap is a field they can still search with. */
-                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }}
+                        style={{ width: '100%', padding: '12px 40px 12px 38px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }}
                         autoComplete="off"
                       />
                       <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
@@ -186,7 +186,7 @@ export default function SearchResultsOverlay({
                         { id: 'recommended', label: 'Recommended' },
                         { id: 'distance', label: 'Closest' },
                       ].map(s => (
-                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
+                        <button className="hit44" key={s.id} onClick={() => setSearchResultsSort(s.id)} style={{ padding: '5px 10px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: searchResultsSort === s.id ? colors.navyBg : 'var(--bg-hover)', color: searchResultsSort === s.id ? 'white' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', whiteSpace: 'nowrap', flexShrink: 0, cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
                           {s.label}
                         </button>
                       ))}
@@ -197,7 +197,7 @@ export default function SearchResultsOverlay({
                 {/* Results list */}
                 <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 80px' }}>
                   {/* Skeleton cards while searching, matching the real card layout */}
-                  {venueSearching && <ListSkeleton count={4} thumb={72} thumbRadius={10} label="Searching venues" />}
+                  {venueSearching && <ListSkeleton count={4} thumb={72} thumbRadius="var(--r-sm)" label="Searching venues" />}
                   {/* Every card below is Google Maps data off a Google map, so
                       the list carries Google's attribution at its top. The
                       photos go uncredited here as thumbnails: each card opens
@@ -237,7 +237,7 @@ export default function SearchResultsOverlay({
                           if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id || venue);
                           openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url, photo_attribution: venue.photo_attribution || null });
                         }}
-                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'opacity 0.2s' }}
+                        style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'opacity 0.2s' }}
                       >
                         {/* Photo + overlay info */}
                         <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
@@ -246,7 +246,7 @@ export default function SearchResultsOverlay({
                               <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {topRatedIds.has(venue.place_id || venue.id) && (
-                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-plate)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--accent-amber-plate)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                   {Icons.flame('var(--accent-amber-text)', 12)}
                                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top rated</span>
                                 </div>
@@ -292,7 +292,7 @@ export default function SearchResultsOverlay({
                                 aria-label={ownerReportShown(prediction)
                                   ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`
                                   : `Crowd level ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`}
-                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 {/* An owner-asserted number carries its source
                                     even at list size — "{venue-type} says" is
                                     the label that keeps it honest (noun is
@@ -318,7 +318,7 @@ export default function SearchResultsOverlay({
                               )}
                             </div>
                             {venue.stars && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: 'var(--r-sm)', backgroundColor: '#FEF3C7', flexShrink: 0 }}>
                                 {Icons.starFilled('#F59E0B', 12)}
                                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#92400E' }}>{venue.stars}</span>
                               </div>
@@ -332,7 +332,7 @@ export default function SearchResultsOverlay({
                               </span>
                             )}
                             {!venue.photo_url && crowdScore != null && (
-                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: 'var(--r-sm)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 {ownerReportShown(prediction) ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
                               </span>
                             )}

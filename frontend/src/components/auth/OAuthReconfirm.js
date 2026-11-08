@@ -71,7 +71,7 @@ export const canReconfirmHere = (provider) => {
 const PROVIDER_BUTTON = {
   width: '100%', minHeight: '48px',
   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px',
-  border: '1px solid #747775', borderRadius: '12px',
+  border: '1px solid #747775', borderRadius: 'var(--r-md)',
   background: '#ffffff', color: '#1f1f1f',
   fontSize: 'var(--t-body)', fontWeight: '500', fontFamily: 'inherit',
   cursor: 'pointer',

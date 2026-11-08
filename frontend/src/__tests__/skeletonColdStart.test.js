@@ -74,7 +74,7 @@ describe('the opening screens', () => {
     const { container } = render(<OpeningScreenSkeleton kind="plan" label="Opening your plan" colors={COLORS} onBack={onBack} />);
     expect(screen.getByRole('status').textContent).toBe('Opening your plan');
     const dark = Array.from(container.querySelectorAll('.skeleton.skeleton-dark'));
-    expect(dark.filter((b) => b.style.height === '24px' && b.style.borderRadius === '20px')).toHaveLength(2);
+    expect(dark.filter((b) => b.style.height === '24px' && b.style.borderRadius === 'var(--r-pill)')).toHaveLength(2);
     const faces = Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '44px' && b.style.borderRadius === '50%');
     expect(faces).toHaveLength(4);
     fireEvent.click(screen.getByRole('button', { name: 'Back to your plans' }));

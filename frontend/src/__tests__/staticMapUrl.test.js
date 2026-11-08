@@ -390,7 +390,10 @@ describe("a plan's venue card", () => {
     const radius = rule[1].match(/border-radius:\s*(\d+)px (\d+)px 0 0;/);
     expect(radius).not.toBeNull();
     const app = readSrc('App.js');
-    const cardRadius = app.match(/\n {2}card: \{\n[^}]*?borderRadius: '(\d+)px'/);
+    // The card reads a step of the radius scale; resolve it in index.css.
+    const cardToken = app.match(/\n {2}card: \{\n[^}]*?borderRadius: 'var\((--r-[a-z]+)\)'/);
+    expect(cardToken).not.toBeNull();
+    const cardRadius = css.match(new RegExp(`\\n  ${cardToken[1]}: (\\d+)px;`));
     expect(cardRadius).not.toBeNull();
     expect((css.match(/--card-border: 1px solid /g) || []).length).toBeGreaterThanOrEqual(2);
     expect(Number(radius[1])).toBe(Number(cardRadius[1]) - 1);

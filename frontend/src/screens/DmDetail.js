@@ -950,7 +950,7 @@ export default function DmDetail({
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={leaveToList} style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           {/* The avatar opens the person card. The overflow menu already carries
               report/block for this thread, but the face is where people reach
               first, and it is the same control the roster now has.
@@ -961,9 +961,9 @@ export default function DmDetail({
             className="hit44"
             aria-label={`About ${selectedDm.name}`}
             onClick={() => openUserProfile({ id: selectedDmId, name: selectedDm.name, image: selectedDm.image })}
-            style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}
+            style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}
           >
-            {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
+            {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
           </button>
           <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
@@ -978,9 +978,9 @@ export default function DmDetail({
                 headers for no reason a person could work out. */}
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
-            <button aria-label="More options" className="hit44" onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
+            <button aria-label="More options" className="hit44" onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
             {showDmMenu && (
-              <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '14px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ position: 'absolute', top: '38px', right: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: '200px', zIndex: 60, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
                 <button className="hit44 glass-btn" onClick={() => { setShowDmMenu(false); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'profile' }); }} style={{ width: '100%', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>
                   <span aria-hidden style={{ display: 'inline-flex' }}>{Icons.flag('currentColor', 15)}</span> Report or block {selectedDm.name}
                 </button>
@@ -1012,7 +1012,7 @@ export default function DmDetail({
       {/* Chat search bar */}
       {showDmChatSearch && (
         <div style={{ padding: '8px 14px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
-          <SearchInputLocal aria-label="Search messages" inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-label)', outline: 'none' }} />
+          <SearchInputLocal aria-label="Search messages" inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-label)', outline: 'none' }} />
           {dmChatSearch && <button aria-label="Clear search" className="hit44" onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>}
         </div>
       )}
@@ -1024,7 +1024,7 @@ export default function DmDetail({
           query, and something to count. */}
       {showDmChatSearch && dmChatSearch.trim() && dmMatchCount > 0 && (
         <div style={{ textAlign: 'center', padding: '8px 12px 0', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: '12px' }}>
+          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: 'var(--r-md)' }}>
             {dmMatchCount} matching messages
           </span>
         </div>
@@ -1035,7 +1035,7 @@ export default function DmDetail({
         <div style={{ padding: '8px 14px', backgroundColor: 'var(--nest-hero-bg)', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
           <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>Sharing your location with {selectedDm.name}</p>
           {dmMemberLocation && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--nest-hero-meta)', fontWeight: '500' }}>{selectedDm.name} sharing too</span>}
-          <button className="hit44" onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          <button className="hit44" onClick={() => { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }} style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
         </div>
       )}
 
@@ -1172,7 +1172,7 @@ export default function DmDetail({
             <DialogBehavior onClose={() => setShowDmVotePanel(false)} label="Vote on a venue" />
             {/* SAFE-AREA rule 1: the last row sat in the home indicator strip
                 under a flat 20px. Same fix as the flock chat's vote sheet. */}
-            <div ref={dmVoteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+            <div ref={dmVoteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
               {/* Header, and the handle: a grabber and the header row, run out
                   to the edges of the sheet, as on the vote sheet in the flock
                   chat. */}
@@ -1187,7 +1187,7 @@ export default function DmDetail({
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` · You voted for ${myVote}` : ''}</p>
                   )}
                 </div>
-                <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
               </div>
 
@@ -1201,8 +1201,8 @@ export default function DmDetail({
                   size={48}
                   role="alert"
                   body={dmVenueVotesError}
-                  style={{ padding: '14px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '12px' }}
-                  action={<button className="hit44 glass-btn glass-navy" onClick={() => loadDmVenueVotes(selectedDmId)} style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                  style={{ padding: '14px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', marginBottom: '12px' }}
+                  action={<button className="hit44 glass-btn glass-navy" onClick={() => loadDmVenueVotes(selectedDmId)} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
                 />
               )}
 
@@ -1229,18 +1229,18 @@ export default function DmDetail({
                        as on the flock's poll card and plan screen. */
                     const deal = dealOf(v.deal);
                     return (
-                      <button key={v.venue_name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                      <button key={v.venue_name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleDmUnvote() : handleDmQuickVote(v.venue_name, v.venue_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: 'var(--r-md)', border: v.isPinned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : '1.5px solid var(--border-default)', backgroundColor: v.isPinned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                         {/* Progress bar background */}
-                        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
+                        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: 'var(--r-md)' }} />
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             {v.isPinned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue_name}</h4>
-                              {v.isPinned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Pinned</span>}
-                              {isLeading && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                              {v.isPinned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: 'var(--r-xs)', flexShrink: 0 }}>Pinned</span>}
+                              {isLeading && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: 'var(--r-xs)', flexShrink: 0 }}>Leading</span>}
                             </div>
                             {/* The venue's deal, in the venue page's deal style,
                                 on one line that truncates: under the name and
@@ -1251,7 +1251,7 @@ export default function DmDetail({
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                             {voteCount > 0 && <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{voteCount}</span>}
-                            {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
+                            {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                           </div>
                         </div>
                       </button>
@@ -1262,7 +1262,7 @@ export default function DmDetail({
                 /* Somebody else may well have voted. Saying nobody has, on the
                    strength of a request that never came back, is the version
                    of this panel that changes what the user does next. */
-                <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
+                <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', marginBottom: '16px' }}>
                   {userLocation ? (
                     <>
                       <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
@@ -1281,7 +1281,7 @@ export default function DmDetail({
                     <>
                       <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet. To see places to suggest, Flock needs your location.</p>
-                      <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
                     </>
                   )}
                 </div>
@@ -1304,11 +1304,11 @@ export default function DmDetail({
                       const showPhoto = !!(venue.photo_url && venue.place_id);
                       return (
                         <div key={venue.id || venue.name} style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                          <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
+                          <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                             {showPhoto ? (
-                              <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                              <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                             ) : (
-                              <div style={{ width: '36px', height: '36px', borderRadius: '8px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: 'var(--r-sm)', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                 {Icons.mapPin('white', 14)}
                               </div>
                             )}
@@ -1316,11 +1316,11 @@ export default function DmDetail({
                               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
                               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{venue.type || venue.category}{venue.stars ? <> · {venue.stars} {Icons.starFilled('currentColor', 12)}</> : ''}{venue.price ? ` • ${venue.price}` : ''}</p>
                             </div>
-                            <div style={{ padding: '6px 12px', borderRadius: '10px', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
+                            <div style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', backgroundColor: `${colors.navy}08`, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>
                               {Icons.vote(colors.navy, 12)} Vote
                             </div>
                           </button>
-                          {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="8px" />}
+                          {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="36px" radius="var(--r-sm)" />}
                         </div>
                       );
                     })}
@@ -1338,7 +1338,7 @@ export default function DmDetail({
               )}
 
               {/* Browse more button */}
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmVotePanel(false); setShowDmVenueSearch(true); }} style={{ width: '100%', padding: '12px', borderRadius: 'var(--r-md)', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 {Icons.plus(colors.textTertiary, 14)} Share a venue to chat
               </button>
             </div>
@@ -1351,16 +1351,16 @@ export default function DmDetail({
         <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowDmVenueSearch(false)} label="Share a venue" />
           {/* SAFE-AREA rule 1, as on the vote sheet above. */}
-          <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+          <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a venue</h2>
-              <button aria-label="Close" className="hit44" onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+              <button aria-label="Close" className="hit44" onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
             </div>
 
             {/* Current pinned venue display */}
             {dmPinnedVenue ? (
-              <div style={{ padding: '12px', borderRadius: '14px', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <div style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--accent-purple-bg)', border: `2px solid ${colors.steel}40`, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: 'var(--r-sm)', background: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {Icons.mapPin('white', 18)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -1372,7 +1372,7 @@ export default function DmDetail({
                       (components/ui/GoogleCredit.js). */}
                   {dmPinnedVenue.place_id && <GoogleMapsMark style={{ display: 'block', marginTop: '2px' }} />}
                 </div>
-                <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share this</button>
+                <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share this</button>
               </div>
             ) : (
               /* WHERE THE FIRST PIN IS MADE NOW. The 61pt "Add a Venue" card
@@ -1388,9 +1388,9 @@ export default function DmDetail({
                  SHARES a venue card into the thread and pins nothing, so the
                  one instruction on the screen did not do what it said. Pinning
                  and sharing are two acts and this now names both. */
-              <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ padding: '12px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1 }}>Nothing is pinned to this chat yet. Pick a place to pin it, or share one from the list below.</p>
-                <button className="hit44 glass-btn glass-secondary" onClick={pickAPlaceForThisDm} style={{ padding: '8px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Pick a place</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={pickAPlaceForThisDm} style={{ padding: '8px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Pick a place</button>
               </div>
             )}
 
@@ -1401,7 +1401,7 @@ export default function DmDetail({
                    different venue", the blank dead end B3 fixed on the flock
                    sheet (ChatDetail). Same honesty here: say why, offer the
                    one real exit. */
-                <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                <div style={{ padding: '16px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
                   <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>{userLocation
                     ? 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.'
@@ -1411,7 +1411,7 @@ export default function DmDetail({
                        fresh account a working feature was broken, which is the
                        sentence ChatDetail's own comment says it fixed there. */
                     : "No venues to show yet, because Flock doesn't have your location. Turn it on from the Discover tab and this list fills in."}</p>
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                 </div>
               ) : allVenues.map(venue => {
                 /* The row's tap shares, so the photo has its own button to the
@@ -1427,7 +1427,7 @@ export default function DmDetail({
                         sendDmMessage({ text: `Check out ${venue.name}!`, message_type: 'venue_card', venue_data: { name: venue.name, addr: venue.addr, stars: venue.stars, rating: venue.rating || venue.stars, price: venue.price, price_level: venue.price_level, photo_url: venue.photo_url, place_id: venue.place_id, category: venue.category, type: venue.type, crowd: venue.crowd }, noReply: true });
                         setShowDmVenueSearch(false);
                       }}
-                      style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
+                      style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
                     >
                       {/* The row is about to SEND this venue's photo_url to the
                           other person, and it was drawing a category gradient
@@ -1440,11 +1440,11 @@ export default function DmDetail({
                         <img
                           src={resolveVenuePhoto(venue.photo_url)}
                           alt=""
-                          style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                          style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', objectFit: 'cover', flexShrink: 0 }}
                           onError={(e) => { e.target.onerror = null; e.target.src = VENUE_PHOTO_PLACEHOLDER; }}
                         />
                       ) : (
-                        <div style={{ width: '44px', height: '44px', borderRadius: '12px', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ width: '44px', height: '44px', borderRadius: 'var(--r-md)', backgroundColor: getCategoryColor(venue.category), display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
                         </div>
                       )}
@@ -1452,11 +1452,11 @@ export default function DmDetail({
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` · ${venue.price}` : ''}</p>
                       </div>
-                      {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                      {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: 'var(--r-md)', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {venue.crowd}%
                       </div>}
                     </button>
-                    {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="12px" />}
+                    {showPhoto && <ThumbToSheet label={`Open ${venue.name}`} onOpen={() => openListVenue(venue)} left="13px" size="44px" radius="var(--r-md)" />}
                   </div>
                 );
               })}
@@ -1477,14 +1477,14 @@ export default function DmDetail({
       {showDeleteDmConfirm && (
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowDeleteDmConfirm(false)} label="Delete conversation" />
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '24px', width: '100%', maxWidth: '300px' }}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '24px', width: '100%', maxWidth: '300px' }}>
             <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
+              <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>{Icons.x('#EF4444', 24)}</div>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Delete conversation?</h3>
               <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Delete this conversation with {selectedDm.name}? Messages will be removed from your view.</p>
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDeleteDmConfirm(false)} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
               <button className="hit44 glass-btn glass-danger" onClick={() => {
                 const dmUserId = selectedDm.userId;
                 setDirectMessages(prev => prev.filter(d => d.userId !== dmUserId));
@@ -1493,7 +1493,7 @@ export default function DmDetail({
                 try { localStorage.setItem('flock_deleted_dms', JSON.stringify(updated)); } catch {}
                 leaveDmScreen();
                 setCurrentScreen('main');
-                             }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Delete</button>
+                             }} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Delete</button>
             </div>
           </div>
         </div>
@@ -1522,9 +1522,9 @@ export default function DmDetail({
       {imageViewer && (
         <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 400, backgroundColor: 'rgba(6,16,31,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
         <DialogBehavior onClose={() => setImageViewer(null)} label="Photo" />
-          <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
+          <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: 'var(--r-pill)', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
           {imageViewer.src ? (
-            <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+            <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 'var(--r-sm)' }} />
           ) : imageViewer.error ? (
             <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error}</p>
           ) : (
@@ -1535,9 +1535,9 @@ export default function DmDetail({
               <span className="sr-only" role="status">Loading the full photo</span>
               <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {imageViewer.thumb ? (
-                  <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+                  <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'var(--r-sm)', filter: 'blur(4px)' }} />
                 ) : (
-                  <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+                  <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius="var(--r-sm)" />
                 )}
               </div>
             </>
@@ -1649,7 +1649,7 @@ export default function DmDetail({
             <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 12px' }} />
             <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This conversation did not load</h3>
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Nothing has been lost. The messages are on the server and this screen could not reach them.</p>
-            <button className="hit44 glass-btn glass-navy" onClick={reloadDmMessages} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+            <button className="hit44 glass-btn glass-navy" onClick={reloadDmMessages} style={{ padding: '10px 16px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
           </div>
         ) : dmSearchQuery ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
@@ -1657,8 +1657,8 @@ export default function DmDetail({
           </div>
         ) : (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-            <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: colors.navyBg, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
-              {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
+            <div style={{ width: '60px', height: '60px', borderRadius: 'var(--r-pill)', background: colors.navyBg, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
+              {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
             </div>
             <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>{dmBlocked[String(selectedDmId)] ? selectedDm.name : `Chat with ${selectedDm.name}`}</h3>
             {/* A blocked pair is shown no messages at all, so this is where a
@@ -1708,7 +1708,7 @@ export default function DmDetail({
                 setDmRequestSending(false);
               }
             }}
-            style={{ padding: '10px 14px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: dmRequestSending ? 'default' : 'pointer', opacity: dmRequestSending ? 0.6 : 1 }}
+            style={{ padding: '10px 14px', borderRadius: 'var(--r-md)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: dmRequestSending ? 'default' : 'pointer', opacity: dmRequestSending ? 0.6 : 1 }}
           >
             {dmRequestSending ? 'Sending request' : 'Send a friend request'}
           </button>
@@ -1909,26 +1909,26 @@ export default function DmDetail({
           <div
             role="group"
             aria-label="Message actions"
-            style={{ position: 'absolute', top: `${dmActionTop}px`, left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100% - 24px)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '4px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '16px', padding: '4px 8px', boxShadow: 'var(--card-shadow)' }}
+            style={{ position: 'absolute', top: `${dmActionTop}px`, left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100% - 24px)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '4px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--r-lg)', padding: '4px 8px', boxShadow: 'var(--card-shadow)' }}
           >
             {dmReactions.map(emoji => (
-              <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; setShowDmReactionPicker(null); toggleDmReaction(emoji, m); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+              <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; setShowDmReactionPicker(null); toggleDmReaction(emoji, m); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: 'var(--r-sm)', transition: 'transform 0.15s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
               >{emoji}</button>
             ))}
             {/* Not on a row already being unsent: one request per message. */}
             {dmActionMessage.sender === 'You' && typeof dmActionMessage.id === 'number' && dmActionMessage.id <= 2147483647 && !dmActionMessage.unsending && (
-              <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); handleUnsendDm(id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
+              <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); handleUnsendDm(id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 'var(--r-sm)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
             )}
             {dmActionMessage.message_type === 'image' && (dmActionMessage.image_url || dmActionMessage.thumb_url) && (
-              <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; closeDmActions(); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
+              <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; closeDmActions(); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 'var(--r-sm)', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
             )}
             {canQuote(dmActionMessage) && (
-              <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); startDmReply(dmActionMessage); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+              <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); startDmReply(dmActionMessage); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 'var(--r-sm)', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
             )}
             {dmActionMessage.sender !== 'You' && (
-              <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
+              <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: 'var(--r-sm)', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
             )}
           </div>
         </div>

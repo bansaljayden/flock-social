@@ -93,7 +93,7 @@ const BLOCK_TITLE = 'Ask a question';
 
 const CARD_STYLE = {
   backgroundColor: 'var(--bg-card-solid)',
-  borderRadius: '12px',
+  borderRadius: 'var(--r-md)',
   padding: '12px',
   marginBottom: '12px',
   boxShadow: 'var(--card-shadow-sm)',
@@ -108,7 +108,7 @@ const CHIP_STYLE = {
   color: 'var(--text-primary)',
   backgroundColor: 'transparent',
   border: '1px solid var(--border-light)',
-  borderRadius: '10px',
+  borderRadius: 'var(--r-sm)',
   cursor: 'pointer',
   textAlign: 'left',
 };
@@ -368,7 +368,7 @@ const ThreadTurn =({ turn, first, navy, navyBg, onRetry, next = [], onNext }) =>
             maxWidth: '85%',
             margin: 0,
             padding: '9px 12px',
-            borderRadius: '14px',
+            borderRadius: 'var(--r-md)',
             borderBottomRightRadius: '4px',
             backgroundColor: navyBg,
             color: 'white',
@@ -1356,7 +1356,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
           role="group"
           aria-labelledby="roost-consent-title"
           data-roost="consent"
-          style={{ marginTop: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-hover)' }}
+          style={{ marginTop: '12px', padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-hover)' }}
         >
           <p id="roost-consent-title" style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>
             Before {name} answers typed questions
@@ -1376,7 +1376,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
               className="hit44"
               onClick={() => { setConsentDeclined(true); setConsentError(''); }}
               disabled={consentBusy}
-              style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'default' : 'pointer' }}
+              style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'default' : 'pointer' }}
             >
               Not now
             </button>
@@ -1385,7 +1385,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
               className="hit44"
               onClick={allowTypedQuestions}
               disabled={consentBusy}
-              style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'wait' : 'pointer', opacity: consentBusy ? 0.6 : 1 }}
+              style={{ flex: 1, padding: '10px', borderRadius: 'var(--r-sm)', border: 'none', background: navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'wait' : 'pointer', opacity: consentBusy ? 0.6 : 1 }}
             >
               {consentBusy ? 'Saving…' : 'Allow'}
             </button>
@@ -1409,7 +1409,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
             alignItems: 'flex-end',
             gap: '8px',
             padding: '5px 5px 5px 12px',
-            borderRadius: '16px',
+            borderRadius: 'var(--r-lg)',
             backgroundColor: 'var(--bg-hover)',
             border: '1.5px solid',
             borderColor: focused ? 'rgba(30,58,92,0.30)' : 'var(--border-subtle)',
@@ -1469,7 +1469,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
               height: '34px',
               minWidth: '34px',
               marginBottom: '3px',
-              borderRadius: '17px',
+              borderRadius: 'var(--r-pill)',
               border: 'none',
               backgroundColor: canAsk ? navy : 'transparent',
               display: 'flex',

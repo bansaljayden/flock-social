@@ -136,7 +136,7 @@ export default function VenueOnboarding({
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Find your venue</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Pick it from the list. That is how we match you to the crowd history we already hold for your address.</p>
           {venueOnboardingData.googlePlaceId ? (
-            <div style={{ borderRadius: '14px', border: '1.5px solid rgba(240,234,216,0.35)', backgroundColor: 'rgba(240,234,216,0.08)', padding: '16px' }}>
+            <div style={{ borderRadius: 'var(--r-md)', border: '1.5px solid rgba(240,234,216,0.35)', backgroundColor: 'rgba(240,234,216,0.08)', padding: '16px' }}>
               <div style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: '#f0ead8' }}>{venueOnboardingData.businessName}</div>
               <div style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.6)', marginTop: '2px' }}>{venueOnboardingData.location}</div>
               <button className="hit44" type="button" onClick={() => {
@@ -181,13 +181,13 @@ export default function VenueOnboarding({
             }}
             placeholder="e.g. The Blue Heron Bar"
             autoComplete="off" data-lpignore="true" data-form-type="other"
-            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+            style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
             {venueSearchResults.length > 0 && (
               /* The 95% face carries this on its own. A blur used to sit under
                  it, reading a flat navy onboarding background and returning the
                  same flat navy, for the cost of a compositing layer that
                  re-rasterised on every keystroke in the field above it. */
-              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', zIndex: 10 }}>
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: 'var(--r-md)', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', zIndex: 10 }}>
                 {venueSearchResults.map((v, i) => (
                   <button className="hit44" key={v.place_id || i} onClick={() => {
                     const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
@@ -246,7 +246,7 @@ export default function VenueOnboarding({
               <div role="status" style={{ margin: '10px 0 0', display: 'grid', gap: '8px' }}>
                 <span className="sr-only">Searching for your venue</span>
                 {[0, 1].map((i) => (
-                  <div key={i} aria-hidden="true" style={{ padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(148,163,184,0.08)' }}>
+                  <div key={i} aria-hidden="true" style={{ padding: '12px 16px', borderRadius: 'var(--r-md)', border: '1px solid rgba(148,163,184,0.08)' }}>
                     <div className="skeleton skeleton-dark" style={{ width: '55%', height: '14px', borderRadius: '4px', marginBottom: '8px' }} />
                     <div className="skeleton skeleton-dark" style={{ width: '80%', height: '11px', borderRadius: '4px' }} />
                   </div>
@@ -272,7 +272,7 @@ export default function VenueOnboarding({
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick the best fit. You can change this later.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {venueCategories.map(cat => (
-              <button className="hit44" key={cat} onClick={() => setVenueOnboardingData(d => ({ ...d, category: cat }))} style={{ padding: '10px 16px', borderRadius: '20px', border: venueOnboardingData.category === cat ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: venueOnboardingData.category === cat ? 'rgba(240,234,216,0.12)' : 'rgba(255,255,255,0.04)', color: venueOnboardingData.category === cat ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s' }}>
+              <button className="hit44" key={cat} onClick={() => setVenueOnboardingData(d => ({ ...d, category: cat }))} style={{ padding: '10px 16px', borderRadius: 'var(--r-xl)', border: venueOnboardingData.category === cat ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: venueOnboardingData.category === cat ? 'rgba(240,234,216,0.12)' : 'rgba(255,255,255,0.04)', color: venueOnboardingData.category === cat ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', transition: 'all 0.15s' }}>
                 {cat}
               </button>
             ))}
@@ -292,7 +292,7 @@ export default function VenueOnboarding({
               keystroke here used to re-render the whole app behind the step.
               Continue reads the draft on the tap, and the box publishes
               anything pending on pointerdown, before the click lands. */}
-          <SearchInputLocal aria-label="Venue address" maxLength={255} initialValue={venueOnboardingData.location} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, location: v }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          <SearchInputLocal aria-label="Venue address" maxLength={255} initialValue={venueOnboardingData.location} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, location: v }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -310,8 +310,8 @@ export default function VenueOnboarding({
             {venueGoals.map(goal => {
               const selected = venueOnboardingData.goals.includes(goal);
               return (
-                <button className="hit44" key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: '12px', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
-                  <div style={{ width: '20px', height: '20px', borderRadius: '6px', border: selected ? '2px solid #f0ead8' : '2px solid rgba(148,163,184,0.2)', backgroundColor: selected ? '#f0ead8' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <button className="hit44" key={goal} onClick={() => setVenueOnboardingData(d => ({ ...d, goals: selected ? d.goals.filter(g => g !== goal) : [...d.goals, goal] }))} style={{ padding: '12px 16px', borderRadius: 'var(--r-md)', border: selected ? '2px solid #f0ead8' : '1.5px solid rgba(148,163,184,0.15)', backgroundColor: selected ? 'rgba(240,234,216,0.1)' : 'rgba(255,255,255,0.04)', color: selected ? '#f0ead8' : 'rgba(148,163,184,0.7)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '10px', transition: 'all 0.15s' }}>
+                  <div style={{ width: '20px', height: '20px', borderRadius: 'var(--r-xs)', border: selected ? '2px solid #f0ead8' : '2px solid rgba(148,163,184,0.2)', backgroundColor: selected ? '#f0ead8' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {selected && Icons.check('#0f172a', 14)}
                   </div>
                   {goal}
@@ -326,7 +326,7 @@ export default function VenueOnboarding({
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Describe your venue in a line</h2>
           <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>What makes your place special? This shows on your Flock listing.</p>
-          <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} initialValue={venueOnboardingData.description} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, description: v }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <SearchInputLocal as="textarea" aria-label="Venue description" maxLength={2000} initialValue={venueOnboardingData.description} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, description: v }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
       // ── Steps 6 to 11: the things only the owner knows ──────────────────────
@@ -427,7 +427,7 @@ export default function VenueOnboarding({
                 onCommit={(v) => setVenueOnboardingData(d => ({ ...d, eventNote: v }))}
                 placeholder="e.g. Trivia at 8, live band after 10"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
-                style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
             ),
           })}
           {renderVenueField({
@@ -456,7 +456,7 @@ export default function VenueOnboarding({
                 onCommit={(v) => setVenueOnboardingData(d => ({ ...d, anchorNote: v }))}
                 placeholder="e.g. Across from Lincoln Financial Field"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
-                style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
             ),
           })}
         </div>
@@ -475,7 +475,7 @@ export default function VenueOnboarding({
             onCommit={(v) => setVenueOnboardingData(d => ({ ...d, quirks: v }))}
             placeholder="e.g. The patio holds 40 more but we close it when it drops below 55."
             autoComplete="off" data-lpignore="true" data-form-type="other"
-            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+            style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
           <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.5)', margin: '8px 0 0', textAlign: 'right' }}>{venueOnboardingData.quirks.length} / 1000</p>
         </div>
       ),
@@ -602,7 +602,7 @@ export default function VenueOnboarding({
             <p role="alert" style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: '#fca5a5', margin: '0 0 10px', lineHeight: 1.5 }}>{venueOnboardingError}</p>
           )}
           <button className="hit44" onClick={handleNext} disabled={!canAdvance() || launching} aria-busy={launching || undefined} style={{
-            width: '100%', padding: '14px', borderRadius: '14px', border: 'none',
+            width: '100%', padding: '14px', borderRadius: 'var(--r-md)', border: 'none',
             background: canAdvance() ? '#f0ead8' : 'rgba(148,163,184,0.1)',
             color: canAdvance() ? '#1a2744' : 'rgba(148,163,184,0.3)',
             fontSize: 'var(--t-body)', fontWeight: '600', cursor: launching ? 'progress' : canAdvance() ? 'pointer' : 'not-allowed',

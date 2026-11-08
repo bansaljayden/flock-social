@@ -747,7 +747,7 @@ describe('the plan screen\'s venue photo is a small thumbnail whose tap opens th
     // :focus-visible, so the rule itself is pinned: the outline 2px inside,
     // on the photo, and a ring of the same colour 2px outside, on the card,
     // where its contrast does not depend on the photo.
-    expect(door.style.borderRadius).toBe('12px');
+    expect(door.style.borderRadius).toBe('var(--r-md)');
     expect(door.style.overflow).toBe('hidden');
     const css = readSrc('index.css');
     expect(css).toMatch(/\.plan-venue-photo:focus-visible\s*\{\s*outline-offset:\s*-2px;\s*box-shadow:\s*0 0 0 2px var\(--focus-ring\);\s*\}/);

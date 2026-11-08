@@ -125,7 +125,7 @@ export const PhotoCredit = ({ credit, style }) => {
         maxWidth: '100%',
         boxSizing: 'border-box',
         padding: '3px 8px',
-        borderRadius: '999px',
+        borderRadius: 'var(--r-pill)',
         backgroundColor: 'rgba(0,0,0,0.55)',
         color: '#FFFFFF',
         fontSize: '12px',

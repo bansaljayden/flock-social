@@ -121,7 +121,7 @@ const VenueEventsSection = ({ events, photos, credits, colors, onReport }) => {
           const src = k >= 0 ? photos[k] : null;
           const credit = src && !failed.has(src) ? creditAt(credits, k) : null;
           return (
-            <li key={e.id} style={{ position: 'relative', height: '124px', borderRadius: '12px', overflow: 'hidden', backgroundColor: colors.navyBg }}>
+            <li key={e.id} style={{ position: 'relative', height: '124px', borderRadius: 'var(--r-md)', overflow: 'hidden', backgroundColor: colors.navyBg }}>
               {src && !failed.has(src) ? (
                 <img
                   src={src}
@@ -142,7 +142,7 @@ const VenueEventsSection = ({ events, photos, credits, colors, onReport }) => {
                 title="Report event"
                 className="hit44"
                 onClick={() => onReport(e)}
-                style={{ position: 'absolute', top: '8px', right: '8px', width: '30px', height: '30px', borderRadius: '15px', border: 'none', backgroundColor: 'rgba(0,0,0,0.45)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                style={{ position: 'absolute', top: '8px', right: '8px', width: '30px', height: '30px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(0,0,0,0.45)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
               >
                 {Icons.flag('white', 13)}
               </button>
@@ -159,7 +159,7 @@ const VenueEventsSection = ({ events, photos, credits, colors, onReport }) => {
           className="hit44 glass-btn glass-secondary"
           aria-expanded={showAll}
           onClick={() => setShowAll((v) => !v)}
-          style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
+          style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
         >
           {showAll ? 'Show fewer' : `Show all ${events.length} events`}
         </button>

@@ -143,7 +143,7 @@ test('the made step says what happened, asks for one thing, and has no dead cont
 test('the primary button is the Create button\'s shape, not a second style', () => {
   const step = madeStep();
   const form = create.slice(create.indexOf('<button className="hit44 glass-btn glass-primary" onClick={handleCreate}'));
-  for (const rule of ["width: '100%', padding: '16px', borderRadius: '16px', border: 'none',", "boxShadow: '0 1px 2px rgba(30,41,59,0.10)',"]) {
+  for (const rule of ["width: '100%', padding: '16px', borderRadius: 'var(--r-lg)', border: 'none',", "boxShadow: '0 1px 2px rgba(30,41,59,0.10)',"]) {
     expect(step).toContain(rule);
     expect(form).toContain(rule);
   }

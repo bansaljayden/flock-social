@@ -204,7 +204,7 @@ export default function BillCard({
   const actionStyle = {
     minHeight: '44px',
     padding: '0 14px',
-    borderRadius: '12px',
+    borderRadius: 'var(--r-md)',
     border: 'none',
     background: 'var(--chat-accent)',
     color: 'var(--chat-on-fill)',

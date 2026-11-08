@@ -98,7 +98,7 @@ describe('the parts', () => {
   test('a card row is ListSkeleton\'s bordered card; a bare row drops the border and the fill', () => {
     const { container: card } = render(<SkeletonRow thumb={44} round />);
     expect(card.firstChild.style.padding).toBe('12px');
-    expect(card.firstChild.style.borderRadius).toBe('14px');
+    expect(card.firstChild.style.borderRadius).toBe('var(--r-md)');
     const thumb = card.querySelector('.skeleton');
     expect(thumb.style.width).toBe('44px');
     expect(thumb.style.borderRadius).toBe('50%');
@@ -130,7 +130,7 @@ describe('the flock card, on the Nest and on Past flocks', () => {
     // no venue pin and no time pill.
     const { container } = render(<FlockCardSkeleton />);
     const card = container.firstChild;
-    expect(card.style.borderRadius).toBe('12px');
+    expect(card.style.borderRadius).toBe('var(--r-md)');
     expect(card.style.padding).toBe('14px 16px');
     expect(card.style.border).toBe('');
     expect(card.style.boxShadow).toBe('');
@@ -150,11 +150,11 @@ describe('the flock card, on the Nest and on Past flocks', () => {
     expect(screen.getByRole('status').textContent).toBe('Loading your flocks');
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars[0].style.height).toBe('196px');
-    expect(bars[0].style.borderRadius).toBe('16px');
+    expect(bars[0].style.borderRadius).toBe('var(--r-lg)');
     // The hero's own warm tone, a step toward the navy card it becomes: in
     // light mode a grey slab turned into the navy card on every cold load.
     // jsdom keeps no var() in a style, so the source says it.
-    expect(SKELETON_SRC).toMatch(/<SkeletonBlock height=\{196\} radius=\{16\} style=\{NEST_HERO_SKELETON\} \/>/);
+    expect(SKELETON_SRC).toMatch(/<SkeletonBlock height=\{196\} radius="var\(--r-lg\)" style=\{NEST_HERO_SKELETON\} \/>/);
     expect(SKELETON_SRC).toContain("const NEST_HERO_SKELETON = { background: 'var(--nest-hero-skel)' };");
     // Two rows, each an 18px icon over a title and its line.
     expect(bars.filter((b) => b.style.width === '18px' && b.style.height === '18px')).toHaveLength(2);
@@ -199,7 +199,7 @@ describe('the roster and the event card', () => {
 
   test('the event card: radius 16, the 132px header, three pills and the 34px buttons', () => {
     const { container } = render(<EventCardSkeleton />);
-    expect(container.firstChild.style.borderRadius).toBe('16px');
+    expect(container.firstChild.style.borderRadius).toBe('var(--r-lg)');
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars[0].style.height).toBe('132px');
     expect(bars.filter((b) => b.style.height === '34px')).toHaveLength(2);
@@ -252,7 +252,7 @@ describe('the Nest, before anything is known', () => {
     const { container } = render(<NestSkeleton />);
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars.some((b) => b.style.width === '36px' && b.style.borderRadius === '50%')).toBe(true);
-    expect(bars.some((b) => b.style.height === '196px' && b.style.borderRadius === '16px')).toBe(true);
+    expect(bars.some((b) => b.style.height === '196px' && b.style.borderRadius === 'var(--r-lg)')).toBe(true);
     expect(bars.filter((b) => b.style.width === '18px' && b.style.height === '18px')).toHaveLength(2);
     // No Tonight control and no Start a flock slab up top any more, and no
     // count: the stat line's bar is gone with it.
@@ -261,7 +261,7 @@ describe('the Nest, before anything is known', () => {
     // One Coming up card's chip, and the five 24px tab icons the bar draws
     // since it took the app's own icon set (App.js NavIcon).
     expect(bars.filter((b) => b.style.width === '72px' && b.style.height === '24px')).toHaveLength(1);
-    expect(bars.filter((b) => b.style.width === '24px' && b.style.height === '24px' && b.style.borderRadius === '6px')).toHaveLength(5);
+    expect(bars.filter((b) => b.style.width === '24px' && b.style.height === '24px' && b.style.borderRadius === 'var(--r-xs)')).toHaveLength(5);
     expectShapesHidden(container);
     expectNoSpinnerOrLoadingText(container);
   });
@@ -273,7 +273,7 @@ describe('the Nest, before anything is known', () => {
     const frame = container.firstChild.children[1];
     expect(frame.style.width).toBe('375px');
     expect(frame.style.maxHeight).toBe('812px');
-    expect(frame.style.borderRadius).toBe('44px');
+    expect(frame.style.borderRadius).toBe('var(--r-frame)');
     // The frame is the busy part; the line is beside it.
     expect(frame.getAttribute('aria-busy')).toBe('true');
     expectBusyOnShapesOnly(container);
@@ -318,7 +318,7 @@ describe('a cold start paints the screen it opens on, Nest or venue dashboard', 
     expect(header.style.background).toBe('rgb(30, 41, 59)');
     expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '28px')).toHaveLength(5);
     expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '104px')).toHaveLength(3);
-    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '24px' && b.style.borderRadius === '6px')).toHaveLength(0);
+    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '24px' && b.style.borderRadius === 'var(--r-xs)')).toHaveLength(0);
     // The strip over the safe top is the header's navy, as the app paints it
     // over the dashboard.
     expect(root.children[1].firstChild.style.backgroundColor).toBe('rgb(30, 41, 59)');
@@ -350,7 +350,7 @@ describe('a cold start paints the screen it opens on, Nest or venue dashboard', 
     expect(root).not.toBeNull();
     const frame = root.children[1];
     expect(frame.style.width).toBe('375px');
-    expect(frame.style.borderRadius).toBe('44px');
+    expect(frame.style.borderRadius).toBe('var(--r-frame)');
     expectBusyOnShapesOnly(container);
   });
 

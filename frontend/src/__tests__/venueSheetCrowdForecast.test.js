@@ -242,7 +242,7 @@ describe('the venue sheet shows the forecast on the first tap', () => {
     const { container } = render(<VenueDetailSheet {...sheetProps({ venueDetailModal: { place_id: PLACE, name: 'The Copper Finch', loading: true }, venueDetailCrowd: sheetRead(null, { loading: true }) })} />);
     const dial = Array.from(container.querySelectorAll('.skeleton')).find((b) => b.style.width === '60px' && b.style.height === '60px');
     expect(dial).toBeTruthy();
-    const tiles = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '62px' && d.style.borderRadius === '12px');
+    const tiles = Array.from(container.querySelectorAll('div')).filter((d) => d.style.height === '62px' && d.style.borderRadius === 'var(--r-md)');
     const hoursTitle = Array.from(container.querySelectorAll('.skeleton')).find((b) => b.style.width === '72px' && b.style.height === '18px');
     expect(follows(tiles[2], dial)).toBe(true);
     expect(follows(dial, hoursTitle)).toBe(true);

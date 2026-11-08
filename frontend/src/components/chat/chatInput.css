@@ -50,7 +50,7 @@
   --chat-composer-bar-h: 52px;
   --chat-composer-pill-h: 40px;
   --chat-composer-pill-max-h: 120px;   /* five lines of 20px plus 20px padding */
-  --chat-composer-pill-radius: 20px;
+  --chat-composer-pill-radius: var(--r-xl);   /* a pill at one line, a rounded box at five */
   --chat-composer-camera: 38px;
 }
 

@@ -286,7 +286,7 @@ export default function ChatInputBar({
                is and what state it is in, so an alt here would make a screen
                reader announce the same thing twice. */
             alt=""
-            style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '10px', flexShrink: 0 }}
+            style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: 'var(--r-sm)', flexShrink: 0 }}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
             <p style={{ margin: 0, fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)' }}>
@@ -301,7 +301,7 @@ export default function ChatInputBar({
               type="button"
               className="hit44"
               onClick={onRetryImage}
-              style={{ border: '1px solid var(--border-default)', background: 'none', borderRadius: '12px', padding: '5px 11px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0 }}
+              style={{ border: '1px solid var(--border-default)', background: 'none', borderRadius: 'var(--r-md)', padding: '5px 11px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', flexShrink: 0 }}
             >
               Try again
             </button>
@@ -322,7 +322,7 @@ export default function ChatInputBar({
               gap: '6px',
               height: '26px',
               padding: '0 10px',
-              borderRadius: '13px',
+              borderRadius: 'var(--r-pill)',
               border: '1.5px solid var(--accent-green-text)',
               color: 'var(--accent-green-text)',
               fontSize: 'var(--t-micro)',

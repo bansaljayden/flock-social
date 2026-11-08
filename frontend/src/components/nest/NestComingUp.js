@@ -51,7 +51,7 @@ export function NestPlanCard({ card, level = 3 }) {
         position: 'relative',
         isolation: 'isolate',
         padding: '14px 16px',
-        borderRadius: '12px',
+        borderRadius: 'var(--r-md)',
         backgroundColor: 'var(--bg-card-solid)',
       }}
     >

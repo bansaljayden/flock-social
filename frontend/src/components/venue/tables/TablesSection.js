@@ -23,7 +23,7 @@ export function SectionLine({ children }) {
 // the global shimmer, roughly the card's height so the card arriving in its
 // place barely moves the page.
 export function SectionSkeleton({ height, testId }) {
-  return <div aria-hidden="true" data-testid={testId} className="skeleton" style={{ height: `${height}px`, borderRadius: '12px', marginBottom: '12px' }} />;
+  return <div aria-hidden="true" data-testid={testId} className="skeleton" style={{ height: `${height}px`, borderRadius: 'var(--r-md)', marginBottom: '12px' }} />;
 }
 
 // The two sentences over a section whose readings have stopped or whose
@@ -40,7 +40,7 @@ export function SectionNotice({ lines }) {
 
 export default function TablesSection({ title, colors, children }) {
   return (
-    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>{title}</h3>
       {children}
     </div>

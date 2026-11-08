@@ -23,7 +23,7 @@ export default function NestChip({ chip, id }) {
         flexShrink: 0,
         whiteSpace: 'nowrap',
         padding: '3px 10px',
-        borderRadius: '999px',
+        borderRadius: 'var(--r-pill)',
         backgroundColor: accent ? 'var(--accent-purple-bg)' : locked ? 'var(--accent-blush)' : 'var(--bg-inset)',
         color: ink,
         fontSize: 'var(--t-label)',

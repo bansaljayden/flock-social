@@ -485,7 +485,7 @@ function MessageList({
             onClick={() => onLoadOlder()}
             style={{
               padding: '6px 12px',
-              borderRadius: '13px',
+              borderRadius: 'var(--r-md)',
               border: '1px solid var(--chat-reaction-border)',
               background: 'var(--chat-reaction-bg)',
               color: 'var(--chat-meta)',
@@ -566,7 +566,7 @@ function MessageList({
             style={{
               pointerEvents: 'auto',
               padding: '7px 14px',
-              borderRadius: '16px',
+              borderRadius: 'var(--r-lg)',
               border: 'none',
               background: 'var(--chat-pill-bg)',
               color: 'var(--chat-pill-ink)',

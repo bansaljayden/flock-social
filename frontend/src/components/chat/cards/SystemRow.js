@@ -161,7 +161,7 @@ export function CardShell({
            from the right. */
         margin: '6px 16px 6px 0',
         padding: '14px',
-        borderRadius: '16px',
+        borderRadius: 'var(--r-lg)',
         backgroundColor: paint.bg,
         border: `1px solid ${paint.border}`,
         boxSizing: 'border-box',

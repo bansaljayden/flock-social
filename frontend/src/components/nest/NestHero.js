@@ -58,7 +58,7 @@ const headingReset = { margin: 0, padding: 0 };
 const LOCKED_PILL = {
   backgroundColor: 'var(--accent-blush)',
   color: 'var(--on-accent-blush)',
-  borderRadius: '999px',
+  borderRadius: 'var(--r-pill)',
   padding: '3px 10px 3px 8px',
   margin: '-3px 0',
 };
@@ -114,7 +114,7 @@ export default function NestHero({
           isolation: 'isolate',
           backgroundColor: 'var(--nest-hero-bg)',
           color: 'var(--nest-hero-ink)',
-          borderRadius: '16px',
+          borderRadius: 'var(--r-lg)',
           padding: '18px',
         }}
       >
@@ -173,7 +173,7 @@ export default function NestHero({
               minHeight: '44px',
               padding: '0 14px 0 16px',
               border: 'none',
-              borderRadius: '12px',
+              borderRadius: 'var(--r-md)',
               backgroundColor: 'var(--nest-hero-action-bg)',
               color: 'var(--nest-hero-action-fg)',
               fontSize: 'var(--t-body)',
@@ -192,7 +192,7 @@ export default function NestHero({
         )}
       </section>
       {sameNight.length > 0 && (
-        <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+        <ul style={{ listStyle: 'none', margin: '8px 0 0', padding: 0, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
           {sameNight.map((row, i) => {
             const rowId = `nest-same-${row.id}`;
             return (

@@ -8,8 +8,9 @@
  *
  *   - A card, row or group is --bg-card-solid on the cream ground: no border,
  *     no shadow. Depth is for what floats over the page.
- *   - Radii: 16 for the hero only; 12 for groups, cards, buttons and the
- *     segmented track; 10 for a segment; 999 for chips, faces and pills.
+ *   - Radii (the index.css scale since 2026-11-07): --r-lg (16) for the
+ *     hero only; --r-md (12) for groups, cards, buttons and the segmented
+ *     track; --r-sm (10) for a segment; --r-pill for chips, faces and pills.
  *   - The one filled button reads --btn-primary-bg / --btn-primary-fg, where
  *     four isDark ternaries picked the same pair; the dead neo-btn-primary
  *     class and its bevel go.
@@ -31,16 +32,16 @@ const PIECES = fs.readdirSync(NEST_DIR).filter((f) => f.endsWith('.js')).map((f)
 const ALL = [{ f: 'HomeScreen', src: HOME }, ...PIECES];
 
 test('every radius the Nest draws is one of the family', () => {
-  const allowed = new Set(['16px', '12px', '10px', '999px']);
+  const allowed = new Set(['var(--r-lg)', 'var(--r-md)', 'var(--r-sm)', 'var(--r-pill)']);
   for (const { f, src } of ALL) {
     const radii = [...src.matchAll(/borderRadius: '([^']+)'/g)].map((m) => m[1]);
     for (const r of radii) expect({ f, r, ok: allowed.has(r) }).toEqual({ f, r, ok: true });
   }
   // 16 is the hero's alone.
-  const sixteen = ALL.filter(({ src }) => /borderRadius: '16px'/.test(src)).map(({ f }) => f);
+  const sixteen = ALL.filter(({ src }) => /borderRadius: 'var\(--r-lg\)'/.test(src)).map(({ f }) => f);
   expect(sixteen.sort()).toEqual(['HomeScreen', 'NestHero.js'].sort());
   // The one 16 in HomeScreen is the failed read's note, which stands in the hero slot.
-  expect(HOME.match(/borderRadius: '16px'/g)).toHaveLength(1);
+  expect(HOME.match(/borderRadius: 'var\(--r-lg\)'/g)).toHaveLength(1);
 });
 
 test('no card, row or group carries a border or a drop shadow', () => {

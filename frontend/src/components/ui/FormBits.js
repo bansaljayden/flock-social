@@ -48,7 +48,7 @@ export const FormGroup = ({ label, children, style }) => (
     {label && (
       <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px 4px', textTransform: 'uppercase', letterSpacing: '0.6px' }}>{label}</p>
     )}
-    <div style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', boxShadow: 'var(--card-shadow-sm)' }}>
+    <div style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: 'var(--r-md)', boxShadow: 'var(--card-shadow-sm)' }}>
       {children}
     </div>
   </section>
@@ -76,7 +76,7 @@ export const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
     }}
     style={{
       padding: '9px 14px',
-      borderRadius: '10px',
+      borderRadius: 'var(--r-sm)',
       border: selected ? '1.5px solid transparent' : '1.5px solid var(--border-default)',
       backgroundColor: selected ? '#2d5a87' : 'var(--bg-card-solid)',
       color: selected ? '#ffffff' : 'var(--text-primary)',

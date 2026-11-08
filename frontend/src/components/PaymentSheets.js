@@ -117,14 +117,14 @@ const PaymentSheets = ({
         return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
           <DialogBehavior onClose={close} label={`Pay ${payee || 'them'}`} />
-          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
+          <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg) var(--r-lg) 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
             {loading ? (
               /* The sentence beside the busy shapes, not inside them
                  (components/ui/Skeleton.js SkeletonStatus says why). */
               <>
                 <p className="sr-only" role="status">Loading the ways to pay.</p>
                 <div aria-busy="true">
-                  <div className="skeleton" style={{ width: '45%', height: '22px', borderRadius: '6px', margin: '0 0 8px' }} />
+                  <div className="skeleton" style={{ width: '45%', height: '22px', borderRadius: 'var(--r-xs)', margin: '0 0 8px' }} />
                   <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', margin: '0 0 18px' }} />
                   <div className="skeleton" style={{ width: '50%', height: '16px', borderRadius: '4px', margin: '2px 0 6px' }} />
                   <div className="skeleton" style={{ width: '35%', height: '12px', borderRadius: '4px', margin: '0 0 13px' }} />
@@ -220,7 +220,7 @@ const PaymentSheets = ({
         return (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
             <DialogBehavior onClose={close} label={`Pay ${payTo || 'them'} with ${label}`} />
-            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg) var(--r-lg) 0 0', padding: '20px', width: '100%', maxWidth: '420px', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>
                 {reason === 'instructions' ? `Pay ${payTo || 'them'} with ${label}` : `${label} did not open`}
               </h3>

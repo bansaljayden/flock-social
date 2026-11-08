@@ -386,7 +386,7 @@ const VenueDetailSheet = ({
               and Tab walked straight out of the card into the Discover map
               underneath while the card covered the screen. */}
           <DialogBehavior onClose={closeVenueDetail} label={venueDetailModal.name || 'Venue'} />
-          <div className="venue-sheet" style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-primary)', borderRadius: '20px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+          <div className="venue-sheet" style={{ width: '100%', maxWidth: '420px', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--r-xl)', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             {/* Photo area */}
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
               {/* One photo slot for the map, the seed photo and the details'
@@ -398,8 +398,8 @@ const VenueDetailSheet = ({
                 <>
                   {venueDetailModal.photos && venueDetailModal.photos.length > 1 && (
                     <>
-                      <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.chevronLeft('white', 18)}</button>
-                      <button aria-label="Next" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.chevronRight('white', 18)}</button>
+                      <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.chevronLeft('white', 18)}</button>
+                      <button aria-label="Next" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i < venueDetailModal.photos.length - 1 ? i + 1 : 0); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.chevronRight('white', 18)}</button>
                       <div style={{ position: 'absolute', bottom: '10px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '5px' }}>
                         {venueDetailModal.photos.map((_, i) => (
                           <div key={i} style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: i === venueDetailPhotoIdx ? 'white' : 'rgba(255,255,255,0.4)', transition: 'background-color 0.2s' }} />
@@ -412,14 +412,14 @@ const VenueDetailSheet = ({
               {/* Overlay gradient */}
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
               {/* Close button */}
-              <button aria-label="Close" className="hit44" onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
+              <button aria-label="Close" className="hit44" onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
               {/* Name overlay */}
               <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
                 {/* A card opened with no venue in hand (a notification tap, the
                     forecast's way back) has no name until the details answer.
                     It used to print "Loading..." here as if that were the
                     venue's name; the name's line is drawn instead. */}
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name || (venueDetailModal.loading ? <SkeletonBar dark width="60%" height={18} radius={5} style={{ margin: '3px 0 2px' }} /> : null)}</h2>
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name || (venueDetailModal.loading ? <SkeletonBar dark width="60%" height={18} radius="var(--r-xs)" style={{ margin: '3px 0 2px' }} /> : null)}</h2>
                 {venueDetailModal.formatted_address && <p className="selectable" style={{ color: 'rgba(255,255,255,0.85)', fontSize: 'var(--t-meta)', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
               </div>
             </div>
@@ -463,15 +463,15 @@ const VenueDetailSheet = ({
                 <SkeletonStatus label="Loading details">
                   <div aria-hidden="true" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                     {[0, 1, 2].map((i) => (
-                      <div key={i} style={{ flex: 1, height: '62px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '7px' }}>
-                        <SkeletonBar width={40} height={18} radius={5} />
+                      <div key={i} style={{ flex: 1, height: '62px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '10px', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '7px' }}>
+                        <SkeletonBar width={40} height={18} radius="var(--r-xs)" />
                         <SkeletonBar width={52} height={10} />
                       </div>
                     ))}
                   </div>
                   {/* The crowd forecast that lands with the details: the
                       dial, its lines and the hourly bars. */}
-                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-md)', padding: '10px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                       <SkeletonCircle size={60} />
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -488,18 +488,18 @@ const VenueDetailSheet = ({
                       ))}
                     </div>
                   </div>
-                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                    <SkeletonBar width={72} height={18} radius={5} style={{ margin: '2px 0 10px' }} />
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <SkeletonBar width={72} height={18} radius="var(--r-xs)" style={{ margin: '2px 0 10px' }} />
                     {['62%', '66%', '60%', '64%', '70%', '58%', '54%'].map((w, i) => (
                       <SkeletonBar key={i} width={w} height={11} style={{ margin: '7px 0' }} />
                     ))}
                   </div>
-                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
-                    <SkeletonBar width={84} height={18} radius={5} style={{ margin: '2px 0 10px' }} />
-                    <SkeletonBar height={32} radius={10} style={{ marginBottom: '6px' }} />
-                    <SkeletonBar height={32} radius={10} />
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <SkeletonBar width={84} height={18} radius="var(--r-xs)" style={{ margin: '2px 0 10px' }} />
+                    <SkeletonBar height={32} radius="var(--r-sm)" style={{ marginBottom: '6px' }} />
+                    <SkeletonBar height={32} radius="var(--r-sm)" />
                   </div>
-                  <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', marginBottom: '14px' }}>
+                  <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', marginBottom: '14px' }}>
                     <SkeletonBar width={18} height={18} radius={4} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <SkeletonBar width={84} height={13} />
@@ -507,7 +507,7 @@ const VenueDetailSheet = ({
                     </div>
                   </div>
                   <div aria-hidden="true" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
-                    {[64, 88, 56].map((w) => <SkeletonBar key={w} width={w} height={24} radius={20} />)}
+                    {[64, 88, 56].map((w) => <SkeletonBar key={w} width={w} height={24} radius="var(--r-pill)" />)}
                   </div>
                 </SkeletonStatus>
               ) : (
@@ -515,7 +515,7 @@ const VenueDetailSheet = ({
                   {/* Stats row */}
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
                     {venueDetailModal.rating && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px', marginBottom: '2px' }}>
                           {Icons.starFilled('#F59E0B', 16)}
                           <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>{venueDetailModal.rating}</span>
@@ -524,13 +524,13 @@ const VenueDetailSheet = ({
                       </div>
                     )}
                     {venueDetailModal.price_level > 0 && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
                         <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level)}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Price</p>
                       </div>
                     )}
                     {venueDetailModal.opening_hours && (
-                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
+                      <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
                         <div style={{ marginBottom: '2px' }}>{Icons.clock(openTile.open ? colors.steel : colors.red, 18)}</div>
                         <p data-open-tile="true" style={{ fontSize: 'var(--t-meta)', color: openTile.open ? colors.steel : colors.red, fontWeight: '500', margin: 0 }}>{openTile.text}</p>
                       </div>
@@ -597,28 +597,28 @@ const VenueDetailSheet = ({
 
                   {/* Hours */}
                   {venueDetailModal.opening_hours?.weekdayDescriptions && (
-                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
                       <h4 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.clock(colors.navy, 14)} Hours</h4>
                       {venueDetailModal.opening_hours.weekdayDescriptions.map((day, i) => {
                         const today = new Date().getDay();
                         const isToday = i === (today === 0 ? 6 : today - 1);
-                        return <p key={i} style={{ fontSize: 'var(--t-meta)', color: isToday ? colors.navy : colors.textSecondary, fontWeight: isToday ? '500' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: '6px' }}>{day}</p>;
+                        return <p key={i} style={{ fontSize: 'var(--t-meta)', color: isToday ? colors.navy : colors.textSecondary, fontWeight: isToday ? '500' : '400', margin: '3px 0', padding: isToday ? '3px 6px' : '0', backgroundColor: isToday ? `${colors.navy}10` : 'transparent', borderRadius: 'var(--r-xs)' }}>{day}</p>;
                       })}
                     </div>
                   )}
 
                   {/* Contact */}
                   {(venueDetailModal.formatted_phone_number || venueDetailModal.website) && (
-                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
                       <h4 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Contact</h4>
                       {venueDetailModal.formatted_phone_number && (
-                        <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
+                        <a href={`tel:${venueDetailModal.formatted_phone_number}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', textDecoration: 'none', marginBottom: venueDetailModal.website ? '6px' : 0 }}>
                           {Icons.phone(colors.navy, 16)}
                           <span className="selectable" style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
                         </a>
                       )}
                       {httpUrl(venueDetailModal.website) && (
-                        <a href={httpUrl(venueDetailModal.website)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none' }}>
+                        <a href={httpUrl(venueDetailModal.website)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', textDecoration: 'none' }}>
                           {Icons.externalLink(colors.navy, 16)}
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Website</span>
                         </a>
@@ -628,7 +628,7 @@ const VenueDetailSheet = ({
 
                   {/* View Menu */}
                   {!venueDetailModal.loading && (
-                    <a href={menuUrl || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
+                    <a href={menuUrl || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
                       {Icons.menuLines(colors.navy, 18)}
                       <div style={{ flex: 1 }}>
                         <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{menuUrl ? 'View menu' : 'Find the menu online'}</span>
@@ -642,7 +642,7 @@ const VenueDetailSheet = ({
                   {typeChips.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
                       {typeChips.map((t) => (
-                        <span key={t} style={{ fontSize: 'var(--t-meta)', padding: '4px 10px', borderRadius: '20px', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', border: '1px solid var(--border-subtle)' }}>{placeTypeLabel(t)}</span>
+                        <span key={t} style={{ fontSize: 'var(--t-meta)', padding: '4px 10px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '500', border: '1px solid var(--border-subtle)' }}>{placeTypeLabel(t)}</span>
                       ))}
                     </div>
                   )}
@@ -655,7 +655,7 @@ const VenueDetailSheet = ({
               <div style={{ padding: '0 16px 12px' }}>
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.gift(colors.steel, 14)} Deals and promotions</h4>
                 {venueDetailPromos.map(p => (
-                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
+                  <div key={p.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', marginBottom: '6px', border: `1px solid ${colors.steel}33` }}>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px' }}>
                       <p style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: 0 }}>{p.title}</p>
                       {/* A promotion is owner-typed UGC served to every user who
@@ -687,7 +687,7 @@ const VenueDetailSheet = ({
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock reviews{venueDetailReviews ? ` (${venueDetailReviewTotal ?? venueDetailReviews.length})` : ''}</h4>
                 {!showReviewForm && (
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: 'var(--r-xs)', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                     Write review
                   </button>
                 )}
@@ -705,7 +705,7 @@ const VenueDetailSheet = ({
 
               {/* Review Form */}
               {showReviewForm && (
-                <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '10px', marginBottom: '8px' }}>
+                <div style={{ padding: '12px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', marginBottom: '8px' }}>
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)', margin: '0 0 6px' }}>Your Rating</p>
                   <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
                     {/* Two things were wrong here, and this is the rating INPUT,
@@ -725,7 +725,7 @@ const VenueDetailSheet = ({
                       </button>
                     ))}
                   </div>
-                  <SearchInputLocal aria-label="Your review" as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-subtle)', fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  <SearchInputLocal aria-label="Your review" as="textarea" initialValue={reviewText} onCommit={setReviewText} placeholder="How was your experience?" rows={3} style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-subtle)', fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                   <div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
                     <button className="hit44 glass-btn glass-primary" disabled={!reviewRating || reviewSubmitting} onClick={async () => {
                       setReviewSubmitting(true);
@@ -745,20 +745,20 @@ const VenueDetailSheet = ({
                         showToast(e?.message || "That review didn't post. Try again.", 'error');
                       }
                       setReviewSubmitting(false);
-                    }} style={{ flex: 1, padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
+                    }} style={{ flex: 1, padding: '8px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: reviewRating ? colors.navy : colors.disabled, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: reviewRating ? 'pointer' : 'not-allowed' }}>
                       {reviewSubmitting ? 'Submitting...' : 'Submit Review'}
                     </button>
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowReviewForm(false)} style={{ padding: '8px 12px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
                   </div>
                 </div>
               )}
 
               {/* Review List */}
               {venueDetailReviews && venueDetailReviews.length > 0 ? venueDetailReviews.slice(0, 5).map(r => (
-                <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
+                <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', marginBottom: '6px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                      <div style={{ width: '24px', height: '24px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {(r.name || '?').charAt(0).toUpperCase()}
                       </div>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-primary)' }}>{r.name || 'Anonymous'}</span>
@@ -780,7 +780,7 @@ const VenueDetailSheet = ({
                       (DESIGN-STANDARD.md). The reply is set apart
                       by its own surface and an indent instead. */}
                   {r.venue_reply && (
-                    <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-subtle)' }}>
                       {/* Its own Report (migration 114). The review's flag
                           reports the reviewer; this one reaches the owner who
                           wrote the reply, and a takedown removes the reply
@@ -804,14 +804,14 @@ const VenueDetailSheet = ({
                   role="alert"
                   body={venueDetailReviewsError}
                   style={{ padding: '8px 4px' }}
-                  action={<button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
+                  action={<button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
                 />
               ) : !venueDetailReviews ? (
                 /* Two reviews' worth of shape, the row above's: the face, the
                    name, the stars and a line of text, no rating in them. */
                 <SkeletonStatus label="Loading reviews">
                   {['78%', '52%'].map((w) => (
-                    <div key={w} aria-hidden="true" style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
+                    <div key={w} aria-hidden="true" style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', marginBottom: '6px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <SkeletonCircle size={24} />
@@ -841,7 +841,7 @@ const VenueDetailSheet = ({
                   Google's own url or the place id; Apple Maps is located by
                   the place's coordinates, address and name. */}
               {footerHasDirections ? (
-                <button type="button" onClick={openVenueDirections} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
+                <button type="button" onClick={openVenueDirections} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
                   {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get directions
                 </button>
               ) : null}
@@ -891,7 +891,7 @@ const VenueDetailSheet = ({
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
-              }} className={directionsIsPrimary ? 'hit44 glass-btn' : 'hit44 glass-btn glass-primary'} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navy : colors.navyBg}`, background: directionsIsPrimary ? 'var(--bg-card-solid)' : colors.navyBg, color: directionsIsPrimary ? colors.navy : 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: directionsIsPrimary ? 'none' : '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
+              }} className={directionsIsPrimary ? 'hit44 glass-btn' : 'hit44 glass-btn glass-primary'} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: `2px solid ${directionsIsPrimary ? colors.navy : colors.navyBg}`, background: directionsIsPrimary ? 'var(--bg-card-solid)' : colors.navyBg, color: directionsIsPrimary ? colors.navy : 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: directionsIsPrimary ? 'none' : '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
                 {/* THE GLYPH FOLLOWS THE SAME TEST AS THE WORDS. It used to key on
                     venueDetailReturnTo alone while the label below checks
                     pickingVenueForDm first, so a card opened from a chat WHILE

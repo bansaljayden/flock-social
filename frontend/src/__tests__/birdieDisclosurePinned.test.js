@@ -231,12 +231,12 @@ describe('on the Nest\'s page (inline, 2026-11-06)', () => {
     expect(card.style.maxWidth).toBe('none');
     // And flat there, the Nest's own card: no border, no shadow, radius 12.
     // The sheets keep their raised card.
-    expect(card.style.borderRadius).toBe('12px');
+    expect(card.style.borderRadius).toBe('var(--r-md)');
     expect(card.style.boxShadow).toBe('none');
     expect(card.style.border === 'none' || card.style.borderStyle === 'none' || card.style.borderWidth === '').toBe(true);
     unmount();
     render(<BirdiePanel {...birdiePanelProps({ isAiPanel: true, isAiFullscreen: false, aiMessages: [{ role: 'user', text: 'where to' }, { role: 'assistant', text: 'Larkspur Tap, then Juniper Bowl.', venues }] })} />);
-    const docked = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: 14px"]');
+    const docked = screen.getByRole('heading', { name: 'Larkspur Tap' }).closest('div[style*="border-radius: var(--r-md)"]');
     expect(docked.style.maxWidth).toBe('280px');
     expect(container).toBeTruthy();
   });

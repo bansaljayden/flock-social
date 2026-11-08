@@ -233,6 +233,37 @@
   --t-micro: 11px;
 
   /* ═════════════════════════════════════════════════════════════════
+     RADIUS SCALE — six steps, and one bezel (2026-11-07).
+
+     Before this, inline styles held 905 literal radii in 25 values:
+     12px x245, 10px x162, 8px x119, 14px x87, 16px x63, 20px x44, and a
+     tail of 6, 9, 11, 13, 15, 17, 18, 19, 21, 22, 23, 24, 26, 28, 30, 34,
+     36 and 40. The steps are the busiest values; everything else moved to
+     the nearest one (a tie went to the busier step: 8 -> 10, 14 -> 12,
+     18 -> 16). The Nest already drew with 16 / 12 / 10 / 999.
+
+       --r-xs     6   a thumbnail tag, a 24px tile, a small square mark
+       --r-sm    10   buttons, inputs, list thumbnails, small tiles
+       --r-md    12   cards, rows, groups, banners
+       --r-lg    16   the hero card, a big photo, a stand-out panel
+       --r-xl    20   sheets (top corners), dialogs, the Birdie panel
+       --r-pill 999   chips, faces, round buttons, anything whose radius
+                      was already half its height
+       --r-frame 44   the desktop phone bezel, and nothing else
+
+     Radii of 4px and under are bar geometry (a progress track, a tick, a
+     chart bar's cap) and stay literal; so does 50% on a circle.
+     src/__tests__/radiusScale.test.js fails on any other literal.
+     ═════════════════════════════════════════════════════════════════ */
+  --r-xs: 6px;
+  --r-sm: 10px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
+  --r-pill: 999px;
+  --r-frame: 44px;
+
+  /* ═════════════════════════════════════════════════════════════════
      THE NEST'S SURFACES (2026-11-06). New tokens only: nothing above is
      redefined. Each one has a single job on the home tab.
 
@@ -663,12 +694,12 @@ body::after {
    and the card has overflow: hidden, so the :focus-visible ring, drawn 2px
    outside it, was cut on three sides and showed only as a line under the map. It
    draws the ring 3px inside the map instead, on the map's own pale or dark
-   ground. The corners match the card's inner curve (its 18px radius less its
-   1px border, App.js styles.card) so the ring is not cut at the top corners
-   either. */
+   ground. The corners match the card's inner curve (its --r-lg radius, 16,
+   less its 1px border, App.js styles.card) so the ring is not cut at the top
+   corners either. */
 .plan-venue-map:focus-visible {
   outline-offset: -3px;
-  border-radius: 17px 17px 0 0;
+  border-radius: 15px 15px 0 0;
 }
 
 /* The plan screen's header is navy in both themes, and in light mode the

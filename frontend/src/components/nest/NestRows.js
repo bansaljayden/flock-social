@@ -45,7 +45,7 @@ const ICON = { owe: 'nestEgg', budget: 'nestEgg', vote: 'vote', invite: 'mail', 
 // blush disc (index.css --accent-blush, the second accent) with the envelope
 // in navy, 9.63:1. The disc's 7px is given back by the same negative margin,
 // so the row's words and height stay where they are.
-const INVITE_DISC = { backgroundColor: 'var(--accent-blush)', borderRadius: '999px', padding: '7px', margin: '-7px' };
+const INVITE_DISC = { backgroundColor: 'var(--accent-blush)', borderRadius: 'var(--r-pill)', padding: '7px', margin: '-7px' };
 export const NEST_ROW_LEAVE_MS = 220;
 
 const prefersReducedMotion = () => {
@@ -132,7 +132,7 @@ export default function NestRows({ rows = [] }) {
   return (
     <div data-nest-band="needs-you" style={{ marginBottom: BAND_GAP }}>
       <h2 style={BAND_HEAD}>Needs you</h2>
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', overflow: 'hidden' }}>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', overflow: 'hidden' }}>
         {drawn.map(({ row, out }, i) => (
           <div
             key={row.key}

@@ -209,12 +209,12 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
     borderBottom: '1px solid var(--border-subtle)', fontFamily: FONT,
   };
   const ghostBtn = {
-    flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)',
+    flex: 1, padding: '13px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)',
     backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px',
     fontWeight: '600', cursor: 'pointer', fontFamily: FONT,
   };
   const dangerBtn = (disabled) => ({
-    flex: 2, padding: '13px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444',
+    flex: 2, padding: '13px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444',
     color: 'white', fontSize: '14px', fontWeight: '700', fontFamily: FONT,
     cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1,
   });
@@ -277,7 +277,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>We never tell them who reported. Every report is reviewed.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
               {REASONS.map(r => (
-                <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: '12px', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>
+                <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: 'var(--r-md)', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>
               ))}
             </div>
             {/* fontSize 16px, and it is not a style preference.
@@ -294,7 +294,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
                 See public/index.html, which is deliberately free of both.
                 maxLength matches the server's own cap on `details`
                 (backend/routes/moderation.js: isLength({ max: 1000 })). */}
-            <textarea value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} aria-label="Add details (optional)" placeholder="Add details (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '16px', resize: 'none', outline: 'none', marginBottom: '14px', fontFamily: 'inherit' }} />
+            <textarea value={details} onChange={(e) => setDetails(e.target.value)} maxLength={1000} aria-label="Add details (optional)" placeholder="Add details (optional)" rows={3} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: '16px', resize: 'none', outline: 'none', marginBottom: '14px', fontFamily: 'inherit' }} />
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={() => setMode('menu')} disabled={busy} style={ghostBtn}>Back</button>
               <button onClick={submitReport} disabled={busy || !reason} style={dangerBtn(busy || !reason)}>{busy ? 'Submitting…' : 'Submit report'}</button>

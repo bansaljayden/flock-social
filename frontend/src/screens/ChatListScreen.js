@@ -216,13 +216,13 @@ export default function ChatListScreen({
                 they overlapped and the button to the right won the edge. The
                 two toggles say which state they are in. */}
             <div style={{ display: 'flex', gap: '8px' }}>
-              <button aria-label="Reorder your flocks" aria-pressed={editingFlockList} className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+              <button aria-label="Reorder your flocks" aria-pressed={editingFlockList} className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: 'var(--r-md)', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.gripVertical('white', 16)}
               </button>
-              <button aria-label="New message" className="hit44" onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+              <button aria-label="New message" className="hit44" onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                 {Icons.plus(colors.navy, 16)}
               </button>
-              <button aria-label="Search chats" aria-expanded={showChatSearch} className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+              <button aria-label="Search chats" aria-expanded={showChatSearch} className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.search('white', 16)}
               </button>
             </div>
@@ -231,14 +231,14 @@ export default function ChatListScreen({
           {/* Search bar */}
           {showChatSearch && (
             <div style={{ marginTop: '12px', position: 'relative' }}>
-              <SearchInputLocal aria-label="Search conversations" inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', border: 'none', fontSize: 'var(--t-label)', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Search conversations" inputRef={chatListSearchRef} type="text" initialValue={chatSearch} onCommit={setChatSearch} placeholder="Search conversations..." style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: 'var(--r-md)', border: 'none', fontSize: 'var(--t-label)', fontWeight: '500', outline: 'none', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', boxSizing: 'border-box' }} autoComplete="off" />
               <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
             </div>
           )}
 
           {/* Edit mode banner */}
           {editingFlockList && (
-            <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ marginTop: '10px', padding: '8px 12px', backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 'var(--r-sm)', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.9)', fontWeight: '500', flex: 1 }}>Tap arrows to reorder, pin to keep on top</span>
               <button className="hit44" onClick={() => setEditingFlockList(false)} style={{ background: 'none', border: 'none', color: colors.cream, cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', padding: '2px 8px' }}>Done</button>
             </div>
@@ -270,10 +270,10 @@ export default function ChatListScreen({
                       : null);
                 const lastMsgPreview = messagePreview(lastMsg);
                 return (
-                  <button className="hit44 press-row" key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
+                  <button className="hit44 press-row" key={`dm-${dm.userId}`} onClick={() => { setSelectedDmId(dm.userId); setCurrentScreen('dmDetail'); setDirectMessages(prev => prev.map(d => d.userId === dm.userId ? { ...d, unread: 0 } : d)); }} style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '12px 14px', marginBottom: '6px', border: dm.unread ? `1.5px solid ${colors.navy}15` : `1px solid var(--border-default)`, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: dm.unread ? '0 2px 12px rgba(13,40,71,0.08)' : '0 1px 4px rgba(0,0,0,0.03)' }}>
                     <div style={{ position: 'relative', flexShrink: 0 }}>
-                      <div style={{ width: '46px', height: '46px', borderRadius: '23px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
-                        {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: '23px', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
+                      <div style={{ width: '46px', height: '46px', borderRadius: 'var(--r-pill)', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', overflow: 'hidden' }}>
+                        {dm.image ? <img src={dm.image} alt="" style={{ width: '46px', height: '46px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : (dm.name?.[0]?.toUpperCase() || '?')}
                       </div>
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -286,7 +286,7 @@ export default function ChatListScreen({
                       </div>
                     </div>
                     {dm.unread > 0 && (
-                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: 'var(--r-pill)', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         {dm.unread > 99 ? '99+' : dm.unread}<span className="sr-only"> unread messages</span>
                       </div>
                     )}
@@ -302,7 +302,7 @@ export default function ChatListScreen({
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
                 <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)' }}>Pending invites</span>
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
-                <span style={{ width: '18px', height: '18px', borderRadius: '9px', backgroundColor: 'var(--accent-amber-bg)', color: 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
+                <span style={{ width: '18px', height: '18px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--accent-amber-bg)', color: 'var(--accent-amber-text)', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
               </div>
               {pendingFlockInvites.map((f) => {
                 // A notification tap for this invite lands on this list, so the
@@ -320,9 +320,9 @@ export default function ChatListScreen({
                   key={`invite-${f.id}`}
                   aria-busy={joining || undefined}
                   ref={tapped ? (el) => { if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } : undefined}
-                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: tapped ? '2px solid #F59E0B' : '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: tapped ? '0 0 0 4px rgba(245,158,11,0.18)' : '0 2px 12px rgba(245,158,11,0.08)' }}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '12px 14px', marginBottom: '6px', border: tapped ? '2px solid #F59E0B' : '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: tapped ? '0 0 0 4px rgba(245,158,11,0.18)' : '0 2px 12px rgba(245,158,11,0.08)' }}
                 >
-                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(245,158,11,0.2)', flexShrink: 0 }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: 'var(--r-md)', background: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(245,158,11,0.2)', flexShrink: 0 }}>
                     {Icons.mail('white', 20)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -353,10 +353,10 @@ export default function ChatListScreen({
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                    <button aria-label="Decline invite" className="hit44" disabled={inviteBusy} onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: inviteBusy ? 'default' : 'pointer', opacity: inviteBusy ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button aria-label="Decline invite" className="hit44" disabled={inviteBusy} onClick={() => handleDeclineFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: inviteBusy ? 'default' : 'pointer', opacity: inviteBusy ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.x(colors.textTertiary, 14)}
                     </button>
-                    <button aria-label="Accept invite" className="hit44" disabled={inviteBusy} onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', background: colors.navyBg, cursor: joining ? 'wait' : inviteBusy ? 'default' : 'pointer', opacity: inviteBusy && !joining ? 0.5 : joining ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button aria-label="Accept invite" className="hit44" disabled={inviteBusy} onClick={() => handleAcceptFlockInvite(f.id)} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, cursor: joining ? 'wait' : inviteBusy ? 'default' : 'pointer', opacity: inviteBusy && !joining ? 0.5 : joining ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                       {Icons.check('white', 14)}
                     </button>
                   </div>
@@ -420,17 +420,17 @@ export default function ChatListScreen({
                     {/* Edit controls */}
                     {editingFlockList && (
                       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '2px', paddingRight: '6px', flexShrink: 0 }}>
-                        <button aria-label="Move up" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === 0 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
+                        <button aria-label="Move up" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockUp(f.id); }} style={{ width: '26px', height: '26px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: idx === 0 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === 0 ? 0.4 : 1 }}>
                           {Icons.chevronUp(colors.navy, 14)}
                         </button>
-                        <button aria-label="Move down" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: '8px', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
+                        <button aria-label="Move down" className="hit44" onClick={(e) => { e.stopPropagation(); moveFlockDown(f.id); }} style={{ width: '26px', height: '26px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: idx === filteredFlocks.length - 1 ? 'var(--bg-hover)' : 'var(--bg-card-solid)', cursor: idx === filteredFlocks.length - 1 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.08)', opacity: idx === filteredFlocks.length - 1 ? 0.4 : 1 }}>
                           {Icons.chevronDown(colors.navy, 14)}
                         </button>
                       </div>
                     )}
 
                     {/* Flock card */}
-                    <button className="hit44 press-row" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
+                    <button className="hit44 press-row" onClick={() => { if (editingFlockList) return; setSelectedFlockId(f.id); setCurrentScreen('chatDetail'); simulateTyping(); }} style={{ flex: 1, textAlign: 'left', backgroundColor: isPinned ? `${colors.navy}06` : 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '12px 14px', border: isPinned ? `1.5px solid ${colors.navy}18` : `1px solid var(--border-default)`, cursor: editingFlockList ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: '12px', transition: 'opacity 0.2s', boxShadow: isPinned ? '0 2px 12px rgba(13,40,71,0.06)' : '0 1px 4px rgba(0,0,0,0.03)', position: 'relative', overflow: 'hidden' }}>
                       {/* Tile — the flock's venue photo if it has picked one,
                           otherwise its initial on a colour keyed to its id.
                           The photo only with the venue's place id, which is
@@ -440,7 +440,7 @@ export default function ChatListScreen({
                         {(() => {
                           const swatch = flockTileSwatch(f.id);
                           return (
-                            <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ width: '46px', height: '46px', borderRadius: 'var(--r-md)', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               {f.venuePhoto && f.venueId ? (
                                 <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
                               ) : (
@@ -463,7 +463,7 @@ export default function ChatListScreen({
 
                         {/* Venue + status row */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px' }}>
-                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>
+                          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: 'var(--r-xs)', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>
                           {f.venue && f.venue !== 'TBD' && (
                             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.venue}</span>
                           )}
@@ -487,11 +487,11 @@ export default function ChatListScreen({
 
                       {/* Pin button (edit mode) or unread badge */}
                       {editingFlockList ? (
-                        <button aria-label={isPinned ? 'Unpin' : 'Pin'} aria-pressed={isPinned} className="hit44" onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+                        <button aria-label={isPinned ? 'Unpin' : 'Pin'} aria-pressed={isPinned} className="hit44" onClick={(e) => { e.stopPropagation(); togglePin(f.id); }} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: isPinned ? `${colors.navy}12` : 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
-                        <div style={{ minWidth: '20px', height: '20px', borderRadius: '10px', padding: '0 6px', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <div style={{ minWidth: '20px', height: '20px', borderRadius: 'var(--r-pill)', padding: '0 6px', backgroundColor: '#B91C1C', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           {f.unread > 99 ? '99+' : f.unread}
                           <span className="sr-only"> unread messages</span>
                         </div>
@@ -525,8 +525,8 @@ export default function ChatListScreen({
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
               </div>
               {filteredDeclinedInvites.map((f) => (
-                <div key={`declined-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <div key={`declined-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '12px 14px', marginBottom: '6px', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: 'var(--r-md)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-secondary)', lineHeight: 1 }}>{flockTileInitial(f.name)}</span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -535,7 +535,7 @@ export default function ChatListScreen({
                   </div>
                   {/* Same hold as an invite card: one join at a time, and the
                       button says it is working rather than sitting still. */}
-                  <button aria-label={acceptingInviteId === f.id ? `Joining ${f.name}` : `Join ${f.name}`} className="hit44 glass-btn glass-navy" disabled={acceptingInviteId != null} onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: acceptingInviteId === f.id ? 'wait' : acceptingInviteId != null ? 'default' : 'pointer', opacity: acceptingInviteId != null && acceptingInviteId !== f.id ? 0.5 : 1, flexShrink: 0, position: 'relative', overflow: 'hidden' }}>{acceptingInviteId === f.id ? 'Joining…' : 'Join'}</button>
+                  <button aria-label={acceptingInviteId === f.id ? `Joining ${f.name}` : `Join ${f.name}`} className="hit44 glass-btn glass-navy" disabled={acceptingInviteId != null} onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: 'var(--r-pill)', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: acceptingInviteId === f.id ? 'wait' : acceptingInviteId != null ? 'default' : 'pointer', opacity: acceptingInviteId != null && acceptingInviteId !== f.id ? 0.5 : 1, flexShrink: 0, position: 'relative', overflow: 'hidden' }}>{acceptingInviteId === f.id ? 'Joining…' : 'Join'}</button>
                 </div>
               ))}
             </>
@@ -555,7 +555,7 @@ export default function ChatListScreen({
                 role="alert"
                 title={conversationsError}
                 body="Nothing has been deleted. This is the list failing to load."
-                action={<button className="hit44 glass-btn glass-navy" onClick={retryConversations} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                action={<button className="hit44 glass-btn glass-navy" onClick={retryConversations} style={{ padding: '10px 16px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
               />
             </div>
           )}

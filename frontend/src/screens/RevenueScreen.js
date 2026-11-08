@@ -155,7 +155,7 @@ function ReconciledLineForm({ line, onSaved, colors }) {
     }
   };
   const small = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' };
-  const input = { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0 };
+  const input = { padding: '8px 10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0 };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 0' }}>
       <span style={small}>{line.label} <span style={{ color: 'var(--text-tertiary)' }}>({line.source === 'dashboard' ? `saved ${line.asOf}` : `from code as of ${line.asOf}, never recorded here`})</span></span>
@@ -167,7 +167,7 @@ function ReconciledLineForm({ line, onSaved, colors }) {
         </label>
         <input aria-label={`Date read for ${line.label}`} type="date" value={asOf} max={localToday()} onChange={(e) => setAsOf(e.target.value)} style={input} />
         <input aria-label={`Note for ${line.label}`} type="text" maxLength={500} placeholder="Note, optional" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...input, flex: '1 1 160px' }} />
-        <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
+        <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
       </div>
       {err && <span style={{ ...small, color: 'var(--accent-red-text, #EF4444)' }}>{err}</span>}
     </div>
@@ -221,7 +221,7 @@ const HUB_STORE_LABEL = {
 const hubStyle = {
   // scrollMarginTop so a card the attention list jumps to lands with a gap
   // above it rather than flush against the tab bar.
-  card: { backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', padding: '14px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0, scrollMarginTop: '12px' },
+  card: { backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: 'var(--r-md)', padding: '14px', boxShadow: 'var(--card-shadow-sm)', minWidth: 0, scrollMarginTop: '12px' },
   sub: { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.45 },
   // A heading inside a card, in sentence case. It used to be the type scale's
   // uppercase eyebrow, a role the scale keeps to twice a screen, and the hub
@@ -230,13 +230,13 @@ const hubStyle = {
   big: { fontSize: 'var(--t-display)', fontWeight: '600', margin: '2px 0 0', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums', overflowWrap: 'anywhere' },
   note: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.45, overflowWrap: 'anywhere' },
   foot: { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.45, overflowWrap: 'anywhere' },
-  input: { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0, width: '100%', boxSizing: 'border-box' },
+  input: { padding: '8px 10px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0, width: '100%', boxSizing: 'border-box' },
   fieldLabel: { display: 'flex', flexDirection: 'column', gap: '3px', fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)', flex: '1 1 130px', minWidth: 0 },
   // A quiet button with an outline, the Nest's ghost button.
-  textButton: { display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid var(--border-default)', background: 'transparent', borderRadius: '8px', padding: '6px 10px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
+  textButton: { display: 'inline-flex', alignItems: 'center', gap: '5px', border: '1px solid var(--border-default)', background: 'transparent', borderRadius: 'var(--r-sm)', padding: '6px 10px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer' },
   // A command to paste. One tap selects all of it, and it wraps rather than
   // scrolling sideways on a narrow phone.
-  command: { display: 'block', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 'var(--t-meta)', color: 'var(--text-primary)', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0 2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all' },
+  command: { display: 'block', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 'var(--t-meta)', color: 'var(--text-primary)', background: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', padding: '8px', margin: '6px 0 2px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', userSelect: 'all', WebkitUserSelect: 'all' },
   link: { display: 'inline-block', marginTop: '4px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', textUnderlineOffset: '2px' },
 };
 
@@ -263,7 +263,7 @@ function hubTag(tone) {
     fontWeight: '600',
     color: HUB_TONE[tone] || 'var(--text-secondary)',
     backgroundColor: HUB_TONE_BG[tone] || 'var(--bg-tertiary)',
-    borderRadius: '999px',
+    borderRadius: 'var(--r-pill)',
     padding: '0 7px',
     marginLeft: '6px',
     lineHeight: 1.6,
@@ -1633,7 +1633,7 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
         <button className="hit44" type="button" disabled={busy || !form.vendor.trim() || String(form.amount).trim() === ''} onClick={save}
-          style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+          style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
           {busy ? 'Saving' : 'Save'}
         </button>
         <button className="hit44" type="button" disabled={busy} onClick={onCancel} style={hubStyle.textButton}>Cancel</button>
@@ -1776,7 +1776,7 @@ function HubExpenseImport({ colors, onImported }) {
           <p style={hubStyle.note}>
             One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, quarterly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, endsOn for a bill whose renewal is turned off, verified, note, replacesLine to count a bill instead of a code line, and isCredit: true for a refund or credit, with the amount still a plain number. A bill already on the list with the same vendor, product, cadence and isCredit is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
           </p>
-          <pre style={{ ...hubStyle.note, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0' }}>{HUB_IMPORT_EXAMPLE}</pre>
+          <pre style={{ ...hubStyle.note, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', borderRadius: 'var(--r-sm)', padding: '8px', margin: '6px 0' }}>{HUB_IMPORT_EXAMPLE}</pre>
           <textarea
             aria-label="Expense list to import"
             value={text}
@@ -1786,7 +1786,7 @@ function HubExpenseImport({ colors, onImported }) {
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }}>
             <button className="hit44" type="button" disabled={busy || !text.trim()} onClick={run}
-              style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+              style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
               {busy ? 'Importing' : 'Import'}
             </button>
           </div>
@@ -1952,7 +1952,7 @@ function HubReceiptAnswer({ r, colors, onDone }) {
           {Object.keys(HUB_KIND_LABEL).map((k) => <option key={k} value={k}>{HUB_KIND_LABEL[k]}</option>)}
         </select>
         <button className="hit44" type="button" aria-label={busy ? undefined : `Add ${label} to the list`} disabled={busy} onClick={() => act(() => confirmAdminEmailReceipt(r.id, { kind }))}
-          style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
+          style={{ padding: '8px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
           {busy ? 'Saving' : 'Add to the list'}
         </button>
         <button className="hit44" type="button" aria-label={busy ? undefined : `Not a Flock bill: ${label}`} disabled={busy} onClick={() => act(() => dismissAdminEmailReceipt(r.id))} style={hubStyle.textButton}>
@@ -3089,7 +3089,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
           </p>
           {!loading && (
             <button className="hit44" type="button" onClick={() => load(false)}
-              style={{ padding: '10px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+              style={{ padding: '10px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
               {error ? 'Try again' : 'Read it'}
             </button>
           )}
@@ -3099,7 +3099,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
             this screen must not paint. */}
         {loading && (
           <div className="hub-tiles" aria-hidden="true" style={{ marginTop: '12px' }}>
-            {[0, 1, 2, 3].map((i) => <div key={`tile-skeleton-${i}`} className="skeleton" style={{ height: '96px', borderRadius: '14px' }} />)}
+            {[0, 1, 2, 3].map((i) => <div key={`tile-skeleton-${i}`} className="skeleton" style={{ height: '96px', borderRadius: 'var(--r-md)' }} />)}
           </div>
         )}
       </div>
@@ -3290,7 +3290,7 @@ export default function RevenueScreen({
     const inputStyle = {
       width: '100%',
       padding: '10px 12px',
-      borderRadius: '8px',
+      borderRadius: 'var(--r-sm)',
       border: `1px solid ${colors.creamDark}`,
       fontSize: 'var(--t-body)',
       fontWeight: '600',
@@ -3321,7 +3321,7 @@ export default function RevenueScreen({
         {/* Header */}
         <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
             </button>
             {/* Cobalt Birdie, still. This slot held a generic briefcase glyph,
@@ -3349,7 +3349,7 @@ export default function RevenueScreen({
               target="_blank". */}
           {(() => {
             const isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
-            const boxStyle = { marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '8px' };
+            const boxStyle = { marginTop: '12px', padding: '10px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '8px' };
             if (isNative) {
               return (
                 <button type="button" className="hit44" onClick={() => window.location.assign('/admin/moderation')} style={{ ...boxStyle, width: '100%', border: 'none', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
@@ -3372,7 +3372,7 @@ export default function RevenueScreen({
         {/* Tab Navigation */}
         <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, padding: '6px', gap: '4px' }}>
           {adminTabs.map(tab => (
-            <button className="hit44" key={tab.id} aria-pressed={activeTab === tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, minWidth: 0, padding: '8px 4px', border: 'none', backgroundColor: activeTab === tab.id ? colors.navyBg : 'transparent', borderRadius: '10px', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'background-color 0.15s ease' }}>
+            <button className="hit44" key={tab.id} aria-pressed={activeTab === tab.id} onClick={() => setAdminTab(tab.id)} style={{ flex: 1, minWidth: 0, padding: '8px 4px', border: 'none', backgroundColor: activeTab === tab.id ? colors.navyBg : 'transparent', borderRadius: 'var(--r-sm)', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'background-color 0.15s ease' }}>
               {tab.icon(activeTab === tab.id ? 'white' : 'var(--text-secondary)', 18)}
               <span style={{ fontSize: 'var(--t-meta)', fontWeight: activeTab === tab.id ? '600' : '500', color: activeTab === tab.id ? 'white' : 'var(--text-secondary)' }}>{tab.label}</span>
             </button>

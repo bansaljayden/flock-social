@@ -129,7 +129,7 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
           height: '44px',
           padding: '0 16px 0 8px',
           border: 'none',
-          borderRadius: '999px',
+          borderRadius: 'var(--r-pill)',
           backgroundColor: 'var(--bg-inset)',
           color: 'var(--text-primary)',
           display: 'flex',
@@ -143,7 +143,7 @@ export default function NestDock({ height, sosSide, getScroller, inputRef, isDar
           transition: `opacity ${NEST_DOCK_FADE_MS}ms ease`,
         }}
       >
-        <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: '999px', objectFit: 'cover', background: isDark ? '#162046' : '#e8eaf0' }} />
+        <img src={isDark ? '/birdie-avatar.png' : '/birdie-avatar-light.png'} alt="" style={{ width: '28px', height: '28px', borderRadius: 'var(--r-pill)', objectFit: 'cover', background: isDark ? '#162046' : '#e8eaf0' }} />
         Ask Birdie
       </button>
     </div>

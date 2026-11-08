@@ -149,7 +149,7 @@ const GroupLabel = ({ children, aside }) => (
 // of them, which is the difference between a list row and the tile grid A14
 // bans.
 const IconBox = ({ children }) => (
-  <div aria-hidden="true" style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{children}</div>
+  <div aria-hidden="true" style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{children}</div>
 );
 
 // A small caption under a control. Tertiary, 1.5 leading, no margin above
@@ -556,7 +556,7 @@ export default function CreateScreen({
               door here goes, the plan's chat, as Escape and the system back
               do. A bar with no way out read as a dead end. */}
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-            <button aria-label="Go to the chat" className="hit44" onClick={goToChat} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+            <button aria-label="Go to the chat" className="hit44" onClick={goToChat} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
             <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a flock</h1>
           </div>
 
@@ -580,7 +580,7 @@ export default function CreateScreen({
               empty cream. */}
           <div style={{ marginTop: '24px' }}>
             <button className="hit44 glass-btn glass-primary" onClick={sendLink} disabled={sending} style={{
-              width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
+              width: '100%', padding: '16px', borderRadius: 'var(--r-lg)', border: 'none',
               background: colors.navy,
               color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
@@ -591,7 +591,7 @@ export default function CreateScreen({
                 ? <><span aria-hidden="true" style={{ display: 'inline-block', width: '16px', height: '16px', boxSizing: 'border-box', border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> Getting the link...</>
                 : <>{Icons.share('currentColor', 18)} Send the link</>}
             </button>
-            <button className="hit44" onClick={goToChat} style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Not now</button>
+            <button className="hit44" onClick={goToChat} style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: 'var(--r-md)', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Not now</button>
           </div>
           </div>
         </div>
@@ -602,7 +602,7 @@ export default function CreateScreen({
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
         <DialogBehavior modal={false} onClose={leave} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft(colors.navy, 20)}</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a flock</h1>
         </div>
 
@@ -662,9 +662,9 @@ export default function CreateScreen({
                   const v = selectedVenueForCreate;
                   const showPhoto = !!v.photo_url && (!!v.place_id || !isPlacesPhotoUrl(v.photo_url));
                   const photo = showPhoto ? (
-                    <img src={v.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                    <img src={v.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: 'var(--r-sm)', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                   ) : (
-                    <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navy, 20)}</div>
+                    <div style={{ width: '48px', height: '48px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navy, 20)}</div>
                   );
                   const facts = (
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -697,7 +697,7 @@ export default function CreateScreen({
                             {facts}
                           </>
                         )}
-                        <button className="hit44 glass-btn glass-secondary" onClick={openVenuePicker} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={openVenuePicker} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
                       </div>
                       {/* A Google place's name, rating, address and photo are
                           Google Maps data off a Google map, so the row carries
@@ -775,9 +775,9 @@ export default function CreateScreen({
               {flockFriends.length > 0 ? (
                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
                   {flockFriends.map(f => (
-                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
-                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: 'var(--r-xl)', backgroundColor: colors.navyBg, color: 'white' }}>
+                      <div style={{ width: '22px', height: '22px', borderRadius: 'var(--r-pill)', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
                       </div>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>{f.name.split(' ')[0]}</span>
                       <button aria-label={`Remove ${f.name}`} className="hit44" onClick={() => setFlockFriends(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
@@ -801,9 +801,9 @@ export default function CreateScreen({
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Suggested</p>
                   <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                     {suggestedToShow.slice(0, 5).map(user => (
-                      <button key={user.id} className="hit44 glass-btn glass-secondary" disabled={flockFriends.length >= 25} onClick={() => setFlockFriends(prev => (prev.length >= 25 ? prev : [...prev, user]))} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
-                        <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
-                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                      <button key={user.id} className="hit44 glass-btn glass-secondary" disabled={flockFriends.length >= 25} onClick={() => setFlockFriends(prev => (prev.length >= 25 ? prev : [...prev, user]))} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: 'var(--r-xl)', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
+                        <div style={{ width: '24px', height: '24px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                         </div>
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
                         <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>+</span>
@@ -834,25 +834,25 @@ export default function CreateScreen({
               {/* Search results */}
               {inviteSearching && (
                 <div style={{ marginTop: '6px' }}>
-                  <ListSkeleton count={3} thumb={32} thumbRadius={16} label="Searching people" />
+                  <ListSkeleton count={3} thumb={32} thumbRadius="var(--r-pill)" label="Searching people" />
                 </div>
               )}
               {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length > 0 && (
-                <div style={{ maxHeight: '160px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', marginTop: '6px' }}>
+                <div style={{ maxHeight: '160px', overflowY: 'auto', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', marginTop: '6px' }}>
                   {inviteResults.filter(u => !flockFriends.some(f => f.id === u.id)).map((user, i, arr) => (
                     <button className="hit44" key={user.id} onClick={() => {
                       setFlockFriends(prev => [...prev, user]);
                       setInviteSearch('');
                       setInviteResults([]);
                     }} style={{ width: '100%', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
-                      <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
-                        {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                      <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                        {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
                       </div>
-                      <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>Add</div>
+                      <div style={{ padding: '4px 10px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>Add</div>
                     </button>
                   ))}
                 </div>
@@ -955,7 +955,7 @@ export default function CreateScreen({
             </p>
           )}
           <button className="hit44 glass-btn glass-primary" onClick={handleCreate} disabled={isLoading} style={{
-            width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
+            width: '100%', padding: '16px', borderRadius: 'var(--r-lg)', border: 'none',
             background: colors.navy,
             color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',

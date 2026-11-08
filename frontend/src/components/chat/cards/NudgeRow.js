@@ -175,7 +175,7 @@ export default function NudgeRow({
           style={{
             flexShrink: 0,
             padding: '5px 12px',
-            borderRadius: '14px',
+            borderRadius: 'var(--r-md)',
             border: '1px solid var(--chat-accent)',
             background: 'transparent',
             color: 'var(--chat-accent)',

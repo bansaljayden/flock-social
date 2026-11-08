@@ -343,7 +343,7 @@ export default function FlockDetail({
                 words (index.css --accent-blush), 9.63:1, on this header,
                 which is navy in both themes. Planning stays amber, and Done
                 and Cancelled steel. */}
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'var(--accent-blush)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? 'var(--on-accent-blush)' : '#fcd34d' }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'var(--accent-blush)' : 'rgba(245,158,11,0.25)', borderRadius: 'var(--r-pill)', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? 'var(--on-accent-blush)' : '#fcd34d' }}>
               {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked in' : 'Planning'}
             </span>
             {/* WHEN, once, and for the host the way to change it. This pill
@@ -354,13 +354,13 @@ export default function FlockDetail({
                 no time says so rather than drawing nothing, in the words the
                 chat header and the Messages list use. */}
             {canEditTime ? (
-              <button type="button" className="hit44 plan-head-control" onClick={openTimeEditor} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: '20px', fontFamily: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', cursor: 'pointer' }}>
+              <button type="button" className="hit44 plan-head-control" onClick={openTimeEditor} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 'var(--r-pill)', fontFamily: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', cursor: 'pointer' }}>
                 {Icons.calendar('white', 12)}
                 {whenText ? <><span className="sr-only">Change the time, </span>{whenText}</> : 'Set a time'}
                 {Icons.edit('rgba(255,255,255,0.8)', 12)}
               </button>
             ) : (whenText || !isCompleted) && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', borderRadius: 'var(--r-pill)', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>
                 {Icons.calendar('white', 12)} {whenText || 'Time still open'}
               </span>
             )}
@@ -384,7 +384,7 @@ export default function FlockDetail({
               // Its thumb sits 16px from the screen's edge, inside the band
               // the back swipe listens on. This drag keeps its own touches.
               data-edge-swipe="off"
-              style={{ position: 'relative', height: '44px', borderRadius: '22px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', overflow: 'hidden', touchAction: 'none', userSelect: 'none' }}
+              style={{ position: 'relative', height: '44px', borderRadius: 'var(--r-pill)', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', overflow: 'hidden', touchAction: 'none', userSelect: 'none' }}
               onTouchStart={(e) => {
                 const rect = slideRef.current.getBoundingClientRect();
                 const x = e.touches[0].clientX - rect.left;
@@ -449,9 +449,9 @@ export default function FlockDetail({
             >
               {/* Fill track: width written imperatively during the drag; the
                   empty-string resets on release hand back to this default. */}
-              <div ref={slideFillRef} style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: '44px', borderRadius: '22px', background: slideStage === 'armed' ? '#2d5a87' : colors.navyBg, transition: slidingRef.current ? 'none' : 'width 0.3s ease, background 0.2s ease' }} />
+              <div ref={slideFillRef} style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: '44px', borderRadius: 'var(--r-pill)', background: slideStage === 'armed' ? '#2d5a87' : colors.navyBg, transition: slidingRef.current ? 'none' : 'width 0.3s ease, background 0.2s ease' }} />
               {/* Thumb */}
-              <div ref={slideThumbRef} style={{ position: 'absolute', top: '3px', left: '3px', width: '38px', height: '38px', borderRadius: '19px', backgroundColor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: slidingRef.current ? 'none' : 'left 0.3s ease' }}>
+              <div ref={slideThumbRef} style={{ position: 'absolute', top: '3px', left: '3px', width: '38px', height: '38px', borderRadius: 'var(--r-pill)', backgroundColor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: slidingRef.current ? 'none' : 'left 0.3s ease' }}>
                 <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navyBg, transition: 'transform 0.15s ease' }}>{slideStage === 'armed' ? Icons.check(colors.navyBg, 16) : Icons.chevronRight(colors.navyBg, 16)}</span>
               </div>
               {/* Label */}
@@ -473,7 +473,7 @@ export default function FlockDetail({
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>Who showed up?</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>This is what sets everyone's reliability score for the night.</p>
             </div>
-            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); openAttendanceSheet(flock.id); }} style={{ padding: '9px 14px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Mark it</button>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); openAttendanceSheet(flock.id); }} style={{ padding: '9px 14px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Mark it</button>
           </div>
         )}
 
@@ -499,7 +499,7 @@ export default function FlockDetail({
                       picture arrives its box is the skeleton's ground at its
                       final size, so nothing beside or under it moves. */}
                   {showVenuePhoto && (
-                    <button type="button" className="plan-venue-photo" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', flexShrink: 0, width: '72px', height: '72px', padding: 0, margin: 0, border: 'none', borderRadius: '12px', overflow: 'hidden', backgroundColor: 'var(--skeleton-bg)', cursor: 'pointer' }}>
+                    <button type="button" className="plan-venue-photo" aria-label={`Open ${flock.venue}`} onClick={openPlanVenue} style={{ display: 'block', flexShrink: 0, width: '72px', height: '72px', padding: 0, margin: 0, border: 'none', borderRadius: 'var(--r-md)', overflow: 'hidden', backgroundColor: 'var(--skeleton-bg)', cursor: 'pointer' }}>
                       <img src={flock.venuePhoto} alt="" width="72" height="72" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                     </button>
                   )}
@@ -512,7 +512,7 @@ export default function FlockDetail({
                     <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', overflowWrap: 'break-word' }}>{flock.venue}</h3>
                     {flock.venueRating && (
                       <div style={{ display: 'flex', marginTop: '6px' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: '8px', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)' }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', background: 'var(--accent-amber-bg)', borderRadius: 'var(--r-sm)', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-amber-text)' }}>{Icons.starFilled('currentColor', 13)} {flock.venueRating}</span>
                       </div>
                     )}
                     {flock.venueAddress && (
@@ -529,14 +529,14 @@ export default function FlockDetail({
                 )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {flock.venueId && (
-                    <button className="hit44 glass-btn glass-secondary" onClick={openPlanVenue} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-secondary" onClick={openPlanVenue} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: 'var(--r-sm)', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.eye(colors.navyMid, 14)} Details
                     </button>
                   )}
                   {(flock.venueId || (flock.venueLat && flock.venueLng)) && (
                     /* openPlanDirections, above the return, says which link
                        each maps app gets and why. */
-                    <button className="hit44 glass-btn glass-navy" onClick={openPlanDirections} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-navy" onClick={openPlanDirections} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: 'var(--r-sm)', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}
@@ -555,7 +555,7 @@ export default function FlockDetail({
                   const ts = parseInt(lsGet('flock_checkin_' + flock.venueId) || '0', 10);
                   const checkedIn = ts > 0 && now - ts < 2 * 60 * 60 * 1000;
                   return (
-                    <button className="hit44 glass-btn glass-secondary" disabled={checkedIn || checkinSaving} onClick={() => handleCheckIn(flock.venueId)} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: checkedIn ? 'default' : 'pointer', opacity: checkedIn ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-secondary" disabled={checkedIn || checkinSaving} onClick={() => handleCheckIn(flock.venueId)} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: 'var(--r-sm)', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: checkedIn ? 'default' : 'pointer', opacity: checkedIn ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.check(colors.navyMid, 14)} {checkedIn ? 'Checked in' : checkinSaving ? 'Checking in…' : 'Check in'}
                     </button>
                   );
@@ -599,7 +599,7 @@ export default function FlockDetail({
               } else {
                 setCurrentScreen('chatDetail'); setShowVotePanel(true); loadPopularVenues();
               }
-            }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', marginBottom: '12px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+            }} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', marginBottom: '12px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
               {Icons.mapPin(colors.navyMid, 16)}
               <span style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ display: 'block', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-label)' }}>{isCreator ? (hasVenue ? 'Change the venue' : 'Pick a venue') : 'Vote on venues'}</span>
@@ -620,7 +620,7 @@ export default function FlockDetail({
               aria-label={`Do ${flock.name} again`}
               disabled={rerunningFlockId === flock.id}
               onClick={() => handleRerunFlock({ id: flock.id, event_time: flock.eventTime, name: flock.name })}
-              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: rerunningFlockId === flock.id ? 'wait' : 'pointer', opacity: rerunningFlockId === flock.id ? 0.6 : 1 }}
+              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: rerunningFlockId === flock.id ? 'wait' : 'pointer', opacity: rerunningFlockId === flock.id ? 0.6 : 1 }}
             >{rerunningFlockId === flock.id ? 'Starting…' : 'Do it again'}</button>
           )}
 
@@ -629,7 +629,7 @@ export default function FlockDetail({
               className="hit44 glass-btn glass-secondary"
               disabled={recapSharing}
               onClick={() => shareNightRecap(flock)}
-              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: recapSharing ? 'wait' : 'pointer', opacity: recapSharing ? 0.6 : 1 }}
+              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: recapSharing ? 'wait' : 'pointer', opacity: recapSharing ? 0.6 : 1 }}
             >{recapSharing ? 'Making the card…' : 'Share the night'}</button>
           )}
 
@@ -649,7 +649,7 @@ export default function FlockDetail({
                     same three options in App.js: only the words changed, the
                     level is what travels. */}
                 {[{ level: 1, label: 'Quiet', color: colors.steel, ink: colors.steel }, { level: 2, label: 'Steady', color: colors.amber, ink: colors.amberText }, { level: 3, label: 'Packed', color: colors.red, ink: colors.redText }].map(opt => (
-                  <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                  <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedbackState.crowdLevel === opt.level ? opt.ink : colors.navy }}>{opt.label}</span>
                   </button>
@@ -659,7 +659,7 @@ export default function FlockDetail({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>Worth the price?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ val: true, label: 'Yes', color: colors.steel, ink: colors.steel }, { val: false, label: 'No', color: colors.red, ink: colors.redText }].map(opt => (
-                  <button key={String(opt.val)} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                  <button key={String(opt.val)} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedbackState.priceWorth === opt.val ? opt.ink : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
@@ -739,11 +739,11 @@ export default function FlockDetail({
                       setFeedbackSubmitting(false);
                     }
                   }}
-                  className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: '10px', border: 'none', background: feedbackState.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedbackState.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: feedbackState.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
+                  className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: 'var(--r-sm)', border: 'none', background: feedbackState.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedbackState.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: feedbackState.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
                 >
                   {feedbackSubmitting ? 'Submitting...' : 'Submit'}
                 </button>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => rememberFeedbackDone(flock.id)} style={{ padding: '11px 18px', borderRadius: '10px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => rememberFeedbackDone(flock.id)} style={{ padding: '11px 18px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
                   Skip
                 </button>
               </div>
@@ -767,7 +767,7 @@ export default function FlockDetail({
                   by name or by link, is refused on an ended plan, so the
                   sheet this opens would have nothing that works. */}
               {!isCompleted && (
-              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: 'var(--r-pill)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 12)} Invite
               </button>
               )}
@@ -872,7 +872,7 @@ export default function FlockDetail({
             ) : rosterError ? (
               <div style={{ textAlign: 'center', padding: '8px 0' }}>
                 <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '0 0 6px' }}>Couldn't load who's going.</p>
-                <button className="hit44" onClick={retryRoster} style={{ minHeight: '44px', padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+                <button className="hit44" onClick={retryRoster} style={{ minHeight: '44px', padding: '8px 14px', borderRadius: 'var(--r-sm)', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
               </div>
             ) : (
               /* The row that is coming, in its shape: faces over first names,
@@ -949,7 +949,7 @@ export default function FlockDetail({
                     {/* navyMidBg, not navyBg: in dark mode navyBg equals
                         --bg-tertiary, so the voted pill would match the
                         unvoted one exactly. navyMidBg differs in both themes. */}
-                    <span style={{ padding: '4px 12px', borderRadius: '14px', fontSize: 'var(--t-meta)', fontWeight: '600', backgroundColor: isMyVote ? colors.navyMidBg : 'var(--bg-tertiary)', color: isMyVote ? 'white' : colors.navy, flexShrink: 0 }}>
+                    <span style={{ padding: '4px 12px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-meta)', fontWeight: '600', backgroundColor: isMyVote ? colors.navyMidBg : 'var(--bg-tertiary)', color: isMyVote ? 'white' : colors.navy, flexShrink: 0 }}>
                       {count}
                     </span>
                   </VoteRow>
@@ -998,7 +998,7 @@ export default function FlockDetail({
                   confirmClick(e);
                   setConfirmingPlan(true);
                   try { await confirmFlockPlan(flock.id); } finally { setConfirmingPlan(false); }
-                }} style={{ padding: '7px 12px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0, opacity: confirmingPlan ? 0.6 : 1 }}>
+                }} style={{ padding: '7px 12px', borderRadius: 'var(--r-sm)', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0, opacity: confirmingPlan ? 0.6 : 1 }}>
                   {confirmingPlan ? 'Locking...' : 'Lock it in'}
                 </button>
               )}
@@ -1013,7 +1013,7 @@ export default function FlockDetail({
         {showTimeEditor && (
           <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowTimeEditor(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
             <DialogBehavior onClose={() => setShowTimeEditor(false)} label="Change the time" />
-            <div ref={timeSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', paddingBottom: 'calc(20px + var(--safe-bottom))', width: '100%' }}>
+            <div ref={timeSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '20px', paddingBottom: 'calc(20px + var(--safe-bottom))', width: '100%' }}>
               {/* The grabber and the heading are the handle, run out to the
                   edges of the sheet. The layout is what it was. */}
               <div className="sheet-grab" {...timeSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '20px 20px 0' }}>
@@ -1025,14 +1025,14 @@ export default function FlockDetail({
               <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Day</label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '14px' }}>
                 {[...FLOCK_DAY_CHOICES, ...(isDateKey(timeEditDay) ? [timeEditDay] : [])].map(d => (
-                  <button className="hit44" key={d} onClick={() => setTimeEditDay(d)} style={{ padding: '10px', borderRadius: '10px', border: timeEditDay === d ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditDay === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>{dayChipLabel(d)}</button>
+                  <button className="hit44" key={d} onClick={() => setTimeEditDay(d)} style={{ padding: '10px', borderRadius: 'var(--r-sm)', border: timeEditDay === d ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditDay === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>{dayChipLabel(d)}</button>
                 ))}
               </div>
 
               <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Time</label>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
                 {FLOCK_HOUR_CHOICES.map(t => (
-                  <button className="hit44" key={t} onClick={() => setTimeEditHour(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: timeEditHour === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditHour === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>{t}</button>
+                  <button className="hit44" key={t} onClick={() => setTimeEditHour(t)} style={{ padding: '6px 14px', borderRadius: 'var(--r-pill)', border: timeEditHour === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditHour === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>{t}</button>
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', fontWeight: '500' }}>
@@ -1040,7 +1040,7 @@ export default function FlockDetail({
               </p>
 
               <div style={{ display: 'flex', gap: '8px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowTimeEditor(false)} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => setShowTimeEditor(false)} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Cancel</button>
                 <button className="hit44 glass-btn glass-navy" disabled={savingEventTime} onClick={async () => {
                   // The day chip lands on today once the plan's own hour has
                   // passed, so a 10 PM pick at 10:30 PM was a plan in the
@@ -1062,7 +1062,7 @@ export default function FlockDetail({
                   } finally {
                     setSavingEventTime(false);
                   }
-                }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: savingEventTime ? 0.6 : 1 }}>
+                }} style={{ flex: 1, padding: '12px', borderRadius: 'var(--r-md)', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', opacity: savingEventTime ? 0.6 : 1 }}>
                   {savingEventTime ? 'Saving...' : 'Save time'}
                 </button>
               </div>
@@ -1077,7 +1077,7 @@ export default function FlockDetail({
             overlay with a fade it covered the Lock it in row on first view,
             and the scroll area's 84px of padding only helped once scrolled. */}
         <div style={{ flexShrink: 0, padding: '8px 14px 14px', display: 'flex', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)' }}>
-          <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ minHeight: '44px', padding: '0 20px', background: colors.navyBg, border: 'none', borderRadius: '22px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.16)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '7px', pointerEvents: 'auto' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={() => setCurrentScreen('chatDetail')} style={{ minHeight: '44px', padding: '0 20px', background: colors.navyBg, border: 'none', borderRadius: 'var(--r-pill)', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 6px 20px rgba(13,40,71,0.16)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '7px', pointerEvents: 'auto' }}>
             {Icons.chat('white', 16)} Open chat
           </button>
         </div>

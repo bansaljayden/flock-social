@@ -2092,10 +2092,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       {poiNotice && (
         // Centred low on the map and kept 64px clear of each side, so it never
         // sits over the my-location button or the map credit at the right edge.
-        <p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', width: 'max-content', maxWidth: 'calc(100% - 128px)', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', textAlign: 'center' }}>{poiNotice}</p>
+        <p role="status" aria-live="polite" ref={poiNoticeRef} style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: 'var(--r-sm)', width: 'max-content', maxWidth: 'calc(100% - 128px)', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', textAlign: 'center' }}>{poiNotice}</p>
       )}
       {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
-        <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
+        <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
       )}
       {/* Both panels stand on the map's own ground, the land colour of the
           theme's basemap, instead of a fixed navy that flashed a dark box in
@@ -2306,7 +2306,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
           position: 'absolute', bottom: '80px', right: '12px',
-          width: '44px', height: '44px', borderRadius: '22px',
+          width: '44px', height: '44px', borderRadius: 'var(--r-pill)',
           border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
           boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -2328,7 +2328,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       <div style={{
         position: 'absolute', bottom: '184px', right: '12px',
         display: 'flex', flexDirection: 'column',
-        borderRadius: '22px', overflow: 'hidden',
+        borderRadius: 'var(--r-xl)', overflow: 'hidden',
         boxShadow: '0 2px 8px rgba(0,0,0,0.25)', zIndex: 5,
       }}>
         <button aria-label="Zoom in" className="hit44"
@@ -2360,7 +2360,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         onClick={toggleMapType}
         style={{
           position: 'absolute', bottom: '132px', right: '12px',
-          width: '44px', height: '44px', borderRadius: '22px',
+          width: '44px', height: '44px', borderRadius: 'var(--r-pill)',
           border: 'none', background: 'var(--bg-card-solid)', cursor: 'pointer',
           boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',

@@ -93,7 +93,7 @@ export function roostPlanPriceLabel(status) {
 const buttonStyle = (primary) => ({
   width: '100%',
   padding: '8px',
-  borderRadius: '8px',
+  borderRadius: 'var(--r-sm)',
   border: primary ? 'none' : '1px solid #2d5a87',
   background: primary ? '#2d5a87' : 'var(--bg-card-solid)',
   color: primary ? 'white' : '#2d5a87',

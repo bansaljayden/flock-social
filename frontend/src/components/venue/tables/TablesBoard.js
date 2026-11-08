@@ -143,7 +143,7 @@ function TableTile({ table, clockAt, colors }) {
   return (
     <li
       data-state={table.state}
-      style={{ minWidth: 0, boxSizing: 'border-box', padding: '10px', borderRadius: '10px', backgroundColor: look.background, border: look.border, overflowWrap: 'anywhere' }}
+      style={{ minWidth: 0, boxSizing: 'border-box', padding: '10px', borderRadius: 'var(--r-sm)', backgroundColor: look.background, border: look.border, overflowWrap: 'anywhere' }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', columnGap: '6px' }}>
         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: look.ink, margin: 0 }}>Table {table.number}</p>
@@ -177,7 +177,7 @@ export default function TablesBoard({ data, colors, now, timeZone }) {
   // global shimmer until the read answers, never "couldn't load" about a read
   // that has not failed. Roughly the card's height with a small floor in it.
   if (data === undefined) {
-    return <div aria-hidden="true" data-testid="tables-board-loading" className="skeleton" style={{ height: '220px', borderRadius: '12px', marginBottom: '12px' }} />;
+    return <div aria-hidden="true" data-testid="tables-board-loading" className="skeleton" style={{ height: '220px', borderRadius: 'var(--r-md)', marginBottom: '12px' }} />;
   }
 
   if (!hasTables) {

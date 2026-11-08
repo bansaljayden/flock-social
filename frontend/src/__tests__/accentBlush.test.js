@@ -152,7 +152,7 @@ const heroProps = (over = {}) => ({
 });
 // The hero's face discs: 28px round spans (the "+N" is min-width, not width).
 const faceDiscs = (root) => [...root.querySelectorAll('section span')]
-  .filter((s) => styleOf(s).width === '28px' && styleOf(s)['border-radius'] === '999px');
+  .filter((s) => styleOf(s).width === '28px' && styleOf(s)['border-radius'] === 'var(--r-pill)');
 
 const pulseProps = (over = {}) => ({
   active: null,
@@ -266,7 +266,7 @@ describe('1 and 2: the Nest hero', () => {
     expect(styleOf(pill)).toMatchObject({
       'background-color': 'var(--accent-blush)',
       color: 'var(--on-accent-blush)',
-      'border-radius': '999px',
+      'border-radius': 'var(--r-pill)',
       padding: '3px 10px 3px 8px',
       margin: '-3px 0',
     });
@@ -343,7 +343,7 @@ describe('5: every other Locked in chip', () => {
   test("the Messages list's chip and the guest page's tag wear blush for Locked in only", () => {
     const list = strip(read('screens', 'ChatListScreen.js'));
     expect(list).toContain("const lockedIn = f.status === 'confirmed';");
-    expect(list).toContain("color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: '6px', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>");
+    expect(list).toContain("color: lockedIn ? 'var(--on-accent-blush)' : statusTextColor, backgroundColor: lockedIn ? 'var(--accent-blush)' : `${statusColor}15`, padding: '1px 6px', borderRadius: 'var(--r-xs)', whiteSpace: 'nowrap', flexShrink: 0 }}>{statusLabel}</span>");
     expect(read('website', 'GuestInvite.js')).toContain('{chosen && <span className="gi-tag gi-tag--locked">Locked in</span>}');
     expect(read('website', 'GuestInvite.js')).toContain('{mine && <span className="gi-tag">Your vote</span>}');
     const css = strip(read('website', 'GuestInvite.css'), 'x.css');
@@ -359,7 +359,7 @@ describe('6: the invite row', () => {
     ];
     const view = mount(<NestRows rows={rows} />);
     const iconOf = (kind) => view.querySelector(`[data-nest-row="${kind}"] .flock-icon-wrap`).parentElement;
-    expect(styleOf(iconOf('invite'))).toMatchObject({ 'background-color': 'var(--accent-blush)', 'border-radius': '999px', padding: '7px', margin: '-7px' });
+    expect(styleOf(iconOf('invite'))).toMatchObject({ 'background-color': 'var(--accent-blush)', 'border-radius': 'var(--r-pill)', padding: '7px', margin: '-7px' });
     expect(styleOf(iconOf('invite').firstChild).color).toBe('var(--on-accent-blush)');
     expect(styleOf(iconOf('vote'))['background-color']).toBeUndefined();
     expect(count(view.innerHTML, 'var(--accent-blush)')).toBe(1);
@@ -392,7 +392,7 @@ describe('3: Out tonight', () => {
     expect(styleOf(plan)).toMatchObject({
       'background-color': 'var(--accent-blush)',
       color: 'var(--on-accent-blush)',
-      'border-radius': '999px',
+      'border-radius': 'var(--r-pill)',
       padding: '0 9px 0 11px',
       'min-height': '32px',
       margin: '0 -9px 0 -11px',
@@ -441,7 +441,7 @@ describe('4: the plan screen', () => {
     const view = mount(React.createElement(FlockDetail, detailProps(plan())));
     const locked = badge(view, 'Locked in');
     expect(locked).toBeTruthy();
-    expect(styleOf(locked)).toMatchObject({ background: 'var(--accent-blush)', color: 'var(--on-accent-blush)', 'border-radius': '20px' });
+    expect(styleOf(locked)).toMatchObject({ background: 'var(--accent-blush)', color: 'var(--on-accent-blush)', 'border-radius': 'var(--r-pill)' });
     // The badge and nothing else on the screen.
     expect(count(view.innerHTML, 'var(--accent-blush)')).toBe(1);
     expect(count(view.innerHTML, 'var(--on-accent-blush)')).toBe(1);

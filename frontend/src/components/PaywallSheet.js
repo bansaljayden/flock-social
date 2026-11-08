@@ -517,7 +517,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
           minWidth: 0,
           padding: '12px',
           textAlign: 'left',
-          borderRadius: '14px',
+          borderRadius: 'var(--r-md)',
           border: active ? `2px solid ${accent}` : '1px solid var(--border-subtle)',
           backgroundColor: active ? (isDark ? 'rgba(109,154,195,0.10)' : 'rgba(45,90,135,0.06)') : 'var(--bg-card-solid)',
           cursor: 'pointer',
@@ -527,7 +527,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>{yearly ? 'Yearly' : 'Monthly'}</span>
           {yearly && (
-            <span style={{ fontSize: '10px', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: '999px', padding: '1px 7px', whiteSpace: 'nowrap' }}>Best value</span>
+            <span style={{ fontSize: '10px', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: 'var(--r-pill)', padding: '1px 7px', whiteSpace: 'nowrap' }}>Best value</span>
           )}
         </div>
         <div style={{ color: 'var(--text-primary)', marginBottom: '3px', whiteSpace: 'nowrap' }}>
@@ -561,7 +561,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
       <button type="button" className="hit44" onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Privacy</button>
     </>
   );
-  const cta = { width: '100%', padding: '15px', borderRadius: '14px', fontSize: '15px', fontWeight: '700', fontFamily: FONT };
+  const cta = { width: '100%', padding: '15px', borderRadius: 'var(--r-md)', fontSize: '15px', fontWeight: '700', fontFamily: FONT };
 
   // WHILE THE STORE OR STRIPE ANSWERS: the two plan cards and the button, in
   // planCard's and cta's own sizes, with no price in them, because none has
@@ -575,14 +575,14 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
       <div aria-busy="true">
         <div aria-hidden="true" style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
           {[96, 56].map((w) => (
-            <div key={w} style={{ flex: 1, minWidth: 0, height: '92px', boxSizing: 'border-box', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
+            <div key={w} style={{ flex: 1, minWidth: 0, height: '92px', boxSizing: 'border-box', padding: '12px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
               <SkeletonBar width={w} height={13} style={{ margin: '2px 0 9px' }} />
-              <SkeletonBar width="72%" height={20} radius={5} style={{ marginBottom: '7px' }} />
+              <SkeletonBar width="72%" height={20} radius="var(--r-xs)" style={{ marginBottom: '7px' }} />
               <SkeletonBar width="58%" height={10} />
             </div>
           ))}
         </div>
-        <SkeletonBar height={49} radius={14} />
+        <SkeletonBar height={49} radius="var(--r-md)" />
       </div>
     </>
   );
@@ -632,7 +632,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
           onClick={onClose}
           disabled={busy || restoring}
           aria-label="Close"
-          style={{ position: 'absolute', top: '10px', right: '12px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '15px', border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: busy || restoring ? 'default' : 'pointer', padding: 0 }}
+          style={{ position: 'absolute', top: '10px', right: '12px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 'var(--r-pill)', border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: busy || restoring ? 'default' : 'pointer', padding: 0 }}
         >
           {Icons.x('currentColor', 16)}
         </button>
@@ -737,7 +737,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
               <button
                 type="button"
                 onClick={loadWeb}
-                style={{ marginTop: '6px', padding: '8px 14px', borderRadius: '12px', border: '1px solid var(--border-subtle)', background: 'var(--bg-card-solid)', fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: FONT }}
+                style={{ marginTop: '6px', padding: '8px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', background: 'var(--bg-card-solid)', fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: FONT }}
               >
                 Try again
               </button>
