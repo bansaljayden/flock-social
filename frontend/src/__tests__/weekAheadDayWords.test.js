@@ -145,11 +145,11 @@ describe('a cafe read by day', () => {
   test('its tiles and its card say today and day, with its own morning numbers', async () => {
     dashboard(CAFE);
     await settle();
-    expect(tile("Today's Peak")).toBe("Today's Peak60around 8 AM");
-    expect(tile('Biggest Day Ahead')).toBe('Biggest Day AheadThuprojected 50 at 7 AM');
+    expect(tile("Today's peak")).toBe("Today's peak60around 8 AM");
+    expect(tile('Biggest day ahead')).toBe('Biggest day aheadThuprojected 50 at 7 AM');
     expect(card('Week Ahead (projected peak)')).toMatch(/^Week Ahead \(projected peak\)Thu50Fri48Sat48Sun50Mon45Tue45/);
-    expect(screen.queryByText("Tonight's Peak")).toBeNull();
-    expect(screen.queryByText('Biggest Night Ahead')).toBeNull();
+    expect(screen.queryByText("Tonight's peak")).toBeNull();
+    expect(screen.queryByText('Biggest night ahead')).toBeNull();
     expect(screen.queryByText('Week Ahead (projected evening peak)')).toBeNull();
   });
 });
@@ -158,17 +158,17 @@ describe('a bar read on the evening', () => {
   test('its tiles and its card read as they always did', async () => {
     dashboard(BAR);
     await settle();
-    expect(tile("Tonight's Peak")).toBe("Tonight's Peak90around 6 PM");
-    expect(tile('Biggest Night Ahead')).toBe('Biggest Night AheadFriprojected 74 at 10 PM');
+    expect(tile("Tonight's peak")).toBe("Tonight's peak90around 6 PM");
+    expect(tile('Biggest night ahead')).toBe('Biggest night aheadFriprojected 74 at 10 PM');
     expect(card('Week Ahead (projected evening peak)')).toMatch(/^Week Ahead \(projected evening peak\)Thu64Fri74/);
-    expect(screen.queryByText("Today's Peak")).toBeNull();
-    expect(screen.queryByText('Biggest Day Ahead')).toBeNull();
+    expect(screen.queryByText("Today's peak")).toBeNull();
+    expect(screen.queryByText('Biggest day ahead')).toBeNull();
   });
 
   test('a small-hours peak still belongs to its night', async () => {
     dashboard({ ...BAR, week: BAR.week.map((d) => (d.weekday === 'Sat' ? { ...d, peakScore: 96, peakHour: '1 AM', afterMidnight: true } : d)) });
     await settle();
-    expect(tile('Biggest Night Ahead')).toBe('Biggest Night AheadSatprojected 96 at 1 AM that night');
+    expect(tile('Biggest night ahead')).toBe('Biggest night aheadSatprojected 96 at 1 AM that night');
   });
 });
 
@@ -180,20 +180,20 @@ describe('closed days', () => {
     const text = card('Week Ahead (projected peak)');
     expect(text).toMatch(/Mon–Tue–/);
     expect(text).toMatch(/A dash marks a day your Google listing shows you closed\.$/);
-    expect(tile('Biggest Day Ahead')).toBe('Biggest Day AheadThuprojected 50 at 7 AM');
+    expect(tile('Biggest day ahead')).toBe('Biggest day aheadThuprojected 50 at 7 AM');
   });
 
   test('a week closed every day names no biggest day and no number', async () => {
     dashboard({ ...CAFE, week: CAFE.week.map((d) => ({ ...d, peakScore: null, peakHour: null, method: null, closed: true })) });
     await settle();
-    expect(tile('Biggest Day Ahead')).toBe('Biggest Day Ahead–');
+    expect(tile('Biggest day ahead')).toBe('Biggest day ahead–');
   });
 
   test('closed today says so in place of a peak', async () => {
     dashboard({ ...CAFE, today: { date: '2026-11-04', weekday: 'Wed', peakScore: null, peakHour: null, method: null, closed: true } });
     await settle();
     // With no hours read today, the tile takes the week's word.
-    expect(tile("Today's Peak")).toBe("Today's Peak–Closed today");
+    expect(tile("Today's peak")).toBe("Today's peak–Closed today");
   });
 });
 
@@ -203,8 +203,8 @@ describe('an answer from before the server read each day on its own hours', () =
     dashboard(old);
     await settle();
     // The strongest of the last eight bars, 4 PM to 11 PM.
-    expect(tile("Tonight's Peak")).toBe("Tonight's Peak90around 6 PM");
-    expect(screen.getByText('Biggest Night Ahead')).toBeTruthy();
+    expect(tile("Tonight's peak")).toBe("Tonight's peak90around 6 PM");
+    expect(screen.getByText('Biggest night ahead')).toBeTruthy();
     expect(screen.getByText('Week Ahead (projected evening peak)')).toBeTruthy();
   });
 });

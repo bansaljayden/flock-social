@@ -29,7 +29,7 @@ const DASH = read('frontend', 'src', 'screens', 'VenueDashboard.js');
 const ROUTE = read('backend', 'routes', 'venueDashboard.js');
 
 function tile() {
-  const start = DASH.indexOf("{weekByDay ? 'Biggest Day Ahead' : 'Biggest Night Ahead'}</p>");
+  const start = DASH.indexOf("{weekByDay ? 'Biggest day ahead' : 'Biggest night ahead'}</p>");
   expect(start).toBeGreaterThan(-1);
   return DASH.slice(start, DASH.indexOf('</div>', start));
 }

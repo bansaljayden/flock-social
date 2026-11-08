@@ -1550,7 +1550,7 @@ export default function ConsumerVenueCard({
                           pulsing green dot and "Live Occupancy", which said live
                           whatever the age; the age is the honest half of that,
                           so it is the half that stays. */}
-                      <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Venue sensor</span>
+                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)' }}>Venue sensor</span>
                       {ageStr && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{ageStr}</span>}
                     </div>
 

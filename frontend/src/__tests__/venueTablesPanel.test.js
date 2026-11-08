@@ -1394,7 +1394,11 @@ describe('the tab bar', () => {
     const { container } = dashboard({ ownerSensorData: SENSOR, ...overrides });
     await settle();
     expect(tabBar()).toEqual(['Analytics', 'Map', 'Promotions', 'Events', 'Reviews', 'Settings']);
-    expect(container.textContent).not.toMatch(/Right now|Tables in use by hour|Needs a server/);
+    // The tables board's "Right now" is a section heading; the dashboard's own
+    // live tile reads "Right now" too since its labels went sentence case
+    // (2026-11-07), so the board is looked for by its heading.
+    expect([...container.querySelectorAll('h3')].map((h) => h.textContent)).not.toContain('Right now');
+    expect(container.textContent).not.toMatch(/Tables in use by hour|Needs a server/);
     expect(container.textContent).not.toMatch(/coming soon/i);
   });
 

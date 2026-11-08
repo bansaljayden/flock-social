@@ -1667,7 +1667,7 @@ describe('GuestInvite: the budget and the still-in question, from the link', () 
     expect(marks.map(Boolean)).toEqual([true, false, false, false]);
     // Glyph AND the words, from the icon system, at the 12px floor: never a
     // tint on its own, the same rule the RSVP answer is held to.
-    expect(marks[0].textContent.trim()).toBe('still in');
+    expect(marks[0].textContent.trim()).toBe('Still in');
     const svg = marks[0].querySelector('svg');
     expect(svg).not.toBeNull();
     expect(Number(svg.getAttribute('width'))).toBeGreaterThanOrEqual(12);

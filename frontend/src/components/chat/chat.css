@@ -67,13 +67,16 @@
      boxes is 16 - 6 - 0.9 = 9.1, rounded to 9. */
   --chat-run-gap: 9px;
 
-  /* Name label: cap height 8, which is 11 to 12 px semibold. 11.5 measures
-     an 8.05 cap in the system face. Tracked about +1. */
-  --chat-name-size: 11.5px;
-  --chat-name-line: 12px;
-  --chat-name-track: 1px;
+  /* Name label. It was the capture's tracked capitals (11.5px, +1); since
+     2026-11-07 it is the app's sentence-case label, --t-label at 600, the
+     Nest's style, with no tracking. The line is 16 so a descender in a
+     name ("the maintainer") clears the bar under it. */
+  --chat-name-size: var(--t-label);
+  --chat-name-line: 16px;
+  --chat-name-track: 0;
 
-  --chat-divider-size: 9px;
+  /* The day divider ("Today"), the same label role in --chat-meta. */
+  --chat-divider-size: var(--t-label);
   --chat-notice-size: 10px;
   --chat-notice-line: 20px;
 

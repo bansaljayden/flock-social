@@ -1532,12 +1532,12 @@ export default function VenueDashboard({
           {/* Key metrics — all computed, none invented */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Right now</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: intelReady && venueIntel.now.score > 84 ? colors.red : colors.steel, margin: '4px 0 0' }}>{intelReady ? `${venueIntel.now.score}` : '–'}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? (venueIntel.now.method === 'ml' ? venueIntel.now.label : `${venueIntel.now.label} · typical for your category`) : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{todayByDay ? "Today's Peak" : "Tonight's Peak"}</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{todayByDay ? "Today's peak" : "Tonight's peak"}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{tonightPeak ? tonightPeak.score : '–'}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{tonightPeak ? `around ${spokenHourLabel(tonightPeak.hour)}` : (todayIntel && todayIntel.closed ? 'Closed today' : '')}</p>
             </div>
@@ -1549,7 +1549,7 @@ export default function VenueDashboard({
                   route lists a plan going here, or still deciding with this venue
                   as its pick or in a member's vote, so every surface says "in their
                   vote" and nothing more. */}
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In their vote</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>In their vote</p>
               {/* A read that never landed is not zero. The other three tiles on
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
@@ -1558,7 +1558,7 @@ export default function VenueDashboard({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{weekByDay ? 'Biggest Day Ahead' : 'Biggest Night Ahead'}</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{weekByDay ? 'Biggest day ahead' : 'Biggest night ahead'}</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{weekPeak ? weekPeak.weekday : '–'}</p>
               {/* Each night runs into its small hours and keeps its evening's
                   name (routes/venueDashboard.js, /intelligence), so a club's
@@ -1817,7 +1817,7 @@ export default function VenueDashboard({
               sensor block, so it was never shown. */}
           {ownerSensorData && !ownerSensorData.sensor_data && (
             <div style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '12px' }}>
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Last hour check-ins</p>
               <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People who checked in from the app or tapped a Flock tag at your venue.</p>
             </div>
@@ -1886,12 +1886,12 @@ export default function VenueDashboard({
                         measures. A sensor that sends its room estimate is
                         labelled for what that is, an estimate, with the
                         range the device gives around it. */}
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>{hasOccupancy ? 'Estimated inside' : 'In view now'}</p>
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>{hasOccupancy ? 'Estimated inside' : 'In view now'}</p>
                     <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{hasOccupancy ? sd.occupancy : sd.thermal_headcount}</p>
                     {band && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{band}</p>}
                   </div>
                   <div>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise level</p>
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Noise level</p>
                     {/* No dB figure here either, and for the venue owner it
                         matters more: a number with a unit on an operator's
                         dashboard is the kind of thing that ends up in a noise
@@ -1904,11 +1904,11 @@ export default function VenueDashboard({
                     ) : <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>No reading yet</p>}
                   </div>
                   <div>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Today's Door Count</p>
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Today's door count</p>
                     <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{todaysIr}</p>
                   </div>
                   <div>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
+                    <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: 0 }}>Last hour check-ins</p>
                     <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
                   </div>
                 </div>
@@ -1934,7 +1934,7 @@ export default function VenueDashboard({
                   });
                   return (
                     <div>
-                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase' }}>Last 24 Hours</p>
+                      <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Last 24 hours</p>
                       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '52px' }}>
                         {slots.map((r, i) => {
                           if (!r) {

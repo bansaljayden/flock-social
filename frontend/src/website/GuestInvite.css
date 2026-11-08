@@ -174,10 +174,8 @@
 /* An eyebrow, not a badge: plain text, no pill, no fill, no border. */
 .gi .gi-eyebrow {
   margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--gi-accent);
   overflow-wrap: anywhere;
 }
@@ -207,17 +205,15 @@
 }
 
 .gi-fact-k {
-  /* 4.5rem is the narrowest column that still fits "WHERE" with its glyph, and
+  /* 4.5rem is the narrowest column that still fits "Where" with its glyph, and
      it is the difference between "Monday, Aug 17 - 11:51 PM" fitting on one
      line at 320px and wrapping onto two. */
   flex: 0 0 4.5rem;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--gi-ink-3);
 }
 
@@ -263,10 +259,8 @@
 .gi-sec:first-of-type { border-top: 0; margin-top: 0; padding-top: 0; }
 
 .gi h2 {
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--gi-ink-3);
   margin: 0 0 14px;
 }
@@ -364,10 +358,8 @@
   justify-content: center;
   gap: 5px;
   margin-top: 7px;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: var(--t-label);
+  font-weight: 600;
   color: var(--gi-ink-3);
 }
 
@@ -418,10 +410,8 @@
 
 .gi-who-kind {
   flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: var(--t-meta);
+  font-weight: 600;
   color: var(--gi-ink-3);
 }
 
@@ -436,10 +426,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  font-size: var(--t-meta);
+  font-weight: 600;
   color: var(--gi-accent);
   white-space: nowrap;
 }
@@ -842,10 +830,8 @@
 
 .gi-venue-count {
   flex-shrink: 0;
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--t-meta);
+  font-weight: 600;
   color: var(--gi-ink-3);
   font-variant-numeric: tabular-nums;
 }

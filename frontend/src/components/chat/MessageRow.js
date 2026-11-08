@@ -406,11 +406,9 @@ function MessageRow({
       <span
         style={{
           display: 'block',
-          fontSize: '10px',
-          lineHeight: '12px',
-          fontWeight: 700,
-          letterSpacing: '0.6px',
-          textTransform: 'uppercase',
+          fontSize: 'var(--t-meta)',
+          lineHeight: '15px',
+          fontWeight: 600,
           color: colour,
         }}
       >

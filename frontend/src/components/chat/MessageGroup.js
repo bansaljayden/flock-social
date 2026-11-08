@@ -170,7 +170,6 @@ function MessageGroup({
             lineHeight: 'var(--chat-name-line)',
             fontWeight: 600,
             letterSpacing: 'var(--chat-name-track)',
-            textTransform: 'uppercase',
             color: colour,
           }}
         >

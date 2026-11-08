@@ -34,10 +34,8 @@ export default function DayDivider({ label }) {
       <span
         style={{
           fontSize: 'var(--chat-divider-size)',
-          lineHeight: '12px',
-          fontWeight: 700,
-          letterSpacing: '0.9px',
-          textTransform: 'uppercase',
+          lineHeight: '16px',
+          fontWeight: 600,
           color: 'var(--chat-meta)',
         }}
       >

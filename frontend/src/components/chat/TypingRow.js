@@ -175,11 +175,9 @@ export default function TypingRow({ members, ground = 'var(--chat-ground)' }) {
                 )}
                 <span
                   style={{
-                    fontSize: '10px',
-                    lineHeight: '10px',
-                    fontWeight: 700,
-                    letterSpacing: '0.6px',
-                    textTransform: 'uppercase',
+                    fontSize: 'var(--t-meta)',
+                    lineHeight: '14px',
+                    fontWeight: 600,
                     color: colour,
                   }}
                 >

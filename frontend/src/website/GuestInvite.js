@@ -1659,7 +1659,7 @@ export default function GuestInvite() {
                     {/* Somebody who answered the link but has no account. Worth
                         saying, because it is the difference between the people
                         in the chat and the people who only answered. */}
-                    {p.isGuest && <span className="gi-who-kind">guest</span>}
+                    {p.isGuest && <span className="gi-who-kind">Guest</span>}
                     {/* Said "still in" tonight. Drawn only while the window is
                         open: outside it the flag is a fact about a night
                         nobody is being asked about, and a plan can carry it
@@ -1668,7 +1668,7 @@ export default function GuestInvite() {
                     {reconfirm && p.reconfirmed && (
                       <span className="gi-who-still">
                         {Icons.checkDouble('var(--gi-accent)', 12)}
-                        still in
+                        Still in
                       </span>
                     )}
                     {/* The glyph is decoration, so the answer is spelled out

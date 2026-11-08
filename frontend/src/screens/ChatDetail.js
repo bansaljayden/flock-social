@@ -4181,8 +4181,14 @@ export default function ChatDetail({
                           <>
                             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more answers</p>
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people in the group chat shared an amount. Skips and guest answers do not count towards those three.
+                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. The group number shows once everyone has.
                             </p>
+                            {/* The rule behind the wait, one tap away rather
+                                than a paragraph in the box (audit 2026-11-07). */}
+                            <details style={{ marginTop: '6px' }}>
+                              <summary style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>How this works</summary>
+                              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>There is a group number only if at least three people in the group chat shared an amount. Skips and guest answers do not count towards those three.</p>
+                            </details>
                           </>
                         )}
                       </div>
@@ -4216,7 +4222,7 @@ export default function ChatDetail({
                          far and closes the budget, so anyone who has not
                          answered yet no longer can. */
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 8px', lineHeight: 1.5 }}>
-                        Locking now sets the group number from the amounts already shared and closes the budget. Anyone who has not answered will not be able to.
+                        Locking sets the group number from the answers so far and closes the budget.
                       </p>
                     )}
                     {/* No reminder once the plan has ended. Nobody can answer
