@@ -4404,7 +4404,7 @@ export default function ChatDetail({
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>What was the total?</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy }}>$</span>
-                        <SearchInputLocal aria-label="Bill total" type="number" inputMode="decimal" initialValue={billTotal} onCommit={setBillTotal} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: '16px', fontWeight: '600' }} />
+                        <SearchInputLocal aria-label="Bill total" type="number" inputMode="decimal" initialValue={billTotal} onCommit={setBillTotal} placeholder="0.00" style={{ ...styles.input, paddingLeft: '28px', fontSize: 'var(--t-body)', fontWeight: '600' }} />
                       </div>
                     </div>
                     <div style={{ marginBottom: '14px' }}>

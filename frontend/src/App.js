@@ -20129,7 +20129,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           value={value} placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           autoComplete="off" data-lpignore="true" data-form-type="other"
-          style={{ width: suffix ? '140px' : '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+          style={{ width: suffix ? '140px' : '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
         />
         {suffix && <span style={{ fontSize: 'var(--t-label)', color: t.hint }}>{suffix}</span>}
       </div>
@@ -20145,7 +20145,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       <input
         type="time" aria-label={ariaLabel} value={value || ''}
         onChange={(e) => onChange(e.target.value)}
-        style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+        style={{ padding: '12px 14px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
       />
     );
   };
@@ -23041,12 +23041,12 @@ const FlockApp = () => {
       }}
     >
       <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{withSupportAddress(noticeText)}</span>
+        <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-body)', lineHeight: 1.45, color: '#f1ede0' }}>{withSupportAddress(noticeText)}</span>
         <button
           type="button"
           className="hit44"
           onClick={() => { setLinkNote(''); setSessionNote(''); setCheckinNote(''); setInviteNote(''); }}
-          style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+          style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: 'var(--t-label)', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
         >
           Dismiss
         </button>

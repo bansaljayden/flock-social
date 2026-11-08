@@ -179,7 +179,7 @@ export default function NudgeRow({
             border: '1px solid var(--chat-accent)',
             background: 'transparent',
             color: 'var(--chat-accent)',
-            fontSize: '12px',
+            fontSize: 'var(--t-meta)',
             fontWeight: 600,
             lineHeight: '18px',
             cursor: 'pointer',

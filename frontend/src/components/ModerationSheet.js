@@ -204,18 +204,18 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
 
   const sheetBtn = {
     width: '100%', padding: '15px 16px', textAlign: 'left', border: 'none',
-    backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: '15px',
+    backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)',
     fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px',
     borderBottom: '1px solid var(--border-subtle)', fontFamily: FONT,
   };
   const ghostBtn = {
     flex: 1, padding: '13px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)',
-    backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: '14px',
+    backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-body)',
     fontWeight: '600', cursor: 'pointer', fontFamily: FONT,
   };
   const dangerBtn = (disabled) => ({
     flex: 2, padding: '13px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: '#EF4444',
-    color: 'white', fontSize: '14px', fontWeight: '700', fontFamily: FONT,
+    color: 'white', fontSize: 'var(--t-body)', fontWeight: '700', fontFamily: FONT,
     cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1,
   });
 
@@ -254,7 +254,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
 
         {mode === 'menu' && (
           <div>
-            <p style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0 12px' }}>{who}</p>
+            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', textAlign: 'center', margin: '8px 0 12px' }}>{who}</p>
             <button style={sheetBtn} onClick={() => setMode('report')}>
               <RowIcon glyph={Icons.flag} color="var(--text-primary)" /> Report {reportingContent ? noun : who}
             </button>
@@ -269,15 +269,15 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
 
         {mode === 'report' && (
           <div style={{ padding: '4px 16px 20px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 4px' }}>Why are you reporting this?</h3>
+            <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 4px' }}>Why are you reporting this?</h3>
             {/* "Your report is anonymous" was not true: content_reports stores
                 reporter_id and the admin queue shows it. What is true, and what
                 the user is actually worried about, is that the other person is
                 never told. Say that instead. */}
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>We never tell them who reported. Every report is reviewed.</p>
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>We never tell them who reported. Every report is reviewed.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
               {REASONS.map(r => (
-                <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: 'var(--r-md)', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>
+                <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: 'var(--r-md)', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>
               ))}
             </div>
             {/* fontSize 16px, and it is not a style preference.
@@ -304,8 +304,8 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
 
         {mode === 'reported' && (
           <div style={{ padding: '4px 16px 20px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 6px' }}>Report sent</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Our team will review it. Do you also want to block {who}? They won't be able to message you or see your activity, and you won't see theirs.</p>
+            <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 6px' }}>Report sent</h3>
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Our team will review it. Do you also want to block {who}? They won't be able to message you or see your activity, and you won't see theirs.</p>
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={onClose} disabled={busy} style={ghostBtn}>Done</button>
               <button onClick={confirmBlock} disabled={busy} style={dangerBtn(busy)}>{busy ? 'Blocking…' : `Block ${who}`}</button>
@@ -315,8 +315,8 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
 
         {mode === 'block' && (
           <div style={{ padding: '4px 16px 20px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 6px' }}>Block {who}?</h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>{/* This used to warn that blocking was one-way inside the app,
+            <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: 'var(--text-primary)', margin: '6px 0 6px' }}>Block {who}?</h3>
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>{/* This used to warn that blocking was one-way inside the app,
                 because getBlockedUsers/unblockUser existed in services/api.js
                 with no caller. That stopped being true: App.js ships a Blocked
                 accounts screen in Settings which lists them and unblocks with a

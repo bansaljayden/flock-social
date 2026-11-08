@@ -272,7 +272,7 @@ export default function VenueCardRow({
       <div className="chat-venue-text">
         <div
           className="chat-truncate"
-          style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
+          style={{ fontSize: 'var(--t-label)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
         >
           {venue.name}
         </div>
@@ -281,7 +281,7 @@ export default function VenueCardRow({
           <div
             className="chat-truncate"
             style={{
-              fontSize: '12px',
+              fontSize: 'var(--t-meta)',
               fontWeight: 500,
               color: 'var(--text-secondary)',
               lineHeight: '16px',
@@ -321,7 +321,7 @@ export default function VenueCardRow({
             party={tableParty}
             compact
             className="chat-truncate"
-            style={{ fontSize: '12px', lineHeight: '16px', marginTop: '2px' }}
+            style={{ fontSize: 'var(--t-meta)', lineHeight: '16px', marginTop: '2px' }}
           />
         )}
 

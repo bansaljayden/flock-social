@@ -419,7 +419,7 @@ function MessageRow({
       <span
         style={{
           display: 'block',
-          fontSize: '12px',
+          fontSize: 'var(--t-meta)',
           lineHeight: '15px',
           color: 'var(--chat-quote-ink)',
           overflow: 'hidden',

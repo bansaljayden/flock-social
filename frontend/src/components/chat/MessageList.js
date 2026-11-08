@@ -571,7 +571,7 @@ function MessageList({
               background: 'var(--chat-pill-bg)',
               color: 'var(--chat-pill-ink)',
               boxShadow: 'var(--chat-pill-shadow)',
-              fontSize: '11px',
+              fontSize: 'var(--t-micro)',
               fontWeight: 700,
               letterSpacing: '0.4px',
               cursor: 'pointer',

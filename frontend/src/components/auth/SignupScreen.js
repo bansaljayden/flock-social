@@ -528,7 +528,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
                 key={c.label}
                 style={{
                   display: 'flex', alignItems: 'center', gap: '8px',
-                  fontSize: '12.5px', fontWeight: '500',
+                  fontSize: 'var(--t-meta)', fontWeight: '500',
                   color: c.ok ? AUTH.green : AUTH.cream2,
                 }}
               >

@@ -122,7 +122,7 @@ export default function WhoIsHereCard({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <span
           style={{
-            fontSize: '11px',
+            fontSize: 'var(--t-micro)',
             fontWeight: 700,
             letterSpacing: '0.06em',
             textTransform: 'uppercase',
@@ -150,7 +150,7 @@ export default function WhoIsHereCard({
         <span
           aria-live="polite"
           className="chat-truncate"
-          style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '20px' }}
+          style={{ fontSize: 'var(--t-body)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '20px' }}
         >
           {sentence}
         </span>
@@ -180,7 +180,7 @@ export default function WhoIsHereCard({
                 />
                 <span
                   className="chat-truncate"
-                  style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '18px' }}
+                  style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', lineHeight: '18px' }}
                 >
                   <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{t.name}</span>
                   {` · ${travellerDetail(t)}`}

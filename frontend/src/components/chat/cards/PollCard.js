@@ -168,7 +168,7 @@ export default function PollCard({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div
           className="chat-truncate"
-          style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '20px' }}
+          style={{ fontSize: 'var(--t-body)', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '20px' }}
         >
           {locked ? `Locked: ${lockedName}` : (title || 'Where are we going?')}
         </div>
@@ -242,16 +242,16 @@ export default function PollCard({
                   <span style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
                     <span
                       className="chat-truncate"
-                      style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
+                      style={{ fontSize: 'var(--t-label)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
                     >
                       {o.name}
                     </span>
-                    <VenueDealLine deal={o.deal} iconColor="var(--chat-accent)" style={{ fontSize: '12px', lineHeight: '16px' }} />
+                    <VenueDealLine deal={o.deal} iconColor="var(--chat-accent)" style={{ fontSize: 'var(--t-meta)', lineHeight: '16px' }} />
                   </span>
                 ) : (
                   <span
                     className="chat-truncate"
-                    style={{ position: 'relative', flex: 1, fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)' }}
+                    style={{ position: 'relative', flex: 1, fontSize: 'var(--t-label)', fontWeight: 600, color: 'var(--text-primary)' }}
                   >
                     {o.name}
                   </span>
@@ -259,7 +259,7 @@ export default function PollCard({
 
                 {rating !== null && (
                   <span
-                    style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0, fontSize: '12px', fontWeight: 500, color: 'var(--text-secondary)' }}
+                    style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: '3px', flexShrink: 0, fontSize: 'var(--t-meta)', fontWeight: 500, color: 'var(--text-secondary)' }}
                   >
                     {Icons.starFilled('var(--accent-amber-text)', 12)}
                     {rating.toFixed(1)}
@@ -268,7 +268,7 @@ export default function PollCard({
 
                 {count > 0 && (
                   <span
-                    style={{ position: 'relative', flexShrink: 0, fontSize: '13px', fontWeight: 700, color: o.voted ? 'var(--chat-accent)' : 'var(--text-secondary)' }}
+                    style={{ position: 'relative', flexShrink: 0, fontSize: 'var(--t-label)', fontWeight: 700, color: o.voted ? 'var(--chat-accent)' : 'var(--text-secondary)' }}
                   >
                     {count}
                   </span>
@@ -276,7 +276,7 @@ export default function PollCard({
 
                 {!locked && tied && isLeader && (
                   <span
-                    style={{ position: 'relative', flexShrink: 0, fontSize: '11px', fontWeight: 600, color: 'var(--text-secondary)' }}
+                    style={{ position: 'relative', flexShrink: 0, fontSize: 'var(--t-micro)', fontWeight: 600, color: 'var(--text-secondary)' }}
                   >
                     Tied
                   </span>
@@ -295,7 +295,7 @@ export default function PollCard({
                       border: 'none',
                       background: 'var(--btn-primary-bg)',
                       color: 'var(--btn-primary-fg)',
-                      fontSize: '12px',
+                      fontSize: 'var(--t-meta)',
                       fontWeight: 600,
                       cursor: 'pointer',
                       whiteSpace: 'nowrap',
@@ -311,10 +311,10 @@ export default function PollCard({
 
         {(footerCount || deadline) && (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-            <span aria-live="polite" style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            <span aria-live="polite" style={{ fontSize: 'var(--t-meta)', fontWeight: 600, color: 'var(--text-secondary)' }}>
               {footerCount}
             </span>
-            <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--text-tertiary)' }}>
+            <span style={{ fontSize: 'var(--t-meta)', fontWeight: 500, color: 'var(--text-tertiary)' }}>
               {deadline}
             </span>
           </div>

@@ -166,14 +166,14 @@ export default function LocationCard({
               region and the headline is not. */}
           <div
             className="chat-truncate"
-            style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '20px' }}
+            style={{ fontSize: 'var(--t-body)', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '20px' }}
           >
             {headline}
           </div>
           {clause && (
             <div
               aria-live="polite"
-              style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', lineHeight: '18px', marginTop: '2px' }}
+              style={{ fontSize: 'var(--t-label)', fontWeight: 500, color: 'var(--text-secondary)', lineHeight: '18px', marginTop: '2px' }}
             >
               {clause}
             </div>
@@ -194,7 +194,7 @@ export default function LocationCard({
               border: '1.5px solid var(--chat-card-border)',
               background: 'transparent',
               color: 'var(--text-primary)',
-              fontSize: '13px',
+              fontSize: 'var(--t-label)',
               fontWeight: 600,
               cursor: 'pointer',
               opacity: stopping ? 0.6 : 1,

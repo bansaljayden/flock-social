@@ -492,7 +492,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
       className="hit44"
       onClick={handleRestore}
       disabled={busy || restoring}
-      style={{ display: 'block', width: '100%', marginTop: '6px', padding: '8px', border: 'none', background: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}
+      style={{ display: 'block', width: '100%', marginTop: '6px', padding: '8px', border: 'none', background: 'none', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}
     >
       {restoring ? 'Restoring…' : 'Restore purchases'}
     </button>
@@ -525,16 +525,16 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)' }}>{yearly ? 'Yearly' : 'Monthly'}</span>
+          <span style={{ fontSize: 'var(--t-label)', fontWeight: '700', color: 'var(--text-primary)' }}>{yearly ? 'Yearly' : 'Monthly'}</span>
           {yearly && (
-            <span style={{ fontSize: '10px', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: 'var(--r-pill)', padding: '1px 7px', whiteSpace: 'nowrap' }}>Best value</span>
+            <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: accent, border: `1px solid ${accent}`, borderRadius: 'var(--r-pill)', padding: '1px 7px', whiteSpace: 'nowrap' }}>Best value</span>
           )}
         </div>
         <div style={{ color: 'var(--text-primary)', marginBottom: '3px', whiteSpace: 'nowrap' }}>
-          <span style={{ fontSize: '20px', fontWeight: '800', letterSpacing: '-0.3px' }}>{price}</span>
-          <span style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>/{periodOf(kind)}</span>
+          <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', letterSpacing: '-0.3px' }}>{price}</span>
+          <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>/{periodOf(kind)}</span>
         </div>
-        <div style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-secondary)' }}>
+        <div style={{ fontSize: 'var(--t-micro)', fontWeight: '500', color: 'var(--text-secondary)' }}>
           {yearly ? (
             <>
               {perMonth ? <span>{perMonth}/mo</span> : null}
@@ -543,14 +543,14 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
             </>
           ) : 'Billed monthly'}
         </div>
-        {trial ? <div style={{ fontSize: '11px', fontWeight: '700', color: accent, marginTop: '3px' }}>{trial}</div> : null}
+        {trial ? <div style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: accent, marginTop: '3px' }}>{trial}</div> : null}
       </button>
     );
   };
 
-  const quiet = { fontSize: '13px', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0', lineHeight: 1.45 };
-  const smallPrint = { fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' };
-  const linkButton = { border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT };
+  const quiet = { fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-secondary)', textAlign: 'center', margin: '4px 0', lineHeight: 1.45 };
+  const smallPrint = { fontSize: 'var(--t-micro)', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' };
+  const linkButton = { border: 'none', background: 'none', padding: 0, fontSize: 'var(--t-micro)', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT };
   // hit44 (index.css) lays a 44 by 44 target over these 11px words without
   // moving a pixel of the fine print, the same for Restore below. Restore
   // comes later in the page, so where the two targets meet, Restore's wins.
@@ -561,7 +561,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
       <button type="button" className="hit44" onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={linkButton}>Privacy</button>
     </>
   );
-  const cta = { width: '100%', padding: '15px', borderRadius: 'var(--r-md)', fontSize: '15px', fontWeight: '700', fontFamily: FONT };
+  const cta = { width: '100%', padding: '15px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-body)', fontWeight: '700', fontFamily: FONT };
 
   // WHILE THE STORE OR STRIPE ANSWERS: the two plan cards and the button, in
   // planCard's and cta's own sizes, with no price in them, because none has
@@ -638,17 +638,17 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
         </button>
 
         <div style={{ padding: '6px 20px 20px' }}>
-          <p style={{ fontSize: '12px', fontWeight: '700', color: accent, letterSpacing: '0.4px', textTransform: 'uppercase', margin: '4px 0 4px' }}>Flock Pro</p>
-          <h3 style={{ fontSize: '20px', fontWeight: '800', letterSpacing: '-0.3px', color: 'var(--text-primary)', margin: subline ? '0 36px 6px 0' : '0 36px 14px 0' }}>{headline}</h3>
+          <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: accent, letterSpacing: '0.4px', textTransform: 'uppercase', margin: '4px 0 4px' }}>Flock Pro</p>
+          <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', letterSpacing: '-0.3px', color: 'var(--text-primary)', margin: subline ? '0 36px 6px 0' : '0 36px 14px 0' }}>{headline}</h3>
           {subline && (
-            <p style={{ fontSize: '14px', fontWeight: '500', color: 'var(--text-secondary)', lineHeight: 1.45, margin: '0 0 14px' }}>{subline}</p>
+            <p style={{ fontSize: 'var(--t-body)', fontWeight: '500', color: 'var(--text-secondary)', lineHeight: 1.45, margin: '0 0 14px' }}>{subline}</p>
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
             {benefits.map((b) => (
               <div key={b.icon} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <BenefitIcon name={b.icon} color={accent} />
-                <span style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-primary)' }}>{b.label}</span>
+                <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-primary)' }}>{b.label}</span>
               </div>
             ))}
           </div>
@@ -737,7 +737,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
               <button
                 type="button"
                 onClick={loadWeb}
-                style={{ marginTop: '6px', padding: '8px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', background: 'var(--bg-card-solid)', fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: FONT }}
+                style={{ marginTop: '6px', padding: '8px 14px', borderRadius: 'var(--r-md)', border: '1px solid var(--border-subtle)', background: 'var(--bg-card-solid)', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer', fontFamily: FONT }}
               >
                 Try again
               </button>

@@ -132,12 +132,14 @@ describe('the fine print is reachable with a finger', () => {
     }
   });
 
-  test('and keep the look they had: no padding or size added to the 11px links', async () => {
+  test('and keep the look they had: no padding or size added to the 11px (--t-micro) links', async () => {
     getProStatus.mockResolvedValue(ON_SALE);
     render(<PaywallSheet open trigger="forecast" onClose={() => {}} />);
     await screen.findByRole('button', { name: MONTHLY_CTA });
     const terms = screen.getByRole('button', { name: 'Terms' });
-    expect(terms.style.fontSize).toBe('11px');
+    // jsdom drops a var() font size, so the size is read off the source: the
+    // links are the --t-micro role, 11px.
+    expect(require('fs').readFileSync(require('path').join(__dirname, '..', 'components', 'PaywallSheet.js'), 'utf8')).toMatch(/const linkButton = \{[^}]*fontSize: 'var\(--t-micro\)'/);
     expect(terms.style.padding).toBe('0px');
   });
 });

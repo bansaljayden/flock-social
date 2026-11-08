@@ -208,7 +208,7 @@ export default function BillCard({
     border: 'none',
     background: 'var(--chat-accent)',
     color: 'var(--chat-on-fill)',
-    fontSize: '13px',
+    fontSize: 'var(--t-label)',
     fontWeight: 600,
     cursor: 'pointer',
     whiteSpace: 'nowrap',
@@ -220,7 +220,7 @@ export default function BillCard({
     border: 'none',
     background: 'transparent',
     color: 'var(--chat-accent)',
-    fontSize: '12px',
+    fontSize: 'var(--t-meta)',
     fontWeight: 600,
     textDecoration: 'underline',
     cursor: 'pointer',
@@ -237,7 +237,7 @@ export default function BillCard({
     // is no control at all.
     if (mine?.committed) {
       footerRight = (
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-amber-text)' }}>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: 600, color: 'var(--accent-amber-text)' }}>
           Pre-committed
         </span>
       );
@@ -262,7 +262,7 @@ export default function BillCard({
     footerRight = waiting > 0
       ? (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 'var(--t-meta)', fontWeight: 600, color: 'var(--text-secondary)' }}>
             {`Waiting on ${waiting}`}
           </span>
           {typeof onRemind === 'function' && (
@@ -282,13 +282,13 @@ export default function BillCard({
   } else if (mine?.settled) {
     footerRight = coveredByCredit(mine)
       ? (
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-green-text)' }}>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: 600, color: 'var(--accent-green-text)' }}>
           You&apos;re settled
         </span>
       )
       : (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--accent-green-text)' }}>Paid</span>
+          <span style={{ fontSize: 'var(--t-meta)', fontWeight: 600, color: 'var(--accent-green-text)' }}>Paid</span>
           {/* Not on a payerless bill. POST /settle refuses one, so a payment
               taken back there could never be marked paid again. */}
           {typeof onUndo === 'function' && !payerless && (
@@ -339,10 +339,10 @@ export default function BillCard({
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         <div>
-          <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '20px' }}>
+          <div style={{ fontSize: 'var(--t-body)', fontWeight: 700, color: 'var(--text-primary)', lineHeight: '20px' }}>
             {title}
           </div>
-          <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)', lineHeight: '18px', marginTop: '2px' }}>
+          <div style={{ fontSize: 'var(--t-label)', fontWeight: 500, color: 'var(--text-secondary)', lineHeight: '18px', marginTop: '2px' }}>
             {subtitle}
           </div>
         </div>
@@ -373,7 +373,7 @@ export default function BillCard({
             <span
               aria-live="polite"
               style={{
-                fontSize: '12px',
+                fontSize: 'var(--t-meta)',
                 fontWeight: 600,
                 color: tally.all ? 'var(--accent-green-text)' : 'var(--text-secondary)',
               }}
@@ -389,7 +389,7 @@ export default function BillCard({
             is on this card. */}
         {error && (
           <div role="alert" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-            <span style={{ fontSize: '12px', fontWeight: 500, color: 'var(--accent-red-text)' }}>{error}</span>
+            <span style={{ fontSize: 'var(--t-meta)', fontWeight: 500, color: 'var(--accent-red-text)' }}>{error}</span>
             {typeof onRetry === 'function' && (
               <button type="button" className="hit44" onClick={stop(onRetry)} style={linkStyle}>
                 Try again

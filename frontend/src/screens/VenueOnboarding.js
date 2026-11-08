@@ -181,7 +181,7 @@ export default function VenueOnboarding({
             }}
             placeholder="e.g. The Blue Heron Bar"
             autoComplete="off" data-lpignore="true" data-form-type="other"
-            style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+            style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
             {venueSearchResults.length > 0 && (
               /* The 95% face carries this on its own. A blur used to sit under
                  it, reading a flat navy onboarding background and returning the
@@ -292,7 +292,7 @@ export default function VenueOnboarding({
               keystroke here used to re-render the whole app behind the step.
               Continue reads the draft on the tap, and the box publishes
               anything pending on pointerdown, before the click lands. */}
-          <SearchInputLocal aria-label="Venue address" maxLength={255} initialValue={venueOnboardingData.location} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, location: v }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
+          <SearchInputLocal aria-label="Venue address" maxLength={255} initialValue={venueOnboardingData.location} onCommit={(v) => setVenueOnboardingData(d => ({ ...d, location: v }))} placeholder="e.g. Austin, TX or 123 Main St" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
         </div>
       ),
       // Step 4: Goals
@@ -427,7 +427,7 @@ export default function VenueOnboarding({
                 onCommit={(v) => setVenueOnboardingData(d => ({ ...d, eventNote: v }))}
                 placeholder="e.g. Trivia at 8, live band after 10"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
             ),
           })}
           {renderVenueField({
@@ -456,7 +456,7 @@ export default function VenueOnboarding({
                 onCommit={(v) => setVenueOnboardingData(d => ({ ...d, anchorNote: v }))}
                 placeholder="e.g. Across from Lincoln Financial Field"
                 autoComplete="off" data-lpignore="true" data-form-type="other"
-                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+                style={{ width: '100%', padding: '12px 14px', borderRadius: 'var(--r-md)', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
             ),
           })}
         </div>
