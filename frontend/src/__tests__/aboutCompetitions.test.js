@@ -111,7 +111,7 @@ describe('competitions.js keeps to its rules', () => {
 
   test('a status is a fact about the entry, never a result, a prize, a fee or a deadline', () => {
     for (const c of COMPETITIONS) {
-      expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted|In progress)\b/)]);
+      expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted)\b/)]);
       const words = [c.name, c.organizer, c.entered, c.status, c.team].join(' | ');
       expect([c.name, RESULT_WORDS.exec(words)]).toEqual([c.name, null]);
       expect([c.name, MONEY_AND_DATES.exec(words)]).toEqual([c.name, null]);
@@ -121,43 +121,31 @@ describe('competitions.js keeps to its rules', () => {
   test('the date behind a status says the same thing as its words, and none is in the future', () => {
     const now = Date.now();
     for (const c of COMPETITIONS) {
-      if (c.status === 'In progress') {
-        expect([c.name, c.date]).toEqual([c.name, undefined]);
-        continue;
-      }
       expect([c.name, c.date]).toEqual([c.name, expect.stringMatching(/^\d{4}-\d{2}(-\d{2})?$/)]);
       expect([c.name, c.status.endsWith(spoken(c.date))]).toEqual([c.name, true]);
       expect([c.name, startOf(c.date) <= now]).toEqual([c.name, true]);
     }
-    // Newest first, with the entry still in progress after the dated ones.
+    // Newest first, every entry dated.
     const dated = COMPETITIONS.filter((c) => c.date).map((c) => startOf(c.date));
     expect(dated).toEqual([...dated].sort((a, b) => b - a));
     const firstUndated = COMPETITIONS.findIndex((c) => !c.date);
     if (firstUndated >= 0) expect(COMPETITIONS.slice(firstUndated).every((c) => !c.date)).toBe(true);
   });
 
-  test('only the Conrad and DECA entries are the maintainer\'s with Asad; the rest are the maintainer\'s alone', () => {
+  test('only the Conrad entry is the maintainer\'s with Asad; the rest are the maintainer\'s alone', () => {
     const withAsad = COMPETITIONS.filter((c) => /Asad Ali/.test(c.team)).map((c) => c.name);
-    expect(withAsad).toEqual(['Conrad Challenge', 'Start-Up Business Plan']);
+    expect(withAsad).toEqual(['Conrad Challenge']);
     for (const c of COMPETITIONS) {
-      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^(Entered|Being prepared) by Jayden Bansal( and Asad Ali)?$/)]);
+      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^Entered by Jayden Bansal( and Asad Ali)?$/)]);
     }
   });
 
-  test('an entry in progress has not been entered: its line says who is preparing it', () => {
+  test('nothing still being prepared is listed: an entry goes in once it is submitted', () => {
     for (const c of COMPETITIONS) {
-      const verb = c.status === 'In progress' ? 'Being prepared by ' : 'Entered by ';
-      expect([c.name, c.team.startsWith(verb)]).toEqual([c.name, true]);
+      expect([c.name, c.team.startsWith('Entered by ')]).toEqual([c.name, true]);
+      expect([c.name, typeof c.date]).toEqual([c.name, 'string']);
     }
-  });
-
-  test('only DECA\'s season-long team event shows while in progress; an application goes in when it is submitted', () => {
-    // An application still being written (the Jacobson summary was, on
-    // 2026-11-06) is added the day it is submitted, as Submitted.
-    for (const c of COMPETITIONS.filter((x) => x.status === 'In progress')) {
-      expect([c.name, c.organizer]).toEqual(['Start-Up Business Plan', 'DECA']);
-    }
-    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Jacobson/);
+    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Jacobson|Start-Up Business Plan/);
   });
 
   test('the science-fair project is not Flock, and no team member\'s school is named', () => {
@@ -229,18 +217,11 @@ describe('/about shows the competitions', () => {
     unmount();
   });
 
-  test('the lead names what is being prepared exactly while an entry is in progress', () => {
-    const lead = (container) => flat(container.querySelector('section[aria-labelledby="ab-h-comps"] .lp-lead').textContent);
+  test('the lead says where Flock has been entered, and nothing about what is being prepared', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
-    expect(COMPETITIONS.some((c) => c.status === 'In progress')).toBe(true);
-    expect(lead(container)).toBe('Where Flock has been entered, and what is being prepared.');
+    expect(flat(container.querySelector('section[aria-labelledby="ab-h-comps"] .lp-lead').textContent)).toBe('Where Flock has been entered.');
+    expect(container.textContent).not.toMatch(/being prepared|In progress/i);
     unmount();
-
-    // The day DECA's plan is entered, the lead says only that.
-    const entered = COMPETITIONS.map((c) => (c.status === 'In progress'
-      ? { ...c, status: 'Submitted December 2026', date: '2026-12', team: c.team.replace(/^Being prepared by/, 'Entered by') }
-      : c));
-    expect(lead(renderWith({ COMPETITIONS: entered, HONORS }).container)).toBe('Where Flock has been entered.');
   });
 
   test('the ledger sits on the navy band between the milestones and where things stand', () => {

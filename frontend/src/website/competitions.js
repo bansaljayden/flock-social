@@ -38,9 +38,8 @@
 // SXSW EDU 2026-10-24; Stevens 2026-10-18 (the upload page's confirmation);
 // the Congressional App Challenge 2026-10-13; Pirates Pitch 2026-10-03 (its
 // confirmation email); the Conrad Challenge's email of 2026-10-02 accepted
-// the team into its Innovation Stage. DECA's Start-Up Business Plan is being
-// prepared for the 2026-27 season (District 7 on 2026-12-15, the state
-// conference 2027-02-17 to 19) and has not been entered yet.
+// the team into its Innovation Stage. Nothing still being prepared is listed
+// (his call, 2026-11-08): an entry goes in once it is submitted.
 //
 // Not here yet: the Jacobson Innovator Competition (University of Iowa), whose
 // one-page summary was being drafted on 2026-11-06 for 2026-11-13. It goes in
@@ -51,11 +50,8 @@
 
 const JAYDEN = 'Entered by Jayden Bansal';
 const JAYDEN_AND_ASAD = 'Entered by Jayden Bansal and Asad Ali';
-// An entry in progress has not been entered, so its line says who is
-// preparing it instead.
-const PREPARING_JAYDEN_AND_ASAD = 'Being prepared by Jayden Bansal and Asad Ali';
 
-// Newest first; the one still in progress last. `status` is what renders;
+// Newest first. `status` is what renders;
 // `date`, where there is one, is its machine-readable date.
 export const COMPETITIONS = [
   {
@@ -113,13 +109,6 @@ export const COMPETITIONS = [
     status: 'Accepted into the Innovation Stage, October 2026',
     date: '2026-10',
     team: JAYDEN_AND_ASAD,
-  },
-  {
-    name: 'Start-Up Business Plan',
-    organizer: 'DECA',
-    entered: 'A business plan and a live pitch for Flock.',
-    status: 'In progress',
-    team: PREPARING_JAYDEN_AND_ASAD,
   },
 ];
 

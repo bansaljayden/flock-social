@@ -65,11 +65,8 @@ const MILESTONES = [
   { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
 ];
 
-// The competitions ledger's lead. An entry in progress has not been entered,
-// so while there is one the lead names it too.
-const COMPETITIONS_LEAD = COMPETITIONS.some((c) => c.status === 'In progress')
-  ? 'Where Flock has been entered, and what is being prepared.'
-  : 'Where Flock has been entered.';
+// The competitions ledger's lead. Only entries that went in are listed.
+const COMPETITIONS_LEAD = 'Where Flock has been entered.';
 
 // An entry's words with one phrase in them made a link.
 function withLink(what, { words, href }) {
@@ -253,7 +250,7 @@ export default function AboutPage() {
 
         {/* Competitions: a ledger on the navy, one entry to a row, from
             competitions.js. Each says who runs it, what went in, who entered
-            it (or, for one in progress, who is preparing it) and where it
+            it and where it
             stands. */}
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
           <div className="lp-wrap">
