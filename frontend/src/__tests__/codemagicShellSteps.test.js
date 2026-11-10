@@ -3,8 +3,9 @@
 //
 // Three now: the push plist check, the provisioning profile check, and the
 // RevenueCat key check (section 3 at the bottom), which stops a build that
-// sells Flock Pro without the Apple key and does nothing to one that sells
-// nothing. The history below is about the first two.
+// sells Flock Pro without the Apple key, or with the Pro sheet and no store,
+// and does nothing to one that sells nothing. The history below is about the
+// first two.
 //
 // WHY THIS FILE EXISTS. Both guards in that file were written after a build
 // shipped something broken while printing green, and both were then tested by
@@ -273,7 +274,8 @@ describe('the step bodies come out of codemagic.yaml intact', () => {
     // build stops on a message about source maps that is not true.
     expect(REVENUECAT_STEP.body).toMatch(/^for path in maps:$/m);
     expect(REVENUECAT_STEP.body).toMatch(/^ {4}with open\(path, encoding="utf-8"\) as f:$/m);
-    expect(REVENUECAT_STEP.body).toMatch(/^print\(len\(maps\), sdk\)$/m);
+    expect(REVENUECAT_STEP.body).toMatch(/^ {8}sheet = 1$/m);
+    expect(REVENUECAT_STEP.body).toMatch(/^print\(len\(maps\), sdk, sheet\)$/m);
   });
 
   test('the heredoc that writes the placeholder plist survived the dedent', () => {
@@ -636,9 +638,11 @@ describe(s('the provisioning profile step, run'), () => {
 // and uploads, and its Pro sheet says Pro can't be bought in the app: the
 // same green failure as the other two. The step reads the source maps the
 // build just wrote to see whether the RevenueCat SDK is in the bundle, which
-// is true exactly when purchases are on, and only then asks for the key. The
-// build made with REACT_APP_PURCHASES=off, which is every build until that
-// line changes, carries no SDK and passes whatever the key.
+// is true exactly when Pro is sold, and then asks for the key. The App Store
+// build is made with REACT_APP_PURCHASES=iap, which carries the SDK and the
+// Pro sheet, so it must have the key. A build made with off carries neither
+// and passes whatever the key. One that carries the sheet and not the SDK
+// would sell Pro with no store behind it, and stops.
 // ---------------------------------------------------------------------------
 describe(s('the RevenueCat key step, run'), () => {
   jest.setTimeout(30000);
@@ -656,6 +660,13 @@ describe(s('the RevenueCat key step, run'), () => {
     ...OFF_BUILD,
     '5678.fedcba98.chunk.js.map': map(['services/purchases.js', '../node_modules/@revenuecat/purchases-capacitor/dist/esm/index.js']),
   };
+  // What `REACT_APP_PURCHASES=iap npm run build` writes: the SDK's chunk, and
+  // the Pro sheet's, which App.js loads behind the same flag.
+  const SHEET = { '9abc.01234567.chunk.js.map': map(['components/PaywallSheet.js', 'lib/proPricing.js']) };
+  const IAP_BUILD = { ...ON_BUILD, ...SHEET };
+  // The sheet with no SDK: a gate that dropped the import but kept the sheet.
+  const SHEET_NO_STORE = { ...OFF_BUILD, ...SHEET };
+  const NO_STORE = 'PURCHASE CHECK FAILED: this build carries the Flock Pro sheet but not the RevenueCat SDK,';
   const build = (files, key) => run(REVENUECAT_STEP, {
     build: files,
     env: key === undefined ? {} : { REACT_APP_REVENUECAT_IOS_KEY: key },
@@ -701,6 +712,35 @@ describe(s('the RevenueCat key step, run'), () => {
     expect(r.code).toBe(0);
     expect(r.out.trim()).toBe("This build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is RevenueCat's Apple key (17 characters).");
     expect(r.out).not.toContain('AbCdEf123456');
+  });
+
+  shellTest('the App Store build (iap) stops with no key, and with a key that is not the Apple one', () => {
+    for (const key of [undefined, '']) {
+      const r = build(IAP_BUILD, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 1 });
+      expect(r.out).toContain('PURCHASE CHECK FAILED: this build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is not set.');
+      expect(r.out).toContain('FIX: set REACT_APP_REVENUECAT_IOS_KEY in the flock_web group');
+    }
+    for (const key of ['goog_abc123', 'appl_', 'appl_abc123\n']) {
+      const r = build(IAP_BUILD, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 1 });
+      expect(r.out).toContain("RevenueCat's Apple key. It has to start with appl_");
+    }
+  });
+
+  shellTest('the App Store build (iap) passes with the Apple key', () => {
+    const r = build(IAP_BUILD, 'appl_AbCdEf123456');
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe("This build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is RevenueCat's Apple key (17 characters).");
+  });
+
+  shellTest('a build with the Pro sheet and no RevenueCat SDK stops, whatever the key', () => {
+    for (const key of [undefined, 'appl_AbCdEf123456']) {
+      const r = build(SHEET_NO_STORE, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 1 });
+      expect(r.out).toContain(NO_STORE);
+      expect(r.out).not.toContain(SELLS_NOTHING);
+    }
   });
 
   shellTest('the SDK named only in a file\'s text is not the SDK in the bundle', () => {

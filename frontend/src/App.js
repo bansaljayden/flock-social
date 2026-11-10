@@ -67,9 +67,12 @@ import { GoogleMapsMark } from './components/ui/GoogleCredit';
 import { lsGet, lsSet, lsRemove } from './lib/storage';
 import { glideFabHome, stopFabGlide } from './lib/fabGlide';
 import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
-// `process.env.REACT_APP_PURCHASES !== 'off'` below is the App Store build's
-// switch: off, there is no purchase surface at all. lib/purchasesBuild.js has
-// the rules, and why every gate spells the variable out instead of calling it.
+// `process.env.REACT_APP_PURCHASES !== 'off'` below is whether this build
+// sells Flock Pro at all (off: no purchase surface), and the same test with
+// `&& process.env.REACT_APP_PURCHASES !== 'iap'` is whether it sells on the web
+// (Stripe, /pro, Roost's billing), which the App Store build (iap) never does.
+// lib/purchasesBuild.js has the rules, and why every gate spells the variable
+// out instead of calling it.
 // When a member's live pin comes off this device, and the emit interval the
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
@@ -718,9 +721,9 @@ const rearmModerationSheet = () => {
    beside the screen ErrorBoundary rather than inside it, so a rejected chunk
    would take the whole signed-in app down to the reload card for a sheet.
 
-   A REACT_APP_PURCHASES=off build (the App Store one) has no sheet: the mount
-   below never renders it, and the literal test here keeps webpack from
-   building its chunk at all. */
+   A REACT_APP_PURCHASES=off build has no sheet: the mount below never renders
+   it, and the literal test here keeps webpack from building its chunk at all.
+   The App Store build (iap) has it, with its App Store half only. */
 const loadPaywallSheet = process.env.REACT_APP_PURCHASES === 'off'
   ? () => Promise.resolve({ default: () => null })
   : () => import('./components/PaywallSheet')
@@ -3976,11 +3979,12 @@ const NavIcon = ({ id, selected }) => {
 // `VENUE_PRICE_USD` in backend/routes/admin.js;
 // backend/services/statedPrices.js lists it so the money hub flags a drift.
 const VENUE_PLAN_PRICE = { pro: 99 };
-// No price at all in a REACT_APP_PURCHASES=off build (lib/purchasesBuild.js),
-// and none inside the app in any build: Roost is sold on the website only
-// (screens/VenueDashboard.js says why, at `native`).
+// No price at all in a build that does not sell on the web (REACT_APP_PURCHASES
+// off, or iap, the App Store one; lib/purchasesBuild.js), and none inside the
+// app in any build: Roost is sold on the website only (screens/VenueDashboard.js
+// says why, at `native`).
 const venuePlanPriceLabel = (tier, per = 'mo') =>
-  (process.env.REACT_APP_PURCHASES !== 'off') && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
+  (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
 
 // The NFC check-in screen. Mounted (not called) by the screen slot, so its
 // hooks live in a component of their own.
@@ -9748,9 +9752,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // bottom of this file). A purchase confirms, then waits up to ~30s for Pro
   // to show, then re-reads the same entitlements snapshot the boot fetch
   // reads. The portal only needs that re-read: a cancel or a card change may
-  // have just happened.
+  // have just happened. Only in a build that sells on the web: off and the
+  // App Store build (iap) have no web checkout to come back from.
   useEffect(() => {
-    if (!(process.env.REACT_APP_PURCHASES !== 'off')) return undefined;
+    if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return undefined;
     const ret = PRO_RETURN;
     if (!ret) return undefined;
     if (ret.kind === 'manage') {
@@ -9797,8 +9802,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // which is the same state a web session is always in, and the next launch
     // tries again.
     //
-    // Never in a REACT_APP_PURCHASES=off build (the App Store one), which does
-    // not start RevenueCat or carry its chunk (lib/purchasesBuild.js).
+    // Never in a REACT_APP_PURCHASES=off build, which does not start
+    // RevenueCat or carry its chunk (lib/purchasesBuild.js). The App Store
+    // build (iap) sells Pro through it, so it starts it here.
     if (process.env.REACT_APP_PURCHASES !== 'off' && authUser?.id) {
       import('./services/purchases')
         .then(({ initPurchases }) => initPurchases(authUser.id))
@@ -11409,8 +11415,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const resetsAt = err?.data?.resetsAt || null;
         setAiResetsAt(resetsAt);
         const back = resetsAt ? `after ${localeTime(new Date(resetsAt), [], { hour: 'numeric', minute: '2-digit' })}` : 'tomorrow';
-        // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing,
-        // so it states the limit and when it lifts, and opens no sheet.
+        // A REACT_APP_PURCHASES=off build sells nothing, so it states the
+        // limit and when it lifts, and opens no sheet. The App Store build
+        // (iap) opens the sheet, which sells Pro there through the App Store.
         const limitText = (process.env.REACT_APP_PURCHASES !== 'off')
           ? `that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me ${back}.`
           : `You've reached today's limit. Try again ${back}.`;
@@ -19521,9 +19528,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // checkout completed. It used to be the answer to everything else as well,
   // including a confirm that threw, and a 404 for a session that belongs to
   // another account throws, so a stranger's link told this owner they had
-  // paid. Anything unconfirmed gets the Pro return's wording.
+  // paid. Anything unconfirmed gets the Pro return's wording. Only in a build
+  // that sells on the web: Roost is never sold in the App Store build (iap).
   useEffect(() => {
-    if (!(process.env.REACT_APP_PURCHASES !== 'off')) return;
+    if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return;
     const ret = VENUE_BILLING_RETURN;
     if (!ret) return;
     VENUE_BILLING_RETURN = null;
@@ -22665,13 +22673,14 @@ const EMAIL_VERIFIED_OUTCOME = readEmailVerifiedOutcome();
 // stripped once, here, for the reason readEmailVerifiedOutcome gives above;
 // lib/proReturn.js has the rest. `let` because FlockAppInner clears it once
 // handled, so a sign-out and sign-in in the same tab does not replay it.
-// Never read in a REACT_APP_PURCHASES=off build, which has no checkout to come
-// back from (lib/purchasesBuild.js).
-let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readProReturn() : null;
+// Never read in a build without a web checkout to come back from: off, and the
+// App Store build (iap), which sells Pro through Apple only
+// (lib/purchasesBuild.js).
+let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? readProReturn() : null;
 
 // Back from Stripe after a venue bought Roost: ?venue_billing=success|manage|cancelled.
-// Same read-once rule; lib/venueBillingReturn.js has the rest.
-let VENUE_BILLING_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readVenueBillingReturn() : null;
+// Same read-once rule, and the same builds; lib/venueBillingReturn.js has the rest.
+let VENUE_BILLING_RETURN = (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? readVenueBillingReturn() : null;
 
 // A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
 // return is the ban; the emailVerificationRequired flag is checked anyway so a
@@ -22840,8 +22849,10 @@ const FlockApp = () => {
     // listener below reach an already-mounted screen.
     pullSettings().catch(() => {});
     // Sent here from /pro to sign in: go back there (lib/returnAfterSignIn.js
-    // holds the one allowed path, so nothing else can steer this).
-    const back = takeReturnAfterSignIn();
+    // holds the one allowed path, so nothing else can steer this). Only a
+    // build that sells on the web has /pro; off and the App Store build (iap)
+    // never send anybody there.
+    const back = (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? takeReturnAfterSignIn() : null;
     if (back) window.location.assign(back);
   }, []);
 

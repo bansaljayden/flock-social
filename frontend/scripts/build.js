@@ -13,7 +13,7 @@
 // So, before react-scripts builds:
 // - every variable read in src/ that the environment does not set is defined
 //   as undefined, so each read compiles to a constant, and the minifier drops
-//   the branch it guards the way REACT_APP_PURCHASES=off already does on iOS;
+//   the branch it guards the way the iOS build's REACT_APP_PURCHASES does;
 // - REACT_APP_* variables no code reads are left out of the bundle.
 // A variable the app does read still ships to every visitor, so REACT_APP_*
 // is for public values only.

@@ -1,18 +1,20 @@
 /**
  * ROOST IS SOLD ON THE WEBSITE, NEVER INSIDE THE APP, WHATEVER THE BUILD SELLS.
  *
- * The App Store build is made with REACT_APP_PURCHASES=off today, which
- * compiles every Roost price and upgrade button out of it
- * (iosBuildSellsNothing.test.js). The build that sells Flock Pro through the
- * App Store turns that flag back on, and with it the venue dashboard brought
- * back "Requires Roost · $99/mo", "Upgrade to Roost", the plans sheet with its
- * price and "Email us about Roost", and the Upgrade and See plans buttons,
- * held back only by the server's VENUE_BILLING_ENABLED. A paid plan offered
- * inside the app outside in-app purchase is an App Review 3.1.1 problem.
+ * The App Store build is made with REACT_APP_PURCHASES=iap: it sells Flock Pro
+ * through Apple, and compiles every Roost price, upgrade button, the plans
+ * sheet and the Subscription card out of the bundle, exactly as off does
+ * (iosBuildSellsProThroughAppleOnly.test.js pins the gates). Turning purchases
+ * back on with the Pro gate alone brought back "Requires Roost · $99/mo",
+ * "Upgrade to Roost", the plans sheet with its price and "Email us about
+ * Roost", and the Upgrade and See plans buttons, held back only by the
+ * server's VENUE_BILLING_ENABLED. A paid plan offered inside the app outside
+ * in-app purchase is an App Review 3.1.1 problem.
  *
- * So inside the native shell (lib/nativeShell.js, the answer every surface
- * that sells asks) none of those render, with purchases on or off, and on the
- * web every one of them still does. What the venue holds is still said in the
+ * So an iap build renders none of those, with or without a bridge, and a web
+ * build inside the native shell (lib/nativeShell.js, the answer every surface
+ * that sells asks) renders none of them either, while on the web every one of
+ * them still does. What the venue holds is still said by a web build in the
  * app, and Roost is still named where it names a feature.
  *
  * The real dashboard is rendered, with a neutral value for every prop it
@@ -52,7 +54,8 @@ const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
 const DASH = read('screens', 'VenueDashboard.js');
 const APP = read('App.js');
-const ON = "(process.env.REACT_APP_PURCHASES !== 'off')";
+// The web's ways to pay, Roost's included: on only when the build is the web.
+const WEB = "(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')";
 
 // Every parameter the dashboard takes, read off its own signature.
 const PARAMS = (() => {
@@ -355,17 +358,111 @@ describe('what the app keeps saying about Roost', () => {
     expect(screen.getByText('Roost')).toBeTruthy();
   });
 
-  test('a build that sells nothing shows the same locked tab on the web and in the app', async () => {
-    process.env.REACT_APP_PURCHASES = 'off';
-    for (const native of [false, true]) {
-      if (native) inTheApp();
-      const { container, unmount } = dashboard({ venueTab: 'analytics' });
+  test('a build that sells nothing, and the App Store build, show the same locked tab on the web and in the app', async () => {
+    for (const flag of ['off', 'iap']) {
+      process.env.REACT_APP_PURCHASES = flag;
+      for (const native of [false, true]) {
+        if (native) inTheApp();
+        else delete window.Capacitor;
+        const { container, unmount } = dashboard({ venueTab: 'analytics' });
+        // eslint-disable-next-line no-await-in-loop
+        await settle();
+        expect(screen.getByText('This is not turned on for your venue.')).toBeTruthy();
+        expect(container.textContent).not.toMatch(/\$\s?\d|Requires Roost|Upgrade/);
+        unmount();
+      }
+    }
+  });
+});
+
+// THE APP STORE BUILD. Everything above that keeps Roost off the app's screen
+// asks the bridge; the iap build does not need to, because the web gate in
+// front of each of these is the constant false there. So these render with no
+// bridge at all, the case where only the build itself can be keeping them off.
+describe('the App Store build (REACT_APP_PURCHASES=iap), even with no bridge', () => {
+  beforeEach(() => { process.env.REACT_APP_PURCHASES = 'iap'; });
+
+  test('the locked tab offers nothing and asks nobody for prices', async () => {
+    const { container } = dashboard({ venueTab: 'analytics' });
+    await settle();
+    expect(screen.getByText('This is not turned on for your venue.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Upgrade|See plans/ })).toBeNull();
+    expect(container.textContent).not.toMatch(/\$\s?\d|Requires Roost/);
+    expect(getVenueBillingStatus).not.toHaveBeenCalled();
+  });
+
+  test('the Settings tab has no Subscription card, no plan to buy and no price', async () => {
+    for (const overrides of [
+      { venueTier: 'free' },
+      { venueTier: 'pro', venueTierReason: 'paid', venueTierSource: 'stripe' },
+      { venueTier: 'pro', venueProfile: { business_name: 'Hoppers', verification_status: 'verified', tier_notice_window: true, tier_notice_until: '2026-12-01T15:00:00.000Z' } },
+    ]) {
+      const { container, unmount } = dashboard({ venueTab: 'settings', ...overrides });
       // eslint-disable-next-line no-await-in-loop
       await settle();
-      expect(screen.getByText('This is not turned on for your venue.')).toBeTruthy();
-      expect(container.textContent).not.toMatch(/\$\s?\d|Requires Roost|Upgrade/);
+      expect(screen.queryByText('Subscription')).toBeNull();
+      expect(screen.queryByRole('button', { name: /Upgrade|See plans|Change or cancel this plan|Manage billing/ })).toBeNull();
+      expect(container.textContent).not.toMatch(/\$\s?\d|Billed through Stripe|Manage billing/);
       unmount();
     }
+    expect(getVenueBillingStatus).not.toHaveBeenCalled();
+    expect(openVenuePortal).not.toHaveBeenCalled();
+  });
+
+  test('the plans sheet never opens, even when asked to', async () => {
+    const { container } = dashboard({ venueTab: 'settings', showUpgradeModal: true });
+    await settle();
+    expect(screen.queryByText('Venue plans')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Email us about Roost' })).toBeNull();
+    expect(container.textContent).not.toMatch(/\$\s?\d/);
+  });
+
+  test('the groups feed refusal keeps its sentence and loses its button', async () => {
+    dashboard({ venueTab: 'events', venueListErrors: { incomingFlocksLocked: true } });
+    await settle();
+    expect(screen.getByText('Your plan does not include this list.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'See plans' })).toBeNull();
+  });
+
+  test('the header carries no plan badge', async () => {
+    dashboard({ venueTab: 'settings', venueTier: 'pro' });
+    await settle();
+    expect(screen.queryByText('Roost')).toBeNull();
+  });
+
+  test("Roost's cards and questions name no plan", async () => {
+    const UPGRADE = 'This feature needs a venue plan upgrade.';
+    const refusal = () => Object.assign(new Error(UPGRADE), {
+      status: 403,
+      data: { error: UPGRADE, code: 'UPGRADE_REQUIRED', requiredTier: 'pro' },
+    });
+    const cards = render(<VenueInsightCards fetchCards={() => Promise.reject(refusal())} colors={{ navy: '#0d2847' }} />);
+    expect(await screen.findByText('Not turned on for your venue.')).toBeTruthy();
+    expect(cards.container.textContent).not.toMatch(/upgrade|paid/i);
+    cards.unmount();
+    clearAdvisorThread();
+    const chat = render(
+      <VenueAdvisorChat
+        fetchQuestions={async () => { throw refusal(); }}
+        ask={async () => { throw refusal(); }}
+        askQuestion={async () => { throw refusal(); }}
+        colors={{ navy: '#0d2847' }}
+      />
+    );
+    expect(await screen.findByText('This is not turned on for your venue.')).toBeTruthy();
+    expect(chat.container.textContent).not.toMatch(/upgrade/i);
+  });
+
+  test("App.js's fallback price is never made", () => {
+    // The function itself, run in an iap build, with no bridge.
+    const start = APP.indexOf('const venuePlanPriceLabel = ');
+    const src = APP.slice(start, APP.indexOf(';\n', start) + 1);
+    // eslint-disable-next-line no-new-func
+    const make = new Function('process', 'isNativeShell', 'VENUE_PLAN_PRICE', `${src}\nreturn venuePlanPriceLabel;`);
+    const label = (flag) => make({ env: flag === undefined ? {} : { REACT_APP_PURCHASES: flag } }, () => false, { pro: 99 });
+    expect(label(undefined)('pro')).toBe('$99/mo');
+    expect(label('iap')('pro')).toBeNull();
+    expect(label('off')('pro')).toBeNull();
   });
 });
 
@@ -432,11 +529,12 @@ describe('the gates are in the source, where the build can see them', () => {
   test('every opener of the plans sheet and the sheet itself ask the one native check', () => {
     expect(DASH).toContain("import { isNativeShell } from '../lib/nativeShell';");
     expect(DASH).toContain('const native = isNativeShell();');
-    // The purchases flag still leads each condition, so a build made with it
-    // off drops the branch and its strings, not only hides them.
-    expect(DASH).toContain(`{showUpgradeModal && ${ON} && !native && (`);
-    expect(DASH).toContain(`{${ON} && !native ? (<>\n        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost`);
-    expect(DASH).toContain(`{${ON} && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)}`);
+    // The web gate still leads each condition, so a build made with
+    // purchases off or iap drops the branch and its strings, not only hides
+    // them.
+    expect(DASH).toContain(`{showUpgradeModal && ${WEB} && !native && (`);
+    expect(DASH).toContain(`{${WEB} && !native ? (<>\n        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost`);
+    expect(DASH).toContain(`{${WEB} && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)}`);
     expect(DASH).toContain('{(!onRoost || inNoticeWindow) && !native && (\n                    <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     expect(DASH).toContain('{!native && (\n                      <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     // Four buttons open the sheet, each pinned above. A fifth is a new one to gate.
@@ -449,6 +547,6 @@ describe('the gates are in the source, where the build can see them', () => {
 
   test("App.js's fallback price is never made inside the app", () => {
     expect(APP).toContain("import { isNativeShell } from './lib/nativeShell';");
-    expect(APP).toContain(`${ON} && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? \`$\${VENUE_PLAN_PRICE[tier]}/\${per}\` : null;`);
+    expect(APP).toContain(`${WEB} && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? \`$\${VENUE_PLAN_PRICE[tier]}/\${per}\` : null;`);
   });
 });

@@ -32,7 +32,10 @@ import Icons from './ui/Icons';
 // through RevenueCat, and the CTA only renders when an offering actually
 // loaded (Apple 2.1). On the web the same sheet sells through Stripe: the
 // plans and prices come from GET /api/pro/status, exactly what /pro shows,
-// and the CTA goes to Stripe's hosted checkout.
+// and the CTA goes to Stripe's hosted checkout. The App Store build
+// (REACT_APP_PURCHASES=iap) is the app whatever its bridge says, so `native`
+// below is the constant true there and the Stripe half is compiled out of it
+// (lib/purchasesBuild.js).
 //
 // WHAT THE SCREEN DOES, AND THE EVIDENCE FOR EACH (the 2026-09-24 research
 // pass; sources in the paywall research notes):
@@ -171,8 +174,9 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
   // lib/nativeShell.js's answer, the one index.js boots on, so a shell booted
-  // as the app can never be shown the Stripe half below.
-  const native = isNativeShell();
+  // as the app can never be shown the Stripe half below. Always the App Store
+  // half in the App Store build, spelled out so that build carries no other.
+  const native = process.env.REACT_APP_PURCHASES === 'iap' || isNativeShell();
 
   // Monthly first: it is the smaller commitment, and the web checkout
   // (website/ProPage.js) opens on it too. Which plan is preselected is the

@@ -45,12 +45,14 @@ import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } 
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
 // The Flux sensor's table zones, on a tab of their own.
 import VenueTablesTab from '../components/venue/tables/VenueTablesTab';
-// REACT_APP_PURCHASES=off (the App Store build): no plan badge, no plans
-// sheet, no prices, no upgrade buttons and no Subscription card. A tab the
-// server withholds says so without offering anything. lib/purchasesBuild.js.
+// A build that does not sell on the web (REACT_APP_PURCHASES off, and iap, the
+// App Store build, which sells Flock Pro through Apple and Roost nowhere): no
+// plan badge, no plans sheet, no prices, no upgrade buttons and no
+// Subscription card, compiled out rather than hidden. A tab the server
+// withholds says so without offering anything. lib/purchasesBuild.js.
 //
-// With purchases on, the native app still shows no Roost price, no upgrade
-// button and no plans sheet: Roost is sold on the website only. Native is
+// A web build in a native shell still shows no Roost price, no upgrade button
+// and no plans sheet: Roost is sold on the website only. Native is
 // lib/nativeShell.js's answer, the one VenueBillingControl's buttons ask.
 import { isNativeShell } from '../lib/nativeShell';
 import { DRINK_DEAL_LINE_PROMO } from '../lib/drinkDeals';
@@ -147,23 +149,24 @@ const venueInitial = (name) => {
 const VERIFICATION_LINES = {
   verified: {
     roost: 'Replies to reviews, your live number, deals on your venue card and your own forecast are on.',
-    free: 'Replies to reviews, your live number and deals on your venue card are on. Your own forecast comes with Roost.',
+    free: 'Replies to reviews, your live number and deals on your venue card are on.',
   },
   pending: {
     roost: 'We confirm ownership by hand. Replies to reviews, your live number, deals on your venue card and your own forecast turn on once that clears. Nothing more is needed from you.',
-    free: 'We confirm ownership by hand. Replies to reviews, your live number and deals on your venue card turn on once that clears. Your own forecast comes with Roost.',
+    free: 'We confirm ownership by hand. Replies to reviews, your live number and deals on your venue card turn on once that clears.',
   },
   unrequested: {
     roost: 'We confirm you own this venue by hand before replies to reviews, your live number, deals on your venue card and your own forecast turn on.',
-    free: 'We confirm you own this venue by hand before replies to reviews, your live number and deals on your venue card turn on. Your own forecast comes with Roost.',
+    free: 'We confirm you own this venue by hand before replies to reviews, your live number and deals on your venue card turn on.',
   },
 };
 export function verificationLine({ verified, pending, onRoost }) {
   const state = verified ? 'verified' : pending ? 'pending' : 'unrequested';
   const line = VERIFICATION_LINES[state][onRoost ? 'roost' : 'free'];
-  // The free lines end on the plan that adds the forecast; a build that sells
-  // nothing leaves that sentence off.
-  return (process.env.REACT_APP_PURCHASES !== 'off') ? line : line.replace(' Your own forecast comes with Roost.', '');
+  // The free lines end on the plan that adds the forecast. A build that does
+  // not sell Roost (off, and iap, the App Store one) has no such sentence at
+  // all: it is written behind the gate, so the minifier drops it there.
+  return !onRoost && (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? `${line} Your own forecast comes with Roost.` : line;
 }
 
 // THE ROOST NOTICE WINDOW, SAID ONLY AS FAR AS IT HAS HAPPENED (Terms 9.6). A
@@ -1159,13 +1162,15 @@ export default function VenueDashboard({
     const tierKnown = venueProfile != null && venueTierKnown;
 
     // ROOST IS NOT SOLD INSIDE THE APP. This dashboard ships in the iOS binary
-    // (VENUE-BILLING.md finding 4), and the purchases flag stops hiding the
-    // plans once that build sells Flock Pro. A Roost price, an upgrade button
-    // or the plans sheet in the native shell would be a paid plan offered
-    // outside in-app purchase, which App Review reads under guideline 3.1.1.
-    // Roost is bought on the website, so inside the app all of them stay off
-    // and a locked tab says what the build that sells nothing says. The name
-    // Roost stays wherever it names a feature or the plan a venue holds.
+    // (VENUE-BILLING.md finding 4). A Roost price, an upgrade button or the
+    // plans sheet in the native shell would be a paid plan offered outside
+    // in-app purchase, which App Review reads under guideline 3.1.1. Roost is
+    // bought on the website, so inside the app all of them stay off and a
+    // locked tab says what the build that sells nothing says. The App Store
+    // build sells Flock Pro (REACT_APP_PURCHASES=iap) and still compiles every
+    // one of them out, by the web gate written at each; `native` keeps them off
+    // a web build that finds itself in a native shell. The name Roost stays
+    // wherever it names a feature.
     const native = isNativeShell();
 
     // Locked tab placeholder, shown where the venue's plan does not include
@@ -1185,7 +1190,7 @@ export default function VenueDashboard({
         </div>
         <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        {(process.env.REACT_APP_PURCHASES !== 'off') && !native ? (<>
+        {(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && !native ? (<>
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
         <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: 'var(--r-sm)', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
           Upgrade to Roost
@@ -1220,7 +1225,7 @@ export default function VenueDashboard({
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {venueBillingOn && (process.env.REACT_APP_PURCHASES !== 'off') && (
+              {venueBillingOn && (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && (
               <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: 'var(--r-md)', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
                 {tierBadge[venueData.tier].label}
               </span>
@@ -1616,7 +1621,7 @@ export default function VenueDashboard({
           {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>This week</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{process.env.REACT_APP_PURCHASES !== 'off' ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? 'This Week is part of Roost.' : 'This Week is not turned on for your venue.'}</p>
             </div>
           )}
 
@@ -2277,7 +2282,7 @@ export default function VenueDashboard({
                 {venueListErrors.incomingFlocksLocked && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--bg-tertiary)' }}>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include this list.</p>
-                    {(process.env.REACT_APP_PURCHASES !== 'off') && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
+                    {(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: 'var(--r-sm)', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
                   </div>
                 )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
@@ -3003,8 +3008,9 @@ export default function VenueDashboard({
                   claim about their bank account that is simply false. tier_source
                   and tier_reason already come down with the profile, so the
                   screen can say what actually happened instead. */}
-              {/* Not in a REACT_APP_PURCHASES=off build at all. */}
-              {(process.env.REACT_APP_PURCHASES !== 'off') && (
+              {/* Not in a build that does not sell on the web at all
+                  (REACT_APP_PURCHASES off, or iap, the App Store one). */}
+              {(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-md)', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
                 {/* Billing off: every feature is on and nothing is a plan the
@@ -3222,7 +3228,7 @@ export default function VenueDashboard({
 
           {/* Upgrade Modal. Never inside the app, whatever opened it: every
               button that opens it is gone there too (`native` above). */}
-          {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off') && !native && (
+          {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') && !native && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl)', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>

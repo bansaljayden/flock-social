@@ -42,9 +42,11 @@
 #                                      naming two different Firebase projects.
 #      REACT_APP_REVENUECAT_IOS_KEY    the paywall can never show, even with
 #                                      PAYWALL_ENABLED set on the backend. The
-#                                      one exception to failing green: once the
-#                                      build sells Pro, the RevenueCat key step
-#                                      below stops it instead
+#                                      one exception to failing green: the App
+#                                      Store build sells Pro, built with
+#                                      REACT_APP_PURCHASES=iap, so the
+#                                      RevenueCat key step below stops it
+#                                      instead
 #      REACT_APP_SENTRY_DSN            crashes inside the shell go unreported
 #      REACT_APP_POSTHOG_KEY           posthog-js is never imported, no analytics
 #      REACT_APP_API_URL               optional. Defaults to https://api.flockcorp.com
@@ -116,11 +118,16 @@ workflows:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
       - name: Build web app (root asset paths)
-        # REACT_APP_PURCHASES=off: the App Store build carries no purchase
-        # screen, price, checkout link or store SDK start-up at all
-        # (frontend/src/lib/purchasesBuild.js). Set on the iOS build lines
-        # only, never on Vercel, so the web keeps everything.
-        script: REACT_APP_PURCHASES=off npm run build
+        # REACT_APP_PURCHASES=iap: the App Store build sells Flock Pro through
+        # Apple's in-app purchase (RevenueCat) and nothing else. Stripe's
+        # checkout and portal, /pro, the landing page's prices, Roost's plans
+        # and buy buttons and every line that points to buying on the web are
+        # compiled out, as they were with off (App Store Review Guideline
+        # 3.1.1; frontend/src/lib/purchasesBuild.js). Set on the iOS build
+        # lines only, never on Vercel or Cloudflare, so the web keeps
+        # everything. frontend/scripts/check-purchase-bundle.js checks what an
+        # iap build carries.
+        script: REACT_APP_PURCHASES=iap npm run build
       - name: Check the RevenueCat key if this build sells Flock Pro
         script: |
           # A BUILD THAT SELLS PRO WITHOUT ITS STORE KEY SHIPS GREEN. With
@@ -131,14 +138,23 @@ workflows:
           # and TestFlight all pass. So the key is checked here, against the
           # web build that just inlined it.
           #
-          # ONLY WHEN THE BUILD SELLS. While the build line above runs with
-          # REACT_APP_PURCHASES=off the bundle has no purchase code and needs
-          # no key, so this step says so and exits 0. It reads that from what
-          # the build produced, not from the build line: the RevenueCat SDK is
-          # bundled exactly when purchases are on (services/purchases.js
-          # imports it behind that flag), and the source maps list every
-          # module in the bundle. Grepping this file for the flag would also
-          # find the review recording's build line, which says off too.
+          # THE APP STORE BUILD SELLS, SO IT NEEDS THE KEY. The build line above
+          # runs with REACT_APP_PURCHASES=iap, which bundles the RevenueCat SDK,
+          # so this step stops the build unless the key is RevenueCat's Apple
+          # one. It reads that from what the build produced, not from the
+          # build line: the RevenueCat SDK is bundled exactly when Flock Pro is
+          # sold (services/purchases.js imports it behind the flag, and only
+          # off leaves it out), and the source maps list every module in the
+          # bundle. A build made with REACT_APP_PURCHASES=off has no purchase
+          # code and needs no key, so for that one this step says so and exits
+          # 0. Grepping this file for the flag would also find the review
+          # recording's build line.
+          #
+          # AND A PRO SHEET WITH NO STORE BEHIND IT STOPS THE BUILD. The Pro
+          # sheet (components/PaywallSheet.js) is bundled behind the same flag
+          # as the SDK, so a build that carries the sheet and not the SDK sells
+          # Pro with no way to pay. Without this, such a build would read here
+          # as one that sells nothing, and pass.
           set -eu
           KEY="${REACT_APP_REVENUECAT_IOS_KEY:-}"
           # The "sources" list of each map, and nothing else: a map also holds
@@ -147,15 +163,18 @@ workflows:
           import glob, json
           maps = glob.glob("build/static/js/*.map")
           sdk = 0
+          sheet = 0
           for path in maps:
               with open(path, encoding="utf-8") as f:
                   sources = json.load(f).get("sources") or []
               if any("@revenuecat/purchases-capacitor/" in s for s in sources):
                   sdk = 1
-          print(len(maps), sdk)
+              if any(s.endswith("components/PaywallSheet.js") for s in sources):
+                  sheet = 1
+          print(len(maps), sdk, sheet)
           ') || VERDICT=""
           set -- $VERDICT
-          if [ "$#" -ne 2 ]; then
+          if [ "$#" -ne 3 ]; then
             echo "PURCHASE CHECK FAILED: the source maps under build/static/js could not be read,"
             echo "so nothing here can tell whether this build sells Flock Pro."
             exit 1
@@ -165,6 +184,13 @@ workflows:
             echo "whether this build sells Flock Pro. This step reads them to see whether the"
             echo "RevenueCat SDK was bundled."
             echo "FIX: leave GENERATE_SOURCEMAP unset for this build, or change this step first."
+            exit 1
+          fi
+          if [ "$2" -eq 0 ] && [ "$3" -eq 1 ]; then
+            echo "PURCHASE CHECK FAILED: this build carries the Flock Pro sheet but not the RevenueCat SDK,"
+            echo "so the sheet would offer Pro with no App Store behind it."
+            echo "FIX: services/purchases.js imports the SDK unless REACT_APP_PURCHASES is off; check that"
+            echo "     import and the build line above (iap for the App Store build)."
             exit 1
           fi
           if [ "$2" -eq 0 ]; then
@@ -704,9 +730,12 @@ workflows:
         # the retry still happen underneath), the second forces the light theme,
         # because this machine keeps UTC time and a run after 20:00 UTC would
         # otherwise film dark. Neither is set on any other workflow or on Vercel.
-        # REACT_APP_PURCHASES=off as on the App Store build above, so the take
-        # films the same app the reviewer installs: no purchase surface at all.
-        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=off npm run build
+        # REACT_APP_PURCHASES=iap as on the App Store build above, so the take
+        # films the same app the reviewer installs: Flock Pro through the App
+        # Store only, and no web purchase surface at all. The Pro sheet appears
+        # only to an account the server has the paywall on for (PAYWALL_ENABLED,
+        # or PAYWALL_PREVIEW_USER_IDS), as in the reviewer's app.
+        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=iap npm run build
       - name: Capacitor sync iOS
         script: |
           # The marketing site's app screenshots stay out of the iPhone app. The

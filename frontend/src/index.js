@@ -920,11 +920,12 @@ const PAGES = [
   {
     id: 'privacy',
     test: (p) => p === '/privacy',
-    // A REACT_APP_PURCHASES=off build (the App Store one) carries no copy of
-    // the policy, which names where each plan is bought, and points at the
-    // published text instead (website/LegalOnTheWeb.js has why). The literal
-    // test keeps the full page's chunk out of that build.
-    load: process.env.REACT_APP_PURCHASES === 'off'
+    // A build that does not sell on the web (REACT_APP_PURCHASES off, or iap,
+    // the App Store one) carries no copy of the policy, which names where each
+    // plan is bought, and points at the published text instead
+    // (website/LegalOnTheWeb.js has why). The literal test keeps the full
+    // page's chunk out of those builds.
+    load: (process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap')
       ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="privacy" /> }))
       : () => import('./website/PrivacyPolicy'),
     Loading: PaperLoading,
@@ -939,8 +940,8 @@ const PAGES = [
     id: 'terms',
     test: (p) => p === '/terms',
     // Same as /privacy: the Terms price Roost and set out how Flock Pro is
-    // sold, so a REACT_APP_PURCHASES=off build points at the published text.
-    load: process.env.REACT_APP_PURCHASES === 'off'
+    // sold on the web, so the off and iap builds point at the published text.
+    load: (process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap')
       ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="terms" /> }))
       : () => import('./website/TermsOfService'),
     Loading: PaperLoading,
@@ -955,9 +956,9 @@ const PAGES = [
     id: 'about',
     test: (p) => p === '/about',
     // Same as /terms: the About page sets out Roost and Flock Pro and asks
-    // venues to write in for early access, so a REACT_APP_PURCHASES=off build
-    // points at the published page and leaves this one's chunk out.
-    load: process.env.REACT_APP_PURCHASES === 'off'
+    // venues to write in for early access, so the off and iap builds point at
+    // the published page and leave this one's chunk out.
+    load: (process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap')
       ? () => import('./website/LegalOnTheWeb').then((m) => ({ default: () => <m.default doc="about" /> }))
       : () => import('./website/AboutPage'),
     Loading: PaperLoading,
@@ -973,10 +974,10 @@ const PAGES = [
   // One plan from the first invite to the bill, the venue side, the four AIs
   // and the pitch video. Linked from the site menu and the footer. The chunk
   // is named for the Pages preload, like the landing page's. It describes
-  // Roost, the paid venue plan, so a REACT_APP_PURCHASES=off build (the App
-  // Store one) leaves it out the same way it leaves out /pro and the landing
-  // page; nothing inside the app links to it.
-  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+  // Roost, the paid venue plan, so a build that does not sell on the web (off,
+  // and iap, the App Store one) leaves it out the same way it leaves out /pro
+  // and the landing page; nothing inside the app links to it.
+  ...((process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap') ? [] : [{
     id: 'how-it-works',
     test: (p) => p === '/how-it-works' && !isNativeShell,
     load: () => import(/* webpackChunkName: "howitworks" */ './website/HowItWorksPage'),
@@ -986,7 +987,7 @@ const PAGES = [
   // chunk of its own that the page loads on approach), and the four AI
   // models with the pitch figures. Web only, like How it works: /ai
   // describes Roost, and nothing inside the app links to either.
-  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+  ...((process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap') ? [] : [{
     id: 'flux',
     test: (p) => p === '/flux' && !isNativeShell,
     load: () => import(/* webpackChunkName: "flux" */ './website/FluxPage'),
@@ -1001,10 +1002,11 @@ const PAGES = [
   // not match, so the WebView falls through to the app like any other path.
   // Apple does not allow the app to point at a web price outside the US, and
   // the page repeats the check itself in case it is ever mounted another way.
-  // A REACT_APP_PURCHASES=off build (the App Store one) has no /pro at all:
-  // the literal test lets webpack leave the page's chunk out of that build
+  // A build that does not sell on the web has no /pro at all: off, and iap,
+  // the App Store one, which sells Pro through Apple only. The literal test
+  // lets webpack leave the page's chunk out of those builds
   // (lib/purchasesBuild.js).
-  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+  ...((process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap') ? [] : [{
     id: 'pro',
     test: (p) => p === '/pro' && !isNativeShell,
     load: () => import('./website/ProPage'),
@@ -1047,14 +1049,15 @@ const PAGES = [
   },
 ];
 
-// The marketing page sells Flock Pro, and the native shell never shows it
-// (isMarketingRoot below), so a REACT_APP_PURCHASES=off build, which is only
-// ever the App Store one, does not carry it (lib/purchasesBuild.js).
+// The marketing page sells Flock Pro on the web, with its prices, and the
+// native shell never shows it (isMarketingRoot below), so a build made for the
+// iPhone app, REACT_APP_PURCHASES off or iap, does not carry it
+// (lib/purchasesBuild.js).
 // The chunk is NAMED (landing.<hash>.chunk.js/.css) so the Pages build can find
 // it in asset-manifest.json and send it as a preload with the HTML
 // (scripts/build-cloudflare.js routePreloads): without a hint the browser only
 // learns it exists after main.js has downloaded and run.
-const LANDING_PAGE = process.env.REACT_APP_PURCHASES === 'off' ? null : {
+const LANDING_PAGE = (process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap') ? null : {
   id: 'landing',
   load: () => import(/* webpackChunkName: "landing" */ './website/LandingPage'),
   Loading: LandingLoading,

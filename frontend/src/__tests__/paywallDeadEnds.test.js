@@ -114,7 +114,9 @@ describe('back to /pro after signing in', () => {
     const i = app.indexOf('const beginSession = useCallback');
     const fn = app.slice(i, app.indexOf('}, []);', i));
     expect(fn.indexOf('pullSettings().catch(() => {});')).toBeLessThan(fn.indexOf('takeReturnAfterSignIn()'));
-    expect(fn).toMatch(/const back = takeReturnAfterSignIn\(\);\n\s+if \(back\) window\.location\.assign\(back\);/);
+    // Only a build that sells on the web has /pro to go back to; off and the
+    // App Store build (iap) never read it, so never send anybody there.
+    expect(fn).toMatch(/const back = \(process\.env\.REACT_APP_PURCHASES !== 'off' && process\.env\.REACT_APP_PURCHASES !== 'iap'\) \? takeReturnAfterSignIn\(\) : null;\n\s+if \(back\) window\.location\.assign\(back\);/);
   });
 });
 

@@ -474,11 +474,12 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
       if (err?.status === 403) {
         // The server said which plan serves these; repeat it rather than
         // guessing. Dormant while VENUE_BILLING_ENABLED is unset.
-        // The App Store build names no plan (lib/purchasesBuild.js),
-        // including the server's own wording. Nor does the app with
-        // purchases on: that wording asks for a venue plan upgrade, and Roost
-        // is sold on the website only (lib/nativeShell.js).
-        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && !isNativeShell()
+        // A build that does not sell on the web (off, and iap, the App Store
+        // one) names no plan (lib/purchasesBuild.js), including the server's
+        // own wording. Nor does a web build inside the app: that wording asks
+        // for a venue plan upgrade, and Roost is sold on the website only
+        // (lib/nativeShell.js).
+        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap' && !isNativeShell()
           ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)
           : 'Not turned on for your venue.');
         setState('locked');
@@ -729,10 +730,12 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   const renderPlainCard = (card, extraFirstRow) => {
     if (card.status === 'locked') {
       // Roost is the one paid venue plan, so a locked card can only be
-      // waiting on Roost. It never says "Pro", which is the consumer plan.
+      // waiting on Roost. It never says "Pro", which is the consumer plan. A
+      // build that does not sell Roost (off, and iap, the App Store one) says
+      // the card is not on, with no plan to go and get.
       return renderCardShell(card, (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-          {process.env.REACT_APP_PURCHASES !== 'off' ? 'Part of Roost.' : 'Not turned on for your venue.'}
+          {(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? 'Part of Roost.' : 'Not turned on for your venue.'}
         </p>
       ));
     }

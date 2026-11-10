@@ -257,3 +257,46 @@ describe('inside the app', () => {
     expect(container.textContent).toContain('Renews at $29.99 every year until you cancel in your App Store settings.');
   });
 });
+
+// THE APP STORE BUILD (REACT_APP_PURCHASES=iap). It sells Flock Pro through
+// Apple and nothing through Stripe, and it is the app whatever its bridge
+// says: the sheet's `native` is the constant true there, so the Stripe half is
+// compiled out of it (lib/purchasesBuild.js). These run with no bridge at all,
+// the case where only the build keeps the Stripe half away.
+describe('in the App Store build, with or without a bridge', () => {
+  const FLAG_BEFORE = process.env.REACT_APP_PURCHASES;
+  beforeEach(() => { process.env.REACT_APP_PURCHASES = 'iap'; });
+  afterEach(() => {
+    if (FLAG_BEFORE === undefined) delete process.env.REACT_APP_PURCHASES;
+    else process.env.REACT_APP_PURCHASES = FLAG_BEFORE;
+  });
+  const bothPlans = () => [
+    { packageType: 'MONTHLY', product: { identifier: 'flock_pro_monthly', priceString: '$3.99', price: 3.99, introPrice: null } },
+    { packageType: 'ANNUAL', product: { identifier: 'flock_pro_yearly', priceString: '$29.99', price: 29.99, introPrice: null } },
+  ];
+
+  test.each([['no bridge', null], ['the iOS bridge', { isNativePlatform: () => true }]])('with %s: the App Store plans, the renewal line, Terms, Privacy and Restore, and no Stripe call', async (_label, bridge) => {
+    if (bridge) window.Capacitor = bridge;
+    isPurchasesAvailable.mockReturnValue(true);
+    introEligibleProducts.mockResolvedValue(new Set());
+    getEntitlements.mockResolvedValue({ isPremium: false, paywallEnabled: true });
+    getProOffering.mockResolvedValue(bothPlans());
+    const { container } = render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+    await screen.findByRole('button', { name: MONTHLY_CTA });
+    expect(container.textContent).toContain('$29.99/year');
+    expect(container.textContent).toContain('Renews at $3.99 every month until you cancel in your App Store settings.');
+    for (const name of ['Terms', 'Privacy', 'Restore purchases']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    expect(getProStatus).not.toHaveBeenCalled();
+    expect(startProCheckout).not.toHaveBeenCalled();
+    expect(container.textContent).not.toMatch(/flockcorp|website|on the web|Under 18|refund/i);
+  });
+
+  test('with no App Store product it says so, and never falls back to the web half', async () => {
+    isPurchasesAvailable.mockReturnValue(false);
+    const { container } = render(<PaywallSheet open trigger="forecast" onClose={() => {}} />);
+    await screen.findByText("Flock Pro can't be bought in the app yet.");
+    expect(getProStatus).not.toHaveBeenCalled();
+    expect(screen.queryByText('Flock Pro is not on sale on the web yet.')).toBeNull();
+    expect(container.textContent).not.toMatch(/\$\s?\d|flockcorp|website/i);
+  });
+});

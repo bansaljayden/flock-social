@@ -457,7 +457,7 @@ describe('the return from Stripe', () => {
 
   test('App.js reads the return once at module scope and re-reads entitlements', () => {
     const app = read('App.js');
-    expect(app).toContain("let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readProReturn() : null;");
+    expect(app).toContain("let PRO_RETURN = (process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap') ? readProReturn() : null;");
     expect(app).toMatch(/settleProCheckout\(\{/);
     expect(app).toMatch(/showToast\("You're Pro\."\)/);
     const effect = app.slice(app.indexOf('const ret = PRO_RETURN;'), app.indexOf('}, [refreshEntitlements, showToast, openVenueDetail]);'));

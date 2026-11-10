@@ -745,7 +745,8 @@ function endNativePurchasesSession() {
   try {
     // A REACT_APP_PURCHASES=off build never started RevenueCat, so there is
     // nothing to sign out of, and the literal test keeps the purchases chunk
-    // out of that build (lib/purchasesBuild.js).
+    // out of that build (lib/purchasesBuild.js). The App Store build (iap)
+    // did start it, and signs it out here.
     if (process.env.REACT_APP_PURCHASES !== 'off') {
       if (!isNativeShell()) return;
       import('./purchases')
@@ -2279,8 +2280,14 @@ export async function getEntitlements() {
 }
 
 // The Pro and Roost billing calls below refuse without asking the server in a
-// build made with REACT_APP_PURCHASES=off (lib/purchasesBuild.js). Nothing in
-// that build calls them; this keeps the routes out of it as well.
+// build that does not sell them (lib/purchasesBuild.js). Nothing in that build
+// calls them; this keeps the routes out of it as well. With
+// REACT_APP_PURCHASES=off that is every one of them. The App Store build
+// (iap) sells Flock Pro through Apple only, so it keeps the two it needs, the
+// status read (the You tab's Flock Pro row asks it whether a subscriber's Pro
+// came from the App Store, to offer Apple's Manage) and the sync after an App
+// Store purchase, and refuses Stripe's checkout, cancel, resume, portal and
+// confirm calls and all of Roost's.
 function purchasesOffInThisBuild() {
   const err = new Error('This is not available in the app.');
   err.code = 'PURCHASES_OFF';
@@ -2320,7 +2327,7 @@ export async function syncProFromStore() {
 // after paying; options.code applies a promotion code from a shared link. The
 // server checks all three against fixed shapes.
 export async function startProCheckout(plan, options = {}) {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   const body = { plan };
   if (options.from) body.from = options.from;
   if (options.from === 'forecast' && options.place) body.place = options.place;
@@ -2335,12 +2342,12 @@ export async function startProCheckout(plan, options = {}) {
 // POST /api/pro/cancel and /resume -> { cancelAtPeriodEnd, periodEnd }. Flock's
 // own buttons for a web subscription, since Stripe's portal is for adults.
 export async function cancelProSubscription() {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/pro/cancel', { method: 'POST', retry: false });
 }
 
 export async function resumeProSubscription() {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/pro/resume', { method: 'POST', retry: false });
 }
 
@@ -2348,14 +2355,14 @@ export async function resumeProSubscription() {
 // subscriber cancels or changes their card. 404 NO_WEB_SUBSCRIPTION when this
 // account never bought on the web.
 export async function openProPortal() {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/pro/portal', { method: 'POST', retry: false });
 }
 
 // POST /api/pro/confirm { sessionId } after Stripe sends the buyer back to
 // /app?pro=success&session_id=cs_... -> { complete, isPremium }.
 export async function confirmProCheckout(sessionId) {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/pro/confirm', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
@@ -2372,7 +2379,7 @@ export async function confirmProCheckout(sessionId) {
 // plans is empty whenever checkout is off, and the dashboard then shows no
 // price from it.
 export async function getVenueBillingStatus() {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/status');
 }
 
@@ -2380,7 +2387,7 @@ export async function getVenueBillingStatus() {
 // ALREADY_SUBSCRIBED, PLAN_ALREADY_GRANTED and 503 CHECKOUT_OFF arrive as
 // err.code. retry: false because a replay would open a second session.
 export async function startVenueCheckout(plan) {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/checkout', {
     method: 'POST',
     body: JSON.stringify({ plan }),
@@ -2390,14 +2397,14 @@ export async function startVenueCheckout(plan) {
 
 // POST /api/venue-billing/portal -> { url } of the Stripe customer portal.
 export async function openVenuePortal() {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/portal', { method: 'POST', retry: false });
 }
 
 // POST /api/venue-billing/confirm { sessionId } after Stripe sends the owner
 // back to /app?venue_billing=success&session_id=cs_... -> { complete, tier }.
 export async function confirmVenueCheckout(sessionId) {
-  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  if (!(process.env.REACT_APP_PURCHASES !== 'off' && process.env.REACT_APP_PURCHASES !== 'iap')) return purchasesOffInThisBuild();
   return request('/api/venue-billing/confirm', {
     method: 'POST',
     body: JSON.stringify({ sessionId }),
@@ -3857,10 +3864,12 @@ export async function sendAiChat(messages, location, currentContext, locationAge
   // server says how far a venue is only from a fix this tells it is fresh
   // (backend routes/ai.js, HOW FAR A VENUE IS); without it, no distance.
   if (location && Number.isInteger(locationAgeSec) && locationAgeSec >= 0) body.locationAgeSec = locationAgeSec;
-  // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing, so it
-  // tells Birdie to leave every plan, upgrade and price out of what it says.
-  // The server only ever removes wording on this; it grants nothing
-  // (lib/purchasesBuild.js has why the test is written out).
+  // A REACT_APP_PURCHASES=off build sells nothing, so it tells Birdie to leave
+  // every plan, upgrade and price out of what it says. The server only ever
+  // removes wording on this; it grants nothing (lib/purchasesBuild.js has why
+  // the test is written out). The App Store build (iap) sells Pro in the app,
+  // so it sends nothing here and Birdie may say Pro exists, as on the web;
+  // Birdie's prompt names no price and no place to buy it.
   if (process.env.REACT_APP_PURCHASES === 'off') body.purchases = 'off';
   // This client asks before Birdie's first message (components/birdie/
   // BirdiePanel.js) and says so on every turn, which is what makes the server

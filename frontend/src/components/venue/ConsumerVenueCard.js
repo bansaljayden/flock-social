@@ -96,9 +96,10 @@ import { submitVenueFeedback } from '../../services/api';
 import { useTableSummary } from '../../lib/tableSummaries';
 import TableAvailability from './TableAvailability';
 import { VENUE_PHOTO_PLACEHOLDER } from '../../lib/venuePhoto';
-// REACT_APP_PURCHASES=off (the App Store build): a forecast the server
-// withholds is stated as a limit, with nothing offered and no Pro wording.
-// lib/purchasesBuild.js has the rules.
+// REACT_APP_PURCHASES=off (a build that sells nothing): a forecast the server
+// withholds is stated as a limit, with nothing offered and no Pro wording. The
+// App Store build (iap) sells Pro there, so its offers open the App Store
+// sheet as on the web. lib/purchasesBuild.js has the rules.
 
 // Animated crowd dial — fills from 0 to target score with counting number,
 // or shows the reading at once under Reduce Motion.

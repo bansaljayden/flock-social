@@ -70,15 +70,18 @@ import { isNativeShell } from '../lib/nativeShell';
 // The real version and build at the foot of the screen (lib/appVersion.js).
 import { initialVersionLine, readVersionLine } from '../lib/appVersion';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
-// REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
-// the subscription note on deletion is a plain App Store warning for an account
+// REACT_APP_PURCHASES=off (sells nothing): no Pro row, no Pro badge, and the
+// subscription note on deletion is a plain App Store warning for an account
 // that has Pro. lib/purchasesBuild.js has the rules. With purchases on, the
-// note inside the app is the App Store half alone, never the website's.
+// note inside the app is the App Store half alone, never the website's, and
+// the App Store build (iap) carries only that half: its Pro row is the App
+// Store one, with no link to /pro and no Stripe billing buttons.
 
 // A deletion refused over billing, said without naming a plan. The sentence
-// from the server names Flock Pro or Roost (backend/routes/users.js, DELETE
-// /me), which the web shows as it is; a REACT_APP_PURCHASES=off build shows
-// these instead, keyed by the code the server sends with it. Each keeps what the person needs
+// from the server names a Flock Pro web subscription or Roost
+// (backend/routes/users.js, DELETE /me), which the web shows as it is; a build
+// that does not sell on the web (off, and iap, the App Store one) shows these
+// instead, keyed by the code the server sends with it. Each keeps what the person needs
 // to know: whether the account is gone, and whether a subscription is still
 // running.
 export const DELETE_BILLING_NEUTRAL = {
@@ -1198,10 +1201,11 @@ export default function ProfileSettings({
                   switch sitting on for alerts it would never get, so the row
                   says it is a Pro feature and opens the sheet instead.
 
-                  A REACT_APP_PURCHASES=off build (the App Store one) sells
-                  nothing, so the same account gets a plain line saying the
-                  alerts are not available, and no switch that would sit on
-                  for alerts the backend will not send. */}
+                  A REACT_APP_PURCHASES=off build sells nothing, so the same
+                  account gets a plain line saying the alerts are not
+                  available, and no switch that would sit on for alerts the
+                  backend will not send. The App Store build (iap) sells Pro,
+                  so it keeps the Pro button, which opens the App Store sheet. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: 'var(--r-sm)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
@@ -1365,10 +1369,10 @@ export default function ProfileSettings({
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. The exception is a plan whose bill somebody else paid and somebody besides you still owes on, which passes to the person who paid, or to another member if they have left the plan or been banned. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Only once there is a subscription to speak of; Apple expects
                     the sheet to say deletion does not cancel one. A
-                    REACT_APP_PURCHASES=off build (the App Store one) sells
-                    nothing, but an account that already has Pro may be paying
-                    Apple for it, so that account still gets the warning and
-                    where to cancel, with no plan name, price or link. When
+                    REACT_APP_PURCHASES=off build sells nothing, but an
+                    account that already has Pro may be paying Apple for it,
+                    so that account still gets the warning and where to
+                    cancel, with no plan name, price or link. When
                     the entitlement read never landed (entitlementsUnknown in
                     App.js), isPro is only a default, so the warning shows
                     then too: a paying account must not lose it to a failed
@@ -1385,8 +1389,10 @@ export default function ProfileSettings({
                     true of whoever reads it. And it goes to an account that is
                     Pro or whose Pro is unknown, never just because Pro is on
                     sale (paywallEnabled is the global switch, and says nothing
-                    about this account). */}
-                {(process.env.REACT_APP_PURCHASES !== 'off') ? (isNativeShell() ? ((isPro || entitlementsUnknown) && (
+                    about this account). The App Store build (iap) is the app
+                    whatever its bridge says, so it carries this half alone and
+                    the website's sentence is compiled out of it. */}
+                {(process.env.REACT_APP_PURCHASES !== 'off') ? ((process.env.REACT_APP_PURCHASES === 'iap' || isNativeShell()) ? ((isPro || entitlementsUnknown) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions. If Flock bills you directly, your subscription is cancelled with the account.</p>
                 )) : ((entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
@@ -1516,7 +1522,7 @@ export default function ProfileSettings({
                           setDeleteError('');
                         } else if (reauth === 'password') {
                           setDeleteError(deletePassword ? 'That password is not right. Try again.' : 'Enter your password to confirm it is you.');
-                        } else if (process.env.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL[err?.code]) {
+                        } else if ((process.env.REACT_APP_PURCHASES === 'off' || process.env.REACT_APP_PURCHASES === 'iap') && DELETE_BILLING_NEUTRAL[err?.code]) {
                           setDeleteError(DELETE_BILLING_NEUTRAL[err.code]);
                         } else {
                           setDeleteError(err.message || 'Could not delete account. Try again.');
@@ -1689,8 +1695,11 @@ const APPLE_SUBSCRIPTIONS_URL = 'https://apps.apple.com/account/subscriptions';
  * NATIVE iOS: no web link and no web price, anywhere (Apple, outside the US;
  * storefront gating comes later). Pro shows as on; a web purchase is named as
  * plain text with no link. Not Pro, the row is the existing App Store sheet,
- * behind PAYWALL_ENABLED exactly as before. Native or web is
- * lib/nativeShell.js's answer, the one index.js boots on.
+ * behind PAYWALL_ENABLED exactly as before: the server's paywallEnabled for
+ * this account, which is true only with PAYWALL_ENABLED on or for an account
+ * on PAYWALL_PREVIEW_USER_IDS. Native or web is lib/nativeShell.js's answer,
+ * the one index.js boots on, and always native in the App Store build
+ * (REACT_APP_PURCHASES=iap), whose bundle carries no web half at all.
  *
  * A FAILED /status READ IS SAID, WITH A RETRY. It used to be swallowed, and a
  * web subscriber then saw "Active" with no Cancel and no Payment method and
@@ -1706,7 +1715,9 @@ export function ProRow(props) {
 }
 
 function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast }) {
-  const native = isNativeShell();
+  // Spelled out so the App Store build drops the web half below: the link to
+  // /pro and Stripe's cancel, resume and billing buttons (lib/purchasesBuild.js).
+  const native = process.env.REACT_APP_PURCHASES === 'iap' || isNativeShell();
   const [status, setStatus] = React.useState(null);
   const [statusFailed, setStatusFailed] = React.useState(false);
   // 'portal', 'cancel' or 'resume' while one is in flight; every button waits

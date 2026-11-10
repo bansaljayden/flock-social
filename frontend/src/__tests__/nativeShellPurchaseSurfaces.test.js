@@ -132,8 +132,16 @@ describe('every surface that sells asks the one module', () => {
   test('ProfileSettings asks it for the Pro row, the one place there that sells', () => {
     const src = read('screens/ProfileSettings.js');
     const row = src.slice(src.indexOf('export function ProRow('));
-    expect(row).toMatch(/const native = isNativeShell\(\);/);
+    // The App Store build (REACT_APP_PURCHASES=iap) is the app whatever the
+    // bridge says; every other build asks the one module.
+    expect(row).toMatch(/const native = process\.env\.REACT_APP_PURCHASES === 'iap' \|\| isNativeShell\(\);/);
     expect(row).not.toMatch(/isNativePlatform/);
+  });
+
+  test('the Pro sheet asks it the same way', () => {
+    const src = read('components/PaywallSheet.js');
+    expect(src).toMatch(/const native = process\.env\.REACT_APP_PURCHASES === 'iap' \|\| isNativeShell\(\);/);
+    expect(stripComments(src)).not.toMatch(/isNativePlatform/);
   });
 
   test('the boot router imports the same detector instead of defining one', () => {
@@ -178,6 +186,39 @@ describe('under a bridge the old checks read as a browser', () => {
     const row = screen.getByRole('button', { name: /Flock Pro/ });
     expect(container.querySelector('a[href="/pro"]')).toBeNull();
     row.click();
+    await waitFor(() => expect(setPaywallTrigger).toHaveBeenCalledWith('settings'));
+    expect(getProStatus).not.toHaveBeenCalled();
+  });
+});
+
+// THE APP STORE BUILD (REACT_APP_PURCHASES=iap) does not need the bridge's
+// answer at all for the two surfaces that have a web half: the Pro sheet and
+// the You tab's row take their App Store half whatever the bridge says, so the
+// web half is compiled out of that build. With no bridge, the case where only
+// the build can be keeping Stripe away, neither shows a web price or a link.
+describe('in the App Store build, with no bridge at all', () => {
+  const FLAG_BEFORE = process.env.REACT_APP_PURCHASES;
+  beforeEach(() => { process.env.REACT_APP_PURCHASES = 'iap'; });
+  afterEach(() => {
+    if (FLAG_BEFORE === undefined) delete process.env.REACT_APP_PURCHASES;
+    else process.env.REACT_APP_PURCHASES = FLAG_BEFORE;
+  });
+
+  test('the Pro sheet is the App Store one and never asks for web prices', async () => {
+    const { container } = render(<PaywallSheet open trigger="forecast" onClose={() => {}} />);
+    await screen.findByText("Flock Pro can't be bought in the app yet.");
+    expect(getProStatus).not.toHaveBeenCalled();
+    expect(container.textContent).not.toMatch(/\$\s?\d/);
+    expect(container.textContent).not.toMatch(/flockcorp|website/i);
+  });
+
+  test('the You tab row opens the App Store sheet, with no link to /pro', async () => {
+    const setPaywallTrigger = jest.fn();
+    const { container } = render(
+      <ProRow isPro={false} entitlements={{ paywallEnabled: true }} colors={{ navy: '#0d2847' }} setPaywallTrigger={setPaywallTrigger} showToast={() => {}} />
+    );
+    expect(container.querySelector('a[href="/pro"]')).toBeNull();
+    screen.getByRole('button', { name: /Flock Pro/ }).click();
     await waitFor(() => expect(setPaywallTrigger).toHaveBeenCalledWith('settings'));
     expect(getProStatus).not.toHaveBeenCalled();
   });

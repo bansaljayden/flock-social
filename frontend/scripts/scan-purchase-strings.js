@@ -5,10 +5,12 @@
 //   node scripts/scan-purchase-strings.js            (reads build/static/js)
 //   node scripts/scan-purchase-strings.js <dir> [pattern ...]
 //
-// The iOS build is made with REACT_APP_PURCHASES=off (codemagic.yaml), and this
-// is how to see what payment wording is left in what it ships. It reports; it
-// does not fail the build, because some hits are words in unrelated code (a
-// vendor library's own "checkout" identifier, say) and need a person to read.
+// This is how to see what payment wording is left in what a build ships. It
+// reports; it does not fail the build, because some hits are words in
+// unrelated code (a vendor library's own "checkout" identifier, say) and need
+// a person to read. The App Store build is made with REACT_APP_PURCHASES=iap
+// (codemagic.yaml), which carries the Pro sheet's wording on purpose; the
+// pass or fail check for each mode is scripts/check-purchase-bundle.js.
 const fs = require('fs');
 const path = require('path');
 

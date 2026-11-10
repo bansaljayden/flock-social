@@ -58,9 +58,10 @@ const API_KEY = process.env.REACT_APP_REVENUECAT_IOS_KEY;
  *  treats as the app; if that bridge is not native after all, the plugin's web
  *  stub refuses configure and nothing can be bought. */
 //
-// Never in a build made with REACT_APP_PURCHASES=off (lib/purchasesBuild.js,
-// the App Store build): that build sells nothing, so RevenueCat is never
-// configured and StoreKit is never asked, whatever key the build carries.
+// Never in a build made with REACT_APP_PURCHASES=off (lib/purchasesBuild.js):
+// that build sells nothing, so RevenueCat is never configured and StoreKit is
+// never asked, whatever key the build carries. The App Store build
+// (REACT_APP_PURCHASES=iap) sells Flock Pro here, and nowhere else.
 export const isPurchasesAvailable = () => purchasesInBuild() && isNativeShell() && !!API_KEY;
 
 // The account this session signed in as, as RevenueCat must name it: a string

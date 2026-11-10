@@ -343,6 +343,13 @@ describe('the poll after an App Store purchase', () => {
     expect(p.toasts).toEqual([]);
   });
 
+  test('the App Store build (iap), which sells Pro through Apple, says it as the web build does', async () => {
+    const p = poll({ answers: [], purchases: 'iap' });
+    await p.runToEnd('purchase');
+    expect(p.scope.getEntitlements).toHaveBeenCalledTimes(5);
+    expect(p.toasts).toEqual([[NOT_ON_TOAST, 'error']]);
+  });
+
   // The sentence says a payment went through. Only a purchase took one: a
   // restore polls the same way and gives up without it, and anything that
   // does not say what happened is not a purchase.
