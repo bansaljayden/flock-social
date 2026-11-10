@@ -2727,6 +2727,29 @@ function astronomyFeatures(lat, month, hour) {
 // populate the entry, so the cached value was not actually a function of its
 // own key. It is now.
 const NEIGHBOR_CACHE_TTL = 24 * 60 * 60 * 1000;
+
+// WHICH READ HOLDS A SLOW SCORE. The homepage demo's cold build spends most
+// of its 4 to 7 s scoring its eight venues (routes/publicCrowd.js
+// logBuildTime measured 2.8 of 3.7 s on 2026-11-10), and Railway's network
+// logs show database results of about 10 KB arriving 2.2 to 2.8 s after their
+// queries were sent, which only says that some read here is slow. A score
+// whose slowest lookup took a second or more says which, and so do the two
+// reads under the neighbour lookup. Each label speaks at most once every ten
+// seconds, so eight venues scored side by side make one line, not eight.
+const SLOW_LOOKUP_MS = 1000;
+const slowNoted = new Map();
+function noteSlow(label, text) {
+  const now = Date.now();
+  if (now - (slowNoted.get(label) || 0) < 10_000) return;
+  slowNoted.set(label, now);
+  console.log(`[MLPredictor] ${text}`);
+}
+function noteSlowLookups(took) {
+  if (!(Math.max(...took) >= SLOW_LOOKUP_MS)) return;
+  noteSlow('lookups', `slow lookups for one score: events ${took[0]} ms, feedback ${took[1]} ms, `
+    + `baseline ${took[2]} ms, neighbours ${took[3]} ms`);
+}
+
 // ~0.0075 degrees is ~830 m of latitude, i.e. the ~1 km neighbourhood the
 // training pipeline's 3x3 grid of 500 m buckets covers.
 const NEIGHBOR_BOX_DEG = 0.0075;
@@ -2865,6 +2888,8 @@ async function getSelfBaselines(placeId, userId) {
           AND ${NOT_HARVESTED_SQL}`,
       [placeId]
     );
+    const readMs = Date.now() - askedAt;
+    if (readMs >= SLOW_LOOKUP_MS) noteSlow('self', `slow venue curve read: ${readMs} ms for ${r.rows.length} rows`);
     let data = null;
     if (r.rows.length > 0) {
       // The venue's own curve rows, so it has a curve (noteCurvePresence;
@@ -2900,6 +2925,7 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
   // A SUPPLIED but malformed id still goes to allow() and is still refused.
   if (userId != null && !neighborUserBudget.allow(userId)) return null;
   try {
+    const scanStart = Date.now();
     const r = await pool.query(
       `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
        FROM ml_venues v
@@ -2910,6 +2936,11 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
        GROUP BY b.day_of_week, b.hour`,
       [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
     );
+    const scanMs = Date.now() - scanStart;
+    if (scanMs >= SLOW_LOOKUP_MS) {
+      const venueRows = r.rows.reduce((n, row) => n + row.cnt, 0);
+      noteSlow('box', `slow neighbour box scan: ${scanMs} ms for ${venueRows} baseline rows in ${r.rows.length} slots`);
+    }
     const byDowHour = new Map();
     for (const row of r.rows) {
       byDowHour.set(`${row.dow}_${row.hour}`, {
@@ -4858,12 +4889,19 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
 
     // This request's own baseline miss reason; see getBaseline.
     const baselineMiss = {};
+    // How long each of the four lookups took, for noteSlowLookups. Timing
+    // only: a lookup that rejects still rejects, and every value is the
+    // lookup's own.
+    const lookupStart = Date.now();
+    const took = [0, 0, 0, 0];
+    const timed = (i, p) => p.finally(() => { took[i] = Date.now() - lookupStart; });
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
-      getNearbyEvents(lat, lng, eventInstant, userId, eventOpts),
-      getUserFeedback(placeId, userId),
-      getBaseline(placeId, ts.getDay(), ts.getHours(), userId, baselineMiss),
-      getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId),
+      timed(0, getNearbyEvents(lat, lng, eventInstant, userId, eventOpts)),
+      timed(1, getUserFeedback(placeId, userId)),
+      timed(2, getBaseline(placeId, ts.getDay(), ts.getHours(), userId, baselineMiss)),
+      timed(3, getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId)),
     ]);
+    noteSlowLookups(took);
 
     // DID ANYONE ACTUALLY CHECK THE STREET. `observed === false` is
     // getNearbyEvents saying no answer reached it: a missing key, an exhausted
@@ -5867,6 +5905,8 @@ module.exports = {
   // Internals exported for backend/__tests__/mlPipeline.test.js — the
   // train/inference parity surface. Not part of the serving API.
   _internals: {
+    // The slow-read notes, for __tests__/mlSlowLookupNote.test.js.
+    noteSlowLookups, noteSlow, slowNoted, SLOW_LOOKUP_MS,
     // The Places-types -> venue_category mapper, for
     // __tests__/venueCategoryMapping.test.js. Exported because the test's whole
     // job is to pin that this function can reach every category the shipped

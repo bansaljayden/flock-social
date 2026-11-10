@@ -837,6 +837,16 @@ const INVENTORY = [
 
   // ── services/mlPredictor.js ───────────────────────────────────────────────
   {
+    file: 'services/mlPredictor.js', name: 'slowNoted', kind: 'counter',
+    key: "a fixed label written in this file: 'lookups' | 'box' | 'self'",
+    callerControls: 'nothing at all',
+    protects: 'the log, not a resource: a slow score or slow read is said at most once every ten seconds per label, so eight venues scored side by side make one line',
+    denominator: 'ten-second windows per label',
+    bound: 'three keys, by construction',
+    verdict: 'SAFE',
+    why: 'The same rule as photoStore.js lastLoggedAt: a closed set of literals no caller input reaches, and nothing is refused on the strength of it, because throttling the log never throttles a score.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'eventCache', kind: 'cache',
     key: '`${lat.toFixed(3)},${lng.toFixed(3)},${utcHourSlot}`',
     callerControls: 'lat/lng and the timestamp, but routes/crowd.js pre-buckets both coordinates to 2dp (~1.1 km)',
