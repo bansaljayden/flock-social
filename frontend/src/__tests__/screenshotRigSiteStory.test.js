@@ -179,3 +179,18 @@ test('the site story can reach no paid service, and writes nowhere the site ship
   // No photo-real picture: the generated venue covers fail a frame.
   expect(RIG).toContain("return { u, ok: false, kind: 'photo-real-cover' };");
 });
+
+test('at a size of its own the site story keeps whole masters in each mode, and the website run is unchanged', () => {
+  // --viewport and --scale turn it on; it takes no --suffix and writes only to an --out of its own.
+  expect(RIG).toContain("const SITE_SIZED = SITE && (opt('viewport') !== null || opt('scale') !== null);");
+  expect(RIG).toContain("for (const o of SITE_SIZED ? ['set', 'suffix'] : ['viewport', 'scale', 'modes', 'set']) {");
+  expect(RIG).toMatch(/--story=site at a size of its own writes only to --out=<folder>/);
+  // Without them it is the website's run: dark, at 390x844 at 2, cut by exportSite.
+  expect(RIG).toContain("const size = SITE_SIZED ? CUSTOM_SIZE : SIZES[0];");
+  expect(RIG).toContain("const modes = SITE_SIZED ? MODES : ['dark'];");
+  expect(RIG).toContain('if (SITE_SIZED) await exportSiteMasters(sharp, frames, report, size, modes);');
+  // One frame per mode, so frames, audits and anchors are keyed by both.
+  expect(RIG).toContain('const siteKey = (id, mode) => (SITE_SIZED ? `${id}-${mode}` : id);');
+  // Opaque PNGs, as Apple takes them.
+  expect(RIG).toContain('await sharp(raw).removeAlpha().png({ compressionLevel: 9, palette: false }).toBuffer()');
+});

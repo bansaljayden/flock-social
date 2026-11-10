@@ -15,6 +15,8 @@
  *       node scripts/capture-screenshots.mjs --only=made,stillin,guestlink --set=web --modes=light --out=../some/dir
  *       node scripts/capture-screenshots.mjs --only=nest,chat --modes=dark --viewport=430x932 --scale=3 --out=../some/dir
  *       node scripts/capture-screenshots.mjs --story=site --suffix=-v3   (the website's frames)
+ *       node scripts/capture-screenshots.mjs --story=site --viewport=430x932 --scale=3 --out=../some/dir
+ *                                                     (the same story as 1290x2796 masters, light and dark)
  *
  * THE SITE STORY (--story=site). The frames the website ships, from one
  * command: the dark theme at 390 x 844, shot at 2x, every one named the way
@@ -166,10 +168,24 @@ const SUFFIX = opt('suffix') || '';
 if (STORY !== null && !SITE) die(`--story takes "site", not "${STORY}"`);
 if (SUFFIX && !SITE) die('--suffix names the site story\'s files; it goes with --story=site');
 if (SUFFIX && !/^-[a-z0-9]{1,12}$/.test(SUFFIX)) die(`--suffix is a short tag that starts with a hyphen, like -v3, not "${SUFFIX}"`);
+/* THE SITE STORY AT A SIZE OF ITS OWN (--story=site --viewport=430x932
+   --scale=3, with --modes). The same seed, the same invented and drawn places,
+   the same stubs and the same audit, shot at that size in each mode asked for
+   and kept as opaque PNG masters, <frame>-<mode>-<width>x<height>.png, for a
+   listing that frames the app's own screens (430x932 at 3 is 1290x2796, an
+   App Store 6.9-inch size). Nothing named for the site is cut from them, so it
+   takes no --suffix, and it writes only to an --out of its own. Without
+   --viewport and --scale the run is the website's, dark, at 390x844 at 2. */
+const SITE_SIZED = SITE && (opt('viewport') !== null || opt('scale') !== null);
 if (SITE) {
-  for (const o of ['viewport', 'scale', 'modes', 'set']) {
-    if (opt(o) !== null) die(`--story=site shoots the website's frames, dark, at 390x844 at 2, and takes no --${o}`);
+  for (const o of SITE_SIZED ? ['set', 'suffix'] : ['viewport', 'scale', 'modes', 'set']) {
+    if (opt(o) !== null) {
+      die(SITE_SIZED
+        ? `--story=site at a size of its own keeps masters only, and takes no --${o}`
+        : `--story=site shoots the website's frames, dark, at 390x844 at 2, and takes no --${o}`);
+    }
   }
+  if (SITE_SIZED && opt('out') === null) die('--story=site at a size of its own writes only to --out=<folder>, never into the site story\'s folder');
 }
 
 /* Somewhere other than public/. The default output is deployed with the site
@@ -2021,7 +2037,7 @@ const DRIVERS = {
     await declineAnalyticsAsk(page);
     const eventsTab = page.getByRole('button', { name: 'Events' }).first();
     if (await eventsTab.count()) await eventsTab.click();
-    await page.getByText('Flocks With You in Their Vote').first().waitFor({ timeout: 15000 }).catch(() => {});
+    await page.getByText('Flocks with you in their vote').first().waitFor({ timeout: 15000 }).catch(() => {});
     await settle(page);
   },
   async 'venue-promos'(page) {
@@ -2092,7 +2108,7 @@ const DRIVERS = {
     await shoot('chat');
     await page.getByRole('button', { name: 'Open the plan' }).click();
     await page.getByText(/\d+ of \d+ still in tonight\./).waitFor({ timeout: 15000 });
-    await page.getByText('STILL IN', { exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByText('Still in', { exact: true }).first().waitFor({ timeout: 10000 });
     await settle(page);
     await shoot('roster');
     return true;
@@ -3237,22 +3253,22 @@ const SITE_ANCHOR_SPECS = {
     { key: 'field', selector: 'input[aria-label="Amount"]', box: 'field' },
     { key: 'note', text: 'This is anonymous', box: 'firstLine', ink: true },
     { key: 'skip', text: 'Skip', box: 'button' },
-    { key: 'sheet', text: 'Group Budget', exact: true, box: 'sheet' },
+    { key: 'sheet', text: 'Group budget', exact: true, box: 'sheet' },
   ],
   bill: [
     { key: 'total', texts: ['Total', 'Paid by'], within: '[role="dialog"]', box: 'line', ink: true },
     { key: 'rows', texts: ['Jayden Bansal', 'Tommy Walsh', 'Owes'], every: true, within: '[role="dialog"]', box: 'line', ink: true, pad: 4 },
     { key: 'settle', text: 'Settle Up', box: 'button' },
-    { key: 'sheet', text: 'Split the Bill', exact: true, box: 'sheet' },
+    { key: 'sheet', text: 'Split the bill', exact: true, box: 'sheet' },
   ],
   sos: [
     { key: 'call911', text: 'Call 911', box: 'button' },
-    { key: 'alert', text: 'Alert Contacts', box: 'button' },
-    { key: 'share', text: 'Share Location', box: 'button' },
+    { key: 'alert', text: 'Alert contacts', box: 'button' },
+    { key: 'share', text: 'Share location', box: 'button' },
   ],
   venue: [
-    { key: 'create', text: 'Create Event', box: 'button' },
-    { key: 'heading', text: 'Flocks With You in Their Vote', box: 'line', ink: true },
+    { key: 'create', text: 'Create event', box: 'button' },
+    { key: 'heading', text: 'Flocks with you in their vote', box: 'line', ink: true },
     { key: 'chips', texts: ['Confirmed', 'Considering you'], exact: true, box: 'chip' },
     { key: 'editDelete', selector: 'button[aria-label="Edit Trivia Night"] svg, button[aria-label="Delete Trivia Night"] svg', all: true, ink: true },
   ],
@@ -3431,13 +3447,17 @@ function inkBox(img, box, pad = 10, threshold = 60) {
 }
 
 /* One frame of the site story, kept as a lossless master in memory and
-   audited; the shipped files are cut from it at the end (exportSite). */
-async function snapSite(page, shot, frames, report) {
-  await checkOverflow(page, { screen: { id: shot.id }, size: SIZES[0], mode: 'dark' });
+   audited; the shipped files are cut from it at the end (exportSite), or, at
+   a size of its own, kept as they are (exportSiteMasters). A sized run shoots
+   each frame once per mode, so its frames, audits and anchors are keyed by
+   frame and mode. */
+const siteKey = (id, mode) => (SITE_SIZED ? `${id}-${mode}` : id);
+async function snapSite(page, shot, frames, report, size, mode) {
+  await checkOverflow(page, { screen: { id: shot.id }, size, mode });
   const audit = await auditSiteFrame(page, shot);
   const dom = shot.anchors ? await measureAnchors(page, shot.anchors) : null;
   const raw = await page.screenshot({ type: 'png' });
-  report.audit[shot.id] = audit;
+  report.audit[siteKey(shot.id, mode)] = audit;
   if (dom) {
     const sharp = requireFrontend('sharp');
     const { data, info } = await sharp(raw).removeAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -3450,16 +3470,16 @@ async function snapSite(page, shot, frames, report) {
       how[s.key] = s.ink ? 'ink' : 'element';
     }
     const { texts, sheetTop, viewH, ...domBoxes } = dom;
-    report.anchors[shot.anchors] = {
+    report.anchors[siteKey(shot.anchors, mode)] = {
       frame: shot.id, boxes, how, dom: domBoxes, sheetTop: sheetTop ?? null,
       sheetRow: sheetTop == null ? null : sheetRowOf(img, sheetTop, viewH),
       texts,
     };
   }
   if (audit.problems.length) throw new Error(`refused by the audit: ${audit.problems.slice(0, 4).join('; ')}`);
-  frames.set(shot.id, raw);
+  frames.set(siteKey(shot.id, mode), raw);
   const pics = Object.entries(audit.pictures).map(([k, n]) => `${n} ${k}`).join(', ') || 'none';
-  log(`  ok ${shot.id}: pictures ${pics}${audit.drawings.length ? ` (${audit.drawings.join(', ')})` : ''}${audit.refusedRequests.length ? `; refused ${audit.refusedRequests.length} outside request(s)` : ''}`);
+  log(`  ok ${siteKey(shot.id, mode)}: pictures ${pics}${audit.drawings.length ? ` (${audit.drawings.join(', ')})` : ''}${audit.refusedRequests.length ? `; refused ${audit.refusedRequests.length} outside request(s)` : ''}`);
 }
 
 async function captureSite(dbUrl, seeded) {
@@ -3467,8 +3487,10 @@ async function captureSite(dbUrl, seeded) {
   const browser = await launchChromium();
   const userToken = await apiLogin(DEMO.camera.email, DEMO.password);
   const ownerToken = await apiLogin(DEMO.owner.email, DEMO.password);
-  const size = SIZES[0];
-  const mode = 'dark';
+  // The website's frames are dark at 390x844 at 2; a sized run shoots its own
+  // size in each mode it was given.
+  const size = SITE_SIZED ? CUSTOM_SIZE : SIZES[0];
+  const modes = SITE_SIZED ? MODES : ['dark'];
   const wanted = SITE_SHOTS.filter((s) => !ONLY || ONLY.includes(s.id));
   const frames = new Map();
   const report = { audit: {}, anchors: {} };
@@ -3479,10 +3501,10 @@ async function captureSite(dbUrl, seeded) {
     page.on('pageerror', (err) => page.__consoleErrors.push(`pageerror: ${String(err).slice(0, 200)}`));
   };
   try {
-    for (const pass of ['main', 'bill']) {
+    for (const mode of modes) for (const pass of ['main', 'bill']) {
       const shots = wanted.filter((s) => s.pass === pass);
       if (!shots.length) continue;
-      log(`site story, ${pass.toUpperCase()} pass: ${shots.map((s) => s.id).join(', ')}`);
+      log(`site story, ${SITE_SIZED ? `${mode} ` : ''}${pass.toUpperCase()} pass: ${shots.map((s) => s.id).join(', ')}`);
       await setServerTheme(dbUrl, mode);
       // One visit per driver; a driver that frames two shots (the bill) runs once.
       const drivers = [...new Set(shots.filter((s) => !s.owner).map((s) => s.driver))];
@@ -3501,10 +3523,10 @@ async function captureSite(dbUrl, seeded) {
               await waitAppReady(page);
               const shoot = async (label) => {
                 const shot = mine.find((s) => s.frame === label);
-                if (shot) await snapSite(page, shot, frames, report);
+                if (shot) await snapSite(page, shot, frames, report, size, mode);
               };
               const framed = await SITE_DRIVERS[driver](page, shoot);
-              if (!framed) await snapSite(page, mine.find((s) => !s.frame) || mine[0], frames, report);
+              if (!framed) await snapSite(page, mine.find((s) => !s.frame) || mine[0], frames, report, size, mode);
             } catch (e) {
               failures.push(await failureReport(page, e, { screen: { id: mine.map((s) => s.id).join('+') }, size, mode }));
             }
@@ -3526,7 +3548,7 @@ async function captureSite(dbUrl, seeded) {
               await page.goto(`${WEB_ORIGIN}/app?venue=true`, { waitUntil: 'domcontentloaded' });
               await page.addStyleTag({ content: hideCaretCss });
               await SITE_DRIVERS[shot.driver](page);
-              await snapSite(page, shot, frames, report);
+              await snapSite(page, shot, frames, report, size, mode);
             } catch (e) {
               failures.push(await failureReport(page, e, { screen: { id: shot.id }, size, mode }));
             }
@@ -3540,9 +3562,10 @@ async function captureSite(dbUrl, seeded) {
     await browser.close();
   }
   const kept = frames.size;
-  await exportSite(sharp, frames, report);
+  if (SITE_SIZED) await exportSiteMasters(sharp, frames, report, size, modes);
+  else await exportSite(sharp, frames, report);
   reportOverflow();
-  log(`site story: ${kept} of ${wanted.length} frame(s) kept${failures.length ? `, ${failures.length} FAILURES` : ''}`);
+  log(`site story: ${kept} of ${wanted.length * modes.length} frame(s) kept${failures.length ? `, ${failures.length} FAILURES` : ''}`);
   if (SITE_MAP_KEY) log('site story: the map was drawn; a map frame ships with the footer\'s MapTiler and OpenStreetMap line (SiteFooter.js, siteFooter.test.js) and WIRING.md\'s words for it');
   for (const f of failures) log(`  FAIL ${f}`);
   if (failures.length) process.exitCode = 1;
@@ -3619,6 +3642,53 @@ async function exportSite(sharp, frames, report) {
     fs.writeFileSync(path.join(OUT_DIR, `contact${SUFFIX}.png`), sheet);
   }
   log(`site story: ${written.length} file(s) written to ${OUT_DIR} (audit${SUFFIX}.json, anchors${SUFFIX}.json, contact${SUFFIX}.png beside them)`);
+}
+
+/* THE SITE STORY AT A SIZE OF ITS OWN: each frame kept whole, as an opaque PNG
+   (Apple takes no alpha), <frame>-<mode>-<width>x<height>.png, with the audit
+   and the anchors keyed by frame and mode beside them and a contact sheet of
+   every frame. Nothing is resized, recompressed or named for the site. */
+async function exportSiteMasters(sharp, frames, report, size, modes) {
+  const W = size.viewport.width * size.dsf;
+  const H = size.viewport.height * size.dsf;
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const kept = [];
+  for (const mode of modes) {
+    for (const shot of SITE_SHOTS) {
+      const raw = frames.get(siteKey(shot.id, mode));
+      if (!raw) continue;
+      const file = `${shot.id}-${mode}-${W}x${H}.png`;
+      fs.writeFileSync(path.join(OUT_DIR, file), await sharp(raw).removeAlpha().png({ compressionLevel: 9, palette: false }).toBuffer());
+      kept.push({ file, id: shot.id, mode, title: shot.title });
+    }
+  }
+  fs.writeFileSync(path.join(OUT_DIR, `audit-${W}x${H}.json`), JSON.stringify({
+    takenAt: RUN_T.toISOString(), zone: SITE_CLOCK.zone, size: { ...size.viewport, scale: size.dsf }, modes,
+    frames: report.audit, overflow: overflowFindings,
+  }, null, 2));
+  fs.writeFileSync(path.join(OUT_DIR, `anchors-${W}x${H}.json`), JSON.stringify(report.anchors, null, 2));
+  fs.writeFileSync(path.join(OUT_DIR, `manifest-${W}x${H}.json`), JSON.stringify(kept, null, 2));
+  if (kept.length) {
+    const w = 260;
+    const h = Math.round(w * H / W);
+    const cols = 6;
+    const pad = 14;
+    const label = 26;
+    const rows = Math.ceil(kept.length / cols);
+    const tiles = [];
+    for (const [i, k] of kept.entries()) {
+      const x = pad + (i % cols) * (w + pad);
+      const y = pad + Math.floor(i / cols) * (h + label + pad);
+      tiles.push({ input: await sharp(frames.get(siteKey(k.id, k.mode))).resize(w).png().toBuffer(), left: x, top: y + label });
+      const text = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${label}"><text x="0" y="18" font-family="Arial, sans-serif" font-size="15" fill="#e8ecf2">${k.id}-${k.mode}</text></svg>`);
+      tiles.push({ input: text, left: x, top: y });
+    }
+    const sheet = await sharp({
+      create: { width: pad + cols * (w + pad), height: pad + rows * (h + label + pad), channels: 3, background: '#1b1f27' },
+    }).composite(tiles).png().toBuffer();
+    fs.writeFileSync(path.join(OUT_DIR, `contact-${W}x${H}.png`), sheet);
+  }
+  log(`site story at ${W}x${H}: ${kept.length} master(s) written to ${OUT_DIR}`);
 }
 
 main().catch((e) => die(e.stack || e.message));
