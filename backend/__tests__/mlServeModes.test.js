@@ -859,13 +859,18 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
 // responses whose nowcast was a two- or three-hour reading on the
 // curve_offset base, which now carry no nowcast and serve curve + offset, and
 // in nothing else. off and off_qmapoff did not move.
+// Statements re-recorded 2026-11-10 for all six when the neighbour box became a
+// weekday-at-a-time read (getNeighborActivity): with its weekday clause taken
+// out as the harvested clause is, the statements differ only in reading a box
+// once for each weekday it is scored on instead of once, and every response
+// hash above is unchanged under every configuration.
 const PRE_FAMILY = {
-  off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
-  off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
-  co: ['e5cb803c15b0aeea081981984019a424d105cbb34765c3dfed5e67f494a8c945', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  conow: ['a5ec0eae71f5186cb819e6bd5d237793c50d7a58f9b63bd815f203a1e493cd0c', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now: ['1af4516bfcab6a88b02e7ca459c3daad52d1fff3ef3fb955acb90ab841508950', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now_qmapoff: ['f46471132de3c93d3df71688b93684899b3d83ec2d6f716f24887b99d0348535', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', '5c66f9b090f424651cf27178e3fa8dd287ad9b25c0f0fe0a70334f990dbb796c'],
+  off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', '5c66f9b090f424651cf27178e3fa8dd287ad9b25c0f0fe0a70334f990dbb796c'],
+  co: ['e5cb803c15b0aeea081981984019a424d105cbb34765c3dfed5e67f494a8c945', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+  conow: ['a5ec0eae71f5186cb819e6bd5d237793c50d7a58f9b63bd815f203a1e493cd0c', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+  now: ['1af4516bfcab6a88b02e7ca459c3daad52d1fff3ef3fb955acb90ab841508950', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
+  now_qmapoff: ['f46471132de3c93d3df71688b93684899b3d83ec2d6f716f24887b99d0348535', '80b3c413e5f577ef1f7ff7767c75ca1586818aa3ad8845bd010c0876c4ad9e6b'],
 };
 const PRE_FAMILY_ENV = {
   off: {},
@@ -890,8 +895,11 @@ test('an artifact that lists no live or sports feature serves byte for byte as b
     // 2026-09-28: the two neighbour statements gained one clause, leaving
     // harvested venues out of the box (HARVESTED_STATUS in mlPredictor.js).
     // It is the only change: with it taken back out, the statements hash to
-    // what was recorded, and the responses above did not move.
-    const stripped = sql.map((s) => s.replace(/\r?\n[ \t]*AND v\.besttime_status IS DISTINCT FROM 'harvested'/g, ''));
+    // what was recorded, and the responses above did not move. 2026-11-10:
+    // the box statement gained a second, its weekday (the box is read a
+    // weekday at a time), taken out the same way; see the note above
+    // PRE_FAMILY for what that re-recording changed.
+    const stripped = sql.map((s) => s.replace(/\r?\n[ \t]*AND v\.besttime_status IS DISTINCT FROM 'harvested'/g, '').replace(/\r?\n[ \t]*AND b\.day_of_week = \$4/g, ''));
     assert.ok(sql.every((s, i) => s === stripped[i] || /FROM ml_venues v\s+JOIN ml_venue_baselines b/.test(s)),
       `${name}: the harvested clause reached a statement other than the neighbour box`);
     assert.ok(sql.some((s, i) => s !== stripped[i]), `${name}: the neighbour box no longer leaves harvested venues out`);

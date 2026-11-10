@@ -2753,7 +2753,7 @@ function noteSlowLookups(took) {
 // ~0.0075 degrees is ~830 m of latitude, i.e. the ~1 km neighbourhood the
 // training pipeline's 3x3 grid of 500 m buckets covers.
 const NEIGHBOR_BOX_DEG = 0.0075;
-const neighborCache = new Map();      // "lat.toFixed(3)_lng.toFixed(3)" -> box totals
+const neighborCache = new Map();      // "lat.toFixed(3)_lng.toFixed(3)" -> box totals, a weekday at a time
 const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 
 // ---------------------------------------------------------------------------
@@ -2913,8 +2913,10 @@ async function getSelfBaselines(placeId, userId) {
 // directly: it neither reads the cache nor dedupes concurrent callers, so a
 // direct call is an unshared bounding-box range scan on the primary pool.
 // Returns null when the scan did not happen or failed, which the caller reads
-// as `none` — see the `none` note in the block above.
-async function scanNeighborBox(key, bLat, bLng, userId) {
+// as `none` — see the `none` note in the block above. Reads one weekday
+// (getNeighborActivity says why) and keeps it beside the box's other
+// weekdays, each with its own age.
+async function scanNeighborBox(key, bLat, bLng, dow, userId) {
   // Budget applies only to cache MISSES (real range scans), and it is read
   // BEFORE the query so a refused caller neither scans nor writes an entry.
   //
@@ -2933,8 +2935,9 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
        WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
          AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
          AND ${NOT_HARVESTED_SQL}
+         AND b.day_of_week = $4
        GROUP BY b.day_of_week, b.hour`,
-      [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
+      [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG, dow]
     );
     const scanMs = Date.now() - scanStart;
     if (scanMs >= SLOW_LOOKUP_MS) {
@@ -2948,9 +2951,11 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
         sum: parseFloat(row.sum_bl) || 0,
       });
     }
-    const entry = { ts: Date.now(), byDowHour };
+    const day = { ts: Date.now(), byDowHour };
+    const entry = neighborCache.get(key) || { byDow: new Map() };
+    entry.byDow.set(dow, day);
     boundedSet(neighborCache, key, entry);
-    return entry;
+    return day;
   } catch {
     return null;
   }
@@ -2967,28 +2972,40 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour, userId) {
   const bLat = (+lat).toFixed(3);
   const bLng = (+lng).toFixed(3);
   const key = `${bLat}_${bLng}`;
-  let entry = neighborCache.get(key);
-  if (!entry || Date.now() - entry.ts >= NEIGHBOR_CACHE_TTL) {
+  // ONE WEEKDAY A READ (2026-11-10). The box's totals are read and kept a
+  // weekday at a time: a score needs one hour, and the read used to fetch all
+  // 168 for every venue in the box. Measured on production that day, a cold
+  // Chicago box was 11,088 baseline rows and 1,152 ms of a 3.5 s demo build;
+  // the weekday's 24 hours are a seventh of the rows. Every count and sum is
+  // the same statement's, restricted to that weekday, so the totals a score
+  // reads are unchanged, and a strip of 24 hours spans at most two weekdays.
+  // A weekday that is not 0 to 6 never had a slot to read, so it reads none.
+  const dow = Number(dayOfWeek);
+  if (!Number.isInteger(dow) || dow < 0 || dow > 6) return none;
+  let day = neighborCache.get(key)?.byDow.get(dow);
+  if (!day || Date.now() - day.ts >= NEIGHBOR_CACHE_TTL) {
     // Coalesce first, charge second. Nineteen of the twenty callers on one
-    // bucket await the same promise and are charged nothing, because the gate
-    // lives on the far side of this check. That is the correct reading of
-    // "charge what you spend", not a discount: only one scan is spent.
-    const inflight = neighborInflight.get(key);
+    // bucket and weekday await the same promise and are charged nothing,
+    // because the gate lives on the far side of this check. That is the
+    // correct reading of "charge what you spend", not a discount: only one
+    // scan is spent.
+    const flight = `${key}_${dow}`;
+    const inflight = neighborInflight.get(flight);
     if (inflight) {
-      entry = await inflight;
+      day = await inflight;
     } else {
-      const pending = scanNeighborBox(key, bLat, bLng, userId);
-      neighborInflight.set(key, pending);
+      const pending = scanNeighborBox(key, bLat, bLng, dow, userId);
+      neighborInflight.set(flight, pending);
       try {
-        entry = await pending;
+        day = await pending;
       } finally {
-        neighborInflight.delete(key);
+        neighborInflight.delete(flight);
       }
     }
-    if (!entry) return none;
+    if (!day) return none;
   }
 
-  const slot = entry.byDowHour.get(`${dayOfWeek}_${hour}`);
+  const slot = day.byDowHour.get(`${dow}_${hour}`);
   if (!slot || slot.cnt <= 0) return none;
 
   // Take self back out, the way add_neighbor_features does. Only if this venue

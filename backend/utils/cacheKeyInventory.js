@@ -1003,7 +1003,7 @@ const INVENTORY = [
   },
   {
     file: 'services/mlPredictor.js', name: 'neighborCache', kind: 'cache',
-    key: '`${lat.toFixed(3)}_${lng.toFixed(3)}` — coordinates only',
+    key: '`${lat.toFixed(3)}_${lng.toFixed(3)}` — coordinates only; the entry holds the box a weekday at a time (at most seven, each with its own age)',
     callerControls: 'ALL of it. This is the whole point of R4-I2: round 3 removed place_id from the key and what replaced it is just as much the caller\'s number (~648M reachable buckets at crowd.js\'s 2dp rounding).',
     protects: 'a bounding-box RANGE SCAN over ml_venues JOIN ml_venue_baselines on the primary pool',
     denominator: 'uncached ~1 km buckets — 120/hr, 400/day per account',
@@ -1023,9 +1023,9 @@ const INVENTORY = [
   },
   {
     file: 'services/mlPredictor.js', name: 'neighborInflight', kind: 'inflight',
-    key: 'the same neighborCache bucket key',
-    callerControls: 'same',
-    protects: 'collapses 20 concurrent callers on one bucket into 1 range scan and 1 charge',
+    key: 'the same neighborCache bucket key and the weekday, 0 to 6',
+    callerControls: 'same, and the weekday, a closed set of seven',
+    protects: 'collapses 20 concurrent callers on one bucket and weekday into 1 range scan and 1 charge',
     denominator: 'in-flight promises',
     bound: 'none, deleted in a finally',
     verdict: 'FIXED-THIS-ROUND',

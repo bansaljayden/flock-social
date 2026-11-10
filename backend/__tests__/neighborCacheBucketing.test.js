@@ -240,10 +240,15 @@ test('the range-scan SQL carries no place id, and the cache key is coordinates o
   assert.ok(!/neighborCache\.get\([^)]*placeId/.test(body),
     'the cache is still being read with a place id in the key');
 
-  // The one range scan in the file must take exactly two parameters, both
-  // coordinates. (Any third would be the caller-chosen value coming back.)
-  assert.match(body, /\[Number\(bLat\), Number\(bLng\), NEIGHBOR_BOX_DEG\]/,
-    'the range scan must be parameterised on the bucketed coordinates and the box width');
+  // The one range scan in the file is parameterised on the two bucketed
+  // coordinates, the box width and the weekday (2026-11-10: the box is read a
+  // weekday at a time). The weekday is a closed set of seven, checked before
+  // the read, so it cannot widen the key space the way a place id did; any
+  // other parameter would be the caller-chosen value coming back.
+  assert.match(body, /\[Number\(bLat\), Number\(bLng\), NEIGHBOR_BOX_DEG, dow\]/,
+    'the range scan must be parameterised on the bucketed coordinates, the box width and the weekday');
+  assert.match(body, /if \(!Number\.isInteger\(dow\) \|\| dow < 0 \|\| dow > 6\) return none;/,
+    'the weekday must be checked to 0..6 before it reaches the read');
 });
 
 test('the box width is one constant, shared by the scan and the self check', () => {
@@ -404,4 +409,31 @@ test('R4-I2: the budget gate sits in FRONT of the query, pinned against the sour
   // createUserBudget.allow fails closed on anything that is not an id.
   assert.match(scan, /userId != null && !neighborUserBudget\.allow\(userId\)/,
     'the identity guard must be `userId != null && !allow(userId)`, matching allowEventFetch');
+});
+
+// ── 6. A weekday at a time (2026-11-10) ──────────────────────────────────────
+// The box is read one weekday at a time: a score needs one hour, and the full
+// read was 168 hours of every venue in the box (11,088 rows and 1.15 s for a
+// cold Chicago box on production). Another weekday is another read; the same
+// weekday is free; a weekday outside 0..6 reads nothing.
+
+test('another weekday is another scan, the same weekday is free, and the scan asks for that weekday', async () => {
+  const [a] = VENUES;
+  await getNeighborActivity(a.id, a.lat, a.lng, DOW, HOUR);
+  await getNeighborActivity(a.id, a.lat, a.lng, DOW, HOUR - 1);
+  assert.strictEqual(rangeScans.length, 1, 'a second hour of the same weekday was read again');
+  await getNeighborActivity(a.id, a.lat, a.lng, (DOW + 1) % 7, HOUR);
+  assert.strictEqual(rangeScans.length, 2, 'another weekday must be its own read');
+  assert.deepStrictEqual(rangeScans.map((r) => r.params[3]), [DOW, (DOW + 1) % 7]);
+  assert.match(rangeScans[0].sql, /AND b\.day_of_week = \$4/);
+  assertModelled();
+});
+
+test('a weekday outside 0..6 reads nothing and scans nothing', async () => {
+  const [a] = VENUES;
+  for (const bad of [-1, 7, 2.5, NaN, undefined]) {
+    assert.deepStrictEqual(await getNeighborActivity(a.id, a.lat, a.lng, bad, HOUR), { count: 0, mean: 0 });
+  }
+  assert.strictEqual(rangeScans.length, 0);
+  assertModelled();
 });

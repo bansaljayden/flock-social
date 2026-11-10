@@ -993,20 +993,25 @@ async function sendsTheStatementsItSentBefore() {
   // and this bar is listed open round the clock, so each of its six evenings
   // is read on to 4 AM, twelve hours where it was seven (18 + 6 x 12 = 90; the
   // headline's slot is then one a night already read). Still no presence
-  // probe and one curve read, as before.
+  // probe and one curve read, as before. Since 2026-11-10 the neighbour box
+  // is read a weekday at a time (mlPredictor getNeighborActivity), so a total
+  // counts one box read for each weekday a surface scores: one more for every
+  // surface whose strip runs past midnight into a second weekday, six more
+  // for the dashboard's week, none for the one-day strip or the warm repeats.
+  // The slot, curve and presence counts did not move.
   const same = (presence, slot, curve, total) => ({ presence, slot, curve, total });
   assert.deepStrictEqual(counts, {
-    'card cold': same(0, 24, 1, 31),
-    'demo cold': same(0, 24, 1, 27),
-    'birdie cold': same(0, 24, 1, 28),
-    'intelligence cold': same(0, 90, 1, 94),
+    'card cold': same(0, 24, 1, 32),
+    'demo cold': same(0, 24, 1, 28),
+    'birdie cold': same(0, 24, 1, 29),
+    'intelligence cold': same(0, 90, 1, 100),
     'strip cold': same(0, 8, 1, 12),
-    'card curved': same(0, 1, 1, 9),
-    'demo curved': same(0, 1, 1, 5),
-    'birdie curved': same(0, 1, 1, 6),
-    'intelligence curved': same(0, 1, 1, 6),
+    'card curved': same(0, 1, 1, 10),
+    'demo curved': same(0, 1, 1, 6),
+    'birdie curved': same(0, 1, 1, 7),
+    'intelligence curved': same(0, 1, 1, 12),
     'strip curved': same(0, 1, 1, 6),
-    area: same(0, 2, 1, 7),
+    area: same(0, 2, 1, 8),
     'card cold again': same(0, 23, 1, 28),
     'card curved again': same(0, 0, 0, 5),
   });

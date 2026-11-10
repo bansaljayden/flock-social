@@ -177,10 +177,12 @@ const realQuery = pool.query;
 pool.query = (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (/FROM ml_venues v JOIN ml_venue_baselines b ON b\.google_place_id = v\.google_place_id/.test(sql)
-      && /WHERE v\.latitude BETWEEN \$1 - \$3::float AND \$1 \+ \$3::float AND v\.longitude BETWEEN \$2 - \$3::float AND \$2 \+ \$3::float AND v\.besttime_status IS DISTINCT FROM 'harvested' GROUP BY/.test(sql)
+      && /WHERE v\.latitude BETWEEN \$1 - \$3::float AND \$1 \+ \$3::float AND v\.longitude BETWEEN \$2 - \$3::float AND \$2 \+ \$3::float AND v\.besttime_status IS DISTINCT FROM 'harvested' AND b\.day_of_week = \$4 GROUP BY/.test(sql)
       && /GROUP BY b\.day_of_week, b\.hour/.test(sql)) {
     // Postgres evaluates `$1 - $3::float` in float8, which is this arithmetic.
-    const [lat, lng, box] = params.map(Number);
+    // The box is read a weekday at a time (2026-11-10): $4 is the weekday, and
+    // only its 24 slots come back.
+    const [lat, lng, box, dow] = params.map(Number);
     const latLo = lat - box;
     const latHi = lat + box;
     const lngLo = lng - box;
@@ -196,7 +198,7 @@ pool.query = (text, params = []) => {
     const rows = [];
     for (let s = 0; s < 168; s++) {
       // COUNT(*)::int, and SUM(smallint) arrives from pg as a bigint string.
-      if (cnt[s] > 0) rows.push({ dow: Math.floor(s / 24), hour: s % 24, cnt: cnt[s], sum_bl: String(sum[s]) });
+      if (cnt[s] > 0 && Math.floor(s / 24) === dow) rows.push({ dow: Math.floor(s / 24), hour: s % 24, cnt: cnt[s], sum_bl: String(sum[s]) });
     }
     return Promise.resolve({ rows, rowCount: rows.length });
   }
