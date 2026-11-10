@@ -762,6 +762,25 @@ function venueClock(place, fallback) {
   return local ? clockFor(local.hour, local.day) : fallback;
 }
 
+// WHERE A COLD BUILD'S TIME GOES. A cache miss on the area search costs the
+// visitor the whole build, and the build was measured from outside only: the
+// Railway logs for 2026-11-07 to 11-10 show every miss between 4.0 and 6.8 s
+// (two visitors left before the answer came), against 5 ms for a hit, and the
+// network logs could not say which step held the rest. One line per slow
+// build, never for a hit and never for a quick one, names the four steps in
+// order. Logged after the answer has gone, so it costs the visitor nothing.
+const SLOW_BUILD_MS = 1500;
+function logBuildTime(phases, venueCount) {
+  const total = phases.card - phases.start;
+  if (!(total >= SLOW_BUILD_MS)) return;
+  const s = (a, b) => `${((phases[b] - phases[a]) / 1000).toFixed(1)} s`;
+  console.log(
+    `[PublicDemo] slow area build ${(total / 1000).toFixed(1)} s: Places search ${s('start', 'places')}, `
+    + `weather ${s('places', 'weather')}, ${venueCount} venue(s) scored ${s('weather', 'venues')}, `
+    + `featured card ${s('venues', 'card')}`
+  );
+}
+
 router.get('/demo/venues',
   [
     query('lat').isFloat({ min: -90, max: 90 }),
@@ -797,6 +816,8 @@ router.get('/demo/venues',
       // Ordered after allowDemo so a request the demo refuses never charges for
       // a call it was never going to make.
       if (!allowGlobalPlacesCall(1)) return res.status(429).json({ error: DEMO_BUSY_MSG });
+      // Where a cold build's time goes (logBuildTime, below the route).
+      const phases = { start: Date.now() };
 
       // Round 11: resp.ok was never checked, so a quota, auth or upstream
       // outage came back as a 200 with an empty venue list and the marketing
@@ -857,7 +878,9 @@ router.get('/demo/venues',
 
       // One weather lookup for the whole area; venues scored in parallel —
       // serial scoring made the first paint feel like dial-up.
+      phases.places = Date.now();
       const weather = await getWeather(lat, lng, ANON).catch(() => null);
+      phases.weather = Date.now();
       const localDayParam = req.query.localDay != null ? parseInt(req.query.localDay, 10) : null;
       const visitorClock = { time: scoreTime, localHour, localDay };
 
@@ -923,6 +946,7 @@ router.get('/demo/venues',
       // red dial over the word "Closed", which is the worst card the demo can
       // draw. An open venue always wins the slot; a closed one only gets it
       // when the whole area is shut.
+      phases.venues = Date.now();
       let card = null;
       if (venues.length > 0) {
         try {
@@ -947,6 +971,8 @@ router.get('/demo/venues',
 
       setCache(cacheKey, result, 20 * 60_000);
       res.json(presentArea(result, req));
+      phases.card = Date.now();
+      logBuildTime(phases, venues.length);
       warmDemoPhotos(result.venues, req);
     } catch (err) {
       console.error('[PublicDemo] venues error:', err.message);
@@ -1060,4 +1086,5 @@ module.exports.__testables = {
   demoState: () => ({ dayKey, dayCount, trackedIps: ipHits.size }),
   IP_LIMIT, IP_WINDOW_MS, IP_MAX_ENTRIES, IP_LOW_WATER,
   CACHE_MAX_ENTRIES, CACHE_LOW_WATER,
+  logBuildTime, SLOW_BUILD_MS,
 };
