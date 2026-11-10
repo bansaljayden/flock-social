@@ -92,7 +92,7 @@ const loadPlugin = async () => {
     const mod = process.env.REACT_APP_PURCHASES === 'off'
       ? null
       : await import('@revenuecat/purchases-capacitor');
-    return mod?.Purchases || null;
+    return mod?.Purchases ? { Purchases: mod.Purchases } : null;
   } catch (err) {
     console.warn('RevenueCat plugin unavailable:', err?.message || err);
     return null;
@@ -150,7 +150,7 @@ export const initPurchases = async (userId) => {
   // Named before anything waits, so a sign-out that lands while the plugin is
   // still loading clears this instead of being overwritten by it.
   if (account) sessionUserId = account;
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases) return false;
   return serially(async () => {
     try {
@@ -179,7 +179,7 @@ export const endPurchasesSession = async () => {
   // Before anything waits, like the line above: a buy or restore still in the
   // queue from this session is refused from here on (askedBy).
   signOuts += 1;
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases) return false;
   return serially(async () => {
     // Somebody signed in again while this waited: their logIn replaces the
@@ -207,7 +207,7 @@ export const endPurchasesSession = async () => {
  * purchases are unavailable / the offering has no packages / anything fails.
  */
 export const getProOffering = async () => {
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases) return null;
   try {
     await configureOnce(Purchases);
@@ -235,7 +235,7 @@ const INTRO_ELIGIBLE = 2;
  */
 export const introEligibleProducts = async (productIds) => {
   const ids = Array.isArray(productIds) ? productIds.filter((id) => typeof id === 'string' && id) : [];
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases || !ids.length) return new Set();
   try {
     await configureOnce(Purchases);
@@ -260,7 +260,7 @@ export const introEligibleProducts = async (productIds) => {
 export const purchase = async (pkg) => {
   // Who asked, read before anything here waits (askedBy).
   const asker = askedBy();
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases || !pkg) return { success: false, isPro: false };
   return serially(async () => {
     if (!(await becomeSessionAccount(Purchases, asker))) return { success: false, isPro: false, reason: 'account' };
@@ -291,7 +291,7 @@ export const purchase = async (pkg) => {
 export const restore = async () => {
   // Who asked, read before anything here waits (askedBy).
   const asker = askedBy();
-  const Purchases = await loadPlugin();
+  const { Purchases } = (await loadPlugin()) || {};
   if (!Purchases) return { success: false, isPro: false };
   return serially(async () => {
     if (!(await becomeSessionAccount(Purchases, asker))) return { success: false, isPro: false, reason: 'account' };
