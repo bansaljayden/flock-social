@@ -597,7 +597,7 @@ function HubMonth({ h, colors, loading, onRefresh }) {
     costs: costsMissing.length > 0
       ? 'The expense list could not be read, so costs are not totalled here. The Costs card below shows what could be read.'
       : 'Monthly bills in full, quarterly bills at a third, yearly bills at a twelfth, and one-time charges dated this month. Credits and refunds are taken off.',
-    net: `Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`,
+    net: `Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $120 yearly bill counts as $10 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`,
     burn: costsMissing.length > 0
       ? 'Not totalled, because the expense list could not be read.'
       : `The burn: every recurring cost at its monthly rate. One-time charges are left out.${w.endingWords}`,
