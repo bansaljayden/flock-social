@@ -1641,13 +1641,16 @@ as a wall clock — and this is a delta model, so the baseline is the answer. A
 - `prepare_features.py`'s neighbouring-hour baseline smoothing (`shift(±1)`
   within `venue_id, day_of_week`) now smooths across real adjacent hours, and the
   00:00-05:00 block now sits in the correct weekday group.
-- The category peaks inside the CURRENT `model_metadata.json` are still on the
-  old axis. `__tests__/dinnerPeakAccuracy.test.js` PART 3 asserts that, and it
-  will go red the first time a model is exported from corrected data. That is the
-  signal to delete PART 3 and the long note above `getBaseline` in
-  `services/mlPredictor.js`, and to flip `crowdEngine.ML_BASELINE_AXIS_VERIFIED`.
-  Flip it only after the retrain ships — the baselines are correct now, but the
-  weights are not yet.
+- DONE 2026-08-18, kept for the record. When this was written the category
+  peaks inside `model_metadata.json` were still on the old axis, and
+  `__tests__/dinnerPeakAccuracy.test.js` PART 3 asserted it. v2.6.0-starling was
+  exported from the corrected corpus on 2026-08-18: PART 3 was inverted rather
+  than deleted, and now pins that the stored peaks are venue-local evening peaks
+  and that adding the old six hours makes them worse, and
+  `crowdEngine.ML_BASELINE_AXIS_VERIFIED` is `true`. For every export since,
+  PART 3 must stay green; red there means the new artifact came from an
+  uncorrected corpus (check `ml_training_data.hour_axis` and migration 023), not
+  that it is time to delete PART 3 or flip the flag.
 
 **Order of operations for the retrain:**
 
