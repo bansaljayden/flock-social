@@ -757,7 +757,16 @@ test('a presence probe never puts its no over an answer that landed after it was
   await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
     const I = p._internals;
     const headline = p.predictBusyness(v, WX, TS);
-    await db.presenceSent();
+    // The probe is held, so the headline cannot answer before it is sent. One
+    // that answers anyway sent none, and waiting for it would wait forever:
+    // that is what a retrained artifact did (its own table is not measured,
+    // so the fallback is off for its version), and the suite hung here at the
+    // 2026-11-05 rehearsal instead of failing.
+    const first = await Promise.race([
+      db.presenceSent().then(() => 'probe sent'),
+      headline.then(() => 'answered first', () => 'answered first'),
+    ]);
+    assert.equal(first, 'probe sent', 'the headline answered without a presence probe, so the fallback did not run');
     curves[v.place_id] = allSlots(50);
     const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
     for (const h of strip) assert.equal(h.predictionMethod, 'ml', `${h.hour}: the strip read the rows`);
