@@ -832,6 +832,22 @@ test('the builder stores the offset\'s readings over the offset\'s own window an
   assert.match(src, /async function storeOffsetReadings[\s\S]*catch \(err\)/);
 });
 
+test('the builder ranks and groups every live reading on its integer venue id, and names the place once per venue', () => {
+  // The sort under the ranking covers every live reading in the window, and by
+  // 2026-11-11 the hourly run's three statements had together taken over two
+  // and a half minutes, against a two-minute cap on each. Sorted on the place
+  // id's text they took about half as long again as on the id
+  // (buildRecentDeviation.js has the measurement).
+  const src = fs.readFileSync(path.join(ML_DIR, 'buildRecentDeviation.js'), 'utf8');
+  for (const name of ['UPSERT_SQL', 'LATEST_READINGS_SQL', 'OFFSET_READINGS_SQL']) {
+    const stmt = new RegExp('const ' + name + ' = `([\\s\\S]*?)`;').exec(src)[1];
+    assert.match(stmt, /PARTITION BY t\.venue_id\s/, name);
+    assert.doesNotMatch(stmt, /(PARTITION|GROUP) BY\s+(\w+\.)?google_place_id/, name);
+    // Grouped on the id, then one lookup per venue for the key the table is stored under.
+    assert.match(stmt, /GROUP BY (r\.)?venue_id\s[\s\S]*JOIN ml_venues v ON v\.id = a\.venue_id/, name);
+  }
+});
+
 test('migration 093 adds the offset readings column additively, in ASCII, and declares it', () => {
   const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '093_venue_offset_readings.sql'), 'utf8');
   assert.ok(/^[\x00-\x7F]*$/.test(sql), 'ASCII only: the boot-safety server is WIN1252');

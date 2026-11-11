@@ -530,19 +530,21 @@ async function seedPrecompute() {
   const old = new Date(today.getTime() - 3 * 86400000);
   await reading(stale, 12, 60, 'live', 72, old.toISOString().slice(0, 10), old.getUTCDay());
   await reading(stale, 13, 65, 'live', 71, old.toISOString().slice(0, 10), old.getUTCDay());
-  return { date };
+  return { date, staleDate: old.toISOString().slice(0, 10) };
 }
 
 test('the precompute stores each venue\'s newest live readings, newest first, and NULL where none is recent', async () => {
-  const { date } = await seedPrecompute();
+  const { date, staleDate } = await seedPrecompute();
   const { buildRecentDeviation, READINGS_KEPT } = require('../scripts/ml/buildRecentDeviation');
   const quiet = console.error;
   console.error = () => {};
   let res;
   try { res = await buildRecentDeviation(); } finally { console.error = quiet; }
   assert.strictEqual(res.readings.error, null, 'the readings statement ran');
+  assert.strictEqual(res.offsetReadings.error, null, 'and the offset readings statement');
   const row = async (place) => (await pool.query(
-    'SELECT n_readings, recent_readings FROM ml_venue_recent_deviation WHERE google_place_id = $1', [place])).rows[0];
+    `SELECT n_readings, recent_readings, offset_pct, offset_readings
+       FROM ml_venue_recent_deviation WHERE google_place_id = $1`, [place])).rows[0];
 
   const fresh = await row(PRECOMPUTE_PLACE);
   assert.strictEqual(fresh.n_readings, 4, 'the offset counts the four live readings on a positive curve');
@@ -562,6 +564,18 @@ test('the precompute stores each venue\'s newest live readings, newest first, an
   const stale = await row(STALE_PLACE);
   assert.strictEqual(stale.n_readings, 2, 'three-day-old readings still make an offset');
   assert.strictEqual(stale.recent_readings, null, 'but nothing the nowcast could use');
+
+  // The offset and the readings behind it (migration 093), each venue's own:
+  // every live reading on a positive curve, newest slot first, each as its
+  // distance from that slot's curve of 40. The statements rank on the venue's
+  // integer id and name the place afterwards, so two venues side by side are
+  // what shows a reading filed under the wrong place.
+  assert.strictEqual(fresh.offset_pct, -5, 'the median of -20, -10, 0 and 10');
+  assert.deepStrictEqual(fresh.offset_readings.map((r) => [r.h, r.dev, r.d]),
+    [[13, 10, date], [12, 0, date], [11, -10, date], [10, -20, date]]);
+  assert.strictEqual(stale.offset_pct, 22.5, 'the median of 20 and 25');
+  assert.deepStrictEqual(stale.offset_readings.map((r) => [r.h, r.dev, r.d]),
+    [[13, 25, staleDate], [12, 20, staleDate]]);
 
   // Readings that age out are cleared on the next run, not left behind.
   await pool.query(`UPDATE ml_training_data SET collected_at = collected_at - interval '4 days'
@@ -597,7 +611,9 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   // From 2026-10-27 the API's 15-second cap on config/database.js's pool, which
   // this file runs on inside the hourly collector, cancelled the offset
   // statement in 22 of 52 runs. SET LOCAL lifts it for one statement only.
-  const { buildRecentDeviation, JOB_STATEMENT_TIMEOUT_MS } = require('../scripts/ml/buildRecentDeviation');
+  const {
+    buildRecentDeviation, describeStatementSeconds, JOB_STATEMENT_TIMEOUT_MS,
+  } = require('../scripts/ml/buildRecentDeviation');
   const appPool = require('../config/database');
   assert.strictEqual(JOB_STATEMENT_TIMEOUT_MS, 120000);
   const capBefore = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
@@ -624,6 +640,15 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   try { res = await buildRecentDeviation(); } finally { appPool.connect = realConnect; }
   assert.ok(res.written > 0 && res.readings.error === null && res.offsetReadings.error === null, 'all three statements ran');
   assert.ok(typeof res.seconds === 'number' && res.seconds >= 0, 'the run says how long it took');
+  // The cap is on each statement, so each statement's own time is reported:
+  // the three, inside the total, in the words the collector's hourly line prints.
+  const { offset, recentReadings, offsetReadings } = res.statementSeconds;
+  for (const s of [offset, recentReadings, offsetReadings]) assert.ok(typeof s === 'number' && s >= 0);
+  assert.ok(offset + recentReadings + offsetReadings <= res.seconds + 1e-6, 'the total covers the three');
+  assert.match(describeStatementSeconds(res.statementSeconds),
+    /^offsets \d+\.\ds, recent readings \d+\.\ds, offset readings \d+\.\ds$/);
+  assert.strictEqual(describeStatementSeconds({ offset: 24.94, recentReadings: 13.06, offsetReadings: 31.8 }),
+    'offsets 24.9s, recent readings 13.1s, offset readings 31.8s');
   assert.strictEqual(sessions.length, 3, 'the offset, the recent readings and the offset readings, one transaction each');
   for (const said of sessions) {
     assert.deepStrictEqual([said[0], said[1], said[3]], ['BEGIN', 'SET LOCAL statement_timeout = 120000', 'COMMIT']);

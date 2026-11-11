@@ -17,7 +17,7 @@ const {
 } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, collectedBaselinesDue, REFUSAL_MESSAGE } = require('./buildBaselines');
-const { buildRecentDeviation } = require('./buildRecentDeviation');
+const { buildRecentDeviation, describeStatementSeconds } = require('./buildRecentDeviation');
 const { refreshSportsIfDue } = require('./collectSportsSchedules');
 const { requireSlotIndex } = require('./collectWeekly');
 
@@ -2519,7 +2519,8 @@ async function run() {
       try {
         const dev = await buildRecentDeviation();
         console.log(`[ML:Realtime] Recent-deviation offsets rebuilt `
-          + `(${dev.written} venues written, ${dev.pruned} stale rows pruned, in ${dev.seconds.toFixed(1)}s).`);
+          + `(${dev.written} venues written, ${dev.pruned} stale rows pruned, in ${dev.seconds.toFixed(1)}s: `
+          + `${describeStatementSeconds(dev.statementSeconds)}).`);
       } catch (err) {
         console.error(`[ML:Realtime] Recent-deviation refresh failed: ${describeDbError(err)}`);
       }
