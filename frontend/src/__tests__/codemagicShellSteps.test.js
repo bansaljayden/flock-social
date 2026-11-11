@@ -98,9 +98,16 @@ const REVENUECAT_STEP = stepScript(/RevenueCat key/);
 // follow: a check that cannot be performed on this checkout says so by name and
 // does not run, because a skipped check that reads as a passed one is the exact
 // failure both of these steps were written to end.
-const probe = (cmd, args) => {
-  const r = spawnSync(cmd, args, { encoding: 'utf8' });
-  return !r.error && r.status === 0;
+//
+// The question asked of each candidate is the one every case below depends on:
+// handed a script by the path this process wrote it to, does it run it. Asking
+// for `-c 'exit 0'` was not enough. On a Windows PATH with no Git Bash on it,
+// `bash` is the WSL launcher: it answers `exit 0`, cannot open a C:/ path at
+// all, and exits 127 on every step, which reads as 38 broken guards.
+const SHELL_RAN_THE_FILE = 'shell-ran-the-file';
+const runsAScriptFile = (cmd, scriptPath) => {
+  const r = spawnSync(cmd, [scriptPath.replace(/\\/g, '/')], { encoding: 'utf8' });
+  return !r.error && r.status === 0 && r.stdout === SHELL_RAN_THE_FILE;
 };
 const SHELLS = [
   'sh',
@@ -108,7 +115,16 @@ const SHELLS = [
   'C:\\Program Files\\Git\\bin\\bash.exe',
   'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
 ];
-const SH = SHELLS.find((c) => probe(c, ['-c', 'exit 0']));
+const SH = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-codemagic-probe-'));
+  try {
+    const scriptPath = path.join(dir, 'probe.sh');
+    fs.writeFileSync(scriptPath, `printf ${SHELL_RAN_THE_FILE}\n`, 'utf8');
+    return SHELLS.find((c) => runsAScriptFile(c, scriptPath));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+})();
 // The interpreter is resolved to its own sys.executable rather than passed on
 // by name. On Windows "python3" is a launcher shim that re-resolves an install
 // on every call, prints progress to STDOUT while it does, and that output lands
