@@ -1034,7 +1034,12 @@ export default function ExploreScreen({
               ))}
             </div>
           )}
-          <button className="hit44" onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
+          {/* Open, this button is an x and nothing else, so it had no name: a
+              screen reader said "button" and the click-through listed it as
+              unnamed. It is named for what it does now, and says whether the
+              row is open. Closed, its words ("Filters", or "Filters · Food")
+              are its name, so it takes no label then. */}
+          <button className="hit44" aria-label={categoryExpanded ? 'Close filters' : undefined} aria-expanded={categoryExpanded} onClick={() => setCategoryExpanded(!categoryExpanded)} style={{
             height: '36px', minWidth: categoryExpanded ? '36px' : 'auto', width: categoryExpanded ? '36px' : '100%',
             borderRadius: 'var(--r-md)', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)',
             cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
