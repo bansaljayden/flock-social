@@ -27,8 +27,12 @@
 // out of the monthly pool, so a URL that drifted by a digit would be paid for
 // again.
 //
-// NO KEY, NO MAP. Contributor and e2e builds carry no REACT_APP_MAPTILER_KEY,
-// and then every builder answers null and the caller draws what it drew before.
+// NO KEY, NO MAP. A build with no REACT_APP_MAPTILER_KEY (a contributor's,
+// with no frontend/.env) makes every builder answer null, and the caller draws
+// what it drew before. The local e2e build is not one of those:
+// tools/e2e/build.js builds frontend/ as it stands, so on a machine whose
+// frontend/.env holds the key its maps are real, leave the machine, and are
+// paid for out of the same monthly pool.
 //
 // THE CREDIT. The image is requested with attribution=false so the credit is
 // not baked into the corner at an unreadable size, which makes the visible

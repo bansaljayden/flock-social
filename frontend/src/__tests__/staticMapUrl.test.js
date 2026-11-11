@@ -10,8 +10,9 @@
 //   cache serves after the first time. Every image is 15 requests of the
 //   monthly pool.
 //
-//   NO KEY, NO MAP, AND NO BAD COORDINATE. Contributor and e2e builds have no
-//   key; a venue with no position must not become a map of 0,0.
+//   NO KEY, NO MAP, AND NO BAD COORDINATE. A contributor's build has no key
+//   (a local e2e build takes frontend/.env's, if it has one); a venue with no
+//   position must not become a map of 0,0.
 //
 //   THE CREDIT IS ALWAYS DRAWN. The image is requested with attribution=false,
 //   so the visible line is the licence condition. A render with the picture
