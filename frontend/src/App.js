@@ -4119,13 +4119,21 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     backgroundColor: 'var(--bg-primary)',
     position: 'relative',
   } : {
+    // THE FRAME FITS THE WINDOW. It was 100vh tall with a 20px margin inside
+    // the wrapper's 20px padding, 80px taller than the window, so below about
+    // 892px of window height the bottom of the frame was off the screen: in a
+    // 1280 x 800 window the tab bar ran to 822px and its labels were cut, and
+    // the page scrolled, so opening Discover lifted the frame 22px and put its
+    // search box under the notice bar. Now it is the window less the
+    // wrapper's padding (20px each side, and the notice bar's height on top
+    // while one is up), and still no taller than a phone.
     width: '375px',
     maxWidth: '375px',
-    height: '100vh',
+    height: 'calc(100vh - 40px - var(--notice-h, 0px))',
     maxHeight: '812px',
     paddingBottom: 'var(--cb-height, 0px)',
     boxSizing: 'border-box',
-    margin: '20px auto',
+    margin: '0 auto',
     borderRadius: 'var(--r-frame)',
     border: `6px solid ${isDark ? '#1e293b' : colorsLight.navy}`,
     overflow: 'hidden',
@@ -4143,12 +4151,15 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   // every one of them scrolled inside a phone-sized window on a monitor. The
   // console takes the width of the window instead, up to a readable 1240px.
   // Only off-device (fullBleed false); a phone already runs it full width.
+  // Sized like the phone frame above, and for the same reason: with a 20px
+  // margin inside the wrapper's 20px padding it was 40px taller than the
+  // window.
   consoleContainer: {
     width: 'min(1240px, calc(100vw - 40px))',
-    height: 'calc(100vh - 40px)',
+    height: 'calc(100vh - 40px - var(--notice-h, 0px))',
     paddingBottom: 'var(--cb-height, 0px)',
     boxSizing: 'border-box',
-    margin: '20px auto',
+    margin: '0 auto',
     borderRadius: 'var(--r-lg)',
     border: `1px solid ${isDark ? '#1e293b' : 'rgba(13,40,71,0.18)'}`,
     overflow: 'hidden',
@@ -21842,7 +21853,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // bezel (20px gutters, dark backdrop, squeezed height) on real phones
       // even after phoneContainer went full-bleed.
       ? { height: '100dvh', backgroundColor: 'var(--bg-primary)', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }
-      : { minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
+      // In a desktop browser the gutter above the frame also clears the notice
+      // bar while one is up (--notice-h, components/NoticeBar.js): the bar is
+      // fixed across the whole window and the frame is not under the shell
+      // spacer that makes room for it on a phone. See phoneContainer.
+      : { minHeight: '100vh', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'calc(20px + var(--notice-h, 0px)) 20px 20px', boxSizing: 'border-box', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
       <style>{`
         .btn-confirmed { position: relative !important; overflow: hidden !important; pointer-events: none !important; }
         .btn-confirmed::after {

@@ -339,14 +339,17 @@ function BootFrame({ mark, label, top, children }) {
     );
   }
   return (
-    <div {...named} style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
+    <div {...named} style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'calc(20px + var(--notice-h, 0px)) 20px 20px', boxSizing: 'border-box' }}>
       <p className="sr-only" role="status">{label}</p>
+      {/* The window less the padding, as App.js sizes its frame (makeStyles,
+          phoneContainer), so the frame fits and does not move when the app
+          arrives. */}
       <div aria-busy="true" style={{
         width: '375px',
         maxWidth: '375px',
-        height: '100vh',
+        height: 'calc(100vh - 40px - var(--notice-h, 0px))',
         maxHeight: '812px',
-        margin: '20px auto',
+        margin: '0 auto',
         boxSizing: 'border-box',
         flexShrink: 0,
         borderRadius: 'var(--r-frame)',
