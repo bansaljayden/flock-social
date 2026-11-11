@@ -48,6 +48,14 @@ test('no icon-only hit44 button clips its own finger box', () => {
   expect(offenders).toEqual([]);
 });
 
+// The moderation console's two text buttons had no box at all: Refresh
+// measured 66 by 21 and "Hide evidence access" 125 by 20 in the same crawl.
+test('the moderation console\'s Refresh and evidence toggle carry the 44px box', () => {
+  const console_ = fs.readFileSync(path.join(SRC, 'website', 'ModerationDashboard.js'), 'utf8').replace(/\r\n/g, '\n');
+  expect(console_).toMatch(/<button\n\s*className="hit44"\n\s*onClick=\{\(\) => load\(\{ background: true \}\)\}/);
+  expect(console_).toContain('<button className="hit44" onClick={toggleEvidence} style={S.evidenceToggle}>');
+});
+
 test('the interest x is a hit44 button with no overflow of its own', () => {
   const settings = fs.readFileSync(path.join(SRC, 'screens', 'ProfileSettings.js'), 'utf8');
   const line = settings.split(/\r?\n/).find((l) => l.includes('aria-label="Remove interest"'));

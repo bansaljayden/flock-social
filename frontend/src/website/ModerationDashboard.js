@@ -812,7 +812,9 @@ export default function ModerationDashboard() {
         ) : null}
         <p style={S.sub}>
           Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
+          {/* hit44: a 44px finger box over text that measured 66 by 21. */}
           <button
+            className="hit44"
             onClick={() => load({ background: true })}
             disabled={refreshing}
             style={{ ...S.refresh, opacity: (loading || refreshing) ? 0.6 : 1, cursor: (loading || refreshing) ? 'progress' : 'pointer' }}
@@ -1101,8 +1103,9 @@ export default function ModerationDashboard() {
               Audit log
               {/* The server excludes evidence-access rows by default so they
                   cannot drown the decisions; this asks for them by name
-                  (?include_evidence=true) and re-reads only the log. */}
-              <button onClick={toggleEvidence} style={S.evidenceToggle}>
+                  (?include_evidence=true) and re-reads only the log. hit44,
+                  because the words alone measured 125 by 20. */}
+              <button className="hit44" onClick={toggleEvidence} style={S.evidenceToggle}>
                 {showEvidence ? 'Hide evidence access' : 'Show evidence access'}
               </button>
             </h2>
