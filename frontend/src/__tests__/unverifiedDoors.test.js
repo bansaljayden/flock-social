@@ -24,7 +24,13 @@ test('accepting a request, sending invites and requesting venue verification use
   expect(app).toMatch(/if \(needsEmailVerification\(err, 'request verification'\)\) return;\s*setVerificationRequestError\(/);
 });
 
-test('venue onboarding says confirm your email instead of check your details', () => {
+test('venue onboarding says confirm your email instead of check your details, and raises the sheet', () => {
   const ob = read('screens/VenueOnboarding.js');
-  expect(ob).toMatch(/err\?\.data\?\.emailVerificationRequired\s*\?\s*'Confirm your email first\./);
+  // The sheet, so the link can be asked for from here; the line under the
+  // button says what to do, never that a link was sent.
+  expect(ob).toMatch(/const unconfirmed = needsEmailVerification\(err, 'launch your dashboard'\);\s*setVenueOnboardingError\(unconfirmed\s*\?\s*'Confirm your email first,/);
+  expect(ob).not.toMatch(/link we sent/i);
+  const app = read('App.js');
+  const props = app.slice(app.indexOf('const venueOnboardingProps = {'), app.indexOf('<VenueOnboarding {...venueOnboardingProps} />'));
+  expect(props).toMatch(/\n\s*needsEmailVerification,\r?\n/);
 });

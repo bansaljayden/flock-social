@@ -455,7 +455,13 @@ test('the two things the first screen offers cannot be done yet, and the app say
 
   await expect(page.getByRole('heading', { name: /confirm your email first/i })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/you can start a flock right away/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: /send the link again/i })).toBeEnabled();
+  // This stack has no mail provider, so the signup mail never left. The
+  // sheet said "We sent a link to <address> when you signed up" with "Send
+  // the link again" anyway; it says where the link goes now, and asks for it.
+  const sheet = page.getByRole('heading', { name: /confirm your email first/i }).locator('..');
+  await expect(sheet).toContainText(/the link goes to/i);
+  await expect(sheet).not.toContainText(/we sent|when you signed up/i);
+  await expect(sheet.getByRole('button', { name: /^send the link$/i })).toBeEnabled();
   await page.getByRole('button', { name: /not now/i }).click();
 
   // Still on the create screen after the sheet closes, so leave it the way the

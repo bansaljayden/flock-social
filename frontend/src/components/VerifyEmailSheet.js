@@ -36,6 +36,17 @@
  * along. This one is App.js's checkEmailConfirmed, the same read the Nest's
  * confirm line uses: it re-reads the account and, when the address is
  * confirmed, clears verifyPrompt, which is what closes this sheet.
+ *
+ * IT SAYS WHERE THE LINK GOES, NOT THAT IT WAS SENT. The sheet used to open
+ * with "We sent a link to <address> when you signed up" and offer "Send the
+ * link again". Nothing here knows that: whether the signup mail left is known
+ * only to the signup screen (its `verificationSent`), and when the mail
+ * provider is down the signup screen says "The link to <address> did not go
+ * out". So the same person, one tap later, was told a link had been sent and
+ * sent to look for it in an inbox that held nothing. The Nest's confirm line
+ * beside it already said "The link goes to <address>" with "Send the link".
+ * The sheet now says the same, and the button only says "again" once a link
+ * asked for from here is known to have left (`verifyLinkSent`, App.js).
  */
 import React from 'react';
 // The support address in a sentence, as a link and text that copies.
@@ -50,6 +61,7 @@ const VerifyEmailSheet = ({
   setVerifyPrompt,
   verifyChecking,
   verifyCooldown,
+  verifyLinkSent,
   verifyNote,
   verifyPrompt,
   verifyRefused,
@@ -64,7 +76,7 @@ const VerifyEmailSheet = ({
       <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-xl) var(--r-xl) 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))' }}>
         <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Confirm your email first</h3>
         <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
-          We sent a link to {authUser?.email || 'your inbox'} when you signed up. Open it and you can {verifyPrompt} right away.
+          The link goes to {authUser?.email || 'your inbox'}. Open it and you can {verifyPrompt} right away.
         </p>
         {verifyNote && <p role="status" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 12px' }}>{withSupportAddress(verifyNote)}</p>}
         <button
@@ -78,7 +90,7 @@ const VerifyEmailSheet = ({
               loop this pair of changes exists to end. */}
           {verifyRefused
             ? 'We cannot mail that address'
-            : verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : 'Send the link again'}
+            : verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : (verifyLinkSent ? 'Send the link again' : 'Send the link')}
         </button>
         <button
           className="hit44"

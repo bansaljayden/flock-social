@@ -77,6 +77,7 @@ export default function VenueOnboarding({
   setVenueSearchQuery,
   setVenueSearchResults,
   setVenueSearchState,
+  needsEmailVerification,
   userLocation,
   venueAgePolicies,
   venueAnchorTypes,
@@ -518,9 +519,16 @@ export default function VenueOnboarding({
           created = await createVenueProfile(venueOnboardingData);
         } catch (err) {
           console.error('Failed to save venue profile:', err);
-          // An unverified email is not a detail to check: say what to do.
-          setVenueOnboardingError(err?.data?.emailVerificationRequired
-            ? 'Confirm your email first. Open the link we sent to your inbox, then finish this step. Every answer here is kept.'
+          // An unverified email is not a detail to check: say what to do. It
+          // used to send the owner to a link already in their inbox, which
+          // nothing here knows (the venue login screen is the one that knows
+          // whether its mail left, and says "did not go out" when it did
+          // not), and it offered no way to ask for the link.
+          // needsEmailVerification raises the app's confirm sheet, which can
+          // send one and re-check.
+          const unconfirmed = needsEmailVerification(err, 'launch your dashboard');
+          setVenueOnboardingError(unconfirmed
+            ? 'Confirm your email first, then finish this step. Every answer here is kept.'
             : (err?.message || "That didn't save. Check your details and try again."));
           // Refused, so the button is the owner's again.
           launchingRef.current = false;

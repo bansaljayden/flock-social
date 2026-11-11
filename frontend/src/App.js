@@ -5984,6 +5984,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // refusal stop being true, and leaving the flag set told somebody we could
   // not mail an address we had never tried.
   useEffect(() => { setVerifyRefused(false); }, [authUser?.email]);
+  // `true` once a link asked for from the sheet or the confirm line is known
+  // to have LEFT, which is the only thing that makes "Send the link again" and
+  // "Sent" true. Whether the signup mail left is known to the signup screen
+  // alone, and on a server whose mail provider is down it did not, so until
+  // this is set the sheet asks for the link, it does not say one was sent.
+  // Bound to the address for the reason the flag above is: a link to the old
+  // mailbox is not a link to the new one.
+  const [verifyLinkSent, setVerifyLinkSent] = useState(false);
+  useEffect(() => { setVerifyLinkSent(false); }, [authUser?.email]);
 
   const resendVerification = useCallback(async () => {
     if (verifyCooldown > 0 || verifyRefused) return;
@@ -6002,6 +6011,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const data = await resendVerificationEmail();
       const sent = data?.verificationSent !== false;
       if (data?.mailRefused) setVerifyRefused(true);
+      if (sent && !data?.mailRefused) setVerifyLinkSent(true);
       setVerifyNote(data?.mailRefused
         ? 'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'
         : sent
@@ -20313,6 +20323,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setVenueSearchQuery,
         setVenueSearchResults,
         setVenueSearchState,
+        needsEmailVerification,
         userLocation,
         venueAgePolicies,
         venueAnchorTypes,
@@ -21594,6 +21605,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVerifyPrompt,
     verifyChecking,
     verifyCooldown,
+    verifyLinkSent,
     verifyNote,
     verifyPrompt,
   };

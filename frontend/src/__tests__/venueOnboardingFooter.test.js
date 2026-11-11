@@ -91,6 +91,7 @@ function Harness({ initialStep = 0, initialSearchState = 'idle', spies }) {
       setVenueSearchQuery={setSearchQuery}
       setVenueSearchResults={setSearchResults}
       setVenueSearchState={setSearchState}
+      needsEmailVerification={spies.needsEmailVerification}
       userLocation={null}
       venueAgePolicies={[{ value: 'all_ages', label: 'All ages' }]}
       venueAnchorTypes={[{ value: 'stadium', label: 'Stadium' }]}
@@ -112,7 +113,13 @@ function Harness({ initialStep = 0, initialSearchState = 'idle', spies }) {
 }
 
 const open = (props = {}) => {
-  const spies = { setCurrentScreen: jest.fn(), setCurrentTab: jest.fn(), setShowVenueOnboarding: jest.fn() };
+  const spies = {
+    setCurrentScreen: jest.fn(),
+    setCurrentTab: jest.fn(),
+    setShowVenueOnboarding: jest.fn(),
+    // App.js's: it takes the refusal when it is the unconfirmed-email one.
+    needsEmailVerification: jest.fn((err) => Boolean(err?.data?.emailVerificationRequired)),
+  };
   const utils = render(<Harness spies={spies} {...props} />);
   return { ...utils, spies };
 };
@@ -157,6 +164,23 @@ describe('Launch Dashboard sends one create', () => {
     fireEvent.click(launch);
     await waitFor(() => expect(utils.spies.setCurrentScreen).toHaveBeenCalledWith('venueDashboard'));
     expect(api.createVenueProfile).toHaveBeenCalledTimes(2);
+    quiet.mockRestore();
+  });
+
+  it('an unconfirmed email raises the sheet that can send the link, and claims no link was sent', async () => {
+    // It said "Open the link we sent to your inbox", which this screen cannot
+    // know, and offered no way to ask for one.
+    const quiet = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const refusal = Object.assign(new Error('Confirm your email first.'), { status: 403, data: { emailVerificationRequired: true } });
+    api.createVenueProfile.mockRejectedValueOnce(refusal);
+    const utils = open({ initialStep: LAST_STEP });
+    fireEvent.click(utils.getByRole('button', { name: 'Launch Dashboard' }));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Confirm your email first, then finish this step. Every answer here is kept.'));
+    expect(utils.spies.needsEmailVerification).toHaveBeenCalledTimes(1);
+    expect(utils.spies.needsEmailVerification).toHaveBeenCalledWith(refusal, 'launch your dashboard');
+    expect(utils.getByRole('alert').textContent).not.toMatch(/we sent|in your inbox/i);
+    expect(utils.getByRole('button', { name: 'Launch Dashboard' }).disabled).toBe(false);
+    expect(utils.spies.setShowVenueOnboarding).not.toHaveBeenCalled();
     quiet.mockRestore();
   });
 });

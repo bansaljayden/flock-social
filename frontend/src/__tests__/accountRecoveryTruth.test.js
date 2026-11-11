@@ -76,7 +76,7 @@ test('changing your address changes the address every screen names', () => {
   const app = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'App.js'), 'utf8');
   // `authUser` is read at sign-in and never refetched, and this form is the one
   // screen that can move the address on it. The verify sheet renders
-  // "We sent a link to {authUser?.email}", so a stale copy sent people to look
+  // "The link goes to {authUser?.email}", so a stale copy sent people to look
   // in the mailbox they had just moved away from.
   expect(settings).toMatch(/const editProfileFormProps = \{\s*authUser,\s*colors,\s*(?:\/\/[^\n]*\n\s*)*onUserUpdated,/);
   expect(form).toMatch(/if \(onUserUpdated && data\.user\) \{/);

@@ -143,10 +143,107 @@ describe('the verify sheet can be told the link was opened', () => {
   test('the resend and Not now are still there', () => {
     const p = sheetProps();
     render(React.createElement(VerifyEmailSheet, p));
-    fireEvent.click(screen.getByRole('button', { name: 'Send the link again' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send the link' }));
     expect(p.resendVerification).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Not now' }));
     expect(p.setVerifyPrompt).toHaveBeenCalledWith(null);
+  });
+});
+
+/* The sheet opened with "We sent a link to <address> when you signed up" and
+   offered "Send the link again", on a local stack whose signup screen had just
+   said "The link to <address> did not go out". The sheet cannot know whether
+   the signup mail left; only a link it asked for itself and was told left. */
+describe('the verify sheet says where the link goes, not that it was sent', () => {
+  test('no claim about the signup mail, and the address it goes to', () => {
+    render(React.createElement(VerifyEmailSheet, sheetProps()));
+    const dialog = screen.getByRole('heading', { name: 'Confirm your email first' }).parentElement;
+    expect(dialog.textContent).toContain('The link goes to maya@example.com. Open it and you can start a flock right away.');
+    expect(dialog.textContent).not.toMatch(/we sent|when you signed up|again/i);
+  });
+
+  test('without an address it still reads as a sentence', () => {
+    render(React.createElement(VerifyEmailSheet, sheetProps({ authUser: { id: 1, email_verified: false } })));
+    const dialog = screen.getByRole('heading', { name: 'Confirm your email first' }).parentElement;
+    expect(dialog.textContent).toContain('The link goes to your inbox. Open it and you can start a flock right away.');
+  });
+
+  test('"again" only once a link asked for here is known to have left', () => {
+    const p = sheetProps({ verifyLinkSent: true });
+    render(React.createElement(VerifyEmailSheet, p));
+    fireEvent.click(screen.getByRole('button', { name: 'Send the link again' }));
+    expect(p.resendVerification).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'Send the link' })).toBeNull();
+  });
+
+  test('the countdown and the refusal read as they did', () => {
+    const { unmount } = render(React.createElement(VerifyEmailSheet, sheetProps({ verifyCooldown: 42 })));
+    expect(screen.getByRole('button', { name: 'Send it again in 42s' })).toBeDisabled();
+    unmount();
+    render(React.createElement(VerifyEmailSheet, sheetProps({ verifyRefused: true, verifyLinkSent: true })));
+    expect(screen.getByRole('button', { name: 'We cannot mail that address' })).toBeDisabled();
+  });
+});
+
+/* App.js's resendVerification, lifted out and run against stand-ins: the
+   flag behind "again" is set by a send the server says went out, and by
+   nothing else. */
+describe('the flag behind "again" is set by a real send only', () => {
+  const RESEND_BODY = (() => {
+    const open = 'const resendVerification = useCallback(';
+    const start = APP.indexOf(open);
+    if (start === -1) throw new Error('lift: resendVerification moved');
+    const end = APP.indexOf(', [verifyCooldown, verifyRefused]);', start);
+    if (end === -1) throw new Error('lift: the close of resendVerification moved');
+    return APP.slice(start + open.length, end);
+  })();
+
+  async function press(answer, { cooldown = 0, refused = false } = {}) {
+    const calls = { linkSent: [], refused: [], note: [] };
+    const fn = new Function(
+      'verifyCooldown', 'verifyRefused', 'setVerifyNote', 'setVerifyCooldown', 'setVerifyRefused', 'setVerifyLinkSent', 'resendVerificationEmail', 'userMessage',
+      `return (${RESEND_BODY});`,
+    )(
+      cooldown, refused,
+      (n) => calls.note.push(n), () => {}, (v) => calls.refused.push(v), (v) => calls.linkSent.push(v),
+      answer, (e, fallback) => fallback,
+    );
+    await fn();
+    return calls;
+  }
+
+  test('a send that went out sets it', async () => {
+    const calls = await press(async () => ({ verificationSent: true, mailRefused: false }));
+    expect(calls.linkSent).toEqual([true]);
+    expect(calls.note).toEqual(['', 'Sent. Check your inbox, and your spam folder.']);
+  });
+
+  test('a send that did not go out does not', async () => {
+    const calls = await press(async () => ({ verificationSent: false, mailRefused: false }));
+    expect(calls.linkSent).toEqual([]);
+  });
+
+  test('a refused address does not', async () => {
+    const calls = await press(async () => ({ verificationSent: false, mailRefused: true }));
+    expect(calls.linkSent).toEqual([]);
+    expect(calls.refused).toEqual([true]);
+    // A missing verificationSent counts as sent (a server older than the
+    // flag), so the refusal has to be what stops it here.
+    const bare = await press(async () => ({ mailRefused: true }));
+    expect(bare.linkSent).toEqual([]);
+  });
+
+  test('a rate limit or a network failure does not', async () => {
+    const limited = await press(async () => { throw Object.assign(new Error('slow down'), { status: 429 }); });
+    expect(limited.linkSent).toEqual([]);
+    const offline = await press(async () => { throw new TypeError('Failed to fetch'); });
+    expect(offline.linkSent).toEqual([]);
+  });
+
+  test('it is cleared when the address changes, beside the refusal', () => {
+    expect(APP).toMatch(/const \[verifyLinkSent, setVerifyLinkSent\] = useState\(false\);\s*useEffect\(\(\) => \{ setVerifyLinkSent\(false\); \}, \[authUser\?\.email\]\);/);
+    const props = APP.slice(APP.indexOf('const verifyEmailSheetProps = {'), APP.indexOf('const newDmModalProps = {'));
+    expect(props).toMatch(/\n\s*verifyLinkSent,\n/);
   });
 });
 
