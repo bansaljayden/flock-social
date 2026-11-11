@@ -239,6 +239,13 @@ async function call(method, path, body) {
 
 const ran = (prefix) => log.filter((q) => q.sql.startsWith(prefix));
 
+// This file has no provider key, so the mail of every link issued here is a
+// skip, and the route notes that on the link's row (migration 137,
+// markVerificationMailFailed). Scripted wherever a link is issued, so the note
+// is answered like the statements around it instead of being refused, caught
+// and warned about.
+const MAIL_DID_NOT_LEAVE = [/^UPDATE email_verifications SET mail_failed_at/, () => ({ rows: [], rowCount: 1 })];
+
 // ---------------------------------------------------------------------------
 // B1. The verification-resend budget, at its exact ceiling
 // ---------------------------------------------------------------------------
@@ -266,6 +273,7 @@ function scriptResend({ accountHour = 0, accountDay = 0, ipHour = 0, accountLast
     })],
     [/^UPDATE email_verifications SET used_at/, () => ({ rows: [], rowCount: 0 })],
     [/^INSERT INTO email_verifications/, () => ({ rows: [], rowCount: 1 })],
+    MAIL_DID_NOT_LEAVE,
   ];
 }
 
@@ -320,6 +328,7 @@ test('the same IP ceiling is checked at SIGNUP, at the same boundary', async () 
       })],
       [/^UPDATE email_verifications SET used_at/, () => ({ rows: [], rowCount: 0 })],
       [/^INSERT INTO email_verifications/, () => ({ rows: [], rowCount: 1 })],
+      MAIL_DID_NOT_LEAVE,
     ];
     return call('POST', '/api/auth/signup', {
       email: 'newbie@example.com', password: 'Password1', name: 'Newbie', date_of_birth: '2000-01-01',
@@ -729,6 +738,7 @@ test('the youngest birth year that is exactly MIN_AGE today can sign up; the nex
       })],
       [/^UPDATE email_verifications SET used_at/, () => ({ rows: [], rowCount: 0 })],
       [/^INSERT INTO email_verifications/, () => ({ rows: [], rowCount: 1 })],
+      MAIL_DID_NOT_LEAVE,
     ];
     return call('POST', '/api/auth/signup', {
       email: 'teen@example.com', password: 'Password1', name: 'Teen', date_of_birth,

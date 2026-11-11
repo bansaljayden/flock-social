@@ -1,0 +1,34 @@
+-- @requires column email_verifications.mail_failed_at
+--
+-- 137: when a confirmation link's mail is known not to have left.
+--
+-- ASCII only, like 094, 100-102 and 136: the embedded server the boot-safety
+-- suite runs is WIN1252.
+--
+-- WHY. A row here is one issued confirmation link, and the sixty-second gap
+-- between two sends (routes/auth.js, RESEND_MIN_GAP_MS) was measured from the
+-- newest row. A row is written before its mail is handed to the provider, so
+-- a link whose mail never left still started the gap. Signup then told the
+-- person "The link did not go out. Ask for it below", and the button under
+-- that sentence was answered 429 "We just sent one. Check your inbox" for the
+-- next minute: two sentences on one screen that cannot both be true, on every
+-- signup made while the provider was down or refusing.
+--
+-- WHO WRITES IT. routes/auth.js markVerificationMailFailed, once, after the
+-- mailer answers anything other than sent for that link: no provider key, the
+-- do-not-mail list, a refusal, an error, a timeout. NULL everywhere else,
+-- which reads as "handed to the provider, or still on its way there", as
+-- every row before this file is.
+--
+-- WHO READS IT. routes/auth.js verificationSendBudget: the gap is measured
+-- from the newest link whose mail was not known to have failed when the
+-- request began, and the capped refusal says "The last link we sent still
+-- works" only when there is one. The hourly, daily and per-IP caps keep
+-- counting every row, failed or not, because each is an attempt.
+--
+-- TIMESTAMPTZ, like created_at and used_at on the same table.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no
+-- rewrite, no scan, every existing row reads NULL. A replay is a no-op.
+
+ALTER TABLE email_verifications ADD COLUMN IF NOT EXISTS mail_failed_at TIMESTAMPTZ;

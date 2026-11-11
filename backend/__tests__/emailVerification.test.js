@@ -275,17 +275,59 @@ pool.query = async (text, params = []) => {
     }
     return { rows: [], rowCount: n };
   }
+  if (sql.startsWith('UPDATE email_verifications SET mail_failed_at')) {
+    // The stamp on a link whose mail did not leave (migration 137). Once per
+    // link, and the guard that makes it once is read off the statement.
+    const v = verifications.find((x) => x.selector === params[0]
+      && (!clause(sql, /AND mail_failed_at IS NULL/) || !x.mail_failed_at));
+    if (v) v.mail_failed_at = new Date(now).toISOString();
+    return { rows: [], rowCount: v ? 1 : 0 };
+  }
   if (sql.startsWith('SELECT COUNT(*)') && sql.includes('FROM email_verifications')) {
     const mine = verifications.filter((v) => v.user_id === params[0]);
     const within = (v, ms) => now - Date.parse(v.created_at) < ms;
-    return {
-      rows: [{
-        account_hour: mine.filter((v) => within(v, 3600e3)).length,
-        account_day: mine.filter((v) => within(v, 86400e3)).length,
-        account_last: mine.length ? mine[mine.length - 1].created_at : null,
-        ip_hour: verifications.filter((v) => v.request_ip === params[1] && within(v, 3600e3)).length,
-      }],
+    // Which links the sixty-second gap is measured from is the statement's own
+    // rule, so it is read off the statement: with the clause deleted from
+    // routes/auth.js every link counts again, here as there. (No request in
+    // this file overlaps another, so a failure is never "recorded after this
+    // request began"; checkThenActRaces.test.js runs that half on a real
+    // database.)
+    const startsGap = (v) => !clause(sql, /mail_failed_at IS NULL OR mail_failed_at > NOW\(\)/)
+      || !v.mail_failed_at || Date.parse(v.mail_failed_at) > now;
+    const newest = mine.filter(startsGap)
+      .reduce((best, v) => (!best || Date.parse(v.created_at) > Date.parse(best) ? v.created_at : best), null);
+    const row = {
+      account_hour: mine.filter((v) => within(v, 3600e3)).length,
+      account_day: mine.filter((v) => within(v, 86400e3)).length,
+      account_last: newest,
+      ip_hour: verifications.filter((v) => v.request_ip === params[1] && within(v, 3600e3)).length,
     };
+    // Likewise the reading behind "The last link we sent still works": each of
+    // its three conditions holds here only while the statement states it.
+    const liveFrom = sql.indexOf('BOOL_OR(');
+    const liveTo = sql.indexOf('AS account_live');
+    if (liveFrom > -1 && liveTo > liveFrom) {
+      const rule = sql.slice(liveFrom, liveTo);
+      row.account_live = mine.some((v) => (!clause(rule, /used_at IS NULL/) || !v.used_at)
+        && (!clause(rule, /expires_at > NOW\(\)/) || Date.parse(v.expires_at) > now)
+        && (!clause(rule, /mail_failed_at IS NULL/) || !v.mail_failed_at));
+    }
+    return { rows: [row] };
+  }
+  if (sql.startsWith('SELECT GREATEST(') && sql.includes('FROM email_verifications')) {
+    // When a spent budget frees its next slot (buildMailBudgetQuery): for each
+    // exhausted leg, the row that has to age out of its window, plus the window.
+    const span = { hour: 3600e3, day: 86400e3 };
+    const legs = [...sql.matchAll(/\(SELECT created_at FROM email_verifications WHERE (user_id|request_ip) = \$(\d+) AND created_at > NOW\(\) - INTERVAL '1 (hour|day)' ORDER BY created_at ASC OFFSET \$(\d+)::int LIMIT 1\) \+ INTERVAL '1 (?:hour|day)'/g)];
+    const frees = legs.map(([, column, key, unit, offset]) => {
+      const inWindow = verifications
+        .filter((v) => v[column] === params[key - 1] && now - Date.parse(v.created_at) < span[unit])
+        .map((v) => Date.parse(v.created_at))
+        .sort((a, b) => a - b);
+      const at = inWindow[params[offset - 1]];
+      return at === undefined ? null : at + span[unit];
+    }).filter((t) => t !== null);
+    return { rows: [{ frees_at: frees.length ? new Date(Math.max(...frees)).toISOString() : null }] };
   }
   if (sql.startsWith('SELECT v.id, v.user_id')) {
     const v = verifications.find((x) => x.selector === params[0]);
@@ -740,8 +782,11 @@ test('resending is rate limited per account', async () => {
   const { token } = await signupUnverified();
 
   // Signup already sent one, so an immediate resend is inside the minimum gap.
+  assert.strictEqual(verifications[0].mail_failed_at, undefined,
+    'a link whose mail left is never marked as one whose mail did not');
   const tooSoon = await post('/api/auth/resend-verification', {}, token);
   assert.strictEqual(tooSoon.status, 429);
+  assert.strictEqual((await tooSoon.json()).error, 'We just sent one. Check your inbox, then try again in under a minute.');
   assert.strictEqual(sentMail.length, 1);
 
   // Past the gap but at the hourly cap.
@@ -754,7 +799,172 @@ test('resending is rate limited per account', async () => {
   }
   const capped = await post('/api/auth/resend-verification', {}, token);
   assert.strictEqual(capped.status, 429);
+  assert.strictEqual((await capped.json()).error,
+    'That is several confirmation links already. You can ask for another in about an hour. The last link we sent still works.');
   assert.strictEqual(sentMail.length, 1, 'no mail may leave once the budget is spent');
+});
+
+// ---------------------------------------------------------------------------
+// A link whose mail did not leave does not start the sixty-second gap.
+//
+// The row behind a link is written before its mail is handed to the provider,
+// and the gap was measured from the newest row. So a signup made while the
+// provider was down was told "The link did not go out. Ask for it below", and
+// the button under that sentence was answered 429 "We just sent one. Check your
+// inbox" for the next minute.
+// ---------------------------------------------------------------------------
+test('after a send that did not leave, the next ask is answered at once, and a delivered one starts the gap again', async () => {
+  const cap = captureConsole();
+  try {
+    for (const behaviour of ['error', 'throw', 'rate-limited', 'aborted']) {
+      reset();
+      resendBehaviour = behaviour;
+      const { body, token } = await signupUnverified();
+      assert.strictEqual(body.verificationSent, false);
+      assert.ok(verifications[0].mail_failed_at, `${behaviour}: the link's row says its mail did not leave`);
+
+      // No ageing of the row: this is the tap on "Send the link", seconds later.
+      const again = await post('/api/auth/resend-verification', {}, token);
+      assert.strictEqual(again.status, 200, `${behaviour}: refused with "We just sent one" when nothing had been sent`);
+      const againBody = await again.json();
+      assert.strictEqual(againBody.verificationSent, false);
+      assert.strictEqual(againBody.message, 'That one did not go out. You can ask again.',
+        `${behaviour}: a 200 that says "Sent" beside verificationSent false`);
+      assert.strictEqual(verifications.length, 2);
+      assert.ok(verifications[1].mail_failed_at);
+
+      // The provider recovers. Still no wait, and this one is delivered.
+      resendBehaviour = 'ok';
+      const delivered = await post('/api/auth/resend-verification', {}, token);
+      assert.strictEqual(delivered.status, 200);
+      const deliveredBody = await delivered.json();
+      assert.strictEqual(deliveredBody.verificationSent, true);
+      assert.strictEqual(deliveredBody.message, 'Sent. Check your inbox.');
+      assert.strictEqual(verifications[2].mail_failed_at, undefined);
+      const mailsSoFar = sentMail.length;
+
+      // Which is the send the gap exists for.
+      const tooSoon = await post('/api/auth/resend-verification', {}, token);
+      assert.strictEqual(tooSoon.status, 429, `${behaviour}: a delivered link must start the gap`);
+      assert.match((await tooSoon.json()).error, /^We just sent one\. Check your inbox, then try again in under a minute\.$/);
+      assert.strictEqual(sentMail.length, mailsSoFar, 'and nothing more is handed to the provider inside it');
+      assert.strictEqual(verifications.length, 3, 'nor is a link issued for a refused request');
+    }
+  } finally { cap.restore(); }
+});
+
+test('the gap is measured from the last link whose mail left, whatever failed after it', async () => {
+  const cap = captureConsole();
+  try {
+    reset();
+    const { token } = await signupUnverified();
+    // Delivered forty seconds ago.
+    verifications[0].created_at = new Date(Date.now() - 40 * 1000).toISOString();
+    resendBehaviour = 'error';
+    const inside = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(inside.status, 429, 'a failing provider does not open the gap a delivered link started');
+    assert.strictEqual(verifications.length, 1);
+
+    // Delivered ninety seconds ago: out of the gap, and this send fails.
+    verifications[0].created_at = new Date(Date.now() - 90 * 1000).toISOString();
+    const failed = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(failed.status, 200);
+    assert.strictEqual((await failed.json()).verificationSent, false);
+
+    // The failed one is the newest row and does not count, so the reading is
+    // still the delivered link's, ninety seconds old.
+    resendBehaviour = 'ok';
+    const next = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(next.status, 200);
+    assert.strictEqual((await next.json()).verificationSent, true);
+  } finally { cap.restore(); }
+});
+
+test('a database error while recording that a mail did not leave costs the signup nothing, and is said', async () => {
+  reset();
+  resendBehaviour = 'error';
+  const warned = [];
+  const real = { log: console.log, warn: console.warn, error: console.error };
+  console.log = () => {}; console.error = () => {};
+  console.warn = (...args) => { warned.push(args.join(' ')); };
+  const fake = pool.query;
+  pool.query = async (text, params) => {
+    if (String(text).startsWith('UPDATE email_verifications SET mail_failed_at')) throw new Error('connection lost');
+    return fake(text, params);
+  };
+  try {
+    const { res, body, token } = await signupUnverified();
+    assert.strictEqual(res.status, 201, 'the account exists; only a note about its mail was lost');
+    assert.strictEqual(body.verificationSent, false);
+    assert.ok(warned.some((line) => line.includes('could not record that a confirmation mail did not leave')
+      && line.includes('connection lost')), `the loss is logged: ${warned.join(' | ')}`);
+
+    // Unrecorded, the link reads as one whose mail left, so the gap holds for
+    // its minute. Of the two ways to be wrong that is the one that sends less.
+    assert.strictEqual(verifications[0].mail_failed_at, undefined);
+    const again = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(again.status, 429);
+    assert.strictEqual(verifications.length, 1);
+  } finally {
+    pool.query = fake;
+    Object.assign(console, real);
+  }
+});
+
+test('while the provider fails, the asks stop at the hourly cap, and that refusal promises no working link', async () => {
+  const cap = captureConsole();
+  try {
+    reset();
+    resendBehaviour = 'error';
+    const { token } = await signupUnverified();
+    // Signup's own link is the first of the hour.
+    for (let i = 1; i < RESEND_MAX_PER_HOUR_ACCOUNT; i++) {
+      const res = await post('/api/auth/resend-verification', {}, token);
+      assert.strictEqual(res.status, 200, `ask ${i} of the hour`);
+    }
+    assert.strictEqual(verifications.length, RESEND_MAX_PER_HOUR_ACCOUNT);
+    const attempts = sentMail.length;
+
+    const capped = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(capped.status, 429, 'a failed send is still an attempt, and attempts are capped');
+    assert.ok(Number(capped.headers.get('retry-after')) > 60, 'the wait named is the hour, not the gap');
+    // Every earlier link was retired by the one after it, and the newest one's
+    // mail did not leave: no inbox holds a link that works.
+    assert.strictEqual((await capped.json()).error,
+      'That is several confirmation links already. You can ask for another in about an hour.');
+    assert.strictEqual(sentMail.length, attempts, 'the provider is not asked again');
+    assert.strictEqual(verifications.length, RESEND_MAX_PER_HOUR_ACCOUNT, 'and no link is issued');
+  } finally { cap.restore(); }
+});
+
+test('"The last link we sent still works" is said only of a link that was delivered, is unused and has not expired', async () => {
+  const at = (mins) => new Date(Date.now() - mins * 60 * 1000).toISOString();
+  const WORKS = ' The last link we sent still works.';
+  const cases = [
+    ['delivered, unused, unexpired', {}, true],
+    ['its mail did not leave', { mail_failed_at: at(5) }, false],
+    ['retired or already used', { used_at: at(4) }, false],
+    ['expired', { expires_at: at(1) }, false],
+  ];
+  for (const [what, newest, promised] of cases) {
+    reset();
+    const { token } = await signupUnverified();
+    // The hour's budget, spent: every link but the newest retired by the next.
+    verifications.length = 0;
+    for (let i = 0; i < RESEND_MAX_PER_HOUR_ACCOUNT; i++) {
+      const last = i === RESEND_MAX_PER_HOUR_ACCOUNT - 1;
+      verifications.push({
+        id: nextVerificationId++, user_id: users[0].id, selector: `w${i}`, verifier_hash: 'h',
+        email: users[0].email, request_ip: null, expires_at: at(-60), created_at: at(10 - i),
+        used_at: last ? null : at(9 - i), ...(last ? newest : {}),
+      });
+    }
+    const res = await post('/api/auth/resend-verification', {}, token);
+    assert.strictEqual(res.status, 429, what);
+    const { error } = await res.json();
+    assert.strictEqual(error.endsWith(WORKS), promised, `${what}: ${error}`);
+    assert.match(error, /^That is several confirmation links already\. You can ask for another in about an hour\./);
+  }
 });
 
 test('resending is rate limited per IP, across accounts', async () => {
@@ -851,8 +1061,8 @@ test('a Resend 429 or timeout is not reported as a blocked address, at signup or
       assert.strictEqual(body.mailRefused, false,
         `${behaviour}: a provider fault told a healthy address it had bounced or been reported as spam`);
 
-      // Out of the sixty-second gap, so the resend route reaches the send.
-      verifications[0].created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+      // The signup's own mail did not leave, so there is no gap to wait out
+      // and the resend route reaches the send.
       const again = await post('/api/auth/resend-verification', {}, token);
       assert.strictEqual(again.status, 200);
       const againBody = await again.json();
@@ -874,9 +1084,15 @@ test('an address on the do-not-mail list IS reported as refused, so the screen c
     assert.strictEqual(body.mailRefused, true);
     assert.strictEqual(sentMail.length, 0, 'the provider was never asked');
 
-    verifications[0].created_at = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    // Asked again at once: our own list turned the first one away before any
+    // provider was involved, so "We just sent one" would be untrue here too.
     const again = await post('/api/auth/resend-verification', {}, token);
-    assert.strictEqual((await again.json()).mailRefused, true);
+    assert.strictEqual(again.status, 200);
+    const againBody = await again.json();
+    assert.strictEqual(againBody.mailRefused, true);
+    assert.strictEqual(againBody.verificationSent, false);
+    assert.strictEqual(againBody.message, 'We cannot send mail to this address.');
+    assert.strictEqual(sentMail.length, 0);
   } finally { cap.restore(); }
 });
 
@@ -917,6 +1133,27 @@ test('migration 011 grandfathers existing rows and only then defaults to unverif
   }
   // Every statement is IF NOT EXISTS / conditional, so a replay is a no-op.
   assert.ok(!/CREATE INDEX (?!IF NOT EXISTS)/.test(sql));
+});
+
+// Migration 137, likewise: the column the gap and the "still works" sentence
+// read. The fake above grows the field by itself, so only this would notice the
+// file losing the column, its post-condition or its replay safety.
+// (checkThenActRaces.test.js applies it to a real Postgres.)
+test('migration 137 adds mail_failed_at as a nullable column, and nothing else', () => {
+  const sql = require('node:fs')
+    .readFileSync(require('node:path').join(__dirname, '..', 'migrations', '137_verification_mail_failed_at.sql'), 'utf8');
+
+  // The runner checks this header AFTER the file has run, so a file that
+  // stopped adding the column fails the boot instead of being recorded applied.
+  assert.match(sql, /^-- @requires column email_verifications\.mail_failed_at$/m);
+  // The embedded server the boot-safety suite runs is WIN1252.
+  assert.ok(!/[^\x00-\x7F]/.test(sql), 'ASCII only');
+
+  const statements = sql.replace(/--.*$/gm, '').split(';').map((s) => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  // Nullable and without a default: every link issued before this file reads
+  // NULL, which is "its mail left", and no row is rewritten to say so.
+  assert.deepStrictEqual(statements,
+    ['ALTER TABLE email_verifications ADD COLUMN IF NOT EXISTS mail_failed_at TIMESTAMPTZ']);
 });
 
 // ---------------------------------------------------------------------------

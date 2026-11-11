@@ -441,7 +441,49 @@ async function mailVerificationLink(user, token) {
   if (result.skipped && process.env.NODE_ENV !== 'production') {
     console.log(`[auth] verification link for ${user.email}: ${link}`);
   }
+  // Awaited, so it is on the row before the caller answers and the request the
+  // person makes next reads it.
+  if (result.sent !== true) await markVerificationMailFailed(token);
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// A LINK WHOSE MAIL DID NOT LEAVE DOES NOT START THE SIXTY-SECOND GAP.
+//
+// A row in email_verifications is written before its mail is handed to the
+// provider, and the gap between two sends was measured from the newest row.
+// So when the mail did not leave (the provider down, refusing or rate
+// limiting, or no key at all on a laptop), signup answered verificationSent
+// false, the screen said "The link did not go out. Ask for it below", and the
+// button under that sentence was refused for the next minute with "We just
+// sent one. Check your inbox": two sentences on one screen that cannot both
+// be true, and a minute in which a new account could do nothing about it.
+//
+// The row is stamped (migration 137) whenever the mailer answers anything
+// other than sent, which is exactly when the client is told verificationSent
+// false: no key, the do-not-mail list, a refusal, an error and a timeout
+// alike. A timeout is the one of those where the mail may have left after
+// all. The person is told the same thing either way, so their next request is
+// treated the same way, and the worst outcome is a second mail inside the
+// minute (the first one's link is retired by then, as with any resend).
+//
+// Stamped on failure and not on success, so an ordinary send writes nothing
+// more than it did, and a process that dies between the send and the stamp
+// leaves the gap in force. The same holds when the stamp itself fails, which
+// is why that is swallowed: the cost is the old refusal for one minute.
+async function markVerificationMailFailed(token) {
+  try {
+    // The row is found by the public half of its token, the way the link
+    // itself is looked up.
+    const parsed = parseVerificationToken(token);
+    if (!parsed) return;
+    await pool.query(
+      'UPDATE email_verifications SET mail_failed_at = NOW() WHERE selector = $1 AND mail_failed_at IS NULL',
+      [parsed.selector]
+    );
+  } catch (err) {
+    console.warn('[auth] could not record that a confirmation mail did not leave:', err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -516,12 +558,29 @@ async function mailBudgetRetryMs(table, keyColumn, key, ip, legs) {
   }
 }
 
+// The counts take every row, because each is an attempt. Two readings do not:
+//
+//   account_last  what the sixty-second gap is measured from: the newest link
+//                 whose mail was not known to have failed WHEN THIS REQUEST
+//                 BEGAN (see markVerificationMailFailed). Inside
+//                 claimVerificationSend NOW() is the moment the claim's
+//                 transaction opened, so a failure recorded after that still
+//                 counts as a send. That is what holds a burst to one
+//                 accepted request when the provider fails fast: every
+//                 request of a burst begins before the first one's mail has
+//                 failed, and the lock only decides the order they read in. A
+//                 request that begins after the failure was recorded is the
+//                 person asking again, and has no gap to wait out.
+//   account_live  whether a link we believe was delivered is still usable,
+//                 which the capped refusal used to promise without looking.
 async function verificationSendBudget(userId, ip, db = pool) {
   const { rows } = await db.query(
     `SELECT
        COUNT(*) FILTER (WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour')::int AS account_hour,
        COUNT(*) FILTER (WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 day')::int  AS account_day,
-       MAX(created_at) FILTER (WHERE user_id = $1) AS account_last,
+       MAX(created_at) FILTER (WHERE user_id = $1 AND (mail_failed_at IS NULL OR mail_failed_at > NOW())) AS account_last,
+       COALESCE(BOOL_OR(used_at IS NULL AND expires_at > NOW() AND mail_failed_at IS NULL)
+                  FILTER (WHERE user_id = $1), FALSE) AS account_live,
        COUNT(*) FILTER (WHERE request_ip = $2 AND created_at > NOW() - INTERVAL '1 hour')::int AS ip_hour
      FROM email_verifications
      WHERE user_id = $1 OR (request_ip = $2 AND created_at > NOW() - INTERVAL '1 hour')`,
@@ -532,6 +591,7 @@ async function verificationSendBudget(userId, ip, db = pool) {
     accountHour: Number(row.account_hour) || 0,
     accountDay: Number(row.account_day) || 0,
     accountLast: row.account_last ? new Date(row.account_last).getTime() : 0,
+    accountLive: row.account_live === true,
     ipHour: Number(row.ip_hour) || 0,
   };
 }
@@ -2601,20 +2661,35 @@ router.post('/resend-verification', authenticate, async (req, res) => {
       // "We just sent one" is only true of the sixty-second gap. The other
       // three legs are hours and a whole day long, and the person reading this
       // cannot confirm their email until one of them clears, so the sentence
-      // has to distinguish them.
+      // has to distinguish them. And "the last link we sent still works" is
+      // only true when one was delivered and is still unused: each new link
+      // retires the one before it, so after a send whose mail did not leave
+      // there is no working link in any inbox, and the sentence is left out.
       const gapMs = tooSoon ? Math.max(1, budget.accountLast + RESEND_MIN_GAP_MS - Date.now()) : 0;
       const cappedMs = capped
         ? await mailBudgetRetryMs('email_verifications', 'user_id', user.id, req.ip, legs)
         : 0;
       const ms = Math.max(gapMs, cappedMs);
+      const stillWorks = budget.accountLive ? ' The last link we sent still works.' : '';
       return res.status(429).json(refusalBody(res, ms, capped
-        ? `That is several confirmation links already. You can ask for another ${waitPhrase(ms)}. The last link we sent still works.`
+        ? `That is several confirmation links already. You can ask for another ${waitPhrase(ms)}.${stillWorks}`
         : `We just sent one. Check your inbox, then try again ${waitPhrase(ms)}.`));
     }
 
     const sendResult = await mailVerificationLink(user, claim.token);
+    const sent = sendResult.sent === true;
     // mailRefused is the do-not-mail list only, for the reason given at signup.
-    res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true, mailRefused: sendResult.suppressed === true });
+    const mailRefused = sendResult.suppressed === true;
+    res.json({
+      // The clients read the two flags and write their own sentence. This one
+      // is for anything that prints a 200's message as it stands, and it used
+      // to say "Sent" beside verificationSent false.
+      message: sent ? 'Sent. Check your inbox.'
+        : mailRefused ? 'We cannot send mail to this address.'
+          : 'That one did not go out. You can ask again.',
+      verificationSent: sent,
+      mailRefused,
+    });
   } catch (err) {
     console.error('Resend verification error:', err);
     res.status(500).json({ error: 'Could not send a new link' });

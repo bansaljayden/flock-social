@@ -171,6 +171,9 @@ pool.query = async (text, params = []) => {
     return { rows: [], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE email_verifications SET used_at')) return { rows: [], rowCount: 0 };
+  // No provider key here, so every link's mail is a skip, and the route notes
+  // that on the link's row (migration 137).
+  if (sql.startsWith('UPDATE email_verifications SET mail_failed_at')) return { rows: [], rowCount: 1 };
   if (sql.startsWith('SELECT COUNT(*)') && sql.includes('FROM email_verifications')) {
     return { rows: [{ account_hour: 0, account_day: 0, account_last: null, ip_hour: 0 }] };
   }
