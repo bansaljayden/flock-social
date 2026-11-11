@@ -78,6 +78,13 @@ function vercelDefaults(env) {
 // hosts name the commit in their own variables (Cloudflare Pages, Vercel,
 // Codemagic, GitHub Actions); a local build asks git. A REACT_APP_BUILD_ID
 // already set wins.
+//
+// The id goes into index.html alone (the %REACT_APP_BUILD_ID% in its
+// <meta name="flock-build">, filled from the raw environment), never into the
+// JavaScript: no file under src/ reads the variable, so the narrowing above
+// leaves it out of the bundle. A script that held it got a new hashed name on
+// every commit, and the main bundle with it, whether or not any code had
+// changed (youScreenVersionLine.test.js holds this).
 const COMMIT_VARS = ['CF_PAGES_COMMIT_SHA', 'VERCEL_GIT_COMMIT_SHA', 'CM_COMMIT', 'GITHUB_SHA'];
 function buildIdDefaults(env, gitSha, now = new Date()) {
   if (env.REACT_APP_BUILD_ID) return {};

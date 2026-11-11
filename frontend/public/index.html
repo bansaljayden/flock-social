@@ -187,6 +187,18 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Flock" />
 
+    <!-- WHICH BUILD THIS IS. scripts/build.js names the build (the short
+         commit it came from, or the build date) and the build writes that
+         name here; the foot of the web's You screen reads it off this tag
+         (src/lib/appVersion.js). It is in the HTML, which is fetched fresh on
+         every load, and not in a script: compiled into the JavaScript it
+         changed that file's bytes on every deploy, so the file and the main
+         bundle were renamed even when no code had changed, and a tab left
+         open asked for a script the site no longer had. A page served by
+         `npm start` keeps the placeholder, which the reader does not take
+         for an id. -->
+    <meta name="flock-build" content="%REACT_APP_BUILD_ID%" />
+
     <!-- THE API HANDSHAKE, MOVED OFF THE CRITICAL PATH.
          The first call to the backend (getCurrentUser, and the landing page's
          /api/pro-offer read) cannot start until the app chunk has downloaded
