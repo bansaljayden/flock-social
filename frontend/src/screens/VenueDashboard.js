@@ -1230,7 +1230,11 @@ export default function VenueDashboard({
                 {tierBadge[venueData.tier].label}
               </span>
               )}
-              <button aria-label="Sign out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {/* Called with nothing. onLogout takes the sentence the sign-in
+                  screen shows afterwards, and handed straight to onClick it was
+                  given the click event, which crashed the app (App.js, at
+                  FlockAppInner's mount). */}
+              <button aria-label="Sign out" className="hit44" onClick={() => onLogout()} style={{ width: '32px', height: '32px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.logout('white', 14)}
               </button>
             </div>
