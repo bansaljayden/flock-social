@@ -10,7 +10,9 @@
 import fs from 'fs';
 import path from 'path';
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// CRLF normalised: with core.autocrlf on, a checkout writes App.js with CRLF,
+// and the guard below is matched up to its line end.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('the SOS button steps aside for Birdie\'s sheets only: closed, or a thread in the Nest\'s page, it stays', () => {
   // 'inline' (2026-11-06) is an answer in the Nest's own page, which covers
