@@ -65,9 +65,27 @@
    4. Never overwrite a safe-area-aware `padding` shorthand with a plain
       `padding` shorthand later in the same style object. That silently
       deletes the inset and is exactly how this bug shipped 50+ times.
+
+   THE NOTICE BAR IS PART OF THE TOP INSET. The app can show one sentence
+   in a bar fixed across the top of the screen (components/NoticeBar.js):
+   what a confirmation link did, why a session ended. It sat over the top
+   of whatever screen was under it, the sign-in mark or the Nest's heading.
+   While it is up it publishes its measured height on <html> as --notice-h,
+   and --safe-top is the larger of that and the device's own inset, so
+   everything that follows rule 2 starts below the bar as well as below
+   the status bar, with no change to any screen. The larger of the two and
+   not their sum: the bar pads its own top by the device inset, so its
+   height already contains it. With no notice up --notice-h is not set and
+   --safe-top is the device inset exactly as it was, which is 0px on the
+   web.
+
+   --device-top is the device inset alone. The notice bar is the one thing
+   that pads by it: padding the bar by --safe-top would add the bar's
+   height to itself every time it measured.
    ═══════════════════════════════════════════════════════════════════ */
 :root {
-  --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --device-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-top: max(var(--device-top), var(--notice-h, 0px));
   --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));

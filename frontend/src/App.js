@@ -230,6 +230,8 @@ import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, plan
 import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
 import EmailConfirmLine from './components/EmailConfirmLine';
+// The one-sentence bar at the top of the app, which makes room for itself.
+import NoticeBar from './components/NoticeBar';
 // The support address in a sentence, as a link and text that copies.
 import { withSupportAddress } from './components/ui/SupportAddress';
 import { useStableFn } from './components/chat/useStableFn';
@@ -4160,7 +4162,9 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
   notch: fullBleed ? {
     // Status-bar / Dynamic Island spacer. var(--safe-top) is defined once in
     // index.css (see the SAFE-AREA CONTRACT block there) and resolves to 0px
-    // on the web, so this row disappears entirely off-device.
+    // on the web, so this row disappears entirely off-device. While the
+    // notice bar is up it is that bar's height, which is what keeps the top
+    // of every tab out from under it.
     height: 'var(--safe-top)',
     backgroundColor: 'var(--bg-primary)',
     flexShrink: 0,
@@ -5312,7 +5316,10 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
     <div
       style={{
         position: 'fixed',
-        top: '50px',
+        // 50px, or just under the notice bar while one is up. That bar is
+        // fixed at the top above this, and a two-line notice is 67px tall, so
+        // it covered the top 17px of a toast.
+        top: 'max(50px, calc(var(--notice-h, 0px) + 8px))',
         left: '50%',
         transform: 'translateX(-50%)',
         zIndex: 400,
@@ -23102,30 +23109,17 @@ const FlockApp = () => {
   // them takes a notice prop.
   //
   // The link is the newer fact when both exist, so it wins.
+  //
+  // IT TAKES ROOM. The bar is fixed at the top, and it used to lie over the
+  // top of the screen under it: the mark on the sign-in screen, the Nest's
+  // heading and profile button. NoticeBar publishes its height while it is up
+  // and index.css counts that in --safe-top, so every screen starts below it
+  // (components/NoticeBar.js has the measurements).
   const noticeText = linkNote || sessionNote || (!authUser ? (checkinNote || inviteNote) : '');
   const notice = noticeText ? (
-    <div
-      role="status"
-      style={{
-        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9000,
-        padding: 'calc(var(--safe-top, 0px) + 10px) 14px 12px',
-        backgroundColor: 'rgba(11,18,32,0.97)',
-        borderBottom: '1px solid rgba(244,239,227,0.18)',
-        fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-        <span style={{ flex: 1, minWidth: 0, fontSize: 'var(--t-body)', lineHeight: 1.45, color: '#f1ede0' }}>{withSupportAddress(noticeText)}</span>
-        <button
-          type="button"
-          className="hit44"
-          onClick={() => { setLinkNote(''); setSessionNote(''); setCheckinNote(''); setInviteNote(''); }}
-          style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: 'var(--t-label)', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
+    <NoticeBar onDismiss={() => { setLinkNote(''); setSessionNote(''); setCheckinNote(''); setInviteNote(''); }}>
+      {withSupportAddress(noticeText)}
+    </NoticeBar>
   ) : null;
 
   // A stored session waiting on GET /me, which is every cold start. The wait

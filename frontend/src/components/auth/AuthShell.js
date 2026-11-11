@@ -177,6 +177,10 @@ export const AuthLabelRow = ({ children }) => (
    .auth-root: scroll-padding-bottom is the room the actions bar takes at the
    bottom of the scroller (more while the keyboard is up). A field or an error
    that a screen focuses scrolls into view above the bar instead of under it.
+   scroll-padding-top is the same thing at the other end: the notice bar that
+   App.js fixes across the top publishes its height as --notice-h while it is
+   up (components/NoticeBar.js), and an error brought into view stops below
+   that bar. With no notice it is 0px.
 
    .auth-col: The analytics bar publishes its footprint as --cb-height while it
    is open and removes it when answered. Padding by it keeps "Create an account"
@@ -274,6 +278,7 @@ const AUTH_CSS = `
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-padding-bottom: calc(var(--kb-pad, 0px) + 160px);
+  scroll-padding-top: var(--notice-h, 0px);
   background: #080d18;
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
