@@ -100,7 +100,7 @@ function readGitSha() {
   }
 }
 
-module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, buildIdDefaults, DEPENDENCY_READS };
+module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, buildIdDefaults, DEPENDENCY_READS, COMMIT_VARS };
 
 if (require.main === module) {
   // What react-scripts/scripts/build.js sets first. config/env.js throws

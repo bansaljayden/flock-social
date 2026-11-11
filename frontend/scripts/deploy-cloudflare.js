@@ -18,6 +18,12 @@
 // how to take a file off the site at once; --drop-old publishes this build
 // alone.
 //
+// A run with nothing to publish stops before the build. scripts/publish-skip.js
+// says when that is, and what it cannot see: a secret or variable changed in
+// the Pages dashboard reaches the functions only with a new deployment, so
+// publish with --force after changing one (HOW_TO_FORCE below; npm keeps a
+// --force that comes before the "--" for itself).
+//
 // Needs `wrangler login` once on the machine (Pages access is enough).
 // Nothing runs this on its own. It is run after a push to main, from a
 // checkout of the commit that is to go live.
@@ -26,6 +32,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const history = require('./asset-history');
+const skip = require('./publish-skip');
 
 const ROOT = path.join(__dirname, '..');
 const WRANGLER = 'wrangler@4.151.3';
@@ -33,6 +40,25 @@ const WRANGLER = 'wrangler@4.151.3';
 // earlier builds' files beside it.
 const OUT = path.join(ROOT, 'build');
 const HISTORY = path.join(ROOT, '.asset-history');
+const HOW_TO_FORCE = 'npm run deploy:cloudflare -- --force';
+
+// Every word the command takes. One it does not know is refused: a mistyped
+// --force would otherwise end in "nothing to publish".
+const FLAGS = new Map([
+  ['--force', 'force'],
+  ['--skip-build', 'skipBuild'],
+  ['--drop-old', 'dropOld'],
+  ['--allow-dirty', 'allowDirty'],
+]);
+
+function flagsFrom(argv) {
+  const flags = {};
+  for (const word of argv) {
+    if (!FLAGS.has(word)) throw new Error('unknown option ' + word + ' (it takes ' + [...FLAGS.keys()].join(', ') + ')');
+    flags[FLAGS.get(word)] = true;
+  }
+  return flags;
+}
 
 function teamIdFrom(toml) {
   const match = /^\s*APPLE_TEAM_ID\s*=\s*"([A-Z0-9]{10})"\s*$/m.exec(toml);
@@ -53,16 +79,57 @@ function run(command, args, env) {
   if (result.status !== 0) throw new Error(command + ' ' + args.join(' ') + ' exited ' + result.status);
 }
 
-function main(argv) {
-  const git = spawnSync('git', ['status', '--porcelain', '--untracked-files=no', '--', '.'], { cwd: ROOT, encoding: 'utf8' });
+async function main(argv) {
+  const flags = flagsFrom(argv);
   const reason = refusal({
-    trackedChanges: git.stdout.trim(),
+    trackedChanges: skip.trackedChanges(),
     hasEnv: fs.existsSync(path.join(ROOT, '.env')),
-    allowDirty: argv.includes('--allow-dirty'),
+    allowDirty: flags.allowDirty,
   });
   if (reason) throw new Error(reason);
   const teamId = teamIdFrom(fs.readFileSync(path.join(ROOT, 'wrangler.toml'), 'utf8'));
-  publish({ teamId, skipBuild: argv.includes('--skip-build'), dropOld: argv.includes('--drop-old') });
+  await deploy({ flags, teamId });
+}
+
+/**
+ * One run: publish, unless publish-skip.js finds nothing to publish, and keep
+ * its record of what went up. Returns whether it published. `checks` reads the
+ * checkout and the live site and `upload` is publish below; a test passes its
+ * own, with folders of its own.
+ */
+async function deploy({ flags = {}, teamId, out = OUT, historyDir = HISTORY, now = new Date(), log = console.log, checks = skip, upload = publish }) {
+  const state = { head: checks.headCommit(), trackedChanges: checks.trackedChanges(), fingerprint: checks.fingerprint() };
+  let loose;
+  const looseFiles = () => {
+    if (loose === undefined) loose = checks.looseFiles();
+    return loose;
+  };
+  const verdict = await skip.decide({
+    flags,
+    record: skip.readRecord(historyDir),
+    state,
+    diffExitCode: checks.diffExitCode,
+    loose: looseFiles,
+    liveBuild: checks.liveBuild,
+  });
+  if (!verdict.publish) {
+    log('deploy:cloudflare: nothing to publish: ' + verdict.reason + '. To publish anyway: ' + HOW_TO_FORCE);
+    return false;
+  }
+  log('deploy:cloudflare: publishing: ' + verdict.reason);
+  // Read before the build writes anything, and the record goes first: from
+  // here until an upload is recorded again, nothing says what is live.
+  const before = looseFiles();
+  skip.forgetRecord(historyDir);
+  upload({ teamId, skipBuild: flags.skipBuild, dropOld: flags.dropOld, out, historyDir, now, log });
+  const { record, why } = skip.recordOf({ flags, state, loose: before, out, now });
+  if (record) {
+    skip.writeRecord(historyDir, record);
+    log('deploy:cloudflare: published build ' + record.build);
+  } else {
+    log('deploy:cloudflare: published. The next run publishes again: ' + why);
+  }
+  return true;
 }
 
 /**
@@ -90,13 +157,11 @@ function publish({ teamId, skipBuild = false, dropOld = false, out = OUT, histor
   }
 }
 
-module.exports = { teamIdFrom, refusal, publish, WRANGLER };
+module.exports = { teamIdFrom, refusal, flagsFrom, publish, deploy, WRANGLER, HOW_TO_FORCE };
 
 if (require.main === module) {
-  try {
-    main(process.argv.slice(2));
-  } catch (err) {
+  main(process.argv.slice(2)).catch((err) => {
     console.error('deploy:cloudflare: ' + err.message);
     process.exit(1);
-  }
+  });
 }

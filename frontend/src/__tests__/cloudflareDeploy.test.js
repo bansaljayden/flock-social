@@ -6,7 +6,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { teamIdFrom, refusal, WRANGLER } = require('../../scripts/deploy-cloudflare');
+const { teamIdFrom, refusal, flagsFrom, WRANGLER, HOW_TO_FORCE } = require('../../scripts/deploy-cloudflare');
 const pkg = require('../../package.json');
 
 const TOML = fs.readFileSync(path.join(__dirname, '..', '..', 'wrangler.toml'), 'utf8');
@@ -32,6 +32,22 @@ describe('Cloudflare Pages deploy', () => {
     expect(refusal({ trackedChanges: ' M src/App.js', hasEnv: true, allowDirty: true })).toBeNull();
     expect(refusal({ trackedChanges: '', hasEnv: false, allowDirty: true })).toMatch(/\.env is missing/);
     expect(refusal({ trackedChanges: '', hasEnv: true, allowDirty: false })).toBeNull();
+  });
+
+  test('takes four options, and refuses a word it does not know', () => {
+    expect(flagsFrom([])).toEqual({});
+    expect(flagsFrom(['--force'])).toEqual({ force: true });
+    expect(flagsFrom(['--skip-build', '--drop-old', '--allow-dirty'])).toEqual({ skipBuild: true, dropOld: true, allowDirty: true });
+    // A mistyped --force must not end in "nothing to publish".
+    expect(() => flagsFrom(['--forse'])).toThrow('unknown option --forse (it takes --force, --skip-build, --drop-old, --allow-dirty)');
+    expect(() => flagsFrom(['--force', 'force'])).toThrow('unknown option force ');
+  });
+
+  test('the command it names for publishing anyway is one it takes', () => {
+    // npm keeps a --force that comes before the "--" for itself.
+    const [command, options] = HOW_TO_FORCE.split(' -- ');
+    expect(command).toBe('npm run deploy:cloudflare');
+    expect(flagsFrom(options.split(' '))).toEqual({ force: true });
   });
 
   test('wrangler is pinned to one version', () => {

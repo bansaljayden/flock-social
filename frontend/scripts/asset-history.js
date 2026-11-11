@@ -33,7 +33,9 @@
 // and nothing here changes that.
 //
 // The folder is only ever a copy. Losing it costs the tabs that are open
-// across that one deploy and nothing else.
+// across that one deploy, and one publish that could have been skipped:
+// publish-skip.js keeps its record of the last upload here too
+// (published.json).
 'use strict';
 const fs = require('fs');
 const path = require('path');
