@@ -3453,12 +3453,33 @@ export async function updateUserSettings(partial) {
   });
 }
 
+// What a refused friend request says in place of the server's "User not found".
+// routes/friends.js answers a spent probe budget (twenty requests to strangers
+// an hour), a blocked pair, a banned account and a missing one with that same
+// 404, on purpose: a sentence that told them apart would be the enumeration
+// signal the budget exists to close. But every tap that reaches here starts
+// from a person on the screen, and "User not found" about somebody you are
+// looking at reads as the app being broken. This is true in every one of
+// those cases and tells nobody which.
+export const FRIEND_REQUEST_REFUSED = "That friend request didn't send. Try again later.";
+
 // Friends
 export async function sendFriendRequest(userId) {
-  const data = await request('/api/friends/request', {
-    method: 'POST',
-    body: JSON.stringify({ user_id: userId }),
-  });
+  let data;
+  try {
+    data = await request('/api/friends/request', {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId }),
+    });
+  } catch (err) {
+    // Not userFacing any more, so a caller's own sentence (userMessage's
+    // fallback) is what shows; a caller that reads err.message gets this one.
+    if (err && err.status === 404) {
+      err.message = FRIEND_REQUEST_REFUSED;
+      err.userFacing = false;
+    }
+    throw err;
+  }
   // The graph attempted. Count only, never who: the audit's finding was that
   // nothing measured whether the social graph grows at all.
   track('friend_request_sent', {});
