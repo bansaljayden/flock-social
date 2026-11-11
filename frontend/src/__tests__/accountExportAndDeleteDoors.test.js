@@ -55,7 +55,11 @@ test('a refused address is told why, and not offered another try', () => {
   // The do-not-mail list, and only that. `refused` also covers a Resend 429,
   // which is not a reason to tell anybody their address bounced.
   expect(auth).toMatch(/mailRefused = sendResult\.suppressed === true;/);
-  expect(auth).toMatch(/verificationSent: sendResult\.sent === true, mailRefused: sendResult\.suppressed === true \}\);/);
+  // The resend route reads the same two, and answers with both. It names
+  // them first since it also words a message from them (the 200 that used to
+  // say "Sent" beside verificationSent false).
+  expect(auth).toMatch(/const sent = sendResult\.sent === true;\s*(?:\/\/[^\n]*\s*)*const mailRefused = sendResult\.suppressed === true;/);
+  expect(auth).toMatch(/verificationSent: sent,\s*mailRefused,\s*\}\);/);
   expect(auth).not.toMatch(/mailRefused(?: =|:) sendResult\.refused/);
   expect(signup).toMatch(/We cannot mail this address: mail to it bounced or was reported as spam before\. Email social@flockcorp\.com from it and we will clear that\./);
   expect(signup).toMatch(/disabled=\{resendCooldown > 0 \|\| mailRefused\}/);
