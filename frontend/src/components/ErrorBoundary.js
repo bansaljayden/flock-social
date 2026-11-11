@@ -9,6 +9,9 @@ import FloppyBird from './ui/FloppyBird';
 // Static for the same reason as the game: a button lazy-loaded from a second
 // chunk could fail to download on the very screen that needs it.
 import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './CrashReportButton';
+// Static for the same reason again: this is what gets a tab past a chunk the
+// site no longer has, and a second chunk is the thing that just failed.
+import { healStaleBuild, NEWER_BUILD_NOTE } from '../lib/staleBuild';
 
 /**
  * A failed lazy chunk: a network event, not a bug. The download died on weak
@@ -65,7 +68,13 @@ export const CHUNK_ERROR_BODY = "A piece of the app didn't finish downloading. T
  *                      a number, never a fresh object.
  *   fallback  fn|node  optional override. As a function it receives
  *                      { error, eventId, reload, reset, componentStack,
- *                      label }, the last two for <CrashReportButton>.
+ *                      label, newerBuild }. componentStack and label are for
+ *                      <CrashReportButton>. newerBuild turns true when the
+ *                      failure is a chunk the site no longer has, the site is
+ *                      on a newer build than this tab, and the boundary's own
+ *                      reload did not happen (see healIfStale): from then on
+ *                      only reload() brings the screen back, and reset()
+ *                      asks for the same missing file again.
  */
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -75,7 +84,12 @@ class ErrorBoundary extends React.Component {
     // it arrives in componentDidCatch, after getDerivedStateFromError. Only a
     // development build sends those names; services/crashReport.js says why a
     // minified one does not.
-    this.state = { error: null, eventId: null, componentStack: null };
+    //
+    // newerBuildFor is the error healIfStale found a newer build behind. It is
+    // compared with the error on screen and never cleared, so a reset, or the
+    // next crash, drops it without either of the two setState calls that clear
+    // an error having to name it.
+    this.state = { error: null, eventId: null, componentStack: null, newerBuildFor: null };
     this._mounted = false;
     this.reload = this.reload.bind(this);
     this.reset = this.reset.bind(this);
@@ -118,6 +132,7 @@ class ErrorBoundary extends React.Component {
     if (this.state.error === error) {
       this.setState({ componentStack: (info && info.componentStack) || null });
     }
+    this.healIfStale(error);
 
     if (!process.env.REACT_APP_SENTRY_DSN) return; // silent when unconfigured
     import('@sentry/react')
@@ -138,6 +153,30 @@ class ErrorBoundary extends React.Component {
       .catch(() => { /* reporting must never crash the fallback */ });
   }
 
+  // A chunk the site no longer has: a tab that was open across a deploy, past
+  // what the deploy keeps of earlier builds. lib/staleBuild.js asks the site,
+  // and reloads the page once when a newer build is live, so the person lands
+  // in the new version without reading a card first. Every other answer leaves
+  // the card that is already on screen: a download that died on a weak
+  // connection is not reloaded, because "Try again" gets it and a reload would
+  // cost the person the screen they are on.
+  //
+  // 'newer' is the answer when the site is ahead and this did not reload (the
+  // one reload for this build is spent, or the browser would not keep the
+  // note). The cards then say so and make Reload the button, because trying
+  // again asks for the same missing file. Same still-the-same-error rule as
+  // the Sentry reference above, for the same reason: the site answers seconds
+  // later, and the boundary can have recovered or crashed on something else.
+  healIfStale(error) {
+    if (!isChunkLoadError(error)) return;
+    const stillOnScreen = () => this._mounted && this.state.error === error;
+    healStaleBuild(error, { reload: this.reload, stillWanted: stillOnScreen })
+      .then((answer) => {
+        if (answer === 'newer' && stillOnScreen()) this.setState({ newerBuildFor: error });
+      })
+      .catch(() => { /* the card on screen already says what to do */ });
+  }
+
   reload() {
     window.location.reload();
   }
@@ -148,9 +187,10 @@ class ErrorBoundary extends React.Component {
   }
 
   render() {
-    const { error, eventId, componentStack } = this.state;
+    const { error, eventId, componentStack, newerBuildFor } = this.state;
     if (!error) return this.props.children;
     const label = this.props.label || 'root';
+    const newerBuild = newerBuildFor === error;
 
     // Development: hand the error straight back to React. Swallowing it here
     // would replace CRA's error overlay (real stack, real source, live
@@ -160,7 +200,7 @@ class ErrorBoundary extends React.Component {
     if (process.env.NODE_ENV === 'development') throw error;
 
     if (typeof this.props.fallback === 'function') {
-      return this.props.fallback({ error, eventId, reload: this.reload, reset: this.reset, componentStack, label });
+      return this.props.fallback({ error, eventId, reload: this.reload, reset: this.reset, componentStack, label, newerBuild });
     }
     if (this.props.fallback) return this.props.fallback;
 
@@ -193,7 +233,7 @@ class ErrorBoundary extends React.Component {
           <p style={styles.body}>
             {offlineNow
               ? "You're offline right now. Reload once you're back on signal."
-              : 'Reloading gets you back in.'}
+              : newerBuild ? NEWER_BUILD_NOTE : 'Reloading gets you back in.'}
           </p>
 
           <div style={styles.actions}>

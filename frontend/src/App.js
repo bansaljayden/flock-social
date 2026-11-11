@@ -52,6 +52,9 @@ import SignupScreen from './components/auth/SignupScreen';
 // somebody else's content.
 import ErrorBoundary from './components/ErrorBoundary';
 import { isChunkLoadError, CHUNK_ERROR_TITLE, CHUNK_ERROR_BODY } from './components/ErrorBoundary';
+// What those two fallbacks say once the boundary has found the site on a newer
+// build than this tab, when only a reload brings the screen back.
+import { NEWER_BUILD_NOTE } from './lib/staleBuild';
 // "Send this to Flock" on the two screen-level crash fallbacks below, the same
 // button the app-wide one carries (components/CrashReportButton.js).
 import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './components/CrashReportButton';
@@ -21373,7 +21376,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowConnectPanel(false);
   };
 
-  const screenCrashFallback = ({ error, eventId, reset, componentStack, label }) => (
+  const screenCrashFallback = ({ error, eventId, reload, reset, newerBuild, componentStack, label }) => (
     <>
       <div
         role="alert"
@@ -21384,7 +21387,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
           {/* A download that died is the network, not a bug, and it gets the
               words and the warm bird components/ErrorBoundary.js gives it.
-              Try again below re-arms the chunk, so it is the way out. */}
+              Try again below re-arms the chunk, so it is the way out, with one
+              exception the boundary reports as newerBuild: the site has moved
+              to a newer build and no longer has the file this tab is asking
+              for (lib/staleBuild.js). Trying again would ask for that same
+              file, so the card says what happened and the button reloads. */}
           <BirdieStill bird={isChunkLoadError(error) ? WARM_BIRD : undefined} size={96} eager style={{ margin: '0 0 12px' }} />
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
@@ -21397,15 +21404,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               ? CHUNK_ERROR_BODY
               : 'Your account, your flocks and your messages are saved on the server. Anything you were typing on this screen is gone.'}
           </p>
+          {newerBuild && (
+            <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
+              {NEWER_BUILD_NOTE}
+            </p>
+          )}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-            <button
-              type="button"
-              className="hit44"
-              onClick={() => { rearmLazyScreens(); reset(); }}
-              style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
-            >
-              Try again
-            </button>
+            {newerBuild ? (
+              <button
+                type="button"
+                className="hit44"
+                onClick={reload}
+                style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+              >
+                Reload the app
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="hit44"
+                onClick={() => { rearmLazyScreens(); reset(); }}
+                style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+              >
+                Try again
+              </button>
+            )}
             <button
               type="button"
               className="hit44"
@@ -21454,7 +21477,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // bar last — because ExploreScreen is the ONLY thing that draws the tab bar
   // on this tab (the switch answers null for it). A fallback without that last
   // line strands the user on Discover with no navigation at all.
-  const exploreCrashFallback = ({ error, reset, componentStack, label }) => (
+  const exploreCrashFallback = ({ error, reload, reset, newerBuild, componentStack, label }) => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       <div
         role="alert"
@@ -21469,24 +21492,39 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             The map stopped working
           </h2>
           <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
-            Nothing you saved is affected. You can try the map again, or pick another tab.
+            {newerBuild
+              ? NEWER_BUILD_NOTE
+              : 'Nothing you saved is affected. You can try the map again, or pick another tab.'}
           </p>
-          <button
-            type="button"
-            className="hit44"
-            /* THE RE-ARM IS WHAT MAKES THIS BUTTON ABLE TO WORK when the crash
-               was the map chunk failing to download: React.lazy remembers a
-               rejection for the life of the page, so a bare reset rethrows the
-               stored error before it asks the network again. A no-op for every
-               other crash, because the helper only rebuilds a poisoned lazy.
-               Two of them now: the screen chunk and the map chunk inside it can
-               each fail on their own, and this button is the only way back into
-               either. */
-            onClick={() => { rearmExploreScreen(); rearmMapLibreMapView(); reset(); }}
-            style={{ padding: '13px 20px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
-          >
-            Try again
-          </button>
+          {/* newerBuild, as on the screen card above: the site no longer has
+              the file Discover asked for, so the button reloads. */}
+          {newerBuild ? (
+            <button
+              type="button"
+              className="hit44"
+              onClick={reload}
+              style={{ padding: '13px 20px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+            >
+              Reload the app
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="hit44"
+              /* THE RE-ARM IS WHAT MAKES THIS BUTTON ABLE TO WORK when the
+                 crash was the map chunk failing to download: React.lazy
+                 remembers a rejection for the life of the page, so a bare
+                 reset rethrows the stored error before it asks the network
+                 again. A no-op for every other crash, because the helper only
+                 rebuilds a poisoned lazy. Two of them now: the screen chunk
+                 and the map chunk inside it can each fail on their own, and
+                 this button is the only way back into either. */
+              onClick={() => { rearmExploreScreen(); rearmMapLibreMapView(); reset(); }}
+              style={{ padding: '13px 20px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+          )}
           {worthReporting(error) && (
             <>
               <CrashReportButton

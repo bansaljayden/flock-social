@@ -270,15 +270,26 @@ describe('what leaves the device', () => {
     expect(localStorage.getItem('flock_some_future_key')).toBeNull();
   });
 
-  it('sweeps sessionStorage on the same rule, though nothing writes it today', () => {
-    // Vacuous right now (the app stores nothing per tab) and swept anyway, so
-    // the first person to reach for sessionStorage is covered by default
-    // rather than by remembering this file exists.
-    sessionStorage.setItem('flock_draft_message', 'unsent');
+  it('sweeps sessionStorage on the same rule', () => {
+    // What a tab keeps for its own next page (the SIGN-OUT comment in api.js
+    // lists it), and a key nobody has added yet, so the next writer is covered
+    // by default rather than by remembering this file exists.
+    const tabNotes = {
+      flock_return_after_sign_in: '{"path":"/pro","at":1755400000000}',
+      flock_pro_code: '{"code":"FLOCKFRIENDS","at":1755400000000}',
+      flock_reloaded_from_build: 'main.aaaaaaaa.js',
+      flock_draft_message: 'unsent',
+    };
+    Object.entries(tabNotes).forEach(([k, v]) => sessionStorage.setItem(k, v));
+    sessionStorage.setItem('ph_test_posthog', '{}');
 
     clearLocalSession();
 
-    expect(sessionStorage.getItem('flock_draft_message')).toBeNull();
+    Object.keys(tabNotes).forEach((key) => {
+      expect([key, sessionStorage.getItem(key)]).toEqual([key, null]);
+    });
+    // Not Flock's, so not Flock's to remove.
+    expect(sessionStorage.getItem('ph_test_posthog')).toBe('{}');
   });
 
   it('leaves non-Flock keys alone', () => {

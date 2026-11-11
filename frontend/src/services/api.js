@@ -656,10 +656,22 @@ function storeSession(data) {
  *                                     regardless of who holds it; clearing it
  *                                     just re-prompts into a denial.
  *
- * sessionStorage is not written anywhere in the app today. It is swept on the
- * same rule anyway so a future writer is covered by default rather than by
- * remembering. Cookies are deliberately absent: the JWT rides in a header and
- * Flock sets no auth cookie at all, so there is nothing there to clear.
+ * sessionStorage is swept on the same rule, so a writer added later is covered
+ * by default rather than by remembering. What it holds is notes a tab leaves
+ * for its own next page, none of them about an account:
+ *     flock_password_reset_done    the reset page telling the sign-in screen
+ *                                  the password was changed. Written AFTER
+ *                                  this sweep by the page that sets it
+ *                                  (components/auth/PasswordReset.js)
+ *     flock_return_after_sign_in   the /pro page's way back after a sign-in
+ *                                  (lib/returnAfterSignIn.js)
+ *     flock_pro_code               a promotion code from a shared link
+ *                                  (website/ProPage.js)
+ *     flock_reloaded_from_build    the build this tab was reloaded away from
+ *                                  (lib/staleBuild.js). Swept, the worst that
+ *                                  follows is one more reload
+ * Cookies are deliberately absent: the JWT rides in a header and Flock sets no
+ * auth cookie at all, so there is nothing there to clear.
  */
 const KEEP_ON_SIGN_OUT = new Set([
   'flock-theme',
