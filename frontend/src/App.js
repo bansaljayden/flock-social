@@ -5865,6 +5865,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
 
   // Fetch weather + forecast when Plans tab is opened and location is available
+  //
+  // THIS EFFECT IS THE ONLY WRITER OF THE PLANS WEATHER. The card is the
+  // weather where the person is: read with their own location from
+  // GET /api/weather, with the forecast beside it.
+  //
+  // A crowd answer carries a weather as well, and three places used to copy it
+  // into liveWeather: the batch of scores, the crowd card's read in hand, and
+  // the crowd card's own fetch. That reading is the VENUE's (for a batch, the
+  // first venue's on the list) and holds a temperature and a word and nothing
+  // else. So opening a venue in another town changed "today" on Plans to that
+  // town's temperature, and the card printed "NaN°", a bare "%" and "NaN mph"
+  // for the three numbers the crowd answer never had. The copies dated from
+  // when the crowd answer was the only weather the app had.
+  //
   // When the Plans weather was last read, not whether. A boolean meant the
   // morning's reading was labelled LIVE at night.
   const weatherFetchedRef = useRef(0);
@@ -5872,13 +5886,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     if (currentTab !== 'calendar' || !userLocation) return;
     if (Date.now() - weatherFetchedRef.current < 30 * 60 * 1000) return;
-    weatherFetchedRef.current = Date.now();
+    const startedAt = Date.now();
+    weatherFetchedRef.current = startedAt;
+    // A failed read is not a read. The stamp is set before the answer, so one
+    // bad answer used to keep the card off Plans for the full thirty minutes.
+    // Now the stamp is wound back to leave one minute, which is how long the
+    // server remembers a failure (WX_NEGATIVE_TTL), and the next visit to
+    // Plans after that asks again. Nothing is retried while the tab is open.
+    // Only this read winds its own stamp back: a later read's is left alone.
+    const readAgainSoon = () => {
+      if (weatherFetchedRef.current === startedAt) weatherFetchedRef.current = startedAt - 29 * 60 * 1000;
+    };
     getWeather(userLocation.lat, userLocation.lng)
-      .then(data => { if (data) setLiveWeather(data); })
-      .catch(() => {});
+      .then(data => { if (data) setLiveWeather(data); else readAgainSoon(); })
+      .catch(readAgainSoon);
     getWeatherForecast(userLocation.lat, userLocation.lng)
-      .then(data => { if (data?.forecast) setWeatherForecast(data.forecast); })
-      .catch(() => {});
+      .then(data => { if (data?.forecast) setWeatherForecast(data.forecast); else readAgainSoon(); })
+      .catch(readAgainSoon);
   }, [currentTab, userLocation]);
 
   // Search result cache: key -> { data, timestamp }
@@ -6189,7 +6213,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const fetchedAt = Date.now();
         (res.predictions || []).forEach(p => { map[p.placeId] = { ...p, fetchedAt }; });
         setCrowdPredictions(prev => ({ ...prev, ...map }));
-        if (res.weather) setLiveWeather(res.weather);
+        // res.weather is the first venue's, and is not the Plans card's to
+        // show: see the weather effect ("THE ONLY WRITER").
       })
       .catch(err => console.error('[Crowd] Batch prediction failed:', err));
   }, []);
@@ -8763,7 +8788,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // The sheet's read, and the card's extras that come with a read.
         setCrowdData({ ...inHand, forPlaceId: pid });
         setCrowdAlternatives([]);
-        if (inHand.weather) setLiveWeather(inHand.weather);
         if (!inHand.forecastAccess?.locked && !(typeof inHand.score === 'number' && inHand.score <= 39)) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       }
       return () => { cancelled = true; };
@@ -8781,7 +8805,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .then(data => {
         if (cancelled) return;
         setCrowdData(data ? { ...data, forPlaceId: pid } : null);
-        if (data?.weather) setLiveWeather(data.weather);
+        // data.weather is this venue's and stays with the crowd read: the
+        // Plans card has its own, where the person is (the weather effect).
         if (data && typeof data.score === 'number') {
           // Sync fresh score into the venue list so the map heatmap matches the dial
           setAllVenues(prev => withVenueCrowd(prev, pid, data.score, data.label));

@@ -60,6 +60,7 @@ import { BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import { BAND_HEAD } from '../components/nest/nestBand';
 import { localeDate, localeTime } from '../lib/localeFormat';
+import { weatherForCard } from '../lib/weatherCard';
 
 export default function CalendarScreen({
   // Declared at App.js module scope and shared with screens other than this
@@ -139,8 +140,11 @@ export default function CalendarScreen({
 
     // Weather data — live for today, forecast for future dates
     const isSelectedToday = selectedDateStr === todayStr;
-    const forecastForDate = weatherForecast.find(f => f.date === selectedDateStr);
-    const weatherData = isSelectedToday ? liveWeather : forecastForDate;
+    const forecastForDate = weatherForecast.find(f => f && f.date === selectedDateStr);
+    // Only what the reading carries is drawn (lib/weatherCard.js): without a
+    // temperature there is no card, and a number that did not arrive has no
+    // cell, where the card used to print "NaN°", "0°" or a bare "%".
+    const weatherData = weatherForCard(isSelectedToday ? liveWeather : forecastForDate);
     const weatherReady = !!weatherData;
 
     return (
@@ -219,7 +223,7 @@ export default function CalendarScreen({
           {/* Weather module */}
           {weatherReady ? (() => {
             const w = weatherData;
-            const cond = (w.conditions || '').toLowerCase();
+            const cond = w.conditions.toLowerCase();
             const isRainy = cond.includes('rain') || cond.includes('drizzle') || cond.includes('thunderstorm');
             const isCloudy = cond.includes('cloud') || cond.includes('overcast') || cond.includes('mist') || cond.includes('fog');
             const isSnowy = cond.includes('snow');
@@ -246,20 +250,18 @@ export default function CalendarScreen({
                         forecast for a day ahead. */}
                   </div>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1px', borderTop: '1px solid var(--nest-edge)', backgroundColor: 'var(--nest-edge)' }}>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Feels like</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.feelsLike)}°</p>
+                {/* One cell per number the reading carries, so the row is as
+                    wide as what there is to say and is not drawn for none. */}
+                {w.details.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: `repeat(${w.details.length}, 1fr)`, gap: '1px', borderTop: '1px solid var(--nest-edge)', backgroundColor: 'var(--nest-edge)' }}>
+                  {w.details.map(d => (
+                  <div key={d.key} style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{d.label}</p>
+                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{d.value}{d.unit ? <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>{d.unit}</span> : null}</p>
                   </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Humidity</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{w.humidity}%</p>
-                  </div>
-                  <div style={{ padding: '10px', textAlign: 'center', backgroundColor: 'var(--bg-card-solid)' }}>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Wind</p>
-                    <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '2px 0 0' }}>{Math.round(w.windSpeed)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}> mph</span></p>
-                  </div>
+                  ))}
                 </div>
+                )}
                 {(isRainy || isSnowy || w.windSpeed > 20) && (
                   <div style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: isDark ? 'rgba(251,191,36,0.1)' : 'rgba(251,191,36,0.12)' }}>
                     {Icons.zap('#f59e0b', 12)}
