@@ -23314,18 +23314,18 @@ const FlockApp = () => {
   // account_deleted line arrives second, hits the early return, and the person
   // who just deleted their account reads the expired-session copy: the exact
   // screen this commit exists to stop them seeing. A note is only ever passed
-  // by a caller that knows why the session ended, so `!!note` is the flag.
+  // by a caller that knows why the session ended, so a note is the flag.
+  //
+  // ONLY A STRING IS A NOTE. VenueDashboard's Sign out button was
+  // `onClick={onLogout}`, which handed over the click event: truthy, so it was
+  // kept as the sentence and rendered, and React's "objects are not valid as a
+  // React child" took the whole app down to the root crash card for every
+  // owner who signed out from the dashboard. Anything else is a plain sign-out.
   return (
     <>
       {/* Only ever a linkNote here: sessionNote does not survive having a
           session. See the notice block above. */}
       {notice}
-      {/* onLogout's argument is the sentence the sign-in screen shows after a
-          sign-out, so only a string counts. VenueDashboard's Sign out button
-          was `onClick={onLogout}`, which handed over the click event: truthy,
-          so it was kept as that sentence and rendered, and React's "objects
-          are not valid as a React child" took the whole app down to the root
-          crash card for every owner who signed out from the dashboard. */}
       <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(typeof note === 'string' ? note : '', { specific: typeof note === 'string' && !!note })} onUserPatch={(patch) => setAuthUser(prev => (prev ? { ...prev, ...patch } : prev))} />
     </>
   );
