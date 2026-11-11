@@ -171,6 +171,24 @@ const noteReload = (storage, name) => {
 };
 
 /**
+ * The same question with no reload in it, for a surface that must not throw
+ * away the page under it by itself: the "did not load" sheets in App.js, which
+ * open over a live screen that can be holding a half-typed message. Answers
+ * one of the states healStaleBuild documents below ('newer', 'current',
+ * 'there', 'unknown') and leaves the reload to a button the person presses
+ * (components/ui/NewerBuildNote.js). At most a HEAD and a manifest read, each
+ * with its own deadline. Never throws.
+ */
+export async function checkStaleBuild(error, options) {
+  try {
+    const { state } = await diagnose(error, options);
+    return state;
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * For a chunk that would not load. Reloads the page, once, when the site no
  * longer has the file and serves a newer build, and says what it found:
  *

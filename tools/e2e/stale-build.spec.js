@@ -21,6 +21,10 @@
  *   3. the two cases that must NOT reload (the download died but the file is
  *      still there; the file is gone but the site's build is still this tab's):
  *      the card keeps Try again, and Try again works once the file is back.
+ *
+ * And two more for the "did not load" sheets, which are not crash cards: a
+ * newer build is said on the sheet with a Reload button and nothing reloads
+ * by itself; a download that died says nothing of the kind.
  */
 'use strict';
 const { test, expect } = require('@playwright/test');
@@ -275,6 +279,79 @@ test('a file that failed for any other reason is left to Try again', async ({ pa
   await again.click();
   await expect(page.getByRole('button', { name: /interests/i }).first()).toBeVisible({ timeout: 20_000 });
   await expect(card).toHaveCount(0);
+  expect(site.documents).toEqual({ asked: 1, loaded: 1 });
+  expect(errors).toEqual([]);
+});
+
+/* The "did not load" sheets. Nine overlays resolve a failed download to a
+   sheet of their own instead of crashing a screen, so the crash net never
+   sees them. They ask the site the same two questions (components/ui/
+   NewerBuildNote.js) and, for a newer build, say so and offer the reload.
+   They never reload by themselves: they open over a live screen, and a chat
+   with a half-typed message is one of them. Birdie is the one a new account
+   reaches from the Nest. */
+test('a sheet that did not load says Flock was updated, and the reload is the person\'s', async ({ page }) => {
+  test.setTimeout(150_000);
+  const { site, errors } = await openTab(page, 'stale-sheet');
+  const askBirdie = () => page.getByRole('button', { name: /^ask birdie$/i }).first();
+  await expect(askBirdie()).toBeVisible({ timeout: 20_000 });
+
+  await site.deploy({ missing: 'gone', newerLive: true });
+  await askBirdie().click();
+  await expect
+    .poll(() => site.lost().length, { message: 'Birdie was already in the tab, so there was nothing to fail' })
+    .toBeGreaterThan(0);
+  const sheet = page.getByRole('dialog', { name: 'Birdie did not load' });
+  await expect(sheet).toContainText('This did not load', { timeout: 20_000 });
+  await expect(sheet).toContainText(NEWER_BUILD_NOTE, { timeout: 20_000 });
+  await expect(sheet.getByRole('button', { name: 'Close' })).toBeVisible();
+
+  // Nothing reloads by itself, and no reload is counted against this build.
+  await page.waitForTimeout(2000);
+  expect(site.documents).toEqual({ asked: 1, loaded: 1 });
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), RELOADED_FROM_KEY)).toBeNull();
+
+  // The person reloads, onto the build the site has, and Birdie opens: on the
+  // Nest that is his section in the page, whose first card for a new account
+  // is the consent question.
+  site.missing = null;
+  await sheet.getByRole('button', { name: 'Reload the app' }).click();
+  await site.onDocument(2);
+  await intoTheApp(page);
+  await askBirdie().click();
+  await expect(page.getByText('Before Birdie answers')).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('dialog', { name: 'Birdie did not load' })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('a sheet whose download died says nothing about an update, and Close then a tap gets it', async ({ page }) => {
+  test.setTimeout(150_000);
+  const { site, errors } = await openTab(page, 'stale-sheet-retry');
+  const askBirdie = () => page.getByRole('button', { name: /^ask birdie$/i }).first();
+  await expect(askBirdie()).toBeVisible({ timeout: 20_000 });
+
+  await site.deploy({ missing: 'dropped', newerLive: true });
+  await askBirdie().click();
+  const sheet = page.getByRole('dialog', { name: 'Birdie did not load' });
+  await expect(sheet).toContainText('This did not load', { timeout: 20_000 });
+  await expect.poll(() => site.headChecks, { timeout: 10_000 }).toBeGreaterThan(0);
+  await page.waitForTimeout(1500);
+  expect(site.manifestReads, 'the manifest was read for a file that is still on the site').toBe(0);
+  await expect(sheet).not.toContainText(NEWER_BUILD_NOTE);
+  await expect(sheet.getByRole('button', { name: 'Reload the app' })).toHaveCount(0);
+
+  // The file is back. Close re-arms the lazy, so the section in the page asks
+  // for it again and Birdie arrives with no reload. The pill on the strip
+  // hides while that section is on screen, so it is only pressed if shown.
+  site.missing = null;
+  await sheet.getByRole('button', { name: 'Close' }).click();
+  if (await askBirdie().isVisible()) await askBirdie().click();
+  // Either of the two things only Birdie's own file draws in his section:
+  // the consent question, or his message box.
+  const section = page.getByRole('region', { name: 'Ask Birdie' });
+  await expect(section.getByRole('textbox', { name: 'Ask Birdie' }).or(section.getByText('Before Birdie answers')).first())
+    .toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('dialog', { name: 'Birdie did not load' })).toHaveCount(0);
   expect(site.documents).toEqual({ asked: 1, loaded: 1 });
   expect(errors).toEqual([]);
 });

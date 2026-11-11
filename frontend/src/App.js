@@ -234,6 +234,9 @@ import EmailConfirmLine from './components/EmailConfirmLine';
 import NoticeBar from './components/NoticeBar';
 // The support address in a sentence, as a link and text that copies.
 import { withSupportAddress } from './components/ui/SupportAddress';
+// What a "did not load" sheet adds when the site is on a newer build than
+// this tab (see chunkFallback).
+import NewerBuildNote from './components/ui/NewerBuildNote';
 import { useStableFn } from './components/chat/useStableFn';
 import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 import { isTextEntryField, isCoarsePointer } from './lib/textEntry';
@@ -435,6 +438,21 @@ const exploreLayerUnchanged = (prev, next) => {
 };
 const ExploreScreenView = React.memo((props) => <ExploreScreen {...props} />, exploreLayerUnchanged);
 
+/* THE ERROR GOES WITH THE "DID NOT LOAD" SHEET. Each of the nine loaders below
+   resolves a failed download to a sheet of its own, and that sheet used to be
+   handed nothing about the failure. It is handed the error now, as chunkError,
+   so it can ask the site whether this tab is running a build the site has
+   moved past (components/ui/NewerBuildNote.js). For a download that died on a
+   weak connection nothing changes; for a tab left open across a deploy the
+   sheet says Flock was updated and offers the reload, because closing it and
+   tapping again would ask for the same missing file for as long as the tab
+   lives. */
+const chunkFallback = (Sheet, chunkError) => {
+  const WithChunkError = (props) => <Sheet {...props} chunkError={chunkError} />;
+  WithChunkError.displayName = `ChunkFallback(${Sheet.name || 'Sheet'})`;
+  return WithChunkError;
+};
+
 /* THE WRAP-UP SHEET, and the first lazy thing in this file that is not a
    screen. It is 6.7 KB of JSX that only a host closing out a plan they created
    ever opens, so it had no business in the chunk every account downloads
@@ -454,7 +472,7 @@ const ExploreScreenView = React.memo((props) => <ExploreScreen {...props} />, ex
 const loadAttendanceModal = () => import('./components/overlays/AttendanceModal')
   .catch((err) => {
     console.warn('Attendance sheet chunk did not load', err);
-    return { default: AttendanceSheetUnavailable };
+    return { default: chunkFallback(AttendanceSheetUnavailable, err) };
   });
 let AttendanceModal = React.lazy(loadAttendanceModal);
 
@@ -494,7 +512,7 @@ const rearmAttendanceModal = () => {
 const loadEventDetailOverlay = () => import(/* webpackChunkName: "overlays" */ './components/EventDetailOverlay')
   .catch((err) => {
     console.warn('Event detail chunk did not load', err);
-    return { default: EventDetailUnavailable };
+    return { default: chunkFallback(EventDetailUnavailable, err) };
   });
 let EventDetailOverlay = React.lazy(loadEventDetailOverlay);
 
@@ -536,7 +554,7 @@ const rearmEventDetailOverlay = () => {
 const loadPaymentSheets = () => import('./components/PaymentSheets')
   .catch((err) => {
     console.warn('Payment sheets chunk did not load', err);
-    return { default: PaymentSheetsUnavailable };
+    return { default: chunkFallback(PaymentSheetsUnavailable, err) };
   });
 let PaymentSheets = React.lazy(loadPaymentSheets);
 
@@ -570,7 +588,7 @@ const rearmPaymentSheets = () => {
 const loadSearchResultsOverlay = () => import('./components/SearchResultsOverlay')
   .catch((err) => {
     console.warn('Search results chunk did not load', err);
-    return { default: SearchResultsUnavailable };
+    return { default: chunkFallback(SearchResultsUnavailable, err) };
   });
 let SearchResultsOverlay = React.lazy(loadSearchResultsOverlay);
 
@@ -615,7 +633,7 @@ const rearmSearchResultsOverlay = () => {
 const loadVenueDetailSheet = () => import('./components/overlays/VenueDetailSheet')
   .catch((err) => {
     console.warn('Venue detail chunk did not load', err);
-    return { default: VenueDetailUnavailable };
+    return { default: chunkFallback(VenueDetailUnavailable, err) };
   });
 let VenueDetailSheet = React.lazy(loadVenueDetailSheet);
 
@@ -661,7 +679,7 @@ const rearmVenueDetailSheet = () => {
 const loadBirdiePanel = () => import('./components/birdie/BirdiePanel')
   .catch((err) => {
     console.warn('Birdie panel chunk did not load', err);
-    return { default: BirdiePanelUnavailable };
+    return { default: chunkFallback(BirdiePanelUnavailable, err) };
   });
 let BirdiePanel = React.lazy(loadBirdiePanel);
 
@@ -699,7 +717,7 @@ const rearmBirdiePanel = () => {
 const loadModerationSheet = () => import('./components/ModerationSheet')
   .catch((err) => {
     console.warn('Report sheet chunk did not load', err);
-    return { default: ModerationSheetUnavailable };
+    return { default: chunkFallback(ModerationSheetUnavailable, err) };
   });
 let ModerationSheet = React.lazy(loadModerationSheet);
 
@@ -734,7 +752,7 @@ const loadPaywallSheet = process.env.REACT_APP_PURCHASES === 'off'
   : () => import('./components/PaywallSheet')
     .catch((err) => {
       console.warn('Paywall sheet chunk did not load', err);
-      return { default: PaywallSheetUnavailable };
+      return { default: chunkFallback(PaywallSheetUnavailable, err) };
     });
 let PaywallSheet = React.lazy(loadPaywallSheet);
 
@@ -781,7 +799,7 @@ const rearmPaywallSheet = () => {
 const loadVenueLoginScreen = () => import('./components/auth/VenueLoginScreen')
   .catch((err) => {
     console.warn('Venue sign-in chunk did not load', err);
-    return { default: VenueLoginUnavailable };
+    return { default: chunkFallback(VenueLoginUnavailable, err) };
   });
 let VenueLoginScreen = React.lazy(loadVenueLoginScreen);
 
@@ -809,7 +827,7 @@ try {
    its way out re-arms the lazy so the next attempt is a real second request.
    Not an overlay and no DialogBehavior: this IS the screen, there is nothing
    behind it to trap focus away from. */
-const VenueLoginUnavailable = ({ onSwitchToUserLogin }) => {
+const VenueLoginUnavailable = ({ onSwitchToUserLogin, chunkError }) => {
   const back = () => { rearmVenueLoginScreen(); onSwitchToUserLogin?.(); };
   return (
     <div className="auth-root">
@@ -819,6 +837,7 @@ const VenueLoginUnavailable = ({ onSwitchToUserLogin }) => {
           <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
             The venue sign-in could not be downloaded, so you are not signed in. Check your connection and try again.
           </p>
+          <NewerBuildNote error={chunkError} />
           <button className="hit44" onClick={back} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to sign in</button>
         </div>
       </div>
@@ -1165,7 +1184,7 @@ const rearmLazyScreens = () => {
    this one lazy, so the next tap is a real second request and the plan screen
    under the sheet stays mounted; rearmAttendanceModal says why not the blanket
    re-arm. */
-const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) => {
+const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal, chunkError }) => {
   const close = () => { rearmAttendanceModal(); setShowAttendanceModal(false); };
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
@@ -1175,6 +1194,7 @@ const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) 
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The attendance sheet could not be downloaded, so nobody has been marked yet. Close this, check your connection and tap Mark it again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1188,7 +1208,7 @@ const AttendanceSheetUnavailable = ({ DialogBehavior, setShowAttendanceModal }) 
    everywhere else in the stack, and a Close that re-arms the lazy so the next
    tap is a real second request rather than a replay of the stored rejection.
    It is handed the whole overlay prop bag and reads two of it. */
-const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
+const EventDetailUnavailable = ({ DialogBehavior, setEventDetail, chunkError }) => {
   const close = () => { rearmEventDetailOverlay(); setEventDetail(null); };
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '16px' }}>
@@ -1198,6 +1218,7 @@ const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The event page could not be downloaded. Close this, check your connection and tap Details again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1211,7 +1232,7 @@ const EventDetailUnavailable = ({ DialogBehavior, setEventDetail }) => {
    either one of them is what mounted this. Closing re-arms the lazy through
    the narrow helper, so the next Settle Up is a real second request rather
    than a replay of a resolved fallback. */
-const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPaymentFallback }) => {
+const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPaymentFallback, chunkError }) => {
   const close = () => { rearmPaymentSheets(); setShowPaymentPicker(false); setPaymentFallback(null); };
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
@@ -1221,6 +1242,7 @@ const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPay
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The payment options could not be downloaded, so nothing has been paid and nothing has been marked. Close this, check your connection and tap Settle Up again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1236,7 +1258,7 @@ const PaymentSheetsUnavailable = ({ DialogBehavior, setShowPaymentPicker, setPay
    on it. It is handed the whole overlay prop bag and reads two of it. Closing
    re-arms the lazy through the narrow helper, so the next tap is a real second
    request rather than a replay of a resolved fallback. */
-const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults }) => {
+const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults, chunkError }) => {
   const close = () => { rearmSearchResultsOverlay(); setShowSearchResults(false); };
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-primary)', padding: '16px' }}>
@@ -1246,6 +1268,7 @@ const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The full list of results could not be downloaded. The map behind this still has every pin on it, so go back, check your connection and ask for the list again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Back to map</button>
       </div>
     </div>
@@ -1261,7 +1284,7 @@ const SearchResultsUnavailable = ({ DialogBehavior, setShowSearchResults }) => {
    sheet prop bag and reads two of it. Closing re-arms the lazy through the
    narrow helper, so the next tap is a real second request rather than a replay
    of a resolved fallback. */
-const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal }) => {
+const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal, chunkError }) => {
   const close = () => { rearmVenueDetailSheet(); setVenueDetailModal(null); };
   return (
     <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -1271,6 +1294,7 @@ const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The venue page could not be downloaded. Close this, check your connection and tap the venue again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1286,7 +1310,7 @@ const VenueDetailUnavailable = ({ DialogBehavior, setVenueDetailModal }) => {
    was sent. It is handed the whole panel prop bag and reads two of it. Closing
    re-arms the lazy through the narrow helper, so the next tap is a real second
    request rather than a replay of a resolved fallback. */
-const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
+const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat, chunkError }) => {
   const close = () => { rearmBirdiePanel(); closeAiChat(); };
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: '16px' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -1296,6 +1320,7 @@ const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           Birdie could not be downloaded, so nothing was asked and nothing was sent. Close this, check your connection and tap him again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1311,7 +1336,7 @@ const BirdiePanelUnavailable = ({ DialogBehavior, closeAiChat }) => {
    DialogBehavior is the module-level one every overlay in this file uses, read
    from scope rather than taken as a prop, because the real sheet does not take
    it and inventing a prop for the fallback alone would drift. */
-const ModerationSheetUnavailable = ({ onClose }) => {
+const ModerationSheetUnavailable = ({ onClose, chunkError }) => {
   const close = () => { rearmModerationSheet(); onClose?.(); };
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -1321,6 +1346,7 @@ const ModerationSheetUnavailable = ({ onClose }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           The report options could not be downloaded, so nothing has been reported and nobody has been blocked. Close this, check your connection and try again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
@@ -1331,7 +1357,7 @@ const ModerationSheetUnavailable = ({ onClose }) => {
    half of loadPaywallSheet's catch. Same shape and the same reason as the
    report sheet above, and the fact it states is the one that matters about a
    paywall: nothing was charged. */
-const PaywallSheetUnavailable = ({ onClose }) => {
+const PaywallSheetUnavailable = ({ onClose, chunkError }) => {
   const close = () => { rearmPaywallSheet(); onClose?.(); };
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={(e) => { if (e.target === e.currentTarget) close(); }}>
@@ -1341,6 +1367,7 @@ const PaywallSheetUnavailable = ({ onClose }) => {
         <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
           Flock Pro could not be downloaded, so nothing has been bought and nothing has been charged. Close this, check your connection and try again.
         </p>
+        <NewerBuildNote error={chunkError} />
         <button className="hit44" onClick={close} style={{ width: '100%', padding: '13px', borderRadius: 'var(--r-md)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
       </div>
     </div>
