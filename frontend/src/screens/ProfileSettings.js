@@ -866,7 +866,11 @@ export default function ProfileSettings({
                     {userInterests.map(interest => (
                       <div key={interest} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 12px', borderRadius: 'var(--r-pill)', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {interest}
-                        <button aria-label="Remove interest" className="hit44" onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex', position: 'relative', overflow: 'hidden' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
+                        {/* No overflow: hidden here. It clipped the button's own
+                            hit44 box (a ::after laid over it) back to the 14px
+                            x, so the finger target was 14 by 14. hit44 sets the
+                            position itself. */}
+                        <button aria-label="Remove interest" className="hit44" onClick={(e) => { confirmClick(e); setUserInterests(userInterests.filter(i => i !== interest)); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.7)', cursor: 'pointer', padding: 0, display: 'flex' }}>{Icons.x('rgba(255,255,255,0.7)', 14)}</button>
                       </div>
                     ))}
                   </div>
