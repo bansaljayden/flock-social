@@ -12,15 +12,27 @@
 // a commit someone can find, and refuses to build without frontend/.env,
 // which would publish a site with no Google sign-in, maps or analytics.
 //
+// The hashed files of the builds published before go up again beside the new
+// ones, so a tab that was open across the deploy can still load the screens
+// it had not opened yet. scripts/asset-history.js says why, for how long, and
+// how to take a file off the site at once; --drop-old publishes this build
+// alone.
+//
 // Needs `wrangler login` once on the machine (Pages access is enough).
-// tools/cloudflare/deploy-if-changed.ps1 runs this when origin/main moves.
+// Nothing runs this on its own. It is run after a push to main, from a
+// checkout of the commit that is to go live.
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const history = require('./asset-history');
 
 const ROOT = path.join(__dirname, '..');
 const WRANGLER = 'wrangler@4.151.3';
+// What wrangler uploads (pages_build_output_dir in wrangler.toml), and the
+// earlier builds' files beside it.
+const OUT = path.join(ROOT, 'build');
+const HISTORY = path.join(ROOT, '.asset-history');
 
 function teamIdFrom(toml) {
   const match = /^\s*APPLE_TEAM_ID\s*=\s*"([A-Z0-9]{10})"\s*$/m.exec(toml);
@@ -50,13 +62,35 @@ function main(argv) {
   });
   if (reason) throw new Error(reason);
   const teamId = teamIdFrom(fs.readFileSync(path.join(ROOT, 'wrangler.toml'), 'utf8'));
-  if (!argv.includes('--skip-build')) {
-    run('node', ['scripts/build-cloudflare.js'], { ...process.env, CF_PAGES: '1', APPLE_TEAM_ID: teamId });
-  }
-  run('npx', ['-y', WRANGLER, 'pages', 'deploy', 'build', '--project-name', 'flockcorp', '--branch', 'main'], process.env);
+  publish({ teamId, skipBuild: argv.includes('--skip-build'), dropOld: argv.includes('--drop-old') });
 }
 
-module.exports = { teamIdFrom, refusal, WRANGLER };
+/**
+ * Build, upload, and keep the earlier builds' hashed files on the site through
+ * it. `start` runs a command; a test passes its own in place of the build and
+ * the upload, with folders of its own and a clock.
+ */
+function publish({ teamId, skipBuild = false, dropOld = false, out = OUT, historyDir = HISTORY, now = new Date(), start = run, log = console.log }) {
+  // Before the build, which empties the folder the live build is still in.
+  if (dropOld) history.forget(historyDir);
+  else history.noteLive(out, historyDir, now);
+  if (!skipBuild) {
+    start('node', ['scripts/build-cloudflare.js'], { ...process.env, CF_PAGES: '1', APPLE_TEAM_ID: teamId });
+  }
+  // After the build's own checks, so nothing it verifies is an older file.
+  const { current, carried } = history.carryForward(out, historyDir, now);
+  log('deploy:cloudflare: ' + carried.length + ' hashed files of earlier builds stay on the site beside this build\'s ' + current.length);
+  try {
+    start('npx', ['-y', WRANGLER, 'pages', 'deploy', 'build', '--project-name', 'flockcorp', '--branch', 'main'], process.env);
+    // Only an upload that went through changes what is live.
+    history.markLive(historyDir, current);
+  } finally {
+    const left = history.dropCarried(out, carried);
+    if (left.length) log('deploy:cloudflare: ' + left.length + ' of them could not be taken back out of build/; the next build clears them');
+  }
+}
+
+module.exports = { teamIdFrom, refusal, publish, WRANGLER };
 
 if (require.main === module) {
   try {
