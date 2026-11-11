@@ -672,7 +672,8 @@ export default function CreateScreen({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
                         {v.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{v.rating}</span>}
                         {v.rating && <StarRating rating={v.rating} />}
-                        {v.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(v.price_level)}</span>}
+                        {/* > 0: a free place's level is 0, and React prints a 0. */}
+                        {v.price_level > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(v.price_level)}</span>}
                       </div>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.addr}</p>
                     </div>

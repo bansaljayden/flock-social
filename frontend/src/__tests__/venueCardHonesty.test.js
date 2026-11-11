@@ -31,6 +31,38 @@ test('a free venue does not read as "$"', () => {
   expect(app).not.toMatch(/'\$'\.repeat\([^)]*\|\| 1\)/);
 });
 
+// Google's "free" level is 0 (routes/venueSearch.js priceLevelToNum), and a
+// JSX guard written `price_level && <span>` hands React that 0, which it
+// prints. The Discover search list read "Probe Riverside Park 4.7 (812) 0"
+// in a browser on 2026-11-11, and the venue row on the create screen had the
+// same guard. Every file, so the next list cannot bring it back.
+test('no price guard anywhere hands React a 0 to print', () => {
+  const SRC = path.join(__dirname, '..');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.jsx?$/.test(entry.name)) files.push(full);
+    }
+  };
+  walk(SRC);
+  expect(files.length).toBeGreaterThan(50);
+  const offenders = [];
+  for (const file of files) {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (/\b(price_level|priceLevel)\s*&&\s*[<(]/.test(line)) offenders.push(`${path.relative(SRC, file)}:${i + 1}`);
+    });
+  }
+  expect(offenders).toEqual([]);
+  const explore = fs.readFileSync(path.join(SRC, 'screens', 'ExploreScreen.js'), 'utf8');
+  expect(explore).toMatch(/\{venue\.price_level > 0 && <span/);
+  const create = fs.readFileSync(path.join(SRC, 'screens', 'CreateScreen.js'), 'utf8');
+  expect(create).toMatch(/\{v\.price_level > 0 && <span/);
+});
+
 test('the review count is the server total', () => {
   expect(app).toMatch(/const \[venueDetailReviewTotal, setVenueDetailReviewTotal\] = useState\(null\);/);
   expect(app).toMatch(/setVenueDetailReviewTotal\(Number\.isFinite\(d\.total\) \? d\.total : null\)/);

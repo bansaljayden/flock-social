@@ -514,7 +514,10 @@ export default function ExploreScreen({
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
                       {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
-                      {venue.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
+                      {/* > 0, not &&: Google's "free" level arrives as 0
+                          (routes/venueSearch.js priceLevelToNum), and React
+                          prints a 0 it is handed, so a park read "4.7 (812) 0". */}
+                      {venue.price_level > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
                       {userLocation && venue.location && (
                         <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{formatDistance(haversineKm(userLocation.lat, userLocation.lng, venue.location.latitude, venue.location.longitude))}</span>
                       )}
