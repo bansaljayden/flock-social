@@ -107,9 +107,10 @@
 .ab-what a:hover { color: var(--steel); }
 
 /* Competitions: a ledger on the navy, one entry to a row between hairlines.
-   The name in the display face with who runs it under it, then what went in
-   and who entered it, then where it stands in the accent. Three columns from
-   900px, stacked below that; type and rules only, like the rest of the page. */
+   The name in the display face with who runs it and who entered it under it,
+   then where it stands in the accent. Two columns from 900px, stacked below
+   that; type and rules only, like the rest of the page. The middle column
+   (what went in) came off on 2026-11-11. */
 .ab-comps {
   margin: clamp(24px, 4vw, 36px) 0 0;
   max-width: 66rem;
@@ -123,7 +124,7 @@
 }
 @media (min-width: 900px) {
   .ab-comp {
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.25fr) minmax(0, 0.8fr);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     column-gap: clamp(28px, 3vw, 44px);
     align-items: baseline;
   }
@@ -137,7 +138,6 @@
   color: var(--cream);
 }
 .ab-comp-by { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--cream-3); }
-.ab-comp-what { font-size: 16px; line-height: 1.55; color: var(--cream-2); max-width: 46ch; }
 .ab-comp-team { margin-top: 4px; font-size: 14.5px; line-height: 1.45; color: var(--cream-3); }
 .ab-comp-status { font-size: 14.5px; font-weight: 600; line-height: 1.45; color: var(--steel-lift); text-wrap: balance; }
 

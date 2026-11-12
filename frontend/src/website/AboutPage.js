@@ -249,9 +249,9 @@ export default function AboutPage() {
         )}
 
         {/* Competitions: a ledger on the navy, one entry to a row, from
-            competitions.js. Each says who runs it, what went in, who entered
-            it and where it
-            stands. */}
+            competitions.js. Each says who runs it and who entered it, beside
+            where it stands. The middle column, a line on what went in, came
+            off on 2026-11-11: it was not needed. */}
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
           <div className="lp-wrap">
             <h2 id="ab-h-comps">Competitions</h2>
@@ -262,9 +262,6 @@ export default function AboutPage() {
                   <div>
                     <h3>{c.name}</h3>
                     <p className="ab-comp-by">{c.organizer}</p>
-                  </div>
-                  <div>
-                    <p className="ab-comp-what">{c.entered}</p>
                     <p className="ab-comp-team">{c.team}</p>
                   </div>
                   <p className="ab-comp-status">

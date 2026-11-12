@@ -2,17 +2,17 @@
  * /about's Competitions and Honors (2026-11-06), from src/website/competitions.js.
  *
  * What this pins:
- *   1. the data keeps to its rules: every entry names its organizer, what went
- *      in, who entered it and a status that is a past or present fact, never a
+ *   1. the data keeps to its rules: every entry names its organizer, who
+ *      entered it and a status that is a past or present fact, never a
  *      result (finalist, winner, award) and never a prize, fee or deadline; the
  *      date behind a status says the same month as the words, and none is in
- *      the future; only the Conrad and DECA entries are the maintainer's with Asad;
- *      only DECA's season-long team event may show as in progress, and its
- *      line says who is preparing it, never "Entered by";
+ *      the future; only the Conrad entry is the maintainer's with Asad; nothing still
+ *      being prepared is listed;
  *   2. the page renders every entry as a row of the Competitions ledger on the
  *      navy band, between the milestones (or the honors) and where things
- *      stand, under a lead that names what is being prepared while any entry
- *      is in progress;
+ *      stand: the name, who runs it and who entered it, beside the status. The
+ *      middle column, a line on what went in, came off on 2026-11-11 (his
+ *      call: not needed), and the data no longer carries it;
  *   3. the Honors section is there only when HONORS has an entry. Empty, the
  *      page says nothing about honors at all (no heading, no "coming soon");
  *      with one, it is the dated log on the stone band before the
@@ -97,12 +97,12 @@ afterEach(() => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('competitions.js keeps to its rules', () => {
-  test('every entry names its organizer, what went in, who entered it and a status', () => {
+  test('every entry names its organizer, who entered it and a status, and nothing about what went in', () => {
     expect(COMPETITIONS.length).toBeGreaterThan(0);
-    const allowed = ['name', 'organizer', 'entered', 'status', 'date', 'team'];
+    const allowed = ['name', 'organizer', 'status', 'date', 'team'];
     for (const c of COMPETITIONS) {
       expect(Object.keys(c).filter((k) => !allowed.includes(k))).toEqual([]);
-      for (const k of ['name', 'organizer', 'entered', 'status', 'team']) {
+      for (const k of ['name', 'organizer', 'status', 'team']) {
         expect([c.name, k, typeof c[k] === 'string' && c[k].trim().length > 0]).toEqual([c.name, k, true]);
       }
     }
@@ -112,7 +112,7 @@ describe('competitions.js keeps to its rules', () => {
   test('a status is a fact about the entry, never a result, a prize, a fee or a deadline', () => {
     for (const c of COMPETITIONS) {
       expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted)\b/)]);
-      const words = [c.name, c.organizer, c.entered, c.status, c.team].join(' | ');
+      const words = [c.name, c.organizer, c.status, c.team].join(' | ');
       expect([c.name, RESULT_WORDS.exec(words)]).toEqual([c.name, null]);
       expect([c.name, MONEY_AND_DATES.exec(words)]).toEqual([c.name, null]);
     }
@@ -145,7 +145,17 @@ describe('competitions.js keeps to its rules', () => {
       expect([c.name, c.team.startsWith('Entered by ')]).toEqual([c.name, true]);
       expect([c.name, typeof c.date]).toEqual([c.name, 'string']);
     }
-    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Jacobson|Start-Up Business Plan/);
+    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Start-Up Business Plan/);
+  });
+
+  test('Jacobson is listed now that it is submitted (2026-11-11), newest first', () => {
+    expect(COMPETITIONS[0]).toEqual({
+      name: 'Jacobson Innovator Competition',
+      organizer: 'University of Iowa',
+      status: 'Submitted November 11, 2026',
+      date: '2026-11-11',
+      team: 'Entered by Jayden Bansal',
+    });
   });
 
   test('the science-fair project is not Flock, and no team member\'s school is named', () => {
@@ -206,7 +216,10 @@ describe('/about shows the competitions', () => {
     rows.forEach((row, i) => {
       const c = COMPETITIONS[i];
       expect(Array.from(row.querySelectorAll('h3, p')).map((n) => flat(n.textContent)))
-        .toEqual([c.name, c.organizer, c.entered, c.team, c.status]);
+        .toEqual([c.name, c.organizer, c.team, c.status]);
+      // Two parts: the competition, beside where it stands.
+      expect(row.children).toHaveLength(2);
+      expect(row.querySelector('.ab-comp-what')).toBeNull();
       const time = row.querySelector('.ab-comp-status time');
       if (c.date) {
         expect(time.getAttribute('datetime') || time.getAttribute('dateTime')).toBe(c.date);

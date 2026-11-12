@@ -19,34 +19,28 @@
 // A change to COMPETITIONS (a new entry, or a status that moved) is the same
 // steps 2 and 4.
 //
-// WHAT GOES IN COMPETITIONS: entries that are submitted, accepted or pitched.
-// An application still being written goes in the day it is submitted, not
-// before. The one exception is DECA's Start-Up Business Plan, a team event
-// that runs the whole school year (district, then state, then international):
-// it shows as In progress while it is prepared, and its line says "Being
-// prepared by", because nothing has been entered yet. The ledger's lead on
-// /about says so too while any entry is in progress. Not a competition being
-// watched or not yet started, and not credits programs or App Store featuring.
-// Every status is a true past or present fact; none says finalist, winner or
-// award until a source does, and then the win goes in HONORS. No prizes, fees
-// or deadlines. No team member's school is named (a Diamond Challenge rule);
-// an organizer can be a university, and none of them is that school.
+// WHAT GOES IN COMPETITIONS: entries that are submitted, accepted or pitched,
+// the day that happens, and nothing still being prepared (his call,
+// 2026-11-08). Not a competition being watched or not yet started, and not
+// credits programs or App Store featuring. Every status is a true past or
+// present fact; none says finalist, winner or award until a source does, and
+// then the win goes in HONORS. No prizes, fees or deadlines. No team member's
+// school is named (a Diamond Challenge rule); an organizer can be a
+// university, and none of them is that school.
 //
-// Sources, checked 2026-11-06: the competition tracker, brought up to date
-// with each entry's own confirmation. LionCage was pitched at its finale on
-// 2026-11-06; MIT Solve's dashboard shows the entry submitted 2026-11-05;
-// SXSW EDU 2026-10-24; Stevens 2026-10-18 (the upload page's confirmation);
-// the Congressional App Challenge 2026-10-13; Pirates Pitch 2026-10-03 (its
-// confirmation email); the Conrad Challenge's email of 2026-10-02 accepted
-// the team into its Innovation Stage. Nothing still being prepared is listed
-// (his call, 2026-11-08): an entry goes in once it is submitted.
+// AN ENTRY IS FOUR THINGS: the competition, who runs it, who entered it and
+// where it stands. The line that described what went in ("A two-minute video
+// pitch.") came off the page on 2026-11-11, his call: the middle of each row
+// was not needed.
 //
-// Not here yet: the Jacobson Innovator Competition (University of Iowa), whose
-// one-page summary was being drafted on 2026-11-06 for 2026-11-13. It goes in
-// the day it is submitted, as
-//   { name: 'Jacobson Innovator Competition', organizer: 'University of Iowa',
-//     entered: 'A one-page executive summary.', status: 'Submitted November 2026',
-//     date: '2026-11', team: JAYDEN }
+// Sources: the competition tracker, brought up to date with each entry's own
+// confirmation. Jacobson was submitted 2026-11-11 (the form's confirmation
+// page); LionCage was pitched at its finale on 2026-11-06; MIT Solve's
+// dashboard shows the entry submitted 2026-11-05; SXSW EDU 2026-10-24;
+// Stevens 2026-10-18 (the upload page's confirmation); the Congressional App
+// Challenge 2026-10-13; Pirates Pitch 2026-10-03 (its confirmation email);
+// the Conrad Challenge's email of 2026-10-02 accepted the team into its
+// Innovation Stage.
 
 const JAYDEN = 'Entered by Jayden Bansal';
 const JAYDEN_AND_ASAD = 'Entered by Jayden Bansal and Asad Ali';
@@ -55,9 +49,17 @@ const JAYDEN_AND_ASAD = 'Entered by Jayden Bansal and Asad Ali';
 // `date`, where there is one, is its machine-readable date.
 export const COMPETITIONS = [
   {
+    name: 'Jacobson Innovator Competition',
+    organizer: 'University of Iowa',
+    // The day, not the month: submitted after LionCage's November 6, and a
+    // month alone would sort below it.
+    status: 'Submitted November 11, 2026',
+    date: '2026-11-11',
+    team: JAYDEN,
+  },
+  {
     name: 'LionCage',
     organizer: 'Penn State Great Valley LaunchBox',
-    entered: 'A five-minute live pitch with slides, then questions from the judges.',
     status: 'Pitched at the finale, November 6, 2026',
     date: '2026-11-06',
     team: JAYDEN,
@@ -65,7 +67,6 @@ export const COMPETITIONS = [
   {
     name: '2027 Global Health Challenge',
     organizer: 'MIT Solve',
-    entered: 'A written application with a pitch video and a product demo.',
     status: 'Submitted November 2026',
     date: '2026-11',
     team: JAYDEN,
@@ -73,7 +74,6 @@ export const COMPETITIONS = [
   {
     name: 'Student Impact Challenge',
     organizer: 'SXSW EDU',
-    entered: 'An application and a pitch video under two minutes.',
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -81,7 +81,6 @@ export const COMPETITIONS = [
   {
     name: 'High School Entrepreneurship and AI Video Pitch',
     organizer: 'Stevens Institute of Technology',
-    entered: 'A two-minute video pitch.',
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -89,7 +88,6 @@ export const COMPETITIONS = [
   {
     name: 'Congressional App Challenge',
     organizer: 'U.S. House of Representatives',
-    entered: 'The Flock app and a demo video, in Pennsylvania’s 7th congressional district.',
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -97,7 +95,6 @@ export const COMPETITIONS = [
   {
     name: 'Pirates Pitch for High School Students',
     organizer: 'Seton Hall University',
-    entered: 'A written pitch of 350 words or fewer.',
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -105,7 +102,6 @@ export const COMPETITIONS = [
   {
     name: 'Conrad Challenge',
     organizer: 'Space Center Houston',
-    entered: 'A one-page business plan, called a Lean Canvas.',
     status: 'Accepted into the Innovation Stage, October 2026',
     date: '2026-10',
     team: JAYDEN_AND_ASAD,
