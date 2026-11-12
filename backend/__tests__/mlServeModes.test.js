@@ -832,19 +832,18 @@ test('the builder stores the offset\'s readings over the offset\'s own window an
   assert.match(src, /async function storeOffsetReadings[\s\S]*catch \(err\)/);
 });
 
-test('the builder ranks and groups every live reading on its integer venue id, and names the place once per venue', () => {
-  // The sort under the ranking covers every live reading in the window, and by
-  // 2026-11-11 the hourly run's three statements had together taken over two
-  // and a half minutes, against a two-minute cap on each. Sorted on the place
-  // id's text they took about half as long again as on the id
-  // (buildRecentDeviation.js has the measurement).
-  const src = fs.readFileSync(path.join(ML_DIR, 'buildRecentDeviation.js'), 'utf8');
+test('the builder ranks and groups on the place id: the integer-id text was slower in production', () => {
+  // 575cc04d (2026-11-11) ranked and grouped on ml_training_data's integer
+  // venue_id. A local bench said 19 s -> 12 s; production said 64-92 s -> 114-168
+  // over the same hours a day apart, the offset readings statement at 113.4 s
+  // against a 120 s cap. Reverted the next night (buildRecentDeviation.js has
+  // the numbers). Changing it again needs production's own timings, not a bench.
+  const src = fs.readFileSync(path.join(ML_DIR, 'buildRecentDeviation.js'), 'utf8').replace(/\r\n/g, '\n');
   for (const name of ['UPSERT_SQL', 'LATEST_READINGS_SQL', 'OFFSET_READINGS_SQL']) {
     const stmt = new RegExp('const ' + name + ' = `([\\s\\S]*?)`;').exec(src)[1];
-    assert.match(stmt, /PARTITION BY t\.venue_id\s/, name);
-    assert.doesNotMatch(stmt, /(PARTITION|GROUP) BY\s+(\w+\.)?google_place_id/, name);
-    // Grouped on the id, then one lookup per venue for the key the table is stored under.
-    assert.match(stmt, /GROUP BY (r\.)?venue_id\s[\s\S]*JOIN ml_venues v ON v\.id = a\.venue_id/, name);
+    assert.match(stmt, /PARTITION BY v\.google_place_id\s/, name);
+    assert.match(stmt, /GROUP BY (r\.)?google_place_id\s/, name);
+    assert.doesNotMatch(stmt, /(PARTITION|GROUP) BY\s+(\w+\.)?venue_id/, name);
   }
 });
 

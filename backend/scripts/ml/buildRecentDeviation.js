@@ -68,59 +68,51 @@ const MAX_READINGS = 20;
 // baseline > 0 is required for the same reason mlPredictor requires it: a
 // missing curve is not a curve of zero.
 //
-// RANKED ON THE VENUE'S OWN ID, NAMED AT THE END. In all three statements in
-// this file the readings are ranked and grouped by ml_training_data's integer
-// venue_id, and the place id this table is keyed on is looked up once per
-// venue after the aggregate. ml_venues.google_place_id is unique and never
-// NULL, so the groups are the same ones. What changes is the sort under the
-// ranking: every live reading in the window, compared as integers and
-// timestamps rather than as place ids, strings of 27 characters or more, under
-// the database's collation. The hourly run had grown from 18 to 34 seconds at
-// the end of October to between 64 and 168 from 7 to 11 November, with the
-// 28-day window still filling until about 24 November and
-// JOB_STATEMENT_TIMEOUT_MS on each statement. On a synthetic corpus of
-// production's size on 2026-11-11 (1.26 million live readings in the window,
-// PostgreSQL 17.11 as in production) the three statements went from about 19
-// seconds to about 12 and wrote the same 18,124 rows, value for value.
+// RANKED ON THE PLACE ID, AND WHY IT STAYS THAT WAY. On 2026-11-11 (575cc04d)
+// all three statements in this file were changed to rank and group on
+// ml_training_data's integer venue_id and look the place id up after the
+// aggregate. On a synthetic local corpus of production's size that took the
+// three from about 19 seconds to about 12. Production went the other way. The
+// hourly run took 83 to 92 seconds from 14:00 to 21:00 UTC on 10 November and
+// 64 to 76 from 22:00 to 08:00 on the old text; on the new one it took 124 to
+// 168 and 114 to 148 over the same hours a day later, and the offset readings
+// statement alone reached 113.4 seconds at 15:00 UTC, against a cap of 120 on
+// each statement (JOB_STATEMENT_TIMEOUT_MS). A day's new readings add about 7%
+// to the window, nowhere near that. So the text is back to the place id, as it
+// was before, and the bench is not evidence about production's plans. The
+// per-statement seconds that commit added stay: the collector's hourly line
+// still names the slowest of the three.
 const UPSERT_SQL = `
   INSERT INTO ml_venue_recent_deviation
     (google_place_id, offset_pct, n_readings, window_start, updated_at)
   SELECT
-    v.google_place_id,
-    a.offset_pct,
-    a.n_readings,
-    a.window_start,
+    r.google_place_id,
+    percentile_cont(0.5) WITHIN GROUP (ORDER BY r.deviation)::real,
+    COUNT(*)::int,
+    MIN(r.observed_at),
     NOW()
   FROM (
     SELECT
-      r.venue_id,
-      percentile_cont(0.5) WITHIN GROUP (ORDER BY r.deviation)::real AS offset_pct,
-      COUNT(*)::int                                                  AS n_readings,
-      MIN(r.observed_at)                                             AS window_start
-    FROM (
-      SELECT
-        t.venue_id,
-        t.busyness_pct - b.baseline AS deviation,
-        t.collected_at              AS observed_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY t.venue_id ORDER BY t.collected_at DESC
-        ) AS recency
-      FROM ml_training_data t
-      JOIN ml_venues v ON v.id = t.venue_id
-      JOIN ml_venue_baselines b
-        ON b.google_place_id = v.google_place_id
-       AND b.day_of_week = t.day_of_week
-       AND b.hour = t.hour
-      WHERE t.collection_mode = 'realtime'
-        AND t.label_source = 'live'
-        AND t.busyness_pct IS NOT NULL
-        AND b.baseline > 0
-        AND t.collected_at >= NOW() - ($1 || ' days')::interval
-    ) r
-    WHERE r.recency <= $2
-    GROUP BY r.venue_id
-  ) a
-  JOIN ml_venues v ON v.id = a.venue_id
+      v.google_place_id,
+      t.busyness_pct - b.baseline AS deviation,
+      t.collected_at              AS observed_at,
+      ROW_NUMBER() OVER (
+        PARTITION BY v.google_place_id ORDER BY t.collected_at DESC
+      ) AS recency
+    FROM ml_training_data t
+    JOIN ml_venues v ON v.id = t.venue_id
+    JOIN ml_venue_baselines b
+      ON b.google_place_id = v.google_place_id
+     AND b.day_of_week = t.day_of_week
+     AND b.hour = t.hour
+    WHERE t.collection_mode = 'realtime'
+      AND t.label_source = 'live'
+      AND t.busyness_pct IS NOT NULL
+      AND b.baseline > 0
+      AND t.collected_at >= NOW() - ($1 || ' days')::interval
+  ) r
+  WHERE r.recency <= $2
+  GROUP BY r.google_place_id
   ON CONFLICT (google_place_id) DO UPDATE SET
     offset_pct   = EXCLUDED.offset_pct,
     n_readings   = EXCLUDED.n_readings,
@@ -168,14 +160,14 @@ const READINGS_WINDOW_HOURS = 48;
 const LATEST_READINGS_SQL = `
   WITH ranked AS (
     SELECT
-      t.venue_id,
+      v.google_place_id,
       t.busyness_pct,
       t.observed_date,
       t.day_of_week,
       t.hour,
       t.collected_at,
       ROW_NUMBER() OVER (
-        PARTITION BY t.venue_id
+        PARTITION BY v.google_place_id
         ORDER BY t.observed_date DESC, t.hour DESC, t.collected_at DESC
       ) AS recency
     FROM ml_training_data t
@@ -193,25 +185,19 @@ const LATEST_READINGS_SQL = `
   ),
   latest AS (
     SELECT
-      v.google_place_id,
-      a.readings
-    FROM (
-      SELECT
-        venue_id,
-        jsonb_agg(
-          jsonb_build_object(
-            'v', busyness_pct,
-            'd', to_char(observed_date, 'YYYY-MM-DD'),
-            'dow', day_of_week,
-            'h', hour,
-            'at', collected_at
-          ) ORDER BY recency
-        ) AS readings
-      FROM ranked
-      WHERE recency <= $2::int
-      GROUP BY venue_id
-    ) a
-    JOIN ml_venues v ON v.id = a.venue_id
+      google_place_id,
+      jsonb_agg(
+        jsonb_build_object(
+          'v', busyness_pct,
+          'd', to_char(observed_date, 'YYYY-MM-DD'),
+          'dow', day_of_week,
+          'h', hour,
+          'at', collected_at
+        ) ORDER BY recency
+      ) AS readings
+    FROM ranked
+    WHERE recency <= $2::int
+    GROUP BY google_place_id
   )
   UPDATE ml_venue_recent_deviation d
      SET recent_readings = l.readings
@@ -288,12 +274,12 @@ const OFFSET_READINGS_SLACK = 4;
 const OFFSET_READINGS_SQL = `
   WITH ranked AS (
     SELECT
-      t.venue_id,
+      v.google_place_id,
       t.busyness_pct - b.baseline AS deviation,
       t.observed_date,
       t.hour,
       ROW_NUMBER() OVER (
-        PARTITION BY t.venue_id
+        PARTITION BY v.google_place_id
         ORDER BY t.observed_date DESC, t.hour DESC, t.collected_at DESC
       ) AS recency
     FROM ml_training_data t
@@ -311,23 +297,17 @@ const OFFSET_READINGS_SQL = `
   ),
   latest AS (
     SELECT
-      v.google_place_id,
-      a.readings
-    FROM (
-      SELECT
-        venue_id,
-        jsonb_agg(
-          jsonb_build_object(
-            'dev', deviation,
-            'd', to_char(observed_date, 'YYYY-MM-DD'),
-            'h', hour
-          ) ORDER BY recency
-        ) AS readings
-      FROM ranked
-      WHERE recency <= $2::int
-      GROUP BY venue_id
-    ) a
-    JOIN ml_venues v ON v.id = a.venue_id
+      google_place_id,
+      jsonb_agg(
+        jsonb_build_object(
+          'dev', deviation,
+          'd', to_char(observed_date, 'YYYY-MM-DD'),
+          'h', hour
+        ) ORDER BY recency
+      ) AS readings
+    FROM ranked
+    WHERE recency <= $2::int
+    GROUP BY google_place_id
   )
   UPDATE ml_venue_recent_deviation d
      SET offset_readings = l.readings

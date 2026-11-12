@@ -567,9 +567,9 @@ test('the precompute stores each venue\'s newest live readings, newest first, an
 
   // The offset and the readings behind it (migration 093), each venue's own:
   // every live reading on a positive curve, newest slot first, each as its
-  // distance from that slot's curve of 40. The statements rank on the venue's
-  // integer id and name the place afterwards, so two venues side by side are
-  // what shows a reading filed under the wrong place.
+  // distance from that slot's curve of 40. Two venues side by side are what
+  // shows a reading filed under the wrong place, whichever key the statements
+  // rank on.
   assert.strictEqual(fresh.offset_pct, -5, 'the median of -20, -10, 0 and 10');
   assert.deepStrictEqual(fresh.offset_readings.map((r) => [r.h, r.dev, r.d]),
     [[13, 10, date], [12, 0, date], [11, -10, date], [10, -20, date]]);
