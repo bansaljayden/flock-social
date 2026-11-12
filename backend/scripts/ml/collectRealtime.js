@@ -17,7 +17,7 @@ const {
 } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, collectedBaselinesDue, REFUSAL_MESSAGE } = require('./buildBaselines');
-const { buildRecentDeviation, describeStatementSeconds } = require('./buildRecentDeviation');
+const { buildRecentDeviation, describeStatementSeconds, planDue } = require('./buildRecentDeviation');
 const { refreshSportsIfDue } = require('./collectSportsSchedules');
 const { requireSlotIndex } = require('./collectWeekly');
 
@@ -2517,10 +2517,15 @@ async function run() {
       // cannot be rebuilt the serving path refuses a stale one on age and every
       // card falls back to exactly what it published before this existed.
       try {
-        const dev = await buildRecentDeviation();
+        // Once a day the three statements run under EXPLAIN and say where
+        // their time went (buildRecentDeviation.js, planDue).
+        const dev = await buildRecentDeviation({ plan: planDue() });
         console.log(`[ML:Realtime] Recent-deviation offsets rebuilt `
           + `(${dev.written} venues written, ${dev.pruned} stale rows pruned, in ${dev.seconds.toFixed(1)}s: `
           + `${describeStatementSeconds(dev.statementSeconds)}).`);
+        for (const [statement, line] of Object.entries(dev.plans || {})) {
+          if (line) console.log(`[ML:Realtime] Recent-deviation plan, ${statement}: ${line}.`);
+        }
       } catch (err) {
         console.error(`[ML:Realtime] Recent-deviation refresh failed: ${describeDbError(err)}`);
       }

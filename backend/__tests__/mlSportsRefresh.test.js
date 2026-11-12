@@ -286,7 +286,7 @@ test('the hourly collector calls it inside run()\'s try, after the offsets', () 
   const runStart = src.indexOf('async function run()');
   const body = src.slice(runStart, src.indexOf('\nmodule.exports', runStart));
   const tryIdx = body.indexOf('try {');
-  const devIdx = body.indexOf('buildRecentDeviation()');
+  const devIdx = body.indexOf('await buildRecentDeviation(');
   const sportsIdx = body.indexOf('await refreshSportsIfDue(pool)');
   const finallyIdx = body.lastIndexOf('} finally {');
   assert.ok(tryIdx !== -1 && devIdx !== -1 && sportsIdx !== -1 && finallyIdx !== -1);

@@ -658,6 +658,77 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   assert.strictEqual(capAfter, capBefore, 'the connection went back with the cap it came with');
 });
 
+// Once a day the collector runs the three statements under EXPLAIN (ANALYZE,
+// BUFFERS) in place of the ordinary run (2026-11-12), so what they store and
+// the counts they report must be the ordinary run's exactly.
+test('the daily plan run stores exactly what the ordinary run stores, and says where the time went', async () => {
+  const { buildRecentDeviation } = require('../scripts/ml/buildRecentDeviation');
+  const rows = async () => (await pool.query(
+    `SELECT google_place_id, offset_pct, n_readings, window_start, recent_readings, offset_readings
+       FROM ml_venue_recent_deviation ORDER BY google_place_id`)).rows;
+  const quiet = console.error;
+  console.error = () => {};
+  let ordinary; let ordinaryAgain; let planned; let plannedAgain; let ordinaryRows; let plannedRows;
+  try {
+    await pool.query('DELETE FROM ml_venue_recent_deviation');
+    ordinary = await buildRecentDeviation();
+    ordinaryRows = await rows();
+    ordinaryAgain = await buildRecentDeviation();
+    await pool.query('DELETE FROM ml_venue_recent_deviation');
+    planned = await buildRecentDeviation({ plan: true });
+    plannedRows = await rows();
+    plannedAgain = await buildRecentDeviation({ plan: true });
+  } finally { console.error = quiet; }
+  assert.ok(ordinaryRows.length > 0, 'there is something to compare');
+  assert.deepStrictEqual(plannedRows, ordinaryRows, 'the same rows, value for value');
+  // The counts read from the plans: inserted from an empty table, then updated
+  // on conflict; and the two UPDATEs' rows, both times.
+  assert.strictEqual(planned.written, ordinary.written);
+  assert.strictEqual(plannedAgain.written, ordinaryAgain.written);
+  assert.ok(plannedAgain.written > 0, 'the second run updates every row on conflict');
+  assert.strictEqual(planned.readings.updated, ordinary.readings.updated);
+  assert.strictEqual(planned.offsetReadings.updated, ordinary.offsetReadings.updated);
+  assert.strictEqual(plannedAgain.readings.updated, ordinaryAgain.readings.updated);
+  assert.strictEqual(plannedAgain.offsetReadings.updated, ordinaryAgain.offsetReadings.updated);
+  assert.strictEqual(ordinary.plans, null, 'an ordinary run carries no plans');
+  for (const statement of ['offsets', 'recent readings', 'offset readings']) {
+    assert.match(planned.plans[statement],
+      /^\d+\.\ds; from disk \d+ MB, from cache \d+ MB, temp files \d+ MB; slowest steps: .+$/, statement);
+  }
+});
+
+test('the plan run is due once a day, for the rebuild that starts near 07:00 UTC', () => {
+  const { planDue, PLAN_HOUR_UTC } = require('../scripts/ml/buildRecentDeviation');
+  assert.strictEqual(PLAN_HOUR_UTC, 7);
+  assert.strictEqual(planDue(new Date('2026-11-12T06:59:05Z')), true, 'the rebuild for 07:00 starts at :59 the hour before');
+  assert.strictEqual(planDue(new Date('2026-11-12T07:10:00Z')), true);
+  assert.strictEqual(planDue(new Date('2026-11-12T05:59:05Z')), false);
+  assert.strictEqual(planDue(new Date('2026-11-12T07:59:05Z')), false);
+});
+
+test('a plan reads as one line: the time, the reads, the slowest steps; and its row count is the statement\'s', () => {
+  const { describePlan, rowCountOfPlan } = require('../scripts/ml/buildRecentDeviation');
+  const top = {
+    'Execution Time': 1000.4,
+    Plan: {
+      'Node Type': 'ModifyTable', 'Relation Name': 'ml_venue_recent_deviation', 'Actual Total Time': 1000, 'Actual Loops': 1,
+      'Actual Rows': 0, 'Tuples Inserted': 3, 'Conflicting Tuples': 5,
+      'Shared Read Blocks': 128000, 'Shared Hit Blocks': 1280, 'Temp Written Blocks': 0,
+      Plans: [{
+        'Node Type': 'Sort', 'Actual Total Time': 900, 'Actual Loops': 1, 'Actual Rows': 8,
+        'Sort Space Type': 'Disk', 'Sort Space Used': 50000,
+        Plans: [{ 'Node Type': 'Seq Scan', 'Relation Name': 'ml_training_data', 'Actual Total Time': 300, 'Actual Loops': 1, 'Actual Rows': 1000000 }],
+      }],
+    },
+  };
+  assert.strictEqual(describePlan(top), '1.0s; from disk 1049 MB, from cache 10 MB, temp files 0 MB; slowest steps: '
+    + 'Sort, spilled 50 MB 0.6s (60%, 8 rows); Seq Scan on ml_training_data 0.3s (30%, 1,000,000 rows); '
+    + 'ModifyTable on ml_venue_recent_deviation 0.1s (10%, 0 rows)');
+  assert.strictEqual(rowCountOfPlan(top), 8, 'inserted plus updated on conflict');
+  assert.strictEqual(rowCountOfPlan({ Plan: { 'Node Type': 'ModifyTable', Plans: [{ 'Actual Rows': 7, 'Actual Loops': 2 }] } }), 14,
+    'an UPDATE: the rows its input hands it');
+});
+
 // ---------------------------------------------------------------------------
 // 5. The fill's open share reads the same weekly rows (2026-10-30)
 // ---------------------------------------------------------------------------

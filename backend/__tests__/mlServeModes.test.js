@@ -799,7 +799,7 @@ test('the builder stores as many readings as serving expects, over a window the 
   assert.match(src, /t\.label_source = 'live'[\s\S]*b\.baseline > 0[\s\S]*make_interval\(hours => \$1::int\)/);
   // Its own statement, after the offset's, so a missing column cannot cost the offset.
   const body = src.slice(src.indexOf('async function buildRecentDeviation('));
-  assert.ok(body.indexOf('UPSERT_SQL') < body.indexOf('storeLatestReadings()'));
+  assert.ok(body.indexOf('storeLatestReadings(') > 0 && body.indexOf('UPSERT_SQL') < body.indexOf('storeLatestReadings('));
   assert.match(src, /async function storeLatestReadings[\s\S]*catch \(err\)/);
 });
 
@@ -832,12 +832,13 @@ test('the builder stores the offset\'s readings over the offset\'s own window an
   assert.match(src, /async function storeOffsetReadings[\s\S]*catch \(err\)/);
 });
 
-test('the builder ranks and groups on the place id: the integer-id text was slower in production', () => {
+test('the builder ranks and groups on the place id, the text production ran before 11 November', () => {
   // 575cc04d (2026-11-11) ranked and grouped on ml_training_data's integer
-  // venue_id. A local bench said 19 s -> 12 s; production said 64-92 s -> 114-168
-  // over the same hours a day apart, the offset readings statement at 113.4 s
-  // against a 120 s cap. Reverted the next night (buildRecentDeviation.js has
-  // the numbers). Changing it again needs production's own timings, not a bench.
+  // venue_id on a local bench's word (19 s -> 12 s); it was reverted the next
+  // night on a comparison across days that the old text's first run back did
+  // not bear out (buildRecentDeviation.js has the numbers). Which is faster in
+  // production is not known, so the text production ran for weeks is the one
+  // pinned; changing it needs production's own plans (the daily EXPLAIN line).
   const src = fs.readFileSync(path.join(ML_DIR, 'buildRecentDeviation.js'), 'utf8').replace(/\r\n/g, '\n');
   for (const name of ['UPSERT_SQL', 'LATEST_READINGS_SQL', 'OFFSET_READINGS_SQL']) {
     const stmt = new RegExp('const ' + name + ' = `([\\s\\S]*?)`;').exec(src)[1];

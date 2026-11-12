@@ -68,20 +68,18 @@ const MAX_READINGS = 20;
 // baseline > 0 is required for the same reason mlPredictor requires it: a
 // missing curve is not a curve of zero.
 //
-// RANKED ON THE PLACE ID, AND WHY IT STAYS THAT WAY. On 2026-11-11 (575cc04d)
-// all three statements in this file were changed to rank and group on
-// ml_training_data's integer venue_id and look the place id up after the
-// aggregate. On a synthetic local corpus of production's size that took the
-// three from about 19 seconds to about 12. Production went the other way. The
-// hourly run took 83 to 92 seconds from 14:00 to 21:00 UTC on 10 November and
-// 64 to 76 from 22:00 to 08:00 on the old text; on the new one it took 124 to
-// 168 and 114 to 148 over the same hours a day later, and the offset readings
-// statement alone reached 113.4 seconds at 15:00 UTC, against a cap of 120 on
-// each statement (JOB_STATEMENT_TIMEOUT_MS). A day's new readings add about 7%
-// to the window, nowhere near that. So the text is back to the place id, as it
-// was before, and the bench is not evidence about production's plans. The
-// per-statement seconds that commit added stay: the collector's hourly line
-// still names the slowest of the three.
+// RANKED ON THE PLACE ID, AS BEFORE 11 NOVEMBER, UNTIL PRODUCTION SAYS
+// OTHERWISE. On 2026-11-11 (575cc04d) all three statements in this file were
+// changed to rank and group on ml_training_data's integer venue_id; a synthetic
+// local corpus of production's size put the three at about 12 seconds against
+// 19. In production that text took 114 to 168 seconds an hour against the old
+// text's 64 to 92 at the same hours the day before, so it was put back
+// (157e2947). The comparison was across days, and it did not hold: the old
+// text's first run back, 05:00 UTC on 12 November, took 123 seconds, as long
+// as the new one at that hour. Something else slowed the rebuild on 11
+// November, and which text is faster in production is not known. The daily
+// plan below is what will say, and neither the bench nor a comparison across
+// days is evidence about it. The per-statement seconds that commit added stay.
 const UPSERT_SQL = `
   INSERT INTO ml_venue_recent_deviation
     (google_place_id, offset_pct, n_readings, window_start, updated_at)
@@ -220,15 +218,79 @@ const LATEST_READINGS_SQL = `
 // the connection goes back to the pool with the API's 15 seconds unchanged.
 const JOB_STATEMENT_TIMEOUT_MS = 120000;
 
-async function jobQuery(sql, params) {
+// ---------------------------------------------------------------------------
+// HOW PRODUCTION RUNS THESE, ONCE A DAY (2026-11-12).
+//
+// Production's plans cannot be read from here, and guessing at them went
+// wrong. On 2026-11-11 a rewrite that a local bench put a third faster was
+// judged slower in production by comparing it with the night before; the old
+// text, put back the next night, took as long as the new one had at the same
+// hours (123 seconds at 05:00 UTC against 64 to 76 the night before), so the
+// slowdown came from somewhere else. So once a day the collector runs the three
+// statements under EXPLAIN (ANALYZE, BUFFERS): the same statements, with the
+// same writes, in the same transactions under the same cap, in place of that
+// hour's ordinary run, and logs where each one's time went and how much it read
+// from disk, from the cache and from temporary files. 07:00 UTC is one of the
+// quicker hours (the slowest statement took 55 to 60 seconds at 04:00 and 05:00
+// UTC on 12 November), which leaves room under the cap for the timing EXPLAIN
+// adds. The rebuild starts near the end of the hour before (about :59), so the
+// hour is read half an hour ahead.
+const PLAN_HOUR_UTC = 7;
+
+function planDue(now = new Date()) {
+  return new Date(now.getTime() + 30 * 60000).getUTCHours() === PLAN_HOUR_UTC;
+}
+
+// The statement's own row count, read from its plan: EXPLAIN returns the plan
+// in place of the count. An INSERT ... ON CONFLICT DO UPDATE counts the rows it
+// inserted and the ones it updated (every conflict is updated here, there is no
+// WHERE on the update); an UPDATE counts the rows its input hands it.
+function rowCountOfPlan(top) {
+  const root = top.Plan;
+  if (root['Tuples Inserted'] !== undefined) return root['Tuples Inserted'] + (root['Conflicting Tuples'] || 0);
+  const input = (root.Plans || [])[0];
+  return input ? Math.round(input['Actual Rows'] * (input['Actual Loops'] || 1)) : 0;
+}
+
+const MB = (blocks) => Math.round(((blocks || 0) * 8192) / 1e6);
+
+// One line: the statement's time, what it read, and its slowest steps. A step's
+// time is its own (its children's taken off), and with parallel workers it is
+// summed over them, so the shares are of all the steps' time together.
+function describePlan(top) {
+  const steps = [];
+  (function walk(node) {
+    const loops = node['Actual Loops'] || 1;
+    const kids = node.Plans || [];
+    const below = kids.reduce((s, k) => s + (k['Actual Total Time'] || 0) * (k['Actual Loops'] || 1), 0);
+    steps.push({ node, ms: Math.max(0, (node['Actual Total Time'] || 0) * loops - below), rows: Math.round((node['Actual Rows'] || 0) * loops) });
+    kids.forEach(walk);
+  })(top.Plan);
+  const all = steps.reduce((s, x) => s + x.ms, 0) || 1;
+  const name = ({ node: n }) => n['Node Type']
+    + (n['Index Name'] ? ` using ${n['Index Name']}` : '')
+    + (n['Relation Name'] ? ` on ${n['Relation Name']}` : '')
+    + (n['Sort Space Type'] === 'Disk' ? `, spilled ${Math.round((n['Sort Space Used'] || 0) / 1000)} MB` : '');
+  const slowest = steps.filter((x) => x.ms / all >= 0.05).sort((a, b) => b.ms - a.ms).slice(0, 4)
+    .map((x) => `${name(x)} ${(x.ms / 1000).toFixed(1)}s (${Math.round((100 * x.ms) / all)}%, ${x.rows.toLocaleString('en-US')} rows)`);
+  const r = top.Plan;
+  return `${((top['Execution Time'] || 0) / 1000).toFixed(1)}s; from disk ${MB(r['Shared Read Blocks'])} MB, `
+    + `from cache ${MB(r['Shared Hit Blocks'])} MB, temp files ${MB(r['Temp Written Blocks'])} MB; `
+    + `slowest steps: ${slowest.join('; ') || 'none over 5%'}`;
+}
+
+async function jobQuery(sql, params, { plan = false } = {}) {
   const client = await pool.connect();
   let broken = false;
   try {
     await client.query('BEGIN');
     await client.query(`SET LOCAL statement_timeout = ${JOB_STATEMENT_TIMEOUT_MS}`);
-    const res = await client.query(sql, params);
+    const res = await client.query(plan ? `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}` : sql, params);
     await client.query('COMMIT');
-    return res;
+    if (!plan) return res;
+    const doc = res.rows[0]['QUERY PLAN'];
+    const top = (typeof doc === 'string' ? JSON.parse(doc) : doc)[0];
+    return { rowCount: rowCountOfPlan(top), plan: describePlan(top) };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => { broken = true; });
     throw err;
@@ -238,13 +300,13 @@ async function jobQuery(sql, params) {
   }
 }
 
-async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT } = {}) {
+async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false } = {}) {
   try {
-    const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep]);
-    return { updated: res.rowCount, error: null };
+    const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep], { plan });
+    return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
     console.error('[ML:Deviation] Recent readings not stored (the offset was):', err.message);
-    return { updated: null, error: err.message };
+    return { updated: null, error: err.message, plan: null };
   }
 }
 
@@ -317,13 +379,13 @@ const OFFSET_READINGS_SQL = `
      AND d.offset_readings IS DISTINCT FROM l.readings
 `;
 
-async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK } = {}) {
+async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK, plan = false } = {}) {
   try {
-    const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep]);
-    return { updated: res.rowCount, error: null };
+    const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep], { plan });
+    return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
     console.error('[ML:Deviation] Offset readings not stored (the offset was):', err.message);
-    return { updated: null, error: err.message };
+    return { updated: null, error: err.message, plan: null };
   }
 }
 
@@ -331,13 +393,15 @@ async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READIN
 // not on the run, so the number that says how close this is to being cancelled
 // is the slowest statement's and the run's total hides it. statementSeconds
 // carries each of the three, and the collector's hourly line prints them.
-async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS } = {}) {
+// With `plan` (the collector passes planDue()), the three run under EXPLAIN
+// and `plans` carries each one's line; otherwise `plans` is null.
+async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS, plan = false } = {}) {
   const t0 = Date.now();
-  const written = await jobQuery(UPSERT_SQL, [windowDays, maxReadings]);
+  const written = await jobQuery(UPSERT_SQL, [windowDays, maxReadings], { plan });
   const t1 = Date.now();
-  const readings = await storeLatestReadings();
+  const readings = await storeLatestReadings({ plan });
   const t2 = Date.now();
-  const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK });
+  const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK, plan });
   const t3 = Date.now();
   const pruned = await pool.query(PRUNE_SQL, [windowDays * 2]);
   return {
@@ -351,6 +415,9 @@ async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MA
       recentReadings: (t2 - t1) / 1000,
       offsetReadings: (t3 - t2) / 1000,
     },
+    plans: plan
+      ? { offsets: written.plan, 'recent readings': readings.plan, 'offset readings': offsetReadings.plan }
+      : null,
   };
 }
 
@@ -402,6 +469,10 @@ module.exports = {
   storeLatestReadings,
   storeOffsetReadings,
   describeStatementSeconds,
+  planDue,
+  describePlan,
+  rowCountOfPlan,
+  PLAN_HOUR_UTC,
   WINDOW_DAYS,
   MAX_READINGS,
   READINGS_KEPT,
