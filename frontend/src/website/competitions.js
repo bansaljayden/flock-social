@@ -56,12 +56,26 @@
 const JAYDEN = 'By Jayden Bansal';
 const JAYDEN_AND_ASAD = 'By Jayden Bansal and Asad Ali';
 
+// EACH ENTRY CARRIES ITS ORGANIZER'S LOGO (his call, 2026-11-11), drawn on a
+// white tile beside the name so it reads on the navy band. The files are in
+// public/logos/competitions, each taken from the organizer's own site and
+// rendered to one height at twice its display size: DECA's brand page, Blue
+// Ocean's media page, the Conrad Challenge, Diamond Challenge and Congressional
+// App Challenge sites, Great Valley LaunchBox, MIT Solve, SXSW EDU, Stevens and
+// Seton Hall (both only offer a white logo, so each is the same artwork in one
+// dark colour), and for Jacobson the University of Iowa's, which runs it.
+// They sit beside a status that is true; nothing on the page says certified,
+// endorsed or partnered. `width` and `height` are the file's own pixels, so
+// the tile keeps its shape before the picture arrives.
+const logo = (file, width, height) => ({ src: `/logos/competitions/${file}`, width, height });
+
 // Upcoming first (soonest first), then newest first. `status` is what
 // renders; `date` is its machine-readable date.
 export const COMPETITIONS = [
   {
     name: 'Start-Up Business Plan',
     organizer: 'DECA',
+    logo: logo('deca.png', 640, 132),
     status: 'Entering, December 2026',
     date: '2026-12',
     team: JAYDEN_AND_ASAD,
@@ -69,6 +83,7 @@ export const COMPETITIONS = [
   {
     name: 'Diamond Challenge',
     organizer: 'University of Delaware Horn Entrepreneurship',
+    logo: logo('diamond-challenge.png', 582, 192),
     status: 'Entering, January 2027',
     date: '2027-01',
     team: JAYDEN_AND_ASAD,
@@ -76,6 +91,7 @@ export const COMPETITIONS = [
   {
     name: 'Blue Ocean Competition',
     organizer: 'Blue Ocean Student Entrepreneurs',
+    logo: logo('blue-ocean.png', 614, 192),
     status: 'Entering, February 2027',
     date: '2027-02',
     team: JAYDEN,
@@ -83,6 +99,7 @@ export const COMPETITIONS = [
   {
     name: 'Jacobson Innovator Competition',
     organizer: 'University of Iowa',
+    logo: logo('university-of-iowa.png', 640, 186),
     // The day, not the month: submitted after LionCage's November 6, and a
     // month alone would sort below it.
     status: 'Submitted November 11, 2026',
@@ -92,6 +109,7 @@ export const COMPETITIONS = [
   {
     name: 'LionCage',
     organizer: 'Penn State Great Valley LaunchBox',
+    logo: logo('launchbox.png', 640, 166),
     status: 'Pitched at the finale, November 6, 2026',
     date: '2026-11-06',
     team: JAYDEN,
@@ -99,6 +117,7 @@ export const COMPETITIONS = [
   {
     name: '2027 Global Health Challenge',
     organizer: 'MIT Solve',
+    logo: logo('mit-solve.png', 640, 150),
     status: 'Submitted November 2026',
     date: '2026-11',
     team: JAYDEN,
@@ -106,6 +125,7 @@ export const COMPETITIONS = [
   {
     name: 'Student Impact Challenge',
     organizer: 'SXSW EDU',
+    logo: logo('sxsw-edu.png', 360, 192),
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -113,6 +133,7 @@ export const COMPETITIONS = [
   {
     name: 'High School Entrepreneurship and AI Video Pitch',
     organizer: 'Stevens Institute of Technology',
+    logo: logo('stevens.png', 640, 172),
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -120,6 +141,7 @@ export const COMPETITIONS = [
   {
     name: 'Congressional App Challenge',
     organizer: 'U.S. House of Representatives',
+    logo: logo('congressional-app-challenge.png', 270, 192),
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -127,6 +149,7 @@ export const COMPETITIONS = [
   {
     name: 'Pirates Pitch for High School Students',
     organizer: 'Seton Hall University',
+    logo: logo('seton-hall.png', 574, 192),
     status: 'Submitted October 2026',
     date: '2026-10',
     team: JAYDEN,
@@ -134,6 +157,7 @@ export const COMPETITIONS = [
   {
     name: 'Conrad Challenge',
     organizer: 'Space Center Houston',
+    logo: logo('conrad.png', 340, 192),
     status: 'Accepted into the Innovation Stage, October 2026',
     date: '2026-10',
     team: JAYDEN_AND_ASAD,

@@ -270,9 +270,11 @@ export default function AboutPage() {
         )}
 
         {/* Competitions: a ledger on the navy, one entry to a row, from
-            competitions.js. Each says who runs it and who entered it, beside
-            where it stands. The middle column, a line on what went in, came
-            off on 2026-11-11: it was not needed. */}
+            competitions.js. Each is the organizer's logo on a white tile (his
+            call, 2026-11-11), then the name with who runs it and who entered
+            it, then where it stands. The logo's alt is empty: the organizer is
+            named in words right beside it, so a screen reader would only hear
+            it twice. The line on what went in came off the same day. */}
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
           <div className="lp-wrap">
             <h2 id="ab-h-comps">Competitions</h2>
@@ -280,6 +282,16 @@ export default function AboutPage() {
             <div className="ab-comps">
               {COMPETITIONS.map((c) => (
                 <div key={c.name} className="ab-comp">
+                  <div className="ab-comp-logo">
+                    <img
+                      src={c.logo.src}
+                      width={c.logo.width}
+                      height={c.logo.height}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </div>
                   <div>
                     <h3>{c.name}</h3>
                     <p className="ab-comp-by">{c.organizer}</p>
