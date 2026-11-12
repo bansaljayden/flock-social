@@ -13,7 +13,11 @@
  * can pin the wiring but not the geometry. This file measures the geometry:
  * the bar's bottom edge against the top of what used to be under it, at the
  * harness's phone size (390 x 664, where "That confirmation link has
- * expired..." is two lines), and that Dismiss gives the room back.
+ * expired..." is two lines), and that Dismiss gives the room back. The same
+ * checks run again at a desktop window, 1280 x 800, where the bar spans the
+ * window but its words keep to the app's column, so the expired notice is
+ * still two lines (66 px measured on 2026-11-12) and every check holds as
+ * written.
  *
  * Every page here is pinned to the local API (helpers.pinToLocalApi), and
  * signups carry an X-Forwarded-For address of their own, for the reason
@@ -73,8 +77,10 @@ async function arriveFromLink(page, outcome) {
   await expect(page.locator('[data-notice-bar]')).toBeVisible({ timeout: 15_000 });
 }
 
-for (const [outcome, words] of [['1', /your email is confirmed/i], ['expired', /has expired/i]]) {
-  test(`signed out, "${outcome}": the bird mark and the heading start below the bar`, async ({ page }) => {
+const SIGNED_OUT = [['1', /your email is confirmed/i], ['expired', /has expired/i]];
+
+function signedOutChecks(outcome, words) {
+  return async ({ page }) => {
     const errors = [];
     failOnPageErrors(page, errors);
     const offences = pinToLocalApi(page);
@@ -94,10 +100,10 @@ for (const [outcome, words] of [['1', /your email is confirmed/i], ['expired', /
 
     expect(errors).toEqual([]);
     expect(offences).toEqual([]);
-  });
+  };
 }
 
-test('signed in: the Nest, a toast, and Dismiss all respect the bar', async ({ page }) => {
+async function signedInChecks({ page }) {
   const errors = [];
   failOnPageErrors(page, errors);
   const offences = pinToLocalApi(page);
@@ -139,4 +145,17 @@ test('signed in: the Nest, a toast, and Dismiss all respect the bar', async ({ p
 
   expect(errors).toEqual([]);
   expect(offences).toEqual([]);
+}
+
+for (const [outcome, words] of SIGNED_OUT) {
+  test(`signed out, "${outcome}": the bird mark and the heading start below the bar`, signedOutChecks(outcome, words));
+}
+test('signed in: the Nest, a toast, and Dismiss all respect the bar', signedInChecks);
+
+test.describe('desktop, 1280 x 800', () => {
+  test.use({ viewport: { width: 1280, height: 800 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+  for (const [outcome, words] of SIGNED_OUT) {
+    test(`signed out, "${outcome}": the bird mark and the heading start below the bar`, signedOutChecks(outcome, words));
+  }
+  test('signed in: the Nest, a toast, and Dismiss all respect the bar', signedInChecks);
 });
