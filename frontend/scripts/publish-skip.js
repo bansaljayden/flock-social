@@ -124,10 +124,19 @@ function trackedChanges(root = ROOT) {
   return status === 0 ? stdout.trimEnd() : null;
 }
 
-/** 0: nothing the site is built from differs between `commit` and HEAD. 1: something does. Anything else: git could not compare. */
+/**
+ * 0: nothing the site is built from differs between `commit` and HEAD. 1: something does. Anything else: git could not compare.
+ *
+ * Byte for byte, never through a text converter. Git for Windows' own config
+ * diffs a PDF (and .doc, .docx, .rtf) through `astextplain`, and `--quiet`
+ * then compares the text it prints: on 12 November 2026 a new research paper
+ * whose words were the same and whose references had become links read as no
+ * change, and the deploy skipped it while the site went on serving the old
+ * file. --no-ext-diff for the same reason, against an external diff tool.
+ */
 function diffExitCode(commit, root = ROOT) {
   if (!COMMIT.test(commit)) return -1;
-  return git(['diff', '--quiet', commit, 'HEAD', '--', '.', ...NOT_THE_SITE], root).status;
+  return git(['diff', '--quiet', '--no-textconv', '--no-ext-diff', commit, 'HEAD', '--', '.', ...NOT_THE_SITE], root).status;
 }
 
 /**

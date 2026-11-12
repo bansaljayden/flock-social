@@ -475,6 +475,24 @@ describe('the git questions, in a repository made for the test', () => {
     expect(skip.looseFiles(nowhere)).toBeNull();
   });
 
+  gitTest(g('compares bytes, not the text a converter makes of them'), () => {
+    // Git for Windows diffs a PDF through `astextplain`; here a converter that
+    // prints the same words for any file stands in for it. A paper whose words
+    // stayed and whose references became links read as unchanged that way
+    // (12 November 2026), and the deploy skipped it.
+    git(repo, ['config', 'diff.sametext.textconv', 'node -e "process.stdout.write(String(1))"']);
+    const first = commit({
+      '.gitattributes': '*.pdf diff=sametext\n',
+      'frontend/public/papers/paper.pdf': '%PDF-1.7 the paper, plain\n',
+    });
+    commit({ 'frontend/public/papers/paper.pdf': '%PDF-1.7 the paper, with its references as links\n' });
+    // The trap is set: git's own quiet diff, through the converter, sees nothing.
+    const fooled = spawnSync('git', ['diff', '--quiet', first, 'HEAD', '--', '.'], { cwd: frontend, encoding: 'utf8', env: ownEnv() });
+    expect(fooled.status).toBe(0);
+    // The question the deploy asks does not fall into it.
+    expect(skip.diffExitCode(first, frontend)).toBe(1);
+  });
+
   gitTest(g('compares only what the site is built from'), () => {
     const first = commit({
       'frontend/src/App.js': 'one\n',

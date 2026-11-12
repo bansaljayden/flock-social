@@ -36,8 +36,9 @@ function decide(env, diffExitCode) {
   return { build: true, reason: 'could not compare with ' + short + ' (git exit ' + code + ')' };
 }
 
+// Byte for byte, never through a text converter (publish-skip.js says why).
 function gitDiffExitCode(previous) {
-  const result = spawnSync('git', ['diff', '--quiet', previous, 'HEAD', '--', '.', ...NOT_THE_SITE], { stdio: 'inherit' });
+  const result = spawnSync('git', ['diff', '--quiet', '--no-textconv', '--no-ext-diff', previous, 'HEAD', '--', '.', ...NOT_THE_SITE], { stdio: 'inherit' });
   return result.status === null ? -1 : result.status;
 }
 
