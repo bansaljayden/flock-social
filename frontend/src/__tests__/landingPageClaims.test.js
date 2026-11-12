@@ -496,7 +496,7 @@ describe('the layout floors that only fail on a phone', () => {
     // would merely scroll on the web is CUT OFF in the app with no scrollbar to
     // announce it. `hidden` is not an acceptable substitute for `clip` here:
     // hidden makes the element a scroll container, which silently kills
-    // position: sticky on descendants, and the entire navbar is sticky.
+    // position: sticky on descendants.
     const rule = /html:has\(\.lp\),\s*\nhtml:has\(\.lp\) body \{ overflow-x: (\w+); \}/.exec(CSS);
     expect(rule).not.toBeNull();
     expect(rule[1]).toBe('clip');

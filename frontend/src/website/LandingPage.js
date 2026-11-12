@@ -365,6 +365,8 @@ export default function LandingPage() {
           </button>
         </div>
       </header>
+      {/* The bar is position: fixed (see .lp-nav); this holds its place. */}
+      <div className="lp-nav-space" aria-hidden="true" />
 
       {/* ---------------- menu panel ---------------- */}
       <div

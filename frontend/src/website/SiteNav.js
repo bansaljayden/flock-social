@@ -139,6 +139,8 @@ export default function SiteNav({ menu, current }) {
           </button>
         </div>
       </header>
+      {/* The bar is position: fixed (see .lp-nav); this holds its place. */}
+      <div className="lp-nav-space" aria-hidden="true" />
 
       <div id="lp-menu" ref={menuRef} className={`lp-menu${menuOpen ? ' is-open' : ''}`}>
         <nav className="lp-menu-in" aria-label="Site menu">

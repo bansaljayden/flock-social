@@ -494,9 +494,21 @@
 
 /* ============ nav ============ */
 
+/* Fixed, not sticky (2026-11-11; his words: "the page goes through it").
+   Safari on iOS 26 no longer reads <meta name="theme-color">: it colours the
+   strip behind the clock and battery from an opaque position: fixed element at
+   the top of the page, and with none there the page scrolls up through that
+   strip, above the bar. A sticky bar does not count, so the bar is fixed and
+   .lp-nav-space, right after it in the markup, holds its 64px in the page.
+   It also pads by the status bar's height (--device-top, index.css), which is
+   0 in a Safari tab and the real height when the site is opened from the home
+   screen; and by the scrollbar the menu's scroll lock takes away
+   (--lp-scrollbar), as the panel does, so the row does not jump sideways. */
 .lp-nav {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   /* Above the menu panel (60) so the wordmark and the corner block stay put
      while the panel is open. */
   z-index: 70;
@@ -504,7 +516,10 @@
      beneath it is the stock site-builder header (2026-10-03), and the blur was
      a full-width filter repainted on every scroll frame. */
   background: var(--navy);
+  padding-top: var(--device-top, 0px);
+  padding-right: var(--lp-scrollbar, 0px);
 }
+.lp-nav-space { height: calc(64px + var(--device-top, 0px)); }
 /* Open: the bar itself gets out of the way, so the panel reads full screen. */
 .lp-nav.is-menu-open {
   background: transparent;
@@ -821,8 +836,8 @@
    tell anyone it happened.
 
    `clip`, not `hidden`, on both. `hidden` makes the element a scroll container,
-   which silently breaks `position: sticky` on descendants — and the whole
-   navbar is sticky. `clip` does not. Scoped through :has(.lp) so the app's own
+   which silently breaks `position: sticky` on descendants (the navbar was
+   sticky until 2026-11-11; it is fixed now). `clip` does not. Scoped through :has(.lp) so the app's own
    routes are untouched; the file already reaches for :has() one line above, so
    the support floor does not move.
 
