@@ -20,9 +20,15 @@
 // steps 2 and 4.
 //
 // WHAT GOES IN COMPETITIONS: entries that are submitted, accepted or pitched,
-// the day that happens, and nothing still being prepared (his call,
-// 2026-11-08). Not a competition being watched or not yet started, and not
-// credits programs or App Store featuring. Every status is a true past or
+// the day that happens; and the main ones Flock is entering next, his call on
+// 2026-11-11 ("add ... the main ones, like Diamond, Blue Ocean, Conrad"),
+// which replaced the 2026-11-08 rule of submitted entries only. An upcoming
+// one says "Entering, <month>", the month its first round is due, and never
+// "Submitted" before it is. Upcoming entries come first, soonest first; then
+// the rest, newest first. When an upcoming month passes, the entry's status
+// moves to what happened (aboutCompetitions.test.js fails until it does). Not
+// a competition only being watched, and not credits programs or App Store
+// featuring. Every status is a true past or
 // present fact; none says finalist, winner or award until a source does, and
 // then the win goes in HONORS. No prizes, fees or deadlines. No team member's
 // school is named (a Diamond Challenge rule); an organizer can be a
@@ -34,7 +40,10 @@
 // was not needed.
 //
 // Sources: the competition tracker, brought up to date with each entry's own
-// confirmation. Jacobson was submitted 2026-11-11 (the form's confirmation
+// confirmation. Upcoming (the tracker, rechecked 2026-11-06 on each official
+// page): DECA's District 7 round is 2026-12-15 (the maintainer and Asad); the Diamond
+// Challenge is due 2027-01-14 (the maintainer and Asad); Blue Ocean is due 2027-02-21
+// (the maintainer). Jacobson was submitted 2026-11-11 (the form's confirmation
 // page); LionCage was pitched at its finale on 2026-11-06; MIT Solve's
 // dashboard shows the entry submitted 2026-11-05; SXSW EDU 2026-10-24;
 // Stevens 2026-10-18 (the upload page's confirmation); the Congressional App
@@ -42,12 +51,35 @@
 // the Conrad Challenge's email of 2026-10-02 accepted the team into its
 // Innovation Stage.
 
-const JAYDEN = 'Entered by Jayden Bansal';
-const JAYDEN_AND_ASAD = 'Entered by Jayden Bansal and Asad Ali';
+// "By", not "Entered by": true of an entry that is in and of one being
+// entered next.
+const JAYDEN = 'By Jayden Bansal';
+const JAYDEN_AND_ASAD = 'By Jayden Bansal and Asad Ali';
 
-// Newest first. `status` is what renders;
-// `date`, where there is one, is its machine-readable date.
+// Upcoming first (soonest first), then newest first. `status` is what
+// renders; `date` is its machine-readable date.
 export const COMPETITIONS = [
+  {
+    name: 'Start-Up Business Plan',
+    organizer: 'DECA',
+    status: 'Entering, December 2026',
+    date: '2026-12',
+    team: JAYDEN_AND_ASAD,
+  },
+  {
+    name: 'Diamond Challenge',
+    organizer: 'University of Delaware Horn Entrepreneurship',
+    status: 'Entering, January 2027',
+    date: '2027-01',
+    team: JAYDEN_AND_ASAD,
+  },
+  {
+    name: 'Blue Ocean Competition',
+    organizer: 'Blue Ocean Student Entrepreneurs',
+    status: 'Entering, February 2027',
+    date: '2027-02',
+    team: JAYDEN,
+  },
   {
     name: 'Jacobson Innovator Competition',
     organizer: 'University of Iowa',

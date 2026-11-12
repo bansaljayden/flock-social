@@ -24,7 +24,7 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //     Pennsylvania who builds all of it, from the app to the Flux sensor  the company's IP assignment: nobody else has contributed code, design or art
 //   Asad Ali, growth and competitions lead since late August 2026         Asad Ali's own description of the role, Oct 2026
 //   1st place in Innovation Plan at Pennsylvania DECA States, 2026        on the site since August; its sources are with HONORS in competitions.js
-//   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
+//   the milestones, each dated                                            the code history, Apple, the state and D-U-N-S records, the model and sensor logs (see MILESTONES)
 //   the competitions and their statuses, and the honors                   competitions.js, which names its sources
 // No team member's school is named anywhere on the page (a Diamond Challenge
 // rule). The competitions' organizers are named, and some are universities;
@@ -57,16 +57,37 @@ const HOLDS = [
 // milestone the others led to (.is-milestone in AboutPage.css). Its words
 // "on the App Store" link to the picture of the listing on the home page
 // (AppStoreListing.js); Apple's badge is in "Where things stand" below.
+//
+// WHAT COUNTS AS A MILESTONE (his call, 2026-11-11): what Flock built,
+// shipped or became. Not a competition entry: those are in Competitions, and
+// he said a submitted pitch "doesn't matter at all" here. Every entry is a
+// dated fact from the company's own records (the code history, Apple's
+// emails, the state and D-U-N-S records, the model and sensor logs); a month
+// stands in where the day is not on the record. No accuracy figures (the
+// model-metrics rule), no user counts.
 const MILESTONES = [
-  { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
-  { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
-  { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
-  { when: 'October 2026', what: 'iPhone app submitted to the App Store.' },
+  { when: 'January 18, 2026', date: '2026-01-18', what: 'Flock’s code history begins.' },
+  { when: 'March to May 2026', what: 'Flock gathered its first large crowd dataset: about 457,000 live readings of how busy places were, across dozens of cities.' },
+  { when: 'June 18, 2026', date: '2026-06-18', what: 'The first iPhone build reached TestFlight, Apple’s beta testing app.' },
+  { when: 'August 12, 2026', date: '2026-08-12', what: 'flockcorp.com went live.' },
+  { when: 'August 12, 2026', date: '2026-08-12', what: 'Starling, Flock’s crowd forecast model, started forecasting in the app.' },
+  { when: 'August 17, 2026', date: '2026-08-17', what: 'The iPhone app was submitted to the App Store for the first time.' },
+  { when: 'August 18, 2026', date: '2026-08-18', what: 'Flock’s source code went public on GitHub.' },
+  { when: 'September 2026', date: '2026-09', what: 'Flock Social LLC formed in Pennsylvania.' },
+  { when: 'September 24, 2026', date: '2026-09-24', what: 'Flock Social LLC received its D-U-N-S business number.' },
+  { when: 'September 25, 2026', date: '2026-09-25', what: 'The first Flux sensor prototype ran: a box that counts the people in a room without sending a picture.' },
+  { when: 'October 13, 2026', date: '2026-10-13', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
+  { when: 'October 2026', date: '2026-10', what: 'The forecasting method was tested on public people-count data: 33 sources and 9.1 million counts.' },
+  { when: 'October 20, 2026', date: '2026-10-20', what: 'Venues can post their own deals and events, shown on their venue card.' },
+  { when: 'October 21, 2026', date: '2026-10-21', what: 'The new flockcorp.com launched, with pages on how Flock works, its AI, Flux and the research.' },
+  { when: 'October 30, 2026', date: '2026-10-30', what: 'Live crowd readings grew to 30 cities, every hour.' },
+  { when: 'November 3, 2026', date: '2026-11-03', what: 'Owl, Flux’s people counter, was retrained on 28 public thermal datasets.' },
   { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
 ];
 
-// The competitions ledger's lead. Only entries that went in are listed.
-const COMPETITIONS_LEAD = 'Where Flock has been entered.';
+// The competitions ledger's lead: the ones Flock is entering next and the
+// ones it has been entered in (competitions.js says which is which).
+const COMPETITIONS_LEAD = 'Where Flock competes.';
 
 // An entry's words with one phrase in them made a link.
 function withLink(what, { words, href }) {

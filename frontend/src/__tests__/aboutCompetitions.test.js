@@ -6,8 +6,9 @@
  *      entered it and a status that is a past or present fact, never a
  *      result (finalist, winner, award) and never a prize, fee or deadline; the
  *      date behind a status says the same month as the words, and none is in
- *      the future; only the Conrad entry is the maintainer's with Asad; nothing still
- *      being prepared is listed;
+ *      the future, except the main ones being entered next ("Entering,
+ *      <month>", his call 2026-11-11), which are never in the past; Asad is
+ *      on DECA, the Diamond Challenge and Conrad; every credit says "By";
  *   2. the page renders every entry as a row of the Competitions ledger on the
  *      navy band, between the milestones (or the honors) and where things
  *      stand: the name, who runs it and who entered it, beside the status. The
@@ -111,50 +112,64 @@ describe('competitions.js keeps to its rules', () => {
 
   test('a status is a fact about the entry, never a result, a prize, a fee or a deadline', () => {
     for (const c of COMPETITIONS) {
-      expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted)\b/)]);
+      expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted|Entering)\b/)]);
       const words = [c.name, c.organizer, c.status, c.team].join(' | ');
       expect([c.name, RESULT_WORDS.exec(words)]).toEqual([c.name, null]);
       expect([c.name, MONEY_AND_DATES.exec(words)]).toEqual([c.name, null]);
     }
   });
 
-  test('the date behind a status says the same thing as its words, and none is in the future', () => {
+  /* His call 2026-11-11: the main competitions Flock is entering next are
+     listed too ("Entering, <month>"). An upcoming one is never in the past:
+     when its month goes by, this fails until the status says what happened,
+     which keeps the page from claiming a plan that already ran. */
+  test('the date behind a status says the same thing as its words; what is in is not in the future, and what is next is not in the past', () => {
     const now = Date.now();
+    const thisMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
     for (const c of COMPETITIONS) {
       expect([c.name, c.date]).toEqual([c.name, expect.stringMatching(/^\d{4}-\d{2}(-\d{2})?$/)]);
       expect([c.name, c.status.endsWith(spoken(c.date))]).toEqual([c.name, true]);
-      expect([c.name, startOf(c.date) <= now]).toEqual([c.name, true]);
+      if (c.status.startsWith('Entering')) {
+        expect([c.name, startOf(c.date) >= thisMonth]).toEqual([c.name, true]);
+      } else {
+        expect([c.name, startOf(c.date) <= now]).toEqual([c.name, true]);
+      }
     }
-    // Newest first, every entry dated.
-    const dated = COMPETITIONS.filter((c) => c.date).map((c) => startOf(c.date));
-    expect(dated).toEqual([...dated].sort((a, b) => b - a));
-    const firstUndated = COMPETITIONS.findIndex((c) => !c.date);
-    if (firstUndated >= 0) expect(COMPETITIONS.slice(firstUndated).every((c) => !c.date)).toBe(true);
+    // Upcoming first, soonest first; then the rest, newest first.
+    const next = COMPETITIONS.filter((c) => c.status.startsWith('Entering'));
+    const done = COMPETITIONS.filter((c) => !c.status.startsWith('Entering'));
+    expect(COMPETITIONS).toEqual([...next, ...done]);
+    const nextDates = next.map((c) => startOf(c.date));
+    expect(nextDates).toEqual([...nextDates].sort((a, b) => a - b));
+    const doneDates = done.map((c) => startOf(c.date));
+    expect(doneDates).toEqual([...doneDates].sort((a, b) => b - a));
   });
 
-  test('only the Conrad entry is the maintainer\'s with Asad; the rest are the maintainer\'s alone', () => {
+  test('Asad is on DECA, the Diamond Challenge and Conrad; the rest are the maintainer\'s alone', () => {
     const withAsad = COMPETITIONS.filter((c) => /Asad Ali/.test(c.team)).map((c) => c.name);
-    expect(withAsad).toEqual(['Conrad Challenge']);
+    expect(withAsad).toEqual(['Start-Up Business Plan', 'Diamond Challenge', 'Conrad Challenge']);
     for (const c of COMPETITIONS) {
-      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^Entered by Jayden Bansal( and Asad Ali)?$/)]);
+      // "By", never "Entered by": an upcoming entry has not been entered.
+      expect([c.name, c.team]).toEqual([c.name, expect.stringMatching(/^By Jayden Bansal( and Asad Ali)?$/)]);
     }
   });
 
-  test('nothing still being prepared is listed: an entry goes in once it is submitted', () => {
-    for (const c of COMPETITIONS) {
-      expect([c.name, c.team.startsWith('Entered by ')]).toEqual([c.name, true]);
-      expect([c.name, typeof c.date]).toEqual([c.name, 'string']);
+  test('the main ones he named are listed, and an upcoming one never says Submitted', () => {
+    const names = COMPETITIONS.map((c) => c.name);
+    for (const n of ['Diamond Challenge', 'Blue Ocean Competition', 'Conrad Challenge', 'Start-Up Business Plan']) {
+      expect(names).toContain(n);
     }
-    expect(COMPETITIONS.map((c) => c.name).join(' ')).not.toMatch(/Start-Up Business Plan/);
+    const upcoming = COMPETITIONS.filter((c) => /Diamond|Blue Ocean|Start-Up/.test(c.name));
+    for (const c of upcoming) expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^Entering, /)]);
   });
 
-  test('Jacobson is listed now that it is submitted (2026-11-11), newest first', () => {
-    expect(COMPETITIONS[0]).toEqual({
+  test('Jacobson is listed now that it is submitted (2026-11-11), the newest of what is in', () => {
+    expect(COMPETITIONS.find((c) => !c.status.startsWith('Entering'))).toEqual({
       name: 'Jacobson Innovator Competition',
       organizer: 'University of Iowa',
       status: 'Submitted November 11, 2026',
       date: '2026-11-11',
-      team: 'Entered by Jayden Bansal',
+      team: 'By Jayden Bansal',
     });
   });
 
@@ -230,9 +245,9 @@ describe('/about shows the competitions', () => {
     unmount();
   });
 
-  test('the lead says where Flock has been entered, and nothing about what is being prepared', () => {
+  test('the lead says where Flock competes, and nothing about what is being prepared', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
-    expect(flat(container.querySelector('section[aria-labelledby="ab-h-comps"] .lp-lead').textContent)).toBe('Where Flock has been entered.');
+    expect(flat(container.querySelector('section[aria-labelledby="ab-h-comps"] .lp-lead').textContent)).toBe('Where Flock competes.');
     expect(container.textContent).not.toMatch(/being prepared|In progress/i);
     unmount();
   });

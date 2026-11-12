@@ -170,10 +170,12 @@ describe('/about', () => {
     expect(container.querySelectorAll('.ab-milestones li.is-milestone')).toHaveLength(1);
   });
 
-  test('the October entry says what happened then, and nothing says "in review"', () => {
+  test('the first App Store submission is dated to August, when it happened, and nothing says "in review"', () => {
     const { container } = render(React.createElement(AboutPage));
     const text = Array.from(container.querySelectorAll('.ab-milestones li')).map((li) => flat(li.textContent));
-    expect(text).toContain('October 2026 iPhone app submitted to the App Store.');
+    // It said October, which was a resubmission; the first was August 17.
+    expect(text).toContain('August 17, 2026 The iPhone app was submitted to the App Store for the first time.');
+    expect(text.join(' | ')).not.toMatch(/October 2026 iPhone app submitted/);
     expect(flat(container.textContent)).not.toMatch(/in review|App Store review/i);
   });
 
