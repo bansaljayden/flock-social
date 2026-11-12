@@ -279,12 +279,33 @@ function describePlan(top) {
     + `slowest steps: ${slowest.join('; ') || 'none over 5%'}`;
 }
 
-async function jobQuery(sql, params, { plan = false } = {}) {
+// HOW TWO OF THE STATEMENTS ARE PLANNED, FROM PRODUCTION'S FIRST PLANS (07:00
+// UTC, 12 November 2026). The offsets statement read every live reading in the
+// window with a sequential scan of ml_training_data: 15.8 s for 1,361,010 rows,
+// then hash joins (the curve table's scan 3.1 s, the join 5.5 s), 33.0 s in
+// all. The offset readings statement needs the same rows, but production
+// reached them through a bitmap over the realtime slot index, whose heap reads
+// scattered across the table: 53.3 s of its 69.8 s, 1,309 MB from disk. The
+// recent readings statement looked up each of its 191,709 readings' curves one
+// at a time in the curve table's primary key: 22.8 s of 32.3 s, 1,848 MB from
+// disk. So, each inside its own statement's transaction and nowhere else: the
+// offset readings statement is planned without bitmap or index scans, which
+// leaves it the offsets statement's sequential scan and hash joins, and the
+// recent readings statement without nested loops, which leaves its curves to a
+// hash join. Neither changes a row of what they store (the tests compare), and
+// the sequential scan's cost follows the table rather than the window, so it
+// does not double as the window fills to about 24 November. The next daily plan
+// says whether production agreed.
+const OFFSET_READINGS_SETTINGS = ['SET LOCAL enable_bitmapscan = off', 'SET LOCAL enable_indexscan = off'];
+const RECENT_READINGS_SETTINGS = ['SET LOCAL enable_nestloop = off'];
+
+async function jobQuery(sql, params, { plan = false, settings = [] } = {}) {
   const client = await pool.connect();
   let broken = false;
   try {
     await client.query('BEGIN');
     await client.query(`SET LOCAL statement_timeout = ${JOB_STATEMENT_TIMEOUT_MS}`);
+    for (const setting of settings) await client.query(setting);
     const res = await client.query(plan ? `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}` : sql, params);
     await client.query('COMMIT');
     if (!plan) return res;
@@ -302,7 +323,7 @@ async function jobQuery(sql, params, { plan = false } = {}) {
 
 async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false } = {}) {
   try {
-    const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep], { plan });
+    const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep], { plan, settings: RECENT_READINGS_SETTINGS });
     return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
     console.error('[ML:Deviation] Recent readings not stored (the offset was):', err.message);
@@ -381,7 +402,7 @@ const OFFSET_READINGS_SQL = `
 
 async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK, plan = false } = {}) {
   try {
-    const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep], { plan });
+    const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep], { plan, settings: OFFSET_READINGS_SETTINGS });
     return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
     console.error('[ML:Deviation] Offset readings not stored (the offset was):', err.message);
@@ -473,6 +494,8 @@ module.exports = {
   describePlan,
   rowCountOfPlan,
   PLAN_HOUR_UTC,
+  OFFSET_READINGS_SETTINGS,
+  RECENT_READINGS_SETTINGS,
   WINDOW_DAYS,
   MAX_READINGS,
   READINGS_KEPT,

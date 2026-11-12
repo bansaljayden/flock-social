@@ -650,12 +650,26 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   assert.strictEqual(describeStatementSeconds({ offset: 24.94, recentReadings: 13.06, offsetReadings: 31.8 }),
     'offsets 24.9s, recent readings 13.1s, offset readings 31.8s');
   assert.strictEqual(sessions.length, 3, 'the offset, the recent readings and the offset readings, one transaction each');
-  for (const said of sessions) {
-    assert.deepStrictEqual([said[0], said[1], said[3]], ['BEGIN', 'SET LOCAL statement_timeout = 120000', 'COMMIT']);
-    assert.match(said[2], /^(INSERT INTO ml_venue_recent_deviation|WITH ranked AS \()/);
-  }
+  // Each statement's planner settings (from production's plans, 12 November)
+  // are SET LOCAL inside its own transaction, after the cap and before the
+  // statement; the offsets statement has none.
+  const { RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS } = require('../scripts/ml/buildRecentDeviation');
+  assert.deepStrictEqual(RECENT_READINGS_SETTINGS, ['SET LOCAL enable_nestloop = off']);
+  assert.deepStrictEqual(OFFSET_READINGS_SETTINGS, ['SET LOCAL enable_bitmapscan = off', 'SET LOCAL enable_indexscan = off']);
+  const settings = [[], RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS];
+  sessions.forEach((said, i) => {
+    const n = settings[i].length;
+    assert.strictEqual(said.length, 4 + n);
+    assert.deepStrictEqual(said.slice(0, 2), ['BEGIN', 'SET LOCAL statement_timeout = 120000']);
+    assert.deepStrictEqual(said.slice(2, 2 + n), settings[i]);
+    assert.match(said[2 + n], /^(INSERT INTO ml_venue_recent_deviation|WITH ranked AS \()/);
+    assert.strictEqual(said[3 + n], 'COMMIT');
+  });
   const capAfter = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
   assert.strictEqual(capAfter, capBefore, 'the connection went back with the cap it came with');
+  for (const name of ['enable_nestloop', 'enable_bitmapscan', 'enable_indexscan']) {
+    assert.strictEqual((await appPool.query(`SHOW ${name}`)).rows[0][name], 'on', `and with ${name} as it was`);
+  }
 });
 
 // Once a day the collector runs the three statements under EXPLAIN (ANALYZE,
