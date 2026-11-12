@@ -66,10 +66,16 @@ try {
       REACT_APP_POSTHOG_KEY: '',
       REACT_APP_POSTHOG_HOST: '',
       REACT_APP_SENTRY_DSN: '',
-      // This is a production-mode build with no MapTiler key, and a release
-      // like that draws no basemap. The e2e stack is not a release, so it asks
-      // for CARTO's keyless one by name
-      // (frontend/src/components/map/keylessBasemap.js).
+      // No MapTiler key. The build reads frontend/.env, which holds the real
+      // one, and until 2026-11-12 nothing here overrode it, so every e2e run
+      // and click-through that opened a map drew MapTiler tiles on the paid
+      // plan (4 of the build's chunks carried the key). An empty value set
+      // here wins over the .env file (dotenv never overwrites a variable that
+      // is already set), and the map code treats empty as no key.
+      REACT_APP_MAPTILER_KEY: '',
+      // A production-mode build with no MapTiler key draws no basemap as a
+      // release. The e2e stack is not a release, so it asks for CARTO's
+      // keyless one by name (frontend/src/components/map/keylessBasemap.js).
       REACT_APP_KEYLESS_BASEMAP: 'carto',
     },
   });
