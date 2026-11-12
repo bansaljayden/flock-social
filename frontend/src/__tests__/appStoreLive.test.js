@@ -158,23 +158,23 @@ describe('the home page', () => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('/about', () => {
-  test('November 4, 2026 is on the record, as the milestone the others led to', () => {
+  // The milestones became a timeline of stages dated by month (2026-11-11);
+  // the App Store dot is still the one set apart.
+  test('the App Store launch is on the timeline, as the dot set apart', () => {
     const { container } = render(React.createElement(AboutPage));
-    const items = Array.from(container.querySelectorAll('.ab-milestones li'));
-    const last = items[items.length - 1];
-    expect(flat(last.textContent)).toBe('November 4, 2026 Flock is on the App Store.');
-    expect(last.classList.contains('is-milestone')).toBe(true);
-    const when = last.querySelector('time.ab-when');
-    expect(when.getAttribute('dateTime') || when.getAttribute('datetime')).toBe('2026-11-04');
+    const set = container.querySelectorAll('.ab-timeline li.is-milestone');
     // Only that one entry is set apart.
-    expect(container.querySelectorAll('.ab-milestones li.is-milestone')).toHaveLength(1);
+    expect(set).toHaveLength(1);
+    expect(flat(set[0].textContent)).toBe('Launched November 2026 Flock is on the App Store.');
+    const when = set[0].querySelector('time.ab-when');
+    expect(when.getAttribute('dateTime') || when.getAttribute('datetime')).toBe('2026-11');
   });
 
-  test('the first App Store submission is dated to August, when it happened, and nothing says "in review"', () => {
+  test('no line dates the first App Store submission to October, and nothing says "in review"', () => {
     const { container } = render(React.createElement(AboutPage));
-    const text = Array.from(container.querySelectorAll('.ab-milestones li')).map((li) => flat(li.textContent));
-    // It said October, which was a resubmission; the first was August 17.
-    expect(text).toContain('August 17, 2026 The iPhone app was submitted to the App Store for the first time.');
+    const text = Array.from(container.querySelectorAll('.ab-timeline li')).map((li) => flat(li.textContent));
+    // It said October, which was a resubmission (the first was August 17);
+    // the submission line came off with the minor milestones.
     expect(text.join(' | ')).not.toMatch(/October 2026 iPhone app submitted/);
     expect(flat(container.textContent)).not.toMatch(/in review|App Store review/i);
   });
@@ -343,16 +343,15 @@ describe('the picture of the listing', () => {
     expect(SCRIPT).not.toMatch(/\.(click|dblclick|fill|type|press|check|tap|setInputFiles)\(|storageState|addCookies|httpCredentials|setExtraHTTPHeaders/);
   });
 
-  test('/about\'s November 4 milestone links its words to the picture', () => {
+  test('/about\'s App Store dot links its words to the picture', () => {
     expect(LISTING_ID).toBe('listing');
     const { container } = render(React.createElement(AboutPage));
-    const items = Array.from(container.querySelectorAll('.ab-milestones li'));
-    const last = items[items.length - 1];
-    const a = last.querySelector('a');
+    const dot = container.querySelector('.ab-timeline li.is-milestone');
+    const a = dot.querySelector('a');
     expect(a.getAttribute('href')).toBe('/#listing');
     expect(a.textContent).toBe('on the App Store');
-    expect(flat(last.textContent)).toBe('November 4, 2026 Flock is on the App Store.');
-    expect(container.querySelectorAll('.ab-milestones a')).toHaveLength(1);
+    expect(flat(dot.textContent)).toBe('Launched November 2026 Flock is on the App Store.');
+    expect(container.querySelectorAll('.ab-timeline a')).toHaveLength(1);
     // The home page carries that id, on the picture.
     const home = render(React.createElement(LandingPage));
     expect(home.container.querySelector('#listing').tagName).toBe('FIGURE');

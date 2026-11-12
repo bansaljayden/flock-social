@@ -13,9 +13,9 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 
 // /about, rebuilt on the landing page's system (.lp tokens, SiteNav) on
 // 2026-10-21, in the order the best company About pages use: who and what,
-// the story, the people, what the company holds to, milestones, where things
+// the story, the people, what the company holds to, the timeline, where things
 // stand, how to reach it. Honors and competitions (2026-11-06) follow the
-// milestones.
+// timeline.
 //
 // THE RULE FOR THIS PAGE: every fact is real and on the record, and anything
 // not yet written is a placeholder that says it is coming, never invented copy.
@@ -24,7 +24,7 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //     Pennsylvania who builds all of it, from the app to the Flux sensor  the company's IP assignment: nobody else has contributed code, design or art
 //   Asad Ali, growth and competitions lead since late August 2026         Asad Ali's own description of the role, Oct 2026
 //   1st place in Innovation Plan at Pennsylvania DECA States, 2026        on the site since August; its sources are with HONORS in competitions.js
-//   the milestones, each dated                                            the code history, Apple, the state and D-U-N-S records, the model and sensor logs (see MILESTONES)
+//   the timeline, each dot dated by month                                 the code history, Apple, the state record, the model and sensor logs, the honors (see TIMELINE)
 //   the competitions and their statuses, and the honors                   competitions.js, which names its sources
 // No team member's school is named anywhere on the page (a Diamond Challenge
 // rule). The competitions' organizers are named, and some are universities;
@@ -52,37 +52,44 @@ const HOLDS = [
   { what: 'Only what ships.', how: 'If the site describes a feature, the app does it today.' },
 ];
 
-// The last entry is the day itself: Apple released Flock 1.0 for iPhone on
-// November 4, 2026. It is dated to the day, in a <time>, and set as the
-// milestone the others led to (.is-milestone in AboutPage.css). Its words
-// "on the App Store" link to the picture of the listing on the home page
-// (AppStoreListing.js); Apple's badge is in "Where things stand" below.
-//
-// WHAT COUNTS AS A MILESTONE (his call, 2026-11-11): what Flock built,
-// shipped or became. Not a competition entry: those are in Competitions, and
-// he said a submitted pitch "doesn't matter at all" here. Every entry is a
-// dated fact from the company's own records (the code history, Apple's
-// emails, the state and D-U-N-S records, the model and sensor logs); a month
-// stands in where the day is not on the record. No accuracy figures (the
-// model-metrics rule), no user counts.
-const MILESTONES = [
-  { when: 'January 18, 2026', date: '2026-01-18', what: 'Flock’s code history begins.' },
-  { when: 'March to May 2026', what: 'Flock gathered its first large crowd dataset: about 457,000 live readings of how busy places were, across dozens of cities.' },
-  { when: 'June 18, 2026', date: '2026-06-18', what: 'The first iPhone build reached TestFlight, Apple’s beta testing app.' },
-  { when: 'August 12, 2026', date: '2026-08-12', what: 'flockcorp.com went live.' },
-  { when: 'August 12, 2026', date: '2026-08-12', what: 'Starling, Flock’s crowd forecast model, started forecasting in the app.' },
-  { when: 'August 17, 2026', date: '2026-08-17', what: 'The iPhone app was submitted to the App Store for the first time.' },
-  { when: 'August 18, 2026', date: '2026-08-18', what: 'Flock’s source code went public on GitHub.' },
-  { when: 'September 2026', date: '2026-09', what: 'Flock Social LLC formed in Pennsylvania.' },
-  { when: 'September 24, 2026', date: '2026-09-24', what: 'Flock Social LLC received its D-U-N-S business number.' },
-  { when: 'September 25, 2026', date: '2026-09-25', what: 'The first Flux sensor prototype ran: a box that counts the people in a room without sending a picture.' },
-  { when: 'October 13, 2026', date: '2026-10-13', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
-  { when: 'October 2026', date: '2026-10', what: 'The forecasting method was tested on public people-count data: 33 sources and 9.1 million counts.' },
-  { when: 'October 20, 2026', date: '2026-10-20', what: 'Venues can post their own deals and events, shown on their venue card.' },
-  { when: 'October 21, 2026', date: '2026-10-21', what: 'The new flockcorp.com launched, with pages on how Flock works, its AI, Flux and the research.' },
-  { when: 'October 30, 2026', date: '2026-10-30', what: 'Live crowd readings grew to 30 cities, every hour.' },
-  { when: 'November 3, 2026', date: '2026-11-03', what: 'Owl, Flux’s people counter, was retrained on 28 public thermal datasets.' },
-  { when: 'November 4, 2026', date: '2026-11-04', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
+// THE TIMELINE (his call, 2026-11-11): the company's story in ten dots, where
+// it started, grew, changed and became. It replaced "Milestones so far", a
+// dated log that grew to seventeen lines and, dated to the day, read as
+// everything happening at once; so each dot is a stage with a month. Every
+// dot is a fact from the company's own records (the code history, Apple's
+// emails, the state record, the model and sensor logs, the honors in
+// competitions.js). No accuracy figures (the model-metrics rule), no user
+// counts.
+//   January 2026     the first commit in Flock's code history, January 18
+//   Early 2026       1st place in Innovation Plan at Pennsylvania DECA States,
+//                    on the site since August; the state conference runs
+//                    before April's international one, and its month is not
+//                    on the record (see HONORS in competitions.js)
+//   June 2026        the iPhone app rebuilt on the web app's code (June 17),
+//                    first TestFlight build June 18
+//   August 2026      flockcorp.com and Starling both went live August 12
+//   August 2026      Asad Ali joined, late August (PEOPLE, below)
+//   September 2026   Flock Social LLC organized, Pennsylvania
+//   September 2026   the first Flux prototype ran, September 25
+//   October 2026     the research paper, published here October 13
+//   November 2026    Apple released Flock 1.0, November 4
+//   November 2026    LionCage, November 6 (HONORS in competitions.js)
+// The two competition dots carry the competition's logo, the same file the
+// Competitions ledger shows (his call: a competition and its logo go
+// together). The App Store dot is the one set apart (.is-milestone), and its
+// words "on the App Store" link to the picture of the listing on the home
+// page (AppStoreListing.js); Apple's badge is in "Where things stand" below.
+const TIMELINE = [
+  { stage: 'It started', when: 'January 2026', date: '2026-01', what: 'the maintainer began building Flock, an app for making plans with friends.' },
+  { stage: 'First win', when: 'Early 2026', what: 'Flock’s Innovation Plan took 1st place at the Pennsylvania DECA state conference.', logo: { src: '/logos/competitions/deca.png', width: 640, height: 132 } },
+  { stage: 'Changed course', when: 'June 2026', date: '2026-06', what: 'The iPhone app was rebuilt on the web app’s code, so one Flock runs everywhere, and the first build reached TestFlight.' },
+  { stage: 'Went live', when: 'August 2026', date: '2026-08', what: 'flockcorp.com went live, with Starling, Flock’s crowd forecast model, forecasting in the app.' },
+  { stage: 'Grew', when: 'August 2026', date: '2026-08', what: 'Asad Ali joined as growth and competitions lead.' },
+  { stage: 'Became a company', when: 'September 2026', date: '2026-09', what: 'Flock Social LLC formed in Pennsylvania.' },
+  { stage: 'Built hardware', when: 'September 2026', date: '2026-09', what: 'The first Flux sensor ran: a box that counts the people in a room without sending a picture.' },
+  { stage: 'Published', when: 'October 2026', date: '2026-10', what: 'Flock published its research paper on forecasting crowds and counting people.' },
+  { stage: 'Launched', when: 'November 2026', date: '2026-11', what: 'Flock is on the App Store.', milestone: true, link: { words: 'on the App Store', href: `/#${LISTING_ID}` } },
+  { stage: 'Recognized', when: 'November 2026', date: '2026-11', what: '2nd place in the Technology category and the Rising Entrepreneur Award at LionCage, Penn State Great Valley.', logo: { src: '/logos/competitions/launchbox.png', width: 640, height: 166 } },
 ];
 
 // The competitions ledger's lead: the ones Flock is entering next and the
@@ -202,7 +209,7 @@ export default function AboutPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-paper" aria-labelledby="ab-h-milestones">
+        <section className="lp-sec lp-sec-paper" aria-labelledby="ab-h-timeline">
           <div className="lp-wrap">
             <img
               className="lp-art ab-milestones-art"
@@ -213,18 +220,35 @@ export default function AboutPage() {
               loading="lazy" decoding="async"
               alt=""
             />
-            <h2 id="ab-h-milestones">Milestones so far</h2>
-            <ol className="ab-milestones">
-              {MILESTONES.map((m) => (
-                <li key={m.what} className={m.milestone ? 'is-milestone' : undefined}>
-                  {m.date
-                    ? <time className="ab-when" dateTime={m.date}>{m.when}</time>
-                    : <span className="ab-when">{m.when}</span>}{' '}
-                  <span className="ab-what">{m.link ? withLink(m.what, m.link) : m.what}</span>
+            <h2 id="ab-h-timeline">Timeline</h2>
+            {/* One dot to a stage on a line down the left; the stage's name,
+                its month, what happened; a competition's logo beside its dot.
+                Spans, not paragraphs, inside each item, with a space between
+                them, so the item reads as one line ("Went live August 2026
+                flockcorp.com went live ...") to a screen reader and in the
+                copy AI crawlers are served. The logo's alt is empty: the words
+                name the competition. */}
+            <ol className="ab-timeline">
+              {TIMELINE.map((t) => (
+                <li key={t.what} className={t.milestone ? 'is-milestone' : undefined}>
+                  <span className="ab-tl-dot" aria-hidden="true" />
+                  <span className="ab-tl-body">
+                    <span className="ab-tl-head">
+                      <span className="ab-tl-stage">{t.stage}</span>{' '}
+                      {t.date
+                        ? <time className="ab-when" dateTime={t.date}>{t.when}</time>
+                        : <span className="ab-when">{t.when}</span>}
+                    </span>{' '}
+                    <span className="ab-what">{t.link ? withLink(t.what, t.link) : t.what}</span>
+                  </span>
+                  {t.logo && (
+                    <span className="ab-tl-logo">
+                      <img src={t.logo.src} width={t.logo.width} height={t.logo.height} alt="" loading="lazy" decoding="async" />
+                    </span>
+                  )}
                 </li>
               ))}
             </ol>
-            <p className="ab-coming">Photos and the story behind each one are coming soon.</p>
           </div>
         </section>
 

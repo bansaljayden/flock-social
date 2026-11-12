@@ -279,7 +279,7 @@ describe('/about shows the competitions', () => {
     unmount();
   });
 
-  test('the ledger sits on the navy band between the milestones and where things stand', () => {
+  test('the ledger sits on the navy band between the timeline (or the honors) and where things stand', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
     const sections = sectionsOf(container);
     const at = sections.findIndex((s) => s.getAttribute('aria-labelledby') === 'ab-h-comps');
@@ -287,7 +287,7 @@ describe('/about shows the competitions', () => {
     expect(sections[at].classList.contains('lp-on-navy')).toBe(true);
     expect(sections[at + 1].getAttribute('aria-labelledby')).toBe('ab-h-now');
     const before = sections[at - 1].getAttribute('aria-labelledby');
-    expect(before).toBe(HONORS.length ? 'ab-h-honors' : 'ab-h-milestones');
+    expect(before).toBe(HONORS.length ? 'ab-h-honors' : 'ab-h-timeline');
     unmount();
   });
 
@@ -306,7 +306,7 @@ describe('Honors appear only when there is one', () => {
     unmount();
   });
 
-  test('today the Honors section holds the LionCage and DECA results, newest first, and the milestones no longer do', () => {
+  test('today the Honors section holds the LionCage and DECA results, newest first, and the timeline marks both with their logos', () => {
     const { container, unmount } = render(React.createElement(AboutPage));
     const section = container.querySelector('section[aria-labelledby="ab-h-honors"]');
     expect(section).not.toBeNull();
@@ -321,9 +321,15 @@ describe('Honors appear only when there is one', () => {
     expect(items[1].querySelector('time')).toBeNull();
     expect(flat(items[1].querySelector('.ab-when').textContent)).toBe('2026');
 
-    const milestones = Array.from(container.querySelectorAll('.ab-milestones li')).map((li) => flat(li.textContent));
-    expect(milestones.join(' | ')).not.toMatch(/DECA|\bAward\b/);
-    // Said once on the page, in the Honors section.
+    // The timeline (2026-11-11) has a dot for each, as a stage of the
+    // company's story, and each carries its competition's logo, the same
+    // file the Competitions ledger uses (his call: a competition and its logo
+    // go together). The honor's own words stay in Honors alone.
+    const dots = Array.from(container.querySelectorAll('.ab-timeline li'));
+    const deca = dots.find((li) => /DECA/.test(li.textContent));
+    const lion = dots.find((li) => /LionCage/.test(li.textContent));
+    expect(deca.querySelector('.ab-tl-logo img').getAttribute('src')).toBe('/logos/competitions/deca.png');
+    expect(lion.querySelector('.ab-tl-logo img').getAttribute('src')).toBe('/logos/competitions/launchbox.png');
     expect(container.textContent.match(/DECA States/g)).toHaveLength(1);
 
     const bands = sectionsOf(container).map(bandOf);
@@ -355,15 +361,15 @@ describe('Honors appear only when there is one', () => {
 
     const sections = sectionsOf(container);
     const at = sections.indexOf(section);
-    expect(sections[at - 1].getAttribute('aria-labelledby')).toBe('ab-h-milestones');
+    expect(sections[at - 1].getAttribute('aria-labelledby')).toBe('ab-h-timeline');
     expect(sections[at + 1].getAttribute('aria-labelledby')).toBe('ab-h-comps');
     const bands = sections.map(bandOf);
     for (let i = 1; i < bands.length; i += 1) expect([i, bands[i]]).not.toEqual([i, bands[i - 1]]);
 
-    // The honors log is its own list: the App Store day stays the last
-    // milestone, which appStoreLive.test.js holds it to.
-    const milestones = Array.from(container.querySelectorAll('.ab-milestones li'));
-    expect(flat(milestones[milestones.length - 1].textContent)).toBe('November 4, 2026 Flock is on the App Store.');
+    // The honors log is its own list: the timeline's App Store dot stays the
+    // one set apart, which appStoreLive.test.js holds it to.
+    const launch = container.querySelector('.ab-timeline li.is-milestone');
+    expect(flat(launch.textContent)).toBe('Launched November 2026 Flock is on the App Store.');
 
     // The outline still steps one level at a time.
     const levels = Array.from(container.querySelectorAll('h1,h2,h3')).map((h) => Number(h.tagName[1]));
