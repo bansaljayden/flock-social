@@ -57,7 +57,7 @@ const PEOPLE = [
     initials: 'AA',
     role: 'Growth & Competitions Lead',
     line: 'On Flock since late August 2026.',
-    more: 'He leads Flock’s growth and its competition entries. With the maintainer he took Flock into the Conrad Challenge’s Innovation Stage and is entering DECA’s Start-Up Business Plan and the Diamond Challenge. He also tests the app the way a new user would, and two of November’s fixes came from his notes.',
+    more: 'He leads Flock’s growth and its competition entries. With the maintainer he took Flock into the Conrad Challenge’s Innovation Stage and is entering DECA’s Start-Up Business Plan and the Diamond Challenge. He also tests the app the way a new user would.',
     photo: { src: '/people/asad-ali-280.webp', srcSet: '/people/asad-ali-280.webp 280w, /people/asad-ali-520.webp 520w' },
   },
 ];

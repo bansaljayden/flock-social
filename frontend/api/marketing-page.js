@@ -221,7 +221,7 @@ const PAGE_BLOCKS = {
     ["h3", "Asad Ali"],
     ["p", "Growth & Competitions Lead"],
     ["p", "On Flock since late August 2026."],
-    ["p", "He leads Flock’s growth and its competition entries. With the maintainer he took Flock into the Conrad Challenge’s Innovation Stage and is entering DECA’s Start-Up Business Plan and the Diamond Challenge. He also tests the app the way a new user would, and two of November’s fixes came from his notes."],
+    ["p", "He leads Flock’s growth and its competition entries. With the maintainer he took Flock into the Conrad Challenge’s Innovation Stage and is entering DECA’s Start-Up Business Plan and the Diamond Challenge. He also tests the app the way a new user would."],
     ["h2", "What Flock holds to"],
     ["h3", "Your budget stays yours."],
     ["p", "The group sees one rounded-down number. Nobody else sees what you typed."],
