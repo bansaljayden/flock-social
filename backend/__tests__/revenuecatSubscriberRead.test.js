@@ -150,6 +150,13 @@ app.use('/api/revenuecat', revenuecatRouter);
 
 let base;
 const server = http.createServer(app);
+// Idle connections never time out here. The boot test below blocks this
+// process with spawnSync, 6.6 and 10.3 s in a loaded pre-push run on
+// 2026-11-13; past the default 5 s keep-alive, the server's close and the next
+// test's fetch on the pooled connection race, and that fetch dies with
+// ECONNRESET (5 of 10 tries after a 7 s block, 0 of 10 with this). test.after
+// closes every connection, so none outlives the file.
+server.keepAliveTimeout = 0;
 test.before(() => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => {
     base = `http://127.0.0.1:${server.address().port}`;

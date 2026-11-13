@@ -128,6 +128,11 @@ app.use((err, _req, res, _next) => {
 
 let base;
 const server = http.createServer(app);
+// Idle connections never time out here: the spawnSync children below block
+// this process, and past the default 5 s keep-alive the server's close races
+// the next fetch on the pooled connection (ECONNRESET on unchanged code; see
+// revenuecatSubscriberRead.test.js). close() still ends the idle ones.
+server.keepAliveTimeout = 0;
 test.before(() => new Promise((resolve) => {
   server.listen(0, '127.0.0.1', () => { base = `http://127.0.0.1:${server.address().port}`; resolve(); });
 }));
