@@ -60,7 +60,10 @@ const HOLDS = [
 // emails, the state record, the model and sensor logs, the honors in
 // competitions.js). No accuracy figures (the model-metrics rule), no user
 // counts.
-//   January 2026     the first commit in Flock's code history, January 18
+//   2025             Flock started in 2025 (his correction, 2026-11-13; the
+//                    first commit in this repository's history is January 18,
+//                    2026, which the timeline used to give, but the work began
+//                    the year before); the year alone, so no machine date
 //   Early 2026       1st place in Innovation Plan at Pennsylvania DECA States,
 //                    on the site since August; the state conference runs
 //                    before April's international one, and its month is not
@@ -80,7 +83,7 @@ const HOLDS = [
 // words "on the App Store" link to the picture of the listing on the home
 // page (AppStoreListing.js); Apple's badge is in "Where things stand" below.
 const TIMELINE = [
-  { stage: 'It started', when: 'January 2026', date: '2026-01', what: 'the maintainer began building Flock, an app for making plans with friends.' },
+  { stage: 'It started', when: '2025', what: 'the maintainer began building Flock, an app for making plans with friends.' },
   { stage: 'First win', when: 'Early 2026', what: 'Flock’s Innovation Plan took 1st place at the Pennsylvania DECA state conference.', logo: { src: '/logos/competitions/deca.png', width: 640, height: 132 } },
   { stage: 'Changed course', when: 'June 2026', date: '2026-06', what: 'The iPhone app was rebuilt on the web app’s code, so one Flock runs everywhere, and the first build reached TestFlight.' },
   { stage: 'Went live', when: 'August 2026', date: '2026-08', what: 'flockcorp.com went live, with Starling, Flock’s crowd forecast model, forecasting in the app.' },

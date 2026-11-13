@@ -232,7 +232,7 @@ const PAGE_BLOCKS = {
     ["h3", "Only what ships."],
     ["p", "If the site describes a feature, the app does it today."],
     ["h2", "Timeline"],
-    ["li", "It started January 2026 the maintainer began building Flock, an app for making plans with friends."],
+    ["li", "It started 2025 the maintainer began building Flock, an app for making plans with friends."],
     ["li", "First win Early 2026 Flock’s Innovation Plan took 1st place at the Pennsylvania DECA state conference."],
     ["li", "Changed course June 2026 The iPhone app was rebuilt on the web app’s code, so one Flock runs everywhere, and the first build reached TestFlight."],
     ["li", "Went live August 2026 flockcorp.com went live, with Starling, Flock’s crowd forecast model, forecasting in the app."],
