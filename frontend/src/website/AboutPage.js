@@ -326,7 +326,9 @@ export default function AboutPage() {
             call, 2026-11-11), then the name with who runs it and who entered
             it, then where it stands. The logo's alt is empty: the organizer is
             named in words right beside it, so a screen reader would only hear
-            it twice. The line on what went in came off the same day. */}
+            it twice. The line on what went in came off the same day. An entry
+            with two logos (AwardX and LaunchX, 2026-11-13) stacks a tile for
+            each in the same column. */}
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ab-h-comps">
           <div className="lp-wrap">
             <h2 id="ab-h-comps">Competitions</h2>
@@ -334,15 +336,19 @@ export default function AboutPage() {
             <div className="ab-comps">
               {COMPETITIONS.map((c) => (
                 <div key={c.name} className="ab-comp">
-                  <div className="ab-comp-logo">
-                    <img
-                      src={c.logo.src}
-                      width={c.logo.width}
-                      height={c.logo.height}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                    />
+                  <div className="ab-comp-logos">
+                    {(c.logos || [c.logo]).map((l) => (
+                      <div key={l.src} className="ab-comp-logo">
+                        <img
+                          src={l.src}
+                          width={l.width}
+                          height={l.height}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </div>
+                    ))}
                   </div>
                   <div>
                     <h3>{c.name}</h3>

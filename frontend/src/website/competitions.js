@@ -43,7 +43,9 @@
 // confirmation. Upcoming (the tracker, rechecked 2026-11-06 on each official
 // page): DECA's District 7 round is 2026-12-15 (the maintainer and Asad); the Diamond
 // Challenge is due 2027-01-14 (the maintainer and Asad); Blue Ocean is due 2027-02-21
-// (the maintainer). Jacobson was submitted 2026-11-11 (the form's confirmation
+// (the maintainer). AwardX International was submitted 2026-11-13 (its portal,
+// apply.awardx.com, shows "You submitted your application" and "Under
+// review"); Jacobson was submitted 2026-11-11 (the form's confirmation
 // page); LionCage was pitched at its finale on 2026-11-06; MIT Solve's
 // dashboard shows the entry submitted 2026-11-05; SXSW EDU 2026-10-24;
 // Stevens 2026-10-18 (the upload page's confirmation); the Congressional App
@@ -64,6 +66,11 @@ const JAYDEN_AND_ASAD = 'By Jayden Bansal and Asad Ali';
 // App Challenge sites, Great Valley LaunchBox, MIT Solve, SXSW EDU, Stevens and
 // Seton Hall (both only offer a white logo, so each is the same artwork in one
 // dark colour), and for Jacobson the University of Iowa's, which runs it.
+// AwardX shows two (his call, 2026-11-13: "the launchx logo and the award x
+// logo", in colour): LaunchX's own colour logo, from launchx.com's footer, and
+// AwardX's wordmark, which its site only offers in white, so the letters take
+// the site's own dark (#171d24) and the X the teal of AwardX's own X mark
+// (#5ec2d3). An entry with two carries `logos` in place of `logo`.
 // They sit beside a status that is true; nothing on the page says certified,
 // endorsed or partnered. `width` and `height` are the file's own pixels, so
 // the tile keeps its shape before the picture arrives.
@@ -94,6 +101,16 @@ export const COMPETITIONS = [
     logo: logo('blue-ocean.png', 614, 192),
     status: 'Entering, February 2027',
     date: '2027-02',
+    team: JAYDEN,
+  },
+  {
+    name: 'AwardX International',
+    organizer: 'LaunchX',
+    // Two logos (his call, 2026-11-13): the competition's and the one who
+    // runs it, a tile each.
+    logos: [logo('awardx.png', 640, 114), logo('launchx.png', 192, 192)],
+    status: 'Submitted November 13, 2026',
+    date: '2026-11-13',
     team: JAYDEN,
   },
   {

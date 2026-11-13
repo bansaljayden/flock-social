@@ -232,7 +232,8 @@
   padding: clamp(18px, 2.4vw, 24px) 0;
   border-top: 1px solid var(--rule-cream);
 }
-.ab-comp-logo { grid-area: logo; }
+/* The logo column: one white tile per logo, stacked (AwardX has two). */
+.ab-comp-logos { grid-area: logo; display: flex; flex-direction: column; gap: 6px; }
 .ab-comp > div:nth-child(2) { grid-area: words; }
 .ab-comp-status { grid-area: status; }
 @media (min-width: 900px) {

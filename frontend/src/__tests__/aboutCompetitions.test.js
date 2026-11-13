@@ -100,7 +100,7 @@ afterEach(() => {
 describe('competitions.js keeps to its rules', () => {
   test('every entry names its organizer, who entered it and a status, and nothing about what went in', () => {
     expect(COMPETITIONS.length).toBeGreaterThan(0);
-    const allowed = ['name', 'organizer', 'logo', 'status', 'date', 'team'];
+    const allowed = ['name', 'organizer', 'logo', 'logos', 'status', 'date', 'team'];
     for (const c of COMPETITIONS) {
       expect(Object.keys(c).filter((k) => !allowed.includes(k))).toEqual([]);
       for (const k of ['name', 'organizer', 'status', 'team']) {
@@ -113,7 +113,8 @@ describe('competitions.js keeps to its rules', () => {
   test('a status is a fact about the entry, never a result, a prize, a fee or a deadline', () => {
     for (const c of COMPETITIONS) {
       expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^(Submitted|Pitched|Accepted|Entering)\b/)]);
-      const words = [c.name, c.organizer, c.status, c.team].join(' | ');
+      // "AwardX" is a competition's name, not a claim of an award.
+      const words = [c.name, c.organizer, c.status, c.team].join(' | ').replace(/\bAwardX\b/g, '');
       expect([c.name, RESULT_WORDS.exec(words)]).toEqual([c.name, null]);
       expect([c.name, MONEY_AND_DATES.exec(words)]).toEqual([c.name, null]);
     }
@@ -161,13 +162,19 @@ describe('competitions.js keeps to its rules', () => {
   test('every entry has its organizer\'s logo, a real file of the size it says', () => {
     const PUBLIC = path.join(__dirname, '..', '..', 'public');
     for (const c of COMPETITIONS) {
-      expect([c.name, typeof c.logo]).toEqual([c.name, 'object']);
-      expect([c.name, c.logo.src]).toEqual([c.name, expect.stringMatching(/^\/logos\/competitions\/[a-z0-9-]+\.png$/)]);
-      const file = path.join(PUBLIC, c.logo.src);
-      expect([c.name, fs.existsSync(file)]).toEqual([c.name, true]);
-      const png = fs.readFileSync(file);
-      expect([c.name, png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([c.name, c.logo.width, c.logo.height]);
-      expect([c.name, png.length < 80 * 1024]).toEqual([c.name, true]);
+      // One logo, or (AwardX, 2026-11-13) a list of them; never both.
+      expect([c.name, Boolean(c.logo) !== Boolean(c.logos)]).toEqual([c.name, true]);
+      const logos = c.logos || [c.logo];
+      expect([c.name, logos.length >= 1 && logos.length <= 2]).toEqual([c.name, true]);
+      for (const l of logos) {
+        expect([c.name, typeof l]).toEqual([c.name, 'object']);
+        expect([c.name, l.src]).toEqual([c.name, expect.stringMatching(/^\/logos\/competitions\/[a-z0-9-]+\.png$/)]);
+        const file = path.join(PUBLIC, l.src);
+        expect([c.name, l.src, fs.existsSync(file)]).toEqual([c.name, l.src, true]);
+        const png = fs.readFileSync(file);
+        expect([l.src, png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([l.src, l.width, l.height]);
+        expect([l.src, png.length < 80 * 1024]).toEqual([l.src, true]);
+      }
     }
     const all = JSON.stringify(COMPETITIONS);
     expect(all).not.toMatch(/certif|endors|partner|official|sponsor/i);
@@ -182,8 +189,20 @@ describe('competitions.js keeps to its rules', () => {
     for (const c of upcoming) expect([c.name, c.status]).toEqual([c.name, expect.stringMatching(/^Entering, /)]);
   });
 
-  test('Jacobson is listed now that it is submitted (2026-11-11), the newest of what is in', () => {
-    expect(COMPETITIONS.find((c) => !c.status.startsWith('Entering'))).toEqual({
+  test('AwardX is listed now that it is submitted (2026-11-13), the newest of what is in, with the AwardX and LaunchX logos', () => {
+    const done = COMPETITIONS.filter((c) => !c.status.startsWith('Entering'));
+    expect(done[0]).toEqual({
+      name: 'AwardX International',
+      organizer: 'LaunchX',
+      logos: [
+        { src: '/logos/competitions/awardx.png', width: 640, height: 114 },
+        { src: '/logos/competitions/launchx.png', width: 192, height: 192 },
+      ],
+      status: 'Submitted November 13, 2026',
+      date: '2026-11-13',
+      team: 'By Jayden Bansal',
+    });
+    expect(done[1]).toEqual({
       name: 'Jacobson Innovator Competition',
       organizer: 'University of Iowa',
       logo: { src: '/logos/competitions/university-of-iowa.png', width: 640, height: 186 },
@@ -255,13 +274,18 @@ describe('/about shows the competitions', () => {
       // Three parts: the organizer's logo, the competition, where it stands.
       expect(row.children).toHaveLength(3);
       expect(row.querySelector('.ab-comp-what')).toBeNull();
-      const img = row.querySelector('.ab-comp-logo img');
-      expect(img.getAttribute('src')).toBe(c.logo.src);
-      expect(Number(img.getAttribute('width'))).toBe(c.logo.width);
-      expect(Number(img.getAttribute('height'))).toBe(c.logo.height);
-      // Named in words beside it, so the picture is not read out again.
-      expect(img.getAttribute('alt')).toBe('');
-      expect(img.getAttribute('loading')).toBe('lazy');
+      // A white tile per logo, stacked in the first column.
+      const logos = c.logos || [c.logo];
+      const imgs = Array.from(row.querySelectorAll('.ab-comp-logos > .ab-comp-logo img'));
+      expect(imgs).toHaveLength(logos.length);
+      imgs.forEach((img, j) => {
+        expect(img.getAttribute('src')).toBe(logos[j].src);
+        expect(Number(img.getAttribute('width'))).toBe(logos[j].width);
+        expect(Number(img.getAttribute('height'))).toBe(logos[j].height);
+        // Named in words beside it, so the picture is not read out again.
+        expect(img.getAttribute('alt')).toBe('');
+        expect(img.getAttribute('loading')).toBe('lazy');
+      });
       const time = row.querySelector('.ab-comp-status time');
       if (c.date) {
         expect(time.getAttribute('datetime') || time.getAttribute('dateTime')).toBe(c.date);
