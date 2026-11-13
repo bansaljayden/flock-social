@@ -294,8 +294,16 @@ function describePlan(top) {
 // recent readings statement without nested loops, which leaves its curves to a
 // hash join. Neither changes a row of what they store (the tests compare), and
 // the sequential scan's cost follows the table rather than the window, so it
-// does not double as the window fills to about 24 November. The next daily plan
-// says whether production agreed.
+// does not double as the window fills to about 24 November.
+//
+// Production agreed. The first run with the settings (09:00 UTC, 12 November)
+// took 78.8 s against 148.8 s the hour before: offset readings 80.4 s to
+// 31.3 s, recent readings 36.6 s to 15.4 s, offsets unchanged. Over the next
+// 34 hourly runs every rebuild took 80 to 100 s and no statement passed
+// 41.5 s, about a third of the cap. The plan at 07:00 UTC on 13 November shows
+// the shapes asked for: offset readings a sequential scan of ml_training_data
+// (14.2 s, 1,459,868 rows) and hash joins, recent readings a hash join whose
+// largest step is the curve table's sequential scan (7.6 s of 14.7 s).
 const OFFSET_READINGS_SETTINGS = ['SET LOCAL enable_bitmapscan = off', 'SET LOCAL enable_indexscan = off'];
 const RECENT_READINGS_SETTINGS = ['SET LOCAL enable_nestloop = off'];
 
