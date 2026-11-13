@@ -41,7 +41,9 @@ import { shareThisPage } from './shareCard';
 // No accuracy figure appears here (they are on /research, with their
 // limits), nothing says the 4G board works, and nothing gives a battery life.
 
-const DESCRIPTION = 'Flux is the people counter Flock is building for venues. See what is inside it, how its Owl model counts people from heat, how it reads tables, where it mounts and every part of the case.';
+// At most 155 characters, the length every other subpage keeps to
+// (marketingRouteMetadata.test.js): search results cut a longer one off.
+const DESCRIPTION = 'Flux is the people counter Flock is building for venues: what is inside, how its Owl model counts people from heat, how it reads tables, where it mounts.';
 
 // Every picture on the page, at the two widths each file was written at
 // (scripts/flux_assets.py, the tables pictures with --tables-src; the mockup and the figures from /ai by hand).
