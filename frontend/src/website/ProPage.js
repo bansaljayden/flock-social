@@ -48,7 +48,10 @@ const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
 const FORECASTS_FREE_MONTHLY = 30;
 
-const DESCRIPTION = 'Flock Pro: more Birdie and more crowd forecasts for whoever plans. It is not on sale on the web yet. How to manage or cancel it.';
+// Static, so it says what is true whatever the offer read returns: on sale
+// since 2026-11-13 (PAYWALL_ENABLED=true). The page's own "not on sale yet"
+// line stays, for the moment the offer is ever switched off again.
+const DESCRIPTION = 'Flock Pro: more Birdie and more crowd forecasts for whoever plans, monthly or yearly. How to buy it, manage it or cancel it.';
 
 const READABLE = { color: 'var(--pp-ink-2)' };
 

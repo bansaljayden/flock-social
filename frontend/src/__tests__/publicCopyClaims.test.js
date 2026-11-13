@@ -148,9 +148,10 @@ test('every public surface counts SOS as two taps, which is what the alert contr
 // "the one paid plan is Roost" while Terms section 10 and /pro describe Flock
 // Pro. Web checkout opens only for accounts the paywall is on for, which while
 // PAYWALL_ENABLED is unset is the review list alone (backend
-// services/proBilling.js), so these surfaces name Pro and say it is not on
-// public sale. The day it goes on sale, these sentences change with it.
-test('/about, its crawler copy and llms.txt name Flock Pro as a paid plan that is not on public sale', () => {
+// services/proBilling.js), so these surfaces named Pro and said it was not on
+// public sale. It went on sale on 2026-11-13 (PAYWALL_ENABLED=true on Railway,
+// his call), and the three sentences changed with it.
+test('/about, its crawler copy and llms.txt name Flock Pro as a paid plan on sale since November 13, 2026', () => {
   const billing = fs.readFileSync(
     path.join(__dirname, '..', '..', '..', 'backend', 'services', 'proBilling.js'), 'utf8'
   );
@@ -160,6 +161,8 @@ test('/about, its crawler copy and llms.txt name Flock Pro as a paid plan that i
     const body = read(rel).replace(/\s+/g, ' ');
     expect(body).not.toMatch(/the one paid plan/i);
     expect(body).toMatch(/Flock Pro, with more Birdie, more crowd forecasts and crowd alerts/);
-    expect(body).toMatch(/not on sale to the public today/);
+    // On /about the words "on this site" are the link to /pro.
+    expect(body).toMatch(/on sale (?:<a href="\/pro">)?(?:on this site|at flockcorp\.com\/pro)(?:<\/a>\{' '\})? since November 13, 2026/);
+    expect(body).not.toMatch(/not on sale to the public today/);
   }
 });

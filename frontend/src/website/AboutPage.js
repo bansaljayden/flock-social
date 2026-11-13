@@ -30,16 +30,45 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 // rule). The competitions' organizers are named, and some are universities;
 // none is that school.
 //   on the App Store since November 4, 2026                               Apple released 1.0; apps.apple.com/app/id6781442127
-//   no venue charged; Flock Pro not on public sale
-// The photos, the bios, the full story and the milestone details are
-// placeholders until the founders write them.
+//   no venue charged; Flock Pro on sale on the web since November 13, 2026 (PAYWALL_ENABLED=true)
+// The story and the bios were filled out on 2026-11-13 from the record (see
+// PEOPLE and STORY); Asad's photo is up, the maintainer's is still to come.
 // The names are in the title and description because the page is what a
 // search for either name, or for the company, should land on.
 const DESCRIPTION = 'Flock, an app for making plans with friends, is made by Jayden Bansal (Solo Technical Founder & CEO) and Asad Ali (Growth & Competitions Lead).';
 
+// The people (2026-11-13, his asks: Asad's photo on the page, a longer story
+// and the bios filled out). Every sentence is a fact the site already states
+// elsewhere (the timeline, the competitions, the product) or the record holds;
+// nothing about either of them is made up, and no school is named. Asad's
+// photo is the one he sent, cropped round and lightly sharpened
+// (public/people/asad-ali-*.webp); the maintainer's is still to come, so his spot shows
+// his initials until it does.
 const PEOPLE = [
-  { name: 'Jayden Bansal', role: 'Solo Technical Founder & CEO', line: 'An 11th grader in Pennsylvania who started Flock and builds all of it, from the app to the Flux sensor.' },
-  { name: 'Asad Ali', role: 'Growth & Competitions Lead', line: 'On Flock since late August 2026.' },
+  {
+    name: 'Jayden Bansal',
+    initials: 'JB',
+    role: 'Solo Technical Founder & CEO',
+    line: 'An 11th grader in Pennsylvania who started Flock and builds all of it, from the app to the Flux sensor.',
+    more: 'That covers the iPhone app and the website, Birdie, Starling, and Owl, the model inside Flux that counts people from heat. He also published Flock’s research paper on forecasting crowds and counting people.',
+  },
+  {
+    name: 'Asad Ali',
+    initials: 'AA',
+    role: 'Growth & Competitions Lead',
+    line: 'On Flock since late August 2026.',
+    more: 'He leads Flock’s growth and its competition entries. With the maintainer he took Flock into the Conrad Challenge’s Innovation Stage and is entering DECA’s Start-Up Business Plan and the Diamond Challenge. He also tests the app the way a new user would, and two of November’s fixes came from his notes.',
+    photo: { src: '/people/asad-ali-280.webp', srcSet: '/people/asad-ali-280.webp 280w, /people/asad-ali-520.webp 520w' },
+  },
+];
+
+// How it started, past its first line (same rule as PEOPLE: only what the
+// record holds).
+const STORY = [
+  'Flock exists because the group chat kept killing perfectly good Friday nights.',
+  'Someone suggests a place. A few people react, nobody commits, and by the time the group agrees, the spot is packed or the night is gone. Jayden Bansal started building Flock in 2025 to give a group one place to make the plan instead.',
+  'In Flock a group starts a flock, votes on where to go and sees how busy each place will be before anyone leaves, from Starling, Flock’s crowd forecast model. Each person can set a budget, and the group sees only one rounded-down number. Birdie, Flock’s assistant, suggests places that fit, and the bill splits in the app at the end of the night.',
+  'Asad Ali joined in August 2026 to grow it and take it to competitions. The timeline below has the rest, from the first website to the App Store.',
 ];
 
 // Commitments the product already keeps, each one enforced in code, which is
@@ -144,13 +173,7 @@ export default function AboutPage() {
           <div className="lp-wrap ab-story">
             <div>
               <h2 id="ab-h-story">How it started</h2>
-              <p>
-                Flock exists because the group chat kept killing perfectly good
-                Friday nights.
-              </p>
-              <p className="ab-coming">
-                The full story is coming soon.
-              </p>
+              {STORY.map((s) => <p key={s}>{s}</p>)}
             </div>
             {/* Not lazy: on a phone this wren is the largest thing in the
                 first screen (the page's LCP), and lazy loading held it back
@@ -170,28 +193,30 @@ export default function AboutPage() {
         <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-people">
           <div className="lp-wrap">
             <h2 id="ab-h-people">Who makes it</h2>
-            {/* Two empty perches, one for each founder's photo, until the
-                photos arrive: captioned as what it is, so the spot reads as
-                waiting rather than broken. */}
-            <figure className="ab-perch">
-              <img
-                className="lp-art ab-perch-art"
-                src="/art/about-perch-480.webp"
-                srcSet="/art/about-perch-480.webp 480w, /art/about-perch-960.webp 960w"
-                sizes="min(560px, 90vw)"
-                width="480" height="171"
-                loading="lazy" decoding="async"
-                alt=""
-              />
-              <figcaption>Photos of the maintainer and Asad are coming soon.</figcaption>
-            </figure>
+            {/* Each person's portrait above their name, round. A person
+                without a photo yet gets their initials in the same circle, so
+                the two columns stay level. The photo's alt is empty: the name
+                is the heading right under it. */}
             <div className="ab-people">
               {PEOPLE.map((p) => (
                 <div key={p.name} className="ab-person">
+                  {p.photo ? (
+                    <img
+                      className="ab-portrait"
+                      src={p.photo.src}
+                      srcSet={p.photo.srcSet}
+                      sizes="140px"
+                      width="280" height="280"
+                      loading="lazy" decoding="async"
+                      alt=""
+                    />
+                  ) : (
+                    <span className="ab-portrait ab-portrait-initials" aria-hidden="true">{p.initials}</span>
+                  )}
                   <h3>{p.name}</h3>
                   <p className="ab-role">{p.role}</p>
                   {p.line && <p>{p.line}</p>}
-                  <p className="ab-coming">A longer bio is coming soon.</p>
+                  {p.more && <p>{p.more}</p>}
                 </div>
               ))}
             </div>
@@ -356,7 +381,9 @@ export default function AboutPage() {
               Venues can make a free account;
               Roost, the paid plan for venues, isn’t charging anyone yet. There’s
               a paid plan for people too, Flock Pro, with more Birdie, more crowd
-              forecasts and crowd alerts, and it is not on sale to the public today.
+              forecasts and crowd alerts, on sale <a href="/pro">on this site</a>{' '}
+              since November 13, 2026. Buying it here unlocks it in the iPhone
+              app too.
             </p>
             <p>
               Flux has only been tested on research footage so far. A retrained
