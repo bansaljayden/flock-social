@@ -279,17 +279,26 @@ describe('the page only sells things that exist', () => {
     expect(dashboard).toContain('Last {tw.windowDays} days.');
   });
 
-  test('llms.txt does not sell Roost in the present tense while no venue is charged', () => {
-    // It said "Venues are the side Flock charges. Roost ... is $99 a month ...
-    // bought on flockcorp.com" ninety lines below its own "no venue is being
-    // charged today". VENUE_BILLING_ENABLED is unset, so checkout cannot run.
-    // /about already speaks in the right tense; llms.txt now matches it.
+  test('llms.txt sells Roost as it is sold: on sale, with no venue charged yet', () => {
+    // It once said "Venues are the side Flock charges. Roost ... is $99 a
+    // month ... bought on flockcorp.com" while VENUE_BILLING_ENABLED was unset
+    // and checkout could not run, so it moved to "will be". The variable went
+    // on 2026-11-10 and Roost has been on sale in the venue dashboard since;
+    // "will be" stayed until 2026-11-13. Now: on sale, and still no venue
+    // charged (pre-cutoff venues sit in their notice window, new ones in the
+    // trial), which /about says too.
     const llms = fs.readFileSync(path.join(REPO, 'frontend', 'public', 'llms.txt'), 'utf8')
       .replace(/\s+/g, ' ');
     expect(llms).not.toMatch(/Venues are the side Flock charges/);
-    expect(llms).not.toMatch(/bought on flockcorp\.com/);
-    expect(llms).toContain('Roost, the venue plan, will be $99 a month or $990 a year per location');
+    expect(llms).not.toMatch(/Roost, the venue plan, will be/);
+    expect(llms).toContain('Roost, the venue plan, is $99 a month or $990 a year per location, on sale in the venue dashboard on flockcorp.com since November 10, 2026, with a 14-day free trial');
     expect(llms).toContain('No venue is being charged today');
+  });
+
+  test('the homepage venue card says where Roost is sold, not that it is not on sale', () => {
+    const landing = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'website', 'LandingPage.js'), 'utf8');
+    expect(landing).not.toMatch(/Roost, the paid plan, is not on sale yet/);
+    expect(landing).toContain('Free account<small>Roost, the paid plan, is sold in the venue dashboard</small>');
   });
 
   test('the SOS email on the page is the one the backend sends', () => {

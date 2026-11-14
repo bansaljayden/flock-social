@@ -927,7 +927,12 @@ export default function LandingPage() {
 
             <div className="lp-plan">
               <h3>For venues</h3>
-              <div className="lp-plan-price">Free account<small>Roost, the paid plan, is not on sale yet</small></div>
+              {/* Roost has been on sale in the venue dashboard since venue
+                  billing went on (2026-11-10); this said "not on sale yet"
+                  until 2026-11-13. No price here: every screen reads the one
+                  constant (venuePricingDecision.test.js), and Stripe's is
+                  what the dashboard shows. */}
+              <div className="lp-plan-price">Free account<small>Roost, the paid plan, is sold in the venue dashboard</small></div>
               <p className="lp-plan-note">Roost adds your own hour-by-hour forecast.</p>
               <ul className="lp-list">
                 <li>See the flocks with you in their vote, once verified</li>
