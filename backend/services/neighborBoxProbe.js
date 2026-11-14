@@ -20,16 +20,24 @@
 // statement (mlPredictor NEIGHBOR_BOX_SQL, the text the scores run) under
 // EXPLAIN (ANALYZE, BUFFERS) for one box around a venue picked at random, on a
 // weekday picked at random, and logs one line: the time, the curve rows read,
-// what came from disk and what from the cache, and the slowest steps with each
-// one's own disk reads. A random box is usually one nobody has read lately,
-// which is the case a demo visitor meets.
+// the shared-buffer misses and hits, and the slowest steps with each one's own
+// misses. A random box is usually one nobody has read lately, which is the case
+// a demo visitor meets.
+//
+// A MISS IS NOT PROOF OF A DISK READ. EXPLAIN's "read" blocks are pages that
+// were not in Postgres's shared buffers; the operating system's cache may still
+// have served them. The read time is what tells the two apart, and EXPLAIN
+// reports it only where track_io_timing is on: the line carries it when it is
+// there (PostgreSQL 17 names it "Shared I/O Read Time", earlier versions
+// "I/O Read Time") and says nothing about disk when it is not.
 //
 // IT CHANGES NOTHING ANY SCORE READS. It runs off the request path, writes no
 // table, and never touches the neighbour cache, the in-flight map or the
 // per-account budget, so a score after it reads exactly what it would have
-// read without it. Its only cost is one box read every six hours, and it reads
-// the venue to centre on through ml_venues' primary key rather than a scan, so
-// the probe does not warm the very pages it is there to measure.
+// read without it. Its only cost is one box read every six hours, and it picks
+// the venue to centre on from a one-per-cent page sample of ml_venues rather
+// than a scan, so the probe does not warm the very pages it is there to
+// measure.
 // NEIGHBOR_PROBE_DISABLED=true is the kill switch.
 // ---------------------------------------------------------------------------
 
@@ -44,13 +52,16 @@ const PROBE_KICKOFF_MS = 15 * 60 * 1000;
 // A probe is never worth a long statement on the primary.
 const PROBE_TIMEOUT_MS = 30 * 1000;
 
-// One venue, by a random point in the primary key's range: an index read of a
-// page or two. ORDER BY random() would scan ml_venues and warm it first.
+// One venue, from a random one per cent of ml_venues' pages: a few dozen page
+// reads, near enough uniform over venues, where ORDER BY random() over the
+// whole table would scan it and warm it first. Not a random point in the id
+// range: upserts burn sequence values, so ids have gaps, and the venue after a
+// long gap would be picked nearly every time, its box warm from the last probe.
+// A sample that lands on no row is a probe skipped, not an error.
 const PICK_SQL = `SELECT latitude, longitude
-  FROM ml_venues
-  WHERE id >= (SELECT floor(random() * MAX(id))::int FROM ml_venues)
-    AND latitude IS NOT NULL AND longitude IS NOT NULL
-  ORDER BY id
+  FROM ml_venues TABLESAMPLE SYSTEM (1)
+  WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+  ORDER BY random()
   LIMIT 1`;
 
 function probeEnabled() {
@@ -59,13 +70,21 @@ function probeEnabled() {
 
 const MB = (blocks) => ((blocks || 0) * 8192 / 1e6).toFixed(1);
 
-// One line from EXPLAIN's JSON. A step's time and disk reads are its own, its
+// One line from EXPLAIN's JSON. A step's time and misses are its own, its
 // children's taken off: EXPLAIN reports both as totals over the step and
 // everything under it, and the question is which step did the reading.
+//
+// IN A PARALLEL PLAN THE STEP TIMES ARE SUMMED OVER THE WORKERS (a step's time
+// per loop times its loops), so under a Gather they add up to more than the
+// wall clock, the Gather's own share clamps to zero, and the shares are of
+// that sum. The line says so when a plan launched workers, rather than passing
+// the sum off as elapsed time.
 function describeProbe(top) {
   const steps = [];
   let curveRows = 0;
+  let workers = 0;
   (function walk(node) {
+    if (Number.isFinite(node['Workers Launched'])) workers += node['Workers Launched'];
     const loops = node['Actual Loops'] || 1;
     const kids = node.Plans || [];
     const kidMs = kids.reduce((s, k) => s + (k['Actual Total Time'] || 0) * (k['Actual Loops'] || 1), 0);
@@ -86,13 +105,17 @@ function describeProbe(top) {
     + (n['Relation Name'] ? ` on ${n['Relation Name']}` : '');
   const slowest = steps.filter((x) => x.ms / all >= 0.05).sort((a, b) => b.ms - a.ms).slice(0, 4)
     .map((x) => `${name(x.node)} ${(x.ms / 1000).toFixed(2)} s (${Math.round((100 * x.ms) / all)}%, `
-      + `${x.rows.toLocaleString('en-US')} rows, from disk ${MB(x.read)} MB)`);
+      + `${x.rows.toLocaleString('en-US')} rows, missed ${MB(x.read)} MB)`);
   const r = top.Plan;
-  const ioMs = r['I/O Read Time'];
+  // PostgreSQL 17 renamed the key; absent on either name means track_io_timing
+  // is off, and the line then makes no claim about disk.
+  const ioMs = r['Shared I/O Read Time'] ?? r['I/O Read Time'];
   return `${((top['Execution Time'] || 0) / 1000).toFixed(2)} s for ${curveRows.toLocaleString('en-US')} curve rows`
-    + ` in ${Math.round(r['Actual Rows'] || 0)} slots; from disk ${MB(r['Shared Read Blocks'])} MB`
-    + ` (${(r['Shared Read Blocks'] || 0).toLocaleString('en-US')} blocks${Number.isFinite(ioMs) ? `, ${(ioMs / 1000).toFixed(2)} s reading` : ''}),`
-    + ` from cache ${MB(r['Shared Hit Blocks'])} MB; slowest steps: ${slowest.join('; ') || 'none over 5%'}`;
+    + ` in ${Math.round(r['Actual Rows'] || 0)} slots; shared-buffer misses ${MB(r['Shared Read Blocks'])} MB`
+    + ` (${(r['Shared Read Blocks'] || 0).toLocaleString('en-US')} blocks, `
+    + `${Number.isFinite(ioMs) ? `${(ioMs / 1000).toFixed(2)} s reading them` : 'read time not tracked'}),`
+    + ` hits ${MB(r['Shared Hit Blocks'])} MB; slowest steps: ${slowest.join('; ') || 'none over 5%'}`
+    + (workers > 0 ? `; parallel plan, ${workers} worker(s) launched: step times are summed over the workers` : '');
 }
 
 let running = false;

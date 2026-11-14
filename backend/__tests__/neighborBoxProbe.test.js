@@ -8,8 +8,9 @@
 //   3. It changes nothing a score reads: no neighbour cache entry, no in-flight
 //      entry.
 //   4. It never throws, and the kill switch stops it before any query.
-//   5. Its line names the step that read from disk, with the reads of the
-//      steps under it taken off.
+//   5. Its line names the step that missed the shared buffers, with the
+//      misses of the steps under it taken off, never calls a miss a disk
+//      read, and says when a parallel plan's step times are summed.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -68,22 +69,75 @@ function planDoc() {
   }];
 }
 
-test('the line names the curve table read as the slow step, with its own disk reads', () => {
+test('the line names the curve table read as the slow step, with its own misses', () => {
   const line = describeProbe(planDoc()[0]);
-  assert.match(line, /^2\.92 s for 4,512 curve rows in 24 slots; from disk 32\.8 MB \(4,000 blocks\), from cache 7\.4 MB;/);
+  assert.match(line, /^2\.92 s for 4,512 curve rows in 24 slots; shared-buffer misses 32\.8 MB \(4,000 blocks, read time not tracked\), hits 7\.4 MB;/);
   // 188 loops of 14 ms = 2,632 ms of the 2,915 ms, the largest share.
-  assert.match(line, /slowest steps: Index Scan using ml_venue_baselines_pkey on ml_venue_baselines 2\.63 s \(90%, 4,512 rows, from disk 31\.1 MB\)/);
+  assert.match(line, /slowest steps: Index Scan using ml_venue_baselines_pkey on ml_venue_baselines 2\.63 s \(90%, 4,512 rows, missed 31\.1 MB\)/);
   // The nested loop's own time is what is left after its children: 2,900 -
-  // 100 - 2,632 = 168 ms (6%), and it read nothing itself (its 4,000 blocks
+  // 100 - 2,632 = 168 ms (6%), and it missed nothing itself (its 4,000 blocks
   // are the children's).
-  assert.match(line, /Nested Loop 0\.17 s \(6%, 4,512 rows, from disk 0\.0 MB\)/);
+  assert.match(line, /Nested Loop 0\.17 s \(6%, 4,512 rows, missed 0\.0 MB\)/);
+  // A serial plan says nothing about workers.
+  assert.doesNotMatch(line, /parallel/);
+  // A miss is not a disk read, so the line never says disk.
+  assert.doesNotMatch(line, /disk/);
 });
 
-test('the read time is named when the server tracks it, and left out when it does not', () => {
+test('the read time is named under either version\'s key, and its absence is said', () => {
   const doc = planDoc()[0];
-  assert.doesNotMatch(describeProbe(doc), /s reading/);
+  assert.match(describeProbe(doc), /\(4,000 blocks, read time not tracked\)/);
+  // PostgreSQL 16 and earlier.
   doc.Plan['I/O Read Time'] = 2710.5;
-  assert.match(describeProbe(doc), /\(4,000 blocks, 2\.71 s reading\)/);
+  assert.match(describeProbe(doc), /\(4,000 blocks, 2\.71 s reading them\)/);
+  // PostgreSQL 17 renamed it; the new key wins when both are there.
+  delete doc.Plan['I/O Read Time'];
+  doc.Plan['Shared I/O Read Time'] = 1204.0;
+  assert.match(describeProbe(doc), /\(4,000 blocks, 1\.20 s reading them\)/);
+  // Tracked and zero is a measurement (everything came from the OS cache).
+  doc.Plan['Shared I/O Read Time'] = 0;
+  assert.match(describeProbe(doc), /\(4,000 blocks, 0\.00 s reading them\)/);
+});
+
+test('a parallel plan says its step times are summed over the workers', () => {
+  // A Gather of 1.1 s over a scan run by the leader and two workers: 0.8 s a
+  // loop over three loops is 2.4 s of summed time, more than the wall clock.
+  const doc = {
+    'Execution Time': 1100,
+    Plan: {
+      'Node Type': 'Gather',
+      'Workers Planned': 2,
+      'Workers Launched': 2,
+      'Actual Total Time': 1100,
+      'Actual Rows': 24,
+      'Actual Loops': 1,
+      'Shared Hit Blocks': 10,
+      'Shared Read Blocks': 500,
+      Plans: [{
+        'Node Type': 'Parallel Seq Scan',
+        'Relation Name': 'ml_venue_baselines',
+        'Actual Total Time': 800,
+        'Actual Rows': 8,
+        'Actual Loops': 3,
+        'Shared Hit Blocks': 10,
+        'Shared Read Blocks': 500,
+      }],
+    },
+  };
+  const line = describeProbe(doc);
+  assert.match(line, /; parallel plan, 2 worker\(s\) launched: step times are summed over the workers$/);
+  // The scan is 2.4 s of summed time; the Gather's own share clamps to zero
+  // instead of going negative, so it is not listed.
+  assert.match(line, /slowest steps: Parallel Seq Scan on ml_venue_baselines 2\.40 s \(100%, 24 rows, missed 4\.1 MB\);/);
+  assert.doesNotMatch(line, /Gather -?\d/);
+});
+
+test('the venue to centre on comes from a page sample, not a scan or the id range', () => {
+  const { PICK_SQL } = probe.__test;
+  assert.match(PICK_SQL, /FROM ml_venues TABLESAMPLE SYSTEM \(1\)/);
+  // A random point in the id range weights each venue by the gap before its
+  // id, and ids have gaps (upserts burn sequence values).
+  assert.doesNotMatch(PICK_SQL, /MAX\(id\)|id >=/);
 });
 
 // pool stubs: the venue pick goes through pool.query, the timed statement
