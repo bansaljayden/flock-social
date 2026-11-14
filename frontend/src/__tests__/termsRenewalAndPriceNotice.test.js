@@ -21,7 +21,7 @@
  * Terms and aiCrawlerSurface.test.js holds the two equal.
  *
  * Also here, two comment-only items from the same review: the homepage's
- * "Live crowd levels" is for the public while the global switch is off, and
+ * free crowd line is for the public, whatever the review list meters, and
  * says so; and CreateScreen.js describes its rebuild instead of quoting the
  * TestFlight report that asked for it.
  */
@@ -114,9 +114,11 @@ describe('where Flock Pro is sold', () => {
 });
 
 describe('the homepage speaks to the public', () => {
-  test('its "Live crowd levels" line says why the review list does not change it', () => {
+  test('its free crowd line says why the review list does not change it', () => {
     const landing = read('frontend', 'src', 'website', 'LandingPage.js');
-    const at = landing.indexOf("<li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Live crowd levels'}</li>");
+    // The line without an offer names no allowance (2026-11-13): it is also
+    // what shows while the offer loads and what crawlers get, with Pro on sale.
+    const at = landing.indexOf("<li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Crowd levels'}</li>");
     expect(at).toBeGreaterThan(-1);
     const note = landing.slice(landing.lastIndexOf('{/*', at), at);
     expect(note).toMatch(/PAYWALL_PREVIEW_USER_IDS/);

@@ -872,7 +872,11 @@ export default function LandingPage() {
       {/* ---------------- pricing ----------------
           A rate sheet, not a SaaS table: free for the people planning, Pro only
           while it is really on sale (useProOffer), and the venue plan named
-          for what it is. */}
+          for what it is. The words shown before the offer answers, or when
+          it cannot, are also what crawlers get (api/marketing-page.js never
+          asks), so they hold whether Pro is on sale or not: planning is free,
+          and the free crowd line names no allowance. They said "you and your
+          friends don’t pay" until 2026-11-13, false once Pro went on sale. */}
       <section className="lp-sec lp-sec-sand" id="pricing" aria-labelledby="lp-h-pricing">
         <div className="lp-wrap">
           <div className="lp-pricing-head">
@@ -881,7 +885,7 @@ export default function LandingPage() {
           <p className="lp-lead lp-pricing-lead">
             {proOffer
               ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are where Flock will make its money, and none is being charged yet.'
-              : 'You and your friends don’t pay, and there are no ads. Venues are where Flock will make its money, and none is being charged yet.'}
+              : 'Planning with your friends is free, with no ads. Venues are where Flock will make its money, and none is being charged yet.'}
           </p>
           </div>
           <img
@@ -904,13 +908,15 @@ export default function LandingPage() {
                 <li>Venue voting and group chat</li>
                 {/* With Pro on sale the free tier is 30 venues a month
                     (services/forecastUsage.js); before that it is every venue.
+                    The line without an offer says neither, since it is also
+                    what shows while the offer loads (see the pricing note).
                     "Before that" is the global switch, PAYWALL_ENABLED, and this
                     page speaks to the public, for whom it is the only switch.
                     The review list (PAYWALL_PREVIEW_USER_IDS) meters a few named
                     accounts, App Review's demo account among them, while the
                     switch is off; /api/pro-offer is asked without an account and answers for
                     the public, so this line changes only when the switch flips. */}
-                <li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Live crowd levels'}</li>
+                <li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Crowd levels'}</li>
                 <li>Budget matching and bill splitting</li>
                 <li>SOS and trusted contacts</li>
               </ul>

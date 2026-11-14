@@ -124,9 +124,9 @@ rating.
 
 ## Pricing
 
-Flock is free for users. There is no card required, and unlimited flocks, friends,
-venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
-all included at no cost.
+Flock is free for users, with no card required. Unlimited flocks and friends, venue
+voting, group chat, budget matching, bill splitting and SOS are all included at no
+cost, and so are crowd levels for 30 venues a month.
 
 There is also a paid plan for people, Flock Pro, with more Birdie, more crowd
 forecasts and crowd alerts, on sale at flockcorp.com/pro since November 13, 2026.
