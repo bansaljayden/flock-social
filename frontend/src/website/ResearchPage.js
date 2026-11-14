@@ -53,23 +53,6 @@ export const PAPER_CITATION = {
 // the unqualified sentence would not be true. The
 // counter's figures are owl-4.9 and the heat rule as deployed on the six real
 // benchmark sets, which also guided Owl's development (paper Table 17).
-// owl-5's exam is the paper's Section 14.7 and Table 22: the gate's 1,593
-// frames, and the three benchmark sets it lost more than 2 points on (PUT
-// -3.1, OpenThermalPose2 -3.4, IISER -6.0). owl-5.1 replaced it on Flux on
-// 2026-11-03 by the owner's decision (paper Section 14.7): within 1 point of
-// owl-4.9 on all six sets' validation frames (rule ii, met), and 48.4% exact
-// on the 909-frame new test against owl-5's 48.1% and owl-4.9's 32.8% (rule i,
-// within 1 point of owl-5, not shown: +0.33 [-3.69, +4.60]). The forecast's retrain is
-// Section 7.2's: late November, thresholds
-// committed on 25 and 26 September. It "ships only if it passes them", not
-// "if it beats today's numbers": production has served v2.6.0 in model mode
-// since 2026-11-01, and the gate compares against rule (b), the rule served
-// from 13 October (backend/scripts/ml/RETRAIN.md, 2026-11-02).
-// From 2026-11-05 to 11-13 the retrain was to be gated, and to ship, as the mix;
-// since 2026-11-13 it is gated and would ship alone, the model making every
-// number (paper Section 7.2; RETRAIN-NOVEMBER-RUNBOOK.md). owl-5.2 was
-// chosen on validation frames the same day (owl5/owl52/owl52_choice.json);
-// owl-5.1 stays on Flux until the recording decides (PREREG-2026-11-05 part d).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -241,65 +224,14 @@ export default function ResearchPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-paper">
-          <div className="lp-wrap rs-two">
-            <div>
-              <h2>What it covers so far</h2>
-              <p>
-                Flock's crowd numbers are scores from 0 to 100 for each venue, not
-                headcounts, and the live test covers one month. Its findings were
-                tested on 9.1 million public hourly counts from 33 sources in
-                15 countries, including people counted inside rooms and
-                libraries. The counter has been tested on six research datasets
-                and in sixteen sealed tests on public footage, including a café
-                and a restaurant, and not yet inside a working venue. Its
-                November retrain, owl-5, counted 37.2% of 1,593 frames neither
-                version had trained on exactly, against owl-4.9's 31.5%, but lost
-                3 to 6 points on three of the six benchmark sets, so it failed the
-                test fixed before it trained. Its successor, owl-5.1, went into
-                Flux on 3 November. It gives owl-4.9's original data a bigger
-                share of training and comes within a point of owl-4.9 on all six
-                benchmark sets' validation frames. On 909 new held-out frames it
-                counted 48.4% exactly, against owl-5's 48.1% and owl-4.9's 32.8%;
-                that test, also fixed before it trained, was too small to prove
-                it within a point of owl-5.
-              </p>
-            </div>
-            <div>
-              <h2>What's next</h2>
-              <p>
-                Owl's training is finished: its three November retrains, owl-5,
-                owl-5.1 and owl-5.2, are in the paper, and no further Owl
-                retrain is planned. The latest, owl-5.2, was chosen on 5
-                November on frames set aside for choosing settings. On frames
-                with four or more people it was exact 39.4% of the time,
-                against 26.1% for owl-5.1; with three or fewer it was exact no
-                more often; and it lost no more than 0.8 points to owl-4.9 on
-                any of its six benchmark sets. The crowd forecast's retrain
-                runs in late November. It is scored on 14 days it never saw,
-                against thresholds set in September, and ships only if it
-                passes them. A full rehearsal on 5 November found the new model
-                matched or beat the rule Flock served from 13 October to 1
-                November only where a venue had been read in the past hour.
-                It is tested, and would ship, on its own, making every number,
-                so that is the gap to close. Owl's next test is a recording on
-                Flux's own camera of a real room with one to fifteen people,
-                counted as it is filmed, kept unseen, and scored once with
-                owl-4.9, owl-5, owl-5.1 and owl-5.2 together; owl-5.1 stays on
-                Flux until then, and owl-5.2 takes its place only if it counts
-                that room better. After that, the plan is to put a Flux sensor
-                in a venue Flock already reads and compare its counts with the
-                forecast hour by hour.
-              </p>
-            </div>
-          </div>
-        </section>
-
         {/* The credits. Generated from the research database (researchThanks.js
             says which rows and why), so a set the paper never scored is never
             thanked as if it had been, and every count source carries the
             attribution line its licence asks for, word for word. */}
-        <section className="lp-sec lp-sec-sand rs-thanks" aria-labelledby="rs-h-thanks">
+        {/* Paper, not sand: since 2026-11-13 it follows the sand charts band
+            directly (the "What it covers so far" / "What's next" band between
+            them was removed), and neighbouring bands never share a colour. */}
+        <section className="lp-sec lp-sec-paper rs-thanks" aria-labelledby="rs-h-thanks">
           <div className="lp-wrap">
             <img
               className="lp-art rs-thanks-art"

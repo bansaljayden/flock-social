@@ -62,10 +62,8 @@
 
 /* Body sections */
 .rs h2 { margin: 0 0 20px; }
-.rs-measure > p, .rs-two p, .rs-end .lp-lead { max-width: 62ch; }
-.rs-measure > p, .rs-two p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
-.rs-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(28px, 5vw, 64px); }
-.rs-two h2 { font-size: clamp(24px, 1.2rem + 1.2vw, 34px); }
+.rs-measure > p, .rs-end .lp-lead { max-width: 62ch; }
+.rs-measure > p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
 
 /* Charts */
 .rs-charts { display: grid; gap: clamp(36px, 5vw, 56px); }
@@ -179,7 +177,6 @@
   .rs-thanks-cols { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 600px) {
-  .rs-two { grid-template-columns: minmax(0, 1fr); }
   .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
   .rs-thumb img { width: 96px; }
   .rs-row { grid-template-columns: minmax(0, 1fr); }
