@@ -2909,6 +2909,19 @@ async function getSelfBaselines(placeId, userId) {
   }
 }
 
+// The box's totals for one weekday. One statement, named, because
+// services/neighborBoxProbe.js times this same text under EXPLAIN to see
+// where a slow scan's time goes; a copy there could drift from what scores
+// actually run.
+const NEIGHBOR_BOX_SQL = `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
+       FROM ml_venues v
+       JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
+       WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
+         AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
+         AND ${NOT_HARVESTED_SQL}
+         AND b.day_of_week = $4
+       GROUP BY b.day_of_week, b.hour`;
+
 // The uncoalesced, unmetered half of getNeighborActivity. Never call this
 // directly: it neither reads the cache nor dedupes concurrent callers, so a
 // direct call is an unshared bounding-box range scan on the primary pool.
@@ -2929,14 +2942,7 @@ async function scanNeighborBox(key, bLat, bLng, dow, userId) {
   try {
     const scanStart = Date.now();
     const r = await pool.query(
-      `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
-       FROM ml_venues v
-       JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
-       WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
-         AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
-         AND ${NOT_HARVESTED_SQL}
-         AND b.day_of_week = $4
-       GROUP BY b.day_of_week, b.hour`,
+      NEIGHBOR_BOX_SQL,
       [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG, dow]
     );
     const scanMs = Date.now() - scanStart;
@@ -5917,6 +5923,10 @@ module.exports = {
   // or, for a venue with none, the category table: routes/ai.js answers a
   // question about a later day with it (usualDayCurve).
   usualDayCurve,
+  // The neighbour box statement and its width, for services/neighborBoxProbe.js,
+  // which times that same statement in production (see NEIGHBOR_BOX_SQL).
+  NEIGHBOR_BOX_SQL,
+  NEIGHBOR_BOX_DEG,
   getLabel,
   init,
   // Internals exported for backend/__tests__/mlPipeline.test.js — the

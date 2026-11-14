@@ -2493,6 +2493,8 @@ let costHeartbeatKickoff = null;
 let dbWatchInterval = null;
 let crashReportPruneInterval = null;
 let crashReportPruneKickoff = null;
+let neighborProbeInterval = null;
+let neighborProbeKickoff = null;
 
 async function boot() {
   try {
@@ -2716,6 +2718,16 @@ async function boot() {
   // 110s: after the reconfirm kickoff's 100s, same stagger reason.
   roostNoticeKickoff = setTimeout(roostNoticeSweep, 110 * 1000);
 
+  // The neighbour box probe (services/neighborBoxProbe.js): production's plan
+  // for the read that holds the homepage demo's slow cold builds, one line
+  // every six hours. Reads only, off the request path; its own timer and
+  // kickoff because a deploy restarts both and deploys come several a day.
+  const { runNeighborBoxProbe, probeEnabled: neighborProbeEnabled, PROBE_INTERVAL_MS: NEIGHBOR_PROBE_MS, PROBE_KICKOFF_MS: NEIGHBOR_PROBE_KICKOFF_MS } = require('./services/neighborBoxProbe');
+  if (neighborProbeEnabled()) {
+    neighborProbeInterval = setInterval(runNeighborBoxProbe, NEIGHBOR_PROBE_MS);
+    neighborProbeKickoff = setTimeout(runNeighborBoxProbe, NEIGHBOR_PROBE_KICKOFF_MS);
+  }
+
   // The money watch. Registered LAST because it reads what the others spend,
   // and every read is non-consuming. See its block above for why it exists.
   const moneyWatch = () => runMoneyWatch().catch((e) => console.error('[moneyWatch] sweep failed:', e && e.message));
@@ -2802,6 +2814,8 @@ function shutdown(signal) {
   if (reconfirmSweepKickoff) clearTimeout(reconfirmSweepKickoff);
   if (roostNoticeInterval) clearInterval(roostNoticeInterval);
   if (roostNoticeKickoff) clearTimeout(roostNoticeKickoff);
+  if (neighborProbeInterval) clearInterval(neighborProbeInterval);
+  if (neighborProbeKickoff) clearTimeout(neighborProbeKickoff);
   if (moneyWatchInterval) clearInterval(moneyWatchInterval);
   if (moneyWatchKickoff) clearTimeout(moneyWatchKickoff);
 
