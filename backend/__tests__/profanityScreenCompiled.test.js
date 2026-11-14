@@ -47,7 +47,10 @@ const ORDINARY = [
 for (const [name, [lib, screen]] of Object.entries(screens)) {
   test(`${name}: every listed word, in every shape, gets the library's verdict`, () => {
     const words = [...new Set(lib.list)];
-    assert.ok(words.length > 400, `the list is the library's (${words.length} words)`);
+    // Chat screens the slur list alone since 2026-11-14 (moderation.js,
+    // CHAT_BLOCKED); the other two screen the library's whole list.
+    if (name === 'chat') assert.strictEqual(words.length, new Set(mod.CHAT_BLOCKED.map((w) => w.toLowerCase())).size, 'the chat list is the slur list');
+    else assert.ok(words.length > 400, `the list is the library's (${words.length} words)`);
     const disagreements = [];
     for (const word of words) {
       for (const text of shapesOf(word)) {

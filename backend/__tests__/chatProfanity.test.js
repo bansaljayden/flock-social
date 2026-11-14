@@ -24,14 +24,20 @@ test('everyday swearing passes in chat and still fails everywhere else', () => {
   assert.strictEqual(mod.moderateText('fuck you').allowed, false, 'a name or bio keeps the full list');
 });
 
-test('a word that stays on the list is still refused in chat', () => {
-  const kept = (mod.filter.list || []).filter((w) => /^[a-z]{4,}$/.test(w) && !mod.CHAT_ALLOWED.includes(w));
-  assert.ok(kept.length > 100, 'the chat list removed only the curse family, not the list');
-  let refused = 0;
-  for (const w of kept.slice(0, 40)) {
-    if (!mod.moderateChatText(`hey ${w} lol`).allowed) refused += 1;
+// CHAT BLOCKS SLURS AND NOTHING ELSE (2026-11-14): the rest of the general
+// list refused "oh my god", "fuckin" and "sexy" between friends.
+test('chat refuses slurs and hate terms, and every one on its list', () => {
+  assert.ok(mod.CHAT_BLOCKED.length >= 50, 'the slur list is the chat list');
+  for (const w of mod.CHAT_BLOCKED) {
+    assert.strictEqual(mod.moderateChatText(`hey ${w} lol`).allowed, false, w);
   }
-  assert.ok(refused >= 30, `words still on the list are refused (${refused}/40)`);
+});
+
+test('words that are not slurs send in chat, and still fail in a name or bio', () => {
+  for (const line of ['oh my god', 'that was sexy', 'fuckin hell', 'what a fart', 'poop emoji', 'sex ed is tomorrow', 'horny lol', 'pawn shop', 'nazi history essay']) {
+    assert.strictEqual(mod.moderateChatText(line).allowed, true, line);
+  }
+  assert.strictEqual(mod.moderateText('oh my god').allowed, false, 'names, bios and flock names keep the full list');
 });
 
 test('the four chat doors use the chat list and nothing else does', () => {

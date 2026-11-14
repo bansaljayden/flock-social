@@ -69,8 +69,31 @@ const CHAT_ALLOWED = [
   'arse', 'bitch', 'bitches', 'bitching', 'bastard', 'bastards', 'crap', 'piss', 'pissed',
   'dick', 'dickhead', 'screw', 'balls', 'bloody', 'prick', 'turd', 'butt',
 ];
-const chatFilter = new Filter();
-chatFilter.removeWords(...CHAT_ALLOWED);
+// CHAT BLOCKS SLURS AND NOTHING ELSE (2026-11-14). Removing the curse family
+// was not enough: the rest of the 714-word list still refused "oh my god",
+// "sexy", "horny", "fart", "poop", "fuckin" (while "fucking" passed), "sex" and
+// dozens of foreign words, and a message between friends that says one of them
+// came back as not fitting the guidelines. Chat is private to the people in the
+// plan or the DM, every message carries Report and every sender can be blocked,
+// which is what Apple 1.2 asks of user content alongside a filter. So chat
+// bodies are screened on this list alone: racial, ethnic, homophobic,
+// transphobic and disability slurs, with their common spellings and plurals.
+// Everything that is not a slur sends. Names, bios, flock names, venue text and
+// reviews, which strangers can read, keep the full list. CHAT_ALLOWED above
+// stays as the record of the swearing that has always passed here, and the
+// tests hold it.
+const CHAT_BLOCKED = [
+  'nigger', 'niggers', 'nigga', 'niggas', 'niggaz', 'niggah', 'n1gga', 'n1gger', 'n1gr', 'nigg3r', 'nigg4h', 'nigur', 'niiger', 'niigr',
+  'faggot', 'faggots', 'fag', 'fags', 'fagot', 'fagots', 'faggit', 'faggitt', 'fagg1t', 'fagg0t', 'fag1t', 'faget', 'fagit', 'fagz', 'faggs', 'fagging',
+  'dyke', 'dykes', 'lesbo', 'lezzian', 'homo', 'gaylord', 'qweir', 'tranny', 'trannies', 'shemale', 'heshe',
+  'butt-pirate', 'carpet muncher', 'fudge packer', 'fudgepacker',
+  'kike', 'kikes', 'chink', 'chinks', 'gook', 'gooks', 'g00k', 'spic', 'spics', 'spick', 'wetback', 'wetbacks', 'coon', 'coons',
+  'paki', 'pakis', 'pakie', 'packi', 'packie', 'packy', 'paky', 'jap', 'japs', 'kraut', 'honkey', 'injun',
+  'wop', 'w0p', 'dego', 'daygo', 'polack', 'polak', 'polac',
+  'retard', 'retards', 'retarded',
+];
+const chatFilter = new Filter({ emptyList: true });
+chatFilter.addWords(...CHAT_BLOCKED);
 
 // ONE COMPILE, NOT ONE PER CALL (2026-09-30). content-checker's isProfane
 // builds a new RegExp for every word on its list, about 715 of them, and
@@ -1090,6 +1113,7 @@ module.exports = {
   moderateChatText,
   rejectIfProfaneChat,
   CHAT_ALLOWED,
+  CHAT_BLOCKED,
   rejectIfProfaneVenue,
   moderateVenueText,
   VENUE_REJECTED_MESSAGE,
