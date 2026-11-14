@@ -137,8 +137,34 @@ table, the ship switch and rollback. What a readiness audit of every step on
   offset would sit at their no-reading values. Only the cancellation moves:
   the export still waits for the end of the current cycle.
 
-**2026-11-05: the retrain is gated and served as a mix, decided before the
-November export.**
+**2026-11-13: the retrain is gated and served alone, the model making every
+number. This supersedes the 2026-11-05 mix below, before the export.**
+
+- **What.** The candidate is scored as production serves today, the model
+  with the nowcast and the quantile map off: `--candidate-serve=model+nowcast
+  --qmap=false` in step 7 below, recorded as `band_gate.candidate_serving`
+  `{"serve_mode":"model","nowcast":true}`. Production already runs
+  `CROWD_SERVE_MODE=model`, `CROWD_NOWCAST_ENABLED=true` and
+  `CROWD_QMAP_ENABLED=false` (since 2026-11-10), so the ship sets no variable;
+  with a retrained artifact the map and the model-table nowcast stand aside,
+  so what users get is the model alone. The mix, rule (b) and curve + offset
+  stay in the printout as benchmarks the model has to beat, and the
+  `model_when_fresh` serving code stays, unused.
+- **Why.** The aim is a model that makes every number on its own, not a
+  serving rule that hands the hard cases to the curve. On 2026-10-23..11-05
+  the mix led production's model (82.8% within 10 against 78.7%, MAE 6.89
+  against 7.66), and switching production to it was declined for that reason.
+- **What it costs.** On the rehearsal below the retrain alone failed one
+  criterion, within 10 against rule (b), because of the readings with no
+  hour-old reading. If the November retrain fails the same way it does not
+  ship and v2.6.0-starling keeps serving through the model. The work is in the
+  model: its numbers for venues not read in the hour before.
+- **Rollback.** `git revert` the artifact commit restores v2.6.0-starling,
+  served through the model. `CROWD_SERVE_MODE=curve_offset` (rule (b)) is for a
+  broken model path only.
+
+**2026-11-05 (superseded on 2026-11-13, above): the retrain is gated and served
+as a mix, decided before the November export.**
 
 - **What.** Where the venue has the live reading rule (b)'s nowcast would
   carry (the reading from one venue-local hour earlier, under the 2026-10-14
@@ -614,9 +640,9 @@ MODEL_VERSION=2.8.0-starling python export_model.py
 #    nowcast under the 2026-10-14 weights. Production served curve_offset +
 #    nowcast from 2026-09-26 (these weights from 2026-10-14) until
 #    2026-11-01. Beating the model alone is not the bar. The candidate is
-#    scored as it will be served (2026-11-05): the model where the venue has
-#    an hour-old reading, curve + 0.85 x offset elsewhere.
-node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model_when_fresh+nowcast --out=band_gate_report.json
+#    scored as it will be served (2026-11-13): the model alone, with the
+#    nowcast and the quantile map off, as production serves.
+node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model+nowcast --qmap=false --out=band_gate_report.json
 
 # 8. Verify the artifact the way production reads it, then read the verdict.
 #    The per-test timeout turns a hang into a red instead of a stall.

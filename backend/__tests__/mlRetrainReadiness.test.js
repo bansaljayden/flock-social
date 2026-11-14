@@ -21,10 +21,10 @@
 //   3. The thresholds, the criteria and the command block in RETRAIN.md are
 //      the registered ones. A change to any of them is a change to the
 //      pre-registration, and it fails here first.
-//   4. Since 2026-11-05 the command block gates the candidate as it will be
-//      served: `--candidate-serve=model_when_fresh+nowcast`, the model where
-//      the venue has an hour-old reading and rule (b)'s curve + offset
-//      elsewhere (RETRAIN.md, the 2026-11-05 decision).
+//   4. The command block gates the candidate as it will be served: since
+//      2026-11-13 `--candidate-serve=model+nowcast --qmap=false`, the model
+//      alone as production serves it (RETRAIN.md, the 2026-11-13 decision;
+//      from 2026-11-05 it was the mix, `model_when_fresh+nowcast`).
 //
 // No database, no network, no model is fitted: the scored artifact is the
 // tracked v2.6.0-starling ONNX, replayed. Run: node --test  (from backend/)
@@ -225,16 +225,18 @@ test('RETRAIN.md\'s command block runs the registered procedure, with no hatch',
     'CROWD_QMAP_ENABLED=false python quick_eval.py',
     'python export_model.py',
     'node bandEval.js --gate --incumbent-serve=curve_offset+nowcast',
-    // The configuration decided on 2026-11-05, the one the ship serves.
-    'node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model_when_fresh+nowcast',
+    // The configuration decided on 2026-11-13, the one production serves.
+    'node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model+nowcast --qmap=false',
   ]) {
     assert.ok(commands.includes(step), `the command block no longer runs: ${step}`);
   }
   // That configuration is one the gate accepts for a candidate, and the one
   // the serving code knows by that name.
-  assert.deepEqual(B.parseCandidateServe('model_when_fresh+nowcast'), { serveMode: 'model_when_fresh', nowcast: true });
+  assert.deepEqual(B.parseCandidateServe('model+nowcast'), { serveMode: 'model', nowcast: true });
   const { _internals: I } = require('../services/mlPredictor');
-  assert.ok(I.SERVE_MODES.includes('model_when_fresh'));
+  assert.ok(I.SERVE_MODES.includes('model'));
+  // The superseded mix is no longer the gated configuration.
+  assert.ok(!commands.includes('--candidate-serve=model_when_fresh'), 'the command block gates the mix again');
   // The registered rule picks the window, and no escape hatch belongs in a release.
   for (const hatch of ['FLOCK_TIME_HOLDOUT_FROM', 'FLOCK_TIME_HOLDOUT_DAYS', 'FLOCK_DEAD_SLOT_POLICY',
     'FLOCK_MIN_REALTIME_ROWS', 'ML_ALLOW_', 'ML_SHIP_GATE_OVERRIDE', '--include-harvested']) {
