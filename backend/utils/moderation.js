@@ -69,28 +69,24 @@ const CHAT_ALLOWED = [
   'arse', 'bitch', 'bitches', 'bitching', 'bastard', 'bastards', 'crap', 'piss', 'pissed',
   'dick', 'dickhead', 'screw', 'balls', 'bloody', 'prick', 'turd', 'butt',
 ];
-// CHAT BLOCKS SLURS AND NOTHING ELSE (2026-11-14). Removing the curse family
-// was not enough: the rest of the 714-word list still refused "oh my god",
-// "sexy", "horny", "fart", "poop", "fuckin" (while "fucking" passed), "sex" and
-// dozens of foreign words, and a message between friends that says one of them
-// came back as not fitting the guidelines. Chat is private to the people in the
-// plan or the DM, every message carries Report and every sender can be blocked,
-// which is what Apple 1.2 asks of user content alongside a filter. So chat
-// bodies are screened on this list alone: racial, ethnic, homophobic,
-// transphobic and disability slurs, with their common spellings and plurals.
-// Everything that is not a slur sends. Names, bios, flock names, venue text and
-// reviews, which strangers can read, keep the full list. CHAT_ALLOWED above
-// stays as the record of the swearing that has always passed here, and the
-// tests hold it.
+// CHAT BLOCKS FIVE SLURS AND NOTHING ELSE (2026-11-14). Removing the curse
+// family was not enough: the rest of the 714-word list still refused "oh my
+// god", "sexy", "horny", "fart", "fuckin" (while "fucking" passed), "sex" and
+// dozens of foreign words, and a message between friends that said one came back
+// as not fitting the guidelines. The owner asked for "only 5 words are blocked
+// or nothing at all". Nothing at all would leave chat without the filter Apple
+// 1.2 asks of user content, so it is five: the five slurs below, each with its
+// plural and the digit spellings people use to get round a filter, which are the
+// same word. Every message still carries Report and every sender can be blocked.
+// Names, bios, flock names, venue text and reviews, which strangers read, keep
+// the full list. CHAT_ALLOWED above stays as the record of the swearing that has
+// always passed here, and the tests hold it.
 const CHAT_BLOCKED = [
-  'nigger', 'niggers', 'nigga', 'niggas', 'niggaz', 'niggah', 'n1gga', 'n1gger', 'n1gr', 'nigg3r', 'nigg4h', 'nigur', 'niiger', 'niigr',
-  'faggot', 'faggots', 'fag', 'fags', 'fagot', 'fagots', 'faggit', 'faggitt', 'fagg1t', 'fagg0t', 'fag1t', 'faget', 'fagit', 'fagz', 'faggs', 'fagging',
-  'dyke', 'dykes', 'lesbo', 'lezzian', 'homo', 'gaylord', 'qweir', 'tranny', 'trannies', 'shemale', 'heshe',
-  'butt-pirate', 'carpet muncher', 'fudge packer', 'fudgepacker',
-  'kike', 'kikes', 'chink', 'chinks', 'gook', 'gooks', 'g00k', 'spic', 'spics', 'spick', 'wetback', 'wetbacks', 'coon', 'coons',
-  'paki', 'pakis', 'pakie', 'packi', 'packie', 'packy', 'paky', 'jap', 'japs', 'kraut', 'honkey', 'injun',
-  'wop', 'w0p', 'dego', 'daygo', 'polack', 'polak', 'polac',
-  'retard', 'retards', 'retarded',
+  'nigger', 'niggers', 'n1gger', 'n1ggers', 'nigg3r', 'nigg3rs',
+  'faggot', 'faggots', 'fagg0t', 'fagg0ts',
+  'kike', 'kikes',
+  'chink', 'chinks',
+  'spic', 'spics',
 ];
 const chatFilter = new Filter({ emptyList: true });
 chatFilter.addWords(...CHAT_BLOCKED);

@@ -24,10 +24,13 @@ test('everyday swearing passes in chat and still fails everywhere else', () => {
   assert.strictEqual(mod.moderateText('fuck you').allowed, false, 'a name or bio keeps the full list');
 });
 
-// CHAT BLOCKS SLURS AND NOTHING ELSE (2026-11-14): the rest of the general
-// list refused "oh my god", "fuckin" and "sexy" between friends.
-test('chat refuses slurs and hate terms, and every one on its list', () => {
-  assert.ok(mod.CHAT_BLOCKED.length >= 50, 'the slur list is the chat list');
+// CHAT BLOCKS FIVE SLURS AND NOTHING ELSE (2026-11-14, the owner's "only 5
+// words are blocked"): the rest of the general list refused "oh my god",
+// "fuckin" and "sexy" between friends.
+test('chat refuses the five slurs, in every spelling on its list', () => {
+  const roots = new Set(mod.CHAT_BLOCKED.map((w) => w.replace(/[^a-z]/g, '').replace(/s$/, '').replace('n1gger', 'nigger')));
+  assert.deepStrictEqual([...new Set(['nigger', 'faggot', 'kike', 'chink', 'spic'])].every((r) => mod.CHAT_BLOCKED.includes(r)), true);
+  assert.ok(roots.size <= 8, 'five words, with their plurals and digit spellings');
   for (const w of mod.CHAT_BLOCKED) {
     assert.strictEqual(mod.moderateChatText(`hey ${w} lol`).allowed, false, w);
   }
