@@ -7,9 +7,9 @@
 
 Flock is on the App Store for iPhone, free, at
 https://apps.apple.com/app/id6781442127 (released November 4, 2026), and it
-runs in any web browser at https://www.flockcorp.com. You and your
-friends do not pay today. Venues are the side Flock is built to charge, and no
-venue is being charged today.
+runs in any web browser at https://www.flockcorp.com. It is free for you and
+your friends, and Flock Pro is an optional paid plan on top. Venues are the side
+Flock is built to charge, and no venue is being charged today.
 
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
