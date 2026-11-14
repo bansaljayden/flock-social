@@ -678,6 +678,32 @@ describe('MessageRow gestures: 350ms and 48px, reported and not handled', () => 
     expect(onSwipeReply.mock.calls[0][0].id).toBe(41);
   });
 
+  it('follows the finger without re-rendering on every move (2026-11-14)', () => {
+    /* A state update per touchmove re-rendered the row sixty times a second
+       while a reply was dragged. The row writes its own transform now; the
+       only commits in a whole gesture are the drag class going on and off. */
+    let commits = 0;
+    const { container } = render(
+      <React.Profiler id="row" onRender={() => { commits += 1; }}>
+        <MessageRow message={row({ id: 41 })} onSwipeReply={jest.fn()} />
+      </React.Profiler>
+    );
+    const node = rowNode(container);
+    const before = commits;
+    fireEvent.touchStart(node, { touches: [{ clientX: 40, clientY: 100 }] });
+    for (let x = 52; x <= 100; x += 6) {
+      fireEvent.touchMove(node, { touches: [{ clientX: x, clientY: 101 }] });
+    }
+    expect(node.style.transform).toMatch(/^translateX\(\d+px\)$/);
+    expect(node.style.transition).toBe('none');
+    expect(commits - before).toBeLessThanOrEqual(1);
+    fireEvent.touchEnd(node, { changedTouches: [{ clientX: 100, clientY: 101 }] });
+    expect(node.style.transform).toBe('none');
+    expect(node.style.transition).toBe('');
+    expect(node.className).not.toMatch(/is-dragging/);
+    expect(commits - before).toBeLessThanOrEqual(2);
+  });
+
   it.each([
     ['still sending in a plan', { id: 1700000000001, pending: true }],
     ['failed in a plan', { id: 1700000000002, failed: true }],

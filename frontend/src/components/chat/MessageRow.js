@@ -205,7 +205,6 @@ function MessageRow({
      (hooks/useEdgeSwipeBack.js). That finger is going back, so this row does
      not also start a reply under it. A long press from there still works. */
   const fromEdgeRef = useRef(false);
-  const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
   const [timeShown, setTimeShown] = useState(false);
   // No swipe at all on a row nobody can reply to (canQuote): the row does not
@@ -257,9 +256,20 @@ function MessageRow({
     }, LONG_PRESS_MS);
   }, [clearTimer, fireLongPress, onLongPress]);
 
+  /* THE ROW FOLLOWS THE FINGER BY WRITING ITS OWN TRANSFORM, NOT THROUGH
+     STATE. A state update per touchmove re-rendered the row (bubble, quote,
+     photo, reactions) about sixty times a second for as long as a reply was
+     being dragged, and on a phone that was the stutter under the finger. The
+     style prop's `transform: 'none'` never changes, so React never writes over
+     what this puts there. The transition goes off while the finger is down, so
+     the row cannot trail the touch, and back to the stylesheet's on release,
+     which is the 120ms return (and nothing, under reduced motion). */
   const setDrag = (px) => {
     dragRef.current = px;
-    setDragX(px);
+    const node = hostRef.current;
+    if (!node) return;
+    node.style.transition = px ? 'none' : '';
+    node.style.transform = px ? `translateX(${px}px)` : 'none';
   };
 
   const onTouchStart = (e) => {
@@ -287,7 +297,7 @@ function MessageRow({
     // Rightward and roughly horizontal only, so a vertical scroll always keeps
     // the gesture it started.
     if (dx > SLOP && Math.abs(dy) < 24) {
-      setDragging(true);
+      if (!dragging) setDragging(true);
       setDrag(Math.min(dx - SLOP, SWIPE_MAX));
     } else if (dx <= SLOP && dragRef.current !== 0) {
       setDrag(0);
@@ -449,7 +459,9 @@ function MessageRow({
            next name is measured from the last BASELINE, and the reserved 8
            above already spends most of it. */
         marginBottom: gapBelow,
-        transform: dragX ? `translateX(${dragX}px)` : 'none',
+        /* Fixed: the drag writes the live value straight onto the node
+           (setDrag above). */
+        transform: 'none',
         opacity: pending ? 0.6 : 1,
       }}
       onTouchStart={onTouchStart}
