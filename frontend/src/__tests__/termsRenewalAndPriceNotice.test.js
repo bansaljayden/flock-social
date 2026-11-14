@@ -81,25 +81,24 @@ describe('the price-change line is a condition, not a sender', () => {
     // (App Review, 5.1.1(v)). October 29: section 5 names the You tab for
     // blocked accounts, and 7 says Roost lists its sources, with their dates,
     // at the end of an answer. A later change to the words moves it again.
-    expect(TERMS).toContain("const EFFECTIVE_DATE = 'November 14, 2026';");
+    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 29, 2026';");
     const terms = MIRROR.slice(MIRROR.indexOf('  terms: ['));
-    expect(terms).toContain('["p", "Effective November 14, 2026"],');
+    expect(terms).toContain('["p", "Effective October 29, 2026"],');
   });
 });
 
 describe('where Flock Pro is sold', () => {
-  // The App Store build sells Flock Pro through Apple from 1.0.3
-  // (REACT_APP_PURCHASES=iap), and the Terms say so by version, which is true
-  // both before and after that version is live. 10.1 is the App Store half.
+  // No iOS build sells Flock Pro (the App Store one is built with
+  // REACT_APP_PURCHASES=off), so the Terms no longer say it can be bought in
+  // the app. The App Store terms in 10.1 stay whole, for a version that does.
   const BOTH = [['Terms', TERMS], ['mirror', MIRROR]];
 
-  test('both copies say where Pro is sold, the app from 1.0.3', () => {
+  test('neither copy says Pro can be bought in the iOS app today', () => {
     for (const [, text] of BOTH) {
       expect(text).not.toMatch(/Buy it in the iOS app and you cancel through Apple/);
       expect(text).not.toMatch(/Flock Pro can be bought in two places/);
-      expect(text).toContain('It is sold on flockcorp.com, where you cancel it in your account, with a full refund within 14 days of your first payment, and in the iOS app from version 1.0.3, where Apple sells it and you cancel it in your Apple ID settings.');
-      expect(text).toContain('Flock Pro is sold on flockcorp.com, under 10.2, and in the iOS app from version 1.0.3, under 10.1.');
-      expect(text).not.toMatch(/does not currently sell/);
+      expect(text).toContain('The iOS app does not currently sell it; if a version of the app does, a subscription bought there is cancelled through Apple.');
+      expect(text).toContain('Flock Pro is sold on flockcorp.com, under 10.2. The iOS app does not currently sell it. If a version of the app offers it, 10.1 sets out how a subscription bought there works.');
       expect(text).toContain('10.1 If bought in the iOS app');
     }
   });
