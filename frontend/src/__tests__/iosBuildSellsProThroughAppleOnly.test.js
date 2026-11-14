@@ -663,8 +663,11 @@ describe('where the flag is set', () => {
     return /\n\s+script: (.*)\n/.exec(block.slice(step))[1];
   };
 
-  test('the App Store workflow builds the web app to sell Pro through Apple only', () => {
-    expect(buildLine(workflow('ios-capacitor'))).toBe('REACT_APP_PURCHASES=iap npm run build');
+  // OFF UNTIL THE DEVELOPER ACCOUNT BELONGS TO FLOCK SOCIAL LLC (2026-11-14,
+  // codemagic.yaml says why). The release that sells Pro through Apple puts
+  // iap back on both lines and these four tests with it.
+  test('the App Store workflow builds the web app to sell nothing for now', () => {
+    expect(buildLine(workflow('ios-capacitor'))).toBe('REACT_APP_PURCHASES=off npm run build');
   });
 
   test('right after that build, a step stops a build that sells Pro without the Apple key', () => {
@@ -685,12 +688,12 @@ describe('where the flag is set', () => {
   });
 
   test('the review recording builds the same app the reviewer gets', () => {
-    expect(buildLine(workflow('ios-review-recording'))).toMatch(/(^| )REACT_APP_PURCHASES=iap .*npm run build$/);
+    expect(buildLine(workflow('ios-review-recording'))).toMatch(/(^| )REACT_APP_PURCHASES=off .*npm run build$/);
   });
 
-  test('nothing else sets it: both iOS lines say iap, none says off, and not an env group line, Vercel or the env example', () => {
-    expect(yaml.match(/script: .*REACT_APP_PURCHASES=iap/g)).toHaveLength(2);
-    expect(yaml).not.toMatch(/script: .*REACT_APP_PURCHASES=off/);
+  test('nothing else sets it: both iOS lines say off, none says iap, and not an env group line, Vercel or the env example', () => {
+    expect(yaml.match(/script: .*REACT_APP_PURCHASES=off/g)).toHaveLength(2);
+    expect(yaml).not.toMatch(/script: .*REACT_APP_PURCHASES=iap/);
     expect(yaml).not.toMatch(/REACT_APP_PURCHASES:\s/);
     expect(read('..', 'vercel.json')).not.toContain('REACT_APP_PURCHASES');
     expect(read('..', '.env.example')).toMatch(/^REACT_APP_PURCHASES=$/m);

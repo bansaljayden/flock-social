@@ -118,16 +118,19 @@ workflows:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
       - name: Build web app (root asset paths)
-        # REACT_APP_PURCHASES=iap: the App Store build sells Flock Pro through
-        # Apple's in-app purchase (RevenueCat) and nothing else. Stripe's
-        # checkout and portal, /pro, the landing page's prices, Roost's plans
-        # and buy buttons and every line that points to buying on the web are
-        # compiled out, as they were with off (App Store Review Guideline
-        # 3.1.1; frontend/src/lib/purchasesBuild.js). Set on the iOS build
-        # lines only, never on Vercel or Cloudflare, so the web keeps
-        # everything. frontend/scripts/check-purchase-bundle.js checks what an
-        # iap build carries.
-        script: REACT_APP_PURCHASES=iap npm run build
+        # REACT_APP_PURCHASES=off: the App Store build sells nothing (no purchase
+        # screen, no price, no store SDK; a server limit is stated without an
+        # offer), and every line that points to buying on the web is compiled
+        # out (App Store Review Guideline 3.1.1; frontend/src/lib/purchasesBuild.js).
+        # OFF UNTIL THE DEVELOPER ACCOUNT BELONGS TO FLOCK SOCIAL LLC (the
+        # owner's call, 2026-11-14): Apple pays in-app sales to the account's
+        # legal owner, which is still an individual. The release that sells Pro
+        # through Apple sets iap on both iOS lines again (Pro through Apple's
+        # in-app purchase and nothing else); the iap mode, the RevenueCat key
+        # step below and frontend/scripts/check-purchase-bundle.js stay ready
+        # for it. Set on the iOS build lines only, never on Vercel or
+        # Cloudflare, so the web keeps everything.
+        script: REACT_APP_PURCHASES=off npm run build
       - name: Check the RevenueCat key if this build sells Flock Pro
         script: |
           # A BUILD THAT SELLS PRO WITHOUT ITS STORE KEY SHIPS GREEN. With
@@ -730,12 +733,10 @@ workflows:
         # the retry still happen underneath), the second forces the light theme,
         # because this machine keeps UTC time and a run after 20:00 UTC would
         # otherwise film dark. Neither is set on any other workflow or on Vercel.
-        # REACT_APP_PURCHASES=iap as on the App Store build above, so the take
-        # films the same app the reviewer installs: Flock Pro through the App
-        # Store only, and no web purchase surface at all. The Pro sheet appears
-        # only to an account the server has the paywall on for (PAYWALL_ENABLED,
-        # or PAYWALL_PREVIEW_USER_IDS), as in the reviewer's app.
-        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=iap npm run build
+        # REACT_APP_PURCHASES as on the App Store build above (off for now), so
+        # the take films the same app the reviewer installs, with no purchase
+        # surface the App Store build does not have.
+        script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=off npm run build
       - name: Capacitor sync iOS
         script: |
           # The marketing site's app screenshots stay out of the iPhone app. The
