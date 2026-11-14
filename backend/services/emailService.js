@@ -394,10 +394,19 @@ const EMAIL_ALARM_PUSH = {
     title: 'An email was held back',
     body: `A ${String((extra && extra.category) || 'transactional').slice(0, 40)} email hit the per-address daily cap. The Railway log has the details under EMAIL.`,
   }),
-  'locked-out': () => ({
-    title: 'Someone cannot get their email',
-    body: 'A verification or password reset email was refused because the address is on the do-not-mail list. The Railway log has the details under EMAIL.',
-  }),
+  // Names the message that was refused when its sender said what it was
+  // (sendEmail's `purpose`). It used to say "a verification or password reset
+  // email" whatever was refused, and from 2026-11-10 the daily push was a
+  // Roost pricing notice to a bounced address, read as somebody failing to
+  // sign in. The purpose is a phrase from this codebase, never an address.
+  'locked-out': (extra) => {
+    const purpose = extra && typeof extra.purpose === 'string' ? extra.purpose.trim().slice(0, 60) : '';
+    const what = purpose ? purpose[0].toUpperCase() + purpose.slice(1) : 'An account email';
+    return {
+      title: 'Someone cannot get their email',
+      body: `${what} was refused because the address is on the do-not-mail list, so it cannot get a verification or password reset email either. The Railway log has the details under EMAIL.`,
+    };
+  },
   'emergency-loop': () => ({
     title: 'Emergency emails are repeating',
     body: 'One address has been sent many emergency emails in 24 hours. Check the SOS cooldown. The Railway log has the details under EMAIL.',
@@ -674,7 +683,10 @@ function deriveTextFromHtml(html) {
   return safeTextBody(s);
 }
 
-async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <social@flockcorp.com>', headers, category = 'transactional' }) {
+// `purpose`, optional: what the message is, as a phrase that reads after
+// "was refused" in the email alarm ("the Roost pricing notice", "a password
+// reset email"). Only the alarm reads it; nothing is sent differently.
+async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <social@flockcorp.com>', headers, category = 'transactional', purpose }) {
   if (!isMailableAddress(to)) {
     console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
     return { sent: false, error: 'invalid recipient', refused: true };
@@ -707,10 +719,10 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <soci
     if (!suppression.OPTIONAL_CATEGORIES.has(category)) {
       raiseEmailAlarm(
         `locked-out:${recipient.toLowerCase()}`,
-        `${maskAddress(recipient)} is on the do-not-mail list (${allowed.reason}) and a ${category} message was just refused for it. `
+        `${maskAddress(recipient)} is on the do-not-mail list (${allowed.reason}) and a ${category} message${purpose ? ` (${purpose})` : ''} was just refused for it. `
         + 'If that address owns a Flock account, its owner cannot verify their email and cannot reset their password, and there is no self-service way back. '
         + 'Clearing the row in email_suppressions is the only fix.',
-        { reason: allowed.reason, category }
+        { reason: allowed.reason, category, purpose }
       );
     }
     return { sent: false, suppressed: true, reason: allowed.reason, refused: true };
@@ -944,6 +956,7 @@ async function sendVerificationEmail({ to, name, link, hours }) {
   return sendEmail({
     to,
     subject: 'Confirm your email for Flock',
+    purpose: 'a verification email',
     // The text part carries the RAW name and the RAW link, not the escaped
     // ones: `&amp;` is correct in an href attribute and wrong in a plain-text
     // body, where it is what the reader pastes into their browser.
@@ -1001,6 +1014,7 @@ async function sendPasswordResetEmail({ to, name, link, minutes }) {
   return sendEmail({
     to,
     subject: 'Reset your Flock password',
+    purpose: 'a password reset email',
     text: [
       'Reset your password',
       '',
@@ -1052,6 +1066,7 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
   return sendEmail({
     to,
     subject: 'About your Flock sign-in',
+    purpose: 'a sign-in help email',
     text: [
       'There is no password to reset',
       '',

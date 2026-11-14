@@ -109,6 +109,8 @@ async function sendOne(row, nowMs) {
     const result = await sendEmail({
       to: row.email,
       category: 'transactional',
+      // What the email alarm names when a bounced address refuses this.
+      purpose: 'the Roost pricing notice',
       subject: roostNoticeSubject(input),
       html: renderRoostNoticeHtml(input),
       text: renderRoostNoticeText(input),
