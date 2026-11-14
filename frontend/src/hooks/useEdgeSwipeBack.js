@@ -58,8 +58,8 @@
  *    the width of a fingertip. `anywhere` turns that on. A touch outside the
  *    band is let go when it starts on a text field (a sideways drag there is
  *    the caret) or on something with a sideways swipe of its own, which marks
- *    itself data-edge-swipe="band": a message that can be replied to and the
- *    pin bar. Those still give the band to the back swipe, by decision 5. It
+ *    itself data-edge-swipe="band": a message that can be replied to, the pin
+ *    bar and Birdie's nudge row, which is dismissed by a sideways drag. Those still give the band to the back swipe, by decision 5. It
  *    also asks for a flatter angle before it moves the screen, twice as far
  *    sideways as up or down, because out in the list a slightly crooked
  *    scroll is far more common than at the edge. And it works in a browser

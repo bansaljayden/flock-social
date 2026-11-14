@@ -49,6 +49,7 @@
 import React, { useRef, useState } from 'react';
 import { BirdieStill, WARM_BIRD } from '../../ui/BirdieBird';
 import Icons from '../../ui/Icons';
+import { startsInEdgeBand } from '../../../hooks/useEdgeSwipeBack';
 import './cards.css';
 
 // Measured against the plan's 32pt dismiss chip: far enough that a vertical
@@ -89,6 +90,10 @@ export default function NudgeRow({
     // and the retarget never happened with it. It also stopped a plain button
     // press from starting a drag and toggling the settle transition.
     if (e.target && typeof e.target.closest === 'function' && e.target.closest('button')) return;
+    // A press that starts in the back swipe's band at the screen's left edge
+    // belongs to that swipe (hooks/useEdgeSwipeBack.js), the way it does for
+    // a message's reply swipe and the pin bar, so the row does not slide too.
+    if (startsInEdgeBand(e.clientX)) return;
     startX.current = e.clientX;
     setSettling(false);
     // jsdom has no pointer capture and neither does every WebView; the drag
@@ -128,6 +133,9 @@ export default function NudgeRow({
     <div
       className={`${settling ? 'chat-nudge-settling ' : ''}${leaving ? 'chat-nudge-leaving ' : ''}`.trim()}
       data-nudge-row="true"
+      // Its own sideways drag dismisses it, so the chat's swipe back from
+      // anywhere takes it only from the edge band (useEdgeSwipeBack, decision 7).
+      data-edge-swipe="band"
       aria-hidden={leaving || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

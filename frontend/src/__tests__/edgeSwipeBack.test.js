@@ -547,6 +547,23 @@ describe('a chat is swiped back from anywhere, not only the edge', () => {
     expect(node.style.transform).toBe('translate3d(100px, 0, 0)');
   });
 
+  test('Birdie\'s nudge keeps its dismiss drag, and gives the band to going back', () => {
+    const NudgeRow = require('../components/chat/cards/NudgeRow').default;
+    const node = screenNode();
+    const view = render(<NudgeRow text="Pick a place" actionLabel="Vote" onAction={jest.fn()} onDismiss={jest.fn()} />, { container: node });
+    const nudge = view.container.querySelector('[data-nudge-row="true"]');
+    expect(nudge.getAttribute('data-edge-swipe')).toBe('band');
+    bindEdgeSwipe(node, { onBack: jest.fn(), anywhere: () => true, clock });
+    // Out past the band the drag is the nudge's: the screen stays put.
+    drag(node, [[150, 300], [260, 300]], nudge);
+    expect(node.style.transform).toBe('');
+    touch(nudge, 'touchend', 260);
+    // From the band the nudge does not start its own drag.
+    fireEvent.pointerDown(nudge, { clientX: 8, pointerType: 'touch', button: 0 });
+    fireEvent.pointerMove(nudge, { clientX: 120, pointerType: 'touch' });
+    expect(nudge.style.transform).toBe('');
+  });
+
   test('both chat screens turn it on, and the pin bar keeps its own swipe', () => {
     expect(read('screens', 'ChatDetail.js')).toMatch(/useEdgeSwipeBack\(leaveToList, \{ anywhere: true \}\)/);
     expect(read('screens', 'DmDetail.js')).toMatch(/useEdgeSwipeBack\(leaveToList, \{ anywhere: true \}\)/);
