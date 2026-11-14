@@ -4,7 +4,7 @@
 //
 // The retrain's hypotheses (H4 to H6), guards and decision rule were fixed in
 // code on 2026-09-25 and 09-26 and are quoted in the research paper. The run
-// moved to early November; until it happens, three things have to stay true,
+// moved to early November; until it happens, four things have to stay true,
 // and nothing else in the suite pins them together:
 //
 //   1. The gate scores the incumbent as production serves it at gate time.

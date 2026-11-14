@@ -64,7 +64,8 @@
 //                 candidate's model_metadata.json and sets overall_pass
 //   ... --candidate-serve=<config>   the configuration the candidate is
 //                 scored and gated in (default 'model'; the November run
-//                 uses model_when_fresh+nowcast, RETRAIN.md 2026-11-05); the
+//                 uses model+nowcast with --qmap=false, RETRAIN.md 2026-11-13,
+//                 which superseded the 2026-11-05 mix); the
 //                 verdict records it as band_gate.candidate_serving
 // ---------------------------------------------------------------------------
 
@@ -1439,7 +1440,8 @@ async function main(argv = process.argv.slice(2)) {
     // before 2026-11-05, and what the app serves with both switches off. Set
     // to model_when_fresh(+nowcast), the model where the venue has a fresh
     // reading and curve_offset elsewhere, the configuration decided on
-    // 2026-11-05 for the November retrain (RETRAIN.md).
+    // 2026-11-05 for the November retrain and superseded on 2026-11-13 by
+    // model+nowcast (RETRAIN.md).
     const mine = await scoreArtifact(art, prepared, { qmap, ...candidateServe });
     // The incumbent AS PRODUCTION SERVES IT: under --incumbent-serve when
     // given, else under the two switches exactly as this process's environment

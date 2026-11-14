@@ -141,7 +141,7 @@ table, the ship switch and rollback. What a readiness audit of every step on
 number. This supersedes the 2026-11-05 mix below, before the export.**
 
 - **What.** The candidate is scored as production serves today, the model
-  with the nowcast and the quantile map off: `--candidate-serve=model+nowcast
+  with the nowcast on and the quantile map off: `--candidate-serve=model+nowcast
   --qmap=false` in step 7 below, recorded as `band_gate.candidate_serving`
   `{"serve_mode":"model","nowcast":true}`. Production already runs
   `CROWD_SERVE_MODE=model`, `CROWD_NOWCAST_ENABLED=true` and
@@ -149,11 +149,13 @@ number. This supersedes the 2026-11-05 mix below, before the export.**
   with a retrained artifact the map and the model-table nowcast stand aside,
   so what users get is the model alone. The mix, rule (b) and curve + offset
   stay in the printout as benchmarks the model has to beat, and the
-  `model_when_fresh` serving code stays, unused.
+  `model_when_fresh` serving code stays, unused. The final refit's forward
+  check scores the refit the same way, `model+nowcast --qmap=false`.
 - **Why.** The aim is a model that makes every number on its own, not a
   serving rule that hands the hard cases to the curve. On 2026-10-23..11-05
   the mix led production's model (82.8% within 10 against 78.7%, MAE 6.89
-  against 7.66), and switching production to it was declined for that reason.
+  against 7.66), and switching production to it was still declined, because
+  the aim is the model alone.
 - **What it costs.** On the rehearsal below the retrain alone failed one
   criterion, within 10 against rule (b), because of the readings with no
   hour-old reading. If the November retrain fails the same way it does not
@@ -641,7 +643,7 @@ MODEL_VERSION=2.8.0-starling python export_model.py
 #    nowcast from 2026-09-26 (these weights from 2026-10-14) until
 #    2026-11-01. Beating the model alone is not the bar. The candidate is
 #    scored as it will be served (2026-11-13): the model alone, with the
-#    nowcast and the quantile map off, as production serves.
+#    nowcast on and the quantile map off, as production serves.
 node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --candidate-serve=model+nowcast --qmap=false --out=band_gate_report.json
 
 # 8. Verify the artifact the way production reads it, then read the verdict.
@@ -655,10 +657,10 @@ node -e "const g=require('./scripts/ml/models/model_metadata.json').ship_gate;
 
 `run_training.sh` runs the same scripts in the same order, without this run's
 switches, the schedule export, `--incumbent-serve` or `--candidate-serve`; use
-the block above for the November run. Run step 7 with
-`CROWD_QMAP_ENABLED` set exactly as the main service has it, because the band
-gate compares the candidate against the incumbent AS SERVED, and the map
-changes what the incumbent serves.
+the block above for the November run. Step 7 turns the quantile map off with
+`--qmap=false`, as the main service has run since 2026-11-10; the flag overrides
+`CROWD_QMAP_ENABLED` in the shell, so the band gate scores the candidate as
+production serves it.
 
 ### A rehearsal on the local export (2026-09-25)
 
