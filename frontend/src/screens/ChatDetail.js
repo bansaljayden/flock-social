@@ -199,6 +199,7 @@ import { GoogleMapsMark, ThumbToSheet } from '../components/ui/GoogleCredit';
 import { isEstimateBill, isQuarantinedBill, owedOn, shellEstimate } from '../lib/billShares';
 import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
+import { createDraftStore } from '../lib/draftStore';
 /* Tables at the places this flock is weighing: one ask for the vote rows and
    the venue cards together (lib/tableSummaries.js), the line itself
    TableAvailability's. */
@@ -992,12 +993,17 @@ export default function ChatDetail({
        that wrote it (lib/flockDrafts.js), so a phone handed to somebody
        else never opens their box on this person's words. */
     const draftAccountId = authUser?.id;
-    const [draft, setDraft] = React.useState(() => readFlockDraft(draftAccountId, selectedFlockId));
+    /* NOT STATE ON THIS SCREEN. The text sits in a store that only
+       ChatInputBar listens to (lib/draftStore.js), so a keystroke re-renders
+       the bar and not this screen, which used to redraw itself, and whatever
+       of the thread a fresh prop reached, for every character typed. */
+    const draftStoreRef = React.useRef(null);
+    if (!draftStoreRef.current) draftStoreRef.current = createDraftStore(readFlockDraft(draftAccountId, selectedFlockId));
     /* The mirror, readable from the effect below without widening its deps. */
     const draftRef = React.useRef('');
     const writeDraft = React.useCallback((next) => {
       draftRef.current = next;
-      setDraft(next);
+      draftStoreRef.current.set(next);
     }, []);
     /* Put the stashed sentence back into App.js's shared ref too, or the
        box would show text that Send does not read. Safe because
@@ -3875,7 +3881,7 @@ export default function ChatDetail({
              own quote block, so the two agree on what a photo is called. */
           replyTo={flockReplyingTo && { ...flockReplyingTo, preview: messagePreview({ ...flockReplyingTo, hadContent: true }) }}
           onCancelReply={() => setFlockReplyingTo(null)}
-          value={draft}
+          draftStore={draftStoreRef.current}
           onChange={(next) => {
             writeDraft(next);
             setComposerHasRealText(next.trim().length > 0);

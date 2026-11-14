@@ -82,6 +82,7 @@ import { groupReactions } from '../components/chat/MessageRow';
 import { useStableFn } from '../components/chat/useStableFn';
 import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, canQuote, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+import { createDraftStore } from '../lib/draftStore';
 /* The keyboard lane, the same hook the flock thread calls. See the block at
    its call below, and the longer version of the reasoning in ChatDetail.js. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
@@ -752,14 +753,18 @@ export default function DmDetail({
      the box through App.js, and none of those is a change event this screen
      can see. Clearing on the value instead would rub out the space somebody
      typed before a venue name. */
-  const [dmDraft, setDmDraft] = React.useState('');
-  /* What the box holds right now, readable from the effect below without
-     putting dmDraft in its dependency list. Every write to the draft goes
-     through writeDmDraft so the two cannot drift. */
+  /* NOT STATE ON THIS SCREEN. The text sits in a store that only
+     ChatInputBar listens to (lib/draftStore.js), so a keystroke re-renders the
+     bar and not the thread. */
+  const dmDraftStoreRef = React.useRef(null);
+  if (!dmDraftStoreRef.current) dmDraftStoreRef.current = createDraftStore('');
+  /* What the box holds right now, readable from the effect below and from the
+     send. Every write to the draft goes through writeDmDraft so the two cannot
+     drift. */
   const dmDraftRef = React.useRef('');
   const writeDmDraft = React.useCallback((next) => {
     dmDraftRef.current = next;
-    setDmDraft(next);
+    dmDraftStoreRef.current.set(next);
   }, []);
   const dmHadTextRef = React.useRef(false);
   React.useEffect(() => {
@@ -896,9 +901,11 @@ export default function DmDetail({
      they call, so nothing is referenced before it exists, and unconditionally
      above the return so they are never called behind a branch.
 
-     Without them the memo boundary was decorative: dmDraft is state in this
-     component, so every character typed re-ran this body, handed MessageRow
-     seven new function identities, and reconciled the whole thread. */
+     Without them the memo boundary was decorative: the draft was state in
+     this component then, so every character typed re-ran this body, handed
+     MessageRow seven new function identities, and reconciled the whole thread.
+     The draft is in a store now (lib/draftStore.js) and a keystroke no longer
+     re-runs this body, but anything else that does still meets the memo. */
   const stableDmColour = useStableFn((run) => (run.isMine ? DM_OWN_COLOUR : DM_FRIEND_COLOUR));
   /* THE TWO RENDERERS MessageRow CALLS WHILE IT RENDERS, and why they are
      the one pair here that does not go through useStableFn.
@@ -1802,7 +1809,7 @@ export default function DmDetail({
              honest signal that the keyboard is going down. */
           registerBar={keyboard.registerBar}
           registerInput={keyboard.registerInput}
-          value={dmDraft}
+          draftStore={dmDraftStoreRef.current}
           onChange={(next) => {
             writeDmDraft(next);
             setDmComposerHasRealText(next.trim().length > 0);
@@ -1818,7 +1825,7 @@ export default function DmDetail({
                the message; the words are about the photo. */
             if (showDmImagePreview && dmPendingImage) {
               const image = dmPendingImage;
-              const caption = dmDraft.trim();
+              const caption = dmDraftRef.current.trim();
               setShowDmImagePreview(false);
               setDmPendingImage(null);
               writeDmDraft('');

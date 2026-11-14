@@ -89,7 +89,7 @@
  * in CHAT-REBUILD-PLAN.md and is fire-and-forget on every platform.
  */
 
-import React, { useCallback, useLayoutEffect, useRef } from 'react';
+import React, { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import Icons from '../ui/Icons';
 import { hapticTap } from '../../services/haptics';
 import './chatInput.css';
@@ -101,6 +101,8 @@ const MIN_FIELD_H = 40;
 const MAX_FIELD_H = 120;
 
 const noop = () => {};
+const subscribeNothing = () => noop;
+const readNothing = () => '';
 
 export default function ChatInputBar({
   /* which surface, and what to call it */
@@ -111,8 +113,12 @@ export default function ChatInputBar({
      Used for the caret only, which is where the capture shows it. */
   ownColor,
 
-  /* the field */
-  value = '',
+  /* the field. `draftStore` (lib/draftStore.js) wins over `value` when both
+     are given: the screen writes the text into it and only this bar re-renders
+     for a keystroke, where a `value` held as screen state re-rendered the whole
+     screen for every character. `value` stays for callers with no store. */
+  value: valueProp = '',
+  draftStore = null,
   onChange = noop,
   onSend = noop,
   onTyping,
@@ -160,6 +166,12 @@ export default function ChatInputBar({
 }) {
   const fieldRef = useRef(null);
   const frameRef = useRef(0);
+
+  const stored = useSyncExternalStore(
+    draftStore ? draftStore.subscribe : subscribeNothing,
+    draftStore ? draftStore.get : readNothing,
+  );
+  const value = draftStore ? stored : valueProp;
 
   const hasText = typeof value === 'string' && value.trim().length > 0;
   const canSend = !disabled && (hasText || !!pendingImage);

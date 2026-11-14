@@ -760,7 +760,7 @@ describe('whitespace does not arm the Send button on either chat screen', () => 
     // photo on its own is a message and needs no words.
     expect(dmSource).toMatch(/if \(canSendDmText\) sendDmMessage\(\);/);
     expect(dmSource).toMatch(/if \(showDmImagePreview && dmPendingImage\) \{/);
-    expect(dmSource).toMatch(/const caption = dmDraft\.trim\(\);/);
+    expect(dmSource).toMatch(/const caption = dmDraftRef\.current\.trim\(\);/);
     expect(dmSource).toMatch(/setDmComposerHasRealText\(next\.trim\(\)\.length > 0\);/);
     // And no disabled send survived the swap on this screen.
     expect(dmSource).not.toContain('disabled={!chatInputHasText}');
