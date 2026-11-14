@@ -359,7 +359,8 @@ describe('every drill-in screen is wired, and the arrow and the swipe share one 
   test.each(SCREENS)('%s', (file, fn, key) => {
     const src = read(...file.split('/'));
     expect(src).toMatch(/^import useEdgeSwipeBack from '\.\.\/hooks\/useEdgeSwipeBack';/m);
-    expect(src).toContain(`const edgeBack = useEdgeSwipeBack(${fn});`);
+    // The two chat screens pass { anywhere: true } (section 6); the rest take the edge only.
+    expect(src).toMatch(new RegExp(`const edgeBack = useEdgeSwipeBack\\(${fn}(, \\{ anywhere: true \\})?\\);`));
     // The root is the element the swipe drags, and it slides in the same way.
     const keyAttr = key.includes('${') ? `key={\`${key}\`}` : `key="${key}"`;
     expect(src).toContain(`${keyAttr} ref={edgeBack} className="screen-enter"`);
@@ -470,5 +471,85 @@ describe('a sideways scroller in a drill-in screen keeps its own touches', () =>
     act(() => { jest.advanceTimersByTime(SETTLE_MS); });
     expect(node.style.transform).toBe('');
     expect(onBack).not.toHaveBeenCalled();
+  });
+});
+
+/* 6. FROM ANYWHERE ON A CHAT (decision 7 in the hook). */
+describe('a chat is swiped back from anywhere, not only the edge', () => {
+  const drag = (node, points, target = node) => {
+    const [first, ...rest] = points;
+    touch(target, 'touchstart', first[0], first[1]);
+    rest.forEach(([x, y, dt]) => {
+      clockNow += dt || 16;
+      touch(target, 'touchmove', x, y);
+    });
+  };
+  const row = { id: 41, sender: 'Ava', senderId: 2, text: 'hi', sentAt: '2026-09-05T20:00:00', message_type: 'text', reactions: [] };
+
+  test('a drag from the middle of the screen goes back', () => {
+    const onBack = jest.fn();
+    const node = screenNode();
+    bindEdgeSwipe(node, { onBack, anywhere: () => true, clock });
+    drag(node, [[150, 300], [250, 302, 60], [330, 304, 60]]);
+    expect(node.style.transform).toBe('translate3d(170px, 0, 0)');
+    clockNow += 150;
+    touch(node, 'touchend', 330);
+    act(() => { jest.advanceTimersByTime(SETTLE_MS); });
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  test('a message that can be replied to keeps its swipe, except from the band', () => {
+    const node = screenNode();
+    const view = render(<MessageRow message={row} onSwipeReply={jest.fn()} />, { container: node });
+    const rowNode = view.container.querySelector('.chat-swipe');
+    expect(rowNode.getAttribute('data-edge-swipe')).toBe('band');
+    bindEdgeSwipe(node, { onBack: jest.fn(), anywhere: () => true, clock });
+    drag(node, [[150, 300], [260, 300]], rowNode);
+    expect(node.style.transform).toBe('');
+    touch(rowNode, 'touchend', 260);
+    drag(node, [[8, 300], [120, 300]], rowNode);
+    expect(node.style.transform).toBe('translate3d(102px, 0, 0)');
+  });
+
+  test('a row nobody can reply to has no swipe of its own, so it goes back', () => {
+    const { container } = render(<MessageRow message={{ ...row, id: undefined }} onSwipeReply={jest.fn()} />);
+    expect(container.querySelector('.chat-swipe').hasAttribute('data-edge-swipe')).toBe(false);
+  });
+
+  test('a drag on a text field is the caret, not the back swipe', () => {
+    const node = screenNode();
+    const field = document.createElement('textarea');
+    node.appendChild(field);
+    bindEdgeSwipe(node, { onBack: jest.fn(), anywhere: () => true, clock });
+    drag(node, [[150, 700], [260, 700]], field);
+    expect(node.style.transform).toBe('');
+  });
+
+  test('out past the band a crooked drag stays a scroll; the band takes it', () => {
+    const node = screenNode();
+    bindEdgeSwipe(node, { onBack: jest.fn(), anywhere: () => true, clock });
+    // 20 across and 14 down: sideways enough at the edge, not out in the list.
+    drag(node, [[150, 300], [170, 314]]);
+    expect(node.style.transform).toBe('');
+    touch(node, 'touchend', 170);
+    drag(node, [[8, 300], [28, 314]]);
+    expect(node.style.transform).toBe('translate3d(10px, 0, 0)');
+  });
+
+  test('in a browser it works past the band and leaves the band to the browser', () => {
+    mockShell.native = false;
+    const node = screenNode();
+    bindEdgeSwipe(node, { onBack: jest.fn(), isEnabled: () => false, anywhere: () => true, clock });
+    drag(node, [[8, 300], [120, 300]]);
+    expect(node.style.transform).toBe('');
+    touch(node, 'touchend', 120);
+    drag(node, [[150, 300], [260, 300]]);
+    expect(node.style.transform).toBe('translate3d(100px, 0, 0)');
+  });
+
+  test('both chat screens turn it on, and the pin bar keeps its own swipe', () => {
+    expect(read('screens', 'ChatDetail.js')).toMatch(/useEdgeSwipeBack\(leaveToList, \{ anywhere: true \}\)/);
+    expect(read('screens', 'DmDetail.js')).toMatch(/useEdgeSwipeBack\(leaveToList, \{ anywhere: true \}\)/);
+    expect(read('components', 'chat', 'sheets', 'PinnedMessageBar.js')).toMatch(/data-edge-swipe="band"/);
   });
 });

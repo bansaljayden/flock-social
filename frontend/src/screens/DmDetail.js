@@ -736,7 +736,8 @@ export default function DmDetail({
   // edge so the two cannot leave differently. Same order the arrow always
   // used: the screen changes, then the thread's shared state is cleared.
   const leaveToList = () => { setCurrentScreen('main'); leaveDmScreen(); };
-  const edgeBack = useEdgeSwipeBack(leaveToList);
+  // From anywhere on the screen, not only the edge (the hook's decision 7).
+  const edgeBack = useEdgeSwipeBack(leaveToList, { anywhere: true });
   // A pull down on the grabber or header of the vote sheet closes it, the
   // same close its X uses (hooks/useSheetDrag.js).
   const dmVoteSheetDrag = useSheetDrag(() => setShowDmVotePanel(false));

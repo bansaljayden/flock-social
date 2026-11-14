@@ -434,6 +434,11 @@ function MessageRow({
     <div
       ref={hostRef}
       data-message-id={message && message.id}
+      /* A row that can be replied to keeps a sideways swipe for the reply;
+         the back swipe takes it only from the screen's edge band
+         (hooks/useEdgeSwipeBack.js, decision 7). A row that cannot be quoted
+         has no swipe of its own, so a swipe on it goes back. */
+      data-edge-swipe={swipeReply ? 'band' : undefined}
       className={`chat-swipe${dragging ? ' is-dragging' : ''}`}
       style={{
         position: 'relative',

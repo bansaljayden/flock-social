@@ -52,6 +52,19 @@
  *
  * 6. The global reduced-motion rule in index.css collapses the settle
  *    transition, so the screen follows the finger and then simply goes.
+ *
+ * 7. FROM ANYWHERE, ON THE CHAT SCREENS (2026-11-14). A chat is left the way
+ *    Snapchat's is: a swipe right from anywhere on it, not only from a band
+ *    the width of a fingertip. `anywhere` turns that on. A touch outside the
+ *    band is let go when it starts on a text field (a sideways drag there is
+ *    the caret) or on something with a sideways swipe of its own, which marks
+ *    itself data-edge-swipe="band": a message that can be replied to and the
+ *    pin bar. Those still give the band to the back swipe, by decision 5. It
+ *    also asks for a flatter angle before it moves the screen, twice as far
+ *    sideways as up or down, because out in the list a slightly crooked
+ *    scroll is far more common than at the edge. And it works in a browser
+ *    too, outside the band only, because the band is the browser's own back
+ *    there (decision 1) and the rest of the screen is not.
  */
 
 import { useCallback, useLayoutEffect, useRef } from 'react';
@@ -81,6 +94,18 @@ export const startsInEdgeBand = (clientX) => (
 
 const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
+/* Out past the band, a touch on a field or on something that swipes sideways
+   by itself (data-edge-swipe="band") is not the back swipe. Decision 7. */
+const startsOnFieldOrOwnSwipe = (target, root) => {
+  for (let el = target; el && el !== root; el = el.parentElement) {
+    if (!el.getAttribute) continue;
+    if (el.getAttribute('data-edge-swipe') === 'band') return true;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || el.isContentEditable) return true;
+  }
+  return false;
+};
+
 /* Walks from the touched element up to the screen root, not past it. A sheet
    inside the screen is found by what DialogBehavior stamps on it (role dialog,
    aria-modal); asking the whole document instead would let a stale attribute
@@ -102,7 +127,7 @@ const startsOnSheetOrOwnDrag = (target, root) => {
  * behaviour can be driven directly by a test with synthetic touches; `clock`
  * is there for the same reason, since a flick is a speed.
  */
-export function bindEdgeSwipe(node, { onBack, isEnabled = () => true, clock = now } = {}) {
+export function bindEdgeSwipe(node, { onBack, isEnabled = () => true, anywhere = () => false, clock = now } = {}) {
   if (!node || typeof node.addEventListener !== 'function') return () => {};
 
   let start = null;
@@ -130,17 +155,20 @@ export function bindEdgeSwipe(node, { onBack, isEnabled = () => true, clock = no
   const onStart = (e) => {
     start = null;
     dragging = false;
-    if (timer || !isEnabled()) return;
+    if (timer) return;
     const touches = e.touches;
     if (!touches || touches.length !== 1) return;
     const t = touches[0];
     const rect = node.getBoundingClientRect ? node.getBoundingClientRect() : { left: 0 };
-    if (t.clientX - (rect.left || 0) > EDGE_PX) return;
+    const inBand = t.clientX - (rect.left || 0) <= EDGE_PX;
+    if (inBand ? !isEnabled() : !anywhere()) return;
+    // Decision 7: out past the band, a field or a swipe of its own keeps it.
+    if (!inBand && startsOnFieldOrOwnSwipe(e.target, node)) return;
     // Decision 3, and 5 for a control that is itself a sideways drag, such as
     // the plan's slide to complete: either one keeps every touch that starts
     // on it.
     if (startsOnSheetOrOwnDrag(e.target, node)) return;
-    start = { x: t.clientX, y: t.clientY };
+    start = { x: t.clientX, y: t.clientY, flat: inBand ? 1 : 2 };
     last = { x: t.clientX, t: clock() };
     offset = 0;
     velocity = 0;
@@ -154,7 +182,7 @@ export function bindEdgeSwipe(node, { onBack, isEnabled = () => true, clock = no
     const dy = t.clientY - start.y;
     if (!dragging) {
       if (Math.abs(dy) > DECIDE_PX && Math.abs(dy) >= Math.abs(dx)) { start = null; return; }
-      if (dx < DECIDE_PX || dx < Math.abs(dy)) return;
+      if (dx < DECIDE_PX || dx < start.flat * Math.abs(dy)) return;
       dragging = true;
       node.style.willChange = 'transform';
       node.style.boxShadow = '-8px 0 24px rgba(0,0,0,0.18)';
@@ -227,14 +255,16 @@ export function bindEdgeSwipe(node, { onBack, isEnabled = () => true, clock = no
  *   const edgeBack = useEdgeSwipeBack(goBack);
  *   <div ref={edgeBack} className="screen-enter" ...>
  */
-export default function useEdgeSwipeBack(onBack, { enabled = edgeSwipeAvailable() } = {}) {
+export default function useEdgeSwipeBack(onBack, { enabled = edgeSwipeAvailable(), anywhere = false } = {}) {
   // Synced after render, never during it, so a render that React throws away
   // cannot leave a handler from a screen that never committed.
   const onBackRef = useRef(onBack);
   const enabledRef = useRef(enabled);
+  const anywhereRef = useRef(anywhere);
   useLayoutEffect(() => {
     onBackRef.current = onBack;
     enabledRef.current = enabled;
+    anywhereRef.current = anywhere;
   });
   const unbindRef = useRef(null);
   return useCallback((node) => {
@@ -243,6 +273,7 @@ export default function useEdgeSwipeBack(onBack, { enabled = edgeSwipeAvailable(
     unbindRef.current = bindEdgeSwipe(node, {
       onBack: () => { if (onBackRef.current) onBackRef.current(); },
       isEnabled: () => !!enabledRef.current,
+      anywhere: () => !!anywhereRef.current,
     });
   }, []);
 }

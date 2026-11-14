@@ -964,7 +964,8 @@ export default function ChatDetail({
     // from the left edge have to leave the same way: the room is left before
     // the screen changes, in that order, as the arrow always did.
     const leaveToList = () => { leaveChatScreen(); setCurrentScreen('main'); };
-    const edgeBack = useEdgeSwipeBack(leaveToList);
+    // From anywhere on the screen, not only the edge (the hook's decision 7).
+    const edgeBack = useEdgeSwipeBack(leaveToList, { anywhere: true });
 
     // A pull down on the grabber or header of a sheet closes it with the
     // same close its X and Escape use (hooks/useSheetDrag.js). One per

@@ -102,6 +102,9 @@ export default function PinnedMessageBar({
     <div
       className="cs-pinbar"
       data-chat-pinbar="true"
+      // Its own sideways swipe steps between pins, so the chat's swipe back
+      // takes it only from the edge band (hooks/useEdgeSwipeBack.js).
+      data-edge-swipe="band"
       // A press that starts in the back swipe's band at the screen's left
       // edge belongs to that swipe (hooks/useEdgeSwipeBack.js), so it does
       // not also step to the previous pin.
