@@ -65,8 +65,9 @@ export const PAPER_CITATION = {
 // "if it beats today's numbers": production has served v2.6.0 in model mode
 // since 2026-11-01, and the gate compares against rule (b), the rule served
 // from 13 October (backend/scripts/ml/RETRAIN.md, 2026-11-02).
-// Since 2026-11-05 the retrain is gated, and would ship, as the mix (paper
-// Section 7.2; RETRAIN-NOVEMBER-RUNBOOK.md, "Decided 2026-11-05"). owl-5.2 was
+// From 2026-11-05 to 11-13 the retrain was to be gated, and to ship, as the mix;
+// since 2026-11-13 it is gated and would ship alone, the model making every
+// number (paper Section 7.2; RETRAIN-NOVEMBER-RUNBOOK.md). owl-5.2 was
 // chosen on validation frames the same day (owl5/owl52/owl52_choice.json);
 // owl-5.1 stays on Flux until the recording decides (PREREG-2026-11-05 part d).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
@@ -279,9 +280,9 @@ export default function ResearchPage() {
                 against thresholds set in September, and ships only if it
                 passes them. A full rehearsal on 5 November found the new model
                 matched or beat the rule Flock served from 13 October to 1
-                November only where a venue had been read in the past hour, so
-                it is tested, and would ship, as a mix: the new model there,
-                that rule everywhere else. Owl's next test is a recording on
+                November only where a venue had been read in the past hour.
+                It is tested, and would ship, on its own, making every number,
+                so that is the gap to close. Owl's next test is a recording on
                 Flux's own camera of a real room with one to fifteen people,
                 counted as it is filmed, kept unseen, and scored once with
                 owl-4.9, owl-5, owl-5.1 and owl-5.2 together; owl-5.1 stays on
