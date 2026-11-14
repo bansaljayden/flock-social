@@ -8,7 +8,7 @@ import SiteFooter from './SiteFooter';
 // day, and 7 and 9.5 corrected later the same day: a venue's own reading
 // replaces the estimate rather than adjusting it, and the dashboard is built
 // from Flock's crowd numbers, not "our model".
-const EFFECTIVE_DATE = 'October 29, 2026';
+const EFFECTIVE_DATE = 'November 14, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -67,7 +67,7 @@ export default function TermsOfService() {
           <li>Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears.</li>
           <li>What you write stays yours. We get only the permission we need to show it to the people you sent it to.</li>
           <li>Crowd predictions are estimates. So is everything Roost tells a venue owner. Neither is a promise.</li>
-          <li>Flock is free to use, and Flock Pro is optional. Its price and how often it renews are shown before you pay. It is sold on flockcorp.com, where you cancel it in your account, with a full refund within 14 days of your first payment. The iOS app does not currently sell it; if a version of the app does, a subscription bought there is cancelled through Apple.</li>
+          <li>Flock is free to use, and Flock Pro is optional. Its price and how often it renews are shown before you pay. It is sold on flockcorp.com, where you cancel it in your account, with a full refund within 14 days of your first payment, and in the iOS app from version 1.0.3, where Apple sells it and you cancel it in your Apple ID settings.</li>
           <li>You can delete your account at any time, and it really deletes.</li>
         </ul>
         <p>
@@ -499,7 +499,7 @@ export default function TermsOfService() {
           <strong>Flock is free to use.</strong> Making plans, inviting people, voting on where to go, the budget, splitting the bill, chat and the safety features cost nothing. Flock Pro is an optional subscription for more Birdie and more crowd forecasts, and the purchase screen lists exactly what it includes. If Flock Pro is not offered where you use Flock, nothing in this section applies to you and nothing is charged.
         </p>
         <p>
-          Flock Pro is sold on flockcorp.com, under 10.2. The iOS app does not currently sell it. If a version of the app offers it, 10.1 sets out how a subscription bought there works. Where you bought it decides who charges you, how you cancel and how refunds work.
+          Flock Pro is sold on flockcorp.com, under 10.2, and in the iOS app from version 1.0.3, under 10.1. Where you bought it decides who charges you, how you cancel and how refunds work.
         </p>
         <h3>10.1 If bought in the iOS app</h3>
         <p>
