@@ -213,11 +213,13 @@ describe('the field grows with the text and stops at five lines', () => {
       let original = null;
       while (proto && !original) { original = Object.getOwnPropertyDescriptor(proto, 'height'); proto = Object.getPrototypeOf(proto); }
       Object.defineProperty(el.style, 'height', { configurable: true, get() { return original.get.call(this); }, set(v) { writes.push(v); original.set.call(this, v); } });
-      // Same width: nothing to do.
-      act(() => observers[0].cb([]));
+      const report = (width) => act(() => observers[0].cb([{ contentRect: { width } }]));
+      // The first report is the observer starting; then the same width again.
+      report(400.25);
+      report(400.25);
       expect(writes).toEqual([]);
-      Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => 600 });
-      act(() => observers[0].cb([]));
+      // A sub-pixel change is a change (clientWidth would round it away).
+      report(400.75);
       expect(writes).toContain('auto');
       writes.length = 0;
       await act(async () => { fontsReady(); await Promise.resolve(); });

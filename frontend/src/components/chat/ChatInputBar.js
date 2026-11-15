@@ -251,10 +251,17 @@ export default function ChatInputBar({
     }
     let observer = null;
     if (typeof ResizeObserver === 'function') {
-      let lastWidth = el.clientWidth;
-      observer = new ResizeObserver(() => {
-        const width = el.clientWidth;
+      // The entry's fractional width, not clientWidth: a sub-pixel change can
+      // cross a wrapping point while the rounded width stays the same.
+      let lastWidth = null;
+      observer = new ResizeObserver((entries) => {
+        const entry = entries && entries[0];
+        const width = entry && entry.contentRect ? entry.contentRect.width : el.clientWidth;
         if (width === lastWidth) return;
+        const first = lastWidth === null;
+        lastWidth = width;
+        // The observer reports once as it starts; the mount already measured.
+        if (first) return;
         lastWidth = width;
         remeasure();
       });
