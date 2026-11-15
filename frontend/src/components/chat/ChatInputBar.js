@@ -258,10 +258,9 @@ export default function ChatInputBar({
         const entry = entries && entries[0];
         const width = entry && entry.contentRect ? entry.contentRect.width : el.clientWidth;
         if (width === lastWidth) return;
-        const first = lastWidth === null;
+        // The first report is measured too: a composer mounted hidden gets
+        // its first report only when it is shown, at its real width.
         lastWidth = width;
-        // The observer reports once as it starts; the mount already measured.
-        if (first) return;
         lastWidth = width;
         remeasure();
       });

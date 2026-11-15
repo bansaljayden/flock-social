@@ -214,8 +214,11 @@ describe('the field grows with the text and stops at five lines', () => {
       while (proto && !original) { original = Object.getOwnPropertyDescriptor(proto, 'height'); proto = Object.getPrototypeOf(proto); }
       Object.defineProperty(el.style, 'height', { configurable: true, get() { return original.get.call(this); }, set(v) { writes.push(v); original.set.call(this, v); } });
       const report = (width) => act(() => observers[0].cb([{ contentRect: { width } }]));
-      // The first report is the observer starting; then the same width again.
+      // The first report measures (a composer mounted hidden is first reported
+      // when shown); the same width again does nothing.
       report(400.25);
+      expect(writes).toContain('auto');
+      writes.length = 0;
       report(400.25);
       expect(writes).toEqual([]);
       // A sub-pixel change is a change (clientWidth would round it away).
