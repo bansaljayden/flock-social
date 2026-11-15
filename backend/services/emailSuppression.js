@@ -291,11 +291,48 @@ async function unsuppress(addr) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ONE PUSH PER LOCKED-OUT ADDRESS (migration 139).
+// ---------------------------------------------------------------------------
+// services/emailService.js pages the admins when this list refuses a
+// transactional email. The page is once a day per condition, so one bounced
+// address that something mails daily produced the same push every day. These
+// two record and read that the admins were already told about THIS address.
+//
+// Both fail toward another push: a failed read answers "not told", and a
+// failed write leaves the column NULL. A repeated push costs a glance; a
+// lockout nobody hears about costs a person their account.
+async function lockoutAlarmSent(addr) {
+  const key = normalizeAddress(addr);
+  if (!key) return false;
+  try {
+    const r = await pool.query('SELECT alarmed_at FROM email_suppressions WHERE email = $1', [key]);
+    return Boolean(r && r.rows && r.rows[0] && r.rows[0].alarmed_at);
+  } catch (err) {
+    console.error('[emailSuppression] could not read the lockout alarm mark, paging anyway:', err.message);
+    return false;
+  }
+}
+
+async function markLockoutAlarmSent(addr) {
+  const key = normalizeAddress(addr);
+  if (!key) return false;
+  try {
+    await pool.query('UPDATE email_suppressions SET alarmed_at = NOW() WHERE email = $1 AND alarmed_at IS NULL', [key]);
+    return true;
+  } catch (err) {
+    console.error('[emailSuppression] could not record the lockout alarm mark:', err.message);
+    return false;
+  }
+}
+
 module.exports = {
   checkSendAllowed,
   suppressionReason,
   suppress,
   unsuppress,
+  lockoutAlarmSent,
+  markLockoutAlarmSent,
   normalizeAddress,
   resetCache,
   HARD_REASONS,

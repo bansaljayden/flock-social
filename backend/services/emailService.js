@@ -381,6 +381,14 @@ function raiseEmailAlarm(key, message, extra) {
 // recipient, and a lock screen is not the place for somebody else's email.
 // The ledger key drops the address for the same reason, so every
 // 'locked-out:<address>' shares one push a day.
+//
+// AND EACH LOCKED-OUT ADDRESS GETS ONE PUSH (2026-11-15). The daily push was
+// the same bounced address of our own every day, refused the same Roost
+// notice, and it read as a new problem each morning. The mark lives on the
+// address's do-not-mail row (migration 139, email_suppressions.alarmed_at) so
+// a deploy cannot forget it, and it is written only when the push about THAT
+// address reached somebody. Taking the address off the list deletes the row
+// and the mark with it, so a later bounce is a new lockout with its own push.
 const EMAIL_ALARM_PUSH = {
   failing: (extra) => ({
     title: 'Flock email is failing',
@@ -404,7 +412,10 @@ const EMAIL_ALARM_PUSH = {
     const what = purpose ? purpose[0].toUpperCase() + purpose.slice(1) : 'An account email';
     return {
       title: 'Someone cannot get their email',
-      body: `${what} was refused because the address is on the do-not-mail list, so it cannot get a verification or password reset email either. The Railway log has the details under EMAIL.`,
+      // One push per address (the note above this table), so the body says
+      // so: a phone that stays quiet tomorrow means nothing new, not a fixed
+      // address.
+      body: `${what} was refused because the address is on the do-not-mail list, so it cannot get a verification or password reset email either. One push per address.`,
     };
   },
   'emergency-loop': () => ({
@@ -427,6 +438,30 @@ const PAGE_RETRY_MS = 10 * 60 * 1000;
 function pageEmailAlarm(key, extra) {
   try {
     const kind = String(key).split(':')[0];
+    if (kind !== 'locked-out') {
+      pageEmailAlarmKind(kind, extra, '');
+      return;
+    }
+    // The address half of a locked-out key, which never leaves this process
+    // except as the lookup for its own do-not-mail row.
+    const address = String(key).slice(kind.length + 1);
+    const state = alarmPaged.get(kind);
+    // Today's push already reached somebody, so nothing can page until
+    // tomorrow and the read below would be wasted.
+    if (state && state.day === utcDay()) return;
+    // The mark is read BEFORE the shared retry gate is taken. Taking the gate
+    // first held it for the length of this read, and a NEW address refused in
+    // that moment was turned away by an attempt that then paged nobody.
+    Promise.resolve(suppression.lockoutAlarmSent(address)).then((told) => {
+      if (!told) pageEmailAlarmKind(kind, extra, address);
+    }).catch(() => {});
+  } catch (err) {
+    // The alarm is allowed to say nothing; it is not allowed to stop a send.
+  }
+}
+
+function pageEmailAlarmKind(kind, extra, address) {
+  try {
     const day = utcDay();
     const now = Date.now();
     const state = alarmPaged.get(kind) || { day: null, nextTryAt: 0 };
@@ -450,6 +485,13 @@ function pageEmailAlarm(key, extra) {
       tag: '[email-alarm]',
     })).then((out) => {
       if (out && (out.sent || out.skipped === 'already-sent-today')) state.day = day;
+      // Only a push that went out NOW was about this address. Today's push
+      // already sent may have named a different one, so that leaves the mark
+      // unset and this address has its turn on a later day. A push held for
+      // quiet hours or still in flight counts as sent here, the same as it
+      // counts for the day's ledger: the outbox delivers both.
+      if (address && out && out.sent) return suppression.markLockoutAlarmSent(address);
+      return null;
     }).catch(() => {});
   } catch (err) {
     // The alarm is allowed to say nothing; it is not allowed to stop a send.

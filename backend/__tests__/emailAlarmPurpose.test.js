@@ -27,6 +27,10 @@ const emailService = require('../services/emailService');
 const pushes = [];
 ops.opsAlert = async (args) => { pushes.push(args); return { sent: true }; };
 suppression.checkSendAllowed = async () => ({ blocked: true, reason: 'bounce' });
+// Never told about this address before, so every test here gets its push.
+// emailAlarmOncePerAddress.test.js pins what happens once it has been.
+suppression.lockoutAlarmSent = async () => false;
+suppression.markLockoutAlarmSent = async () => true;
 
 const ADDRESS = 'owner@example.com';
 

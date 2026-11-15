@@ -1,0 +1,34 @@
+-- @requires column email_suppressions.alarmed_at
+--
+-- 139: when the admins' phones were told about a locked-out address.
+--
+-- ASCII only, like 094, 100-102, 136 and 137: the embedded server the
+-- boot-safety suite runs is WIN1252.
+--
+-- WHY. A transactional email refused by this list raises the locked-out alarm
+-- (services/emailService.js), and the push about it went out once a DAY. One
+-- bounced address of our own, the internal test venue, was refused the Roost
+-- pricing notice every day from 2026-11-10, so the same push about the same
+-- address landed every day and read as something new going wrong each time.
+-- From 2026-11-15: one push per address for as long as it stays on the list.
+--
+-- WHO WRITES IT. services/emailSuppression.js markLockoutAlarmSent, once,
+-- after opsAlert answers that a push about this address reached somebody.
+-- A push that reached nobody, or a day whose one push was about a different
+-- address, leaves it NULL, so the address gets its push on a later refusal.
+--
+-- WHO READS IT. services/emailService.js pageEmailAlarm, through
+-- lockoutAlarmSent, before it pages about a locked-out address. A set value
+-- means the admins already know, and the refusal stays in the log only.
+--
+-- WHY ON THIS ROW. The lockout IS this row. Taking the address off the list
+-- deletes the row (unsuppress), so an address that bounces again later is a
+-- new lockout and gets a new push. suppress() upserts without touching this
+-- column, so a second bounce on a row that is still there does not.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no
+-- rewrite, no scan, every existing row reads NULL, so every address already
+-- on the list gets one more push the next time it is refused. A replay is a
+-- no-op.
+
+ALTER TABLE email_suppressions ADD COLUMN IF NOT EXISTS alarmed_at TIMESTAMPTZ;
