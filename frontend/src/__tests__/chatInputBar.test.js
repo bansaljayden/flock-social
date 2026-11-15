@@ -157,6 +157,36 @@ describe('the field grows with the text and stops at five lines', () => {
     expect(field().style.height).toBe('40px');
     expect(field().style.overflowY).toBe('hidden');
   });
+
+  test('typing on the end never collapses the box to measure it; deleting does (2026-11-14)', () => {
+    /* Collapsing to auto lays the column out twice per character, so it is
+       kept for the edits that can shrink the box. */
+    const props = baseProps({ value: 'a' });
+    const { rerender } = render(React.createElement(ChatInputBar, props));
+    const el = field();
+    const writes = [];
+    // The original accessor, from the prototype chain (jsdom's setProperty
+    // calls it, so the spy must not call setProperty back).
+    let proto = Object.getPrototypeOf(el.style);
+    let original = null;
+    while (proto && !original) {
+      original = Object.getOwnPropertyDescriptor(proto, 'height');
+      proto = Object.getPrototypeOf(proto);
+    }
+    Object.defineProperty(el.style, 'height', {
+      configurable: true,
+      get() { return original.get.call(this); },
+      set(v) { writes.push(v); original.set.call(this, v); },
+    });
+    for (const value of ['ab', 'abc', 'abc\nd', 'abc\nde']) {
+      rerender(React.createElement(ChatInputBar, { ...props, value }));
+    }
+    expect(writes).not.toContain('auto');
+    expect(el.style.height).toBe('60px');
+    rerender(React.createElement(ChatInputBar, { ...props, value: 'abc' }));
+    expect(writes).toContain('auto');
+    expect(el.style.height).toBe('40px');
+  });
 });
 
 /* ── 2. Enter sends, Shift with Enter does not ──────────────────────────── */
