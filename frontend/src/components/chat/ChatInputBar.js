@@ -89,7 +89,7 @@
  * in CHAT-REBUILD-PLAN.md and is fire-and-forget on every platform.
  */
 
-import React, { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import Icons from '../ui/Icons';
 import { hapticTap } from '../../services/haptics';
 import './chatInput.css';
@@ -230,6 +230,41 @@ export default function ChatInputBar({
       if (frameRef.current) cancelAnimationFrame(frameRef.current);
     };
   }, [value, measure]);
+
+  /* A FULL MEASURE WHEN THE WRAPPING CHANGES WITHOUT A KEYSTROKE: the web
+     font finishing its load after the box was first measured, or the box
+     changing width (a rotated phone, a composer measured while hidden at
+     width 0 and then shown). Forgetting the last text sends the next measure
+     down the collapse-and-read path. Height changes, which measuring itself
+     makes, are not width changes and are ignored. */
+  useEffect(() => {
+    const el = fieldRef.current;
+    if (!el) return undefined;
+    let alive = true;
+    const remeasure = () => {
+      if (!alive) return;
+      measuredRef.current = null;
+      measure();
+    };
+    if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(remeasure, () => {});
+    }
+    let observer = null;
+    if (typeof ResizeObserver === 'function') {
+      let lastWidth = el.clientWidth;
+      observer = new ResizeObserver(() => {
+        const width = el.clientWidth;
+        if (width === lastWidth) return;
+        lastWidth = width;
+        remeasure();
+      });
+      observer.observe(el);
+    }
+    return () => {
+      alive = false;
+      if (observer) observer.disconnect();
+    };
+  }, [measure]);
 
   const handleChange = useCallback((event) => {
     onChange(event.target.value);

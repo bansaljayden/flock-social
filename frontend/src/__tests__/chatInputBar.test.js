@@ -197,6 +197,36 @@ describe('the field grows with the text and stops at five lines', () => {
     rerender(React.createElement(ChatInputBar, { ...props, value: 'abcde' }));
     expect(writes).not.toContain('auto');
   });
+
+  test('a width change with no keystroke, or the font arriving, measures from nothing', async () => {
+    const observers = [];
+    const RealRO = window.ResizeObserver;
+    window.ResizeObserver = class { constructor(cb) { this.cb = cb; observers.push(this); } observe() {} disconnect() {} };
+    let fontsReady;
+    const hadFonts = Object.prototype.hasOwnProperty.call(document, 'fonts');
+    Object.defineProperty(document, 'fonts', { configurable: true, value: { ready: new Promise((r) => { fontsReady = r; }) } });
+    try {
+      render(React.createElement(ChatInputBar, baseProps({ value: 'abc\nd' })));
+      const el = field();
+      const writes = [];
+      let proto = Object.getPrototypeOf(el.style);
+      let original = null;
+      while (proto && !original) { original = Object.getOwnPropertyDescriptor(proto, 'height'); proto = Object.getPrototypeOf(proto); }
+      Object.defineProperty(el.style, 'height', { configurable: true, get() { return original.get.call(this); }, set(v) { writes.push(v); original.set.call(this, v); } });
+      // Same width: nothing to do.
+      act(() => observers[0].cb([]));
+      expect(writes).toEqual([]);
+      Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => 600 });
+      act(() => observers[0].cb([]));
+      expect(writes).toContain('auto');
+      writes.length = 0;
+      await act(async () => { fontsReady(); await Promise.resolve(); });
+      expect(writes).toContain('auto');
+    } finally {
+      window.ResizeObserver = RealRO;
+      if (!hadFonts) delete document.fonts;
+    }
+  });
 });
 
 /* ── 2. Enter sends, Shift with Enter does not ──────────────────────────── */
