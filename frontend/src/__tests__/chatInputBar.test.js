@@ -186,6 +186,16 @@ describe('the field grows with the text and stops at five lines', () => {
     rerender(React.createElement(ChatInputBar, { ...props, value: 'abc' }));
     expect(writes).toContain('auto');
     expect(el.style.height).toBe('40px');
+
+    // A wider box (a rotated phone) can hold the same text in fewer lines, so
+    // a keystroke after the width changes measures from nothing again.
+    writes.length = 0;
+    Object.defineProperty(el, 'clientWidth', { configurable: true, get: () => 600 });
+    rerender(React.createElement(ChatInputBar, { ...props, value: 'abcd' }));
+    expect(writes).toContain('auto');
+    writes.length = 0;
+    rerender(React.createElement(ChatInputBar, { ...props, value: 'abcde' }));
+    expect(writes).not.toContain('auto');
   });
 });
 

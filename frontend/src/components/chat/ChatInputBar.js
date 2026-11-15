@@ -190,9 +190,12 @@ export default function ChatInputBar({
      is kept for the cases that can shrink it: a deletion, an edit in the
      middle, an autocorrect, a paste over a selection, a send that empties
      the box. The last text measured and the height written are remembered
-     for exactly that test. */
+     for exactly that test, and so is the box's width: a wider box (a
+     rotated phone, a widened window) can hold the same text in fewer lines,
+     so the shortcut is only taken at the width the last measure saw. */
   const measuredRef = useRef(null);
   const heightRef = useRef(0);
+  const widthRef = useRef(-1);
   const measure = useCallback(() => {
     if (frameRef.current) cancelAnimationFrame(frameRef.current);
     frameRef.current = requestAnimationFrame(() => {
@@ -202,13 +205,16 @@ export default function ChatInputBar({
       const text = el.value;
       const before = measuredRef.current;
       measuredRef.current = text;
+      const width = el.clientWidth;
+      const sameWidth = width === widthRef.current;
+      widthRef.current = width;
       const apply = (content) => {
         const next = Math.min(Math.max(content, MIN_FIELD_H), MAX_FIELD_H);
         heightRef.current = next;
         el.style.height = `${next}px`;
         el.style.overflowY = content > MAX_FIELD_H ? 'auto' : 'hidden';
       };
-      if (before !== null && heightRef.current > 0 && text.length > before.length && text.startsWith(before)) {
+      if (sameWidth && before !== null && heightRef.current > 0 && text.length > before.length && text.startsWith(before)) {
         const content = el.scrollHeight;
         if (content > heightRef.current) apply(content);
         return;
