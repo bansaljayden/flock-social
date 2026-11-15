@@ -66,7 +66,7 @@ const PEOPLE = [
 // record holds).
 const STORY = [
   'Flock exists because the group chat kept killing perfectly good Friday nights.',
-  'Someone suggests a place. A few people react, nobody commits, and by the time the group agrees, the spot is packed or the night is gone. Jayden Bansal started building Flock in 2025 to give a group one place to make the plan instead.',
+  'Someone suggests a place. A few people react, nobody commits, and by the time the group agrees, the spot is packed or the night is gone. Jayden Bansal started building Flock in December 2025 to give a group one place to make the plan instead.',
   'In Flock a group starts a flock, votes on where to go and sees how busy each place will be before anyone leaves, from Starling, Flock’s crowd forecast model. Each person can set a budget, and the group sees only one rounded-down number. Birdie, Flock’s assistant, suggests places that fit, and the bill splits in the app at the end of the night.',
   'Asad Ali joined in August 2026 to grow it and take it to competitions. The timeline below has the rest, from the first website to the App Store.',
 ];
@@ -89,10 +89,11 @@ const HOLDS = [
 // emails, the state record, the model and sensor logs, the honors in
 // competitions.js). No accuracy figures (the model-metrics rule), no user
 // counts.
-//   2025             Flock started in 2025 (his correction, 2026-11-13; the
-//                    first commit in this repository's history is January 18,
-//                    2026, which the timeline used to give, but the work began
-//                    the year before); the year alone, so no machine date
+//   December 2025    Flock started in December 2025 (his correction,
+//                    2026-11-13, said 2025, and his answer on 2026-11-15 gave
+//                    the month; the first commit in this repository's history
+//                    is January 18, 2026, which the timeline used to give, but
+//                    the work began the month before)
 //   Early 2026       1st place in Innovation Plan at Pennsylvania DECA States,
 //                    on the site since August; the state conference runs
 //                    before April's international one, and its month is not
@@ -112,7 +113,7 @@ const HOLDS = [
 // words "on the App Store" link to the picture of the listing on the home
 // page (AppStoreListing.js); Apple's badge is in "Where things stand" below.
 const TIMELINE = [
-  { stage: 'It started', when: '2025', what: 'the maintainer began building Flock, an app for making plans with friends.' },
+  { stage: 'It started', when: 'December 2025', date: '2025-12', what: 'the maintainer began building Flock, an app for making plans with friends.' },
   { stage: 'First win', when: 'Early 2026', what: 'Flock’s Innovation Plan took 1st place at the Pennsylvania DECA state conference.', logo: { src: '/logos/competitions/deca.png', width: 640, height: 132 } },
   { stage: 'Changed course', when: 'June 2026', date: '2026-06', what: 'The iPhone app was rebuilt on the web app’s code, so one Flock runs everywhere, and the first build reached TestFlight.' },
   { stage: 'Went live', when: 'August 2026', date: '2026-08', what: 'flockcorp.com went live, with Starling, Flock’s crowd forecast model, forecasting in the app.' },

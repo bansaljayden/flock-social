@@ -45,11 +45,12 @@ test('the section is the Timeline, and the old Milestones list is gone', () => {
   expect(c.textContent).not.toMatch(/Milestones so far/);
 });
 
-test('it started in 2025, not with the first commit in January 2026 (his correction, 2026-11-13)', () => {
+test('it started in December 2025, not with the first commit in January 2026 (his correction 2026-11-13, his month 2026-11-15)', () => {
   const first = dots()[0];
   expect(flat(first.querySelector('.ab-tl-stage').textContent)).toBe('It started');
-  expect(flat(first.querySelector('.ab-when').textContent)).toBe('2025');
-  expect(first.querySelector('time')).toBeNull();
+  expect(flat(first.querySelector('.ab-when').textContent)).toBe('December 2025');
+  const time = first.querySelector('time.ab-when');
+  expect(time.getAttribute('datetime') || time.getAttribute('dateTime')).toBe('2025-12');
 });
 
 test('about ten dots', () => {

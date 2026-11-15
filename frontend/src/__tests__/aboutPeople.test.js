@@ -6,7 +6,7 @@
  * photo he sent (a file that exists, small), the maintainer's shows his initials
  * until his photo comes; the story and the bios carry no "coming soon"
  * placeholder any more; the story keeps its first line and says Flock started
- * in 2025; no school is named.
+ * in December 2025 (the month, his answer 2026-11-15); no school is named.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test aboutPeople --watchAll=false
@@ -64,7 +64,7 @@ test('the maintainer\'s spot shows his initials until his photo comes', () => {
   expect(flat(spot.textContent)).toBe('JB');
 });
 
-test('the story and the bios are filled out: no "coming soon", first line kept, started in 2025', () => {
+test('the story and the bios are filled out: no "coming soon", first line kept, started in December 2025', () => {
   const c = page();
   const story = c.querySelector('section[aria-labelledby="ab-h-story"]');
   const people = c.querySelector('section[aria-labelledby="ab-h-people"]');
@@ -73,7 +73,7 @@ test('the story and the bios are filled out: no "coming soon", first line kept, 
   const paras = Array.from(story.querySelectorAll('p')).map((p) => flat(p.textContent));
   expect(paras[0]).toBe('Flock exists because the group chat kept killing perfectly good Friday nights.');
   expect(paras.length).toBeGreaterThanOrEqual(3);
-  expect(paras.join(' ')).toMatch(/started building Flock in 2025/);
+  expect(paras.join(' ')).toMatch(/started building Flock in December 2025/);
   for (const person of people.querySelectorAll('.ab-person')) {
     expect(person.querySelectorAll('p').length).toBeGreaterThanOrEqual(3);
   }
