@@ -769,6 +769,12 @@ function venueClock(place, fallback) {
 // network logs could not say which step held the rest. One line per slow
 // build, never for a hit and never for a quick one, names the four steps in
 // order. Logged after the answer has gone, so it costs the visitor nothing.
+//
+// Measured again after migration 138's covering index on the neighbour box
+// read: a cold Bethlehem build on 2026-11-15 (8 venues) took 1.7 s end to end
+// from a home connection and logged no line here, so the server's share was
+// under SLOW_BUILD_MS. A line from this function now means a new slow step,
+// not the old one.
 const SLOW_BUILD_MS = 1500;
 function logBuildTime(phases, venueCount) {
   const total = phases.card - phases.start;
