@@ -389,6 +389,8 @@ function raiseEmailAlarm(key, message, extra) {
 // a deploy cannot forget it, and it is written only when the push about THAT
 // address reached somebody. Taking the address off the list deletes the row
 // and the mark with it, so a later bounce is a new lockout with its own push.
+// Seen in production on 2026-11-17: our bounced test-venue address pushed
+// once on its first refusal after the deploy, and the next refusal was quiet.
 const EMAIL_ALARM_PUSH = {
   failing: (extra) => ({
     title: 'Flock email is failing',
