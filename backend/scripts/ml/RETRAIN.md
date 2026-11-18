@@ -2121,6 +2121,53 @@ as agreeing. The seven-day dry run of the same market passed at 100%. A
 one-day refusal with the cells still exact at 0 means ask the whole week, never
 lower the threshold.
 
+### Every training city, new venues only (2026-11-17)
+
+`--city` takes any `scripts/ml/config.js` CITIES key, a comma list, or `all`
+(every key but the holdout cities, which the script reads from
+`train/export_training_data.js` HOLDOUT_CITIES, and beijing). In PowerShell
+quote a comma list (`'--city=chicago,la'`): unquoted, the comma makes an array
+and the second city arrives as a separate argument.
+
+`--new-only` writes nothing for a venue the corpus already holds (by BestTime
+id, Google place id or as a near-duplicate). Before an export whose plan is
+fixed, that is the only safe way to add curves: every weekly row the plan was
+measured on stays as it was, and only venues new to the corpus are added.
+
+**The gate under `--new-only` judges the hour origin, not agreement with old
+curves.** Denver's first commit (2026-11-18) was refused at 88.1% of cells
+within five points, though rotation 0 fitted 528 of 540 venues best (r 0.972
+against 0.884 at +1): its stored curves were months older than PA's, so the
+within-five share measured curve drift as much as the hour origin. A
+`--new-only` commit writes nothing for those venues, so the only question is
+whether the NEW venues' curves start at the right hour, and it passes when
+rotation 0 is the best pooled rotation, at least 90% of compared venues fit
+best at rotation 0, rotation 0's r beats every other rotation's by at least
+0.05, and at least 20 venues were compared. A commit without `--new-only`
+refreshes known venues' rows and keeps the 90% within-five rule unchanged; the
+rule above for a one-day refusal ("ask the whole week, never lower the
+threshold") still holds for it.
+
+`--cache-dir=<dir>` keeps every filter answer (key stripped) and answers a
+repeated question from disk, unbilled and outside `--result-budget`, so a run
+that is refused, budget-stopped or killed never wastes what it fetched: rerun
+the same scope with the same directory. `--result-budget` (default 60,000)
+stops before a page could pass it and keeps every venue's week whole; a
+request that may have been billed without an answer (a timeout, a 5xx, a
+dropped body) reserves a page against it.
+
+**The first all-city runs, 2026-11-18** (20 km, all seven days, `--new-only`):
+denver + seattle + part of chicago 9,129 new venues and 1,533,528 weekly rows
+(1,166 requests, 89,909 results, gate 96.7% of 1,446 venues at rotation 0);
+the rest of chicago + most of la 8,821 venues and 1,481,928 rows (gate 97.6% of
+4,116); la's remainder was cut short when the machine ran low on memory and
+its process was stopped mid-write, so a rerun with the same `--cache-dir`
+finishes it unbilled. BestTime held about 3,800 to 14,800 venues per market
+against the 600 to 1,100 the corpus held. The filter took about 180,000 results
+that month without refusing, so on this package it is unmetered in practice.
+`repairBestTimeDiscoveredVenues.js` (report only) afterwards: 0 BestTime ids on
+more than one row.
+
 ### Spending the rest of a month's admissions, after a harvest
 
 The admissions reset on the 1st (UTC) and do not carry over. Once a market's
