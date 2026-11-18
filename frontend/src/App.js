@@ -19248,6 +19248,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueTab, venueProfile?.google_place_id, venueTier]);
 
+  // THE LIVE NUMBER ENDS WHEN ITS TIME DOES. Users see the owner's number for
+  // its 90 minutes and then the forecast, but this was read only on a change
+  // of tab, place or plan, so the card and the insight cards went on saying
+  // users see it after it had expired. At expiresAt the reading is dropped
+  // and busy-now read again, which also brings in a number set since from
+  // another device. One already past its time on this clock is dropped with
+  // no read, so a clock that disagrees with the server's cannot loop.
+  const busyNowExpiresAt = venueBusyNow?.live?.expiresAt;
+  useEffect(() => {
+    const at = Date.parse(busyNowExpiresAt);
+    if (!Number.isFinite(at)) return undefined;
+    const drop = () => setVenueBusyNow((prev) => (prev?.live?.expiresAt === busyNowExpiresAt ? { ...prev, live: null } : prev));
+    if (at <= Date.now()) { drop(); return undefined; }
+    const t = setTimeout(() => {
+      drop();
+      getVenueBusyNow().then((d) => setVenueBusyNow(d)).catch(() => {});
+    }, at - Date.now());
+    return () => clearTimeout(t);
+  }, [busyNowExpiresAt]);
+  // And on a return to the app with the card on screen: a dashboard left in
+  // a pocket comes back to what the server holds now.
+  const busyNowSeenVisibleRef = useRef(docVisible);
+  useEffect(() => {
+    const back = docVisible && !busyNowSeenVisibleRef.current;
+    busyNowSeenVisibleRef.current = docVisible;
+    if (!back || currentScreen !== 'venueDashboard' || (venueTab !== 'analytics' && venueTab !== 'map') || !venueProfile) return;
+    getVenueBusyNow().then((d) => setVenueBusyNow(d)).catch(() => {});
+  }, [docVisible, currentScreen, venueTab, venueProfile]);
+
   // The Try again behind the forecast failure card. Clearing the state first
   // puts the loading line back, so a tap that is doing something looks like it
   // (DESIGN-STANDARD rule 10: a button that appears to do nothing is the failure).
