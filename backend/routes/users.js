@@ -463,6 +463,28 @@ function normalizedAddress(addr) {
   return `${local}@${domain}`;
 }
 
+// WHETHER PUT /profile IS MOVING THE ACCOUNT, asked in the sanitizer's own
+// alphabet. The route's .normalizeEmail() is validator's normalizeEmail with
+// its default options, and that rewrites more than Gmail: a Yandex domain
+// becomes yandex.ru, iCloud, Outlook, Hotmail and Live drop a +tag, Yahoo
+// drops a -tag. Compared through normalizedAddress above, which mirrors Gmail
+// alone, the form sending an untouched `jane+apple@icloud.com` back read as a
+// change, and an OAuth row refuses every change, so no field on such an
+// account could ever be saved. Both sides go through the same function with
+// the same options here, so an unchanged address is never a change.
+// normalizedAddress itself stays as it is: it keys the stored ban and grace
+// digests (identityDigests, graceDigests), and changing it would orphan them.
+// `validator` is express-validator's own dependency, the copy its sanitizer
+// calls.
+const validator = require('validator');
+
+function sanitizedAddress(addr) {
+  if (typeof addr !== 'string') return '';
+  const trimmed = addr.trim();
+  const out = trimmed ? validator.normalizeEmail(trimmed) : false;
+  return typeof out === 'string' ? out : trimmed.toLowerCase();
+}
+
 // ---------------------------------------------------------------------------
 // Recent-possession proof ("sudo mode") — round 16
 // ---------------------------------------------------------------------------
@@ -1340,7 +1362,7 @@ router.put('/profile',
       }
 
       // Check email uniqueness if changing email
-      const changingEmail = Boolean(email) && normalizedAddress(email) !== normalizedAddress(user.email);
+      const changingEmail = Boolean(email) && sanitizedAddress(email) !== sanitizedAddress(user.email);
       if (changingEmail) {
         // The same block all three account-creation paths in routes/auth.js
         // apply. Without it a throwaway address that signup refused was one

@@ -59,10 +59,17 @@ function reset() {
 }
 reset();
 
+// The profile UPDATE's parameters, as the route last sent them.
+let lastUpdate = null;
+
 function handle(text, params) {
   const flat = String(text).replace(/\s+/g, ' ').trim();
   if (/^SELECT[\s\S]*FROM users WHERE id = \$1/i.test(flat)) {
     return { rows: Number(params?.[0]) === USER.id ? [USER] : [], rowCount: 1 };
+  }
+  if (/^UPDATE users SET name = COALESCE\(\$1, name\)/i.test(flat)) {
+    lastUpdate = { params };
+    return { rows: [{ ...USER, email: params[1] ?? USER.email, bio: params[6] ?? USER.bio }], rowCount: 1 };
   }
   return { rows: [], rowCount: 0 };
 }
@@ -150,6 +157,48 @@ test('an address that is not disposable is not caught by the new rule', async ()
     body: { email: 'alice.new@example.com', current_password: 'CorrectHorse1' },
   });
   assert.notStrictEqual(res.status, 400, JSON.stringify(res.body));
+});
+
+// ===========================================================================
+// 1b. a Google or Apple account's own address is not a change
+// ===========================================================================
+// The route runs .normalizeEmail() (validator 13) on the submitted address, and
+// that rewrites more than Gmail: a Yandex domain becomes yandex.ru, iCloud,
+// Outlook, Hotmail and Live drop a +tag, Yahoo drops a -tag. The comparison
+// mirrored Gmail alone, so the form sending the stored address back read as a
+// change, an OAuth row is refused every change, and no field could ever be
+// saved on these accounts.
+
+const OAUTH_ADDRESSES = [
+  ['google', 'ivan@yandex.com'],
+  ['apple', 'jane+apple@icloud.com'],
+  ['google', 'me+g@outlook.com'],
+  ['google', 'sam-x@yahoo.com'],
+];
+
+function oauthRow(provider, address) {
+  reset();
+  lastUpdate = null;
+  Object.assign(USER, { email: address, password: null, oauth_provider: provider, oauth_id: `${provider}-subject-1` });
+}
+
+for (const [provider, address] of OAUTH_ADDRESSES) {
+  test(`a ${provider} account on ${address} saves a bio with its own address on the form`, async () => {
+    oauthRow(provider, address);
+    const res = await req('PUT', '/api/users/profile', { body: { email: address, bio: 'new in town' } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.user.bio, 'new in town');
+    assert.strictEqual(lastUpdate.params[1], null, 'the stored address is never rewritten by an unchanged form');
+    assert.strictEqual(res.body.emailVerificationRequired, undefined, 'an unchanged address is not a move');
+  });
+}
+
+test('a real change on a Google or Apple account is still refused', async () => {
+  oauthRow('google', 'ivan@yandex.com');
+  const res = await req('PUT', '/api/users/profile', { body: { email: 'someone.else@yandex.com', bio: 'x' } });
+  assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+  assert.match(res.body.error, /managed by that provider/);
+  assert.strictEqual(lastUpdate, null);
 });
 
 // ===========================================================================
