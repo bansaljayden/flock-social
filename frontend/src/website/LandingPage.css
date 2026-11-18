@@ -1830,7 +1830,7 @@ html:has(.lp) body { overflow-x: clip; }
 }
 /* Its own row on a phone, with "Check it" and "Use my location" under it.
    Sharing a row with "Check it" left the field 189-207px of room between 375
-   and 393px, and the hint, 209px of text, was cut to "Try “pizza” or a
+   and 393px, and the hint, 194px of text, was cut to "Try “pizza” or a
    bar’s nam" (2026-11-06). The row count is the same two as before, so the
    reserved height above (.lpd-hold) still holds. */
 @media (max-width: 480px) { .lpd-input { flex-basis: 100%; max-width: none; } }

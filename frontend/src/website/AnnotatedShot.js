@@ -28,9 +28,9 @@ import { PhoneStatus } from './PhoneDevice';
    cut down to the sheet: `shot.crop` is the share of the capture's height,
    in percent, taken off its top, and the cut files start there. The notes
    keep the boxes measured on the whole 780 x 1688 capture and cropNotes maps
-   each y into the cut. The phone is then drawn cut straight across at the
-   sheet's top edge: no top frame and no status row, so it reads as the lower
-   part of a phone rather than a shorter one. */
+   each y into the cut. The cut is drawn as the sheet itself, its rounded top
+   corners on a dark plate (LandingPage.css .lp-anno.is-cropped), with no
+   phone frame and no status row around it. */
 export const N = 230;
 export const G = 56;
 export const P = 240;
