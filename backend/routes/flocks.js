@@ -444,6 +444,43 @@ const scalarOnly = (chain, label) => chain.custom(isScalar).withMessage(`Invalid
 // `shape → trim → strip markup → trim again`, as a reusable chain fragment.
 const freeText = (chain, label) => scalarOnly(chain, label).trim().customSanitizer(stripHtml).trim();
 
+// AN EVENT TIME IS A REAL INSTANT, AND THE COLUMN GETS IT IN UTC. isISO8601()
+// checks the shape of a string, not the instant it names, and event_time is a
+// naive TIMESTAMP holding UTC wall time. So `2027-02-30T20:00:00Z` and the
+// week, ordinal and truncated forms (`2027-W05-3`, `2027-036`, `2027`) passed
+// POST /, PUT /:id and POST /:id/rerun and came back a 500 from Postgres, and
+// `2027-03-05T21:00:00-05:00` was stored with its offset dropped, five hours
+// early. routes/calendar.js settles the same class for event_date.
+//
+// The test is a calendar date with an optional time and offset, every field in
+// range and the day real for its month and year (Date.UTC rolls a 30 February
+// into March, so a day that comes back different did not exist). The sanitizer
+// then hands the handler toISOString(). A time with no offset was always stored
+// as given, which the column reads as UTC, and is still read as UTC rather than
+// in whatever timezone the server runs in. The year has to stay at four digits
+// once in UTC: Postgres has no year zero, and toISOString writes 10000 as
+// `+010000`.
+const EVENT_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?(Z|[+-]\d{2}(?::?\d{2})?)?)?$/i;
+function toEventInstant(value) {
+  if (typeof value !== 'string') return null;
+  const m = EVENT_TIME_RE.exec(value);
+  if (!m) return null;
+  const [, y, mo, d, h = '00', mi = '00', s = '00', frac = '', zone = 'Z'] = m;
+  const [year, month, day] = [Number(y), Number(mo), Number(d)];
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+  if (Number(h) > 23 || Number(mi) > 59 || Number(s) > 59) return null;
+  const digits = zone.slice(1).replace(':', '');
+  const offset = /^z$/i.test(zone) ? 'Z' : `${zone[0]}${digits.slice(0, 2)}:${digits.slice(2) || '00'}`;
+  const at = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}${frac.slice(0, 4)}${offset}`);
+  if (Number.isNaN(at.getTime())) return null;
+  if (at.getUTCFullYear() < 1000 || at.getUTCFullYear() > 9999) return null;
+  return at.toISOString();
+}
+const eventTimeField = (chain) => scalarOnly(chain, 'event time')
+  .custom((v) => toEventInstant(v) !== null).withMessage('Invalid event time')
+  .customSanitizer(toEventInstant);
+
 // ---------------------------------------------------------------------------
 // Unverified accounts and flock membership (audit 2026-08-14)
 //
@@ -903,7 +940,7 @@ router.post('/',
     // NUMERIC(2,1), so 10 or more overflowed it and answered 500, not 400.
     scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }),
     scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
-    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
+    eventTimeField(body('event_time').optional()),
     body('invited_user_ids').optional().isArray({ max: 25 }).withMessage('invited_user_ids must be an array'),
     // toBoolean(true): isBoolean accepts the STRING "false", and the insert
     // below reads `!!budget_enabled`, which made "false" a budget that was on.
@@ -1588,7 +1625,7 @@ router.put('/:id',
     // NUMERIC(2,1), so 10 or more overflowed it and answered 500, not 400.
     scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }).withMessage('Rating must be between 0 and 5'),
     scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
-    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
+    eventTimeField(body('event_time').optional()),
     // isIn() coerces too — `{"status": ["planning"]}` passed it and then went
     // into the column as an array. scalarOnly settles that before isIn looks.
     scalarOnly(body('status').optional(), 'status').isIn(['planning', 'confirmed', 'completed', 'cancelled'])
@@ -3444,7 +3481,7 @@ router.post('/:id/rerun',
   requireVerified,
   [
     param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
-    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
+    eventTimeField(body('event_time').optional()),
   ],
   async (req, res) => {
     try {
