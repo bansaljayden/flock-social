@@ -2338,6 +2338,19 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-pricing-head { grid-template-columns: minmax(0, 44rem) 160px; justify-content: space-between; }
 }
 .lp-pricing-art { width: 160px; }
+/* On a phone three of the paintings sat between a heading and what it
+   introduces: the branch between the crowds copy and the demo's search field
+   (about 550px into the section at 390), the robin between the pricing lead
+   and "$0", and the sparrow under the tablet, 335px of empty navy after "Seen
+   by five. Nobody went." There they go; beat 1, beat 4 and safety keep theirs.
+   All three are lazy, so a hidden one is never fetched. */
+@media (max-width: 759.98px) {
+  .lp-live-art,
+  .lp-pricing-art { display: none; }
+}
+@media (max-width: 899.98px) {
+  .lp-friday-art { display: none; }
+}
 
 /* ============ motion: arrival, menu, links ============ */
 
