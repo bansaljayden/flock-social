@@ -39,6 +39,7 @@ import React from 'react';
 import Icons from './ui/Icons';
 import { updateProfile, resendVerificationEmail, userMessage } from '../services/api';
 import { connectSocket } from '../services/socket';
+import { syncPushRegistration } from '../services/firebase';
 // The support address in a sentence, as a link and text that copies.
 import { withSupportAddress } from './ui/SupportAddress';
 
@@ -195,6 +196,16 @@ const EditProfileForm = ({
                     // which it has, and carries the push token up again
                     // with it.
                     if (newPw) connectSocket();
+                    // The same revoke deleted every device row the account
+                    // had, this phone's included (backend middleware/auth.js
+                    // revokeUserSessions), and the push watcher registers
+                    // again only on a focus, a reconnect or a return to the
+                    // app, so this phone heard nothing until it was next
+                    // backgrounded and reopened. It registers again now,
+                    // under the session api.js has just stored. Never a
+                    // prompt: syncPushRegistration only registers where
+                    // permission is already granted.
+                    if (newPw) syncPushRegistration().catch(() => {});
                     // Push the row of record up to the app shell. `authUser` is
                     // a prop that is read at sign-in and never refetched, so an
                     // address changed here stayed stale everywhere above: the
