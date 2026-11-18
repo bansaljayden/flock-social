@@ -1694,10 +1694,10 @@ const LIMITERS = [
     keyKind: 'account',
     key: 'billedAccountKey (= billedImageKey)',
     message: 'That is a lot of questions in one hour. Give it a little while and ask again.',
-    mounts: ['/api/venue/advisor/question'],
+    mounts: ['(app-wide, conditional on the normalised path /api/venue/advisor/question)'],
     protects: 'at least two model calls per typed question, over a prompt carrying the owner\'s own words',
     verdict: 'SAFE',
-    why: 'The ONE advisor path the caller shapes, so it gets an HOUR window rather than a minute: advisorLimiter\'s 20 a minute is 1,200 an hour and a question is a thought. Mounted at a longer path than advisorLimiter and therefore charged IN ADDITION to it, tighter one first, which is the right precedence. Its sentence names the hour, which is more than most 429s in this codebase do — see the handoff list in the round-24 report. It sits UNDER the per-venue daily cap in migration 039 rather than replacing it: this one is per process and a restart clears it, the Postgres one is not.',
+    why: 'The ONE advisor path the caller shapes, so it gets an HOUR window rather than a minute: advisorLimiter\'s 20 a minute is 1,200 an hour and a question is a thought. Mounted ahead of the advisor router and therefore charged IN ADDITION to advisorLimiter, tighter one first, which is the right precedence. Matched on the path with runs of slashes collapsed (imageRoutePath), because /api/venue/advisor//question reaches the same handler and a mount at the literal path never charged it. Its sentence names the hour, which is more than most 429s in this codebase do — see the handoff list in the round-24 report. It sits UNDER the per-venue daily cap in migration 039 rather than replacing it: this one is per process and a restart clears it, the Postgres one is not.',
   },
   {
     name: 'venueDashboardLimiter',

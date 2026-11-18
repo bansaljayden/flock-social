@@ -832,8 +832,53 @@ test('the free-text limiter is tighter than the advisor limiter, and both are ke
   assert.match(block, /windowMs: 60 \* 60 \* 1000/, 'an hour window, not a minute');
   assert.match(block, /max: 10\b/, 'ten questions an hour');
   assert.match(block, /keyGenerator: billedAccountKey/, 'keyed on the account, which IP rotation cannot defeat');
-  assert.match(src, /app\.use\('\/api\/venue\/advisor\/question', advisorQuestionLimiter\)/,
-    'and it is actually mounted, ahead of the router');
+  const mount = src.indexOf('advisorQuestionLimiter(req, res, next)');
+  assert.ok(mount !== -1, 'and it is actually mounted');
+  assert.ok(mount < src.indexOf("app.use('/api/venue/advisor', advisorLimiter, advisorRoutes)"), 'ahead of the router');
+});
+
+test('a doubled slash after the advisor mount reaches /question, and is charged the free-text limiter all the same', async () => {
+  // POST /api/venue/advisor//question reaches the /question handler: one extra
+  // slash after a mount point survives Express 4's router (server.js,
+  // imageRoutePath). Mounted at the literal path, the limiter never saw that
+  // spelling. The mount is lifted from server.js and run against a real
+  // router, with the limiter's shape at a ceiling of one so the second question
+  // is the one refused.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const rateLimit = require('express-rate-limit');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  const routePath = /^const imageRoutePath = .*;$/m.exec(src);
+  assert.ok(routePath, 'imageRoutePath is gone from server.js');
+  const route = /^const ADVISOR_QUESTION_ROUTE = .*;$/m.exec(src);
+  const mount = /^app\.use\(.*\badvisorQuestionLimiter\b.*$/m.exec(src);
+  assert.ok(mount, 'advisorQuestionLimiter is not mounted in server.js');
+
+  const limited = express();
+  const advisorQuestionLimiter = rateLimit({
+    windowMs: 60 * 1000, max: 1, keyGenerator: () => 'one account', standardHeaders: true, legacyHeaders: false,
+    message: { error: 'limited' },
+  });
+  // eslint-disable-next-line no-new-func
+  new Function('app', 'advisorQuestionLimiter', [routePath[0], route ? route[0] : '', mount[0]].join('\n'))(limited, advisorQuestionLimiter);
+  let answered = 0;
+  const advisor = express.Router();
+  advisor.post('/question', (_req, res) => { answered += 1; res.json({ ok: true }); });
+  limited.use('/api/venue/advisor', advisor);
+
+  const s = http.createServer(limited);
+  await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const at = `http://127.0.0.1:${s.address().port}`;
+  const post = (p) => fetch(at + p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  try {
+    assert.strictEqual((await post('/api/venue/advisor//question')).status, 200);
+    assert.strictEqual(answered, 1, 'the doubled slash reaches the /question handler');
+    assert.strictEqual((await post('/api/venue/advisor//question')).status, 429, 'and is charged the hour cap');
+    assert.strictEqual((await post('/api/venue/advisor/question')).status, 429, 'the same bucket as the plain spelling');
+    assert.strictEqual(answered, 1);
+  } finally {
+    await new Promise((r) => s.close(r));
+  }
 });
 
 // ── 6. The flag ─────────────────────────────────────────────────────────────

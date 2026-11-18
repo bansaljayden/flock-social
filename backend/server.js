@@ -1775,7 +1775,15 @@ app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/n
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', venueDashboardLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
-app.use('/api/venue/advisor/question', advisorQuestionLimiter);  // free text, tighter: 10/hour per account
+// Free text, tighter: 10/hour per account. Charged on the NORMALISED path
+// (imageRoutePath), as the body parsers and the billed-image meter are: POST
+// /api/venue/advisor//question reaches the /question handler (one extra slash
+// after a mount point survives Express 4's router), and mounted at the literal
+// path this limiter never saw that spelling, which left the hour cap to
+// advisorLimiter's minute brake. The path itself or anything under it, in any
+// case, as app.use matched it.
+const ADVISOR_QUESTION_ROUTE = /^\/api\/venue\/advisor\/question(?:\/|$)/i;
+app.use((req, res, next) => (ADVISOR_QUESTION_ROUTE.test(imageRoutePath(req)) ? advisorQuestionLimiter(req, res, next) : next()));
 app.use('/api/venue/advisor', advisorLimiter, advisorRoutes);  // Roost: fact cards + chip chat (own limiter, see above)
 app.use('/api/venue/tables', apiLimiter, require('./routes/tableInsights')); // owner table read: last night at the tables, free forecast (verified owner, Roost)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
