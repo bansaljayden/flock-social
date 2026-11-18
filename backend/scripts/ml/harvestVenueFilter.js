@@ -66,8 +66,10 @@
 // id against the weekly rows stored for them (collectWeekly wrote those, from
 // forecasts, through the same transform), at every rotation of the 168-hour
 // week, and prints which rotation agrees best. A --commit refuses unless the
-// best rotation is 0 and the agreement at 0 clears AXIS_* below; a dry run that
-// would be refused exits nonzero. Each run also prints each category's peak
+// best rotation is 0 and the agreement at 0 clears AXIS_* below (under
+// --new-only, the hour-origin rule at AXIS_NEW_ONLY_*, which drift in old
+// stored curves cannot fail); a dry run that would be refused exits nonzero,
+// and the gate's line names the rule that judged it. Each run also prints each category's peak
 // hour on the venue clock, the plain-language form of the same check (bars
 // peak late in the evening, never at dawn). See readFilterVenue for which
 // field the curve is read from and why.
@@ -312,6 +314,22 @@ const AXIS_MIN_OVERLAP = 24;
 const AXIS_MIN_VENUES = 20;
 const AXIS_MIN_WITHIN5 = 0.9;
 const AXIS_MIN_VENUE_SHARE = 0.75;
+// A --new-only commit writes nothing known, so the one question its gate asks
+// is the hour origin of the NEW venues' curves. The within-five share above
+// measures that AND how far the stored curves have drifted since they were
+// collected: Denver (2026-11-18) had rotation 0 best by every measure, 528 of
+// 540 venues best there, r 0.972 against 0.884 an hour off, and 88.1% within
+// five only because its stored curves were months older than PA's (PA passed
+// at 99.9% on fresh curves, 2026-11-02). Drift lowers every rotation's
+// agreement alike; an origin error moves the best rotation. So under
+// --new-only: the best pooled rotation at 0, at least
+// AXIS_NEW_ONLY_MIN_VENUE_SHARE of compared venues individually best at 0, and
+// rotation 0's r above every other rotation's by AXIS_NEW_ONLY_MIN_R_MARGIN,
+// with AXIS_MIN_VENUES as before. A commit that refreshes known rows keeps the
+// within-five rule: it overwrites stored curves, and how far they move is its
+// question too.
+const AXIS_NEW_ONLY_MIN_VENUE_SHARE = 0.9;
+const AXIS_NEW_ONLY_MIN_R_MARGIN = 0.05;
 // The rotations printed, in hours on the 168-hour week. Six is the origin
 // error the proof exists for, 24 a weekday mislabelled by one.
 const AXIS_SHOWN_SHIFTS = [0, 1, -1, 2, -2, 3, -3, 6, -6, 12, -12, 24, -24];
@@ -754,24 +772,53 @@ function axisProof(pairs) {
   return { venues, tied, thin, flat, table, bestShift: best ? best.shift : null };
 }
 
-// The --commit gate. Returns { pass, reason }.
-function axisVerdict(proof) {
+const AXIS_RULE_WITHIN5 = 'the within-five rule, because this commit would refresh known venues\' rows';
+const AXIS_RULE_NEW_ONLY = 'the --new-only hour-origin rule, because nothing known is written and only the new venues\' '
+  + 'hour origin is in question (within five points is reported, not required)';
+
+// The --commit gate. Returns { pass, reason, rule }; `newOnly` picks the rule
+// (see AXIS_NEW_ONLY_MIN_VENUE_SHARE).
+function axisVerdict(proof, { newOnly = false } = {}) {
+  const rule = newOnly ? AXIS_RULE_NEW_ONLY : AXIS_RULE_WITHIN5;
+  const refuse = (reason) => ({ pass: false, reason, rule });
   const at0 = proof.table.find((r) => r.shift === 0);
   if (proof.venues < AXIS_MIN_VENUES) {
-    return { pass: false, reason: `only ${proof.venues} known venues could be compared (at least ${AXIS_MIN_VENUES} are needed to prove the axis)` };
+    return refuse(`only ${proof.venues} known venues could be compared (at least ${AXIS_MIN_VENUES} are needed to prove the axis)`);
   }
   if (proof.bestShift !== 0) {
-    return { pass: false, reason: `the curves agree best with the stored rows at a rotation of ${proof.bestShift > 0 ? '+' : ''}${proof.bestShift} hours, not 0` };
-  }
-  if (at0.within5 < AXIS_MIN_WITHIN5) {
-    return { pass: false, reason: `at rotation 0 only ${pct(at0.within5)} of cells are within five points (at least ${pct(AXIS_MIN_WITHIN5)} needed)` };
+    return refuse(`the curves agree best with the stored rows at a rotation of ${proof.bestShift > 0 ? '+' : ''}${proof.bestShift} hours, not 0`);
   }
   const share = at0.venuesBestHere / proof.venues;
+  if (newOnly) {
+    const fit = `${at0.venuesBestHere} of ${proof.venues} venues (${pct(share)}) fit best at rotation 0`;
+    if (share < AXIS_NEW_ONLY_MIN_VENUE_SHARE) return refuse(`only ${fit} (at least ${pct(AXIS_NEW_ONLY_MIN_VENUE_SHARE)} needed)`);
+    if (typeof at0.r !== 'number') return refuse('rotation 0 has no correlation to judge');
+    let next = null;
+    for (const row of proof.table) {
+      if (row.shift !== 0 && typeof row.r === 'number' && (next === null || row.r > next.r)) next = row;
+    }
+    const sign = (k) => `${k > 0 ? '+' : ''}${k}`;
+    if (next !== null && at0.r - next.r < AXIS_NEW_ONLY_MIN_R_MARGIN - 1e-9) {
+      return refuse(`r ${at0.r.toFixed(3)} is only ${(at0.r - next.r).toFixed(3)} above rotation ${sign(next.shift)}'s `
+        + `(${next.r.toFixed(3)}); at least ${AXIS_NEW_ONLY_MIN_R_MARGIN} needed`);
+    }
+    return {
+      pass: true,
+      rule,
+      reason: `best rotation 0; ${fit}; r ${at0.r.toFixed(3)} is `
+        + (next === null ? 'the only one' : `${(at0.r - next.r).toFixed(3)} above the next rotation's (${sign(next.shift)}, ${next.r.toFixed(3)})`)
+        + `; ${pct(at0.within5)} of cells within five points`,
+    };
+  }
+  if (at0.within5 < AXIS_MIN_WITHIN5) {
+    return refuse(`at rotation 0 only ${pct(at0.within5)} of cells are within five points (at least ${pct(AXIS_MIN_WITHIN5)} needed)`);
+  }
   if (share < AXIS_MIN_VENUE_SHARE) {
-    return { pass: false, reason: `only ${pct(share)} of compared venues agree best at rotation 0 (at least ${pct(AXIS_MIN_VENUE_SHARE)} needed)` };
+    return refuse(`only ${pct(share)} of compared venues agree best at rotation 0 (at least ${pct(AXIS_MIN_VENUE_SHARE)} needed)`);
   }
   return {
     pass: true,
+    rule,
     reason: `best rotation 0; at 0, ${pct(at0.within5)} of cells within five points and ${pct(share)} of ${proof.venues} venues agree best`,
   };
 }
@@ -1880,7 +1927,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           stored: stored.get(Number(item.row.id)),
         }));
       const proof = axisProof(pairsFor('days'));
-      const verdict = axisVerdict(proof);
+      const verdict = axisVerdict(proof, { newOnly: opts.newOnly });
       summary.axis = proof;
       summary.axisVerdict = verdict;
       console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with stored weekly `
@@ -1897,7 +1944,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           + `${alt0.mae === null ? 'n/a' : alt0.mae.toFixed(2)}, within five ${pct(alt0.within5)}, r `
           + `${alt0.r === null ? 'n/a' : alt0.r.toFixed(3)}, over ${alt.venues} venues.`);
       }
-      console.log(`${TAG} COMMIT GATE: ${verdict.pass ? 'PASS' : 'REFUSED'} (${verdict.reason}).`);
+      console.log(`${TAG} COMMIT GATE: ${verdict.pass ? 'PASS' : 'REFUSED'} (${verdict.reason}). Judged by ${verdict.rule}.`);
 
       const peaks = peakHourHistogram(plan);
       summary.peakHours = peaks;

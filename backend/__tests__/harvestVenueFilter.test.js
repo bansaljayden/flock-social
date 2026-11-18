@@ -653,7 +653,7 @@ test('a six-hour origin error is caught: --commit refuses and writes nothing, th
   assert.strictEqual(commit.summary.aborted, true);
   assert.strictEqual(commit.summary.exitCode, 1);
   assert.strictEqual(commit.summary.axis.bestShift, 6, 'the planted six-hour error is what the proof finds');
-  assert.match(commit.out, /COMMIT GATE: REFUSED \(the curves agree best with the stored rows at a rotation of \+6 hours, not 0\)/);
+  assert.match(commit.out, /COMMIT GATE: REFUSED \(the curves agree best with the stored rows at a rotation of \+6 hours, not 0\)\. Judged by the within-five rule/);
   assert.match(commit.out, /ABORTED: REFUSED: the axis proof failed/);
   assert.match(commit.out, /\n +\+6 +4032 +0\.00 +100\.0% +100\.0% +1\.000 +24 +<- best/);
   assert.deepStrictEqual(await snapshot(), before, 'a refused commit wrote');
@@ -693,6 +693,60 @@ test('axisProof names the rotation, and the gate holds the floors', () => {
   assert.strictEqual(harvester.axisVerdict(at0(0.99, 90)).pass, true);
   assert.match(harvester.axisVerdict(at0(harvester.AXIS_MIN_WITHIN5 - 0.01, 90)).reason, /within five points/);
   assert.match(harvester.axisVerdict(at0(0.99, 100 * harvester.AXIS_MIN_VENUE_SHARE - 1)).reason, /agree best at rotation 0/);
+});
+
+// A proof table over every rotation of the week: `rows` overrides the default
+// (a poor fit) at the shifts it names.
+function proofTable({ venues, bestShift, rows }) {
+  const table = [];
+  for (let k = -83; k <= 84; k++) {
+    table.push({ shift: k, pairs: 50000, mae: 30, exact: 0.02, within5: 0.15, r: 0.3, venuesBestHere: 0, ...(rows[k] || {}) });
+  }
+  return { venues, tied: 0, thin: 0, flat: 0, table, bestShift };
+}
+
+test('--new-only judges the hour origin alone: drifted stored curves pass, a real shift does not', () => {
+  // Denver, 2026-11-18: rotation 0 best by every measure, 528 of 540 venues
+  // best there, r 0.972 against 0.884 one hour off, and refused only because
+  // its stored curves are months old (88.1% of cells within five points).
+  const denverRows = {
+    0: { mae: 2.49, exact: 0.78, within5: 0.881, r: 0.972, venuesBestHere: 528 },
+    1: { mae: 6.1, exact: 0.3, within5: 0.55, r: 0.884, venuesBestHere: 2 },
+    [-1]: { mae: 6.3, exact: 0.3, within5: 0.54, r: 0.879, venuesBestHere: 0 },
+    24: { mae: 7.5, exact: 0.25, within5: 0.5, r: 0.86, venuesBestHere: 3 },
+    [-24]: { mae: 7.6, exact: 0.25, within5: 0.5, r: 0.858, venuesBestHere: 2 },
+  };
+  const denver = proofTable({ venues: 540, bestShift: 0, rows: denverRows });
+  const newOnly = harvester.axisVerdict(denver, { newOnly: true });
+  assert.strictEqual(newOnly.pass, true, newOnly.reason);
+  assert.match(newOnly.rule, /--new-only/);
+  assert.match(newOnly.reason, /528 of 540 venues \(97\.8%\) fit best at rotation 0/);
+  assert.match(newOnly.reason, /r 0\.972 is 0\.088 above the next rotation's \(\+1, 0\.884\)/);
+  // A commit that refreshes known rows keeps the within-five rule.
+  const refresh = harvester.axisVerdict(denver);
+  assert.strictEqual(refresh.pass, false);
+  assert.match(refresh.reason, /at rotation 0 only 88\.1% of cells are within five points \(at least 90\.0% needed\)/);
+  assert.match(refresh.rule, /within-five rule/);
+
+  // A real hour shift is refused under --new-only, whatever the drift.
+  for (const k of [1, -6]) {
+    const shifted = proofTable({
+      venues: 540, bestShift: k,
+      rows: { [k]: { mae: 2.4, within5: 0.95, r: 0.975, venuesBestHere: 530 }, 0: { mae: 6, within5: 0.6, r: 0.88, venuesBestHere: 1 } },
+    });
+    const v = harvester.axisVerdict(shifted, { newOnly: true });
+    assert.strictEqual(v.pass, false, `rotation ${k}`);
+    assert.match(v.reason, new RegExp(`rotation of ${k > 0 ? '\\+' : ''}${k} hours, not 0`));
+  }
+  // And each of the rule's three tests holds on its own.
+  const share = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], venuesBestHere: 480 } } });
+  assert.match(harvester.axisVerdict(share, { newOnly: true }).reason, /480 of 540 venues \(88\.9%\) fit best at rotation 0 \(at least 90\.0% needed\)/);
+  const close = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, [-1]: { ...denverRows[-1], r: 0.94 } } });
+  assert.match(harvester.axisVerdict(close, { newOnly: true }).reason, /r 0\.972 is only 0\.032 above rotation -1's \(0\.940\); at least 0\.05 needed/);
+  const few = proofTable({ venues: 19, bestShift: 0, rows: denverRows });
+  assert.match(harvester.axisVerdict(few, { newOnly: true }).reason, /only 19 known venues could be compared/);
+  const noR = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], r: null } } });
+  assert.strictEqual(harvester.axisVerdict(noR, { newOnly: true }).pass, false);
 });
 
 test('the peak-hour histogram is on the venue clock', () => {
@@ -1062,6 +1116,7 @@ test('--new-only writes nothing for a venue already held, and a new one gets its
   assert.strictEqual(dry.summary.knownSkipped, 27);
   assert.strictEqual(dry.summary.rowsPlanned, 168, 'only the new venue\'s week is planned');
   assert.match(dry.out, /NEW VENUES ONLY/);
+  assert.match(dry.out, /COMMIT GATE: PASS \(best rotation 0; 24 of 24 venues \(100\.0%\) fit best at rotation 0; .*\)\. Judged by the --new-only hour-origin rule/);
   assert.match(dry.out, /--new-only: 27 known venues skipped \(25 by BestTime id, 1 by Google place id, 1 as near-duplicates\)/);
   assert.match(dry.out, /Would write 168 weekly rows for 1 venues and add 1 ml_venues rows .* 27 known venues skipped \(--new-only\)\./);
 
