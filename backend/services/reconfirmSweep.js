@@ -56,11 +56,20 @@
 // WHICH DAY. FLOCK_RECONFIRM_LEAD_HOURS goes up to 24, so the plan can be on
 // another day than the push. On the clock the time is said on, compared with
 // the day the push will LAND (now, or the end of the quiet hours that hold it,
-// read on the zone quiet hours read): the same day says no day; the next says
-// "tomorrow", except that a start in the small hours (before 5 AM, routes/
-// advisor.js THE SMALL HOURS) is "tonight", the night still running, and a push
-// landing in the small hours names the weekday, since "tomorrow" at 1 AM is
-// heard both ways; further off, the weekday.
+// read on the zone quiet hours read): the same day says no day; a later day
+// says its weekday, "starts Thursday at 7 PM", except that a start in the small
+// hours (before 5 AM, routes/advisor.js THE SMALL HOURS) on the next day, said
+// before those small hours begin, is "tonight", the night still running.
+//
+// NEVER "TOMORROW" (2026-11-18). The body is composed once and pushHelper sends
+// it as stored, so a failed delivery retried a minute later, or at growing
+// gaps for up to half an hour (its RETRY_TTL_MS), says what was composed. Said
+// at 11:59:30 PM about 7 PM the next day, "tomorrow" is wrong by the first
+// retry, at 12:00:30 AM. The weekday stays true whenever in the week it lands.
+// "Tonight" stays true too: composed at 11:59 PM for 12:30 AM and delivered at
+// 12:01 AM, the night it names is the one still running
+// (__tests__/reconfirmWindow.test.js reads every landing across a midnight,
+// on time and after each retry).
 
 const pool = require('../config/database');
 const { pushIfOffline, recipientZone, reportedZone, quietWindowEnd } = require('./pushHelper');
@@ -121,15 +130,13 @@ const sameWall = (a, b) => Boolean(a && b) && a.year === b.year && a.month === b
   && a.hour === b.hour && a.minute === b.minute;
 
 // The day word for a start at `plan` said at `land` (both civilTime on one
-// clock): '' for the same day, else 'tonight', 'tomorrow' or a weekday (WHICH
-// DAY, above).
+// clock): '' for the same day, 'tonight' for the next day's small hours said
+// before they begin, else the weekday (WHICH DAY and NEVER "TOMORROW", above).
 function dayWord(plan, land) {
   const days = Math.round((Date.UTC(plan.year, plan.month - 1, plan.day) - Date.UTC(land.year, land.month - 1, land.day)) / DAY_MS);
   if (days <= 0) return '';
-  const weekday = WEEKDAYS[civilWeekday(plan.year, plan.month, plan.day)];
-  if (days >= 2) return weekday;
-  if (land.hour < SMALL_HOURS_END) return weekday;
-  return plan.hour < SMALL_HOURS_END ? 'tonight' : 'tomorrow';
+  if (days === 1 && land.hour >= SMALL_HOURS_END && plan.hour < SMALL_HOURS_END) return 'tonight';
+  return WEEKDAYS[civilWeekday(plan.year, plan.month, plan.day)];
 }
 
 // The push's body: "<plan> starts at 7:30 PM." on the venue's clock, with the

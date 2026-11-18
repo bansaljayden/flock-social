@@ -20,7 +20,9 @@
 //      the push names the plan's start on the venue's clock, with the venue
 //      zone's name when the recipient's device reads another clock, on the
 //      device's clock when the venue has no zone, with the day when the start
-//      is not on the day the push lands, and says a rounded distance only when
+//      is not on the day the push lands (the weekday, or "tonight" for the
+//      small hours, never "tomorrow", so the word stays true when delivery is
+//      retried past midnight), and says a rounded distance only when
 //      neither zone is known, so a push held until 08:00 does not land saying
 //      "in about 3 hours" about a plan that is now one hour away.
 //   2. THE STATE. reconfirmState reads one statement for open, deadline, count
@@ -325,11 +327,12 @@ test('reconfirmBody names the start on the venue\'s clock, the device\'s without
     // No name and no venue: the plan is still the subject.
     [{ where: '', eventMs: at('2026-09-17T01:00:00Z'), deviceZone: NY, hoursOut: 3 }, 'Your plan starts at 9 PM.'],
     // THE DAY. With FLOCK_RECONFIRM_LEAD_HOURS at 24, the plan can be on the
-    // next day: 9 PM Wednesday, for 8:30 PM Thursday.
+    // next day: 9 PM Wednesday, for 8:30 PM Thursday. The weekday, never
+    // "tomorrow" (the day word stays true when the push is late, below).
     [{ where: 'Dinner', eventMs: at('2026-09-18T00:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
-      'Dinner starts tomorrow at 8:30 PM.'],
+      'Dinner starts Thursday at 8:30 PM.'],
     [{ where: 'Dinner', eventMs: at('2026-09-18T00:30:00Z'), venueZone: CHI, deviceZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
-      'Dinner starts tomorrow at 7:30 PM CDT.'],
+      'Dinner starts Thursday at 7:30 PM CDT.'],
     // Just after midnight is tonight, said at 9:30 PM: the small hours belong
     // to the night before (routes/advisor.js, THE SMALL HOURS).
     [{ where: 'Late one', eventMs: at('2026-09-17T04:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:30:00Z') },
@@ -349,9 +352,9 @@ test('reconfirmBody names the start on the venue\'s clock, the device\'s without
     // The week the clocks change: 9 PM EDT Saturday 31 October, for 7:30 PM
     // EST on Sunday, and the traveller's label is the zone's name on the night.
     [{ where: 'Dinner', eventMs: at('2026-11-02T00:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-11-01T01:00:00Z') },
-      'Dinner starts tomorrow at 7:30 PM.'],
+      'Dinner starts Sunday at 7:30 PM.'],
     [{ where: 'Dinner', eventMs: at('2026-11-02T00:30:00Z'), venueZone: NY, deviceZone: 'Europe/London', nowMs: Date.parse('2026-11-01T01:00:00Z') },
-      'Dinner starts tomorrow at 7:30 PM EST.'],
+      'Dinner starts Sunday at 7:30 PM EST.'],
     [{ where: 'Dinner', eventMs: at('2026-10-31T23:30:00Z'), venueZone: NY, deviceZone: 'Europe/London', nowMs: Date.parse('2026-10-31T21:00:00Z') },
       'Dinner starts at 7:30 PM EDT.'],
     // No usable zone either side: the distance.
@@ -363,6 +366,77 @@ test('reconfirmBody names the start on the venue\'s clock, the device\'s without
   for (const [input, want] of cases) {
     assert.strictEqual(body(input), want + tail, JSON.stringify(input));
   }
+});
+
+// THE DAY WORD STAYS TRUE WHEN THE PUSH IS LATE (2026-11-18). pushHelper
+// stores the body once and sends it as stored: a failed delivery is retried a
+// minute later, then at growing gaps, for up to half an hour (RETRY_TTL_MS).
+// So the day word, said for the moment the push was meant to land, has to stay
+// true for that half hour, across midnight too. "Tomorrow" cannot: said at
+// 11:59:30 PM about 7 PM the next day, it is wrong by the one-minute retry. It
+// is never said. The weekday is, and "tonight" for a start in the small hours
+// said before midnight, which is still the night after it.
+const NY_WALL = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hourCycle: 'h23', weekday: 'long',
+});
+function nyWall(ms) {
+  const p = Object.fromEntries(NY_WALL.formatToParts(ms).map((x) => [x.type, x.value]));
+  return { date: Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day)) / 86400000, hour: Number(p.hour) % 24, weekday: p.weekday };
+}
+// Whether the day word in `text` is true when read at `readMs`, about a start
+// at `planMs`, on New York's clock. Worked out here, not by the module.
+function dayWordHolds(text, planMs, readMs) {
+  const m = / starts (?:(\w+) )?at /.exec(text);
+  if (!m) return false;
+  const word = m[1] || '';
+  const plan = nyWall(planMs);
+  const read = nyWall(readMs);
+  const days = plan.date - read.date;
+  if (word === '') return days === 0;
+  // The small hours belong to the night before (routes/advisor.js).
+  if (word === 'tonight') return plan.hour < 5 && ((days === 1 && read.hour >= 5) || (days === 0 && read.hour < 5));
+  return word === plan.weekday && days >= 0 && days <= 6;
+}
+
+test('the day word is never "tomorrow", and stays true when delivery is retried across midnight', () => {
+  const NY = 'America/New_York';
+  const tail = " Tap to say you're still coming.";
+  const ms = (iso) => Date.parse(iso);
+  // The review's case: composed at 11:59:30 PM Wednesday, for 7 PM Thursday,
+  // and delivered by the retry at 12:00:30 AM Thursday.
+  const dinner = reconfirmBody({ where: 'Dinner', eventMs: at('2026-09-17T23:00:00Z'), venueZone: NY, nowMs: ms('2026-09-17T03:59:30Z') });
+  assert.strictEqual(dinner, `Dinner starts Thursday at 7 PM.${tail}`);
+  assert.ok(dayWordHolds(dinner, ms('2026-09-17T23:00:00Z'), ms('2026-09-17T04:00:30Z')));
+  // A 12:30 AM start composed at 11:59 PM and delivered at 12:01 AM: "tonight
+  // at 12:30 AM" is true at both.
+  const late = reconfirmBody({ where: 'Late one', eventMs: at('2026-09-17T04:30:00Z'), venueZone: NY, nowMs: ms('2026-09-17T03:59:00Z') });
+  assert.strictEqual(late, `Late one starts tonight at 12:30 AM.${tail}`);
+  assert.ok(dayWordHolds(late, ms('2026-09-17T04:30:00Z'), ms('2026-09-17T03:59:00Z')));
+  assert.ok(dayWordHolds(late, ms('2026-09-17T04:30:00Z'), ms('2026-09-17T04:01:00Z')));
+  // The predicate itself: "tomorrow" at 12:01 AM about 7 PM that day is false.
+  assert.ok(!dayWordHolds('Dinner starts tomorrow at 7 PM.', ms('2026-09-17T23:00:00Z'), ms('2026-09-17T04:01:00Z')));
+
+  // Every landing ten minutes apart from 6 PM Wednesday to 6 AM Thursday, every
+  // start half an hour apart up to the 24-hour lead, read on time and after
+  // each retry inside the half hour, until the start.
+  const RETRIED_AFTER_MIN = [0, 1, 3, 7, 15, 30];
+  const first = ms('2026-09-16T22:00:00Z');
+  let checked = 0;
+  for (let land = first; land <= first + 12 * 3600000; land += 10 * 60000) {
+    for (let ahead = 30; ahead <= 24 * 60; ahead += 30) {
+      const planMs = land + ahead * 60000;
+      const text = reconfirmBody({ where: 'Plan', eventMs: `${planMs}.000000`, venueZone: NY, nowMs: land });
+      const said = `"${text}" composed for ${new Date(land).toISOString()}`;
+      assert.doesNotMatch(text, /tomorrow/, said);
+      for (const lateBy of RETRIED_AFTER_MIN) {
+        const readMs = land + lateBy * 60000;
+        if (readMs >= planMs) continue;
+        assert.ok(dayWordHolds(text, planMs, readMs), `${said}, read at ${new Date(readMs).toISOString()}`);
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 15000, `only ${checked} readings checked`);
 });
 
 // ===========================================================================
@@ -536,12 +610,12 @@ test('with a 24-hour lead the push names the day, on the day it will land', asyn
   }));
   deviceZones.set(3, 'America/Chicago');
   // Member 4's phone says London, where it is 3 AM: quiet hours hold the push
-  // until 8 AM there, 2 AM Thursday in Chicago, and on Thursday the plan is
-  // not tomorrow. The words are for when it lands.
+  // until 8 AM there, 2 AM Thursday in Chicago, and on Thursday the plan needs
+  // no day. The words are for when it lands.
   deviceZones.set(4, 'Europe/London');
   await runReconfirmSweep(io);
   assert.deepStrictEqual(pushes.map((p) => [p.userId, p.body]), [
-    [3, "Dinner at The Bar starts tomorrow at 8 PM. Tap to say you're still coming."],
+    [3, "Dinner at The Bar starts Thursday at 8 PM. Tap to say you're still coming."],
     [4, "Dinner at The Bar starts at 8 PM CDT. Tap to say you're still coming."],
     [3, "Late one starts tonight at 12:30 AM. Tap to say you're still coming."],
   ]);
