@@ -2095,27 +2095,40 @@ html:has(.lp) body { overflow-x: clip; }
    (landingAnnotations.js), so no note lands between the words and the phone,
    and they grow only as far as the row leaves room for the words. */
 @media (min-width: 960px) {
-  /* The words' track is up to 25rem and takes it whenever the row has room,
-     so a beat with a short line ("Asad paid, so Flock splits it.") still
-     starts on the same left edge as the others; an `auto` track shrank to
-     its words and pushed them 50px right. On the right the words are the
-     second track: .is-flip, or the invitation, whose painting comes first. */
+  /* Every beat's words get the same track, --beat-words: up to 25rem, and no
+     wider than the row leaves beside the widest picture, a one-sided capture
+     (--beat-pic: 526 design units, notes 230 + gap 56 + phone 240, at the
+     row's --anno-scale). A track sized row by row shrank only where the
+     capture was wide, so the right-hand words started at 520 and 614 at
+     960, 584 and 617 at 1024, 660 and 700 at 1100 (2026-11-06). Now the
+     words start on one of two lines at every desktop width: the content
+     edge, or the right track's edge. On the right the words are the second
+     track: .is-flip, or the invitation, whose painting comes first. */
   .lp-beat-row {
+    --beat-gap: clamp(40px, 5vw, 72px);
+    --beat-pic: 526px;
+    --beat-words: min(25rem, 100% - var(--beat-pic) - var(--beat-gap));
     display: grid;
-    grid-template-columns: minmax(0, 25rem) auto;
+    grid-template-columns: minmax(0, var(--beat-words)) auto;
     justify-content: space-between;
     align-items: center;
-    column-gap: clamp(40px, 5vw, 72px);
+    column-gap: var(--beat-gap);
   }
   .lp-beat-row.is-flip,
-  .lp-beat-row:has(> .lp-beat:last-child) { grid-template-columns: auto minmax(0, 25rem); }
+  .lp-beat-row:has(> .lp-beat:last-child) { grid-template-columns: auto minmax(0, var(--beat-words)); }
+  /* The invitation's painting is narrower than a capture, so at the content
+     edge it left 300px of paper between the birds and their words at 1440.
+     Its track takes the free space and the painting sits at the track's end,
+     one gap from the words it belongs to. */
+  .lp-beat-row:has(> .lp-beat-scene.is-invite) { grid-template-columns: minmax(0, 1fr) minmax(0, var(--beat-words)); }
   .lp-beat-row.is-flip > .lp-beat { order: 2; }
   .lp-beat-row > .lp-beat { max-width: 25rem; }
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1; width: calc(var(--anno-w) * var(--anno-scale) * 1px); margin: 0; }
-  .lp-beat-row > .lp-beat-scene.is-invite { width: 380px; margin: 0; }
+  .lp-beat-row > .lp-beat-scene.is-invite { width: 380px; margin: 0; justify-self: end; }
   .lp-beat-row > .lp-beat-scene.is-flight { width: 500px; margin: 0; }
 }
 @media (min-width: 1100px) {
+  .lp-beat-row { --beat-pic: 605px; }
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.15; }
 }
 
