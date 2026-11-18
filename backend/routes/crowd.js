@@ -2310,9 +2310,14 @@ router.get('/:placeId/alternatives',
       // its 90 minutes by the same margin. The rule is about the FIELD, not
       // about which branch produced it: if the payload carries an owner
       // assertion at all, it is served fresh and never remembered.
+      //
+      // And it is every SCORED neighbour, not only the three published: a
+      // neighbour whose owner said "packed" is ranked out of the list, so the
+      // list carried no reading, was cached, and kept that venue off it for
+      // ten minutes after the owner retracted.
       const carriesOwnerReport = (row) => row && row.ownerReport != null;
       const anyOwnerAsserted = carriesOwnerReport(payload.currentVenue)
-        || alternatives.some(carriesOwnerReport);
+        || scoredNearby.some(carriesOwnerReport);
       if (!anyOwnerAsserted) setCache(cacheKey, payload);
       res.json(onlyVisible(payload));
     } catch (err) {
