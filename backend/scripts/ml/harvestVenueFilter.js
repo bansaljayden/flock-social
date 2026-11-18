@@ -839,13 +839,67 @@ function formatPeakHistogram(byCategory) {
 // apart: articles, the company suffix, the city a listing appends.
 const NAME_STOPWORDS = new Set(['the', 'and', 'of', 'at', 'a', 'an', 'llc', 'inc', 'co', 'philadelphia', 'philly', 'pa']);
 
-function nameKey(name) {
-  return String(name || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+// The city a listing appends, outside PA ("The Ivy London", "Joe Bar Buenos
+// Aires"): the venue's own city only, as config.js names it, its CITIES key,
+// and the few other forms below. Removed as whole words, a multi-word name
+// only as the whole phrase ("Buenos Aires", never a lone "Aires"). The key
+// "la" is not one of them: it is the article in "La Colombe", a word of the
+// name, and "Los Angeles" is.
+const CITY_NAME_FORMS = Object.freeze({
+  nyc: ['New York', 'NY'],
+  mexico: ['CDMX'],
+  delhi: ['New Delhi'],
+  seoul: ['서울'],
+  dubai: ['دبي'],
+});
+const CITY_KEYS_THAT_ARE_WORDS = new Set(['la']);
+const cityPhraseCache = new Map();
+
+// Unicode words: NFKD with the Latin accents dropped ("Café" is "cafe"), then
+// NFKC so Hangul syllables come back whole, lower case, and split on anything
+// that is not a letter, a mark or a digit. Marks stay because they are letters'
+// parts outside Latin: a Thai vowel or tone mark, a Devanagari vowel sign.
+function nameTokens(name) {
+  return String(name || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').normalize('NFKC').toLowerCase()
     .replace(/&/g, ' and ')
     .replace(/['’]/g, '')
-    .split(/[^a-z0-9]+/)
-    .filter((t) => t && !NAME_STOPWORDS.has(t))
-    .join('');
+    .split(/[^\p{L}\p{M}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+function cityPhrases(cityKey) {
+  if (!cityKey) return [];
+  if (!cityPhraseCache.has(cityKey)) {
+    const forms = [...(CITY_NAME_FORMS[cityKey] || [])];
+    if (CITIES[cityKey] && CITIES[cityKey].name) forms.push(CITIES[cityKey].name);
+    if (!CITY_KEYS_THAT_ARE_WORDS.has(cityKey)) forms.push(cityKey);
+    const phrases = forms.map(nameTokens).filter((p) => p.length > 0);
+    // Longest first, so "New York City" goes before "New York" can split it.
+    cityPhraseCache.set(cityKey, phrases.sort((p, q) => q.length - p.length));
+  }
+  return cityPhraseCache.get(cityKey);
+}
+
+function withoutPhrases(tokens, phrases) {
+  let out = tokens;
+  for (const phrase of phrases) {
+    const kept = [];
+    for (let i = 0; i < out.length;) {
+      if (i + phrase.length <= out.length && phrase.every((t, j) => out[i + j] === t)) { i += phrase.length; continue; }
+      kept.push(out[i]);
+      i++;
+    }
+    out = kept;
+  }
+  return out;
+}
+
+// `cityKey` is the CITIES key of the city the venue was placed in; without it
+// only the PA words above are removed. `full` keeps every word.
+function nameKey(name, cityKey = null, { full = false } = {}) {
+  const tokens = nameTokens(name);
+  if (full) return tokens.join('');
+  return withoutPhrases(tokens, cityPhrases(cityKey)).filter((t) => !NAME_STOPWORDS.has(t)).join('');
 }
 
 function bigrams(s) {
@@ -861,12 +915,18 @@ function bigrams(s) {
 // five letters ("Olde Bar" and "The Olde Bar Philadelphia", "Starbucks" and
 // "Starbucks Coffee"), or a character-bigram Dice score of 0.75 or more (a
 // typo, a dropped word). "Cafe" and "Cafe Lift" are not similar: four letters
-// is a word, not a name.
-function namesSimilar(a, b) {
-  const x = nameKey(a);
-  const y = nameKey(b);
-  if (!x || !y) return false;
-  if (x === y) return true;
+// is a word, not a name. Names in any script are compared (nameTokens): the
+// same Hangul, Thai or Arabic name is the same name. `cityKey`: see nameKey.
+function namesSimilar(a, b, cityKey = null) {
+  const x = nameKey(a, cityKey);
+  const y = nameKey(b, cityKey);
+  if (x && x === y) return true;
+  if (!x || !y) {
+    // A name that is nothing but those words ("The London", "Philly"): only
+    // the same whole name is the same name.
+    const fx = nameKey(a, null, { full: true });
+    return fx !== '' && fx === nameKey(b, null, { full: true });
+  }
   const [short, long] = x.length <= y.length ? [x, y] : [y, x];
   if (short.length >= 5 && short.length * 2 >= long.length && long.includes(short)) return true;
   const bx = bigrams(x);
@@ -1338,7 +1398,7 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
     const claimedBy = claimedPlaces.get(v.placeId);
     if (claimedBy && claimedBy !== v.venueId) { skipped.placeClaimedTwice++; continue; }
     // Rule 4: the nearest row close enough with a similar name.
-    const near = nearRows(v.lat, v.lng).find((c) => namesSimilar(v.name, c.row.name));
+    const near = nearRows(v.lat, v.lng).find((c) => namesSimilar(v.name, c.row.name, where.cityKey));
     if (near) {
       const row = near.row;
       if (row.besttime_venue_id && row.besttime_venue_id !== v.venueId) { skipped.nearDupHeldByOtherBtId++; continue; }
@@ -1361,7 +1421,7 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
     for (let dx = -1; dx <= 1 && !twin; dx++) {
       for (let dy = -1; dy <= 1 && !twin; dy++) {
         twin = (newGrid.get(`${gx + dx}_${gy + dy}`) || []).some((o) => (
-          kmBetween(v.lat, v.lng, o.lat, o.lng) * 1000 <= NEAR_DUP_METERS && namesSimilar(v.name, o.name)));
+          kmBetween(v.lat, v.lng, o.lat, o.lng) * 1000 <= NEAR_DUP_METERS && namesSimilar(v.name, o.name, where.cityKey)));
       }
     }
     if (twin) { skipped.nearDuplicateInRun++; continue; }
@@ -1502,7 +1562,7 @@ async function writeOne(pool, item, cells) {
         [v.lat - dLat, v.lat + dLat, v.lng - dLng, v.lng + dLng]
       );
       if (around.some((r) => kmBetween(v.lat, v.lng, Number(r.latitude), Number(r.longitude)) * 1000 <= NEAR_DUP_METERS
-        && namesSimilar(v.name, r.name))) {
+        && namesSimilar(v.name, r.name, item.city))) {
         return { status: 'claimed' };
       }
       const { rows } = await client.query(

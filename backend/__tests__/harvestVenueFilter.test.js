@@ -287,7 +287,17 @@ test.before(async () => {
   dataDir = path.join(os.tmpdir(), 'flock-harvest-pg-' + Date.now());
   pg = createEmbeddedPostgres(EmbeddedPostgres, { suite: 'harvestVenueFilter', port: PG_PORT, databaseDir: dataDir });
   await startEmbeddedPostgres(pg);
-  await pg.createDatabase('flock_harvest_test');
+  // UTF8, as Railway's Postgres is. embedded-postgres runs initdb under the
+  // machine's locale, WIN1252 on this Windows box, where a Hangul, Thai or
+  // Arabic venue name cannot be stored at all (dumpLiteralRestore.test.js has
+  // the same note). template0 because template1 cannot be copied into another
+  // encoding.
+  const boot = new Pool({ connectionString: CONN.replace(/\/flock_harvest_test$/, '/postgres'), max: 1 });
+  try {
+    await boot.query("CREATE DATABASE flock_harvest_test ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'");
+  } finally {
+    await boot.end();
+  }
   pool = new Pool({ connectionString: CONN });
   await migrate(pool);
 
@@ -1283,4 +1293,119 @@ test('the demand list inserts under the same corpus lock the harvest writes unde
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'scripts', 'ml', 'addDemandVenues.js'), 'utf8');
   assert.match(src, /withCorpusWriteLock\(pool, \(client\) => client\.query\(\s*`INSERT INTO ml_venues/);
   assert.doesNotMatch(src, /await pool\.query\(\s*`INSERT INTO ml_venues/);
+});
+
+// ---------------------------------------------------------------------------
+// A review of the every-city harvest, 2026-11-18.
+// ---------------------------------------------------------------------------
+
+test('names in any script are compared, and the city a listing appends is not part of its name', () => {
+  // The old key kept only a-z and 0-9, so every Hangul, Thai or Arabic name
+  // came out empty and "not similar" to itself, and only the PA city words were
+  // dropped, so "The Ivy London" was not "The Ivy".
+  const same = [
+    ['달빛 포차', '달빛 포차'], ['달빛포차', '달빛 포차'],
+    ['ร้านกาแฟ ดอยช้าง', 'ร้านกาแฟ ดอยช้าง'], ['ร้านกาแฟดอยช้าง', 'ร้านกาแฟ ดอยช้าง'],
+    ['مطعم الشام', 'مطعم الشام'], ['مطعم الشام', 'مطعم-الشام'],
+  ];
+  for (const [a, b] of same) assert.ok(harvester.namesSimilar(a, b), `${a} / ${b}`);
+  const sameInCity = [
+    ['The Ivy', 'The Ivy London', 'london'], ['Joe Bar', 'Joe Bar Buenos Aires', 'buenosaires'],
+    ['Joe Bar', 'Joe Bar New York City', 'nyc'], ['Joe Bar', 'Joe Bar NYC', 'nyc'], ['Joe Bar', 'Joe Bar, New York', 'nyc'],
+    ['Joe Bar', 'Joe Bar Mexico City', 'mexico'], ['Café Lutèce', 'Cafe Lutece São Paulo', 'saopaulo'],
+    ['달빛 포차', '달빛 포차 서울', 'seoul'], ['Olde Bar', 'Olde Bar Philadelphia', 'philly'], ['London', 'London', 'london'],
+  ];
+  for (const [a, b, city] of sameInCity) assert.ok(harvester.namesSimilar(a, b, city), `${a} / ${b} in ${city}`);
+  const different = [
+    ['달빛 포차', '새벽 커피'], ['ร้านกาแฟ ดอยช้าง', 'ก๋วยเตี๋ยวเรือ'], ['مطعم الشام', 'مقهى بيروت'],
+    ['달빛 포차', ''], ['★', '★'],
+  ];
+  for (const [a, b] of different) assert.ok(!harvester.namesSimilar(a, b), `${a} / ${b}`);
+  // Nothing else is loosened: another city's name, a lone word of a two-word
+  // city, a city named without its city, and a name that is only a city.
+  const differentInCity = [
+    ['The Ivy', 'The Ivy London', null], ['The Ivy', 'The Ivy London', 'paris'], ['Joe Bar', 'Joe Bar Aires Buenos', 'buenosaires'],
+    ['The Ivy', 'The Ivy Chelsea Garden', 'london'], ['London', 'Paris', 'london'], ['The London', 'London Bridge Bar', 'london'],
+    ['Sushi Palace', 'The Olde Bar', 'london'], ['Cafe', 'Cafe Lift', 'nyc'], ['Bar', 'La Bar', 'la'],
+  ];
+  for (const [a, b, city] of differentInCity) assert.ok(!harvester.namesSimilar(a, b, city), `${a} / ${b} in ${city}`);
+});
+
+test('the planner and the write lock judge names in the venue\'s own script and city', async () => {
+  const days = new Map([[0, new Array(24).fill(10)]]);
+  // Rule 4: "The Ivy London" 10 m from the corpus's "The Ivy" is that row.
+  const ivyRow = { id: 41, name: 'The Ivy', latitude: 51.5126, longitude: -0.1281, besttime_venue_id: null };
+  const ivy = { venueId: 'ven_ivy', placeId: 'ChIJivyivyivyivyivy1', name: 'The Ivy London', lat: 51.51269, lng: -0.1281, type: 'RESTAURANT', days };
+  const ruled = harvester.planVenues([ivy], { byBtId: new Map(), byPlaceId: new Map(), nearby: [ivyRow] }, ['london']);
+  assert.deepStrictEqual(ruled.plan.map((p) => [p.kind, p.row && p.row.id]), [['known_near', 41]]);
+
+  // The in-run twin check: two new listings of one Thai cafe, 15 m apart.
+  const thaiA = { venueId: 'ven_th_a', placeId: 'ChIJthaithaithaithai1', name: 'ร้านกาแฟ ดอยช้าง', lat: 13.7563, lng: 100.5018, type: 'CAFE', days };
+  const thaiB = { ...thaiA, venueId: 'ven_th_b', placeId: 'ChIJthaithaithaithai2', name: 'ร้านกาแฟดอยช้าง', lat: 13.75643 };
+  const twins = harvester.planVenues([thaiB, thaiA], { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, ['bangkok']);
+  assert.deepStrictEqual(twins.plan.map((p) => [p.kind, p.venue.venueId]), [['new', 'ven_th_a']]);
+  assert.strictEqual(twins.skipped.nearDuplicateInRun, 1);
+
+  // Under the write lock: a row another writer added since the plan, a few
+  // metres off, under the same Arabic name.
+  const queries = [];
+  const client = {
+    query: async (sql) => {
+      const text = String(sql);
+      queries.push(text);
+      if (/latitude BETWEEN/.test(text)) return { rows: [{ id: 9, name: 'مطعم الشام', latitude: 25.2048, longitude: 55.2708 }] };
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const res = await harvester.writeOne({ connect: async () => client }, {
+    kind: 'new', city: 'dubai', category: 'restaurant',
+    venue: { venueId: 'ven_dxb', placeId: 'ChIJdubaidubaidubai01', name: 'مطعم الشام', lat: 25.20482, lng: 55.27082, address: null, rating: null, reviews: null },
+  }, []);
+  assert.strictEqual(res.status, 'claimed');
+  assert.ok(!queries.some((q) => /INSERT INTO ml_venues/.test(q)), 'a second row was inserted under the same Arabic name');
+});
+
+test('--new-only writes nothing for a held Seoul venue that comes back under new ids with its Hangul name', async () => {
+  const pad = (i) => String(i).padStart(3, '0');
+  const SAXIS = Array.from({ length: 24 }, (_, i) => fx(
+    `ven_seo_axis_${pad(i)}`, 37.5500 + i * 0.001, 126.9500, 'BAR', `ChIJharvestSeoAxis${pad(i)}`, 500 + i * 3
+  ));
+  const S = {
+    // Seven metres from the held row, a new BestTime id and a new place id.
+    twin: fx('ven_seo_twin', 37.57105, 126.98105, 'BAR', 'ChIJharvestSeoTwinPl1', 33, { name: '달빛 포차' }),
+    fresh: fx('ven_seo_new', 37.5800, 126.9900, 'CAFE', 'ChIJharvestSeoNewCaf1', 43, { name: '새벽 커피' }),
+  };
+  const seoul = { city: 'seoul', tz: 'Asia/Seoul' };
+  for (const [i, v] of SAXIS.entries()) {
+    await insertVenue(`seoAxis${i}`, v.placeId, v.venueId, 'bar', { ...seoul, lat: v.lat, lng: v.lng });
+    await storeWeek(seeded[`seoAxis${i}`], v);
+  }
+  await insertVenue('seoHeld', 'ChIJharvestSeoHeldPl1', null, 'bar', { ...seoul, name: '달빛 포차', lat: 37.57100, lng: 126.98100 });
+  const heldIds = [seeded.seoHeld, ...SAXIS.map((_, i) => seeded[`seoAxis${i}`])];
+  const held = async () => {
+    const { rows: venues } = await pool.query('SELECT *, xmin::text AS xm FROM ml_venues WHERE id = ANY($1) ORDER BY id', [heldIds]);
+    const { rows: training } = await pool.query(
+      'SELECT *, xmin::text AS xm FROM ml_training_data WHERE venue_id = ANY($1) ORDER BY id', [heldIds]
+    );
+    return { venues, training };
+  };
+  const heldBefore = await held();
+  const fixture = [...SAXIS, ...Object.values(S)];
+
+  const dry = await runHarvest(['--city=seoul', '--new-only'], fakeBestTime(fixture));
+  assert.strictEqual(dry.summary.exitCode, 0, dry.summary.abortReason);
+  assert.deepStrictEqual(dry.summary.plan, { known_bt: 24, known_place: 0, known_near: 1, new: 1 });
+
+  const { summary } = await runHarvest(['--city=seoul', '--new-only', '--commit'], fakeBestTime(fixture));
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.strictEqual(summary.exitCode, 0);
+  assert.deepStrictEqual([summary.venuesInserted, summary.rowsWritten, summary.knownSkipped], [1, 168, 25]);
+  assert.deepStrictEqual(await held(), heldBefore, 'the held venue or a known week was written');
+  const { rows: second } = await pool.query(
+    "SELECT 1 FROM ml_venues WHERE besttime_venue_id = 'ven_seo_twin' OR google_place_id = 'ChIJharvestSeoTwinPl1'"
+  );
+  assert.deepStrictEqual(second, [], 'the held Seoul venue was given a second identity');
+  const { rows: [fresh] } = await pool.query("SELECT city, timezone FROM ml_venues WHERE besttime_venue_id = 'ven_seo_new'");
+  assert.deepStrictEqual([fresh.city, fresh.timezone], ['seoul', 'Asia/Seoul']);
 });
