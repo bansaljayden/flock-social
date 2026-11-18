@@ -425,6 +425,31 @@ test('a night that runs past midnight is one night: its small hours are its own,
   }
 });
 
+test('the kitchen line reads the minutes: a 9 PM peak is before 9:30 PM last orders, and at 9 PM ones', async () => {
+  // The peak is an hour, and it starts on the hour. Read on hours alone,
+  // '21:30' was 21, so a 9 PM peak landed "at or after your last orders at
+  // 9:30 PM" and the Monday email lifted it into its anomaly block.
+  const peak = {
+    id: 'peak_2026-08-28', source: 'model_holdout', asOf: '2026-08-24T12:00:00Z',
+    value: { date: '2026-08-28', weekday: 'Friday', peakHour: 21, peakScore: 80 },
+    label: 'Friday projects busiest around 9 PM, at 80 on our 0 to 100 index.',
+  };
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: [] })]];
+  const kitchenAt = async (at) => (await advisorFacts.buildListingReadBack({ profile: profileRow({ kitchen_last_order: at }) }, [peak]))
+    .find((f) => f.id === 'kitchen_vs_peak');
+
+  const halfPast = await kitchenAt('21:30');
+  assert.strictEqual(halfPast.value.peakAtOrAfterLastOrder, false, 'a 9 PM peak is half an hour before 9:30 PM last orders');
+  assert.strictEqual(halfPast.label, "Friday's projected peak lands around 9 PM, before your last orders at 9:30 PM.");
+
+  const onTheHour = await kitchenAt('21:00');
+  assert.strictEqual(onTheHour.value.peakAtOrAfterLastOrder, true, '21:00 kitchen, 21:00 peak: they touch');
+  assert.strictEqual(onTheHour.label, "Friday's projected peak lands around 9 PM, at or after your last orders at 9 PM. Two facts, side by side.");
+
+  const before = await kitchenAt('20:30');
+  assert.strictEqual(before.value.peakAtOrAfterLastOrder, true, 'a 9 PM peak is after 8:30 PM last orders');
+});
+
 test('in the small hours the night in progress is still tonight: the week starts from its evening', async () => {
   handlers = [[/FROM ml_venue_baselines/, () => ({ rows: clubCurve() })]];
   const NIGHT_PEAK = { 5: 55, 6: 92, 0: 96 };

@@ -1848,6 +1848,11 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     out.push(kitchenFact);
     if (peakFact) {
       const kitchenHour = Number(String(p.kitchen_last_order).slice(0, 2));
+      // And its minutes ('HH:MM', validators/venueIntake.js). The peak is an
+      // hour, and it starts on the hour, so a 9 PM peak is before 9:30 PM last
+      // orders. Read on hours alone it was "at or after" them, and the Monday
+      // email lifted that into its anomaly block.
+      const kitchenMinutes = kitchenHour * 60 + (Number(String(p.kitchen_last_order).slice(3, 5)) || 0);
       const { peakHour, weekday, date, afterMidnight } = peakFact.value;
       // The ordering claim is only drawn when both clocks read as the same
       // service day. A last-order time in the small hours (an overnight
@@ -1859,7 +1864,7 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
       // last order it is as ambiguous as an overnight kitchen: a diner's 4 AM
       // peak and its 6 AM last orders are one morning, not one night.
       const comparable = Number.isFinite(kitchenHour) && kitchenHour >= 6 && !(afterMidnight && kitchenHour < 12);
-      const peakAtOrAfterLastOrder = comparable ? peakHour + (afterMidnight ? 24 : 0) >= kitchenHour : null;
+      const peakAtOrAfterLastOrder = comparable ? (peakHour + (afterMidnight ? 24 : 0)) * 60 >= kitchenMinutes : null;
       const whose = `${weekday}${afterMidnight ? ' night' : ''}'s`;
       out.push(makeFact({
         id: 'kitchen_vs_peak',

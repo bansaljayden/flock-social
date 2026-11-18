@@ -643,7 +643,7 @@ const HISTORY_CARDS = [
   ] },
   { id: 'listing_read_back', title: 'Your listing, read back', status: 'ok', facts: [
     { id: 'intake_kitchen_last_order', value: '21:30', source: 'intake', asOf: 'owner-set 2026-10-01', label: 'You told us the kitchen takes last orders at 9:30 PM.' },
-    { id: 'kitchen_vs_peak', value: { kitchenLastOrder: '21:30', peakHour: 21, peakAtOrAfterLastOrder: true }, source: 'arithmetic', asOf: '2026-11-09T14:00:00Z', label: 'Saturday\'s projected peak lands around 9 PM, at or after your last orders at 9:30 PM.' },
+    { id: 'kitchen_vs_peak', value: { kitchenLastOrder: '21:30', peakHour: 22, peakAtOrAfterLastOrder: true }, source: 'arithmetic', asOf: '2026-11-09T14:00:00Z', label: 'Saturday\'s projected peak lands around 10 PM, at or after your last orders at 9:30 PM.' },
   ] },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', status: 'ok', facts: [
     { id: 'owner_reading_2026-11-07', value: { date: '2026-11-07', peakReading: 74, readings: 5 }, source: 'owner_report', asOf: '2026-11-07', label: 'Your highest reading on Nov 7 was 74, from 5 readings.' },
@@ -669,7 +669,7 @@ const HISTORY_TEXT = [
   "",
   "WORTH A LOOK: YOUR LISTING, READ BACK",
   "  You told us the kitchen takes last orders at 9:30 PM. (from your intake, owner-set Oct 1)",
-  "  Saturday's projected peak lands around 9 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)",
+  "  Saturday's projected peak lands around 10 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)",
   "",
   "WEEK AHEAD",
   "  Tuesday projects busiest around 6 PM, at 38 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. (forecast, Nov 9)",
@@ -697,7 +697,7 @@ const HISTORY_HTML = [
   "<li style=\"margin: 0 0 8px 0;\">On Nov 7 Flock served 12 crowd estimates for your venue, median 61 on the 0 to 100 index. What Flock served to people who looked at your venue, not a measurement of your room. (served estimates, Nov 7)</li></ul>",
   "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Worth a look: Your listing, read back</h2>",
   "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">You told us the kitchen takes last orders at 9:30 PM. (from your intake, owner-set Oct 1)</li>",
-  "<li style=\"margin: 0 0 8px 0;\">Saturday&#39;s projected peak lands around 9 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)</li></ul>",
+  "<li style=\"margin: 0 0 8px 0;\">Saturday&#39;s projected peak lands around 10 PM, at or after your last orders at 9:30 PM. (arithmetic on your numbers, Nov 9)</li></ul>",
   "<h2 style=\"font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;\">Week ahead</h2>",
   "<ul style=\"font-size: 15px; color: #4a5568; line-height: 1.6; margin: 0; padding-left: 20px;\"><li style=\"margin: 0 0 8px 0;\">Tuesday projects busiest around 6 PM, at 38 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. (forecast, Nov 9)</li>",
   "<li style=\"margin: 0 0 8px 0;\">Saturday night projects busiest around 1 AM, at 88 on our 0 to 100 index. This is an estimate, not a promise of foot traffic. This peak is in the small hours, early on Sunday. It belongs to Saturday night. (forecast, Nov 9)</li></ul>",
