@@ -301,6 +301,19 @@ describe('the page only sells things that exist', () => {
     expect(landing).toContain('Free account<small>Roost, the paid plan, is sold in the venue dashboard</small>');
   });
 
+  test('/how-it-works says where Roost is sold, not that a venue can write in early', () => {
+    // It said "No venue is being charged yet. Want in early? Write to ..."
+    // after Roost went on sale in the venue dashboard (2026-11-10). It now
+    // says where Roost is sold in the homepage venue card's words, and keeps
+    // "no venue is being charged yet", which the homepage pricing line and
+    // /about still say. The page is prerendered from this file, so crawlers
+    // get the same words (scripts/build-cloudflare.js PRERENDER).
+    const page = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'website', 'HowItWorksPage.js'), 'utf8')
+      .replace(/\s+/g, ' ');
+    expect(page).not.toMatch(/Want in early/);
+    expect(page).toContain('Roost, the paid plan, adds your own hour-by-hour forecast and the advisor above. It is sold in the venue dashboard. No venue is being charged yet.');
+  });
+
   test('the SOS email on the page is the one the backend sends', () => {
     // The card is captioned "The actual email." It printed "exact coordinates
     // included" after the real email had stopped claiming exactness (it prints

@@ -31,7 +31,6 @@ const VIDEO_TITLE = 'Flock: Nurturing friendship, one flock at a time';
 // longer do, so the footer every page shares stopped crediting Google, and
 // this page credits its video in its own footer, where that line used to be.
 const VIDEO_PHOTO_CREDIT = 'Venue photos in the video: Google Maps and its contributors.';
-const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // The video's own chapter list, from its YouTube description; each button
 // starts the player at its time.
@@ -341,10 +340,15 @@ export default function HowItWorksPage() {
                 is being built to show which tables are free, seated, waiting on
                 a server or ready to clear.
               </p>
+              {/* Roost has been on sale in the venue dashboard since venue
+                  billing went on (2026-11-10), and this asked a venue to write
+                  in early until 2026-11-18. It now says where Roost is sold,
+                  in the homepage venue card's words. No venue is charged yet,
+                  as the homepage and /about also say. */}
               <p>
                 Roost, the paid plan, adds your own hour-by-hour forecast and the
-                advisor above. No venue is being charged yet. Want in early? Write
-                to <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
+                advisor above. It is sold in the venue dashboard. No venue is
+                being charged yet.
               </p>
             </div>
             <figure className="lp-plate hw-venues-plate">
