@@ -105,11 +105,16 @@ function sanitizeVenueData(raw) {
   // subtitle whenever `type` is absent, so it is displayed UGC on the same
   // terms as the name.
   const category = str(raw.category, 64);
+  // `type` is displayed too: the chat card shows `category || type`
+  // (VenueCardRow.js), so a card with no category put whatever `type` said
+  // under the venue's name, unscreened. It is Google's place type on a card
+  // from a search, so it is screened with the name and address below.
+  const type = str(raw.type, 64);
   // A card with a place id carries Google's name and address, screened as
   // provider text (utils/moderation.js moderateVenueText); the category is
   // the app's own label. A card without one is typed, and keeps the full list.
   const placeIdForScreen = str(raw.place_id, 256);
-  for (const text of [name, addr]) {
+  for (const text of [name, addr, type]) {
     if (text && !moderateVenueText(text, placeIdForScreen).allowed) return { ok: false };
   }
   if (category && !moderateText(category).allowed) return { ok: false };
@@ -122,7 +127,7 @@ function sanitizeVenueData(raw) {
     user_ratings_total: inRange(raw.user_ratings_total, 0, 1e9),
     // See priceLevelOf: `price` is an input alias, not a second output field.
     price_level: priceLevelOf(raw),
-    type: str(raw.type, 64),
+    type,
     // Dropped silently until round 20. The card renders a category colour and
     // icon and a crowd percentage, and the flock-create card sends its
     // coordinates as lat/lng rather than latitude/longitude — so a card looked

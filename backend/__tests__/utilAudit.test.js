@@ -207,6 +207,20 @@ test('category is screened like the other displayed text', () => {
   assert.strictEqual(sanitizeVenueData({ name: 'Bar', category: 'fucking bullshit' }).ok, false);
 });
 
+test('type is screened too, since the card shows it when category is absent', () => {
+  // VenueCardRow.js shows `category || type`. `type` went through with only a
+  // length clamp, so a card with no category carried any word as its subtitle.
+  const PLACE_ID = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
+  assert.strictEqual(sanitizeVenueData({ name: 'The Bar', type: 'faggot' }).ok, false);
+  assert.strictEqual(sanitizeVenueData({ name: 'The Bar', place_id: PLACE_ID, type: 'faggot' }).ok, false);
+  // Google's own types pass, as the app title-cases them and as they arrive.
+  for (const type of ['Bar', 'Night Club', 'Liquor Store', 'Point Of Interest', 'night_club', 'Venue']) {
+    const { ok, data } = sanitizeVenueData({ name: 'The Bar', place_id: PLACE_ID, type });
+    assert.strictEqual(ok, true, type);
+    assert.strictEqual(data.type, type);
+  }
+});
+
 test('photo_url still only ever points at our own proxy', () => {
   assert.strictEqual(safeVenuePhotoUrl('/api/venues/photo?ref=abc&maxwidth=400'), '/api/venues/photo?ref=abc&maxwidth=400');
   assert.strictEqual(
