@@ -15,8 +15,13 @@
 //     within 25 points of 40, so each one's assertion reached back to 40 and
 //     the three quiet reports, filed while 40 was on screen and agreeing with
 //     it, were judged against 55, 60 and 65 in turn: three strikes, suppressed.
-//     A report carried forward from an earlier reading now counts only if it
-//     also disagreed with the reading that was on screen when it was filed.
+//     A report carried forward from an earlier reading is now judged against
+//     the reading that was on screen when it was filed.
+//
+//   * THE SPLIT ROOM. A 50 that three people call quiet and three call 50 is
+//     35 against 50, no strike. The first fix for the ramp dropped the carried
+//     reports that agreed, so re-posting the same 50 struck it on the quiet
+//     half alone. No carried report is dropped.
 //
 //   * THE NUDGE. One contested 80 (the room says 50), then 84 and 78. One
 //     disagreement about one claim was stamped three times, once per re-post.
@@ -144,6 +149,35 @@ test('an owner raising the number as the room fills is not struck by reports tha
   assert.deepStrictEqual(await struck(place), [],
     'three quiet reports that agreed with 40 were charged against 55, 60 and 65');
   assert.strictEqual(last.score, 65, 'and the slider is still the number, not suppressed for a month');
+});
+
+test('re-posting an unchanged reading does not turn a split room into a strike', async () => {
+  // Three people say quiet and three say what the venue says: 35 against 50,
+  // inside the 25 points. Posting the same 50 again adds no disagreement, and
+  // dropping the three who agreed would leave the quiet half as the whole room.
+  const place = await listing();
+  const room = [...reports([51, 52, 53], 1, 30), ...reports([54, 55, 56], 2, 30)];
+
+  await post(place, 50, 40);
+  await serve(place, room);
+  assert.deepStrictEqual(await struck(place), []);
+  await post(place, 50, 1);
+  const last = await serve(place, room);
+
+  assert.deepStrictEqual(await struck(place), [], 'the re-post was struck on half the room');
+  assert.strictEqual(last.score, 50);
+});
+
+test('an owner who moves toward the room is not struck for the number they moved off', async () => {
+  // 40 while the room says 80, then 60: inside 25 points of 40, so the same
+  // assertion, and inside 25 points of the room. The reports disagreed with 40
+  // by 40 points; against 60 they disagree by 20, and 60 is what is judged.
+  const place = await listing();
+  await post(place, 40, 50);
+  await post(place, 60, 10);
+  const last = await serve(place, reports([57, 58, 59], 3, 40));
+  assert.deepStrictEqual(await struck(place), []);
+  assert.strictEqual(last.score, 60);
 });
 
 test('one contested reading nudged twice is one strike, not three', async () => {

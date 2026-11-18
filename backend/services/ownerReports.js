@@ -170,9 +170,9 @@ const LIVE_OWNER_REPORTS_SQL = `
          -- this venue posted inside one reading's life up to this one, whatever
          -- its number. The assertion walk above can reach back past a number
          -- that agreed with the room (40, then 55, 60, 65 as the room fills),
-         -- and a report that agreed with the reading it was filed against is
-         -- not evidence against the next one. contemporaneousReports uses this
-         -- to judge each carried report against its own reading.
+         -- and a report says how far off the reading it was filed against
+         -- was, not the next one. contemporaneousReports uses this to judge
+         -- each carried report against its own reading.
          COALESCE((
            SELECT json_agg(json_build_object('created_at', p.created_at, 'busy_percent', p.busy_percent))
              FROM venue_owner_reports p
@@ -402,10 +402,12 @@ function recentReadings(ownerRow) {
 // on its own, never as a reporter that can be multiplied.
 //
 // A report filed before this row was posted is CARRIED from an earlier
-// reading in the assertion, and it counts only if it also disagreed with the
-// reading on screen when it was filed. Three people who said "quiet" while the
-// venue said 40 agreed with the venue; charging them against the 55, 60 and 65
-// it posted as the room filled struck an honest ramp three times.
+// reading in the assertion, and it travels with the reading that was on screen
+// when it was filed (filedAgainst; null for a report filed against this row,
+// or when the row carries no history). strikeableDivergence judges it there.
+// It is never dropped: dropping the reports that agreed with the venue left
+// the ones that did not as the whole room, so re-posting an unchanged 50 to a
+// room split between 20 and 50 struck it.
 function contemporaneousReports(feedbackRows, ownerRow, nowMs) {
   const window = assertionWindow(ownerRow);
   if (!window) return [];
@@ -423,28 +425,45 @@ function contemporaneousReports(feedbackRows, ownerRow, nowMs) {
     // A row with no readable timestamp cannot be shown to be contemporaneous,
     // so it is not. Same direction as everything else here.
     if (!Number.isFinite(at) || at < from || at > Math.min(until, now)) continue;
+    let filedAgainst = null;
     if (history && at < rowAt) {
-      let then = null;
-      for (const p of history) if (p.at <= at) then = p.percent;
+      for (const p of history) if (p.at <= at) filedAgainst = p.percent;
       // No reading known for that moment is no evidence, same direction.
-      if (then === null || Math.abs(score - then) <= OWNER_DIVERGENCE_POINTS) continue;
+      if (filedAgainst === null) continue;
     }
-    if (row.user_id == null) { unattributed.push(score); continue; }
-    byReporter.set(String(row.user_id), score);
+    const report = { score, filedAgainst };
+    if (row.user_id == null) { unattributed.push(report); continue; }
+    byReporter.set(String(row.user_id), report);
   }
   return [...byReporter.values(), ...unattributed];
 }
 
-// The strike test itself: enough contemporaneous reporters, and their own
-// consensus more than OWNER_DIVERGENCE_POINTS from what the owner asserted.
-// The magnitude comes from those reporters directly rather than from the
-// engine-plus-drift reconstruction above, because here we actually hold the
-// rows and do not have to infer their average back out of a blend.
+// How far one report puts the room from the current reading, signed. A report
+// filed against this reading says score - percent. A carried one says no more
+// than it said against the reading it was filed against: three people who
+// called a 40 quiet were 20 points off it, and that is all they said, whatever
+// the venue posted next. Nor more than it says against this reading, so a
+// venue that moved toward the room is judged where it now stands, and nothing
+// at all when the two point opposite ways.
+function reportGap(report, percent) {
+  const now = report.score - percent;
+  if (report.filedAgainst === null) return now;
+  const then = report.score - report.filedAgainst;
+  if (Math.sign(now) !== Math.sign(then)) return 0;
+  return Math.abs(then) < Math.abs(now) ? then : now;
+}
+
+// The strike test itself: enough contemporaneous reporters, and their mean gap
+// from what the owner asserted more than OWNER_DIVERGENCE_POINTS. For reports
+// filed against this reading that is their own consensus against it, as it
+// always was. The magnitude comes from those reporters directly rather than
+// from the engine-plus-drift reconstruction above, because here we actually
+// hold the rows and do not have to infer their average back out of a blend.
 function strikeableDivergence(feedbackRows, ownerRow, percent, nowMs) {
-  const scores = contemporaneousReports(feedbackRows, ownerRow, nowMs);
-  if (scores.length < crowdEngine.MIN_CALIBRATION_REPORTERS) return false;
-  const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-  return Math.abs(percent - mean) > OWNER_DIVERGENCE_POINTS;
+  const reports = contemporaneousReports(feedbackRows, ownerRow, nowMs);
+  if (reports.length < crowdEngine.MIN_CALIBRATION_REPORTERS) return false;
+  const gap = reports.reduce((sum, r) => sum + reportGap(r, percent), 0) / reports.length;
+  return Math.abs(gap) > OWNER_DIVERGENCE_POINTS;
 }
 
 // Stamp a strike. Fire-and-forget from the serve path — a divergence is
