@@ -984,7 +984,9 @@ html:has(.lp) body { overflow-x: clip; }
 /* The code on GitHub: a link, underlined, in the lead's own --cream-2. The
    10px of padding makes a 44px-tall target without making it look like a
    button. */
-.lp-hero-code { margin-top: 18px; }
+/* 6px: the link's own 10px of padding makes the rest of the gap, and it
+   reads as part of the row above it. */
+.lp-hero-code { margin-top: 6px; }
 .lp-hero-code a {
   display: inline-block;
   padding: 10px 0;
@@ -1007,16 +1009,18 @@ html:has(.lp) body { overflow-x: clip; }
   --reel-gap: 18px;
   position: relative;
   z-index: 1;
-  margin-top: clamp(24px, 3.5vw, 40px);
+  /* 4px: the code link's padding and the reel's own 34px above the phones
+     (the room a lifted card needs) are the gap. */
+  margin-top: 4px;
   padding: 34px 0 46px;
   overflow: hidden;
 }
 @media (min-width: 600px) { .lp-reel { --reel-w: 200px; --reel-gap: 24px; } }
 /* The desktop phones were 230px, and at 1440x900 the first screen showed only
    their status bars and the tops of their screens: a first screen of words
-   over film. At 200px, with the hero row above them shorter (2026-11-06),
-   about 70% of each phone is in view at 1440x900, half at 1280x800. */
-@media (min-width: 1100px) { .lp-reel { margin-top: 28px; } }
+   over film. At 200px at every width from 600px, with the hero row above them
+   shorter (2026-11-06), 70% of each phone is in view at 1440x900 and half of
+   it at 1280x800 (measured). */
 .lp-reel-track {
   display: flex;
   align-items: center;
