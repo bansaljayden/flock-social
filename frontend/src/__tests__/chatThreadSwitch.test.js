@@ -428,6 +428,48 @@ describe("App.js puts down the composer it holds when the open conversation chan
     expect(effect.left).toBe(4);
   });
 
+  // "Votes are in", tapped from another conversation: the tap opens the vote
+  // panel and the switch's own clear, which runs on the same commit, used to
+  // close it again. The tap's plan is remembered and the panel put back once
+  // that plan is the open thread.
+  test('a votes tap from another conversation still opens on the vote panel', () => {
+    const handler = APP.slice(APP.indexOf('useEffect(() => onPushNavigate((intent) => {'));
+    expect(handler).toMatch(/if \(intent\.view === 'votes'\) setShowVotePanel\(true\);[\s\S]{0,400}?if \(intent\.view === 'votes'\) pushVotesForRef\.current = intent\.flockId;/);
+
+    const reset = blockFrom(APP, APP.indexOf('  React.useLayoutEffect(() => {\n    const was = openThreadRef.current;'));
+    const reapplyAt = APP.indexOf('  React.useLayoutEffect(() => {\n    const votesFor = pushVotesForRef.current;');
+    expect(reapplyAt).toBeGreaterThan(APP.indexOf('const was = openThreadRef.current;'));
+    const reapply = blockFrom(APP, reapplyAt);
+
+    let panel = false;
+    const setShowVotePanel = (v) => { panel = v; };
+    const openThreadRef = { current: null };
+    const pushVotesForRef = { current: null };
+    // eslint-disable-next-line no-new-func
+    const runReset = new Function('openThreadRef', 'openThread', 'leaveOpenThread', reset);
+    // eslint-disable-next-line no-new-func
+    const runReapply = new Function('pushVotesForRef', 'openThread', 'setShowVotePanel', reapply);
+    const commit = (openThread) => {
+      runReset(openThreadRef, openThread, () => setShowVotePanel(false));
+      runReapply(pushVotesForRef, openThread, setShowVotePanel);
+    };
+
+    commit('dm:5');
+    // The tap, for plan 2, over the DM.
+    setShowVotePanel(true);
+    pushVotesForRef.current = 2;
+    commit('flock:2');
+    expect(panel).toBe(true);
+    expect(pushVotesForRef.current).toBe(null);
+
+    // A tap for the plan already open moves no thread; the next switch away
+    // drops the request rather than reopening anything.
+    pushVotesForRef.current = 2;
+    commit('dm:5');
+    expect(panel).toBe(false);
+    expect(pushVotesForRef.current).toBe(null);
+  });
+
   test('the open conversation is the screen and its id, and the clear runs before passive effects', () => {
     expect(APP).toMatch(/const openThread = currentScreen === 'chatDetail' && selectedFlockId != null\n\s+\? `flock:\$\{selectedFlockId\}`\n\s+: \(currentScreen === 'dmDetail' && selectedDmId != null \? `dm:\$\{selectedDmId\}` : null\);/);
     expect(APP).toMatch(/React\.useLayoutEffect\(\(\) => \{\n\s+const was = openThreadRef\.current;[\s\S]{0,200}\}, \[openThread, leaveOpenThread\]\);/);

@@ -9227,6 +9227,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the dashboard, so an owner who then leaves is not pulled back.
   const [pushTablesIntent, setPushTablesIntent] = useState(false);
   const pushTablesReachedRef = useRef(false);
+  // The plan a tapped "Votes are in" asked to open on its vote panel, held
+  // for the open-thread clear further down (see its twin beside it).
+  const pushVotesForRef = useRef(null);
 
   // A push-notification tap resolves (in services/pushNavigation) into a
   // navigation intent. Consume it here and set the SAME state the in-app
@@ -9286,6 +9289,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setCurrentScreen('chatDetail');
         if (intent.view === 'bill' || intent.view === 'budget') setShowChatPool(true);
         if (intent.view === 'votes') setShowVotePanel(true);
+        // Held for the open-thread clear, which closes the panel again when
+        // this tap moves the app off another conversation.
+        if (intent.view === 'votes') pushVotesForRef.current = intent.flockId;
       }
     } else if (intent.screen === 'flockInvite' && intent.flockId) {
       setCurrentTab('chat');
@@ -17745,6 +17751,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     openThreadRef.current = openThread;
     if (was && was !== openThread) leaveOpenThread();
   }, [openThread, leaveOpenThread]);
+  // A "Votes are in" tap (or ?view=votes) that moves the app here from
+  // another conversation opens the vote panel in the same commit that the
+  // clear above closes it in. Its plan is put back on the panel once it is
+  // the open thread. A tap for the plan already open moves no thread, and the
+  // next switch away drops it without reopening anything.
+  React.useLayoutEffect(() => {
+    const votesFor = pushVotesForRef.current;
+    if (votesFor == null) return;
+    pushVotesForRef.current = null;
+    if (openThread === `flock:${votesFor}`) setShowVotePanel(true);
+  }, [openThread]);
 
   // The DM name lives in a ref and is drawn from it, like the flock twin's: a
   // change asks for a draw only while the thread is the screen on show.
