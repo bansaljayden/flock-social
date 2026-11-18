@@ -1781,10 +1781,21 @@ router.post('/batch',
       // says 85" would be the two-surfaces-disagree bug in its newest clothes.
       // A withheld row skips the owner override too: the owner's reading is a
       // number like any other.
+      //
+      // ONLY ON A ROW SCORED FOR NOW. The reading is the owner's "we are at X%
+      // right now", and this route also answers for a plan's hour (frontend
+      // requestEventCrowdScores sends the plan's localHour/localDay and no
+      // zone), so a Saturday 9 PM plan was printing the owner's Tuesday-evening
+      // 12% and judging it against reports filed for Saturday 9 PM. A row is on
+      // the venue's current hour exactly when its own zone or offset set the
+      // clock (venueClock.local: venueLocalNow at this request's now). A row on
+      // the body's clock may be the device's now or a plan's hour and nothing
+      // here says which, so it gets neither the reading nor the strike test.
+      const isNowRow = (p) => !p.crowdLocked && p.venueClock?.local === true;
       const ownerByPlace = await ownerReports.getLiveOwnerReports(
-        predictions.filter((p) => !p.crowdLocked).map((p) => p.placeId)
+        predictions.filter(isNowRow).map((p) => p.placeId)
       );
-      const published = predictions.map((p) => (p.crowdLocked ? p : ownerReports.applyOwnerReport(
+      const published = predictions.map((p) => (!isNowRow(p) ? p : ownerReports.applyOwnerReport(
         p, ownerByPlace[p.placeId], { feedbackRows: feedbackByVenue[p.placeId] || [] }
       )));
 
