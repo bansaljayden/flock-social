@@ -2039,6 +2039,21 @@ function registerHandlers(io, socket) {
         }
       }
 
+      // THE SENDER IS ASKED AGAIN AFTER THE SCREEN. Membership was checked
+      // before moderateImage, which can take seconds, and a ban written in that
+      // time changed nothing: the row was stored and went out to every member.
+      // A ban disconnects the banned account's sockets, but a handler already
+      // running carries on. Only an image send waits long enough for this to
+      // matter, so only it asks, as send_dm asks about its pair, and a banned
+      // sender gets the answer the session check gives a banned account.
+      if (imageCheck) {
+        const senderBan = await pool.query('SELECT 1 FROM users WHERE id = $1 AND is_banned IS TRUE', [user.id]);
+        if (senderBan.rows.length > 0) {
+          revokeSession(socket, 'account_suspended');
+          return;
+        }
+      }
+
       // Persist to database (membership was verified above, before the billed
       // image screen)
       const result = await pool.query(

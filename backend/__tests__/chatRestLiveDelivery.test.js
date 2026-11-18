@@ -540,6 +540,8 @@ function scriptFlockPhoto() {
     rows: [{ id: 501, flock_id: p[0], sender_id: p[1], message_text: p[2], message_type: p[3], image_url: p[5], thumb_url: p[6] }],
     rowCount: 1,
   }));
+  // The sender's ban, read again after the photo screen: not banned.
+  on(/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, () => ({ rows: [], rowCount: 0 }));
 }
 
 function scriptDmPhoto() {

@@ -198,6 +198,8 @@ test('a member image send is billed exactly once, strictly after membership is c
     [MEMBERSHIP, [{ id: 1 }]],
     [/SELECT name FROM flocks WHERE id = \$1/, [{ name: 'Trip' }]],
     [INVISIBLE, []],
+    // The sender's ban, read again after the screen: not banned.
+    [/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, []],
     [/INSERT INTO messages/, (params) => [{ id: 9, flock_id: params[0], sender_id: params[1], message_text: params[2], image_url: params[5] }]],
   ], calls);
   try {

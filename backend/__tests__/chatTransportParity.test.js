@@ -179,6 +179,8 @@ function scriptFlockSend() {
     [/SELECT name FROM flocks WHERE id = \$1/, [{ name: 'Friday' }]],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/, [{ user_id: 2 }]],
     [/FROM user_blocks/, []],
+    // The sender's ban, read again after a photo's screen: not banned.
+    [/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, []],
   ];
 }
 

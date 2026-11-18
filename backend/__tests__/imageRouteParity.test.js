@@ -156,6 +156,8 @@ const allowImages = () => { moderateImageImpl = async () => ({ allowed: true, re
 // Fixtures for the happy paths. Everything a send touches before the INSERT.
 function scriptFlockSend() {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/, () => ({ rows: [{ id: 1 }] }));
+  // The sender's ban, read again after the image screen: not banned.
+  on(/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, () => ({ rows: [] }));
   on(/INSERT INTO messages/, () => ({ rows: [{ id: 5, flock_id: 42, sender_id: 1 }] }));
 }
 function scriptDmSend() {

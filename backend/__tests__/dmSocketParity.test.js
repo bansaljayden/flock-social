@@ -401,6 +401,7 @@ test('image sends have their own, much tighter ceiling than text sends', async (
     [/FROM flock_members WHERE flock_id = \$1 AND status/, []],
     [/SELECT name FROM flocks/, [{ name: 'Dinner' }]],
     [/FROM user_blocks/, []],
+    [/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, []],
     [/INSERT INTO messages/, [{ id: 1 }]],
   ];
 
@@ -421,6 +422,7 @@ test('the image ceiling does not silence ordinary chat', async () => {
     [/FROM flock_members WHERE flock_id = \$1 AND status/, []],
     [/SELECT name FROM flocks/, [{ name: 'Dinner' }]],
     [/FROM user_blocks/, []],
+    [/SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/, []],
     [/INSERT INTO messages/, [{ id: 1 }]],
   ];
 

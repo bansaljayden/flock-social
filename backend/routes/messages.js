@@ -1068,6 +1068,18 @@ router.post('/flocks/:id/messages',
         safeReplyId = reply_to_id;
       }
 
+      // THE SENDER IS ASKED AGAIN AFTER THE SCREEN, as send_message asks it.
+      // verifyFlockMember above ran before moderateImage, which can take
+      // seconds; a ban written in that time used to change nothing, and the
+      // row was stored and delivered. Only a send that waited on the screen
+      // asks, and a banned sender gets the auth middleware's answer.
+      if (image_url) {
+        const senderBan = await pool.query('SELECT 1 FROM users WHERE id = $1 AND is_banned IS TRUE', [req.user.id]);
+        if (senderBan.rows.length > 0) {
+          return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
+        }
+      }
+
       const result = await pool.query(
         `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url, reply_to_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
