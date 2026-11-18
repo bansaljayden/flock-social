@@ -328,7 +328,24 @@ async function customerIdFor(userId) {
 // replaced, swapped in only over the dead one. The replacement's key names the
 // customer it replaces, because the hourly key could hand that one back again.
 // Same rule as services/venueBilling.js ensureVenueCustomer.
+//
+// THE REPLACEMENT IS ASKED FOR TOO. Its key replays for a day like any other,
+// so a second failed deletion inside that day (A closed, replaced by B, B
+// closed and the column cleared) had the next checkout handed A by the hourly
+// key and B by the key naming A, and B was saved and built on unasked. Every
+// customer the loop below lands on is asked for, and each dead one joins the
+// next key, which is then one no earlier attempt used and cannot replay any of
+// them. Bounded: past MAX_CUSTOMER_REPLACEMENTS the checkout fails instead.
 const missingAtStripe = (err) => !!err && (err.code === 'resource_missing' || err.statusCode === 404);
+const MAX_CUSTOMER_REPLACEMENTS = 3;
+
+async function customerLive(customerId) {
+  const existing = await stripe().customers.retrieve(customerId).catch((err) => {
+    if (missingAtStripe(err)) return { id: customerId, deleted: true };
+    throw err;
+  });
+  return !existing || existing.deleted !== true;
+}
 
 function newCustomer(user, idempotencyKey) {
   return stripe().customers.create({
@@ -361,20 +378,23 @@ async function ensureCustomer(user) {
     onFile = r.rows[0] ? r.rows[0].stripe_customer_id : await customerIdFor(user.id);
     if (!onFile) return null;
   }
-  const existing = await stripe().customers.retrieve(onFile).catch((err) => {
-    if (missingAtStripe(err)) return { id: onFile, deleted: true };
-    throw err;
-  });
-  if (!existing || existing.deleted !== true) return onFile;
-  const replacement = await newCustomer(user, `flock-customer-${user.id}-replaces-${onFile}`);
-  const swapped = await pool.query(
-    `UPDATE users SET stripe_customer_id = $1
-      WHERE id = $2 AND stripe_customer_id = $3
-      RETURNING stripe_customer_id`,
-    [replacement.id, user.id, onFile]
-  );
-  if (swapped.rows[0]) return swapped.rows[0].stripe_customer_id;
-  return customerIdFor(user.id);
+  const dead = [];
+  while (!(await customerLive(onFile))) {
+    dead.push(onFile);
+    if (dead.length > MAX_CUSTOMER_REPLACEMENTS) {
+      throw new Error(`Stripe handed account ${user.id} only deleted customers (${dead.join(', ')})`);
+    }
+    const replacement = await newCustomer(user, `flock-customer-${user.id}-replaces-${dead.join('-')}`);
+    const swapped = await pool.query(
+      `UPDATE users SET stripe_customer_id = $1
+        WHERE id = $2 AND stripe_customer_id = $3
+        RETURNING stripe_customer_id`,
+      [replacement.id, user.id, onFile]
+    );
+    onFile = swapped.rows[0] ? swapped.rows[0].stripe_customer_id : await customerIdFor(user.id);
+    if (!onFile) return null;
+  }
+  return onFile;
 }
 
 // Statuses that mean a subscription is already running, so a second checkout

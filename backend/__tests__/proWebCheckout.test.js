@@ -34,12 +34,17 @@ const stripeCalls = [];
 // invoices: invoice id -> the invoice, whose parent names its subscription.
 // createdIds: the ids customers.create answers with, in order (cus_TEST123 once
 // they run out). deletedCustomers: customers Stripe has deleted, which a
-// retrieve still answers, flagged deleted.
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, invoicePayments: {}, invoices: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false, createdIds: [], deletedCustomers: [] };
+// retrieve still answers, flagged deleted. replays: idempotency key -> the
+// customer Stripe already made under it, handed back instead of a new one.
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, invoicePayments: {}, invoices: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false, createdIds: [], deletedCustomers: [], replays: {} };
 function FakeStripe() {
   return {
     customers: {
-      create: async (args, opts) => { stripeCalls.push(['customers.create', args, opts]); return { id: stripeState.createdIds.shift() || 'cus_TEST123' }; },
+      create: async (args, opts) => {
+        stripeCalls.push(['customers.create', args, opts]);
+        const replayed = opts && stripeState.replays[opts.idempotencyKey];
+        return { id: replayed || stripeState.createdIds.shift() || 'cus_TEST123' };
+      },
       retrieve: async (id) => {
         stripeCalls.push(['customers.retrieve', id]);
         return stripeState.deletedCustomers.includes(id) ? { id, object: 'customer', deleted: true } : { id, object: 'customer' };
@@ -242,6 +247,7 @@ test.beforeEach(() => {
   stripeState.openSessions = [];
   stripeState.createdIds = [];
   stripeState.deletedCustomers = [];
+  stripeState.replays = {};
   billing.__test.resetStripe();
 });
 test.afterEach(() => resetEnv());
@@ -638,6 +644,46 @@ test('a checkout in the same hour as a failed account deletion does not save the
     assert.match(keys[0], /^flock-customer-7-\d+$/);
     assert.strictEqual(keys[1], 'flock-customer-7-replaces-cus_CLOSED',
       'the replacement needs a key the hour\'s key cannot replay');
+  } finally { restore(); }
+});
+
+test('a replacement Stripe has deleted since is not built on either', async () => {
+  setEnv(ON);
+  // Inside one hour: a failed deletion closed A, a checkout replaced it with B
+  // under the key naming A, and a second failed deletion closed B and cleared
+  // the column. Both keys still replay, and both hand back a deleted customer.
+  const hour = Math.floor(Date.now() / 3600e3);
+  stripeState.replays = {
+    [`flock-customer-7-${hour}`]: 'cus_A',
+    [`flock-customer-7-${hour + 1}`]: 'cus_A',
+    'flock-customer-7-replaces-cus_A': 'cus_B',
+  };
+  stripeState.createdIds = ['cus_C'];
+  stripeState.deletedCustomers = ['cus_A', 'cus_B'];
+  const column = customerColumn(null);
+  const { restore } = stubPool(column.handler);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(column.get(), 'cus_C', 'the replayed replacement was saved without being asked for');
+    assert.strictEqual(stripeCalls.find((c) => c[0] === 'checkout.create')[1].customer, 'cus_C');
+    const keys = stripeCalls.filter((c) => c[0] === 'customers.create').map((c) => c[2].idempotencyKey);
+    assert.deepStrictEqual(keys.slice(1), ['flock-customer-7-replaces-cus_A', 'flock-customer-7-replaces-cus_A-cus_B'],
+      'the next key names every dead customer so far, so it cannot replay any of them');
+  } finally { restore(); }
+});
+
+test('a checkout that keeps being handed deleted customers stops instead of looping', async () => {
+  setEnv(ON);
+  stripeState.createdIds = ['cus_D1', 'cus_D2', 'cus_D3', 'cus_D4', 'cus_D5'];
+  stripeState.deletedCustomers = ['cus_D0', 'cus_D1', 'cus_D2', 'cus_D3', 'cus_D4', 'cus_D5'];
+  const column = customerColumn('cus_D0');
+  const { restore } = stubPool(column.handler);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.notStrictEqual(res.status, 200);
+    assert.ok(!stripeCalls.some((c) => c[0] === 'checkout.create'), 'a checkout was built on a deleted customer');
+    assert.ok(stripeCalls.filter((c) => c[0] === 'customers.create').length <= 3);
   } finally { restore(); }
 });
 
