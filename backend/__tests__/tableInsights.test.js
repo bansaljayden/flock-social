@@ -56,10 +56,24 @@ function busyStats(days) {
     turn_minutes: { median: 52.4, by_hour: [] },
     waited_share: 0.184,
     clear_minutes_median: 4.2,
-    full_hours: [{ dow: 5, hour: 19, share: 0.8 }, { dow: 5, hour: 20, share: 0.9 }, { dow: 6, hour: 20, share: 0.6 }],
+    // tableHistory's full hours need readings on four distinct dates, so its
+    // seven-day stats never have any: a week has one date per weekday-hour.
+    full_hours: days === 7 ? [] : [{ dow: 5, hour: 19, share: 0.8 }, { dow: 5, hour: 20, share: 0.9 }, { dow: 6, hour: 20, share: 0.6 }],
     timeZone: 'America/New_York',
   };
 }
+
+// A fixture week of readings, one row per weekday-hour as the week's full
+// hours statement folds them: [dow, hour, readings, full_readings].
+const FIXTURE_WEEK = [
+  [5, 19, 120, 100], // Friday 7 PM, full in most readings
+  [5, 20, 120, 90], // Friday 8 PM
+  [6, 20, 60, 36], // Saturday 8 PM, 60%
+  [6, 21, 60, 20], // Saturday 9 PM, a third: not full
+  [2, 15, 1, 1], // Tuesday 3 PM, one test reading with every table drawn
+  [4, 22, 9, 9], // Thursday 10 PM, one reading short of the floor
+].map(([dow, hour, readings, full]) => ({ dow, hour, readings, full_readings: full }));
+const WEEK_FULL = /FROM venue_sensor_data v .*GROUP BY 1, 2$/;
 
 const NOW = new Date('2026-10-19T13:00:00Z'); // a Monday morning in New York
 
@@ -179,6 +193,7 @@ test('digest section: absent for a venue with no seatings in the week', async ()
 test('digest section: last night, seatings, full hours, turn, waited share and clear, venue wide only', async () => {
   reset({ stats: busyStats });
   handlers.push([/FROM sensor_table_seatings s/, () => ({ rows: [{ seatings: 30, waited: 3, turn_median: 50, day: '2026-10-18' }] })]);
+  handlers.push([WEEK_FULL, () => ({ rows: FIXTURE_WEEK })]);
   const facts = await tableInsights.buildDigestTableFacts('place-a', NOW);
   assert.deepStrictEqual(facts.map((f) => f.id), [
     'tables_last_night', 'tables_week_seatings', 'tables_full_hours', 'tables_turn_typical', 'tables_waited_share', 'tables_clear_typical',
@@ -194,6 +209,44 @@ test('digest section: last night, seatings, full hours, turn, waited share and c
   assert.strictEqual(byId.tables_waited_share, 'About 18% of seatings waited past your wait limit for a server.');
   assert.strictEqual(byId.tables_clear_typical, 'A table was typically cleared about 4 minutes after the party left.');
   assert.ok(byId.tables_last_night.startsWith('Last night at your tables: Your tables had 30 seatings yesterday.'));
+});
+
+test('digest section: the week\'s full hours are this week\'s, by reading count, not the 28-day four-date rule', async () => {
+  // The line never appeared: it read tableHistory.tableStats(placeId, 7),
+  // whose full hours need four distinct dates, and a week has one per cell.
+  // The week is read here instead, with last night's floor: enough readings,
+  // and every table in use in at least half of them.
+  reset({ stats: busyStats });
+  handlers.push([WEEK_FULL, () => ({ rows: FIXTURE_WEEK })]);
+  const week = await tableInsights.weekFigures('place-a', NOW);
+  assert.deepStrictEqual(week.full_hours, [
+    { dow: 5, hour: 19, share: 0.83 },
+    { dow: 5, hour: 20, share: 0.75 },
+    { dow: 6, hour: 20, share: 0.6 },
+  ], 'a third is not most, one reading is not an hour, and nine is one short of the floor');
+  assert.strictEqual(week.seatings, 64, 'the rest of the week is still tableHistory\'s');
+  assert.strictEqual(week.timeZone, 'America/New_York');
+  const q = queryLog.find((x) => WEEK_FULL.test(x.sql));
+  assert.deepStrictEqual(q.params, ['place-a', 'America/New_York', NOW.toISOString(), 7], 'this week, on the venue\'s clock, ending now');
+  assert.match(q.sql, /AND v\.recorded_at >= \$3::timestamptz - \(\$4::int \* INTERVAL '1 day'\) AND v\.recorded_at < \$3::timestamptz/);
+  assert.ok(!/DISTINCT/.test(q.sql), 'no distinct-dates floor: a week has one date per weekday-hour');
+
+  // An hour exactly at the floor is enough; the share boundary is inclusive.
+  handlers = [[WEEK_FULL, () => ({ rows: [{ dow: 1, hour: 12, readings: tableHistory.FULL_HOURS_MIN_READINGS, full_readings: tableHistory.FULL_HOURS_MIN_READINGS / 2 }] })]];
+  assert.deepStrictEqual((await tableInsights.weekFigures('place-a', NOW)).full_hours, [{ dow: 1, hour: 12, share: 0.5 }]);
+});
+
+test('digest section: the week\'s full hours in a zone Postgres refuses are read in UTC and said so', async () => {
+  reset({ zone: 'Mars/Olympus', stats: (days) => ({ ...busyStats(days), timeZone: null }) });
+  handlers.push([/FROM sensor_table_seatings s/, () => ({ rows: [{ seatings: 30, waited: 3, turn_median: 50, day: '2026-10-18' }] })]);
+  handlers.push([WEEK_FULL, (p) => {
+    if (p[1] !== 'UTC') { const e = new Error('bad zone'); e.code = '22023'; throw e; }
+    return { rows: FIXTURE_WEEK };
+  }]);
+  const facts = await tableInsights.buildDigestTableFacts('place-a', NOW);
+  const full = facts.find((f) => f.id === 'tables_full_hours');
+  assert.ok(full, 'the line is there');
+  assert.ok(full.label.endsWith('Hours are in UTC, because we do not know your time zone yet.'), full.label);
 });
 
 test('digest section: under the floor only the count is said', async () => {

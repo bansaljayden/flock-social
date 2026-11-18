@@ -449,6 +449,49 @@ test('on the real schema: stats are the medians Postgres computes, folded on the
   assert.deepEqual([fortnight.body.days, fortnight.body.seatings], [14, 7]);
 });
 
+test('on the real schema: the digest\'s week has full hours from a fixture week of readings, by reading count, where the 28-day four-date rule finds none', async () => {
+  const tableInsights = require('../services/tableInsights');
+  const tableHistory = require('../services/tableHistory');
+  const now = Date.now();
+  const cellOf = async (atMs) => (await pool.query(
+    `SELECT EXTRACT(DOW FROM ($1::timestamptz AT TIME ZONE $2::text))::int AS dow, EXTRACT(HOUR FROM ($1::timestamptz AT TIME ZONE $2::text))::int AS hour`,
+    [new Date(atMs), ZONE]
+  )).rows[0];
+  // One week, each weekday-hour seen once, the way a week is:
+  //   two days ago, full in 10 of 12 readings          -> full (0.83)
+  //   four days ago, full in 5 of exactly 10           -> full (0.5, at the floor)
+  //   two days ago less five hours, full in 4 of 12    -> not most of the hour
+  //   two days ago less nine hours, full in all of 9   -> one reading short of the floor
+  //   nine days ago, full in all of 12                 -> not this week
+  const twoDays = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
+  const fourDays = Math.floor((now - 4 * DAY) / HOUR) * HOUR + 5 * MIN;
+  for (let i = 0; i < 12; i += 1) {
+    await record(twoDays + i * MIN, 6, i < 10 ? 6 : 4);
+    await record(twoDays - 5 * HOUR + i * MIN, 6, i < 4 ? 6 : 3);
+    await record(now - 9 * DAY + i * MIN, 6, 6);
+  }
+  for (let i = 0; i < 10; i += 1) await record(fourDays + i * MIN, 6, i < 5 ? 6 : 2);
+  for (let i = 0; i < 9; i += 1) await record(twoDays - 9 * HOUR + i * MIN, 6, 6);
+  // A seating in the week, so the digest has a section to put the line in.
+  await seed(1, twoDays, 45);
+
+  const a = await cellOf(twoDays);
+  const b = await cellOf(fourDays);
+  const want = [{ ...a, share: 0.83 }, { ...b, share: 0.5 }].sort((x, y) => x.dow - y.dow || x.hour - y.hour);
+  assert.deepEqual((await tableHistory.tableStats(VENUE, 7)).full_hours, [],
+    'the four-date rule over seven days: the reason the line never appeared');
+  const week = await tableInsights.weekFigures(VENUE, new Date(now));
+  assert.deepEqual(week.full_hours, want);
+  assert.equal(week.timeZone, ZONE);
+  assert.equal(week.seatings, 1);
+
+  const facts = await tableInsights.buildDigestTableFacts(VENUE, new Date(now));
+  const full = facts.find((f) => f.id === 'tables_full_hours');
+  assert.ok(full, `the digest says the full hours: ${JSON.stringify(facts.map((f) => f.id))}`);
+  assert.equal(full.value.hours, 2);
+  assert.ok(!/UTC/.test(full.label), 'on the venue\'s clock, so no UTC note');
+});
+
 test('on the real schema: the waits by party, the incoming feed over the real flock tables with a suggestion and no name, and the switches', async () => {
   // Table 3 is counted at four, so six and eight are known not to fit it.
   const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30:4;4:4:s:1200:6;5:0:c:30:8');

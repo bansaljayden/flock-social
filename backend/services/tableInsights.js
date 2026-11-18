@@ -10,7 +10,8 @@
 //                      counts and medians, no model call (the owner route in
 //                      routes/tableInsights.js, the advisor, the digest)
 //   weekFigures        the last seven days for the Monday digest's "Your
-//                      tables" section (tableHistory.tableStats, read only)
+//                      tables" section (tableHistory.tableStats, read only,
+//                      with the week's own full hours read here)
 //   turnsByDay         typical turn and waited share for each weekday
 //   tablesWaitingMost  which table numbers most often waited for a server
 //   freeForecast       for a weekday and hour, the share of past weeks a table
@@ -39,7 +40,9 @@ const tableHistory = require('./tableHistory');
 
 // tableHistory's sample rules, kept here too: no seating longer than
 // MAX_TURN_HOURS is a turn, and an hour needs FULL_HOURS_MIN_READINGS readings
-// before it is called full (that file's header says why).
+// before it is called full (that file's header says why). Its four-date floor
+// is for "usually" over 28 days and is not used here: last night and this week
+// have one date per hour (S7 below).
 const {
   MIN_SEATINGS_FOR_MEDIAN, FULL_SHARE_MIN, MAX_TURN_HOURS, FULL_HOURS_MIN_READINGS,
 } = tableHistory;
@@ -194,10 +197,52 @@ async function lastNightSummary(placeId, now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
-// S7. The last seven days (tableHistory.tableStats over a seven day window).
+// S7. The last seven days: tableHistory.tableStats over a seven day window,
+// with the full hours read here.
+//
+// THE WEEK'S FULL HOURS ARE THIS WEEK'S. tableStats calls a weekday-and-hour
+// cell full only with readings on FULL_HOURS_MIN_DAYS (four) distinct dates,
+// the right floor for "usually" over its 28 days, and that rule stays as it is
+// for every surface that reads it. A week has one date per cell, so over
+// seven days the floor is never met and the digest's full-hours line never
+// appeared. The week is read here with the floor one occurrence can meet,
+// the one last night uses: FULL_HOURS_MIN_READINGS readings in the cell, and
+// every table in use in at least FULL_SHARE_MIN of them.
 // ---------------------------------------------------------------------------
-async function weekFigures(placeId) {
-  return tableHistory.tableStats(placeId, WEEK_DAYS);
+const WEEK_FULL_SQL = `
+  SELECT EXTRACT(DOW FROM (v.recorded_at AT TIME ZONE $2::text))::int AS dow,
+         EXTRACT(HOUR FROM (v.recorded_at AT TIME ZONE $2::text))::int AS hour,
+         COUNT(*)::int AS readings,
+         COUNT(*) FILTER (WHERE v.tables_occupied = v.tables_total)::int AS full_readings
+    FROM venue_sensor_data v
+   WHERE v.venue_place_id = $1::varchar
+     AND v.tables_total > 0
+     AND v.recorded_at >= $3::timestamptz - ($4::int * INTERVAL '1 day')
+     AND v.recorded_at < $3::timestamptz
+   GROUP BY 1, 2`;
+
+/** This week's full hours: { timeZone, cells: [{ dow, hour, share }] } in weekday then hour order. */
+async function weekFullHours(placeId, now = new Date()) {
+  const zone = await zoneFor(placeId);
+  const { rows, timeZone } = await queryInZone(WEEK_FULL_SQL, placeId, zone, new Date(now).toISOString(), [WEEK_DAYS]);
+  const cells = rows
+    .filter((r) => Number(r.readings) >= FULL_HOURS_MIN_READINGS && Number(r.full_readings) / Number(r.readings) >= FULL_SHARE_MIN)
+    .map((r) => ({ dow: Number(r.dow), hour: Number(r.hour), share: Math.round((Number(r.full_readings) / Number(r.readings)) * 100) / 100 }))
+    .sort((a, b) => a.dow - b.dow || a.hour - b.hour);
+  return { timeZone, cells };
+}
+
+async function weekFigures(placeId, now = new Date()) {
+  const [stats, full] = await Promise.all([
+    tableHistory.tableStats(placeId, WEEK_DAYS),
+    weekFullHours(placeId, now),
+  ]);
+  if (!stats) return stats;
+  return {
+    ...stats,
+    full_hours: full.cells,
+    timeZone: stats.timeZone && full.timeZone ? stats.timeZone : null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -396,7 +441,7 @@ function weekFacts(stats, asOf) {
  * seating in the last seven days, so the section is simply absent.
  */
 async function buildDigestTableFacts(placeId, now = new Date()) {
-  const stats = await weekFigures(placeId);
+  const stats = await weekFigures(placeId, now);
   if (!stats || !(stats.seatings > 0)) return null;
   const asOf = new Date(now).toISOString().slice(0, 10);
   const summary = await lastNightSummary(placeId, now);
@@ -431,7 +476,7 @@ async function buildTableFacts(ctx, { now = new Date() } = {}) {
   try {
     [stats28, stats7, summary, byDay, waitedTables, free] = await Promise.all([
       tableHistory.tableStats(placeId, TURNS_WINDOW_DAYS),
-      weekFigures(placeId),
+      weekFigures(placeId, now),
       lastNightSummary(placeId, now),
       turnsByDay(placeId, now),
       tablesWaitingMost(placeId, now),
