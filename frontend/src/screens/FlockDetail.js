@@ -79,6 +79,9 @@ import VenueDealLine from '../components/venue/VenueDealLine';
 // Places data off a Google map (components/ui/GoogleCredit.js).
 import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 
+// The "How was it?" card's empty draft, as App.js starts it.
+const NO_FEEDBACK = { crowdLevel: null, priceWorth: null, rating: null };
+
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
 // two weeks out say, used to open the editor on 'Tonight', so changing its
@@ -229,6 +232,17 @@ export default function FlockDetail({
     // an hour after the plan began, the plan locked in and one other member
     // in by then too (routes/feedback.js, the plan window).
     const nightOver = isNightOver(flock);
+    // THE "HOW WAS IT?" ANSWERS BELONG TO ONE PLAN. App.js holds a single
+    // draft for every plan screen, so answers picked on one plan's card and
+    // left there were drawn on the next plan's card, and Submit filed them
+    // under that plan. The draft carries the plan it was picked on and reads
+    // as empty on any other; App.js's empty draft names no plan.
+    const ownFeedback = (draft) => (draft.flockId == null || draft.flockId === flock.id ? draft : NO_FEEDBACK);
+    const feedback = ownFeedback(feedbackState);
+    const editFeedback = (edit) => setFeedbackState(prev => {
+      const own = ownFeedback(prev);
+      return { ...own, ...edit(own), flockId: flock.id };
+    });
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
     // completed the night hours after it ended and there was no sheet to skip.
@@ -649,9 +663,9 @@ export default function FlockDetail({
                     same three options in App.js: only the words changed, the
                     level is what travels. */}
                 {[{ level: 1, label: 'Quiet', color: colors.steel, ink: colors.steel }, { level: 2, label: 'Steady', color: colors.amber, ink: colors.amberText }, { level: 3, label: 'Packed', color: colors.red, ink: colors.redText }].map(opt => (
-                  <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                  <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => editFeedback(() => ({ crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedback.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedback.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedbackState.crowdLevel === opt.level ? opt.ink : colors.navy }}>{opt.label}</span>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedback.crowdLevel === opt.level ? opt.ink : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
               </div>
@@ -659,8 +673,8 @@ export default function FlockDetail({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>Worth the price?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                 {[{ val: true, label: 'Yes', color: colors.steel, ink: colors.steel }, { val: false, label: 'No', color: colors.red, ink: colors.redText }].map(opt => (
-                  <button key={String(opt.val)} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedbackState.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedbackState.priceWorth === opt.val ? opt.ink : colors.navy }}>{opt.label}</span>
+                  <button key={String(opt.val)} className="hit44 glass-btn glass-secondary" onClick={() => editFeedback(() => ({ priceWorth: opt.val }))} style={{ flex: 1, padding: '12px 6px', borderRadius: 'var(--r-sm)', border: feedback.priceWorth === opt.val ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedback.priceWorth === opt.val ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedback.priceWorth === opt.val ? opt.ink : colors.navy }}>{opt.label}</span>
                   </button>
                 ))}
               </div>
@@ -673,15 +687,15 @@ export default function FlockDetail({
                   an INPUT star has to read as a real outline to aim at. */}
               <div style={{ display: 'flex', gap: '4px', marginBottom: '16px' }}>
                 {[1, 2, 3, 4, 5].map(star => (
-                  <button aria-label={`Rate ${star} star${star === 1 ? '' : 's'}`} aria-pressed={feedbackState.rating === star} className="hit44" key={star} onClick={() => setFeedbackState(prev => ({ ...prev, rating: prev.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
-                    {feedbackState.rating >= star ? Icons.starFilled(colors.amber, 22) : Icons.star('var(--text-tertiary)', 22)}
+                  <button aria-label={`Rate ${star} star${star === 1 ? '' : 's'}`} aria-pressed={feedback.rating === star} className="hit44" key={star} onClick={() => editFeedback(own => ({ rating: own.rating === star ? null : star }))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', transition: 'opacity 0.15s ease' }}>
+                    {feedback.rating >= star ? Icons.starFilled(colors.amber, 22) : Icons.star('var(--text-tertiary)', 22)}
                   </button>
                 ))}
               </div>
 
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button
-                  disabled={!feedbackState.crowdLevel || feedbackSubmitting}
+                  disabled={!feedback.crowdLevel || feedbackSubmitting}
                   onClick={async () => {
                     setFeedbackSubmitting(true);
                     try {
@@ -689,9 +703,9 @@ export default function FlockDetail({
                         flock_id: flock.id,
                         venue_place_id: flock.venueId,
                         venue_name: flock.venue,
-                        crowd_level: feedbackState.crowdLevel,
-                        price_worth: feedbackState.priceWorth,
-                        rating: feedbackState.rating,
+                        crowd_level: feedback.crowdLevel,
+                        price_worth: feedback.priceWorth,
+                        rating: feedback.rating,
                         predicted_score: crowdPredictions[flock.venueId]?.score || null,
                       });
                       rememberFeedbackDone(flock.id);
@@ -739,11 +753,11 @@ export default function FlockDetail({
                       setFeedbackSubmitting(false);
                     }
                   }}
-                  className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: 'var(--r-sm)', border: 'none', background: feedbackState.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedbackState.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: feedbackState.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
+                  className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '11px', borderRadius: 'var(--r-sm)', border: 'none', background: feedback.crowdLevel ? colors.navyBg : 'var(--border-default)', color: feedback.crowdLevel ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: feedback.crowdLevel ? 'pointer' : 'not-allowed', opacity: feedbackSubmitting ? 0.6 : 1 }}
                 >
                   {feedbackSubmitting ? 'Submitting...' : 'Submit'}
                 </button>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => rememberFeedbackDone(flock.id)} style={{ padding: '11px 18px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { rememberFeedbackDone(flock.id); setFeedbackState(prev => (ownFeedback(prev) === prev ? NO_FEEDBACK : prev)); }} style={{ padding: '11px 18px', borderRadius: 'var(--r-sm)', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
                   Skip
                 </button>
               </div>

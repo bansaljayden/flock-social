@@ -166,7 +166,7 @@ describe('no hand-rolled star rating survives outside the icon system', () => {
     // Each button names its number: five buttons all reading "Rate" give a
     // screen reader nothing to pick between.
     expect(block).toMatch(/aria-label=\{`Rate \$\{star\} star\$\{star === 1 \? '' : 's'\}`\}/);
-    expect(block).toMatch(/aria-pressed=\{feedbackState\.rating === star\}/);
+    expect(block).toMatch(/aria-pressed=\{feedback\.rating === star\}/);
     expect(block).toMatch(/Icons\.starFilled\(colors\.amber, 22\)/);
     // An INPUT's empty star must read as an outline to aim at, so it uses
     // --text-tertiary like the venue review form, not --star-empty.
