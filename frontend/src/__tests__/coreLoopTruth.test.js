@@ -96,7 +96,10 @@ test('the create screen caps invitees at the server\'s ceiling and counts what t
 
 test('the invite helper\'s live card says when, where and how many', () => {
   const i = flocks.indexOf('async function inviteUsersToFlock(');
-  const helper = flocks.slice(i, i + 20000);
+  // The whole function, to the next top-level declaration: a fixed length cut
+  // the card's lines off once the function grew past it.
+  const next = flocks.slice(i + 1).search(/\n(?:async function |function |const |router\.|module\.exports)/);
+  const helper = flocks.slice(i, next === -1 ? undefined : i + 1 + next);
   expect(helper).toMatch(/SELECT f\.event_time, f\.venue_name, f\.status,/);
   expect(helper).toMatch(/finished: false,\s*eventTime,\s*venueName,\s*goingCount,\s*\}\);/);
   // A plan that had ended by the time the invite is announced is announced
