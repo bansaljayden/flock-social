@@ -408,10 +408,15 @@ describe('structural fingerprint', () => {
     const safety = grid('lp-safety');
     const venues = grid('lp-venues-in');
     // The beats went from centred stacks to rows on 2026-10-21 (his third
-    // look): words beside the picture from 960px, centred over it on a phone.
+    // look): words beside the picture from 960px, over it on a phone. Since
+    // 2026-11-06 the words align left at every width, like every other
+    // section, and from 960px each row spans the measure so the words sit on
+    // two left edges down the page instead of five.
     const beats = grid('lp-beat-row');
     expect(new Set([safety, venues, beats]).size).toBe(3);
-    expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: center;/);
+    expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: left;/);
+    expect(CSS).toMatch(/\.lp-beat-row \{[^}]*justify-content: space-between;/);
+    expect(CSS).not.toMatch(/\.lp-beat \{[^}]*text-align: center;/);
     expect(visible).not.toMatch(/lp-beat-main|has-plate/);
   });
 

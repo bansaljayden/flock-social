@@ -602,8 +602,8 @@ export default function LandingPage() {
           From 960px the words sit to the SIDE, the sides alternating down the
           page, and every note is on the phone's far side from the words
           (his third look: "text to the side not on top ... both text boxes on
-          the other side"); on a phone the words come first, centred, over the
-          picture. Flat grounds, no gradients and no shadows. Every capture on
+          the other side"); on a phone the words come first, at the content
+          edge, over the picture. Flat grounds, no gradients and no shadows. Every capture on
           the site is the dark theme, the hero's own. #birdie and #money stay
           on the beats they always named, for old links. The notes, and the
           measured box of each thing they name, are in landingAnnotations.js. */}

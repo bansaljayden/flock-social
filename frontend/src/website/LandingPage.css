@@ -200,6 +200,14 @@
   --rule: rgba(22, 40, 61, 0.12);
   --rule-cream: rgba(244, 239, 227, 0.16);
 
+  /* Body text on one scale (2026-11-06). The page ran at nine sizes between
+     13 and 17px, half a pixel apart, which reads as accident; every running
+     line now takes one of these three. Body is the 17px floor for anything a
+     visitor reads as prose, a note is a step under it, a caption a step more. */
+  --fs-body: 17px;
+  --fs-note: 15px;
+  --fs-cap: 13.5px;
+
   /* semantic crowd colours — sacred, never decorative */
   --crowd-quiet: #22c55e;
   --crowd-mid: #f59e0b;
@@ -1971,37 +1979,55 @@ html:has(.lp) body { overflow-x: clip; }
    turn (the maintainer, 2026-10-21), so each step reads as its own. A beat is its
    time, headline and one short line beside the capture of that moment with
    its parts named (.lp-anno, AnnotatedShot.js) or, where the beat has no
-   screen, a painted scene. On a phone the words are centred over the picture;
-   from 960px they sit to its side (.lp-beat-row below), alternating. Not a
+   screen, a painted scene. On a phone the words sit over the picture at the
+   content edge; from 960px they sit to its side (.lp-beat-row below),
+   alternating. Not a
    numbered grid: the times are the order. */
 .lp-friday-title { max-width: 18em; }
 .lp-friday-lead { margin-top: 16px; }
 /* A band is one beat: tighter than a chapter section, so five of them read as
    one sequence rather than five chapters. */
 .lp-sec.lp-beat-band { padding: clamp(44px, 6vw, 76px) 0; }
-.lp-beat { display: grid; justify-items: center; gap: 6px; max-width: 44rem; margin: 0 auto; text-align: center; }
+/* Left-aligned at every width (2026-11-06): every other section starts at the
+   content edge, and centred three- and four-line paragraphs ran ragged on
+   both sides. The phone captures under the words stay centred in the column. */
+.lp-beat { display: grid; justify-items: start; gap: 6px; max-width: 44rem; margin: 0; text-align: left; }
+/* Three steps of type: the time in steel, the headline, then the line under
+   it. `.lp-beat p` used to outrank `.lp-beat-when`, so the time printed at the
+   body's size and colour and a phone read 16.5, 18 and 16.5px down the beat.
+   :where() keeps the paragraph rule at one class, and the time and the note
+   name the beat too, so neither needs !important. Sentence case and no
+   tracking: it is a time, not an eyebrow. The time is the serif's text cut
+   (opsz 9), in the fallback solved for that cut; its size and ink are on the
+   two-class rule under it. */
+.lp-beat :where(p) { font-size: var(--fs-body); line-height: 1.6; color: var(--ink-2); max-width: 52ch; }
 .lp-beat-when {
   font-family: var(--font-display-9);
   font-variation-settings: 'opsz' 9;
-  font-size: 14px;
+}
+.lp-beat .lp-beat-when {
+  font-size: 15px;
   font-weight: 600;
   color: var(--steel);
+  font-variant-numeric: tabular-nums;
 }
-.lp-beat h3 { margin-bottom: 2px; }
-.lp-beat p { font-size: 16.5px; line-height: 1.6; color: var(--ink-2); max-width: 52ch; }
-.lp-beat-note { font-size: 14.5px !important; color: var(--ink-3) !important; margin-top: 4px; }
+.lp-beat h3 { margin-bottom: 2px; font-size: clamp(22px, 1rem + 0.9vw, 30px); }
+.lp-beat .lp-beat-note { font-size: var(--fs-note); color: var(--ink-3); margin-top: 4px; }
 /* The painted scenes of the two beats with no screen. On a phone the
-   invitation sits over its words, centred, and the flock flies off under its
-   words, out to the right; from 960px each sits beside its words. */
+   invitation sits over its words at the content edge, and the flock flies off
+   under its words, out to the right; from 960px each sits beside its words. */
 .lp-beat-scene { display: block; height: auto; }
-.lp-beat-scene.is-invite { width: min(400px, 84vw); margin: 0 auto clamp(18px, 3vw, 26px); }
+.lp-beat-scene.is-invite { width: min(400px, 84vw); margin: 0 0 clamp(18px, 3vw, 26px); }
 .lp-beat-scene.is-flight { width: min(520px, 90vw); margin: clamp(22px, 3.5vw, 34px) 0 0 auto; }
 @media (min-width: 960px) {
   .lp-beat-scene.is-flight { margin-right: 6%; }
 }
 /* From 960px a beat is a row: the words on one side, the capture or the
-   painting on the other, level at their middles and centred as a pair (his
-   third look, 2026-10-21: "text to the side not on top"). .is-flip puts the
+   painting on the other, level at their middles (his third look, 2026-10-21:
+   "text to the side not on top"). The pair spans the measure, so the words
+   of every beat start on one of two lines, the content edge or the right
+   column, at a 25rem measure; centring each pair on its own contents left
+   five different left edges down the page (2026-11-06). .is-flip puts the
    words on the right while they stay first in the markup, so a phone still
    reads words, then picture. The captures in a row are one-sided
    (landingAnnotations.js), so no note lands between the words and the phone,
@@ -2010,22 +2036,18 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-beat-row {
     display: grid;
     grid-template-columns: auto auto;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
     column-gap: clamp(40px, 5vw, 72px);
   }
   .lp-beat-row.is-flip > .lp-beat { order: 2; }
-  .lp-beat-row > .lp-beat { justify-items: start; max-width: 25rem; margin: 0; text-align: left; }
-  .lp-beat-row > .lp-beat h3 { font-size: clamp(24px, 1rem + 0.9vw, 30px); }
+  .lp-beat-row > .lp-beat { max-width: 25rem; }
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1; width: calc(var(--anno-w) * var(--anno-scale) * 1px); margin: 0; }
   .lp-beat-row > .lp-beat-scene.is-invite { width: 380px; margin: 0; }
   .lp-beat-row > .lp-beat-scene.is-flight { width: 500px; margin: 0; }
 }
 @media (min-width: 1100px) {
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.15; }
-}
-@media (min-width: 1280px) {
-  .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.3; }
 }
 
 /* A plate: a capture of the web app on the page, with its caption under it.
@@ -2045,7 +2067,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-phone > .lp-reel-device { --reel-w: 100cqw; }
 .lp-phone .lp-shot { border: 0; border-radius: 0; background: var(--navy-deep); }
 .lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
-.lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--ink-2); text-align: center; }
+.lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: var(--fs-body); color: var(--ink-2); }
 .lp-friday-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
 
 /* ============ annotated captures (AnnotatedShot.js) ============
@@ -2217,8 +2239,8 @@ html:has(.lp) body { overflow-x: clip; }
 /* A beat on a navy band takes the on-navy inks. The capture is the dark
    theme on every band, so on navy it gets a light hairline in place of the
    paper's ink one, or the phone's own navy would run into the band's. */
-.lp-on-navy .lp-beat-when { color: var(--steel-lift); }
-.lp-on-navy .lp-beat p { color: var(--cream-2); }
+.lp-on-navy .lp-beat :where(p) { color: var(--cream-2); }
+.lp-on-navy .lp-beat .lp-beat-when { color: var(--steel-lift); }
 /* "Still in?": the one yes in the beat's line is a blush highlight under
    navy words (9.63:1), the plan coming together. The 3px each side is given
    back, so the line breaks where it did; an inline background adds no
@@ -2232,7 +2254,7 @@ html:has(.lp) body { overflow-x: clip; }
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
-.lp-on-navy .lp-beat-note { color: var(--cream-3) !important; }
+.lp-on-navy .lp-beat .lp-beat-note { color: var(--cream-3); }
 .lp-on-navy .lp-fig-cap { color: var(--cream-3); }
 .lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
 .lp-on-navy .lp-friday-more { color: var(--cream-2); }
