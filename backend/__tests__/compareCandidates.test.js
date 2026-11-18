@@ -209,16 +209,29 @@ test('the columns are found by name, so an older rows file (fewer serve columns)
   assert.equal(r.bootstrap.delta, 0);
 });
 
-test('a slot held twice pairs its readings in label order, not file order', async () => {
+test('a slot held twice refuses: the corpus keeps one live reading per venue, date and hour', async () => {
   const reg = population();
   const twin = { ...reg[0], y: reg[0].y + 30, served: reg[0].y + 30 + HIT };
   const chal = clone(reg);
-  // The challenger lists the two readings of the slot the other way round.
   chal.unshift({ ...twin });
-  const r = await C.compareFiles(write([...reg, twin]), write(chal));
-  assert.equal(r.pairing.paired, reg.length + 1);
-  assert.equal(r.pairing.y_mismatches, 0);
-  assert.equal(r.pairing.keys_held_more_than_once, 1);
+  const err = await refusal(C.compareFiles(write([...reg, twin]), write(chal)));
+  assert.match(err.message, /keys are held more than once/);
+  assert.equal(err.result.verdict, C.VERDICT_REFUSED);
+  assert.equal(err.result.pairing.keys_held_more_than_once, 1);
+});
+
+test('an extra miss in one file\'s duplicate slot can never turn into a CLEARS', async () => {
+  // The review's case: each date, one slot is held twice in the registered
+  // file only (a miss beside the hit), which positional pairing met with the
+  // challenger's hit and read as a gain. Refused, never cleared.
+  const reg = population();
+  const extra = [...new Set(reg.map((r) => r.date))].map((date) => {
+    const r0 = reg.find((r) => r.date === date);
+    return { ...r0, y: r0.y - 10, served: r0.y + 20 };
+  });
+  const err = await refusal(C.compareFiles(write([...reg, ...extra]), write(clone(reg))));
+  assert.equal(err.result.verdict, C.VERDICT_REFUSED);
+  assert.ok(err.result.pairing.keys_held_more_than_once >= extra.length);
 });
 
 // ── Refusals ──────────────────────────────────────────────────────────────────

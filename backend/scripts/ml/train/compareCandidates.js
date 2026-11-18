@@ -281,6 +281,15 @@ async function compareFiles(registeredFile, challengerFile) {
   };
 
   const problems = [];
+  // One live reading per venue, local date and hour is what the corpus holds
+  // (migration 024's realtime key drops a second read in the same hour), so a
+  // key held twice means the two files are not the gate's rows. Pairing such
+  // a slot in any order can meet the wrong readings and print a verdict the
+  // data does not support, so it is refused rather than guessed at.
+  if (duplicateKeys > 0) {
+    problems.push(`${duplicateKeys} (venue, date, hour) keys are held more than once across the two files; `
+      + 'the corpus keeps one live reading per slot, so these are not the gate\'s rows.');
+  }
   for (const [name, n] of [['registered', reg.rows.length], ['challenger', chal.rows.length]]) {
     if (paired.length / n < MIN_PAIRED_SHARE) {
       problems.push(`only ${paired.length} of the ${name} file's ${n} gate-population rows pair `
