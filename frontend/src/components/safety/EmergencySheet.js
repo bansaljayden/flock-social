@@ -95,6 +95,12 @@ const EmergencySheet = ({
     const t = setTimeout(() => onArmedChange(false), 4000);
     return () => clearTimeout(t);
   }, [armed, onArmedChange]);
+  // The share's arm, on the same window.
+  useEffect(() => {
+    if (!shareArmed) return undefined;
+    const t = setTimeout(() => setShareArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [shareArmed]);
 
   // Dialog behavior: focus in on open, trap Tab, close on Escape, restore
   // focus on close. Self-contained because App.js's DialogBehavior is module-

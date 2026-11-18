@@ -10311,6 +10311,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Modals
   const [showSOS, setShowSOS] = useState(false);
+  // The alert's arm goes with the sheet, however it closes. A stand-down or a
+  // location share that succeeds closes it from App.js, and the sheet's own
+  // 4 second disarm is unmounted with it, so an alert armed just before used
+  // to open armed the next time, one tap from sending.
+  useEffect(() => {
+    if (!showSOS) setSosArmed(false);
+  }, [showSOS]);
 
   // Admin Mode (for Revenue Simulator access)
   const [showAdminPrompt, setShowAdminPrompt] = useState(false);

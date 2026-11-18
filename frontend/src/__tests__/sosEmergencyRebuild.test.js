@@ -233,6 +233,18 @@ describe('the four actions keep their original wiring', () => {
     expect(onShareLocation).toHaveBeenCalledTimes(1);
   });
 
+  it('an armed share disarms itself after the same 4 second window', () => {
+    const onShareLocation = jest.fn();
+    renderSheet({ onShareLocation });
+    fireEvent.click(screen.getByRole('button', { name: /share location/i }));
+    act(() => { jest.advanceTimersByTime(3999); });
+    expect(screen.getByRole('button', { name: /tap again to send your location/i })).toBeInTheDocument();
+    act(() => { jest.advanceTimersByTime(1); });
+    // Back to one tap from arming, not one tap from sending.
+    fireEvent.click(screen.getByRole('button', { name: /share location/i }));
+    expect(onShareLocation).not.toHaveBeenCalled();
+  });
+
   it('with no contacts, alert and share are dead and setup is the live action', () => {
     const onAddContacts = jest.fn();
     renderSheet({ contactCount: 0, onAddContacts });
@@ -360,6 +372,14 @@ describe('the App.js splice is minimal and correctly wired', () => {
     expect(region).toContain('onShareLocation={handleShareLocationWithContacts}');
     expect(region).toContain('loadTrustedContacts()');
     expect(region).toContain("onClose={() => { setSosArmed(false); setShowSOS(false); }}");
+  });
+
+  it('an armed alert is put down whenever the sheet closes, not only by Cancel', () => {
+    // A stand-down or a location share that succeeds closes the sheet itself,
+    // and the sheet's own 4 second disarm dies with it, so an alert armed
+    // just before either opened armed the next time, one tap from sending.
+    const src = APP.replace(/\r\n/g, '\n');
+    expect(src).toMatch(/useEffect\(\(\) => \{\n\s+if \(!showSOS\) setSosArmed\(false\);\n\s+\}, \[showSOS\]\);/);
   });
 
   it('the inline modal is fully gone from App.js', () => {
