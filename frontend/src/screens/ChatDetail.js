@@ -1021,6 +1021,9 @@ export default function ChatDetail({
       if (!stashed) return;
       writeDraft(stashed);
       setChatInput(stashed);
+      /* Send is armed by this flag as well as App.js's, and only a keystroke
+         sets it, so a sentence put back without one could not be sent. */
+      setComposerHasRealText(stashed.trim().length > 0);
     }, [selectedFlockId, draftAccountId, writeDraft, setChatInput]);
 
     /* TAKEN AWAY WITHOUT ITS OWN EXIT, and the draft is still filed. App.js

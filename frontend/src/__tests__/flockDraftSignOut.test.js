@@ -267,6 +267,18 @@ describe('a flock draft belongs to the account that wrote it', () => {
     expect(openAs(ACCOUNT_A).value).toBe(SENTENCE);
   });
 
+  test('a draft put back in the box sends, without a keystroke first', () => {
+    writeAndLeave(ACCOUNT_A);
+    const p = chatProps({ authUser: ACCOUNT_A });
+    const { rerender } = render(React.createElement(ChatDetail, p));
+    // App.js's setChatInput arms chatInputHasText for the restored sentence.
+    expect(p.setChatInput).toHaveBeenCalledWith(SENTENCE);
+    rerender(React.createElement(ChatDetail, { ...p, chatInputHasText: true }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+    expect(p.sendChatMessage).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
   test('signing out takes it off the device', () => {
     writeAndLeave(ACCOUNT_A);
     expect(readFlockDraft(ACCOUNT_A.id, FLOCK.id)).toBe(SENTENCE);
