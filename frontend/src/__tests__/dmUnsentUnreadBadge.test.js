@@ -141,7 +141,9 @@ test('a current thread holding fewer of their messages than the count is read ag
 
 test('your own unsend never touches the count, and the count never goes below zero', () => {
   const mine = thread({ messages: [{ id: 30, sender: 'Bo' }, { id: 32, sender: 'You' }], unread: 1 });
-  expect(run([mine], { messageId: 32, senderId: 9 })[0].unread).toBe(1);
+  // Your own unsend carries your id as the sender: no count change, no read.
+  expect(run([mine], { messageId: 32, senderId: ME })[0].unread).toBe(1);
+  expect(rereads).toBe(0);
   expect(run([thread({ unread: 0 })], { messageId: 31, senderId: 7 })[0].unread).toBe(0);
 });
 

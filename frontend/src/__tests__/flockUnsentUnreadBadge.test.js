@@ -172,3 +172,9 @@ test('a message and its unsend landing in one batch leave no phantom badge', () 
   expect(after[0].messages.map((m) => m.id)).toEqual([30]);
   expect(rereads).toBe(1);
 });
+test('a plan not in the list as rendered is read again: a cold start\'s first read may predate the unsend', () => {
+  const s = session([]);
+  s.clear(4, 31);
+  expect(s.flocks).toEqual([]);
+  expect(s.rereads).toBe(1);
+});

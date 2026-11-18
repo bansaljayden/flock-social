@@ -14188,8 +14188,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       return !historyIsCurrent(`flock:${f.id}`) || theirs.length < (f.unread || 0);
     };
+    // A plan not in the list as rendered (a cold start whose first list read
+    // is still out) is read again too: that read's snapshot may predate the
+    // unsend, and a count it brings back would include the removed message.
     const target = (flocksRef.current || []).find(f => String(f.id) === String(flockId));
-    if (target && needsReread(target)) loadFlocks();
+    if (!target || needsReread(target)) loadFlocks();
     setFlocks(prev => {
       const next = applyTakedownToFlocks(prev, { contentType: 'flock_message', contentId: messageId, flockId });
       if (next === prev) return prev;
