@@ -12081,6 +12081,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (spin) { historyReadSeqRef.current['spinner:flock'] = spin; setMessagesLoading(true); }
     historyReadSeqRef.current['last:flock'] = `flock:${flockId}`;
     setMessagesError('');
+    // Whether this read can leave the plan current (historyCurrentRef): only
+    // if the socket is up as it goes out, so what arrives after it comes live.
+    const drops = getSocket()?.connected ? socketDropsRef.current : null;
     return getMessages(flockId)
       .then((data) => {
         if (overtaken()) return;
@@ -12154,6 +12157,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
           return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held, reach }), readers: liftReaders(readers, f.readers), pins };
         }));
+        if (drops === null) delete historyCurrentRef.current[`flock:${flockId}`];
+        else historyCurrentRef.current[`flock:${flockId}`] = drops;
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
         // wrote the same watermark on its way out, so this is the client
@@ -14135,32 +14140,54 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // way a moderator's takedown already took them. It is logged too, so a
   // history read already in flight cannot put it back (retractionsRef).
   const clearUnsentFlockMessage = useCallback((flockId, messageId) => {
+    // Already cleared once this session: the server's echo of an unsend this
+    // device confirmed, or the same event twice. Nothing new to count.
+    const seen = retractionsRef.current.log.some(e => e.kind === 'flock' && sameContentId(e.messageId, messageId));
     noteRetraction(retractionsRef, { kind: 'flock', messageId });
+    // The badge is a server-backed COUNT since migration 056, not something
+    // derived from this array, so dropping the bubble left the row saying one
+    // unread about a message that no longer exists. The server's own
+    // unread_count already excludes it. Never for your own message, which was
+    // never counted: your own unsend runs through here too.
+    //
+    // The count is the other members' messages after your read cursor, their
+    // newest `unread` ones, so a message of theirs comes off it here only when
+    // it is among those, and only when the plan held here can show which
+    // those are: it ends at the server's newest row (historyIsCurrent) and
+    // holds at least `unread` of theirs. Subtracting for any removed message
+    // of theirs took a newer unread message's badge when an already-read one
+    // was unsent, and a plan read before a drop, kept by the list read beside
+    // the server's fresh count, can be missing the very messages counted. So
+    // when the plan cannot show it, nothing is subtracted here and the count
+    // is read again (loadFlocks, 'reread'). Likewise for a message never held
+    // here, which may be one of the counted.
+    const badge = (f) => {
+      const unread = f.unread || 0;
+      if (unread <= 0) return null;
+      const theirs = (f.messages || []).filter(m => m.sender !== 'You');
+      const at = theirs.findIndex(m => sameContentId(m.id, messageId));
+      if (at === -1) {
+        const yours = (f.messages || []).some(m => sameContentId(m.id, messageId));
+        return yours || seen ? null : 'reread';
+      }
+      if (theirs.length < unread || !historyIsCurrent(`flock:${f.id}`)) return 'reread';
+      return at >= theirs.length - unread ? 'drop' : null;
+    };
+    const target = (flocksRef.current || []).find(f => String(f.id) === String(flockId));
+    if (target && badge(target) === 'reread') loadFlocks();
     setFlocks(prev => {
       const next = applyTakedownToFlocks(prev, { contentType: 'flock_message', contentId: messageId, flockId });
       if (next === prev) return prev;
       return next.map((f, i) => {
         const was = prev[i];
         if (f === was) return f;
-        // The badge is a server-backed COUNT since migration 056, not something
-        // derived from this array, so dropping the bubble left the row saying
-        // one unread about a message that no longer exists. The server's own
-        // unread_count already excludes it; this is the same subtraction on the
-        // copy we are holding, and only when the row was actually removed.
-        // Never for your own message, which was never counted: your own unsend
-        // runs through here too now.
-        const gone = (was.messages || []).find(m => sameContentId(m.id, messageId));
-        const removed = !!gone && gone.sender !== 'You';
-        return {
-          ...f,
-          ...(removed && (f.unread || 0) > 0 ? { unread: f.unread - 1 } : {}),
-        };
+        return badge(was) === 'drop' ? { ...f, unread: (f.unread || 0) - 1 } : f;
       });
     });
     // And the reply bar, if it was quoting it: a send from there would be
     // refused ("That message is no longer there to reply to").
     setFlockReplyingTo((cur) => (cur && sameContentId(cur.id, messageId) ? null : cur));
-  }, []);
+  }, [historyIsCurrent, loadFlocks]);
 
   useEffect(() => {
     const unsub = onFlockMessageUnsent((data) => {

@@ -161,6 +161,9 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     mergeHistory: H.mergeHistory,
     liftReaders,
     sendFlockAck: noop,
+    getSocket: () => ({ connected: true }),
+    socketDropsRef: { current: 0 },
+    historyCurrentRef: { current: {} },
   });
   const refreshFlockRoster = run(`${callback('refreshFlockRoster')}\nreturn refreshFlockRoster;`, {
     useCallback: (fn) => fn,

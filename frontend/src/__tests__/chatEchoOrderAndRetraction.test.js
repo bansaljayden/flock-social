@@ -543,6 +543,9 @@ function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop
     mergeHistory: H.mergeHistory,
     liftReaders,
     sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
+    getSocket: () => ({ connected: true }),
+    socketDropsRef: { current: 0 },
+    historyCurrentRef: { current: {} },
   });
   return { state, reads, load, retractionsRef };
 }
@@ -1650,6 +1653,9 @@ describe('a send delivered while its echo was lost never comes back as a failed 
       mergeHistory: H.mergeHistory,
       liftReaders,
       sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
+      getSocket: () => ({ connected: true }),
+      socketDropsRef: { current: 0 },
+      historyCurrentRef: { current: {} },
     });
     // One history read, answered with these rows.
     const readWith = async (rows) => {
@@ -1904,6 +1910,9 @@ describe("a send's failure is decided by the newest state, whatever the transpor
       mergeHistory: H.mergeHistory,
       liftReaders,
       sendFlockAck: () => {},
+      getSocket: () => ({ connected: true }),
+      socketDropsRef: { current: 0 },
+      historyCurrentRef: { current: {} },
     });
     const echo = runLifted(`return ${liftListener(appSource, 'const unsub = onNewMessage(')};`, {
       authUser: { id: ME },

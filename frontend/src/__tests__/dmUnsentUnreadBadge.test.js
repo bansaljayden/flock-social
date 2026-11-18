@@ -11,7 +11,8 @@
  * And it subtracts only what it can show was counted. The count is their
  * newest `unread` messages on the server, and a thread held here says which
  * those are only when it ends at the server's newest row (historyIsCurrent)
- * and holds that many of theirs. Otherwise the count is read again.
+ * and holds that many of theirs. Otherwise the count is read again. The flock
+ * twin keeps the same rule (flockUnsentUnreadBadge.test.js).
  *
  * The handler is lifted out of App.js by source and run.
  *
