@@ -132,14 +132,43 @@ test('a message this device does not hold changes no count here, and the count i
   s.clear(4, 99);
   expect(s.flocks[0].unread).toBe(2);
   expect(s.rereads).toBe(1);
-  // Nothing to read for a plan with nothing unread.
+  // Read again even where the rendered count is 0: that render can predate
+  // the message itself (the batched case below).
   const quiet = session([plan({ unread: 0 })]);
   quiet.clear(4, 99);
-  expect(quiet.rereads).toBe(0);
+  expect(quiet.rereads).toBe(1);
 });
 
 test('the plan history read records whether it leaves the plan current', () => {
   const load = APP.slice(APP.indexOf('const loadFlockMessages = useCallback'), APP.indexOf('const prefetchUnreadThread'));
   expect(load).toMatch(/const drops = getSocket\(\)\?\.connected \? socketDropsRef\.current : null;/);
   expect(load).toMatch(/historyCurrentRef\.current\[`flock:\$\{flockId\}`\] = drops;/);
+});
+
+test('a message and its unsend landing in one batch leave no phantom badge', () => {
+  // React runs queued updates at the next render, so the callback's re-read
+  // check sees the plan as last rendered: read before a drop (history not
+  // current), nothing unread, 31 not in it yet. 31 arrives and is unsent
+  // before React renders; the message's own update (+1) is queued first.
+  const rendered = [plan({ unread: 0, messages: [{ id: 30, sender: 'Bo', senderId: 7, text: 'which bar' }] })];
+  const queue = [(prev) => prev.map((f) => ({
+    ...f, unread: (f.unread || 0) + 1, messages: [...f.messages, { id: 31, sender: 'Bo', senderId: 7, text: 'oops' }],
+  }))];
+  const log = [];
+  let rereads = 0;
+  const clear = liftClear({
+    noteRetraction: (ref, entry) => { ref.current.log.push(entry); },
+    retractionsRef: { current: { log } },
+    setFlocks: (next) => { queue.push(next); },
+    applyTakedownToFlocks,
+    sameContentId,
+    setFlockReplyingTo: () => {},
+    historyIsCurrent: () => false,
+    flocksRef: { current: rendered },
+    loadFlocks: () => { rereads += 1; },
+  });
+  clear(4, 31);
+  const after = queue.reduce((s, u) => (typeof u === 'function' ? u(s) : u), rendered);
+  expect(after[0].messages.map((m) => m.id)).toEqual([30]);
+  expect(rereads).toBe(1);
 });

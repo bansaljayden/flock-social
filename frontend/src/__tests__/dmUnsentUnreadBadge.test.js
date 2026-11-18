@@ -69,9 +69,35 @@ function run(dms, data, { current = true } = {}) {
     historyIsCurrent: () => current,
     directMessagesRef: { get current() { return state; } },
     loadDmConversationsRef: { current: () => { rereads += 1; } },
+    meRef: { current: { id: ME } },
   };
   unsentHandler(env)(data);
   return state;
+}
+
+// The signed-in user; Bo is 7.
+const ME = 1;
+
+// React runs queued state updates at the next render, after the handler has
+// returned, so the handler's re-read check sees the list as last rendered.
+// `queued` are updates already waiting when the unsend lands (the message
+// itself, delivered in the same batch).
+function runBatched(rendered, queued, data, { current = true } = {}) {
+  const queue = [...queued];
+  rereads = 0;
+  const env = {
+    noteRetraction: () => {},
+    retractionsRef: { current: { log: [] } },
+    setDirectMessages: (next) => { queue.push(next); },
+    applyTakedownToDms,
+    sameContentId,
+    historyIsCurrent: () => current,
+    directMessagesRef: { current: rendered },
+    loadDmConversationsRef: { current: () => { rereads += 1; } },
+    meRef: { current: { id: ME } },
+  };
+  unsentHandler(env)(data);
+  return queue.reduce((s, u) => (typeof u === 'function' ? u(s) : u), rendered);
 }
 
 const thread = (over) => ({
@@ -161,9 +187,28 @@ test('a message of theirs this device does not hold changes no count here, and t
   const [row] = run([thread()], { messageId: 99, senderId: 7 });
   expect(row.unread).toBe(2);
   expect(rereads).toBe(1);
-  // Nothing to read for a thread with nothing unread, or for your own.
+  // Read again even where the rendered count is 0: that render can predate
+  // the message itself (the batched case below). Never for your own.
   run([thread({ unread: 0 })], { messageId: 99, senderId: 7 });
+  expect(rereads).toBe(1);
+  run([thread()], { messageId: 99, senderId: ME });
   expect(rereads).toBe(0);
+  // A sender with no thread here yet: theirs may be arriving in this batch.
   run([thread()], { messageId: 99, senderId: 9 });
-  expect(rereads).toBe(0);
+  expect(rereads).toBe(1);
+});
+
+test('a message and its unsend landing in one batch leave no phantom badge', () => {
+  // The thread was read before a drop (history not current) and shows
+  // nothing unread. 31 arrives and is unsent before React renders: the
+  // message's own update (+1) is queued first, then the unsend's. The update
+  // cannot subtract from a history it cannot trust, so the count must be
+  // read again, and the check must not lean on the rendered 0.
+  const rendered = [thread({ unread: 0, messages: [{ id: 30, sender: 'Bo', text: 'are you coming' }] })];
+  const arrives = (prev) => prev.map((d) => ({
+    ...d, unread: (d.unread || 0) + 1, messages: [...d.messages, { id: 31, sender: 'Bo', text: 'oops' }],
+  }));
+  const [row] = runBatched(rendered, [arrives], { messageId: 31, senderId: 7 }, { current: false });
+  expect(row.messages.map((m) => m.id)).toEqual([30]);
+  expect(rereads).toBe(1);
 });

@@ -14173,8 +14173,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (theirs.length < unread || !historyIsCurrent(`flock:${f.id}`)) return 'reread';
       return at >= theirs.length - unread ? 'drop' : null;
     };
+    // The re-read is decided here, from the plan as last rendered, before the
+    // update below runs, so it must not lean on that render's count: a message
+    // and its unsend can land in one batch, the count going 0 to 1 and the
+    // message going again, and a check of the rendered 0 asked for nothing
+    // while the update declined to subtract from a history it could not
+    // trust. So a message this plan cannot place, or a plan whose history is
+    // not current, is read again whatever the rendered count says.
+    const needsReread = (f) => {
+      const theirs = (f.messages || []).filter(m => m.sender !== 'You');
+      if (!theirs.some(m => sameContentId(m.id, messageId))) {
+        const yours = (f.messages || []).some(m => sameContentId(m.id, messageId));
+        return !(yours || seen);
+      }
+      return !historyIsCurrent(`flock:${f.id}`) || theirs.length < (f.unread || 0);
+    };
     const target = (flocksRef.current || []).find(f => String(f.id) === String(flockId));
-    if (target && badge(target) === 'reread') loadFlocks();
+    if (target && needsReread(target)) loadFlocks();
     setFlocks(prev => {
       const next = applyTakedownToFlocks(prev, { contentType: 'flock_message', contentId: messageId, flockId });
       if (next === prev) return prev;
@@ -14230,7 +14245,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (theirs.length < unread || !historyIsCurrent(`dm:${d.userId}`)) return 'reread';
         return at >= theirs.length - unread ? 'drop' : null;
       };
-      if ((directMessagesRef.current || []).some(d => badge(d) === 'reread')) loadDmConversationsRef.current?.();
+      // Decided from the list as last rendered, so not from that render's
+      // count (clearUnsentFlockMessage says why: a message and its unsend can
+      // land in one batch). A message of theirs this device cannot place, or a
+      // thread with them whose history is not current, is read again whatever
+      // the rendered count says; so is a sender with no thread here yet.
+      const fromThem = data.senderId != null && String(data.senderId) !== String(meRef.current?.id);
+      const needsReread = (d) => {
+        if (String(d.userId) !== String(data.senderId)) return false;
+        const theirs = (d.messages || []).filter(m => m.sender !== 'You');
+        if (!theirs.some(m => sameContentId(m.id, data.messageId))) return true;
+        return !historyIsCurrent(`dm:${d.userId}`) || theirs.length < (d.unread || 0);
+      };
+      const rendered = directMessagesRef.current || [];
+      if (fromThem && (rendered.some(needsReread) || !rendered.some(d => String(d.userId) === String(data.senderId)))) {
+        loadDmConversationsRef.current?.();
+      }
       setDirectMessages(prev => {
         // The takedown helper, not a bare filter: it also nulls reply quotes
         // that would keep the unsent words on screen, and clears a preview
