@@ -54,7 +54,21 @@ const MARK_TABLE_SQL = `
     rebuilt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
 `;
-const CORPUS_STAMP_SQL = 'SELECT MAX(last_collected_at) AS corpus_at FROM ml_venues';
+// HARVESTED VENUES DO NOT MOVE THE STAMP (2026-11-18). The every-city harvest
+// writes a city's new venues ('harvested', inactive; harvestVenueFilter.js) in
+// one commit, 500,000 to 1,700,000 weekly rows, and each commit made the next
+// hourly run's tail rebuild them all: 638,568 rows took 43 minutes and
+// 1,279,320 as long, past the next :07, and Railway skips a cron fire while the
+// last one is still running. That day lost the 11:00, 13:00, 20:00 and 22:00 UTC
+// sweeps, about 4,000 live readings each, with twenty cities still to go. A
+// harvested venue is out of the hourly sweep and out of the neighbour box, so
+// nothing served waits on its baseline but its own score, and the daily rebuild
+// (DAILY_REBUILD_UTC_HOUR) still averages every weekly row, harvested or not:
+// its baseline lands within a day instead of within the hour. A venue promoted
+// out of 'harvested' joins the stamp, but its own stamp may be older than the
+// mark, so run this file by hand after a promotion, as after a repair.
+const CORPUS_STAMP_SQL = `SELECT MAX(last_collected_at) AS corpus_at FROM ml_venues
+                           WHERE besttime_status IS DISTINCT FROM 'harvested'`;
 
 // Is there a weekly row whose hour column is not a venue-local hour (or does
 // not say)? EXISTS, not COUNT: ml_training_data is ~4M rows and this runs at

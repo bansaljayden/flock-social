@@ -878,8 +878,9 @@ test('loadRecordedThisHour finds the venues holding this local hour\'s realtime 
 // real rows: due before any rebuild has left a mark, not due once one has,
 // due for any week written after it however soon (a tolerance once hid
 // those), not due again for production's 0.495 s late stamp once a rebuild
-// has recorded it, due when the newest stamp moves backwards, and due at the
-// daily hour whatever the stamps say. Explicit instants, an hour ahead of
+// has recorded it, due when the newest stamp moves backwards, due at the
+// daily hour whatever the stamps say, and not due for a harvested venue's week
+// until the venue is promoted. Explicit instants, an hour ahead of
 // anything the tests above seeded, keep the order independent of how fast
 // this runs.
 test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the last rebuild\'s mark', async () => {
@@ -893,15 +894,15 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   // A week written the way the weekly writers write one: the rows, and the
   // venue's last_collected_at, in one transaction. `stampAt` defaults to the
   // rows' own instant, which is what one NOW() gives.
-  const writeWeek = async (place, rowsAt, stampAt = rowsAt) => {
+  const writeWeek = async (place, rowsAt, stampAt = rowsAt, status = null) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const { rows: [{ id }] } = await client.query(
         `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
-                                venue_category, timezone, is_active)
-         VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, true)
-         RETURNING id`, [place, 'bt_' + place, CITY, TZ]);
+                                venue_category, timezone, is_active, besttime_status)
+         VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, $5::text IS NULL, $5)
+         RETURNING id`, [place, 'bt_' + place, CITY, TZ, status]);
       await client.query(
         `INSERT INTO ml_training_data
            (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
@@ -975,6 +976,29 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   const moved = await due();
   assert.strictEqual(moved.due, true, moved.reason);
   assert.match(moved.reason, /^the newest weekly stamp moved from .+ to .+ since the last rebuild$/);
+  await rebuild();
+  assert.strictEqual((await due()).due, false);
+
+  // A harvested venue's week does not make the hourly run rebuild: on
+  // 2026-11-18 each city's harvest commit cost the next hourly sweep. The
+  // rebuild still averages it (the daily hour runs one whatever the stamps
+  // say), and promoting the venue out of 'harvested' brings its stamp back in.
+  const baselineRows = async (place) => (await pool.query(
+    'SELECT COUNT(*)::int AS n FROM ml_venue_baselines WHERE google_place_id = $1', [place])).rows[0].n;
+  await writeWeek('ChIJbaselineHarvested', at(180 * 1000), at(180 * 1000), 'harvested');
+  const harvested = await due();
+  assert.strictEqual(harvested.due, false, harvested.reason);
+  assert.strictEqual(await baselineRows('ChIJbaselineHarvested'), 0);
+  assert.strictEqual((await collectedBaselinesDue(pool, { at: dailyHour })).due, true);
+  await rebuild();
+  assert.strictEqual(await baselineRows('ChIJbaselineHarvested'), 168, 'the rebuild left the harvested week out');
+  assert.strictEqual((await due()).due, false);
+  await pool.query(`UPDATE ml_venues SET besttime_status = 'harvest_measured', is_active = true
+                     WHERE google_place_id = 'ChIJbaselineHarvested'`);
+  const promoted = await due();
+  assert.strictEqual(promoted.due, true, promoted.reason);
+  assert.strictEqual(promoted.reason, `a weekly curve was written at ${at(180 * 1000).toISOString()}, `
+    + `after the last rebuild's mark (${at(60 * 1000 + 600).toISOString()})`);
   await rebuild();
   assert.strictEqual((await due()).due, false);
 });

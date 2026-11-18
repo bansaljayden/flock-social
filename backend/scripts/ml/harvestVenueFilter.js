@@ -170,7 +170,9 @@
 // harvest can find thousands of venues, so a new row is written is_active =
 // false with besttime_status = 'harvested', which keeps it out of both the
 // hourly sweep and collectWeekly's refresh. buildBaselines reads every row, so
-// a harvested venue gets a served baseline and scores for its own hours. It
+// a harvested venue gets a served baseline and scores for its own hours, from
+// the next daily rebuild (its stamp does not make the hourly run rebuild;
+// buildBaselines.js says why). It
 // does NOT move anybody else's score: services/mlPredictor.js leaves harvested
 // rows out of the neighbour box (log_neighbor_count and
 // neighbor_baseline_same_hour are inputs of the shipped model), and

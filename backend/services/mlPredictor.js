@@ -2761,7 +2761,8 @@ const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 // ---------------------------------------------------------------------------
 // scripts/ml/harvestVenueFilter.js can add thousands of venues at once from
 // BestTime's Venue Filter, as ml_venues rows with besttime_status 'harvested'.
-// buildBaselines gives each one a curve within the hour, and without this
+// buildBaselines gives each one a curve (within a day since 2026-11-18, when a
+// harvested venue's stamp stopped making the hourly run rebuild), and without this
 // clause every one of them would join the box below: log_neighbor_count and
 // neighbor_baseline_same_hour are inputs of the shipped model, so every
 // existing venue's score would move within a cache TTL, by an amount no
