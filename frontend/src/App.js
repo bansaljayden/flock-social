@@ -8097,6 +8097,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             reconfirm: old.reconfirm !== undefined ? old.reconfirm : f.reconfirm,
             hiddenAccepted: old.hiddenAccepted !== undefined ? old.hiddenAccepted : f.hiddenAccepted,
             askedIds: old.askedIds !== undefined ? old.askedIds : f.askedIds,
+            // The history read's two: the pinned bar and the receipt roster.
+            pins: old.pins !== undefined ? old.pins : f.pins,
+            readers: old.readers !== undefined ? old.readers : f.readers,
           };
         }));
         // An invite to a night that already happened is not an invitation,
