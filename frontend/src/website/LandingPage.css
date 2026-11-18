@@ -2033,13 +2033,20 @@ html:has(.lp) body { overflow-x: clip; }
    (landingAnnotations.js), so no note lands between the words and the phone,
    and they grow only as far as the row leaves room for the words. */
 @media (min-width: 960px) {
+  /* The words' track is up to 25rem and takes it whenever the row has room,
+     so a beat with a short line ("Asad paid, so Flock splits it.") still
+     starts on the same left edge as the others; an `auto` track shrank to
+     its words and pushed them 50px right. On the right the words are the
+     second track: .is-flip, or the invitation, whose painting comes first. */
   .lp-beat-row {
     display: grid;
-    grid-template-columns: auto auto;
+    grid-template-columns: minmax(0, 25rem) auto;
     justify-content: space-between;
     align-items: center;
     column-gap: clamp(40px, 5vw, 72px);
   }
+  .lp-beat-row.is-flip,
+  .lp-beat-row:has(> .lp-beat:last-child) { grid-template-columns: auto minmax(0, 25rem); }
   .lp-beat-row.is-flip > .lp-beat { order: 2; }
   .lp-beat-row > .lp-beat { max-width: 25rem; }
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1; width: calc(var(--anno-w) * var(--anno-scale) * 1px); margin: 0; }
