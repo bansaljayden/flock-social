@@ -14153,13 +14153,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // that a removal just emptied.
         const removed = applyTakedownToDms(prev, { contentType: 'dm', contentId: data.messageId });
         // The badge, the flock twin's subtraction (clearUnsentFlockMessage):
-        // the row's unread is a server count, and a message of theirs that was
-        // removed here is one it no longer includes. Never your own.
+        // the row's unread is a server count, and a message it counted that
+        // was removed here is one it no longer includes. Never your own, and
+        // never one already read: opening a thread reads everything in it, so
+        // the count is always their newest `unread` messages, and unsending an
+        // older one of theirs leaves every one still waiting counted.
         const cleaned = removed === prev ? prev : removed.map((d, i) => {
           const was = prev[i];
           if (d === was) return d;
-          const gone = (was.messages || []).find(m => sameContentId(m.id, data.messageId));
-          return gone && gone.sender !== 'You' && (d.unread || 0) > 0 ? { ...d, unread: d.unread - 1 } : d;
+          const unread = d.unread || 0;
+          const theirs = (was.messages || []).filter(m => m.sender !== 'You');
+          const at = theirs.findIndex(m => sameContentId(m.id, data.messageId));
+          return at !== -1 && at >= theirs.length - unread ? { ...d, unread: unread - 1 } : d;
         });
         // A thread not loaded this session keeps only a stored lastMessage,
         // and nothing local can tell whether that preview IS the unsent

@@ -82,6 +82,22 @@ test('your own unsend never touches the count, and the count never goes below ze
   expect(run([thread({ unread: 0 })], { messageId: 31, senderId: 7 })[0].unread).toBe(0);
 });
 
+test('their message unsent after it was read leaves the newer unread one counted', () => {
+  // 30 was read, then 31 arrived while the thread was closed: unread 1, and
+  // the one it counts is 31. Unsending 30 takes nothing off it.
+  const [row] = run([thread({ unread: 1 })], { messageId: 30, senderId: 7 });
+  expect(row.messages.map((m) => m.id)).toEqual([31]);
+  expect(row.unread).toBe(1);
+
+  // Your own replies in between do not move which of theirs are counted.
+  const mixed = thread({
+    unread: 1,
+    messages: [{ id: 30, sender: 'Bo' }, { id: 31, sender: 'You' }, { id: 32, sender: 'Bo' }],
+  });
+  expect(run([mixed], { messageId: 30, senderId: 7 })[0].unread).toBe(1);
+  expect(run([mixed], { messageId: 32, senderId: 7 })[0].unread).toBe(0);
+});
+
 test('a message this device does not hold changes no count', () => {
   const [row] = run([thread()], { messageId: 99, senderId: 7 });
   expect(row.unread).toBe(2);
