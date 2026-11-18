@@ -57,6 +57,7 @@ const EditProfileForm = ({
   setProfileBio,
   setProfileName,
   setProfilePhone,
+  setPhoneDiscoverable,
   onUserUpdated,
   setShowPicModal,
   styles,
@@ -217,12 +218,17 @@ const EditProfileForm = ({
                     // Marked as written for people, so userMessage below
                     // shows this sentence rather than the general one.
                     if (!data || !data.user) throw Object.assign(new Error('The profile did not come back from the server. Try again.'), { userFacing: true });
+                    // email_verified too: moving the address un-verifies the
+                    // row, and App.js's emailUnconfirmed and the confirm line
+                    // read it off authUser. Left out, they stayed silent until
+                    // the next plan or friend request came back 403.
                     if (onUserUpdated && data.user) {
                       onUserUpdated({
                         name: data.user.name,
                         email: data.user.email,
                         ...(typeof data.user.bio === 'string' ? { bio: data.user.bio } : {}),
                         ...('phone' in data.user ? { phone: data.user.phone || null } : {}),
+                        ...(typeof data.user.email_verified === 'boolean' ? { email_verified: data.user.email_verified } : {}),
                       });
                     }
                     setProfileName(data.user.name);
@@ -233,6 +239,10 @@ const EditProfileForm = ({
                     // The row of record, not what was typed, so the switch
                     // under Safety and privacy reads what actually got stored.
                     if ('phone' in data.user) setProfilePhone(data.user.phone || '');
+                    // And the discovery switch with it: clearing the number
+                    // turns discovery off on the server, and the You tab kept
+                    // reading "Find me by phone: On".
+                    if ('phone_discoverable' in data.user && setPhoneDiscoverable) setPhoneDiscoverable(Boolean(data.user.phone_discoverable));
                     if (data.emailVerificationRequired) {
                       // The address moved, so the account is unverified again
                       // and the next plan, request or payment handle would

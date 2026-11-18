@@ -21661,6 +21661,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setNotifStatus,
           setPaymentSaving,
           setPaywallTrigger,
+          setPhoneDiscoverable,
           setPhoneDiscoveryError,
           setPhoneDiscoveryNeedsNumber,
           setProfileBio,

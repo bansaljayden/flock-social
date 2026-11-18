@@ -420,6 +420,7 @@ export default function ProfileSettings({
   setNotifStatus,
   setPaymentSaving,
   setPaywallTrigger,
+  setPhoneDiscoverable,
   setPhoneDiscoveryError,
   setPhoneDiscoveryNeedsNumber,
   setProfileBio,
@@ -509,6 +510,7 @@ export default function ProfileSettings({
                 setProfileBio,
                 setProfileName,
                 setProfilePhone,
+                setPhoneDiscoverable,
                 setShowPicModal,
                 styles,
               };
