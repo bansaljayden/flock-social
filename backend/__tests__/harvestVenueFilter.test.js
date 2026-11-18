@@ -1666,6 +1666,15 @@ test('a request that may have been billed without an answer keeps a page reserve
     assert.deepStrictEqual([u.summary.budget.reserved, u.summary.budget.used], [0, counted]);
     assert.match(u.out, new RegExp(`network error \\(${code}\\); never sent, nothing reserved; retry 1/`));
   }
+
+  // The same codes while an answer was being read may follow a billed
+  // request: a page is reserved, and a one-page budget stops before a retry.
+  const cutMidAnswer = failFirstFilter(fakeBestTime(AXIS), async () => {
+    throw Object.assign(new TypeError('terminated'), { cause: { code: 'ENETDOWN', syscall: 'read' } });
+  });
+  const m = await runHarvest(['--city=philly', '--days=0', '--page-size=100', '--result-budget=100'], cutMidAnswer);
+  assert.ok(m.summary.budget.reserved >= 100, `reserved ${m.summary.budget.reserved}`);
+  assert.strictEqual(m.summary.stats.requests, 1);
 });
 
 test('a day mismatch seen before a budget stop still refuses the run, and nothing is written', async () => {

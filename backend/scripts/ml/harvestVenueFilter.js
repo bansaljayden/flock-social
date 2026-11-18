@@ -1151,7 +1151,18 @@ const budgetUsed = (s) => s.venuesReturned + s.resultsReserved;
 // BestTime cannot have billed it. Any other failure once the request was made
 // (our deadline passing, a connection dropped mid-answer, an answer that was
 // not JSON) may have been served and billed.
-const NEVER_SENT_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EHOSTDOWN/;
+// A refused connection, a name that did not resolve and a connect timeout can
+// only happen before the request is sent. A network or host that is
+// unreachable or down can also cut an answer already being read, so it counts
+// as never sent only when the failing call was the connect itself.
+const NEVER_SENT_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT/;
+const CONNECT_ONLY_RE = /ENETUNREACH|EHOSTUNREACH|ENETDOWN|EHOSTDOWN/;
+function neverSent(err, code) {
+  const said = `${code} ${String((err && err.message) || '')}`;
+  if (NEVER_SENT_RE.test(said)) return true;
+  const cause = (err && err.cause) || {};
+  return CONNECT_ONLY_RE.test(`${said} ${cause.code || ''}`) && cause.syscall === 'connect';
+}
 
 // A request that may have been billed without an answer being read holds a
 // whole page against the budget, and the hold is never released: the retry
@@ -1210,8 +1221,7 @@ async function requestPage(ctx, q) {
         throw abortError(`the venue filter request failed (${code}).`);
       }
       // Tested, never printed: the message can carry the URL.
-      const held = NEVER_SENT_RE.test(`${code} ${String((err && err.message) || '')}`)
-        ? 'never sent, nothing reserved' : reservePage(ctx);
+      const held = neverSent(err, code) ? 'never sent, nothing reserved' : reservePage(ctx);
       if (attempt >= RETRY_WAITS_MS.length) throw abortError(`the venue filter kept failing (${code}); stopping.`);
       console.warn(`  network error (${code}); ${held}; retry ${attempt + 1}/${RETRY_WAITS_MS.length} in ${RETRY_WAITS_MS[attempt] / 1000}s`);
       await ctx.sleep(RETRY_WAITS_MS[attempt]);
