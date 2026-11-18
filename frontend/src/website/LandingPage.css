@@ -1012,7 +1012,11 @@ html:has(.lp) body { overflow-x: clip; }
   overflow: hidden;
 }
 @media (min-width: 600px) { .lp-reel { --reel-w: 200px; --reel-gap: 24px; } }
-@media (min-width: 1100px) { .lp-reel { --reel-w: 230px; --reel-gap: 28px; } }
+/* The desktop phones were 230px, and at 1440x900 the first screen showed only
+   their status bars and the tops of their screens: a first screen of words
+   over film. At 200px, with the hero row above them shorter (2026-11-06),
+   about 70% of each phone is in view at 1440x900, half at 1280x800. */
+@media (min-width: 1100px) { .lp-reel { margin-top: 28px; } }
 .lp-reel-track {
   display: flex;
   align-items: center;

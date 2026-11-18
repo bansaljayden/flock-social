@@ -41,7 +41,7 @@ function Screen({ shot, first, copy }) {
       className="lp-reel-shot"
       src={shot.src}
       srcSet={shot.srcSet}
-      sizes={shot.landscape ? '(min-width: 1100px) 362px, (min-width: 600px) 315px, 265px' : '(min-width: 1100px) 230px, 200px'}
+      sizes={shot.landscape ? '(min-width: 600px) 315px, 265px' : '200px'}
       width={shot.width} height={shot.height}
       loading="lazy" decoding="async"
       alt={copy ? '' : shot.alt}
@@ -69,7 +69,7 @@ function Screen({ shot, first, copy }) {
    laid over the badge, and the screen is the capture reelShots.js names, set
    into the photo's glass; the turned photograph carries the same capture,
    set into its glass in perspective when it was made. */
-const FLUX_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
+const FLUX_SIZES = '(min-width: 600px) 380px, 320px';
 // The photographs keep their names when they are remade, and /sensor/ is
 // cached for a day, so the query sends every cache to the new ones. 2: the
 // case with the table camera, 2026-10-29.
