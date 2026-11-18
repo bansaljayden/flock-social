@@ -30,13 +30,21 @@
 //   * a dry run writes nothing (xmin snapshot), a commit upserts, a rerun
 //     changes nothing but collected_at;
 //   * an empty run, an aborted run and a refused key all exit nonzero;
-//   * paging stops at the cap and a capped box is split, down to a minimum.
+//   * paging stops at the cap and a capped box is split, down to a minimum;
+//   * every training city (2026-11-17): any CITIES key is asked about around
+//     its own centroid, the holdout cities and beijing are refused, --city=all
+//     is the rest, and a PA run's boxes are the ones it always asked;
+//   * --new-only writes nothing for a venue already held, by either id or as
+//     a near-duplicate, and a new venue's row carries its own city and zone;
+//   * the result budget stops a run before it could pass, and no venue is
+//     written with part of its week.
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/harvestVenueFilter.test.js
 // ---------------------------------------------------------------------------
 const test = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -65,6 +73,8 @@ const harvester = require('../scripts/ml/harvestVenueFilter');
 const { bestTimeSlotToLocal } = require('../scripts/ml/collectWeekly');
 const { bestTimeDayToJsDay } = require('../scripts/ml/config');
 const { nearestPaCity } = require('../scripts/ml/addDemandVenues');
+const { CITIES } = require('../scripts/ml/config');
+const { HOLDOUT_CITIES } = require('../scripts/ml/train/export_training_data');
 
 let pg;
 let pool;
@@ -238,6 +248,41 @@ async function snapshot() {
 
 const seeded = {};
 
+async function insertVenue(tag, placeId, btId, category, extra = {}) {
+  const { rows } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, rating, review_count, timezone)
+     VALUES ($1, $2, $3, $9, $7, $8, $4, $5, $6, $10) RETURNING id`,
+    [placeId, btId, extra.name || `Seeded ${tag}`, category,
+      'rating' in extra ? extra.rating : 4.2, 'reviews' in extra ? extra.reviews : 300,
+      extra.lat ?? 39.95, extra.lng ?? -75.16, extra.city || 'philly', extra.tz || 'America/New_York']
+  );
+  seeded[tag] = rows[0].id;
+}
+
+// The week collectWeekly would have stored for fixture venue `v`: each
+// BestTime slot through the transform, or, with `midnight`, as if slot 0
+// were midnight (the origin the axis proof must catch).
+async function storeWeek(venueRowId, v, { midnight = false } = {}) {
+  const values = [];
+  const params = [];
+  for (let d = 0; d < 7; d++) {
+    for (let s = 0; s < 24; s++) {
+      const js = bestTimeDayToJsDay(d);
+      const cell = midnight ? { dayOfWeek: js, hour: s } : bestTimeSlotToLocal(s, js);
+      params.push(venueRowId, cell.dayOfWeek, cell.hour, v.week[d][s]);
+      const b = params.length - 4;
+      values.push(`($${b + 1}, 'weekly', 'venue_local', $${b + 2}, $${b + 3}, 'bar', $${b + 4}, 1786000000, false, 'no_observation_date')`);
+    }
+  }
+  await pool.query(
+    `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                   busyness_pct, besttime_epoch, events_observed, events_unavailable_reason)
+     VALUES ${values.join(', ')}`,
+    params
+  );
+}
+
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), 'flock-harvest-pg-' + Date.now());
   pg = createEmbeddedPostgres(EmbeddedPostgres, { suite: 'harvestVenueFilter', port: PG_PORT, databaseDir: dataDir });
@@ -246,39 +291,6 @@ test.before(async () => {
   pool = new Pool({ connectionString: CONN });
   await migrate(pool);
 
-  const insertVenue = async (tag, placeId, btId, category, extra = {}) => {
-    const { rows } = await pool.query(
-      `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
-                              venue_category, rating, review_count, timezone)
-       VALUES ($1, $2, $3, 'philly', $7, $8, $4, $5, $6, 'America/New_York') RETURNING id`,
-      [placeId, btId, extra.name || `Seeded ${tag}`, category,
-        'rating' in extra ? extra.rating : 4.2, 'reviews' in extra ? extra.reviews : 300,
-        extra.lat ?? 39.95, extra.lng ?? -75.16]
-    );
-    seeded[tag] = rows[0].id;
-  };
-  // The week collectWeekly would have stored for fixture venue `v`: each
-  // BestTime slot through the transform, or, with `midnight`, as if slot 0
-  // were midnight (the origin the axis proof must catch).
-  const storeWeek = async (venueRowId, v, { midnight = false } = {}) => {
-    const values = [];
-    const params = [];
-    for (let d = 0; d < 7; d++) {
-      for (let s = 0; s < 24; s++) {
-        const js = bestTimeDayToJsDay(d);
-        const cell = midnight ? { dayOfWeek: js, hour: s } : bestTimeSlotToLocal(s, js);
-        params.push(venueRowId, cell.dayOfWeek, cell.hour, v.week[d][s]);
-        const b = params.length - 4;
-        values.push(`($${b + 1}, 'weekly', 'venue_local', $${b + 2}, $${b + 3}, 'bar', $${b + 4}, 1786000000, false, 'no_observation_date')`);
-      }
-    }
-    await pool.query(
-      `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
-                                     busyness_pct, besttime_epoch, events_observed, events_unavailable_reason)
-       VALUES ${values.join(', ')}`,
-      params
-    );
-  };
   await insertVenue('knownBt', 'ChIJharvestKnownBt01', 'ven_known_bt', 'bar');
   await insertVenue('knownPlace', 'ChIJharvestKnownPl01', null, 'restaurant');
   await insertVenue('otherBt', 'ChIJharvestHeldElse1', 'ven_someone_else', 'bar');
@@ -740,7 +752,9 @@ test('a filter that ignores the day aborts rather than filing one weekday under 
 });
 
 test('bad arguments refuse before any request', async () => {
-  for (const args of [['--city=nyc'], ['--days=7'], ['--page-size=600'], ['--frobnicate'], ['--radius-km=0'], ['--radius-km=81']]) {
+  for (const args of [['--city=atlantis'], ['--city=miami'], ['--city=beijing'], ['--city=all,nyc'], ['--days=7'],
+    ['--page-size=600'], ['--frobnicate'], ['--radius-km=0'], ['--radius-km=81'], ['--result-budget=0'],
+    ['--result-budget=50'], ['--result-budget=100001'], ['--max-requests=5']]) {
     const fake = fakeBestTime(FIXTURE);
     const { summary } = await runHarvest(args, fake);
     assert.strictEqual(summary.exitCode, 1, args.join(' '));
@@ -813,6 +827,343 @@ test('the request ceiling ends a runaway run nonzero', async () => {
   assert.strictEqual(summary.exitCode, 1);
   assert.strictEqual(summary.stats.requests, 20);
   assert.match(out, /--max-requests=20/);
+});
+
+// ---------------------------------------------------------------------------
+// Every training city, --new-only and the result budget (2026-11-17).
+// ---------------------------------------------------------------------------
+const boxOf = (r) => ({
+  s: Math.round(Number(r.params.lat_min) * 1000), w: Math.round(Number(r.params.lng_min) * 1000),
+  n: Math.round(Number(r.params.lat_max) * 1000), e: Math.round(Number(r.params.lng_max) * 1000),
+});
+const boxKey = (t) => `${t.s},${t.w},${t.n},${t.e}`;
+const inBox = (t, v) => v.lat >= t.s / 1000 && v.lat <= t.n / 1000 && v.lng >= t.w / 1000 && v.lng <= t.e / 1000;
+
+test('--city takes any training city, and --city=all is every one but the holdouts and beijing', () => {
+  const parse = (...a) => harvester.parseArgs(['node', 'harvestVenueFilter.js', ...a]);
+  assert.deepStrictEqual(parse().cities, ['philly', 'lehigh'], 'no --city is still the two PA markets');
+  assert.deepStrictEqual(parse('--city=nyc').cities, ['nyc']);
+  assert.deepStrictEqual(parse('--city=london, denver,london').cities, ['london', 'denver']);
+  const all = [
+    'nyc', 'la', 'chicago', 'london', 'lehigh', 'sydney', 'delhi', 'paris', 'madrid', 'philly', 'dallas', 'austin',
+    'seattle', 'denver', 'boston', 'nashville', 'nola', 'mexico', 'saopaulo', 'buenosaires', 'berlin', 'amsterdam',
+    'rome', 'dubai', 'capetown', 'singapore', 'seoul', 'bangkok', 'mumbai', 'toronto',
+  ];
+  assert.deepStrictEqual(parse('--city=all').cities, all);
+  // The same list derived, so a city added to config.js or to the holdout list
+  // moves --city=all with it.
+  assert.deepStrictEqual(all, Object.keys(CITIES).filter((c) => !HOLDOUT_CITIES.includes(c) && c !== 'beijing'));
+  assert.deepStrictEqual(HOLDOUT_CITIES, ['miami', 'tokyo', 'barcelona']);
+  for (const c of HOLDOUT_CITIES) {
+    assert.match(parse(`--city=${c}`).error, new RegExp(`--city=${c} refused: ${c} is a holdout city \\(train/export_training_data\\.js HOLDOUT_CITIES\\)`));
+    assert.match(parse(`--city=nyc,${c}`).error, /is a holdout city/, `${c} named beside another city`);
+  }
+  assert.match(parse('--city=beijing').error, /--city=beijing refused: beijing is not harvested: Google has no usable data in mainland China/);
+  assert.match(parse('--city=all,nyc').error, /--city=all stands alone/);
+  assert.match(parse('--city=atlantis').error, /config\.js CITIES keys, comma separated, or all; got "atlantis"/);
+  assert.match(parse('--city=').error, /config\.js CITIES keys/);
+  assert.strictEqual(parse().resultBudget, 60000);
+  assert.strictEqual(parse('--result-budget=25000').resultBudget, 25000);
+  assert.match(parse('--result-budget=100001').error, /--result-budget must be an integer from 1 to 100000/);
+  assert.match(parse('--result-budget=50').error, /smaller than one page \(--page-size=100\)/);
+  assert.strictEqual(parse('--result-budget=50', '--page-size=50').resultBudget, 50);
+  assert.deepStrictEqual([parse().newOnly, parse('--new-only').newOnly], [false, true]);
+});
+
+test('a PA run asks the boxes it always asked, alone, together, or inside --city=all', () => {
+  // The grids as the harvester built them before any other city could be
+  // named (47257536): the boxes behind the September and November PA commits.
+  const fp = (tiles) => crypto.createHash('sha256')
+    .update(JSON.stringify(tiles.map((t) => [t.s, t.w, t.n, t.e]))).digest('hex').slice(0, 16);
+  const sorted = (tiles) => tiles.slice().sort((a, b) => a.s - b.s || a.w - b.w);
+  for (const [cities, radiusKm, n, hash] of [
+    [['philly', 'lehigh'], 20, 14, 'ffb9448887e10c72'],
+    [['philly'], 20, 8, '394df5a706baac06'],
+    [['lehigh'], 20, 6, '6b5dc404d08aab4e'],
+    [['philly', 'lehigh'], 80, 101, '27799eba818e09f4'],
+    [['philly'], 80, 62, 'dbc660a73bf84e0c'],
+    [['lehigh'], 80, 60, 'bae016c05c193819'],
+  ]) {
+    const what = `${cities.join('+')} at ${radiusKm} km`;
+    const grid = harvester.buildTiles(cities, 20, radiusKm);
+    assert.strictEqual(fp(grid), hash, `${what}: the grid moved`);
+    const planned = harvester.planTiles(cities, 20, radiusKm);
+    assert.strictEqual(planned.length, n, what);
+    assert.strictEqual(fp(sorted(planned.map((p) => p.tile))), fp(sorted(grid)), `${what}: the run asks other boxes`);
+    assert.ok(planned.every((p) => p.area.join() === cities.join()), `${what}: a split would keep other quarters`);
+  }
+  // Inside --city=all the two markets keep their shared grid, and nyc (124 km
+  // from lehigh, 130 from philly) gets its own.
+  const everything = harvester.planTiles(harvester.ALL_CITIES, 20, 20);
+  const pa = everything.filter((p) => p.city === 'philly' || p.city === 'lehigh');
+  assert.strictEqual(fp(sorted(pa.map((p) => p.tile))), fp(sorted(harvester.buildTiles(['philly', 'lehigh'], 20, 20))));
+  // (config.js lists lehigh first; the grid does not depend on the order.)
+  assert.ok(pa.every((p) => p.area.slice().sort().join() === 'lehigh,philly'));
+  assert.deepStrictEqual(harvester.gridGroups(['nyc', 'philly', 'london', 'lehigh']), [['nyc'], ['philly', 'lehigh'], ['london']]);
+  assert.strictEqual(harvester.gridGroups(harvester.ALL_CITIES).length, harvester.ALL_CITIES.length - 1,
+    'only philly and lehigh are close enough to share a grid');
+  // The centroids are config.js's, and PA_CITIES agrees with it for the two.
+  const { PA_CITIES } = require('../scripts/ml/addDemandVenues');
+  for (const c of ['philly', 'lehigh']) {
+    assert.deepStrictEqual([CITIES[c].lat, CITIES[c].lon, CITIES[c].tz], [PA_CITIES[c].lat, PA_CITIES[c].lon, PA_CITIES[c].tz]);
+  }
+});
+
+test('a non-PA city is tiled around its own CITIES centroid, and its whole circle is covered', () => {
+  const { kmBetween } = require('../scripts/ml/addDemandVenues');
+  for (const city of ['nyc', 'london', 'sydney', 'buenosaires']) {
+    const c = CITIES[city];
+    const planned = harvester.planTiles([city], 20, 20);
+    assert.ok(planned.length >= 4, `${city}: ${planned.length} boxes`);
+    assert.ok(planned.every((p) => p.city === city && p.area.join() === city));
+    for (const p of planned) assert.ok(harvester.tileIntersects(p.tile, [city], 20), `${city}: a box off the circle`);
+    // Points on a 1 km lattice across the circle: every one inside some box.
+    const dLat = 20 / 111.32;
+    const dLng = 20 / (111.32 * Math.cos((c.lat * Math.PI) / 180));
+    let inside = 0;
+    for (let i = -20; i <= 20; i++) {
+      for (let j = -20; j <= 20; j++) {
+        const pt = { lat: c.lat + (i / 20) * dLat, lng: c.lon + (j / 20) * dLng };
+        if (kmBetween(c.lat, c.lon, pt.lat, pt.lng) > 19.9) continue;
+        inside++;
+        assert.ok(planned.some((p) => inBox(p.tile, pt)), `${city}: ${pt.lat},${pt.lng} is in no box`);
+      }
+    }
+    assert.ok(inside > 1000);
+  }
+});
+
+test('where a venue belongs: the PA rule first, then the nearest city asked for or refused', () => {
+  const markets = harvester.otherMarkets(['nyc']);
+  assert.deepStrictEqual(Object.keys(markets).sort(), ['barcelona', 'beijing', 'miami', 'nyc', 'tokyo']);
+  assert.strictEqual(harvester.placeVenue(40.73, -73.99, markets).cityKey, 'nyc');
+  // 75 km from philly and 74 from nyc: the PA market rule keeps it philly's,
+  // in every run, as addDemandVenues would file it.
+  assert.strictEqual(nearestPaCity(40.088, -74.303).cityKey, 'philly');
+  assert.strictEqual(harvester.placeVenue(40.088, -74.303, harvester.otherMarkets(harvester.ALL_CITIES)).cityKey, 'philly');
+  assert.strictEqual(harvester.placeVenue(25.77, -80.19, markets).cityKey, 'miami');
+  assert.strictEqual(harvester.placeVenue(0, 0, markets).cityKey, null);
+
+  const days = new Map([[0, new Array(24).fill(30)]]);
+  const v = (venueId, lat, lng) => ({ venueId, placeId: `ChIJplacement${venueId}xxxxxxx`, name: `Place ${venueId}`, lat, lng, type: 'BAR', days });
+  const { plan, skipped, placed } = harvester.planVenues(
+    [v('ven_p_nyc', 40.73, -73.99), v('ven_p_phl', 40.088, -74.303), v('ven_p_mia', 25.77, -80.19), v('ven_p_sea', 0, 0)],
+    { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, ['nyc']
+  );
+  assert.deepStrictEqual(plan.map((p) => [p.venue.venueId, p.city, p.kind]), [['ven_p_nyc', 'nyc', 'new']]);
+  assert.strictEqual(skipped.otherMarket, 2, "philly's and miami's venues are theirs, not nyc's");
+  assert.strictEqual(skipped.outsideMarkets, 1);
+  assert.deepStrictEqual([...placed], [['nyc', 1]]);
+});
+
+test('a nyc run asks only about nyc, and places its new venues there', async () => {
+  const NYC = [
+    fx('ven_nyc_bar', 40.7301, -73.9901, 'BAR', 'ChIJharvestNycBar0001', 12, { name: 'Nyc Test Bar' }),
+    fx('ven_nyc_cafe', 40.7001, -74.0101, 'CAFE', 'ChIJharvestNycCafe001', 22, { name: 'Nyc Test Cafe' }),
+    fx('ven_nyc_rest', 40.7501, -73.9801, 'RESTAURANT', 'ChIJharvestNycRest001', 32, { name: 'Nyc Test Kitchen' }),
+  ];
+  const before = await snapshot();
+  const fake = fakeBestTime([...NYC, V.newPhilly]);
+  const { summary, out } = await runHarvest(['--city=nyc'], fake);
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.deepStrictEqual(summary.plan, { known_bt: 0, known_place: 0, known_near: 0, new: 3 });
+  assert.strictEqual(summary.rowsPlanned, 3 * 168);
+  assert.strictEqual(summary.exitCode, 1, 'no known venue to prove the axis with: a commit would be refused');
+  assert.match(out, /The axis proof would refuse --commit/);
+  const filters = fake.requests.filter((r) => r.path === '/api/v1/venues/filter');
+  const planned = new Set(harvester.planTiles(['nyc'], 20, 20).map((p) => boxKey(p.tile)));
+  assert.strictEqual(filters.length, planned.size * 7);
+  for (const r of filters) {
+    assert.ok(planned.has(boxKey(boxOf(r))), `a box nyc's grid does not hold: ${boxKey(boxOf(r))}`);
+    assert.ok(!harvester.tileIntersects(boxOf(r), ['philly', 'lehigh'], 80), 'a nyc run asked about PA');
+  }
+  const nyc = summary.byCity.nyc;
+  assert.deepStrictEqual([nyc.state, nyc.tiles, nyc.requests, nyc.results, nyc.venues, nyc.newPlanned, nyc.rowsPlanned],
+    ['done', planned.size, planned.size * 7, 3 * 7, 3, 3, 3 * 168]);
+  assert.match(out, new RegExp(`nyc: ${planned.size} tiles \\(${planned.size} leaves\\), ${planned.size * 7} requests, 21 results`));
+  assert.match(out, /BY CITY \(dry run/);
+  assert.match(out, new RegExp(`\\n  nyc +${planned.size} +${planned.size * 7} +21 +3 +3 +0 +0 +504\\n`));
+  assert.deepStrictEqual(await snapshot(), before, 'the dry run wrote');
+});
+
+test('--city=all asks every training city around its own centroid, and nothing near a refused one', async () => {
+  const fake = fakeBestTime([]);
+  const { summary, out } = await runHarvest(['--city=all', '--days=0'], fake);
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  const planned = harvester.planTiles(harvester.ALL_CITIES, 20, 20);
+  const boxes = fake.requests.filter((r) => r.path === '/api/v1/venues/filter').map(boxOf);
+  assert.deepStrictEqual(boxes.map(boxKey), planned.map((p) => boxKey(p.tile)), 'city by city, each on its own grid');
+  for (const p of planned) assert.ok(harvester.tileIntersects(p.tile, [p.city], 20), `${p.city}: a box off its circle`);
+  for (const b of boxes) assert.ok(!harvester.tileIntersects(b, Object.keys(harvester.REFUSED_CITIES), 80), 'a refused city was asked about');
+  assert.deepStrictEqual(Object.keys(summary.byCity), harvester.ALL_CITIES);
+  assert.ok(harvester.ALL_CITIES.every((c) => summary.byCity[c].state === 'done' && summary.byCity[c].tiles > 0));
+  assert.match(out, new RegExp(`${planned.length} tiles of about 20 km cover nyc \\+ la \\+ chicago`));
+  assert.match(out, /\n  toronto +\d+ tiles, at least \d+ requests/);
+  assert.match(out, /Nothing to write: exiting nonzero/);
+});
+
+test('--new-only writes nothing for a venue already held, and a new one gets its own city and zone', async () => {
+  // London, so the new row's timezone is not the default New York one.
+  const pad = (i) => String(i).padStart(3, '0');
+  const LAXIS = Array.from({ length: 24 }, (_, i) => fx(
+    `ven_lon_axis_${pad(i)}`, 51.4900 + i * 0.001, -0.1500, 'BAR', `ChIJharvestLonAxis${pad(i)}`, 400 + i * 3
+  ));
+  const L = {
+    knownBt: fx('ven_lon_known_bt', 51.5150, -0.1000, 'BAR', 'ChIJharvestLonKnownB1', 11),
+    knownPlace: fx('ven_lon_known_place', 51.5160, -0.0900, 'RESTAURANT', 'ChIJharvestLonKnownP1', 21),
+    nearDup: fx('ven_lon_near_dup', 51.50695, -0.19460, 'BAR', 'ChIJharvestLonNearNw1', 31, { name: 'Churchill Arms London' }),
+    fresh: fx('ven_lon_new', 51.5200, -0.0800, 'CAFE', 'ChIJharvestLonNewCaf1', 41, { name: 'Lantern Coffee' }),
+  };
+  const london = { city: 'london', tz: 'Europe/London' };
+  for (const [i, v] of LAXIS.entries()) {
+    await insertVenue(`lonAxis${i}`, v.placeId, v.venueId, 'bar', { ...london, lat: v.lat, lng: v.lng });
+    await storeWeek(seeded[`lonAxis${i}`], v);
+  }
+  await insertVenue('lonKnownBt', 'ChIJharvestLonKnownB1', 'ven_lon_known_bt', 'bar', { ...london, lat: 51.5150, lng: -0.1000 });
+  await insertVenue('lonKnownPlace', 'ChIJharvestLonKnownP1', null, 'restaurant', { ...london, lat: 51.5160, lng: -0.0900 });
+  await insertVenue('lonNearRow', 'ChIJharvestLonNearRw1', null, 'bar',
+    { ...london, name: 'The Churchill Arms', lat: 51.50680, lng: -0.19450 });
+  // A stored Tuesday 20:00 the harvest would read as 49: it must stay 99.
+  await pool.query(
+    `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                   busyness_pct, besttime_epoch, events_observed, events_unavailable_reason)
+     VALUES ($1, 'weekly', 'venue_local', 2, 20, 'bar', 99, 1786000000, false, 'no_observation_date')`,
+    [seeded.lonKnownBt]
+  );
+  const fixture = [...LAXIS, ...Object.values(L)];
+  const knownIds = [...LAXIS.map((_, i) => seeded[`lonAxis${i}`]), seeded.lonKnownBt, seeded.lonKnownPlace, seeded.lonNearRow];
+  const held = async () => {
+    const { rows: venues } = await pool.query('SELECT *, xmin::text AS xm FROM ml_venues WHERE id = ANY($1) ORDER BY id', [knownIds]);
+    const { rows: training } = await pool.query(
+      'SELECT *, xmin::text AS xm FROM ml_training_data WHERE venue_id = ANY($1) ORDER BY id', [knownIds]
+    );
+    return { venues, training };
+  };
+  const heldBefore = await held();
+  assert.strictEqual(heldBefore.training.length, 24 * 168 + 1);
+
+  const dry = await runHarvest(['--city=london', '--new-only'], fakeBestTime(fixture));
+  assert.strictEqual(dry.summary.exitCode, 0, dry.summary.abortReason);
+  assert.deepStrictEqual(dry.summary.plan, { known_bt: 25, known_place: 1, known_near: 1, new: 1 });
+  assert.strictEqual(dry.summary.knownSkipped, 27);
+  assert.strictEqual(dry.summary.rowsPlanned, 168, 'only the new venue\'s week is planned');
+  assert.match(dry.out, /NEW VENUES ONLY/);
+  assert.match(dry.out, /--new-only: 27 known venues skipped \(25 by BestTime id, 1 by Google place id, 1 as near-duplicates\)/);
+  assert.match(dry.out, /Would write 168 weekly rows for 1 venues and add 1 ml_venues rows .* 27 known venues skipped \(--new-only\)\./);
+
+  const { summary, out } = await runHarvest(['--city=london', '--new-only', '--commit'], fakeBestTime(fixture));
+  assertNoKey(out);
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.strictEqual(summary.exitCode, 0);
+  // The proof read the 24 known weeks it writes nothing to.
+  assert.strictEqual(summary.axis.venues, 24);
+  assert.strictEqual(summary.axisVerdict.pass, true, summary.axisVerdict.reason);
+  assert.deepStrictEqual([summary.venuesWritten, summary.venuesInserted, summary.rowsWritten, summary.rowsRefreshed],
+    [1, 1, 168, 0]);
+  assert.strictEqual(summary.knownSkipped, 27);
+  const lon = summary.byCity.london;
+  assert.deepStrictEqual([lon.newWritten, lon.knownWritten, lon.knownSkipped, lon.rowsWritten], [1, 0, 27, 168]);
+  assert.match(out, /\n  london +\d+ +\d+ +\d+ +28 +1 +0 +27 +168\n/);
+
+  // Not a byte of what was held moved: same rows, same versions.
+  assert.deepStrictEqual(await held(), heldBefore, 'a known venue or one of its weekly rows was written');
+  const { rows: stale } = await pool.query(
+    'SELECT busyness_pct FROM ml_training_data WHERE venue_id = $1 AND day_of_week = 2 AND hour = 20', [seeded.lonKnownBt]
+  );
+  assert.deepStrictEqual(stale.map((r) => r.busyness_pct), [99]);
+  const { rows: twins } = await pool.query(
+    "SELECT 1 FROM ml_venues WHERE besttime_venue_id IN ('ven_lon_known_place', 'ven_lon_near_dup') OR google_place_id = 'ChIJharvestLonNearNw1'"
+  );
+  assert.deepStrictEqual(twins, [], 'a known venue was given a second identity');
+
+  const { rows: [fresh] } = await pool.query("SELECT * FROM ml_venues WHERE besttime_venue_id = 'ven_lon_new'");
+  assert.deepStrictEqual(
+    [fresh.google_place_id, fresh.city, fresh.timezone, fresh.venue_category, fresh.is_active, fresh.besttime_status],
+    ['ChIJharvestLonNewCaf1', 'london', 'Europe/London', 'cafe', false, harvester.HARVEST_STATUS]
+  );
+  const { rows } = await pool.query(
+    'SELECT day_of_week, hour, busyness_pct, collection_mode, hour_axis FROM ml_training_data WHERE venue_id = $1', [fresh.id]
+  );
+  assert.strictEqual(rows.length, 168);
+  const expected = new Map();
+  for (let d = 0; d < 7; d++) {
+    for (let s = 0; s < 24; s++) {
+      const local = bestTimeSlotToLocal(s, bestTimeDayToJsDay(d));
+      expected.set(`${local.dayOfWeek}:${local.hour}`, L.fresh.week[d][s]);
+    }
+  }
+  for (const r of rows) {
+    assert.strictEqual(r.busyness_pct, expected.get(`${r.day_of_week}:${r.hour}`), `day ${r.day_of_week} hour ${r.hour}`);
+    assert.deepStrictEqual([r.collection_mode, r.hour_axis], ['weekly', 'venue_local']);
+  }
+});
+
+test('--new-only still refuses a --commit the axis proof fails', async () => {
+  const before = await snapshot();
+  const { summary, out } = await runHarvest(['--commit', '--new-only', '--city=philly'], fakeBestTime(SHIFTED));
+  assert.strictEqual(summary.aborted, true);
+  assert.strictEqual(summary.exitCode, 1);
+  assert.strictEqual(summary.axis.bestShift, 6);
+  assert.match(out, /ABORTED: REFUSED: the axis proof failed/);
+  assert.deepStrictEqual(await snapshot(), before, 'a refused --new-only commit wrote');
+});
+
+test('the result budget stops the run before it could pass, and keeps every written week whole', async () => {
+  // Philly's boxes in run order. The 24 known axis venues sit in an early box;
+  // three clusters of ten new venues go in three later ones, A and B to be
+  // finished, and C to be cut short by the budget two days into its week.
+  const order = harvester.planTiles(['philly', 'lehigh'], 20, 20).filter((p) => p.city === 'philly').map((p) => p.tile);
+  const lastAxis = Math.max(...order.map((t, i) => (AXIS.some((v) => inBox(t, v)) ? i : -1)));
+  const c0 = harvester.CENTROIDS.philly;
+  const usable = order.slice(lastAxis + 1).filter((t) => t.n - t.s >= 40 && t.e - t.w >= 40);
+  assert.ok(usable.length >= 3, 'the philly grid has three boxes after the axis venues');
+  const clusterIn = (tag, t) => {
+    // The point of the box nearest philly's centroid, 15 thousandths inside.
+    const lat = Math.min(Math.max(c0.lat, (t.s + 15) / 1000), (t.n - 15) / 1000);
+    const lng = Math.min(Math.max(c0.lon, (t.w + 15) / 1000), (t.e - 15) / 1000);
+    return Array.from({ length: 10 }, (_, i) => fx(
+      `ven_budget_${tag}_${i}`, lat + (i - 5) * 0.001, lng, 'BAR', `ChIJharvestBudget${tag}${String(i).padStart(3, '0')}`,
+      7 + i, { name: `Budget ${tag} Bar ${i}` }
+    ));
+  };
+  const [A, B, C] = [clusterIn('A', usable[0]), clusterIn('B', usable[1]), clusterIn('C', usable[2])];
+  const fixture = [...AXIS, ...A, ...B, ...C];
+  for (const v of [...A, ...B, ...C]) assert.ok(nearestPaCity(v.lat, v.lng).km < 19, 'a cluster venue sits past the radius');
+  const cAt = order.indexOf(usable[2]);
+  // A week of every box before C, then C's first two days: the third would
+  // need a page the budget no longer has room for.
+  const before = 7 * order.slice(0, cAt).reduce((n, t) => n + fixture.filter((v) => inBox(t, v)).length, 0);
+  const budget = before + 100 + 15;
+
+  const { summary, out } = await runHarvest(
+    ['--city=philly,lehigh', '--new-only', '--commit', `--result-budget=${budget}`], fakeBestTime(fixture)
+  );
+  assertNoKey(out);
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.strictEqual(summary.exitCode, 0, 'a budget stop with whole weeks written is a clean run');
+  assert.deepStrictEqual(summary.budget, {
+    limit: budget, used: before + 20, stopped: true, cutShort: 'philly', unfinished: ['philly', 'lehigh'],
+  });
+  assert.ok(summary.stats.venuesReturned <= budget);
+  assert.strictEqual(summary.venuesFound, 24 + 20, "C's venues were dropped with its box");
+  assert.strictEqual(summary.incompleteWeeks, 0);
+  assert.strictEqual(summary.venuesInserted, 20);
+  assert.strictEqual(summary.rowsWritten, 20 * 168);
+  assert.strictEqual(summary.knownSkipped, 24);
+  assert.deepStrictEqual([summary.byCity.philly.state, summary.byCity.lehigh.state], ['stopped', 'not reached']);
+  assert.deepStrictEqual([summary.byCity.philly.results, summary.byCity.lehigh.results, summary.byCity.lehigh.requests],
+    [before + 20, 0, 0]);
+  assert.match(out, new RegExp(`RESULT BUDGET: stopped in philly with ${before + 20} of ${budget} results used`));
+  assert.match(out, /To continue, with what the month has left: --city=philly,lehigh/);
+  assert.match(out, /\n  philly \(stopped\) /);
+  assert.match(out, /\n  lehigh \(not reached\) /);
+
+  const { rows } = await pool.query(
+    `SELECT v.besttime_venue_id AS id, COUNT(t.id)::int AS n FROM ml_venues v LEFT JOIN ml_training_data t ON t.venue_id = v.id
+      WHERE v.besttime_venue_id LIKE 'ven_budget_%' GROUP BY 1 ORDER BY 1`
+  );
+  assert.deepStrictEqual(rows.map((r) => r.id), [...A, ...B].map((v) => v.venueId).sort());
+  assert.ok(rows.every((r) => r.n === 168), 'a venue was written with part of its week');
 });
 
 // Last, over every request every run above made.

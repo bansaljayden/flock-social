@@ -4,14 +4,18 @@
 // Run (from backend/):
 //   node scripts/ml/harvestVenueFilter.js --city=philly            dry run
 //   node scripts/ml/harvestVenueFilter.js --city=philly --commit   writes, once the dry run's axis proof passes
-// One market at a time; --radius-km (default 20) sets how far it reaches.
+//   node scripts/ml/harvestVenueFilter.js --city=all --new-only    every training city, new venues only (dry run)
+// --city takes CITIES keys, comma separated, or all (EVERY TRAINING CITY
+// below); --radius-km (default 20) sets how far each reaches; --result-budget
+// (default 60000) caps the results one run may be billed for.
 //
-// WHY THIS EXISTS. The plan (Pro Package 100) meters exactly one thing: 100
-// NEW venue admissions a calendar month. Forecasts by id, live calls, query
-// calls and venue-filter calls on the package are unlimited. The Venue Filter
-// (GET /api/v1/venues/filter) answers with every venue BestTime holds a
-// forecast for inside a box, WITH that venue's 24-slot curve for the day asked,
-// and it bills query credits (one per ten venues returned), not admissions.
+// WHY THIS EXISTS. The plan (Pro Package 100) meters 100 NEW venue admissions
+// a calendar month, and 100,000 Venue Filter results a calendar month (THE
+// RESULT BUDGET below). Forecasts by id and live calls are unlimited. The
+// Venue Filter (GET /api/v1/venues/filter) answers with every venue BestTime
+// holds a forecast for inside a box, WITH that venue's 24-slot curve for the
+// day asked, and it bills query credits (one per ten venues returned), not
+// admissions.
 // Measured 2026-09-28: 50 central-Philadelphia venues with full-day curves for
 // "credits_charged: 5". So seven filter passes over a market, one per weekday,
 // are a full typical week for every venue BestTime knows there, and none of
@@ -91,8 +95,60 @@
 //      the venue is skipped, and the summary says how many were. Two new
 //      venues within NEAR_DUP_METERS of each other with similar names are one
 //      venue: the lower BestTime id is kept.
-// Every venue is also placed by nearestPaCity, addDemandVenues' own rule: the
-// nearest PA centroid within MAX_KM, or outside both markets and skipped.
+// Every venue is also placed (WHERE A VENUE BELONGS, below), and one placed in
+// no market, or in a city this run did not ask for, is skipped.
+//
+// EVERY TRAINING CITY. --city takes any key of config.js CITIES, and --city=all
+// means all of them but four, which are refused by name (REFUSED_CITIES):
+//   miami, tokyo, barcelona  train/export_training_data.js HOLDOUT_CITIES, the
+//                            whole-city test set a retrain is scored on. The
+//                            harvest leaves what it measures alone.
+//   beijing                  Google has no usable data in mainland China, so no
+//                            venue there has a place id the app could serve.
+// Each city is tiled around its own centroid (CITIES; philly and lehigh from
+// PA_CITIES, the market rule's table, which agrees to the last digit today), so
+// a PA re-run asks exactly the questions it asked before. Cities within MAX_KM
+// of each other share one grid, as philly and lehigh (77 km apart) always have;
+// no other two CITIES are closer than 124 km, and one grid across an ocean
+// would walk the planet and take its longitude step at the wrong latitude. A
+// shared grid's boxes are counted against the nearest of its cities.
+//
+// WHERE A VENUE BELONGS (placeVenue). The PA market rule first, unchanged:
+// addDemandVenues.nearestPaCity puts a venue within MAX_KM of philly or lehigh
+// in the nearer of the two, in every run, so the two ways a venue enters the
+// corpus still agree about where philly ends. Anywhere else, the nearest
+// centroid within MAX_KM among the cities the run asked for and the refused
+// four (nearestMarket, the same loop): a venue nearer a holdout city than any
+// city asked for is that city's, and skipped, whatever --radius-km reaches. A
+// new row takes the city it was placed in and that city's timezone.
+//
+// --new-only WRITES NOTHING FOR A VENUE THE CORPUS ALREADY HOLDS: no weekly
+// upsert and no ml_venues update for one matched by BestTime id, by Google
+// place id or as a near-duplicate (identity rules 1 to 4). Only a venue new to
+// ml_venues gets its row and its weekly rows. Why: the November retrain exports
+// the weekly rows of the venues it knows around 2026-11-27..29 and its research
+// plan is final, so those curves must not move before the export; a new venue
+// adds breadth without touching anything the plan measured (and is
+// 'harvested', which the export leaves out unless asked; NEW ROWS ARE INACTIVE
+// below). The axis proof still reads every venue it can compare, because it
+// writes nothing, and a --commit still refuses when it fails. The summary
+// counts the known venues skipped.
+//
+// THE RESULT BUDGET. The plan allows 100,000 Venue Filter results a calendar
+// month (UTC), billed at one query credit per ten venues returned; a full week
+// of philly alone was about 32,000 (3,193 credits, 2026-09-28). The month's
+// other runs count against the same 100,000, so --result-budget (default
+// 60,000) is per run: give a second run in a month what is left. A page holds
+// at most --page-size venues, so the run stops before any request that could
+// take its results past the budget, and says how many it used, in all and by
+// city. Stopping must not leave a venue with part of a week, so the harvest
+// goes leaf first: a box's first day finds its leaves (splitting as below),
+// and each leaf asks its other days before the next leaf starts. A leaf's
+// answers join the run only once its last day is in, and a split box's own
+// first-day answer only once every leaf under it is; when the budget stops the
+// run, the leaf in progress and its box are dropped whole, and the summary
+// names the cities left unfinished and the --city= that continues them. These
+// are the questions the day-by-day order asked, in a different order.
 //
 // NEW ROWS ARE INACTIVE, ON PURPOSE. collectRealtime.js sweeps every active PA
 // row with a BestTime id, hourly, and REFUSES (throws, every hour) once that
@@ -141,7 +197,8 @@
 //
 // EXIT CODE. Nonzero on any abort, on a --commit that wrote no row or failed a
 // write, and on a dry run that found nothing to write. An empty run is a
-// failure to report, never a success (collectRealtime's lesson).
+// failure to report, never a success (collectRealtime's lesson). A run the
+// result budget stopped is not an abort: it is judged by what it wrote.
 //
 // BESTTIME DELETES A STORED FORECAST AFTER 31 DAYS, and the filter only returns
 // venues whose forecast still exists. Run this at least monthly; see RETRAIN.md,
@@ -151,7 +208,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
-const { bestTimeDayToJsDay, sleep: realSleep, withCorpusWriteLock } = require('./config');
+const { CITIES, bestTimeDayToJsDay, sleep: realSleep, withCorpusWriteLock } = require('./config');
 // IMPORTED, NEVER REIMPLEMENTED: the slot -> (venue-local day, hour) transform
 // and the axis literal live in collectWeekly.js, pinned against migration 023's
 // SQL by __tests__/mlClockAxisBackfill.test.js.
@@ -160,7 +217,11 @@ const {
   HOUR_AXIS_VENUE_LOCAL, WEEKLY_SLOT_INDEX,
 } = require('./collectWeekly');
 const { requireVenueIdIndex } = require('./discoverBestTime');
-const { PA_CITIES, MAX_KM, kmBetween, nearestPaCity } = require('./addDemandVenues');
+const {
+  PA_CITIES, MAX_KM, kmBetween, nearestMarket, nearestPaCity,
+} = require('./addDemandVenues');
+// The holdout list itself, not a copy: a city added to it is refused here too.
+const { HOLDOUT_CITIES } = require('./train/export_training_data');
 const { classifyHttpFailure, fetchJsonWithTimeout, NETWORK_ERR_RE } = require('./bestTimeService');
 const { labelFor, describeError, describeDbError, safeText } = require('./logSafe');
 const besttime = require('../../services/besttimeAccount');
@@ -208,6 +269,26 @@ const KM_PER_DEG_LAT = 111.32;
 // corpus's own footprint. MAX_KM, the market rule's 80, stays available on
 // purpose with --radius-km=80.
 const DEFAULT_RADIUS_KM = 20;
+
+// THE RESULT BUDGET (see the header): the month's allowance, and the share of
+// it one run may spend unless told otherwise.
+const MONTHLY_RESULT_ALLOWANCE = 100000;
+const DEFAULT_RESULT_BUDGET = 60000;
+
+// The cities a run refuses by name, and why (EVERY TRAINING CITY).
+const REFUSED_CITIES = Object.freeze({
+  ...Object.fromEntries(HOLDOUT_CITIES.map((c) => [c, `${c} is a holdout city (train/export_training_data.js `
+    + 'HOLDOUT_CITIES): its rows are the test set a retrain is scored on, and the harvest leaves them alone.'])),
+  beijing: 'beijing is not harvested: Google has no usable data in mainland China, so no venue there has a '
+    + 'Google place id the app could serve it under.',
+});
+
+// Every city's centroid and timezone. PA_CITIES wins for philly and lehigh, so
+// a PA run asks what it always asked even if the two tables ever drift apart.
+const CENTROIDS = Object.freeze({ ...CITIES, ...PA_CITIES });
+
+// --city=all: every CITIES key but the refused ones, in config.js order.
+const ALL_CITIES = Object.freeze(Object.keys(CITIES).filter((c) => !REFUSED_CITIES[c]));
 
 // Two listings of one venue: closer than this, with names that normalise to
 // nearly the same string. 40 m is inside one building's frontage on a city
@@ -339,22 +420,34 @@ function intArg(argv, name, fallback, { min = 1, max = Infinity } = {}) {
   return { value: Number(raw) };
 }
 
+function parseCities(argv) {
+  const cityArg = argv.find((a) => a.startsWith('--city='));
+  if (!cityArg) return { cities: Object.keys(PA_CITIES) };
+  const names = [...new Set(cityArg.slice('--city='.length).split(',').map((s) => s.trim()).filter(Boolean))];
+  if (names.includes('all')) {
+    return names.length === 1 ? { cities: [...ALL_CITIES] } : { error: '--city=all stands alone; name cities, or all.' };
+  }
+  const refused = names.find((c) => REFUSED_CITIES[c]);
+  if (refused) return { error: `--city=${refused} refused: ${REFUSED_CITIES[refused]}` };
+  const unknownCity = names.find((c) => !CENTROIDS[c]);
+  if (names.length === 0 || unknownCity) {
+    return { error: `--city takes scripts/ml/config.js CITIES keys, comma separated, or all${unknownCity ? `; got "${unknownCity}"` : ''}.` };
+  }
+  return { cities: names };
+}
+
 function parseArgs(argv) {
-  const known = ['--commit', '--all-types', '--no-place-id'];
-  const valued = ['--city=', '--days=', '--tile-km=', '--page-size=', '--result-cap=', '--max-requests=', '--radius-km='];
+  const known = ['--commit', '--all-types', '--no-place-id', '--new-only'];
+  const valued = ['--city=', '--days=', '--tile-km=', '--page-size=', '--result-cap=', '--max-requests=', '--radius-km=',
+    '--result-budget='];
   for (const a of argv.slice(2)) {
     if (!known.includes(a) && !valued.some((p) => a.startsWith(p))) {
       return { error: `Unknown argument "${a}".` };
     }
   }
-  const cityArg = argv.find((a) => a.startsWith('--city='));
-  const cities = cityArg
-    ? [...new Set(cityArg.slice('--city='.length).split(',').map((s) => s.trim()).filter(Boolean))]
-    : Object.keys(PA_CITIES);
-  const unknownCity = cities.find((c) => !PA_CITIES[c]);
-  if (cities.length === 0 || unknownCity) {
-    return { error: `--city must name ${Object.keys(PA_CITIES).join(' and/or ')}${unknownCity ? `, got "${unknownCity}"` : ''}.` };
-  }
+  const parsedCities = parseCities(argv);
+  if (parsedCities.error) return { error: parsedCities.error };
+  const { cities } = parsedCities;
   const daysArg = argv.find((a) => a.startsWith('--days='));
   let days = BT_DAYS;
   if (daysArg) {
@@ -371,14 +464,19 @@ function parseArgs(argv) {
   // Past MAX_KM the market rule places nothing, so a wider circle only spends
   // requests on venues that are skipped.
   const radiusKm = intArg(argv, 'radius-km', DEFAULT_RADIUS_KM, { min: 1, max: MAX_KM });
-  for (const r of [tileKm, resultCap, pageSize, maxRequests, radiusKm]) if (r.error) return { error: r.error };
+  const resultBudget = intArg(argv, 'result-budget', DEFAULT_RESULT_BUDGET, { min: 1, max: MONTHLY_RESULT_ALLOWANCE });
+  for (const r of [tileKm, resultCap, pageSize, maxRequests, radiusKm, resultBudget]) if (r.error) return { error: r.error };
   if (pageSize.value > resultCap.value) {
     return { error: `--page-size (${pageSize.value}) cannot exceed --result-cap (${resultCap.value}).` };
+  }
+  if (pageSize.value > resultBudget.value) {
+    return { error: `--result-budget (${resultBudget.value}) is smaller than one page (--page-size=${pageSize.value}).` };
   }
   return {
     commit: argv.includes('--commit'),
     allTypes: argv.includes('--all-types'),
     askPlaceId: !argv.includes('--no-place-id'),
+    newOnly: argv.includes('--new-only'),
     cities,
     days,
     tileKm: tileKm.value,
@@ -386,6 +484,7 @@ function parseArgs(argv) {
     resultCap: resultCap.value,
     pageSize: pageSize.value,
     maxRequests: maxRequests.value,
+    resultBudget: resultBudget.value,
   };
 }
 
@@ -394,20 +493,56 @@ function parseArgs(argv) {
 // ---------------------------------------------------------------------------
 const kmPerDegLng = (lat) => KM_PER_DEG_LAT * Math.cos((lat * Math.PI) / 180);
 
+// The distance from a city's centroid to the nearest point of the box.
+function kmToTile(tile, key) {
+  const c = CENTROIDS[key];
+  const lat = Math.min(Math.max(c.lat, tile.s / 1000), tile.n / 1000);
+  const lon = Math.min(Math.max(c.lon, tile.w / 1000), tile.e / 1000);
+  return kmBetween(c.lat, c.lon, lat, lon);
+}
+
 // True when any point of the box is within radiusKm of a centroid of `cities`.
 function tileIntersects(tile, cities, radiusKm = DEFAULT_RADIUS_KM) {
-  return cities.some((key) => {
-    const c = PA_CITIES[key];
-    const lat = Math.min(Math.max(c.lat, tile.s / 1000), tile.n / 1000);
-    const lon = Math.min(Math.max(c.lon, tile.w / 1000), tile.e / 1000);
-    return kmBetween(c.lat, c.lon, lat, lon) <= radiusKm;
-  });
+  return cities.some((key) => kmToTile(tile, key) <= radiusKm);
+}
+
+// One grid for each set of cities whose centroids lie within MAX_KM of one
+// another (see EVERY TRAINING CITY), in the order the cities were asked for.
+function gridGroups(cities) {
+  const groups = [];
+  for (const key of cities) {
+    const c = CENTROIDS[key];
+    const near = groups.filter((g) => g.some((k) => kmBetween(c.lat, c.lon, CENTROIDS[k].lat, CENTROIDS[k].lon) <= MAX_KM));
+    const merged = [...near.flat(), key];
+    for (const g of near) groups.splice(groups.indexOf(g), 1);
+    groups.push(merged);
+  }
+  return groups.map((g) => cities.filter((k) => g.includes(k)))
+    .sort((a, b) => cities.indexOf(a[0]) - cities.indexOf(b[0]));
+}
+
+// The run's first-pass boxes, city by city in the order asked, each box on
+// its grid's own order: [{ city, area, tile }], where `area` is the grid's
+// cities (a split keeps the quarters that touch any of them, as it always
+// has) and `city` the nearest of them, which the box's requests and results
+// are counted against. Pure, so a run's size can be read off it without a
+// request; the run prints that sizing before its first one.
+function planTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM) {
+  const out = [];
+  for (const area of gridGroups(cities)) {
+    for (const tile of buildTiles(area, tileKm, radiusKm)) {
+      let city = area[0];
+      for (const key of area) if (kmToTile(tile, key) < kmToTile(tile, city)) city = key;
+      out.push({ city, area, tile });
+    }
+  }
+  return cities.flatMap((key) => out.filter((p) => p.city === key));
 }
 
 function buildTiles(cities, tileKm, radiusKm = DEFAULT_RADIUS_KM) {
   let s = Infinity; let n = -Infinity; let w = Infinity; let e = -Infinity;
   for (const key of cities) {
-    const c = PA_CITIES[key];
+    const c = CENTROIDS[key];
     const dLat = radiusKm / KM_PER_DEG_LAT;
     const dLng = radiusKm / kmPerDegLng(c.lat);
     s = Math.min(s, Math.floor((c.lat - dLat) * 1000));
@@ -778,6 +913,13 @@ function abortError(message) {
   return err;
 }
 
+// Not an abort: the run keeps every week already whole and writes it.
+function budgetStop(message) {
+  const err = new Error(message);
+  err.budgetStop = true;
+  return err;
+}
+
 function makePacer(sleep, intervalMs) {
   let last = -Infinity;
   return async () => {
@@ -813,12 +955,19 @@ async function requestPage(ctx, q) {
   const url = buildFilterUrl(ctx.key, q, ctx.opts);
   assertAllowedRequest(url, 'GET');
   for (let attempt = 0; ; attempt++) {
+    // A page holds at most --page-size venues, so this is the last moment the
+    // budget can be kept rather than passed (THE RESULT BUDGET).
+    if (ctx.stats.venuesReturned + ctx.opts.pageSize > ctx.opts.resultBudget) {
+      throw budgetStop(`the next page could take the run past --result-budget=${ctx.opts.resultBudget} `
+        + `(${ctx.stats.venuesReturned} results used).`);
+    }
     if (ctx.stats.requests >= ctx.opts.maxRequests) {
       throw abortError(`REFUSED: the request ceiling (--max-requests=${ctx.opts.maxRequests}) was reached. `
         + 'Raise it on purpose, or narrow the run with --city= or --days=.');
     }
     await ctx.pace();
     ctx.stats.requests++;
+    if (ctx.city) ctx.city.requests++;
     let response;
     let data;
     try {
@@ -897,6 +1046,10 @@ async function fetchTile(ctx, tile, day) {
     if (res.credits !== null) ctx.stats.creditsReported += res.credits;
     // BestTime bills about one query credit per ten venues returned.
     ctx.stats.creditsEstimated += Math.max(1, Math.ceil(n / 10));
+    if (ctx.city) {
+      ctx.city.results += n;
+      ctx.city.credits += Math.max(1, Math.ceil(n / 10));
+    }
     venues.push(...res.venues);
     // venues_n is documented as "the total number of found venues", and the
     // documentation's own example has it equal to the page. It is read as the
@@ -914,8 +1067,12 @@ async function fetchTile(ctx, tile, day) {
 }
 
 // One weekday across the tiles. Returns the leaves (boxes that answered under
-// the cap, or could not be split further) so later days start from them.
-async function harvestDay(ctx, tiles, day) {
+// the cap, or could not be split further) so later days start from them. With
+// onLeaf, each leaf is handed over with its own answers the moment it is
+// found, and the queue waits while onLeaf asks the leaf's other days: the
+// leaf-first order of THE RESULT BUDGET. The checks below then judge the day
+// per call, which for the later days is one leaf's box.
+async function harvestDay(ctx, tiles, day, onLeaf = null) {
   const queue = tiles.slice();
   const leaves = [];
   const byVenue = new Map();
@@ -924,16 +1081,19 @@ async function harvestDay(ctx, tiles, day) {
   while (queue.length > 0) {
     const tile = queue.shift();
     const res = await fetchTile(ctx, tile, day);
+    const own = new Map();
     for (const raw of res.venues) {
       const v = readFilterVenue(raw);
       if (!v) { ctx.stats.malformed++; continue; }
       if (v.dayInt === null) { unverifiable++; continue; }
       if (v.dayInt !== day) { mismatched++; continue; }
+      if (!own.has(v.venueId)) own.set(v.venueId, v);
       if (!byVenue.has(v.venueId)) byVenue.set(v.venueId, v);
     }
     if (res.saturated) {
       const kids = splitTile(tile);
-      const inside = kids ? kids.filter((k) => tileIntersects(k, ctx.opts.cities, ctx.opts.radiusKm)) : null;
+      const area = ctx.area || ctx.opts.cities;
+      const inside = kids ? kids.filter((k) => tileIntersects(k, area, ctx.opts.radiusKm)) : null;
       if (inside) {
         ctx.stats.splits++;
         console.log(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  reached the ${ctx.opts.resultCap} cap, split into ${inside.length}`);
@@ -946,6 +1106,7 @@ async function harvestDay(ctx, tiles, day) {
       console.log(`  ${BT_DAY_NAMES[day]}  ${tileLabel(tile)}  ${res.venues.length} venues (${res.pages} page${res.pages === 1 ? '' : 's'})`);
     }
     leaves.push(tile);
+    if (onLeaf) await onLeaf(tile, own);
   }
   // A record for another day is the filter ignoring day_int, and writing it
   // would file one weekday's curve under another. Refuse the whole day.
@@ -958,6 +1119,54 @@ async function harvestDay(ctx, tiles, day) {
   }
   if (unverifiable > 0) ctx.stats.unverifiable += unverifiable;
   return { leaves, byVenue };
+}
+
+// The run's venues, one answer per (venue, day): the first to arrive, as the
+// day-by-day order kept the first box's.
+function mergeDay(ctx, venues, day, answers) {
+  for (const v of answers.values()) {
+    let merged = venues.get(v.venueId);
+    if (!merged) {
+      merged = { ...v, days: new Map(), altDays: new Map(), answered: new Set() };
+      delete merged.hours;
+      delete merged.hoursAlt;
+      delete merged.curveField;
+      delete merged.dayInt;
+      venues.set(v.venueId, merged);
+    }
+    if (merged.answered.has(day)) continue;
+    merged.answered.add(day);
+    if (!merged.placeId && v.placeId) merged.placeId = v.placeId;
+    if (!merged.rawPlaceId && v.rawPlaceId) merged.rawPlaceId = v.rawPlaceId;
+    if (v.hours) merged.days.set(day, v.hours); else ctx.stats.malformed++;
+    if (v.curveField === 'day_raw_whole') ctx.stats.fromWhole++;
+    if (v.hours && v.hoursAlt) {
+      merged.altDays.set(day, v.hoursAlt);
+      if (v.hoursAlt.every((x, s) => x === v.hours[s])) ctx.stats.fieldsIdentical++; else ctx.stats.fieldsDiffer++;
+    } else if (v.hours) ctx.stats.fieldAltAbsent++;
+  }
+}
+
+// One first-pass box, leaf first (THE RESULT BUDGET). The first day asked
+// finds the box's leaves; each leaf asks the other days before the next leaf
+// is looked for, and its answers reach `venues` only once its last day is in.
+// The box's own first-day answers (a split box's, which its leaves repeat, and
+// a corner no kept quarter covers) follow once every leaf is in. A budget stop
+// thrown anywhere in here leaves `venues` holding whole leaves only.
+async function harvestBox(ctx, tile, venues) {
+  const [first, ...rest] = ctx.opts.days;
+  const { byVenue } = await harvestDay(ctx, [tile], first, async (leaf, own) => {
+    const week = [[first, own]];
+    let current = [leaf];
+    for (const day of rest) {
+      const res = await harvestDay(ctx, current, day);
+      current = res.leaves;
+      week.push([day, res.byVenue]);
+    }
+    ctx.city.leaves += current.length;
+    for (const [day, answers] of week) mergeDay(ctx, venues, day, answers);
+  });
+  mergeDay(ctx, venues, first, byVenue);
 }
 
 // ---------------------------------------------------------------------------
@@ -1041,10 +1250,27 @@ function placeIdAgreement(plan) {
   return out;
 }
 
+// The centroids a venue outside PA is placed among: the cities asked for and
+// the refused ones. Philly and lehigh are left to nearestPaCity, which
+// placeVenue asks first.
+function otherMarkets(cities) {
+  const keys = new Set([...cities, ...Object.keys(REFUSED_CITIES)].filter((k) => !PA_CITIES[k] && CENTROIDS[k]));
+  return Object.fromEntries([...keys].map((k) => [k, CENTROIDS[k]]));
+}
+
+// WHERE A VENUE BELONGS (see the header): { cityKey, km }, cityKey null when
+// no market is within MAX_KM. `markets` is otherMarkets(cities).
+function placeVenue(lat, lng, markets) {
+  const pa = nearestPaCity(lat, lng);
+  if (pa.cityKey) return pa;
+  const other = nearestMarket(lat, lng, markets);
+  return other.cityKey ? other : { cityKey: null, km: Math.min(pa.km, other.km) };
+}
+
 // Decides, for every harvested venue, which row its week belongs to, or why it
 // is skipped. Pure: the tests drive it without a database. `identities.nearby`
 // is every ml_venues row around the harvest (loadNearbyRows); without it rule 4
-// finds nothing.
+// finds nothing. `placed` counts the venues placed in each city asked for.
 function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM } = {}) {
   const plan = [];
   const skipped = {
@@ -1055,15 +1281,18 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
   const claimedPlaces = new Map(); // place id -> BestTime id that took it this run
   const claimedRows = new Set();
   const nearRows = nearIndex(identities.nearby || []);
+  const markets = otherMarkets(cities);
+  const placed = new Map();
   const rest = [];
   // Pass one: placement, and every venue this corpus already holds by its
   // BestTime id. Done first so the answer does not depend on the order
   // BestTime listed the venues in.
   for (const v of venues) {
     if (!Number.isFinite(v.lat) || !Number.isFinite(v.lng)) { skipped.noCoordinates++; continue; }
-    const where = nearestPaCity(v.lat, v.lng);
+    const where = placeVenue(v.lat, v.lng, markets);
     if (!where.cityKey) { skipped.outsideMarkets++; continue; }
     if (!cities.includes(where.cityKey)) { skipped.otherMarket++; continue; }
+    placed.set(where.cityKey, (placed.get(where.cityKey) || 0) + 1);
     const byBt = identities.byBtId.get(v.venueId);
     if (!byBt) { rest.push({ v, where }); continue; }
     plan.push({ kind: 'known_bt', venue: v, row: byBt, city: where.cityKey });
@@ -1141,7 +1370,7 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
     claimedPlaces.set(v.placeId, v.venueId);
     plan.push({ kind: 'new', venue: v, row: null, city: where.cityKey, category });
   }
-  return { plan, skipped };
+  return { plan, skipped, placed };
 }
 
 // ---------------------------------------------------------------------------
@@ -1286,7 +1515,7 @@ async function writeOne(pool, item, cells) {
          RETURNING *`,
         [
           v.placeId, v.venueId, v.name, v.address, item.city, v.lat, v.lng,
-          item.category, v.rating, v.reviews, PA_CITIES[item.city].tz, HARVEST_STATUS,
+          item.category, v.rating, v.reviews, CENTROIDS[item.city].tz, HARVEST_STATUS,
         ]
       );
       if (!rows[0]) return { status: 'claimed' };
@@ -1334,13 +1563,44 @@ function emptyStats() {
   };
 }
 
+// One city's line of the BY CITY table. `state`: planned, done, stopped (the
+// result budget ended the run inside it) or not reached.
+function emptyCityStats(tiles) {
+  return {
+    state: 'planned', tiles, leaves: 0, requests: 0, results: 0, credits: 0, venues: 0,
+    newPlanned: 0, knownPlanned: 0, knownSkipped: 0, rowsPlanned: 0,
+    newWritten: 0, knownWritten: 0, rowsWritten: 0,
+  };
+}
+
+const duration = (requests) => {
+  const min = Math.ceil((requests * START_INTERVAL_MS) / 60000);
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+};
+
+function formatCityTable(summary, opts) {
+  const head = ['city', 'tiles', 'requests', 'results', 'venues', 'new', 'known', 'known skipped', 'weekly rows'];
+  const pick = (c) => (opts.commit ? [c.newWritten, c.knownWritten, c.knownSkipped, c.rowsWritten]
+    : [c.newPlanned, c.knownPlanned, c.knownSkipped, c.rowsPlanned]);
+  const rows = opts.cities.map((city) => {
+    const c = summary.byCity[city];
+    const label = c.state === 'stopped' || c.state === 'not reached' ? `${city} (${c.state})` : city;
+    return [label, c.tiles, c.requests, c.results, c.venues, ...pick(c)];
+  });
+  if (rows.length > 1) rows.push(['all', ...rows.reduce((sum, r) => sum.map((x, i) => x + r[i + 1]), new Array(8).fill(0))]);
+  const width = head.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
+  const line = (r) => `  ${String(r[0]).padEnd(width[0])}${r.slice(1).map((x, i) => `  ${String(x).padStart(width[i + 1])}`).join('')}`;
+  return [line(head), ...rows.map(line)];
+}
+
 async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   const summary = {
-    exitCode: 1, aborted: false, abortReason: null, commit: false,
+    exitCode: 1, aborted: false, abortReason: null, commit: false, newOnly: false,
     tiles: 0, leaves: 0, venuesFound: 0, plan: { known_bt: 0, known_place: 0, known_near: 0, new: 0 },
     skipped: null, rowsPlanned: 0, rowsWritten: 0, rowsInserted: 0, rowsRefreshed: 0,
     venuesInserted: 0, venuesWritten: 0, vanished: 0, claimed: 0, writeFailures: 0,
-    incompleteWeeks: 0, stats: emptyStats(),
+    incompleteWeeks: 0, knownSkipped: 0, stats: emptyStats(), byCity: {},
+    budget: { limit: null, used: 0, stopped: false, cutShort: null, unfinished: [] },
     axis: null, axisAlt: null, axisVerdict: null, placeIds: null, nearDuplicates: null, peakHours: null,
   };
 
@@ -1352,6 +1612,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     return summary;
   }
   summary.commit = opts.commit;
+  summary.newOnly = opts.newOnly;
+  summary.budget.limit = opts.resultBudget;
   const key = besttime.configuredKey();
   if (!key) {
     summary.aborted = true;
@@ -1363,7 +1625,35 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   console.log(`${TAG} ${opts.commit ? 'COMMIT' : 'DRY RUN (nothing is written; --commit writes)'}: `
     + `${opts.cities.join(' + ')}, days ${opts.days.map((d) => BT_DAY_NAMES[d]).join(',')}, `
     + `${opts.allTypes ? 'all venue types' : `${Object.keys(TYPE_TO_CATEGORY).length} mapped venue types`}, `
-    + `within ${opts.radiusKm} km, cap ${opts.resultCap}, page ${opts.pageSize}.`);
+    + `within ${opts.radiusKm} km, cap ${opts.resultCap}, page ${opts.pageSize}, result budget ${opts.resultBudget}`
+    + `${opts.newOnly ? ', NEW VENUES ONLY (nothing is written for a venue the corpus holds)' : ''}.`);
+
+  // The size of the run, before any request: each first-pass box is asked once
+  // a day at least, and splits and pages only add to that.
+  const tilePlan = planTiles(opts.cities, opts.tileKm, opts.radiusKm);
+  summary.tiles = tilePlan.length;
+  for (const city of opts.cities) summary.byCity[city] = emptyCityStats(tilePlan.filter((p) => p.city === city).length);
+  const minRequests = tilePlan.length * opts.days.length;
+  console.log(`${TAG} ${tilePlan.length} tiles of about ${opts.tileKm} km cover ${opts.cities.join(' + ')} `
+    + `(within ${opts.radiusKm} km of each centroid). At least ${minRequests} requests, one every `
+    + `${START_INTERVAL_MS / 1000}s: ${duration(minRequests)} at least. Query credits: about one per ten venues returned, `
+    + `per day asked, and the run stops before its results could pass ${opts.resultBudget}. `
+    + 'New-venue admissions: none; this script cannot call an endpoint that makes one.');
+  if (opts.cities.length > 1) {
+    for (const city of opts.cities) {
+      const n = summary.byCity[city].tiles;
+      console.log(`  ${city.padEnd(12)} ${String(n).padStart(3)} tiles, at least ${n * opts.days.length} requests`);
+    }
+  }
+  if (minRequests > opts.maxRequests) {
+    // Refused now, because reaching the ceiling later aborts and writes nothing.
+    const reason = `--max-requests=${opts.maxRequests} is below the ${minRequests} requests this run needs at least. `
+      + 'Raise it on purpose, or narrow the run with --city= or --days=.';
+    console.error(`${TAG} REFUSED: ${reason}`);
+    summary.aborted = true;
+    summary.abortReason = reason;
+    return summary;
+  }
 
   try {
     // Both refusals before the first BestTime call, the way discoverBestTime
@@ -1378,48 +1668,43 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         throw abortError('the key status endpoint did not report a healthy key; not starting.');
       }
 
-      const ctx = { key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS) };
-      let tiles = buildTiles(opts.cities, opts.tileKm, opts.radiusKm);
-      summary.tiles = tiles.length;
-      console.log(`${TAG} ${tiles.length} tiles of about ${opts.tileKm} km cover ${opts.cities.join(' + ')} `
-        + `(within ${opts.radiusKm} km of the centroid). At least ${tiles.length * opts.days.length} requests, one every `
-        + `${START_INTERVAL_MS / 1000}s. Query credits: about one per ten venues returned, per day asked. `
-        + 'New-venue admissions: none; this script cannot call an endpoint that makes one.');
+      const ctx = {
+        key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS), city: null, area: null,
+      };
+      const s = ctx.stats;
 
       // venueId -> merged venue with a Map of BestTime day -> 24 slots, and the
-      // other curve field's slots for the axis proof.
+      // other curve field's slots for the axis proof. Whole leaves only.
       const venues = new Map();
-      for (let i = 0; i < opts.days.length; i++) {
-        const day = opts.days[i];
-        const startCredits = ctx.stats.creditsEstimated;
-        const { leaves, byVenue } = await harvestDay(ctx, tiles, day);
-        tiles = leaves;
-        for (const v of byVenue.values()) {
-          let merged = venues.get(v.venueId);
-          if (!merged) {
-            merged = { ...v, days: new Map(), altDays: new Map() };
-            delete merged.hours;
-            delete merged.hoursAlt;
-            delete merged.curveField;
-            delete merged.dayInt;
-            venues.set(v.venueId, merged);
+      let current = null;
+      try {
+        for (const city of opts.cities) {
+          current = city;
+          ctx.city = summary.byCity[city];
+          for (const { area, tile } of tilePlan.filter((p) => p.city === city)) {
+            ctx.area = area;
+            await harvestBox(ctx, tile, venues);
           }
-          if (!merged.placeId && v.placeId) merged.placeId = v.placeId;
-          if (!merged.rawPlaceId && v.rawPlaceId) merged.rawPlaceId = v.rawPlaceId;
-          if (v.hours) merged.days.set(day, v.hours); else ctx.stats.malformed++;
-          if (v.curveField === 'day_raw_whole') ctx.stats.fromWhole++;
-          if (v.hours && v.hoursAlt) {
-            merged.altDays.set(day, v.hoursAlt);
-            if (v.hoursAlt.every((x, s) => x === v.hours[s])) ctx.stats.fieldsIdentical++; else ctx.stats.fieldsDiffer++;
-          } else if (v.hours) ctx.stats.fieldAltAbsent++;
+          ctx.city.state = 'done';
+          console.log(`${TAG} ${city}: ${ctx.city.tiles} tiles (${ctx.city.leaves} leaves), ${ctx.city.requests} requests, `
+            + `${ctx.city.results} results (~${ctx.city.credits} query credits). Run so far: ${s.venuesReturned} of the `
+            + `${opts.resultBudget}-result budget.`);
         }
-        const used = ctx.stats.creditsEstimated - startCredits;
-        console.log(`${TAG} ${BT_DAY_NAMES[day]}: ${byVenue.size} venues, ~${used} query credits.`
-          + (i === 0 && opts.days.length > 1
-            ? ` The other ${opts.days.length - 1} days should use about ${used * (opts.days.length - 1)} more.`
-            : ''));
+      } catch (err) {
+        if (!err.budgetStop) throw err;
+        summary.budget.stopped = true;
+        summary.budget.cutShort = current;
+        summary.budget.unfinished = opts.cities.slice(opts.cities.indexOf(current));
+        summary.byCity[current].state = 'stopped';
+        for (const city of summary.budget.unfinished.slice(1)) summary.byCity[city].state = 'not reached';
+        console.log(`${TAG} RESULT BUDGET: stopped in ${current} with ${s.venuesReturned} of ${opts.resultBudget} results `
+          + `used; the next page could have passed --result-budget. The leaf in progress and its box were dropped `
+          + 'whole, so no venue is written with part of the week this run asked for. '
+          + `Unfinished: ${summary.budget.unfinished.join(', ')}. To continue, with what the month has left: `
+          + `--city=${summary.budget.unfinished.join(',')} (${current} starts again from its first box).`);
       }
-      summary.leaves = tiles.length;
+      summary.budget.used = s.venuesReturned;
+      summary.leaves = opts.cities.reduce((n, city) => n + summary.byCity[city].leaves, 0);
       summary.venuesFound = venues.size;
 
       const all = [...venues.values()].filter((v) => v.days.size > 0);
@@ -1433,19 +1718,36 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         pool, all.map((v) => v.venueId), all.map((v) => v.placeId).filter(Boolean)
       );
       identities.nearby = await loadNearbyRows(pool, all);
-      const { plan, skipped } = planVenues(all, identities, opts.cities, { radiusKm: opts.radiusKm });
+      const { plan, skipped, placed } = planVenues(all, identities, opts.cities, { radiusKm: opts.radiusKm });
       summary.skipped = skipped;
+      for (const [city, n] of placed) summary.byCity[city].venues = n;
+      // Under --new-only a known venue stays in the plan, for the axis proof and
+      // the identity checks, and is never written (see the header).
+      const writes = [];
       for (const item of plan) {
         summary.plan[item.kind]++;
         item.cells = weekCells([...item.venue.days.entries()].sort((a, b) => a[0] - b[0]));
+        const c = summary.byCity[item.city];
+        if (opts.newOnly && item.kind !== 'new') {
+          summary.knownSkipped++;
+          c.knownSkipped++;
+          continue;
+        }
+        writes.push(item);
         summary.rowsPlanned += item.cells.length;
+        c.rowsPlanned += item.cells.length;
+        if (item.kind === 'new') c.newPlanned++; else c.knownPlanned++;
         if (item.venue.days.size < 7) summary.incompleteWeeks++;
       }
       console.log(`${TAG} Venues found: ${venues.size}. Known by BestTime id: ${summary.plan.known_bt}. `
         + `Known by Google place id: ${summary.plan.known_place}. Known as a near-duplicate of an existing row: `
         + `${summary.plan.known_near}. New with a Google place id: ${summary.plan.new}.`);
       console.log(`${TAG} Skipped: ${Object.entries(skipped).map(([k, n]) => `${k} ${n}`).join(', ')}.`);
-      if (summary.plan.known_place + summary.plan.known_near > 0) {
+      if (opts.newOnly) {
+        console.log(`${TAG} --new-only: ${summary.knownSkipped} known venues skipped (${summary.plan.known_bt} by BestTime `
+          + `id, ${summary.plan.known_place} by Google place id, ${summary.plan.known_near} as near-duplicates). Nothing `
+          + 'is written for them; they still feed the axis proof, which only reads.');
+      } else if (summary.plan.known_place + summary.plan.known_near > 0) {
         console.log(`${TAG} ${summary.plan.known_place + summary.plan.known_near} known venues have no BestTime id stored; `
           + 'their curves are filed, and no id is stamped (stamping would put them in the hourly live sweep).');
       }
@@ -1490,7 +1792,6 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       const verdict = axisVerdict(proof);
       summary.axis = proof;
       summary.axisVerdict = verdict;
-      const s = ctx.stats;
       console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with stored weekly `
         + `rows; ${proof.venues} compared (${proof.thin} with fewer than ${AXIS_MIN_OVERLAP} shared cells and ${proof.flat} `
         + `with a flat stored curve left out). Curves read from day_raw_whole on ${s.fromWhole} venue-days; day_raw `
@@ -1512,24 +1813,27 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       console.log(`${TAG} PEAK HOUR by category, venue-local: venues whose week-averaged busiest hour is that hour.`);
       for (const line of formatPeakHistogram(peaks)) console.log(line);
 
+      const skippedNote = opts.newOnly ? ` ${summary.knownSkipped} known venues skipped (--new-only).` : '';
       if (!opts.commit) {
-        console.log(`${TAG} Would write ${summary.rowsPlanned} weekly rows for ${plan.length} venues `
-          + `and add ${summary.plan.new} ml_venues rows (inactive, besttime_status '${HARVEST_STATUS}').`);
+        console.log(`${TAG} Would write ${summary.rowsPlanned} weekly rows for ${writes.length} venues `
+          + `and add ${summary.plan.new} ml_venues rows (inactive, besttime_status '${HARVEST_STATUS}').${skippedNote}`);
         summary.exitCode = summary.rowsPlanned > 0 && verdict.pass ? 0 : 1;
       } else {
         if (!verdict.pass) {
           throw abortError(`REFUSED: the axis proof failed, so the curves' hour origin is not established: ${verdict.reason}. `
             + 'Nothing was written.');
         }
-        for (const item of plan) {
+        for (const item of writes) {
           if (item.cells.length === 0) continue;
           try {
             const res = await writeOne(pool, item, item.cells);
             if (res.status === 'vanished') { summary.vanished++; continue; }
             if (res.status === 'claimed') { summary.claimed++; continue; }
+            const c = summary.byCity[item.city];
             summary.venuesWritten++;
-            if (res.newVenue) summary.venuesInserted++;
+            if (res.newVenue) { summary.venuesInserted++; c.newWritten++; } else c.knownWritten++;
             summary.rowsWritten += res.written;
+            c.rowsWritten += res.written;
             summary.rowsInserted += res.inserted;
             summary.rowsRefreshed += res.written - res.inserted;
           } catch (err) {
@@ -1540,7 +1844,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         console.log(`${TAG} Wrote ${summary.rowsWritten} weekly rows (${summary.rowsInserted} new, `
           + `${summary.rowsRefreshed} refreshed in place) for ${summary.venuesWritten} venues; `
           + `added ${summary.venuesInserted} ml_venues rows. ${summary.vanished} venues changed under the run, `
-          + `${summary.claimed} were claimed by another writer, ${summary.writeFailures} writes failed.`);
+          + `${summary.claimed} were claimed by another writer, ${summary.writeFailures} writes failed.${skippedNote}`);
         summary.exitCode = summary.rowsWritten > 0 && summary.writeFailures === 0 ? 0 : 1;
       }
       if (summary.incompleteWeeks > 0) {
@@ -1548,9 +1852,14 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       }
 
       console.log(`${TAG} ${s.requests} filter requests over ${summary.leaves} leaf tiles (${s.splits} splits, `
-        + `${s.truncatedTiles} tiles still at the cap at minimum size, ${s.notFound} answered 404). Query credits: `
+        + `${s.truncatedTiles} tiles still at the cap at minimum size, ${s.notFound} answered 404). Results: `
+        + `${s.venuesReturned} of the ${opts.resultBudget} budget. Query credits: `
         + `${s.creditsReported > 0 ? `${s.creditsReported} reported by BestTime, ` : ''}~${s.creditsEstimated} estimated.`
         + `${opts.commit ? '' : ' A --commit run of the same scope asks the same questions and should cost the same.'}`);
+      console.log(`${TAG} BY CITY${opts.commit ? '' : ' (dry run: new, known and weekly rows are what --commit would write)'}: `
+        + 'results are the venues the filter returned, billed one query credit per ten; venues are the distinct ones placed '
+        + `in the city${opts.newOnly ? '' : '; known are refreshed in place'}.`);
+      for (const line of formatCityTable(summary, opts)) console.log(line);
       await readAccount(key, 'after');
       console.log(`${TAG} New-venue admissions this run: none attempted (only the venue filter and the key `
         + 'status endpoint were called). The besttime.app dashboard shows the month\'s admission count.');
@@ -1602,8 +1911,12 @@ module.exports = {
   assertAllowedRequest,
   withAdmissionGuard,
   buildTiles,
+  planTiles,
+  gridGroups,
   splitTile,
   tileIntersects,
+  placeVenue,
+  otherMarkets,
   buildFilterUrl,
   readFilterVenue,
   isRealGooglePlaceId,
@@ -1622,6 +1935,11 @@ module.exports = {
   DEFAULT_RESULT_CAP,
   DEFAULT_PAGE_SIZE,
   DEFAULT_RADIUS_KM,
+  DEFAULT_RESULT_BUDGET,
+  MONTHLY_RESULT_ALLOWANCE,
+  ALL_CITIES,
+  REFUSED_CITIES,
+  CENTROIDS,
   NEAR_DUP_METERS,
   AXIS_MIN_VENUES,
   AXIS_MIN_OVERLAP,

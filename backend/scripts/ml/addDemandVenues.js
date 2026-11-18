@@ -74,18 +74,25 @@ function kmBetween(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// The market rule, in one place: the nearest PA centroid, or no city at all
-// when the point is more than MAX_KM from both. harvestVenueFilter.js assigns
-// its venues with this same function, so the two ways a venue enters the
-// corpus cannot disagree about where philly ends.
-function nearestPaCity(lat, lon) {
+// The market rule, in one place: the nearest centroid of `markets`, or no city
+// at all when the point is more than MAX_KM from every one. On a tie the
+// earlier key wins.
+function nearestMarket(lat, lon, markets) {
   let cityKey = null;
   let best = Infinity;
-  for (const [key, city] of Object.entries(PA_CITIES)) {
+  for (const [key, city] of Object.entries(markets)) {
     const d = kmBetween(lat, lon, city.lat, city.lon);
     if (d < best) { best = d; cityKey = key; }
   }
   return { cityKey: best > MAX_KM ? null : cityKey, km: best };
+}
+
+// This script's markets: the nearest PA centroid, or none past MAX_KM from
+// both. harvestVenueFilter.js places every venue with this same function
+// first, so the two ways a venue enters the corpus cannot disagree about where
+// philly ends; outside PA it asks nearestMarket of the cities it harvests.
+function nearestPaCity(lat, lon) {
+  return nearestMarket(lat, lon, PA_CITIES);
 }
 
 // Google types to the corpus's own category vocabulary (the GROUP BY of
@@ -383,7 +390,7 @@ async function main() {
 }
 
 module.exports = {
-  PA_CITIES, MAX_KM, kmBetween, nearestPaCity,
+  PA_CITIES, MAX_KM, kmBetween, nearestMarket, nearestPaCity,
   MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport,
 };
 
