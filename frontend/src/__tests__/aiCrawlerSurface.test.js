@@ -186,6 +186,39 @@ describe('structured data', () => {
     expect(api.SITE_GRAPH).toEqual(graph);
   });
 
+  test('with Flock Pro on sale the app offers Free and Pro, at the prices Pro is sold for', () => {
+    // index.html's own rule: the price 0 Offer alone was true only while
+    // PAYWALL_ENABLED was unset. It went on 2026-11-13 and the Offer stayed
+    // 0 alone, so the one machine-readable price said Flock costs nothing.
+    // The Pro amounts are held to the stated-price registry
+    // (backend/services/statedPrices.js), not restated here.
+    const html = read(path.join(FRONTEND, 'public', 'index.html'));
+    const graph = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)[1])['@graph'];
+    const app = graph.find((e) => e['@type'] === 'WebApplication');
+    const { STATED_PRICES } = require(path.join(FRONTEND, '..', 'backend', 'services', 'statedPrices.js'));
+    const registry = (plan) => {
+      const amounts = new Set(STATED_PRICES.filter((s) => s.product === 'pro' && s.plan === plan).map((s) => s.usd));
+      expect(amounts.size).toBe(1);
+      return [...amounts][0];
+    };
+
+    expect(Array.isArray(app.offers)).toBe(true);
+    const [free, ...pro] = app.offers;
+    expect(free).toMatchObject({ '@type': 'Offer', price: '0', priceCurrency: 'USD' });
+    expect(pro).toHaveLength(2);
+    const byUnit = Object.fromEntries(pro.map((o) => [o.priceSpecification.unitCode, o]));
+    for (const [unit, plan] of [['MON', 'monthly'], ['ANN', 'yearly']]) {
+      const o = byUnit[unit];
+      expect(o).toMatchObject({ '@type': 'Offer', priceCurrency: 'USD', url: 'https://www.flockcorp.com/pro' });
+      expect(Number(o.price)).toBe(registry(plan));
+      expect(o.priceSpecification).toMatchObject({ '@type': 'UnitPriceSpecification', price: o.price, priceCurrency: 'USD' });
+    }
+
+    // The rule above the block moved with it.
+    expect(html).not.toMatch(/price 0 Offer is true only while PAYWALL_ENABLED is unset/);
+    expect(api.SITE_GRAPH).toEqual(graph);
+  });
+
   test('the support FAQPage is derived from the visible Q&A, not stored twice', () => {
     const faq = api.supportFaq(api.PAGE_BLOCKS.support);
     expect(faq.length).toBeGreaterThanOrEqual(5);

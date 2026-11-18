@@ -838,9 +838,9 @@ const NAV_LINKS = [
 // site describes one Organization and one WebApplication no matter which
 // surface a crawler read. aiCrawlerSurface.test.js pins the two copies to
 // each other. The editing rules (no fabricated ratings, the App Store listing
-// as the app's sameAs and installUrl and never the Organization's, price 0
-// only while PAYWALL_ENABLED is unset) are documented in index.html and bind
-// here too.
+// as the app's sameAs and installUrl and never the Organization's, the free
+// Offer beside Flock Pro's two while PAYWALL_ENABLED is on) are documented in
+// index.html and bind here too.
 const SITE_GRAPH = [
   {
     '@type': 'Organization',
@@ -912,12 +912,43 @@ const SITE_GRAPH = [
     browserRequirements: 'Requires JavaScript.',
     description: 'Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.',
     publisher: { '@id': 'https://www.flockcorp.com/#organization' },
-    offers: {
-      '@type': 'Offer',
-      price: '0',
-      priceCurrency: 'USD',
-      availability: 'https://schema.org/InStock',
-    },
+    offers: [
+      {
+        '@type': 'Offer',
+        name: 'Free',
+        price: '0',
+        priceCurrency: 'USD',
+        availability: 'https://schema.org/InStock',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Flock Pro, monthly',
+        price: '3.99',
+        priceCurrency: 'USD',
+        priceSpecification: {
+          '@type': 'UnitPriceSpecification',
+          price: '3.99',
+          priceCurrency: 'USD',
+          unitCode: 'MON',
+        },
+        url: 'https://www.flockcorp.com/pro',
+        availability: 'https://schema.org/InStock',
+      },
+      {
+        '@type': 'Offer',
+        name: 'Flock Pro, yearly',
+        price: '29.99',
+        priceCurrency: 'USD',
+        priceSpecification: {
+          '@type': 'UnitPriceSpecification',
+          price: '29.99',
+          priceCurrency: 'USD',
+          unitCode: 'ANN',
+        },
+        url: 'https://www.flockcorp.com/pro',
+        availability: 'https://schema.org/InStock',
+      },
+    ],
     featureList: [
       'Create a group plan and collect RSVPs in one tap',
       'Vote as a group on where to go',

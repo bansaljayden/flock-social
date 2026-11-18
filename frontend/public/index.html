@@ -281,9 +281,15 @@
            field, not the prose, so the field was the version being quoted.
            There is no feed, no follow graph and no profile to browse; the
            category has to describe the product the prose describes.
-         - The price 0 Offer is true only while PAYWALL_ENABLED is unset. If
-           the paywall is ever switched on, this block, the og:description
-           above and the landing page pricing section change together.
+         - offers is what Flock sells. The price 0 Offer stood alone while
+           PAYWALL_ENABLED was unset, and was true only then. Flock Pro went on
+           sale with it on 2026-11-13, so the free Offer sits beside Pro's
+           monthly and yearly Offers, at the prices /pro sells them for (GET
+           /api/pro-offer reads them from Stripe). A Pro price change moves
+           these two, and the copy in api/marketing-page.js, in the same
+           change; aiCrawlerSurface.test.js holds them to the stated-price
+           registry (backend/services/statedPrices.js). If the paywall is ever
+           switched off, the Pro Offers come out.
          - featureList entries must each be a feature that ships today.
          - legalName is "Flock Social LLC", the registered name of the
            Pennsylvania company that operates Flock. It was absent from
@@ -366,12 +372,43 @@
           "browserRequirements": "Requires JavaScript.",
           "description": "Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.",
           "publisher": { "@id": "https://www.flockcorp.com/#organization" },
-          "offers": {
-            "@type": "Offer",
-            "price": "0",
-            "priceCurrency": "USD",
-            "availability": "https://schema.org/InStock"
-          },
+          "offers": [
+            {
+              "@type": "Offer",
+              "name": "Free",
+              "price": "0",
+              "priceCurrency": "USD",
+              "availability": "https://schema.org/InStock"
+            },
+            {
+              "@type": "Offer",
+              "name": "Flock Pro, monthly",
+              "price": "3.99",
+              "priceCurrency": "USD",
+              "priceSpecification": {
+                "@type": "UnitPriceSpecification",
+                "price": "3.99",
+                "priceCurrency": "USD",
+                "unitCode": "MON"
+              },
+              "url": "https://www.flockcorp.com/pro",
+              "availability": "https://schema.org/InStock"
+            },
+            {
+              "@type": "Offer",
+              "name": "Flock Pro, yearly",
+              "price": "29.99",
+              "priceCurrency": "USD",
+              "priceSpecification": {
+                "@type": "UnitPriceSpecification",
+                "price": "29.99",
+                "priceCurrency": "USD",
+                "unitCode": "ANN"
+              },
+              "url": "https://www.flockcorp.com/pro",
+              "availability": "https://schema.org/InStock"
+            }
+          ],
           "featureList": [
             "Create a group plan and collect RSVPs in one tap",
             "Vote as a group on where to go",
