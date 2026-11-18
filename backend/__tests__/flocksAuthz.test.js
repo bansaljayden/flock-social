@@ -336,8 +336,9 @@ async function dispatch(text, params = []) {
     return { rows, rowCount: rows.length };
   }
   // The invite announcement's facts: the card asks for a decision, so the
-  // emit carries the time, the venue and how many are going.
-  if (has("(SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS going")) {
+  // emit carries the time, the venue and how many are going: accepted members
+  // and visible 'in' guests, and this world has no guests.
+  if (has("(SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') + (SELECT COUNT(*)::int FROM guest_rsvps WHERE flock_id = f.id AND status = 'in' AND COALESCE(is_hidden, false) = false) AS going")) {
     const f = flocks.get(Number(params[0]));
     if (!f) return { rows: [], rowCount: 0 };
     const going = rowsOf(params[0]).filter((m) => m.status === 'accepted').length;

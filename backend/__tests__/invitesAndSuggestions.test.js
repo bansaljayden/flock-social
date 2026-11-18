@@ -98,6 +98,7 @@ let base;
 let signUserToken;
 let handlers;
 let flocksRouter;
+let app;
 let seq = 0;
 
 function call(method, url, { token, body } = {}) {
@@ -198,7 +199,7 @@ test.before(async () => {
   handlers = require('../sockets/handlers');
   flocksRouter = require('../routes/flocks');
 
-  const app = express();
+  app = express();
   app.use(express.json());
   app.use('/api/flocks', flocksRouter);
   app.use('/api/friends', require('../routes/friends'));
@@ -640,6 +641,35 @@ test('the flock_invite relay reaches a teen who never chose from anyone, and fri
 
   assert.deepStrictEqual(await relay(host), [kid.id], 'a stranger relayed a toast naming themselves to someone who chose friends only');
   assert.deepStrictEqual(await relay(friend), ids(kid, strict));
+});
+
+// The live card says how many are going the way the card GET /:id sends does:
+// accepted members and the 'in' guests the roster shows. It counted members
+// only, so the card read "1 going" over a plan two guests had said yes to, and
+// changed when the invitee opened it.
+test('POST /:id/invite: the live card counts the guests going, as the card GET /:id sends does', async () => {
+  const host = await adult('Host8');
+  const eve = await adult('Eve8');
+  const flockId = await mkFlock(host);
+  await pool.query(
+    `INSERT INTO guest_rsvps (flock_id, name, status, is_hidden)
+     VALUES ($1, 'Gus', 'in', false), ($1, 'Gia', 'in', false), ($1, 'Oz', 'out', false), ($1, 'Hid', 'in', true)`,
+    [flockId]
+  );
+  const io = fakeIo();
+  app.set('io', io);
+  try {
+    const res = await call('POST', `/api/flocks/${flockId}/invite`, { token: host.token, body: { user_ids: [eve.id] } });
+    assert.strictEqual(res.status, 200, res.text);
+  } finally {
+    app.set('io', undefined);
+  }
+  const card = io.emitted.find((e) => e.event === 'flock_invite_received' && e.room === `user:${eve.id}`);
+  assert.ok(card, 'the invitee was not told');
+  const opened = await call('GET', `/api/flocks/${flockId}`, { token: eve.token });
+  assert.strictEqual(opened.status, 200, opened.text);
+  assert.strictEqual(opened.body.flock.going_count, 3, 'the host and the two guests who are in and shown');
+  assert.strictEqual(card.payload.goingCount, opened.body.flock.going_count);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

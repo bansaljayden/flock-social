@@ -3123,7 +3123,10 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     // The card asks for a decision, and this emit used to carry only the
     // name, so an invite sent from the chat's sheet read "Time still open ·
     // Venue still open · 1 going" for a plan that had all three. Best effort:
-    // a miss leaves the fields null and the card says "still open".
+    // a miss leaves the fields null and the card says "still open". Going is
+    // counted as the card GET /:id sends counts it, accepted members and the
+    // 'in' guests the roster shows, or the live card read "1 going" over a
+    // plan guests had said yes to and changed when the invitee opened it.
     let eventTime = null;
     let venueName = null;
     let goingCount = null;
@@ -3132,7 +3135,9 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds, re
     try {
       const facts = await pool.query(
         `SELECT f.event_time, f.venue_name, f.status,
-                (SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS going
+                (SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted')
+                + (SELECT COUNT(*)::int FROM guest_rsvps WHERE flock_id = f.id AND status = 'in'
+                     AND COALESCE(is_hidden, false) = false) AS going
            FROM flocks f WHERE f.id = $1`,
         [flockId]
       );
