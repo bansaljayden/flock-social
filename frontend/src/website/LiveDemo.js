@@ -84,9 +84,14 @@ const MAP_BOOT_TIMEOUT_MS = 15_000; // no style by then and the basemap is not c
 // Re-cut 2026-08-28 with the qmap arming: under the calibrated
 // venue-relative scale, Busy is a normal good evening and wears amber; only
 // Packed alarms. Same reasoning as crowdEngine.js getLabel.
-const CROWD_GREEN = '#22C55E';
-const CROWD_AMBER = '#F59E0B';
-const CROWD_RED = '#EF4444';
+// The site's own three (2026-11-06), not Tailwind's green-500, amber-500 and
+// red-500: those are every generated dashboard's, and green and amber measured
+// 2.2:1 and 2.1:1 on the card, under WCAG 1.4.11's 3:1 for a bar or a ring.
+// These hold 3.9, 3.5 and 4.4 on the card (--plate) and 5.2, 5.9 and 4.7 under
+// the pin badge's black type. The app keeps its own colours.
+const CROWD_GREEN = '#2F8F5B';
+const CROWD_AMBER = '#B97A12';
+const CROWD_RED = '#CF4A33';
 // Shut. Slate rather than a crowd colour, because a closed venue is not quiet,
 // it is unavailable.
 const CROWD_CLOSED = '#64748B';
@@ -96,13 +101,13 @@ const CROWD_CLOSED = '#64748B';
 // ring keeps the base slate.
 const CROWD_CLOSED_BADGE = '#6B7B90';
 
-// The same four bands again, dark enough to be READ. The bright hues are pigment:
-// they work as a 10px ring, an 18px bar and a pin ring, and they fail badly the
-// moment they become type on the white card. Measured on #fff, the card's own
-// ground: green 2.28:1, amber 2.15:1, red 3.76:1. The dial number and the crowd
-// label were painted with all three. Text now uses the darker sibling from the
-// same ramp (green 5.02:1, amber 5.02:1, red 6.47:1, slate 7.58:1) while the
-// ring, the glow, the bars and the pins keep the bright hue.
+// The same four bands again, dark enough to be READ. The hues above are
+// pigment: they work as a 10px ring, an 18px bar and a pin ring, and none
+// reaches 4.5:1 as type on the white card (the Tailwind hues they replaced
+// measured green 2.28:1, amber 2.15:1, red 3.76:1 there, and the dial number
+// and the crowd label were painted with all three). Text uses a darker sibling
+// (green 5.02:1, amber 5.02:1, red 6.47:1, slate 7.58:1) while the ring, the
+// glow, the bars and the pins keep the hue.
 const CROWD_GREEN_TEXT = '#15803D';
 const CROWD_AMBER_TEXT = '#B45309';
 const CROWD_RED_TEXT = '#B91C1C';

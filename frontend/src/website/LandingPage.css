@@ -208,10 +208,12 @@
   --fs-note: 15px;
   --fs-cap: 13.5px;
 
-  /* semantic crowd colours — sacred, never decorative */
-  --crowd-quiet: #22c55e;
-  --crowd-mid: #f59e0b;
-  --crowd-busy: #ef4444;
+  /* semantic crowd colours — sacred, never decorative. The same three as
+     LiveDemo.js CROWD_GREEN, CROWD_AMBER and CROWD_RED (2026-11-06), in
+     place of Tailwind's green-500, amber-500 and red-500. */
+  --crowd-quiet: #2f8f5b;
+  --crowd-mid: #b97a12;
+  --crowd-busy: #cf4a33;
 
   /* THE PLATES. Every white object on the cream page — the chat transcript, the
      split card, the two plan cards, the demo stage, the dial, the search field.
@@ -1824,10 +1826,10 @@ html:has(.lp) body { overflow-x: clip; }
   margin-top: -8px; position: relative; z-index: 1;
   padding: 1px 7px; border: 2px solid var(--plate); border-radius: 999px;
   /* Black, not white: the badge ground is whichever crowd colour the venue
-     scored, and white text measured 2.1:1 on green and amber. Black holds
-     4.5:1 on all four grounds (green 9.8, amber 9.4, red 6.1, slate 4.86 on the
-     badge's own lighter slate, LiveDemo.js CROWD_CLOSED_BADGE; the ring's
-     #64748B is 4.41 and stays off the badge). */
+     scored. Black holds 4.5:1 on all four grounds (green 5.2, amber 5.9, red
+     4.7, slate 4.86 on the badge's own lighter slate, LiveDemo.js
+     CROWD_CLOSED_BADGE; the ring's #64748B is 4.41 and stays off the badge),
+     and demoPinBadgeContrast.test.js measures each. */
   color: var(--badge-ink); font: 700 11px 'Hanken Grotesk', sans-serif;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
 }
