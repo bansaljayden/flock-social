@@ -14129,7 +14129,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // The takedown helper, not a bare filter: it also nulls reply quotes
         // that would keep the unsent words on screen, and clears a preview
         // that a removal just emptied.
-        const cleaned = applyTakedownToDms(prev, { contentType: 'dm', contentId: data.messageId });
+        const removed = applyTakedownToDms(prev, { contentType: 'dm', contentId: data.messageId });
+        // The badge, the flock twin's subtraction (clearUnsentFlockMessage):
+        // the row's unread is a server count, and a message of theirs that was
+        // removed here is one it no longer includes. Never your own.
+        const cleaned = removed === prev ? prev : removed.map((d, i) => {
+          const was = prev[i];
+          if (d === was) return d;
+          const gone = (was.messages || []).find(m => sameContentId(m.id, data.messageId));
+          return gone && gone.sender !== 'You' && (d.unread || 0) > 0 ? { ...d, unread: d.unread - 1 } : d;
+        });
         // A thread not loaded this session keeps only a stored lastMessage,
         // and nothing local can tell whether that preview IS the unsent
         // message. Clear it rather than leak: an empty preview until the
