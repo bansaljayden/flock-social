@@ -1574,8 +1574,9 @@ html:has(.lp) body { overflow-x: clip; }
 /* nowrap on the link, so "Create your account" is never split across lines.
    The link's sentence takes its own line at every width: at 17px the pair
    broke there anyway everywhere but 768-1024px, so the break is made on
-   purpose rather than left to the column. */
-.lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: var(--fs-body); line-height: 1.6; color: var(--cream-2); }
+   purpose rather than left to the column. Balanced, so on a phone the first
+   sentence splits in two even lines, never "...in your / browser too." */
+.lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: var(--fs-body); line-height: 1.6; color: var(--cream-2); text-wrap: balance; }
 .lp-get-web-go { display: block; }
 .lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .lp-get-web a:hover { color: var(--cream-hi); }
