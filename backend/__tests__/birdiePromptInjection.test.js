@@ -966,6 +966,49 @@ for (const reason of ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECI
   });
 }
 
+// A BUTTON ALREADY CHOSEN OUTLIVES A WITHHELD LAST ROUND, as it outlives a
+// stalled one (the timeout tests above). Someone describing a threat lost the
+// Safety button the model picked a round earlier when Gemini withheld the words.
+const withheldAfter = (name, args, last) => (_p, call) => (call === 1
+  ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name, args } }] } }] }
+  : last);
+const SAFETY_BUTTON = { tab: 'profile', screen: 'profile', profile_section: 'safety' };
+
+for (const [what, last] of [
+  ['finishes SAFETY', { candidates: [{ content: { parts: [] }, finishReason: 'SAFETY' }] }],
+  ['blocks the prompt', { promptFeedback: { blockReason: 'SAFETY' }, candidates: [] }],
+]) {
+  test(`a last round Gemini ${what} after the model chose Safety keeps the button and says to call 911`, async () => {
+    sendImpl = withheldAfter('navigate_app', SAFETY_BUTTON, last);
+    const r = await chat({ messages: [{ role: 'user', text: "someone's been following me and i think he has a knife" }] });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.body.navigate, SAFETY_BUTTON, 'the Safety button was dropped with the withheld words');
+    assert.strictEqual(r.body.text, "tap below to open Safety and send your location to your people. if you're in danger right now, call 911");
+    assert.deepStrictEqual(r.body.venues, []);
+    assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 1, 'the button is what the chirp bought');
+    assert.strictEqual(r.body.remaining, left());
+  });
+}
+
+test('a withheld last round after another button points at it, and a staged plan stays off', async () => {
+  let call = 0;
+  sendImpl = () => {
+    call += 1;
+    if (call === 1) {
+      return { candidates: [{ content: { parts: [
+        { functionCall: { id: 'c1', name: 'navigate_app', args: { screen: 'addFriends' } } },
+        { functionCall: { id: 'c2', name: 'draft_flock', args: { name: 'Friday tacos' } } },
+      ] } }] };
+    }
+    return { candidates: [{ content: { parts: [] }, finishReason: 'PROHIBITED_CONTENT' }] };
+  };
+  const r = await chat({ messages: [{ role: 'user', text: 'set up friday and take me to add friends' }] });
+  assert.strictEqual(r.status, 200);
+  assert.deepStrictEqual(r.body.navigate, { screen: 'addFriends' });
+  assert.strictEqual(r.body.text, 'tap Take me there below');
+  assert.strictEqual(r.body.flock_draft, undefined, 'a plan gathered for the refused answer went out with it');
+});
+
 for (const reason of ['STOP', 'MAX_TOKENS', undefined]) {
   test(`an empty turn that ends with ${reason || 'no finish reason'} still asks for a rephrase`, async () => {
     sendImpl = endsWith(reason);

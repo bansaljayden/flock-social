@@ -3946,6 +3946,24 @@ router.post('/chat',
       const blockReason = response.promptFeedback?.blockReason
         || withheldFinishReason(candidate?.finishReason);
       if (blockReason && textParts.length === 0) {
+        // A BUTTON ALREADY CHOSEN OUTLIVES A WITHHELD LAST ROUND, the way it
+        // outlives a stalled one (A CALL THAT TIMES OUT AFTER THE TOOLS
+        // DELIVERED SOMETHING, above). Someone who described a threat lost the
+        // Safety button the model had picked a round earlier when Gemini then
+        // withheld the words. The navigate button only, as the plain no below
+        // keeps it: cards and a staged plan or vote were gathered for the
+        // answer that was refused. The button is what the chirp bought, so the
+        // chirp is kept, and the line points at the button as a cut turn's does.
+        if (navigationAction) {
+          const kept = {
+            text: navigationAction.profile_section === 'safety' ? BIRDIE_SAFETY_CUT_MESSAGE : BIRDIE_NAV_CUT_MESSAGE,
+            venues: [],
+            remaining: rateCheck.remaining,
+            navigate: navigationAction,
+          };
+          if (kept.remaining === 0) kept.resetsAt = chargeDayEndsAt(rateCheck.chargeDay);
+          return res.json(kept);
+        }
         refundChirp(res);
         return res.json({ text: "not something i'll help with. ask me something else", venues: [], remaining: rateCheck.remaining + 1 });
       }
