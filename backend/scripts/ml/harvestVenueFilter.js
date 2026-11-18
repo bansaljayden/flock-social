@@ -343,7 +343,50 @@ const AXIS_MIN_VENUE_SHARE = 0.75;
 // with AXIS_MIN_VENUES as before. A commit that refreshes known rows keeps the
 // within-five rule: it overwrites stored curves, and how far they move is its
 // question too.
+// That venue share is two questions since 2026-11-18, each asked of the venues
+// that can answer it, each with the same floor:
+//   THE HOUR. Every compared venue whose best rotation (or every rotation tied
+//   for its best) is a whole number of days, 0 included, lines up by hour.
+//   THE DAY. A venue votes on it only with all 168 cells held on both sides
+//   and a stored week at least AXIS_DAY_CONTRAST_MIN points (MAE) from itself
+//   a whole number of days on: one whose days look alike cannot tell them
+//   apart, as a flat curve cannot tell rotations apart. A voter lines up by
+//   day when its best is a whole number of days and rotation 0 fits it within
+//   AXIS_DAY_TIE_MAE of that best. The day share is those over EVERY compared
+//   venue, so one that cannot vote counts against it: a day error cannot hide
+//   among venues that cannot speak to it, and non-voters and voters a day off
+//   share one allowance. At least AXIS_MIN_VENUES must vote. A voter really a day off,
+//   read with no drift, misses that by its own day contrast (its best fits
+//   exactly, rotation 0 by the contrast at that shift), so only drift can
+//   admit one: drift that brings rotation 0 within a point of the true
+//   rotation hides that venue's error, and no tolerance can tell the two
+//   apart. How often that happens is measured below on NYC, not bounded.
+// Why: counting rotation 0 alone (as first written) refused NYC's commit
+// (2026-11-18: 404 of 454 venues, 89.0%) and would have refused PA's reference
+// run (189 of 216 at 0, the rest tied with a whole day). A dry rerun from
+// NYC's cache compared 462: 411 best at 0, 41 best or tied a whole day off, 10
+// an hour off, r 0.939 against 0.854 at +1. A venue whose days look alike fits
+// a day off nearly as well, and on months-old stored curves some tip over: the
+// 38 best a whole day off fitted rotation 0 worse by a median of 0.36 points
+// (90th percentile 1.49), though their days differ by a median of 8.4. NYC's
+// venues all differ from themselves a day on by at least 2 points (10th
+// percentile 5.2), and 461 of 462 hold whole weeks on both sides; 459 vote on
+// the day, and 441 of the 462 (95.5%) line up by day while 452 (97.8%) do by
+// hour. With a one-day error planted on the same harvested weeks (+24 or -24,
+// ten spreads each), 11.7% of the venues still line up by day, and the gate
+// refused every trial with 8% or more of the venues a day off, 15 of 20 at 7%,
+// 3 of 20 at 6% and none at 5% or less. Review (2026-11-18)
+// dropped four looser versions: a whole-day best with no tolerance counts every
+// planted venue; a tolerance with no contrast floor counts venues whose days
+// differ by one spike; a floor whose share is taken over the voters alone, or
+// measured over a partial week, lets the venues that can speak decide for the
+// rest, and with two 90% floors (voters, then voters lined up) 19% of venues
+// exactly a day off passed. A city whose curves are all a day off is refused by the
+// pooled tests as before: the best pooled rotation must be 0, and r at 0 must
+// beat +-24 by the margin.
 const AXIS_NEW_ONLY_MIN_VENUE_SHARE = 0.9;
+const AXIS_DAY_TIE_MAE = 1;
+const AXIS_DAY_CONTRAST_MIN = 3;
 const AXIS_NEW_ONLY_MIN_R_MARGIN = 0.05;
 // The rotations printed, in hours on the 168-hour week. Six is the origin
 // error the proof exists for, 24 a weekday mislabelled by one.
@@ -720,6 +763,30 @@ function weekCurve(cells) {
 // Rotation k (0..167) -> hours, signed, in -83..84.
 const signedShift = (k) => (k > WEEK_HOURS / 2 ? k - WEEK_HOURS : k);
 
+// Every one of the week's 168 cells held.
+const wholeWeek = (week) => week.length === WEEK_HOURS && week.every((v) => v >= 0);
+
+// How far a stored week sits from itself a whole number of days on, at the
+// closest such rotation (MAE over the cells both hold): how well the venue can
+// tell its days apart. null when no such rotation shares a cell (a week held
+// on one day only cannot tell days apart either).
+function dayContrast(stored) {
+  let least = Infinity;
+  for (let d = 24; d < WEEK_HOURS; d += 24) {
+    let n = 0;
+    let abs = 0;
+    for (let i = 0; i < WEEK_HOURS; i++) {
+      const a = stored[i];
+      const b = stored[(i + d) % WEEK_HOURS];
+      if (a < 0 || b < 0) continue;
+      n++;
+      abs += Math.abs(a - b);
+    }
+    if (n > 0) least = Math.min(least, abs / n);
+  }
+  return least === Infinity ? null : least;
+}
+
 // pairs: [{ planned, stored }], both weekCurve()s. At rotation k the stored
 // cell at slot i is compared with the planned cell at slot i + k, so a best
 // rotation of +6 means the harvested curve sits six hours LATER on the venue
@@ -732,6 +799,9 @@ function axisProof(pairs) {
   const venueBest = new Array(WEEK_HOURS).fill(0);
   let venues = 0;
   let tied = 0;
+  let hourAligned = 0;
+  let dayInformative = 0;
+  let dayAligned = 0;
   let thin = 0;
   let flat = 0;
   for (const { planned, stored } of pairs) {
@@ -749,6 +819,7 @@ function axisProof(pairs) {
     venues++;
     let bestMae = Infinity;
     let bestAt = [];
+    let mae0 = null;
     for (let k = 0; k < WEEK_HOURS; k++) {
       const p = pooled[k];
       let n = 0;
@@ -769,10 +840,19 @@ function axisProof(pairs) {
       }
       if (n === 0) continue;
       const mae = abs / n;
+      if (k === 0) mae0 = mae;
       if (mae < bestMae - 1e-9) { bestMae = mae; bestAt = [k]; } else if (Math.abs(mae - bestMae) <= 1e-9) bestAt.push(k);
     }
     // A venue whose minimum is shared by two rotations votes for neither.
     if (bestAt.length === 1) venueBest[bestAt[0]]++; else tied++;
+    // The hour and the day (see AXIS_NEW_ONLY_MIN_VENUE_SHARE).
+    const wholeDays = bestAt.length > 0 && bestAt.every((k) => k % 24 === 0);
+    if (wholeDays) hourAligned++;
+    const contrast = wholeWeek(planned) && wholeWeek(stored) ? dayContrast(stored) : null;
+    if (contrast !== null && contrast >= AXIS_DAY_CONTRAST_MIN - 1e-9) {
+      dayInformative++;
+      if (wholeDays && mae0 !== null && mae0 - bestMae <= AXIS_DAY_TIE_MAE + 1e-9) dayAligned++;
+    }
   }
   const table = pooled.map((p, k) => {
     const cov = p.pairs * p.sxy - p.sx * p.sy;
@@ -789,7 +869,9 @@ function axisProof(pairs) {
   });
   let best = null;
   for (const row of table) if (row.mae !== null && (best === null || row.mae < best.mae)) best = row;
-  return { venues, tied, thin, flat, table, bestShift: best ? best.shift : null };
+  return {
+    venues, tied, hourAligned, dayInformative, dayAligned, thin, flat, table, bestShift: best ? best.shift : null,
+  };
 }
 
 const AXIS_RULE_WITHIN5 = 'the within-five rule, because this commit would refresh known venues\' rows';
@@ -810,8 +892,26 @@ function axisVerdict(proof, { newOnly = false } = {}) {
   }
   const share = at0.venuesBestHere / proof.venues;
   if (newOnly) {
-    const fit = `${at0.venuesBestHere} of ${proof.venues} venues (${pct(share)}) fit best at rotation 0`;
-    if (share < AXIS_NEW_ONLY_MIN_VENUE_SHARE) return refuse(`only ${fit} (at least ${pct(AXIS_NEW_ONLY_MIN_VENUE_SHARE)} needed)`);
+    if (![proof.hourAligned, proof.dayInformative, proof.dayAligned].every((x) => typeof x === 'number')) {
+      return refuse('the proof did not count venues by hour and by day');
+    }
+    const needed = `(at least ${pct(AXIS_NEW_ONLY_MIN_VENUE_SHARE)} needed)`;
+    const byHour = proof.hourAligned / proof.venues;
+    const hourFit = `${proof.hourAligned} of ${proof.venues} venues (${pct(byHour)}) fit best at rotation 0 or a whole `
+      + `number of days from it (${at0.venuesBestHere} at 0 itself)`;
+    if (byHour < AXIS_NEW_ONLY_MIN_VENUE_SHARE) return refuse(`by hour, only ${hourFit} ${needed}`);
+    const daysApart = `whole weeks on both sides whose days differ by at least ${AXIS_DAY_CONTRAST_MIN} points`;
+    if (proof.dayInformative < AXIS_MIN_VENUES) {
+      return refuse(`only ${proof.dayInformative} compared venues hold ${daysApart} `
+        + `(at least ${AXIS_MIN_VENUES} are needed to prove the day)`);
+    }
+    // Over every compared venue: one that cannot vote counts against the day,
+    // so non-voters and voters a day off share one allowance.
+    const byDay = proof.dayAligned / proof.venues;
+    const dayFit = `${proof.dayAligned} of ${proof.venues} venues (${pct(byDay)}) hold ${daysApart} and fit rotation 0 `
+      + `within ${AXIS_DAY_TIE_MAE} point of their best whole-day rotation (${proof.dayInformative} could vote)`;
+    if (byDay < AXIS_NEW_ONLY_MIN_VENUE_SHARE) return refuse(`by day, only ${dayFit} ${needed}`);
+    const fit = `by hour, ${hourFit}; by day, ${dayFit}`;
     if (typeof at0.r !== 'number') return refuse('rotation 0 has no correlation to judge');
     let next = null;
     for (const row of proof.table) {
@@ -2138,6 +2238,10 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         + `beside it identical on ${s.fieldsIdentical}, different on ${s.fieldsDiffer}, absent on ${s.fieldAltAbsent}. `
         + 'Shift +k: the harvested curve sits k hours later on the venue clock than the stored rows.');
       for (const line of formatAxisTable(proof)) console.log(line);
+      console.log(`${TAG} By hour: ${proof.hourAligned} of ${proof.venues} venues best at rotation 0 or a whole number `
+        + `of days from it. By day: ${proof.dayAligned} of the ${proof.dayInformative} with whole weeks on both sides whose `
+        + `days differ by at least ${AXIS_DAY_CONTRAST_MIN} points fit rotation 0 within ${AXIS_DAY_TIE_MAE} point of their `
+        + `best. ${proof.tied} tied in all.`);
       if (s.fieldsDiffer > 0) {
         const alt = axisProof(pairsFor('altDays'));
         summary.axisAlt = alt;

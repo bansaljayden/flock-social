@@ -2140,14 +2140,63 @@ within five points, though rotation 0 fitted 528 of 540 venues best (r 0.972
 against 0.884 at +1): its stored curves were months older than PA's, so the
 within-five share measured curve drift as much as the hour origin. A
 `--new-only` commit writes nothing for those venues, so the only question is
-whether the NEW venues' curves start at the right hour, and it passes when
-rotation 0 is the best pooled rotation, at least 90% of compared venues fit
-best at rotation 0, rotation 0's r beats every other rotation's by at least
-0.05, and at least 20 venues were compared. A commit without `--new-only`
-refreshes known venues' rows and keeps the 90% within-five rule unchanged; the
-rule above for a one-day refusal ("ask the whole week, never lower the
-threshold") still holds for it.
+whether the NEW venues' curves start at the right hour and day, and it passes
+when rotation 0 is the best pooled rotation, rotation 0's r beats every other
+rotation's by at least 0.05, at least 20 venues were compared, and the venue
+share holds on two questions, each at 90%:
 
+- **The hour:** of all compared venues, those whose best rotation is 0 or a
+  whole number of days from it.
+- **The day:** a venue votes only if it holds all 168 cells on both sides and
+  its stored week differs from itself a whole number of days on by at least 3
+  points (MAE, at the closest such rotation); at least 20 must vote. A voter
+  lines up when its best is a whole number of days and its fit at rotation 0
+  is within 1 point of that best. The share is taken over every compared
+  venue, so one that cannot vote counts against it.
+
+A commit without `--new-only` refreshes known venues' rows and keeps the 90%
+within-five rule unchanged; the rule above for a one-day refusal ("ask the
+whole week, never lower the threshold") still holds for it.
+
+**Amended 2026-11-18, after NYC's refusal: the venue share asks the hour and
+the day separately.** As first written the share counted only venues best at
+rotation 0, and NYC's commit was refused at 89.0% (404 of 454). A dry rerun
+from its cache compared 462 venues: 411 best at 0, 41 best or tied a whole day
+off, 10 an hour off, r 0.939 at 0 against 0.854 at +1 and 0.843 at ±24. A
+venue whose days look alike fits a day off nearly as well, and on months-old
+stored curves some tip over: the 38 best a whole day off fitted rotation 0
+worse by a median of 0.36 points (90th percentile 1.49). The same count would
+have refused PA's reference run (189 of 216 at 0, the rest tied with a whole
+day).
+
+Review dropped four looser versions before anything was committed:
+- Counting every whole-day best passes a city with some venues really a day
+  off.
+- A one-point tolerance alone passes a day error on venues whose days differ
+  by a single spike, since rotation 0 still fits those within a point.
+- A contrast floor with the share taken over the voters alone, or measured
+  over a partial week, lets the venues that can speak decide for the rest.
+- Two 90% floors (enough voters, then enough voters lined up) passed 19% of
+  venues exactly a day off: the two allowances added up.
+
+Read with no drift, a voter really a day off misses the one point by its own
+day contrast (3 or more), because its best fits exactly and rotation 0 by that
+contrast. Only drift can admit one: drift that brings rotation 0 within a point
+of the true rotation hides that venue's error, and no tolerance can tell the
+two apart. So the gate's power against a partial day error is measured, not
+bounded:
+- On NYC: 452 of 462 (97.8%) by hour. The 462 venues' days differ by a median
+  of 7.9 (10th percentile 5.2), 461 hold whole weeks on both sides, 459 vote on
+  the day, and 441 of the 462 (95.5%) line up by day.
+- With a one-day error planted on NYC's own harvested weeks (+24 or -24, ten
+  spreads each), 11.7% of venues still line up by day, and the gate refused
+  every trial with 8% or more of the venues a day off, 15 of 20 at 7%, 3 of 20
+  at 6% and none at 5% or less.
+- A city that is all a day off is refused by the pooled tests.
+
+The 90% floor is unchanged; the 1-point tolerance and the 3-point floor were
+chosen after seeing NYC's numbers, from the distributions above. The proof
+prints "By hour: ... By day: ..." under its table.
 `--cache-dir=<dir>` keeps every filter answer (key stripped) and answers a
 repeated question from disk, unbilled and outside `--result-budget`, so a run
 that is refused, budget-stopped or killed never wastes what it fetched: rerun

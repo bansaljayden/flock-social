@@ -703,14 +703,15 @@ test('axisProof names the rotation, and the gate holds the floors', () => {
 });
 
 // A proof table over every rotation of the week: `rows` overrides the default
-// (a poor fit) at the shifts it names.
-function proofTable({ venues, bestShift, rows }) {
+// (a poor fit) at the shifts it names; `counts` are the hour and day counts.
+function proofTable({ venues, bestShift, rows, counts = {} }) {
   const table = [];
   for (let k = -83; k <= 84; k++) {
     table.push({ shift: k, pairs: 50000, mae: 30, exact: 0.02, within5: 0.15, r: 0.3, venuesBestHere: 0, ...(rows[k] || {}) });
   }
-  return { venues, tied: 0, thin: 0, flat: 0, table, bestShift };
+  return { venues, tied: 0, ...counts, thin: 0, flat: 0, table, bestShift };
 }
+const allCount = (n, aligned) => ({ hourAligned: aligned, dayInformative: n, dayAligned: aligned });
 
 test('--new-only judges the hour origin alone: drifted stored curves pass, a real shift does not', () => {
   // Denver, 2026-11-18: rotation 0 best by every measure, 528 of 540 venues
@@ -723,11 +724,13 @@ test('--new-only judges the hour origin alone: drifted stored curves pass, a rea
     24: { mae: 7.5, exact: 0.25, within5: 0.5, r: 0.86, venuesBestHere: 3 },
     [-24]: { mae: 7.6, exact: 0.25, within5: 0.5, r: 0.858, venuesBestHere: 2 },
   };
-  const denver = proofTable({ venues: 540, bestShift: 0, rows: denverRows });
+  const denverCounts = allCount(540, 533);
+  const denver = proofTable({ venues: 540, bestShift: 0, rows: denverRows, counts: denverCounts });
   const newOnly = harvester.axisVerdict(denver, { newOnly: true });
   assert.strictEqual(newOnly.pass, true, newOnly.reason);
   assert.match(newOnly.rule, /--new-only/);
-  assert.match(newOnly.reason, /528 of 540 venues \(97\.8%\) fit best at rotation 0/);
+  assert.match(newOnly.reason, /by hour, 533 of 540 venues \(98\.7%\) fit best at rotation 0 or a whole number of days from it \(528 at 0 itself\)/);
+  assert.match(newOnly.reason, /by day, 533 of 540 venues \(98\.7%\) hold whole weeks on both sides whose days differ by at least 3 points and fit rotation 0 within 1 point of their best whole-day rotation \(540 could vote\)/);
   assert.match(newOnly.reason, /r 0\.972 is 0\.088 above the next rotation's \(\+1, 0\.884\)/);
   // A commit that refreshes known rows keeps the within-five rule.
   const refresh = harvester.axisVerdict(denver);
@@ -738,22 +741,128 @@ test('--new-only judges the hour origin alone: drifted stored curves pass, a rea
   // A real hour shift is refused under --new-only, whatever the drift.
   for (const k of [1, -6]) {
     const shifted = proofTable({
-      venues: 540, bestShift: k,
+      venues: 540, bestShift: k, counts: allCount(540, 10),
       rows: { [k]: { mae: 2.4, within5: 0.95, r: 0.975, venuesBestHere: 530 }, 0: { mae: 6, within5: 0.6, r: 0.88, venuesBestHere: 1 } },
     });
     const v = harvester.axisVerdict(shifted, { newOnly: true });
     assert.strictEqual(v.pass, false, `rotation ${k}`);
     assert.match(v.reason, new RegExp(`rotation of ${k > 0 ? '\\+' : ''}${k} hours, not 0`));
   }
-  // And each of the rule's three tests holds on its own.
-  const share = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], venuesBestHere: 480 } } });
-  assert.match(harvester.axisVerdict(share, { newOnly: true }).reason, /480 of 540 venues \(88\.9%\) fit best at rotation 0 \(at least 90\.0% needed\)/);
-  const close = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, [-1]: { ...denverRows[-1], r: 0.94 } } });
+  // And each of the rule's tests holds on its own.
+  const hourShare = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], venuesBestHere: 480 } }, counts: { ...denverCounts, hourAligned: 485 } });
+  assert.match(harvester.axisVerdict(hourShare, { newOnly: true }).reason,
+    /by hour, only 485 of 540 venues \(89\.8%\) fit best at rotation 0 or a whole number of days from it \(480 at 0 itself\) \(at least 90\.0% needed\)/);
+  const dayShare = proofTable({ venues: 540, bestShift: 0, rows: denverRows, counts: { ...denverCounts, dayAligned: 480 } });
+  assert.match(harvester.axisVerdict(dayShare, { newOnly: true }).reason,
+    /by day, only 480 of 540 venues \(88\.9%\) hold whole weeks on both sides whose days differ by at least 3 points and fit rotation 0 within 1 point of their best whole-day rotation \(540 could vote\) \(at least 90\.0% needed\)/);
+  const fewDays = proofTable({ venues: 540, bestShift: 0, rows: denverRows, counts: { hourAligned: 533, dayInformative: 19, dayAligned: 19 } });
+  assert.match(harvester.axisVerdict(fewDays, { newOnly: true }).reason,
+    /only 19 compared venues hold whole weeks on both sides whose days differ by at least 3 points \(at least 20 are needed to prove the day\)/);
+  const close = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, [-1]: { ...denverRows[-1], r: 0.94 } }, counts: denverCounts });
   assert.match(harvester.axisVerdict(close, { newOnly: true }).reason, /r 0\.972 is only 0\.032 above rotation -1's \(0\.940\); at least 0\.05 needed/);
-  const few = proofTable({ venues: 19, bestShift: 0, rows: denverRows });
+  const few = proofTable({ venues: 19, bestShift: 0, rows: denverRows, counts: allCount(19, 19) });
   assert.match(harvester.axisVerdict(few, { newOnly: true }).reason, /only 19 known venues could be compared/);
-  const noR = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], r: null } } });
-  assert.strictEqual(harvester.axisVerdict(noR, { newOnly: true }).pass, false);
+  const noR = proofTable({ venues: 540, bestShift: 0, rows: { ...denverRows, 0: { ...denverRows[0], r: null } }, counts: denverCounts });
+  assert.match(harvester.axisVerdict(noR, { newOnly: true }).reason, /rotation 0 has no correlation to judge/);
+  // A proof that never counted by hour and day is refused, not read as zero.
+  const uncounted = proofTable({ venues: 540, bestShift: 0, rows: denverRows });
+  assert.match(harvester.axisVerdict(uncounted, { newOnly: true }).reason, /did not count venues by hour and by day/);
+});
+
+test('--new-only: a venue best a whole day off counts by hour, and by day only when rotation 0 fits it within a point (NYC, 2026-11-18)', () => {
+  // NYC's stored curves are months old. Its commit was refused counting
+  // rotation 0 alone (404 of 454, 89.0%); the dry rerun from its cache: 411 of
+  // 462 best at 0, 452 at 0 or a whole number of days, 459 with whole weeks
+  // whose days differ by at least 3 points and 441 of those within a point at
+  // 0, r 0.939 against 0.854 at +1.
+  const nyc = proofTable({
+    venues: 462, bestShift: 0, counts: { hourAligned: 452, dayInformative: 459, dayAligned: 441 },
+    rows: {
+      0: { mae: 4.97, exact: 0.636, within5: 0.765, r: 0.939, venuesBestHere: 411 },
+      1: { mae: 8.94, exact: 0.502, within5: 0.632, r: 0.854, venuesBestHere: 3 },
+      [-1]: { mae: 9.24, exact: 0.496, within5: 0.617, r: 0.849, venuesBestHere: 1 },
+      2: { mae: 13.74, exact: 0.44, within5: 0.529, r: 0.713, venuesBestHere: 2 },
+      24: { mae: 9.15, exact: 0.52, within5: 0.633, r: 0.843, venuesBestHere: 11 },
+      [-24]: { mae: 9.15, exact: 0.522, within5: 0.636, r: 0.843, venuesBestHere: 11 },
+    },
+  });
+  const v = harvester.axisVerdict(nyc, { newOnly: true });
+  assert.strictEqual(v.pass, true, v.reason);
+  assert.match(v.reason, /by hour, 452 of 462 venues \(97\.8%\) fit best at rotation 0 or a whole number of days from it \(411 at 0 itself\); by day, 441 of 462 venues \(95\.5%\) hold whole weeks on both sides whose days differ by at least 3 points and fit rotation 0 within 1 point of their best whole-day rotation \(459 could vote\)/);
+  assert.match(v.reason, /r 0\.939 is 0\.085 above the next rotation's \(\+1, 0\.854\)/);
+  // A city whose curves all sit a day off is refused by the pooled tests.
+  const dayOff = proofTable({
+    venues: 454, bestShift: 24, counts: allCount(454, 450),
+    rows: { 24: { mae: 3, within5: 0.9, r: 0.96, venuesBestHere: 440 }, 0: { mae: 9, within5: 0.6, r: 0.84, venuesBestHere: 10 } },
+  });
+  assert.match(harvester.axisVerdict(dayOff, { newOnly: true }).reason, /rotation of \+24 hours, not 0/);
+  // And r at 0 must beat a day off by the margin like any other rotation.
+  const dayClose = proofTable({ venues: 454, bestShift: 0, counts: allCount(454, 450), rows: { 0: { mae: 3, r: 0.9, venuesBestHere: 300 }, 24: { mae: 3.5, r: 0.88, venuesBestHere: 150 } } });
+  assert.match(harvester.axisVerdict(dayClose, { newOnly: true }).reason, /r 0\.900 is only 0\.020 above rotation \+24's \(0\.880\)/);
+});
+
+test('axisProof: a partial day error is refused, and a venue that cannot tell its days apart does not vote on the day', () => {
+  const week = (seed) => harvester.weekCurve(harvester.weekCells(weekFor(seed).map((h, d) => [d, h])));
+  const rotate = (c, k) => { const o = new Int16Array(168); for (let i = 0; i < 168; i++) o[(i + k + 168) % 168] = c[i]; return o; };
+  const mix = (shifts) => shifts.map((k, i) => { const c = week(i * 11); return { planned: rotate(c, k), stored: c }; });
+  const at = (k, n) => Array(n).fill(k);
+  // A real one-day error on three of twenty. These weeks differ day to day, so
+  // rotation 0 fits a shifted one far worse than +24 does: the day share is
+  // 85%, though every venue lines up by hour and the pooled tests pass.
+  const dayErr = harvester.axisProof(mix([...at(0, 17), ...at(24, 3)]));
+  assert.strictEqual(dayErr.bestShift, 0);
+  assert.deepStrictEqual([dayErr.hourAligned, dayErr.dayInformative, dayErr.dayAligned], [20, 20, 17]);
+  assert.match(harvester.axisVerdict(dayErr, { newOnly: true }).reason, /by day, only 17 of 20 venues \(85\.0%\) hold whole weeks/);
+  // A day error on seventeen venues whose days differ by one spike (a day on,
+  // 140 of 168 cells' worth: 0.83 points), beside three correct ones (found in
+  // review, 2026-11-18). Rotation 0 fits each within a point, so a tolerance
+  // alone would pass it; they cannot tell their days apart, so they do not
+  // vote on the day, and three venues cannot prove it.
+  const spike = Int16Array.from({ length: 168 }, (_, i) => ((i % 24) * 7) % 50);
+  spike[0] += 70;
+  const spiked = harvester.axisProof([
+    ...Array.from({ length: 3 }, (_, j) => { const c = Int16Array.from({ length: 168 }, (_, i) => (11 * j + i) % 101); return { stored: c, planned: c }; }),
+    ...Array.from({ length: 17 }, () => ({ stored: spike, planned: rotate(spike, 24) })),
+  ]);
+  assert.strictEqual(spiked.bestShift, 0);
+  assert.deepStrictEqual([spiked.hourAligned, spiked.dayInformative], [20, 3]);
+  // Nor can enough correct venues beside them carry the day (round three of the
+  // same review): twenty correct venues and eighty spiked ones a day off, or
+  // eighty whose harvested week holds one day only, filed a day late.
+  const correct = Array.from({ length: 20 }, (_, j) => { const c = Int16Array.from({ length: 168 }, (_, i) => (11 * j + i) % 101); return { stored: c, planned: c }; });
+  const manySpiked = harvester.axisProof([...correct, ...Array.from({ length: 80 }, () => ({ stored: spike, planned: rotate(spike, 24) }))]);
+  assert.deepStrictEqual([manySpiked.bestShift, manySpiked.hourAligned, manySpiked.dayInformative], [0, 100, 20]);
+  assert.match(harvester.axisVerdict(manySpiked, { newOnly: true }).reason, /by day, only 20 of 100 venues \(20\.0%\) hold whole weeks/);
+  const steps = [0, 1, 3, 5, 7, 9, 11];
+  const stepped = Int16Array.from({ length: 168 }, (_, i) => (((i % 24) * 7) % 50) + steps[Math.floor(i / 24)]);
+  const oneDayLate = Int16Array.from({ length: 168 }, (_, i) => (i >= 24 && i < 48 ? ((i % 24) * 7) % 50 : -1));
+  const partial = harvester.axisProof([...correct, ...Array.from({ length: 80 }, () => ({ stored: stepped, planned: oneDayLate }))]);
+  assert.deepStrictEqual([partial.venues, partial.dayInformative], [100, 20]);
+  assert.match(harvester.axisVerdict(partial, { newOnly: true }).reason, /by day, only 20 of 100 venues \(20\.0%\) hold whole weeks/);
+  // Non-voters and voters a day off share one allowance (round four): 81
+  // correct, 9 that vote and sit exactly a day off, 10 spiked a day off that
+  // cannot vote. Two separate 90% floors passed this; one share over every
+  // venue reads 81%.
+  const curveJ = (j) => Int16Array.from({ length: 168 }, (_, i) => (11 * j + i) % 101);
+  const shared = harvester.axisProof([
+    ...Array.from({ length: 81 }, (_, j) => ({ stored: curveJ(j), planned: curveJ(j) })),
+    ...Array.from({ length: 9 }, (_, k) => ({ stored: curveJ(81 + k), planned: rotate(curveJ(81 + k), 24) })),
+    ...Array.from({ length: 10 }, () => ({ stored: spike, planned: rotate(spike, 24) })),
+  ]);
+  assert.deepStrictEqual([shared.bestShift, shared.hourAligned, shared.dayInformative, shared.dayAligned], [0, 100, 90, 81]);
+  assert.match(harvester.axisVerdict(shared, { newOnly: true }).reason, /by day, only 81 of 100 venues \(81\.0%\) hold whole weeks/);
+  assert.match(harvester.axisVerdict(spiked, { newOnly: true }).reason,
+    /only 3 compared venues hold whole weeks on both sides whose days differ by at least 3 points \(at least 20 are needed to prove the day\)/);
+  // Drift that tips a venue whose days do differ (each day 4 points above the
+  // last) to a day off, with rotation 0 within 0.29 points of it, still lines
+  // up by day.
+  const hr = (i) => ((i % 24) * 7) % 50;
+  const dayLift = [12, 2, 6, 10, 14, 18, 21];
+  const base = Int16Array.from({ length: 168 }, (_, i) => hr(i) + 4 * Math.floor(i / 24));
+  const drifted = Int16Array.from({ length: 168 }, (_, i) => hr(i) + dayLift[Math.floor(i / 24)]);
+  const tipped = harvester.axisProof([...mix(at(0, 20)), { planned: drifted, stored: base }]);
+  assert.strictEqual(tipped.table.find((r) => r.shift === 24).venuesBestHere, 1);
+  assert.deepStrictEqual([tipped.hourAligned, tipped.dayInformative, tipped.dayAligned], [21, 21, 21]);
 });
 
 test('the peak-hour histogram is on the venue clock', () => {
@@ -1123,7 +1232,8 @@ test('--new-only writes nothing for a venue already held, and a new one gets its
   assert.strictEqual(dry.summary.knownSkipped, 27);
   assert.strictEqual(dry.summary.rowsPlanned, 168, 'only the new venue\'s week is planned');
   assert.match(dry.out, /NEW VENUES ONLY/);
-  assert.match(dry.out, /COMMIT GATE: PASS \(best rotation 0; 24 of 24 venues \(100\.0%\) fit best at rotation 0; .*\)\. Judged by the --new-only hour-origin rule/);
+  assert.match(dry.out, /COMMIT GATE: PASS \(best rotation 0; by hour, 24 of 24 venues \(100\.0%\) fit best at rotation 0 or a whole number of days from it \(24 at 0 itself\); by day, 24 of 24 venues \(100\.0%\) hold whole weeks on both sides whose days differ by at least 3 points and fit rotation 0 within 1 point of their best whole-day rotation \(24 could vote\); .*\)\. Judged by the --new-only hour-origin rule/);
+  assert.match(dry.out, /By hour: 24 of 24 venues best at rotation 0 or a whole number of days from it\. By day: 24 of the 24 with whole weeks on both sides whose days differ by at least 3 points fit rotation 0 within 1 point of their best\. 0 tied in all\./);
   assert.match(dry.out, /--new-only: 27 known venues skipped \(25 by BestTime id, 1 by Google place id, 1 as near-duplicates\)/);
   assert.match(dry.out, /Would write 168 weekly rows for 1 venues and add 1 ml_venues rows .* 27 known venues skipped \(--new-only\)\./);
 
