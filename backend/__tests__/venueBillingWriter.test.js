@@ -1190,6 +1190,51 @@ test('a comp is given to a venue, not to the account: it does not follow the cla
   assert.strictEqual((await state(id)).served, 'free', 'a founding comp given to venue A was served to venue B');
 });
 
+test('a plan bought for the listing the claim names now is served, though a comp is still live on the old listing', async () => {
+  // Checkout lets the new listing buy (the comp is the old listing's, so it
+  // serves nothing here), and the writer used to keep the comp on the row
+  // anyway: Stripe billed the new listing every period and it was served
+  // nothing until the comp for the old one ran out.
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const adminId = await admin();
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'founding_comp', reason: 'founding cohort' },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  await repointAndVerify(id, PLACE_B);
+  assert.strictEqual((await state(id)).served, 'free');
+
+  const before = sessionsMade.length;
+  await venueBilling.createVenueCheckout({ id, email: `owner-comp-moved-${id}@example.com`, name: 'Owner' }, 'monthly');
+  assert.strictEqual(sessionsMade[before].metadata.flock_venue_place_id, PLACE_B);
+
+  const result = await venueBilling.syncVenueSubscription(sub('sub_over_old_comp', id, 'trialing', { metadata: boundTo(PLACE_B)(id) }));
+  assert.strictEqual(result.written, true, 'the plan B paid for was kept off the row by the comp A was given');
+  const s = await state(id);
+  assert.strictEqual(s.served, 'pro', 'B was billed for Roost and served nothing');
+  assert.strictEqual(s.grant.stripe_subscription_id, 'sub_over_old_comp');
+});
+
+test('a comp on the listing the claim names still keeps a shorter subscription off the row, and that subscription is not marked delivered', async () => {
+  const [PLACE_A] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const adminId = await admin();
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'founding_comp', reason: 'founding cohort' },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+
+  const result = await venueBilling.syncVenueSubscription(sub('sub_under_comp', id, 'active', { metadata: boundTo(PLACE_A)(id) }));
+  assert.strictEqual(result.written, false);
+  assert.strictEqual((await state(id)).grant.source, 'comp', 'the comp for this listing still stands');
+  // What the venue is served is the comp's; this subscription delivered
+  // nothing, so fulfillment must still be free to refuse it.
+  const rec = await testPool.query('SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_under_comp']);
+  assert.strictEqual(rec.rows[0].served_at, null, 'a subscription kept off the row was recorded as delivered');
+  assert.strictEqual(result.tier, 'free');
+});
+
 // The profile routes, mounted the way server.js mounts them.
 let profileServer = null;
 let profileBase = null;

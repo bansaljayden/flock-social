@@ -926,7 +926,13 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            still live, because its events were not written. Nor does a
 //            subscription ever take the row from a live grant WE wrote for a
 //            different listing, whatever its dates: a plan for venue A is not
-//            a reason to end a comp given to venue B.
+//            a reason to end a comp given to venue B. The one exception is a
+//            live subscription for the listing the claim names now over a
+//            grant of ours for another listing, which serves the claim
+//            nothing (the resolver's grantForAnotherListing). Checkout lets
+//            that listing buy, since the grant is not its own, and keeping
+//            the old grant on the row billed the new listing every period
+//            and served it nothing until the old grant ran out.
 //            And a subscription bound to another listing than the one the
 //            claim names never takes the row from a different, live Stripe
 //            plan that serves the claim (bound to the claim's listing, or to
@@ -992,7 +998,11 @@ const SYNC_SQL = `WITH old AS (
        AND (venue_subscriptions.expires_at IS NULL OR venue_subscriptions.expires_at > NOW())
        AND NOT ($11::boolean AND venue_subscriptions.expires_at IS NOT NULL
                 AND EXCLUDED.expires_at >= venue_subscriptions.expires_at
-                AND venue_subscriptions.google_place_id IS NOT DISTINCT FROM EXCLUDED.google_place_id))
+                AND venue_subscriptions.google_place_id IS NOT DISTINCT FROM EXCLUDED.google_place_id)
+       AND NOT ($11::boolean
+                AND venue_subscriptions.google_place_id IS NOT NULL
+                AND venue_subscriptions.google_place_id IS DISTINCT FROM (SELECT google_place_id FROM old)
+                AND EXCLUDED.google_place_id IS NOT DISTINCT FROM (SELECT google_place_id FROM old)))
       AND NOT (EXCLUDED.google_place_id IS NOT NULL
        AND EXCLUDED.google_place_id IS DISTINCT FROM (SELECT google_place_id FROM old)
        AND venue_subscriptions.source = 'stripe'
@@ -1281,9 +1291,12 @@ async function syncVenueSubscription(subscriptionId, { refuse = null } = {}) {
       g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier, boundPlace || null,
     ]);
     const row = r.rows[0] || {};
-    // Bound to no listing binds nothing (the resolver's rule too).
+    // Bound to no listing binds nothing (the resolver's rule too). Served only
+    // when this subscription is the grant on the row: one a grant of ours kept
+    // off the row delivered nothing, and marking it delivered would stop
+    // fulfillment from ever refusing it.
     const otherListing = !!boundPlace && boundPlace !== (row.place_id || null);
-    const served = !!row.profiles && g.live && row.verified === true && !otherListing;
+    const served = row.written > 0 && !!row.profiles && g.live && row.verified === true && !otherListing;
     if (served) await client.query(MARK_SERVED_SQL, [sub.id]);
     await client.query('COMMIT');
     const asked = decided ? { decision: decided.decision, refusal: decided.refusal || null } : {};
