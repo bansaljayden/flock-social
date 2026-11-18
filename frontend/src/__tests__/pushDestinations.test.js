@@ -85,6 +85,35 @@ describe('a tapped invite lands on the invite', () => {
     expect(APP).toMatch(/That invite is no longer open\./);
   });
 
+  test('a failed list read holds the tap, rather than calling a live invite closed', () => {
+    // On a cold start whose GET /api/flocks fails, loading ends with both
+    // lists empty and flocksError set. The tap is kept and nothing is said
+    // until a read answers; the plans list's error card offers that retry.
+    const at = APP.indexOf('if (!pushInviteFlockId || flocksLoading) return;');
+    const start = APP.lastIndexOf('useEffect(() => {', at);
+    const end = APP.indexOf('\n  }, [', at);
+    const body = APP.slice(start + 'useEffect('.length, end + '\n  }'.length);
+    const NAMES = ['pushInviteFlockId', 'flocksLoading', 'flocksError', 'pendingFlockInvites', 'flocks',
+      'setHighlightedInviteId', 'setSelectedFlockId', 'setCurrentTab', 'setCurrentScreen', 'showToast', 'setPushInviteFlockId'];
+    const run = (state) => {
+      const calls = { setHighlightedInviteId: jest.fn(), setSelectedFlockId: jest.fn(), setCurrentTab: jest.fn(), setCurrentScreen: jest.fn(), showToast: jest.fn(), setPushInviteFlockId: jest.fn() };
+      const scope = { ...state, ...calls };
+      // eslint-disable-next-line no-new-func
+      new Function(...NAMES, `return ${body};`)(...NAMES.map((n) => scope[n]))();
+      return calls;
+    };
+
+    const failed = run({ pushInviteFlockId: 12, flocksLoading: false, flocksError: 'Your flocks are not loading right now.', pendingFlockInvites: [], flocks: [] });
+    expect(failed.showToast).not.toHaveBeenCalled();
+    expect(failed.setPushInviteFlockId).not.toHaveBeenCalled();
+
+    // The retry answers: the invite is there, and the tap lands on its card.
+    const answered = run({ pushInviteFlockId: 12, flocksLoading: false, flocksError: '', pendingFlockInvites: [{ id: 12 }], flocks: [] });
+    expect(answered.setHighlightedInviteId).toHaveBeenCalledWith(12);
+    expect(answered.showToast).not.toHaveBeenCalled();
+    expect(answered.setPushInviteFlockId).toHaveBeenCalledWith(null);
+  });
+
   test('the card the tap meant is called out on the list', () => {
     expect(CHAT_LIST).toMatch(/const tapped = highlightedInviteId === f\.id;/);
     expect(APP).toMatch(/setHighlightedInviteId/);

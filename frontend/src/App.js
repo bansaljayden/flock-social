@@ -9397,6 +9397,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   //                      answer rather than a wrong screen.
   useEffect(() => {
     if (!pushInviteFlockId || flocksLoading) return;
+    // A failed read is not two empty lists. The tap stays held, and nothing
+    // is said about it, until a read answers (the plans list offers the retry).
+    if (flocksError) return;
     const invited = pendingFlockInvites.some(f => f.id === pushInviteFlockId);
     const joined = flocks.some(f => f.id === pushInviteFlockId);
     if (invited) {
@@ -9409,7 +9412,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('That invite is no longer open.');
     }
     setPushInviteFlockId(null);
-  }, [pushInviteFlockId, flocksLoading, pendingFlockInvites, flocks, showToast]);
+  }, [pushInviteFlockId, flocksLoading, flocksError, pendingFlockInvites, flocks, showToast]);
 
   // The call-out fades on its own. It is a "this one" marker, not a state the
   // user has to dismiss, and leaving it lit forever would make the next invite
