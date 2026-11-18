@@ -754,7 +754,7 @@ export default function ExploreScreen({
         {/* Conditional, because the wrapper is mounted for the whole session
             and an unconditional marker would grab focus at app start.
             modal={false}: this is a push with the tab bar still beside it. */}
-        {showEventsView && <DialogBehavior modal={false} onClose={() => { setShowEventsView(false); setEventsSearchQuery(''); }} />}
+        {showEventsView && <DialogBehavior modal={false} onClose={() => { clearTimeout(eventsSearchTimerRef.current); setShowEventsView(false); setEventsSearchQuery(''); }} />}
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', transform: showEventsView ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.35s cubic-bezier(0.4, 0, 0.2, 1)', willChange: 'transform' }}>
         {/* The gate. eventsDrawerMounted is declared at the top of this file
             and the comment there is the whole argument. The lines it wraps are
@@ -763,7 +763,7 @@ export default function ExploreScreen({
           {/* Events header */}
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
             <div style={{ padding: '12px 12px 8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <button aria-label="Back" className="hit44" onClick={() => { setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
+              <button aria-label="Back" className="hit44" onClick={() => { clearTimeout(eventsSearchTimerRef.current); setShowEventsView(false); setEventsSearchQuery(''); }} style={{ width: '38px', height: '38px', borderRadius: 'var(--r-md)', border: 'none', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, transition: 'opacity 0.2s' }}>
                 {Icons.arrowLeft(colors.navy, 18)}
               </button>
               <div style={{ flex: 1, position: 'relative' }}>
@@ -782,8 +782,10 @@ export default function ExploreScreen({
                   initialValue={eventsSearchQuery}
                   onCommit={(typed) => {
                     setEventsSearchQuery(typed);
+                    // A search still waiting on its timer is for words no
+                    // longer in the box, whatever this commit does next.
+                    clearTimeout(eventsSearchTimerRef.current);
                     if (typed.length >= 2 && userLocation) {
-                      clearTimeout(eventsSearchTimerRef.current);
                       eventsSearchTimerRef.current = setTimeout(() => {
                         fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, typed);
                       }, 280);
@@ -797,6 +799,7 @@ export default function ExploreScreen({
                 <span style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(eventsSearchQuery ? '#F59E0B' : colors.textTertiary, 15)}</span>
                 {eventsSearchQuery && (
                   <button aria-label="Clear search" className="hit44" onClick={() => {
+                    clearTimeout(eventsSearchTimerRef.current);
                     setEventsSearchQuery('');
                     if (userLocation) fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
                   }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 14)}</button>
