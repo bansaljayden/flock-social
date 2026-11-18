@@ -48,7 +48,9 @@ test('the four chat doors use the chat list and nothing else does', () => {
   const handlers = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
   assert.strictEqual((messages.match(/rejectIfProfaneChat\(res, message_text\)/g) || []).length, 2, 'flock POST and DM POST');
   assert.ok(!/rejectIfProfane\(res, message_text\)/.test(messages), 'no chat body on the full list');
-  assert.match(messages, /rejectIfProfane\(res, venue_name\)/, 'venue text keeps the full list');
+  // The venue screen, as on the socket: the full list for a typed venue, the
+  // provider list for Google's text (moderateVenueText). Never the chat list.
+  assert.match(messages, /rejectIfProfaneVenue\(res, venue_name, venue_id\)/, 'venue text keeps the venue screen');
   assert.match(handlers, /if \(!moderateChatText\(message_text\)\.allowed\) \{/);
   assert.match(handlers, /if \(!moderateChatText\(text\)\.allowed\) \{/);
   assert.match(handlers, /moderateText\(venue_name\)\.allowed/, 'venue text keeps the full list on the socket too');

@@ -4,7 +4,7 @@ const pool = require('../config/database');
 const { prepared } = require('../db/prepared');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
-const { rejectIfProfane, rejectIfProfaneChat, moderateImage, imageRejectionMessage } = require('../utils/moderation');
+const { rejectIfProfaneChat, rejectIfProfaneVenue, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedOrBannedBetween, getInvisibleUserIds } = require('../utils/blocks');
@@ -2531,7 +2531,7 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4
 router.post('/dm/:userId/venue-votes',
   [
     param('userId').isInt({ min: 1, max: INT4_MAX }),
-    // Shape first: the handler runs stripHtml + rejectIfProfane on this value
+    // Shape first: the handler runs stripHtml + rejectIfProfaneVenue on this value
     // and BOTH pass a non-string straight through, so an array was a screened
     // field that had never been screened — and it then reached the VARCHAR(255)
     // column and the vote lookup as an array literal. (venue_id below is safe
@@ -2565,13 +2565,15 @@ router.post('/dm/:userId/venue-votes',
         return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
       }
       const venue_name = stripHtml(req.body.venue_name);
-      // Venue names ride into the other person's UI (round 9 follow-up).
-      if (rejectIfProfane(res, venue_name)) return;
       // dm_venue_votes.venue_id is VARCHAR(255) and the validator only checks
       // that it is a string, so an over-long id used to reach the INSERT and
       // come back as a swallowed 500 — and now would do it with a transaction
       // and an advisory lock held. Clamped, exactly as the socket twin does.
       const venue_id = typeof req.body.venue_id === 'string' ? req.body.venue_id.slice(0, 255) : null;
+      // Venue names ride into the other person's UI (round 9 follow-up).
+      // Google's text is screened as Google's text, as dm_vote_venue screens
+      // it; see moderateVenueText.
+      if (rejectIfProfaneVenue(res, venue_name, venue_id)) return;
       // Toggle: if already voted for this venue, unvote; otherwise switch vote.
       //
       // This was read, DELETE, INSERT as three separate autocommit statements —
@@ -2755,10 +2757,12 @@ router.put('/dm/:userId/pinned-venue',
       const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
       const venue_name = stripHtml(req.body.venue_name).slice(0, 255);
       const venue_address = req.body.venue_address ? stripHtml(String(req.body.venue_address)).slice(0, 512) : null;
-      // Same screen + photo-proxy-only rule as venue cards (round 8).
-      if (rejectIfProfane(res, venue_name)) return;
-      if (venue_address && rejectIfProfane(res, venue_address)) return;
       const venue_id = typeof req.body.venue_id === 'string' ? req.body.venue_id.slice(0, 256) : null;
+      // Same screen + photo-proxy-only rule as venue cards (round 8). Google's
+      // text is screened as Google's text, as dm_pin_venue screens it; see
+      // moderateVenueText.
+      if (rejectIfProfaneVenue(res, venue_name, venue_id)) return;
+      if (venue_address && rejectIfProfaneVenue(res, venue_address, venue_id)) return;
       // NUMERIC(2,1) and a five-star scale; see the socket twin.
       const venue_rating = Number.isFinite(req.body.venue_rating) && req.body.venue_rating >= 0 && req.body.venue_rating <= 5
         ? req.body.venue_rating : null;
