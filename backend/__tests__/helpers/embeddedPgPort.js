@@ -208,6 +208,11 @@ const SUITE_SLOTS = {
                                  // counting until noon the next day (migration
                                  // 136), through the real feedback router. No
                                  // branch of 5-6 Nov held 74.
+  ownerStrikeAssertionRealDb: 61, // new in 2026-11-17; the owner slider's
+                                 // strikes read back through the live-reading
+                                 // statement: one strike per assertion, and a
+                                 // carried report judged against the reading
+                                 // on screen when it was filed.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

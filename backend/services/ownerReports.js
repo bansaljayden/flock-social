@@ -165,7 +165,34 @@ const LIVE_OWNER_REPORTS_SQL = `
               AND p.created_at <= r.created_at
               AND p.created_at > r.created_at - INTERVAL '90 minutes'
               AND ABS(p.busy_percent - r.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
-         ), r.created_at) AS assertion_since
+         ), r.created_at) AS assertion_since,
+         -- WHAT WAS ON SCREEN WHEN EACH CARRIED REPORT WAS FILED: every reading
+         -- this venue posted inside one reading's life up to this one, whatever
+         -- its number. The assertion walk above can reach back past a number
+         -- that agreed with the room (40, then 55, 60, 65 as the room fills),
+         -- and a report that agreed with the reading it was filed against is
+         -- not evidence against the next one. contemporaneousReports uses this
+         -- to judge each carried report against its own reading.
+         COALESCE((
+           SELECT json_agg(json_build_object('created_at', p.created_at, 'busy_percent', p.busy_percent))
+             FROM venue_owner_reports p
+            WHERE p.google_place_id = r.google_place_id
+              AND p.created_at <= r.created_at
+              AND p.created_at > r.created_at - INTERVAL '90 minutes'
+         ), '[]'::json) AS recent_readings,
+         -- WHETHER THIS ASSERTION HAS ALREADY COST A STRIKE, over the same rows
+         -- the walk above calls one assertion. One contested 80 nudged to 84
+         -- and 78 is one claim and one disagreement, and was three strikes:
+         -- the whole suppression, from one misjudged reading.
+         EXISTS (
+           SELECT 1
+             FROM venue_owner_reports p
+            WHERE p.google_place_id = r.google_place_id
+              AND p.created_at <= r.created_at
+              AND p.created_at > r.created_at - INTERVAL '90 minutes'
+              AND ABS(p.busy_percent - r.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
+              AND p.diverged = true
+         ) AS assertion_struck
     FROM venue_owner_reports r
     JOIN venue_profiles vp
       ON vp.user_id = r.venue_user_id
@@ -356,17 +383,36 @@ function assertionWindow(ownerRow) {
   return { from, until: at + OWNER_REPORT_TTL_MS };
 }
 
+// The venue's recent readings, oldest first, from the read's recent_readings,
+// or null when the row carries none (a hand-built row), in which case every
+// report in the window counts, as it always did.
+function recentReadings(ownerRow) {
+  if (!Array.isArray(ownerRow?.recent_readings)) return null;
+  return ownerRow.recent_readings
+    .map((p) => ({ at: reportRowTime(p), percent: Number(p?.busy_percent) }))
+    .filter((p) => Number.isFinite(p.at) && Number.isFinite(p.percent))
+    .sort((a, b) => a.at - b.at);
+}
+
 // Distinct verified reporters whose report lands inside the owner reading's
 // own live window. Deduped per account for the same reason
 // crowdEngine.usableCalibrationReports dedupes: one person filing six reports
 // is one person, and a Sybil floor of three that counts rows instead of
 // accounts is not a floor. An unattributable row (user_id null) counts once
 // on its own, never as a reporter that can be multiplied.
+//
+// A report filed before this row was posted is CARRIED from an earlier
+// reading in the assertion, and it counts only if it also disagreed with the
+// reading on screen when it was filed. Three people who said "quiet" while the
+// venue said 40 agreed with the venue; charging them against the 55, 60 and 65
+// it posted as the room filled struck an honest ramp three times.
 function contemporaneousReports(feedbackRows, ownerRow, nowMs) {
   const window = assertionWindow(ownerRow);
   if (!window) return [];
   const { from, until } = window;
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  const rowAt = reportRowTime(ownerRow);
+  const history = recentReadings(ownerRow);
   const byReporter = new Map();
   const unattributed = [];
   for (const row of feedbackRows || []) {
@@ -377,6 +423,12 @@ function contemporaneousReports(feedbackRows, ownerRow, nowMs) {
     // A row with no readable timestamp cannot be shown to be contemporaneous,
     // so it is not. Same direction as everything else here.
     if (!Number.isFinite(at) || at < from || at > Math.min(until, now)) continue;
+    if (history && at < rowAt) {
+      let then = null;
+      for (const p of history) if (p.at <= at) then = p.percent;
+      // No reading known for that moment is no evidence, same direction.
+      if (then === null || Math.abs(score - then) <= OWNER_DIVERGENCE_POINTS) continue;
+    }
     if (row.user_id == null) { unattributed.push(score); continue; }
     byReporter.set(String(row.user_id), score);
   }
@@ -499,8 +551,13 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   // the room agrees with and there is nothing to strike, however fast or slow
   // the correction was. Correct it to another number the room does not
   // recognise and it is still a false reading.
+  //
+  // One strike per assertion (assertion_struck, from the read): re-posting a
+  // contested number inside 25 points is the same claim, already charged, and
+  // three strikes are meant to be three claims, not one claim nudged twice.
   if (ownerRow.id != null
       && ownerRow.diverged !== true
+      && ownerRow.assertion_struck !== true
       && strikeableDivergence(options.feedbackRows, ownerRow, live.percent, options.now)) {
     markDiverged(ownerRow.id);
   }
