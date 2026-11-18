@@ -70,11 +70,17 @@ const { emitToFlockMembers, emitToFlockExcludingBlocked } = require('../sockets/
 // to every member, and it rides on the settle and unsettle responses too so
 // the actor's own sheet sets it rather than guessing. `IS TRUE` for the reason
 // the old count used IS NOT TRUE: settled has no NOT NULL constraint.
+//
+// Over every share but a banned account's, as GET /:flockId counts it (see
+// `settleable` there). Counting that row here told the room 3 of 4 over a bill
+// GET called settled, and bill_fully_settled could never go out.
 async function billTallyFor(billId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS share_count,
             COUNT(*) FILTER (WHERE settled IS TRUE)::int AS settled_count
-       FROM bill_split_shares WHERE bill_id = $1`,
+       FROM bill_split_shares bss
+       JOIN users u ON u.id = bss.user_id
+      WHERE bss.bill_id = $1 AND u.is_banned IS NOT TRUE`,
     [billId]
   );
   const shareCount = Number(rows[0]?.share_count) || 0;

@@ -2314,6 +2314,51 @@ test('on a bill posted before the ban, the banned share frees the payer and the 
   assert.equal((await call('DELETE', `/api/flocks/${flockId}`, { token: alice.token })).status, 409);
 });
 
+test('the settle that clears the last share anybody can settle closes the bill on the wire too', async () => {
+  // GET left the banned row out of the tally and the settle and unsettle
+  // tallies counted it, so the room read 3 of 4 over a bill GET called settled
+  // and bill_fully_settled never went out.
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, carol, dave], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${flockId}/create`, {
+    token: bob.token, body: { totalAmount: 120, tipPercent: 0, splitType: 'equal', paidBy: bob.id },
+  })).status, 201);
+  await ban(dave);
+  assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: alice.token })).status, 200);
+
+  emits.length = 0;
+  const last = await call('POST', `/api/billing/${flockId}/settle`, { token: carol.token });
+  assert.equal(last.status, 200, last.text);
+  const want = { shareCount: 3, settledCount: 3, fullySettled: true };
+  assert.deepEqual(
+    { shareCount: last.body.shareCount, settledCount: last.body.settledCount, fullySettled: last.body.fullySettled },
+    want, 'the response counts what GET counts'
+  );
+  const tally = emits.find((e) => e.event === 'bill_tally' && e.room === `user:${bob.id}`);
+  assert.ok(tally, 'the tally reaches the payer');
+  assert.deepEqual(
+    { shareCount: tally.payload.shareCount, settledCount: tally.payload.settledCount, fullySettled: tally.payload.fullySettled },
+    want
+  );
+  assert.ok(emits.some((e) => e.event === 'bill_fully_settled' && e.room === `user:${bob.id}`),
+    'the room is told the bill is closed');
+  const again = await call('POST', `/api/billing/${flockId}/settle`, { token: carol.token });
+  assert.equal(again.body.bill_tally.fullySettled, true, 'a retry carries the same tally');
+
+  const back = await call('POST', `/api/billing/${flockId}/unsettle`, { token: carol.token });
+  assert.equal(back.status, 200, back.text);
+  assert.deepEqual(
+    { shareCount: back.body.shareCount, settledCount: back.body.settledCount, fullySettled: back.body.fullySettled },
+    { shareCount: 3, settledCount: 2, fullySettled: false }
+  );
+  const seen = await call('GET', `/api/billing/${flockId}`, { token: bob.token });
+  assert.equal(seen.body.bill.settledCount, back.body.settledCount);
+  assert.equal(seen.body.bill.shareCount, back.body.shareCount);
+});
+
 test('the budget does not wait on a banned member who never answered, and still waits on one who did', async () => {
   const alice = await mkUser('Alice');
   const bob = await mkUser('Bob');
