@@ -568,6 +568,18 @@ describe('the layout floors that only fail on a phone', () => {
     expect(bare).toEqual([]);
   });
 
+  test('on a phone no painting sits between a heading and what it introduces', () => {
+    // The crowds branch, the pricing robin and the sparrow under the tablet
+    // hide on phones (2026-11-06). `.lp img { display: block }` is (0,1,1),
+    // so a bare class loses to it: the first version of these rules did, and
+    // all three still showed at 390.
+    expect(CSS).toMatch(/@media \(max-width: 759\.98px\) \{\s*\.lp \.lp-live-art,\s*\.lp \.lp-pricing-art \{ display: none; \}/);
+    expect(CSS).toMatch(/@media \(max-width: 899\.98px\) \{\s*\.lp \.lp-friday-art \{ display: none; \}/);
+    for (const cls of ['lp-live-art', 'lp-pricing-art', 'lp-friday-art']) {
+      expect(visible).toMatch(new RegExp(`className="lp-art ${cls}"[\\s\\S]{0,400}loading="lazy"`));
+    }
+  });
+
   test('display headings can break inside a word rather than overflow', () => {
     const block = /\.lp h1, \.lp h2, \.lp h3 \{([\s\S]*?)\}/.exec(CSS);
     expect(block).not.toBeNull();
