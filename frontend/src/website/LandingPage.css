@@ -1795,8 +1795,10 @@ html:has(.lp) body { overflow-x: clip; }
 .lpd-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .lpd-input {
   /* Capped, not greedy. At full row width a cream-filled field is the loudest
-     thing in a navy section, and it is a search box, not the headline. */
-  flex: 1 1 220px; min-width: 0; max-width: 360px;
+     thing in a navy section, and it is a search box, not the headline. 230px,
+     not 220: the hint, 194px of text, needs 228px of field, and from about 510px
+     the field shares its row with both buttons at its basis. */
+  flex: 1 1 230px; min-width: 0; max-width: 360px;
   /* 16px, not 15. iOS zooms the whole viewport when a focused control computes
      under 16px, and in the Capacitor shell it does not zoom back out. This was
      already harmless in a browser — the floor block in index.css is (0,7,1) and
@@ -1810,6 +1812,12 @@ html:has(.lp) body { overflow-x: clip; }
   color: var(--ink); background: var(--plate);
   border: 1px solid var(--rule); border-radius: 12px; outline: none;
 }
+/* Its own row on a phone, with "Check it" and "Use my location" under it.
+   Sharing a row with "Check it" left the field 189-207px of room between 375
+   and 393px, and the hint, 209px of text, was cut to "Try “pizza” or a
+   bar’s nam" (2026-11-06). The row count is the same two as before, so the
+   reserved height above (.lpd-hold) still holds. */
+@media (max-width: 480px) { .lpd-input { flex-basis: 100%; max-width: none; } }
 .lpd-input:focus { border-color: var(--steel); box-shadow: 0 0 0 3px rgba(45, 90, 135, 0.15); }
 .lpd-input::placeholder { color: var(--ink-3); }
 .lpd-go { flex-shrink: 0; }
