@@ -87,6 +87,11 @@ function rememberPushToken(token) {
   // first registration, a rotated token from the tokenReceived listener, and
   // logout clearing it. So this is the one place the socket has to be told.
   try { setDevicePushToken(token); } catch (err) { /* socket not up yet */ }
+  // And the one place the notification row has to hear from. It reads "On"
+  // only for a device holding a token (pushSetupStatus below), and a token can
+  // appear with nobody tapping anything: the session watcher registers a
+  // device whose OS already said yes, seconds after App.js first read it.
+  try { window.dispatchEvent(new CustomEvent('flock-push-token-changed')); } catch (err) { /* no window */ }
 }
 
 function knownPushToken() {
@@ -839,6 +844,18 @@ export function getNotificationStatus() {
   }
   if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
   return Notification.permission; // 'granted', 'denied', or 'default'
+}
+
+// WHAT THE NOTIFICATION ROWS MAY CALL "ON": a granted permission AND a token
+// this device registered. Permission alone is not push. Brave grants it and
+// then fails every FCM getToken with "push service error", so Set up got null
+// back, toasted "Notifications aren't on", and re-read the permission, which
+// said 'granted': the row turned to On, told the person how to turn them off,
+// and took Set up away. A grant with no token is not set up, and is offered
+// Set up like a device that was never asked. Every other answer passes
+// through. Settings and the flock chat both draw from what this returns.
+export function pushSetupStatus(permission) {
+  return permission === 'granted' && !knownPushToken() ? 'default' : permission;
 }
 
 // Re-exported so App.js has a single import for "take me to the thing the

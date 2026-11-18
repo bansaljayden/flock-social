@@ -59,7 +59,7 @@
  */
 import React from 'react';
 import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice, getPrivacySettings, setPrivacySettings, userMessage } from '../services/api';
-import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
+import { getNotificationStatus, pushSetupStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 // The You tab's stat tiles and the trusted contacts list, while they load.
@@ -1170,9 +1170,11 @@ export default function ProfileSettings({
                     <button className="hit44 glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
                       trackNotificationPermission(token ? 'granted' : getNotificationStatus(), 'settings');
                       // null = denied or registration failed — saying
-                      // "enabled" without a registered token was a lie.
+                      // "enabled" without a registered token was a lie. So
+                      // was re-reading the permission here: Brave grants it
+                      // and still fails to register, and the row read On.
                       if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
-                      else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
+                      else { setNotifStatus(pushSetupStatus(getNotificationStatus())); showToast("Notifications aren't on. Check your device settings.", 'error'); }
                     }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: 'var(--r-sm)', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Set up</button>
                 )}
               </div>

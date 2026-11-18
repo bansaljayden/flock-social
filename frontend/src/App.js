@@ -26,7 +26,7 @@ import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onBillReminder, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
-import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
+import { syncPushRegistration, readNotificationPermission, pushSetupStatus, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession, primeBootReads, takeBootRead, currentAccount } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
@@ -9640,7 +9640,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [pickingVenueForDm, setPickingVenueForDm] = useState(false);
 
   // Profile
-  const [notifStatus, setNotifStatus] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+  // Through pushSetupStatus, every read: a browser that granted permission but
+  // holds no registered token is not set up, and reads as not asked.
+  const [notifStatus, setNotifStatus] = useState(() => pushSetupStatus(typeof Notification !== 'undefined' ? Notification.permission : 'default'));
   // The line above is the best a synchronous initialiser can do, and inside the
   // iOS shell it is wrong: there is no Notification object in the WKWebView, so
   // every native user starts as 'default' whatever the OS actually thinks. Ask
@@ -9654,17 +9656,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     let live = true;
     const read = () => {
       readNotificationPermission()
-        .then((status) => { if (live) setNotifStatus(status); })
+        .then((status) => { if (live) setNotifStatus(pushSetupStatus(status)); })
         .catch(() => {});
     };
     read();
     const onVisible = () => { if (document.visibilityState === 'visible') read(); };
     document.addEventListener('visibilitychange', onVisible);
     window.addEventListener('focus', read);
+    // A token registered or dropped with nobody tapping (the session watcher
+    // on a sign-in, a sign-out) changes what the row may say.
+    window.addEventListener('flock-push-token-changed', read);
     return () => {
       live = false;
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', read);
+      window.removeEventListener('flock-push-token-changed', read);
     };
   }, []);
   // "Not now" on the notifications row in a flock chat. Remembered on the

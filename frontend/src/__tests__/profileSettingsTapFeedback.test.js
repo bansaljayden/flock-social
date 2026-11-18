@@ -40,6 +40,10 @@ jest.mock('../services/api', () => ({
 jest.mock('../services/firebase', () => ({
   getNotificationStatus: jest.fn(),
   requestNotificationPermission: jest.fn(),
+  // This device holds no registered token, so a grant alone is not set up.
+  // The real rule is pinned in pushOnNeedsRegisteredToken.test.js. A plain
+  // function: react-scripts resets jest.fn implementations between tests.
+  pushSetupStatus: (permission) => (permission === 'granted' ? 'default' : permission),
 }));
 jest.mock('@react-oauth/google', () => ({
   useGoogleLogin: () => () => {},
@@ -57,6 +61,7 @@ jest.mock('../components/ui/BirdieBird', () => {
 });
 
 const api = require('../services/api');
+const firebase = require('../services/firebase');
 const ProfileSettings = require('../screens/ProfileSettings').default;
 
 const PROFILE_SRC = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8').replace(/\r\n/g, '\n');
@@ -128,6 +133,27 @@ describe('push notifications that are on', () => {
   test('a row that is not on yet says nothing about turning them off', async () => {
     render(React.createElement(ProfileSettings, props({ notifStatus: 'default' })));
     await act(async () => {});
+    expect(screen.queryByText(/Turn them off/)).toBeNull();
+  });
+
+  // Brave: the permission is granted and every FCM getToken fails, so Set up
+  // gets no token back. Re-reading the permission there said 'granted', and
+  // the row read On, said how to turn them off and took Set up away, under a
+  // toast saying they were not on.
+  test('a browser that said yes but could not register keeps Set up and never reads On', async () => {
+    firebase.getNotificationStatus.mockReturnValue('granted');
+    firebase.requestNotificationPermission.mockResolvedValue(null);
+    const p = props({ notifStatus: 'default' });
+    const { rerender } = render(React.createElement(ProfileSettings, p));
+    await act(async () => {});
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Set up' })); });
+    expect(p.showToast).toHaveBeenCalledWith("Notifications aren't on. Check your device settings.", 'error');
+    expect(p.setNotifStatus).not.toHaveBeenCalledWith('granted');
+    expect(p.setNotifStatus).toHaveBeenCalledWith('default');
+    rerender(React.createElement(ProfileSettings, { ...p, notifStatus: p.setNotifStatus.mock.calls[0][0] }));
+    await act(async () => {});
+    expect(screen.getByRole('button', { name: 'Set up' })).toBeTruthy();
+    expect(screen.queryByText('On')).toBeNull();
     expect(screen.queryByText(/Turn them off/)).toBeNull();
   });
 });

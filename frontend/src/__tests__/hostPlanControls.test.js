@@ -82,6 +82,9 @@ jest.mock('../services/socket', () => ({
 jest.mock('../services/firebase', () => ({
   getNotificationStatus: jest.fn(() => 'granted'),
   requestNotificationPermission: jest.fn(),
+  // This device holds no registered token, so a grant alone is not set up
+  // (the real rule: pushOnNeedsRegisteredToken.test.js).
+  pushSetupStatus: (permission) => (permission === 'granted' ? 'default' : permission),
 }));
 
 const api = require('../services/api');
@@ -1380,5 +1383,19 @@ describe('a host alone on a new plan is asked about notifications', () => {
     expect(firebase.requestNotificationPermission).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(p.setNotifStatus).toHaveBeenCalledWith('granted'));
     expect(api.trackNotificationPermission).toHaveBeenCalledWith('granted', 'chat_banner');
+  });
+
+  test('a browser that said yes but could not register is not marked on', async () => {
+    // Brave grants the permission and fails every FCM getToken. The status
+    // this row writes is the one Settings draws, and re-reading the
+    // permission here turned Settings to On with nothing registered.
+    firebase.requestNotificationPermission.mockReset();
+    firebase.requestNotificationPermission.mockResolvedValue(null);
+    firebase.getNotificationStatus.mockReturnValue('granted');
+    const { p } = mount({ ...unasked, flock: { memberCount: 1 } });
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    await waitFor(() => expect(p.showToast).toHaveBeenCalledWith("Notifications aren't on. Check your device settings.", 'error'));
+    expect(p.setNotifStatus).not.toHaveBeenCalledWith('granted');
+    expect(p.setNotifStatus).toHaveBeenCalledWith('default');
   });
 });

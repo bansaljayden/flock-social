@@ -164,7 +164,7 @@ import React from 'react';
 import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
 import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBillReminder, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline, userMessage } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
-import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
+import { getNotificationStatus, pushSetupStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 // The vote sheet's loading rows and the photo viewer's wait.
@@ -3433,7 +3433,9 @@ export default function ChatDetail({
                   trackNotificationPermission(token ? 'granted' : getNotificationStatus(), 'chat_banner');
                   if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
                   else {
-                    setNotifStatus(getNotificationStatus());
+                    // The status Settings draws too. A grant with no token
+                    // (Brave fails every registration) is not on.
+                    setNotifStatus(pushSetupStatus(getNotificationStatus()));
                     showToast("Notifications aren't on. Check your device settings.", 'error');
                   }
                 }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'));
