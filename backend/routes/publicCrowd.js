@@ -21,6 +21,7 @@ const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 // Free outage detection. This is the file whose console.error below ran for five days in September with nobody counting it. See utils/placesHealth.js.
 const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 const { isPlaceIdShaped } = require('../utils/places');
+const { scalarOnly } = require('../validators/shape');
 const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, describePublishedArithmetic, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
@@ -792,7 +793,9 @@ router.get('/demo/venues',
   [
     query('lat').isFloat({ min: -90, max: 90 }),
     query('lng').isFloat({ min: -180, max: 180 }),
-    query('q').optional().trim().isLength({ max: 60 }),
+    // Shape first: a repeated `q` arrives as an array, passes trim() and
+    // isLength() element by element, and then threw on toLowerCase() below.
+    scalarOnly(query('q').optional(), 'q').trim().isLength({ max: 60 }),
     query('localHour').optional().isInt({ min: 0, max: 23 }),
     query('localDay').optional().isInt({ min: 0, max: 6 }),
   ],
