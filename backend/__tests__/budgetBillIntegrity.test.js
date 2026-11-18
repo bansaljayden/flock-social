@@ -88,7 +88,9 @@
 //      and a shell, a quarantined bill and a settled one are refused.
 //  18. A REMINDER THAT WAITED (quiet hours, a retry) IS ASKED AGAIN AS IT GOES
 //      OUT, and is not sent to somebody who paid in the meantime, nor about a
-//      bill quarantined since.
+//      bill quarantined since. A budget reminder is not sent to somebody who
+//      answered in the meantime, nor once the budget is settled or the plan
+//      is over.
 //  19. A BANNED MEMBER IS NOT SPLIT, COUNTED OR WAITED ON. A ban leaves the
 //      membership accepted, so an equal split charged the banned account a
 //      share it could never settle, which hid the total from everyone, never
@@ -2154,6 +2156,66 @@ test('a reminder that waited is not sent to somebody who paid meanwhile, nor abo
   assert.equal(await pushHelper.canNotify(cam.id, data), true);
   await pool.query('UPDATE bill_splits SET quarantined = true WHERE flock_id = $1', [flockId]);
   assert.equal(await pushHelper.canNotify(cam.id, data), false);
+});
+
+// The budget's "Submit your budget for Dinner" waits the same way, and the
+// person it asks can answer, or the budget settle, before it goes out. It is
+// asked again on the four conditions POST /submit refuses on: the budget on and
+// not settled, the plan not over, and no answer from the recipient yet.
+test('a budget reminder that waited is not sent to somebody who answered meanwhile, nor once the budget is settled or the plan over', async () => {
+  const firebaseService = require('../services/firebaseService');
+  const pushHelper = require('../services/pushHelper');
+  const ava = await mkUser('Ava');
+  const ben = await mkUser('Ben');
+  const cam = await mkUser('Cam');
+  const flockId = await mkFlock(ava, [ben, cam]);
+  const data = { type: 'budget_reminder', flockId: String(flockId) };
+
+  assert.equal(await pushHelper.canNotify(ben.id, data), true, 'an open budget Ben has not answered');
+  assert.equal(await pushHelper.canNotify(ben.id, { type: 'budget_reminder' }), false, 'a payload naming no plan cannot be asked');
+
+  // One device each, with no time zone on record, so nothing waits for morning.
+  const tokenOf = (u) => `fcm-bbr-${u.id}-${'x'.repeat(40)}`;
+  for (const u of [ben, cam]) {
+    await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [u.id, tokenOf(u)]);
+  }
+  const queue = async (userId) => Number((await one(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+     VALUES ($1, 'quiet', 'Budget reminder', 'Submit your budget for Dinner', $2::jsonb,
+             NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [userId, JSON.stringify(data)]
+  )).id);
+  const benRow = await queue(ben.id);
+  const camRow = await queue(cam.id);
+  // Ben answers while his reminder waits; Cam has not.
+  assert.equal((await submit(flockId, ben, 40)).status, 200);
+
+  const sent = [];
+  pushHelper._resetDebounce();
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    await pushHelper.sweepPushOutbox();
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+  const reached = sent
+    .filter((m) => m.data && m.data.type === 'budget_reminder' && m.data.flockId === String(flockId))
+    .map((m) => m.token);
+  assert.deepEqual(reached, [tokenOf(cam)], 'the reminder reached somebody who had answered, or nobody at all');
+  assert.deepEqual(await outboxRows([benRow, camRow]), []);
+
+  assert.equal(await pushHelper.canNotify(cam.id, data), true);
+  await pool.query('UPDATE flocks SET budget_locked = true WHERE id = $1', [flockId]);
+  assert.equal(await pushHelper.canNotify(cam.id, data), false, 'the budget is settled');
+  await pool.query('UPDATE flocks SET budget_locked = false WHERE id = $1', [flockId]);
+  for (const status of ['completed', 'cancelled']) {
+    await pool.query('UPDATE flocks SET status = $2 WHERE id = $1', [flockId, status]);
+    assert.equal(await pushHelper.canNotify(cam.id, data), false, `the plan is ${status}`);
+  }
+  await pool.query("UPDATE flocks SET status = 'planning', budget_enabled = false WHERE id = $1", [flockId]);
+  assert.equal(await pushHelper.canNotify(cam.id, data), false, 'the budget was turned off');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

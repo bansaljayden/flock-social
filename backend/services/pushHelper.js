@@ -1285,15 +1285,18 @@ const CAN_SEE = Object.freeze({ allowed: true, uncheckable: false });
 const CANNOT_SEE = Object.freeze({ allowed: false, uncheckable: false });
 const CANNOT_TELL = Object.freeze({ allowed: false, uncheckable: true });
 
-// A NUDGE WHOSE REASON HAS PASSED IS NOT SENT. Two pushes ask the recipient to
-// do something that can be done before the push lands: flock_votes_in asks the
-// host to lock in a plan the rest of the group has voted on, and bill_reminder
-// asks a member to pay back their share. A push held for quiet hours or queued
-// for a retry keeps its words, so a morning release could ask a host "Lock it
-// in?" about a plan they locked in at midnight, or tell somebody who had paid
-// since that the payer was still waiting on them. checkVisibility asks each one
-// again at delivery, which every path (fresh, retried, released) passes
-// through, in the same statement as the membership check:
+// A NUDGE WHOSE REASON HAS PASSED IS NOT SENT. Four pushes ask the recipient
+// to do something that can be done, or stop mattering, before the push lands:
+// flock_votes_in asks the host to lock in a plan the rest of the group has
+// voted on, bill_reminder asks a member to pay back their share,
+// flock_reconfirm asks whether they are still coming, and budget_reminder asks
+// for their budget. A push held for quiet hours or queued for a retry keeps its
+// words, so a morning release could ask a host "Lock it in?" about a plan they
+// locked in at midnight, tell somebody who had paid since that the payer was
+// still waiting on them, or ask "Still in?" about a 07:00 plan at 08:00 or a
+// plan called off overnight. checkVisibility asks each one again at delivery,
+// which every path (fresh, retried, released) passes through, in the same
+// statement as the membership check:
 //
 //   flock_votes_in  the plan is still being planned and the recipient is still
 //                   its host, the only person who can lock it in.
@@ -1306,6 +1309,13 @@ const CANNOT_TELL = Object.freeze({ allowed: false, uncheckable: true });
 //                   because that list is the pushes whose body carries a
 //                   figure (migration 091 and the boot purge are held to it
 //                   word for word), and a reminder carries none.
+//   flock_reconfirm the window is still open, as utils/reconfirm.js reads it
+//                   (the plan confirmed, a window opened, its time still
+//                   ahead), and the recipient has not answered this window.
+//   budget_reminder the budget is on and not settled, the plan is not over,
+//                   and the recipient has no answer on it: the four
+//                   conditions POST /api/budget/:id/submit refuses on, as the
+//                   Nest's i_budget_open reads them (routes/flocks.js).
 //
 // Fixed text chosen by the type, never text from the payload, like the invite
 // and bill clauses. Read through stillTrueClause so a type that happens to name
@@ -1317,6 +1327,11 @@ const STILL_TRUE_AT_DELIVERY = Object.freeze({
     + ' WHERE bs.flock_id = f.id AND bs.paid_by IS NOT NULL AND bs.paid_by <> u.id'
     + ' AND bs.quarantined IS NOT TRUE'
     + ' AND bss.user_id = u.id AND bss.settled IS NOT TRUE)',
+  flock_reconfirm: " AND f.status = 'confirmed' AND f.reconfirm_opened_at IS NOT NULL"
+    + " AND f.event_time > (NOW() AT TIME ZONE 'UTC')"
+    + ' AND (m.reconfirmed_at IS NULL OR m.reconfirmed_at < f.reconfirm_opened_at)',
+  budget_reminder: " AND f.budget_enabled IS TRUE AND f.budget_locked IS NOT TRUE AND f.status IN ('planning', 'confirmed')"
+    + ' AND NOT EXISTS (SELECT 1 FROM budget_submissions bsub WHERE bsub.flock_id = f.id AND bsub.user_id = u.id)',
 });
 
 function stillTrueClause(type) {
@@ -1388,7 +1403,7 @@ async function checkVisibility(userId, data = {}) {
       ? ' AND NOT EXISTS (SELECT 1 FROM bill_splits bs WHERE bs.flock_id = f.id AND bs.quarantined IS TRUE)'
       : '';
     // A nudge is asked whether its reason still holds (STILL_TRUE_AT_DELIVERY
-    // above). Both name their plan; one that names none cannot be asked, and
+    // above). Each names its plan; one that names none cannot be asked, and
     // is not sent.
     const nudgeClause = stillTrueClause(data?.type);
     if (nudgeClause && !flockId) return CANNOT_SEE;

@@ -41,7 +41,9 @@
 //      flocks.votes_in_pushed_at only while it is NULL, so it is run here,
 //      with two last votes fired together, rather than trusted. A push that
 //      waited (quiet hours, a retry) is asked again as it goes out, and is not
-//      sent once the plan is locked in, called off or done.
+//      sent once the plan is locked in, called off or done. Nor is a "Still
+//      in?" that waited, once the plan has begun, been called off or been
+//      answered.
 //  11. A GUEST ANSWER WHOSE REPLY WAS LOST IS THE SAME ANSWER SENT AGAIN. The
 //      page mints the identity and sends it with the first answer, so the
 //      row is keyed on something the page already holds; the retry lands on
@@ -1171,6 +1173,75 @@ test('a votes-in push that waited is not sent once the plan is locked in, and on
     await pool.query('UPDATE flocks SET status = $2 WHERE id = $1', [lockedLater, status]);
     assert.strictEqual(await pushHelper.canNotify(host.id, data(lockedLater)), false, status);
   }
+});
+
+// "Still in?" waits too. services/reconfirmSweep.js opens the window three
+// hours out, and at 04:00 on the recipient's clock the push is held to 08:00:
+// for a 07:00 plan it went out an hour after the plan began, and a plan called
+// off overnight still asked. It is asked again as it goes out: the plan still
+// confirmed, its window still open, its time still ahead, and the recipient
+// not yet answered this window.
+test('a "Still in?" push that waited is not sent once the plan has begun, been called off or been answered', async () => {
+  const pushHelper = require('../services/pushHelper');
+  const firebaseService = require('../services/firebaseService');
+  const opened = async (host, hoursFromNow) => {
+    const id = await mkFlock(host, { status: 'confirmed', hoursFromNow });
+    await pool.query('UPDATE flocks SET reconfirm_opened_at = NOW() WHERE id = $1', [id]);
+    return id;
+  };
+  const data = (flockId) => ({ type: 'flock_reconfirm', flockId: String(flockId) });
+  const host = await mkUser('Host Seventeen');
+  const lu = await mkUser('Lu Seventeen');
+  const live = await opened(host, 2);
+  await addMember(live, lu, 'accepted');
+
+  assert.strictEqual(await pushHelper.canNotify(lu.id, data(live)), true, 'an open window on a plan still ahead');
+  assert.strictEqual(await pushHelper.canNotify(lu.id, { type: 'flock_reconfirm' }), false, 'a payload naming no plan cannot be asked');
+
+  const begun = await opened(host, -1);
+  await addMember(begun, lu, 'accepted');
+  assert.strictEqual(await pushHelper.canNotify(lu.id, data(begun)), false, 'the plan has begun');
+
+  const moved = await opened(host, 2);
+  await addMember(moved, lu, 'accepted');
+  // A time change closes the window (routes/flocks.js PUT /:id).
+  await pool.query('UPDATE flocks SET reconfirm_opened_at = NULL WHERE id = $1', [moved]);
+  assert.strictEqual(await pushHelper.canNotify(lu.id, data(moved)), false, 'no window is open');
+
+  const answered = await opened(host, 2);
+  await addMember(answered, lu, 'accepted');
+  await pool.query('UPDATE flock_members SET reconfirmed_at = NOW() WHERE flock_id = $1 AND user_id = $2', [answered, lu.id]);
+  assert.strictEqual(await pushHelper.canNotify(lu.id, data(answered)), false, 'already answered in the app');
+
+  const calledOff = await opened(host, 2);
+  await addMember(calledOff, lu, 'accepted');
+
+  // One device, with no time zone on record, so nothing waits for morning.
+  await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [lu.id, `fcm-pfr-${lu.id}-${'x'.repeat(40)}`]);
+  const queue = async (flockId) => Number((await pool.query(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+     VALUES ($1, 'quiet', 'Still in?', 'Plan is in about 3 hours. Tap to say you''re still coming.', $2::jsonb,
+             NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [lu.id, JSON.stringify(data(flockId))]
+  )).rows[0].id);
+  const rows = [await queue(calledOff), await queue(live)];
+  // Called off overnight, while the push waits.
+  await pool.query("UPDATE flocks SET status = 'cancelled' WHERE id = $1", [calledOff]);
+
+  const sent = [];
+  pushHelper._resetDebounce();
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    await pushHelper.sweepPushOutbox();
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+  const told = sent.filter((m) => JSON.stringify(m).includes('flock_reconfirm')).map((m) => m.data && m.data.flockId);
+  assert.deepStrictEqual(told, [String(live)], 'only the plan still ahead and still on was asked about');
+  const left = await pool.query('SELECT id FROM push_outbox WHERE id = ANY($1::bigint[])', [rows]);
+  assert.deepStrictEqual(left.rows, [], 'the refused row is dropped, not kept to be tried again');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
