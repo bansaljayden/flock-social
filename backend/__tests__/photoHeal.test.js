@@ -447,6 +447,28 @@ test('the demo\'s photo warm never heals: it only holds names a search just retu
   assert.deepEqual(seen(), [`media ${OLD}`]);
 });
 
+test('the demo\'s photo warm and a pin asking for the same photo while it is out buy it once', async () => {
+  // The warm called fetchPhotoOnce itself, so it neither joined nor registered
+  // the flight for its key, and a cold demo build's pin request landing while
+  // the warm was buying a photo bought the same photo again.
+  let release;
+  holdMedia.set(FIRST, new Promise((r) => { release = r; }));
+  const warm = venueSearch.warmPhoto(FIRST, 400, { ip: '203.0.113.7' });
+  await waitFor(() => calls.some((c) => c.kind === 'media' && c.name === FIRST));
+  const pin = getWithin(FIRST);
+  // Long enough for a second purchase to reach Google if the pin makes one.
+  const bought = () => calls.filter((c) => c.kind === 'media' && c.name === FIRST).length;
+  for (let waited = 0; waited < 1000 && bought() < 2; waited += 5) await new Promise((r) => setTimeout(r, 5));
+  release();
+  const [w, p] = await Promise.all([warm, pin]);
+  assert.equal(w.status, 200);
+  assert.equal(p.status, 200);
+  assert.equal(p.text, `pixels of ${FIRST}`);
+  assert.equal(bought(), 1, 'the pin bought the photo the warm was already buying');
+  assert.equal(db.charges, 1);
+  assertDrained();
+});
+
 // =============================================================================
 // 2. A heal that cannot finish answers what a dead name always answered
 // =============================================================================

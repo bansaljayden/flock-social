@@ -67,8 +67,12 @@ test('every failure inside the warm is swallowed', () => {
 test('the warm reuses the photo route rather than reimplementing the spend', () => {
   // fetchPhotoOnce is where the Postgres cache is read, the dead-name memo is
   // consulted, the charge is made and both tiers are written. A warmer with
-  // its own copy of any of that would be a second opinion on money.
-  assert.match(VENUE_SEARCH, /module\.exports\.warmPhoto = \(photoRef, maxWidth, req\) =>\s*\n\s*fetchPhotoOnce\(photoRef, maxWidth, photoCacheKey\(photoRef, maxWidth\), req\);/);
+  // its own copy of any of that would be a second opinion on money. It goes
+  // through photoFlight, which runs fetchPhotoOnce once per key, so a pin
+  // asking for the same photo joins the warm's purchase
+  // (__tests__/photoHeal.test.js has the race).
+  assert.match(VENUE_SEARCH, /module\.exports\.warmPhoto = \(photoRef, maxWidth, req\) =>\s*\n\s*photoFlight\(photoRef, maxWidth, photoCacheKey\(photoRef, maxWidth\), req\);/);
+  assert.match(VENUE_SEARCH, /function photoFlight\([^)]*\) \{\s*\n\s*let flight = photoInflight\.get\(cacheKey\);\s*\n\s*if \(!flight\) \{\s*\n\s*flight = fetchPhotoOnce\(/);
   assert.match(warmBlock, /require\('\.\/venueSearch'\)/);
   assert.ok(!/places\.googleapis\.com/.test(warmBlock), 'the warm never calls Google directly');
 });

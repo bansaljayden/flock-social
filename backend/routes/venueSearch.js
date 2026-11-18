@@ -2091,9 +2091,12 @@ module.exports.__test = {
    charged, the size and content type are clamped and both cache tiers are
    written. A warmer that repeated any of that would be a second opinion on
    money, and the two would drift. It answers {status, buffer, contentType} on
-   a hit and {status, error} otherwise; a warmer only cares which. */
+   a hit and {status, error} otherwise; a warmer only cares which.
+   Through photoFlight, the one flight per key: called on fetchPhotoOnce
+   directly, a pin request landing while the warm was out bought the same
+   photo a second time. */
 module.exports.warmPhoto = (photoRef, maxWidth, req) =>
-  fetchPhotoOnce(photoRef, maxWidth, photoCacheKey(photoRef, maxWidth), req);
+  photoFlight(photoRef, maxWidth, photoCacheKey(photoRef, maxWidth), req);
 
 module.exports.photoProxyStatus = () => photoSpendStatus();
 module.exports.photoBudgetLimits = {
