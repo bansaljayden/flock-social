@@ -791,10 +791,12 @@ function logBuildTime(phases, venueCount) {
 
 router.get('/demo/venues',
   [
-    query('lat').isFloat({ min: -90, max: 90 }),
-    query('lng').isFloat({ min: -180, max: 180 }),
-    // Shape first: a repeated `q` arrives as an array, passes trim() and
-    // isLength() element by element, and then threw on toLowerCase() below.
+    // Shape first: a repeated key arrives as an array and passes each rule
+    // element by element. A repeated lat or lng became NaN below and went to
+    // the paid search as a null coordinate; a repeated `q` threw on
+    // toLowerCase().
+    scalarOnly(query('lat'), 'lat').isFloat({ min: -90, max: 90 }),
+    scalarOnly(query('lng'), 'lng').isFloat({ min: -180, max: 180 }),
     scalarOnly(query('q').optional(), 'q').trim().isLength({ max: 60 }),
     query('localHour').optional().isInt({ min: 0, max: 23 }),
     query('localDay').optional().isInt({ min: 0, max: 6 }),

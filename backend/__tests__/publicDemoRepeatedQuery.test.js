@@ -46,3 +46,16 @@ test('a repeated q is refused as a bad request before anything is spent', async 
   assert.strictEqual(res.status, 400, text);
   assert.strictEqual(googleCalls, 0);
 });
+
+test('so is a repeated lat or lng, which reached a paid search with a null coordinate', async () => {
+  // isFloat() passes each element, `+['40.71', '41.0']` is NaN, and the Text
+  // Search went out with latitude null: a paid call Google can only refuse,
+  // recorded as a Places failure toward the outage alarm.
+  for (const qs of ['lat=40.71&lat=41.0&lng=-74.00', 'lat=40.71&lng=-74.00&lng=-73.9']) {
+    publicCrowd.__testables.resetDemoLimitsForTest();
+    const res = await fetch(`${base}/api/public/demo/venues?${qs}&localHour=20&localDay=5`);
+    const text = await res.text();
+    assert.strictEqual(res.status, 400, `${qs}: ${text}`);
+  }
+  assert.strictEqual(googleCalls, 0);
+});
