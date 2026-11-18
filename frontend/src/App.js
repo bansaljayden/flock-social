@@ -8893,6 +8893,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [activeVenue]);
 
   // Sensor: fetch + subscribe when active venue changes
+  const sensorRereadRef = useRef(null);
   useEffect(() => {
     const pid = activeVenue?.place_id;
     if (!pid) {
@@ -8914,20 +8915,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // on read, keyed by place, so there is nothing left for it to write.
 
     let cancelled = false;
-    Promise.all([
-      getSensorCurrent(pid).catch(() => null),
-      getSensorHistory(pid, 12).catch(() => ({ readings: [] })),
-    ]).then(([current, history]) => {
-      if (cancelled) return;
-      // Keep the answer whenever there was one: the check-in count rides in
-      // the same object, and nulling it for venues without a sensor (almost
-      // all of them) hid every tag check-in and dropped the live increments.
-      setSensorData(current || null);
-      // Array.isArray, not `|| []`: the chart calls .find on this every render,
-      // and a readings field that came back as an object (or a string) would
-      // take the whole venue sheet down with it.
-      setSensorHistory(Array.isArray(history?.readings) ? history.readings : []);
-    });
+    // Read again on a reconnect and on a return to the app, as the owner's
+    // card is (ownerSensorRereadRef says why); a read again that fails keeps
+    // what is on screen.
+    let turn = 0;
+    const read = (again) => {
+      const mine = ++turn;
+      Promise.all([
+        getSensorCurrent(pid).catch(() => null),
+        getSensorHistory(pid, 12).catch(() => null),
+      ]).then(([current, history]) => {
+        if (cancelled || mine !== turn) return;
+        // Keep the answer whenever there was one: the check-in count rides in
+        // the same object, and nulling it for venues without a sensor (almost
+        // all of them) hid every tag check-in and dropped the live increments.
+        if (current || !again) setSensorData(current || null);
+        // Array.isArray, not `|| []`: the chart calls .find on this every render,
+        // and a readings field that came back as an object (or a string) would
+        // take the whole venue sheet down with it.
+        if (history || !again) setSensorHistory(Array.isArray(history?.readings) ? history.readings : []);
+      });
+    };
+    read(false);
+    sensorRereadRef.current = read;
 
     joinVenueRoom(pid);
     // History is hourly-bucketed by the backend: a SUM of door counts and an
@@ -8952,13 +8962,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }));
       setSensorHistory(prev => foldSensorReading(prev, payload, 48));
     });
+    // One at once, then the server's count of people (the owner's twin says why).
+    let countTimer = null;
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
+      clearTimeout(countTimer);
+      countTimer = setTimeout(() => {
+        getSensorCurrent(pid).then((current) => {
+          if (cancelled || !current) return;
+          setSensorData(prev => (prev ? { ...prev, recent_checkins: current.recent_checkins || 0 } : current));
+        }).catch(() => {});
+      }, 2000);
     });
 
     return () => {
       cancelled = true;
+      clearTimeout(countTimer);
+      if (sensorRereadRef.current === read) sensorRereadRef.current = null;
       leaveVenueRoom(pid);
       offUpdate && offUpdate();
       offCheckin && offCheckin();
@@ -19874,18 +19895,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Pull live sensor data + history for the dashboard analytics tab.
   // Mirrors the venue-detail effect but scoped to the owner's own placeId.
+  //
+  // READ AGAIN, NOT ONLY FOLDED. After the first read only the pushes moved
+  // the card, and socket.js lets the connection go while the app is hidden: a
+  // room rejoined after that replays nothing, so every reading sent in the
+  // gap was missing from the card for the rest of the visit. The read runs
+  // again on a reconnect and on a return to the app (sensorRereadSeenRef
+  // below), and its answer replaces what was folded. One that fails keeps
+  // what is on screen.
+  const ownerSensorRereadRef = useRef(null);
   React.useEffect(() => {
     const pid = ownerVenuePlaceId;
     if (!pid || currentScreen !== 'venueDashboard') return;
     let cancelled = false;
-    Promise.all([
-      getSensorCurrent(pid).catch(() => null),
-      getSensorHistory(pid, 24).catch(() => ({ readings: [] })),
-    ]).then(([current, history]) => {
-      if (cancelled) return;
-      setOwnerSensorData(current || null);
-      setOwnerSensorHistory(history?.readings || []);
-    });
+    let turn = 0;
+    const read = (again) => {
+      const mine = ++turn;
+      Promise.all([
+        getSensorCurrent(pid).catch(() => null),
+        getSensorHistory(pid, 24).catch(() => null),
+      ]).then(([current, history]) => {
+        if (cancelled || mine !== turn) return;
+        if (current || !again) setOwnerSensorData(current || null);
+        if (history || !again) setOwnerSensorHistory(history?.readings || []);
+      });
+    };
+    read(false);
+    ownerSensorRereadRef.current = read;
     joinVenueRoom(pid);
     // Each live push is folded into the hour's bucket the way the server
     // builds it (lib/sensorHistory.js).
@@ -19908,17 +19944,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Folded into the hour's bucket, or a new bucket on the hour; 72 hours kept.
       setOwnerSensorHistory(prev => foldSensorReading(prev, payload, 72));
     });
+    // "Last hour check-ins" is the server's count of people over the last
+    // hour, each once (routes/sensors.js). A check-in adds one at once and the
+    // server's figure replaces it a moment later: one per event counted a
+    // person who checked in twice twice, and never let the hour age out.
+    let countTimer = null;
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setOwnerSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
+      clearTimeout(countTimer);
+      countTimer = setTimeout(() => {
+        getSensorCurrent(pid).then((current) => {
+          if (cancelled || !current) return;
+          setOwnerSensorData(prev => (prev ? { ...prev, recent_checkins: current.recent_checkins || 0 } : current));
+        }).catch(() => {});
+      }, 2000);
     });
     return () => {
       cancelled = true;
+      clearTimeout(countTimer);
+      if (ownerSensorRereadRef.current === read) ownerSensorRereadRef.current = null;
       leaveVenueRoom(pid);
       offUpdate && offUpdate();
       offCheckin && offCheckin();
     };
   }, [ownerVenuePlaceId, currentScreen]);
+
+  // Both sensor cards, the venue sheet's and the dashboard's, read again when
+  // the socket comes back and when the app is looked at again. A reconnect
+  // while hidden waits for the return. Only an open card has a read to run.
+  const sensorRereadSeenRef = useRef({ tick: reconnectTick, visible: docVisible });
+  useEffect(() => {
+    const seen = sensorRereadSeenRef.current;
+    sensorRereadSeenRef.current = { tick: reconnectTick, visible: docVisible };
+    if (!docVisible || (reconnectTick === seen.tick && seen.visible)) return;
+    sensorRereadRef.current?.(true);
+    ownerSensorRereadRef.current?.(true);
+  }, [reconnectTick, docVisible]);
 
   // The same sensor's tables, for the same place: read when the dashboard
   // opens and again 15 seconds after each answer while it stays open, never
