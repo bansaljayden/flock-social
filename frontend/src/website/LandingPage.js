@@ -962,7 +962,7 @@ export default function LandingPage() {
         <div className="lp-wrap lp-cta-in lp-get-in">
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
-            <p className="lp-lead" style={{ marginTop: 16 }}>
+            <p className="lp-lead lp-get-lead">
               Flock is on the App Store, free for iPhone.
             </p>
             <div className="lp-get-store">

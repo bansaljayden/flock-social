@@ -1552,7 +1552,14 @@ html:has(.lp) body { overflow-x: clip; }
 /* The waitlist's band until 2026-11-05 (its form and its two live regions are
    gone with it). Apple's badge first, at 52px, so 13px of clear space: 26px
    above it and 22px under it. Then one line for anyone without an iPhone. */
+.lp-get-lead { margin-top: 16px; }
 .lp-get-store { margin-top: 26px; }
+/* The band sits on the page's own column (2026-11-06). It shares .lp-cta-in,
+   720px and centred, with the other pages' closing bands, so between 768 and
+   1100px its heading started at x=192 (1024) while every other section and
+   the footer start at the content edge. The words keep a 40rem measure. */
+.lp-cta-in.lp-get-in { max-width: 1160px; }
+.lp-get-in > div:first-child { max-width: 40rem; }
 /* nowrap on the link, so "Create your account" is never split across lines. */
 .lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: var(--fs-body); line-height: 1.6; color: var(--cream-2); }
 .lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
