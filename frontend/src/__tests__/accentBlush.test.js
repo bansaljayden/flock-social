@@ -557,7 +557,10 @@ describe('8 and 9: the website, on its navy only', () => {
       '  font-weight: 600;',
       '}',
     ].join('\n'));
-    expect(LP_CSS).toContain('.lp-hero-store-date { display: block; margin-top: 5px; font-size: 14px; color: var(--cream-2); }');
+    // The date under it is a caption on the home page's type scale (--fs-cap,
+    // 13.5px, since the 2026-11-06 pass), 5px under the pill.
+    expect(LP_CSS).toContain('.lp-hero-store-date { display: block; margin-top: 5px; font-size: var(--fs-cap); color: var(--cream-2); }');
+    expect(LP_CSS).toMatch(/--fs-cap: 13\.5px;/);
     const hero = sectionWith('<strong>Now on the App Store</strong>');
     expect(hero.open).toContain('lp-hero lp-on-navy');
     expect(count(LP_JS, '<strong>Now on the App Store</strong>')).toBe(1);

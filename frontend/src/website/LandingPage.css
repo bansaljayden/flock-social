@@ -490,8 +490,11 @@
   font-variation-settings: inherit;
 }
 
+/* An 18px floor, so a lead always reads a step above the 17px body
+   (--fs-body). The hero's keeps 17px on a phone (.lp-hero .lp-lead), so the
+   first screen does not grow. */
 .lp-lead {
-  font-size: clamp(17px, 1.8vw, 20px);
+  font-size: clamp(18px, 1.8vw, 20px);
   max-width: 56ch;
   color: var(--ink-2);
 }
@@ -948,7 +951,7 @@ html:has(.lp) body { overflow-x: clip; }
    tell (DESIGN-STANDARD.md A4). .lp-hero-note, the status and DECA line under
    the button, went too (2026-10-21, his ask); the award is on /about. */
 
-.lp-hero .lp-lead { margin-bottom: 26px; max-width: 44ch; }
+.lp-hero .lp-lead { margin-bottom: 26px; max-width: 44ch; font-size: clamp(17px, 1.8vw, 20px); }
 /* One row since 2026-11-06: "Start a plan", then Apple's badge with the day
    Flock went on the App Store. Two equal buttons side by side was the stock
    hero, and the GitHub one outshouted the badge, the real download, on a
@@ -988,7 +991,7 @@ html:has(.lp) body { overflow-x: clip; }
   font-size: 15px;
   font-weight: 600;
 }
-.lp-hero-store-date { display: block; margin-top: 5px; font-size: 14px; color: var(--cream-2); }
+.lp-hero-store-date { display: block; margin-top: 5px; font-size: var(--fs-cap); color: var(--cream-2); }
 /* The code on GitHub: a link, underlined, in the lead's own --cream-2. The
    10px of padding makes a 44px-tall target without making it look like a
    button. */
@@ -1390,7 +1393,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-safety-art { width: min(220px, 60%); margin-bottom: 18px; }
 .lp-safety-facts { display: grid; gap: 18px 32px; }
 .lp-safety-facts h3 { margin-bottom: 4px; }
-.lp-safety-facts p { font-size: 15.5px; line-height: 1.6; color: var(--ink-2); max-width: 46ch; }
+.lp-safety-facts p { font-size: var(--fs-body); line-height: 1.6; color: var(--ink-2); max-width: 46ch; }
 /* The two standing guarantees: one row under the facts, not two loose lines
    at the foot of the band. */
 .lp-safety .lp-safety-rules {
@@ -1439,7 +1442,7 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-safety-exhibits .lp-mail-small { font-size: 12px; }
 }
 .lp-list { display: grid; gap: 0; margin-top: 20px; }
-.lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
+.lp-list li { list-style: none; font-size: var(--fs-body); color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Plain rows, no glyphs and no rules. A column of checkmarks is the single
    most template-looking thing a marketing page can do, and a hairline between
@@ -1493,12 +1496,12 @@ html:has(.lp) body { overflow-x: clip; }
   flex-wrap: wrap;
 }
 .lp-plan-price small {
-  font-size: 14px;
+  font-size: var(--fs-cap);
   font-weight: 500;
   color: var(--ink-3);
   letter-spacing: 0;
 }
-.lp-plan-note { font-size: 15px; color: var(--ink-2); }
+.lp-plan-note { font-size: var(--fs-note); color: var(--ink-2); }
 .lp-plan .lp-list { margin: 20px 0 26px; }
 .lp-plan .lp-btn { margin-top: auto; align-self: flex-start; }
 
@@ -1524,7 +1527,7 @@ html:has(.lp) body { overflow-x: clip; }
    above it and 22px under it. Then one line for anyone without an iPhone. */
 .lp-get-store { margin-top: 26px; }
 /* nowrap on the link, so "Create your account" is never split across lines. */
-.lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: 16px; line-height: 1.6; color: var(--cream-2); }
+.lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: var(--fs-body); line-height: 1.6; color: var(--cream-2); }
 .lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .lp-get-web a:hover { color: var(--cream-hi); }
 
@@ -1566,16 +1569,16 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-footer-top { display: grid; gap: 12px; padding-bottom: 26px; }
 .lp-footer ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 22px; }
 .lp-footer-links { padding-bottom: 28px; }
-.lp-footer a { color: var(--cream-3); text-decoration: none; font-size: 14.5px; }
+.lp-footer a { color: var(--cream-3); text-decoration: none; font-size: var(--fs-note); }
 .lp-footer a:hover { color: var(--cream); }
 /* 46ch, not 34. Thirty-four characters is under the 45-75ch band that prose is
    readable in: the blurb is one sentence and 34ch broke it into four choppy
    lines in a column that had room for two. */
-.lp-footer-blurb { font-size: 14.5px; color: var(--cream-3); max-width: 60ch; }
+.lp-footer-blurb { font-size: var(--fs-note); color: var(--cream-3); max-width: 60ch; }
 .lp-footer-base {
   padding-top: 24px;
   display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between;
-  font-size: 13px;
+  font-size: var(--fs-cap);
 }
 /* Apple's trademark credit (SiteFooter.js): its own line under the other two,
    so the row's space-between never strands it in the middle. */
@@ -1971,7 +1974,7 @@ html:has(.lp) body { overflow-x: clip; }
    the lead. */
 .lp-live-head { max-width: 40rem; }
 .lp-live-head h2 { margin-bottom: 16px; }
-.lp-live-note { margin-top: 12px; font-size: 14.5px; color: var(--ink-3); }
+.lp-live-note { margin-top: 12px; font-size: var(--fs-note); color: var(--ink-3); }
 .lp-live-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
 
 /* One Friday plan, read top to bottom. The dead group chat comes first, then
@@ -2073,7 +2076,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-phone { container-type: inline-size; }
 .lp-phone > .lp-reel-device { --reel-w: 100cqw; }
 .lp-phone .lp-shot { border: 0; border-radius: 0; background: var(--navy-deep); }
-.lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
+.lp-fig-cap { margin-top: 10px; font-size: var(--fs-cap); line-height: 1.45; color: var(--ink-3); }
 .lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: var(--fs-body); color: var(--ink-2); }
 .lp-friday-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
 
@@ -2298,7 +2301,7 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-venues h2 { margin-bottom: 16px; }
 .lp-venues-actions { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
-.lp-venue-signin { margin-top: 14px; font-size: 14.5px; color: var(--ink-2); }
+.lp-venue-signin { margin-top: 14px; font-size: var(--fs-note); color: var(--ink-2); }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
 .lp-pricing-lead { margin-top: 16px; }
