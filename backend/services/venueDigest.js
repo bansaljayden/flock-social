@@ -48,7 +48,9 @@ const { sendEmail, baseApiUrl, isMailableAddress, maskAddress } = require('./ema
 const { renderDigestHtml, renderDigestText, digestSubject } = require('../templates/venueDigestEmail');
 
 const OPT_OUT_PURPOSE = 'venue_digest_optout';
-const FALLBACK_TIMEZONE = 'America/New_York';
+// America/New_York. One definition: Roost reads the days of a venue outside
+// the corpus in the same zone (services/advisorFacts.js venueTimeZone).
+const { DEFAULT_VENUE_TIMEZONE: FALLBACK_TIMEZONE } = require('../utils/venueZone');
 const SEND_HOUR_FIRST = 7;   // venue-local, inclusive
 const SEND_HOUR_LAST = 11;   // venue-local, inclusive
 const MARKER_RETENTION_DAYS = 90;

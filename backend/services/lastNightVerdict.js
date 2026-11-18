@@ -379,7 +379,9 @@ function noReadingRefusal({ weekday, date, everPosted }) {
  */
 async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
   const p = ctx.profile;
-  const tz = (ctx.mlVenue && ctx.mlVenue.timezone) || 'UTC';
+  // The venue's own zone, never UTC (advisorFacts.venueTimeZone): a venue
+  // outside the corpus has no ml_venues row to name one.
+  const tz = advisorFacts.venueTimeZone(ctx);
   const lat = ctx.mlVenue && ctx.mlVenue.latitude != null ? Number(ctx.mlVenue.latitude) : NaN;
   const lng = ctx.mlVenue && ctx.mlVenue.longitude != null ? Number(ctx.mlVenue.longitude) : NaN;
 

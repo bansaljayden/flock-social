@@ -27,6 +27,12 @@
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+// The zone a venue's days are read in when nothing names its own: New York,
+// where both live markets are, and the Monday digest's default
+// (services/venueDigest.js). Never UTC, whose day turns at 7 or 8 PM Eastern
+// and files a bar's Saturday night under Sunday.
+const DEFAULT_VENUE_TIMEZONE = 'America/New_York';
+
 // What an IANA name can look like before ICU is asked about it: letters,
 // digits and the punctuation real names use ("America/Port-au-Prince",
 // "Etc/GMT+5", "America/Argentina/Buenos_Aires"), at most 64 characters, the
@@ -331,4 +337,5 @@ module.exports = {
   serverWallDate,
   zoneHourSlots,
   HOUR_MS,
+  DEFAULT_VENUE_TIMEZONE,
 };

@@ -1945,6 +1945,23 @@ function dayTurned(k) {
   return Boolean(local) && SHORT_WEEKDAYS[local.day] !== hit.data.today.weekday;
 }
 
+// THE VENUE'S ZONE, FROM A LOOKUP ALREADY PAID FOR. Every forecast this cache
+// keeps carries the clock its Places lookup gave, and a zone does not change
+// under a place, so any entry for the place answers, whatever hour it was built
+// in. A read, never a lookup: Roost reads the days of a venue outside the
+// corpus on it (services/advisorFacts.js venueTimeZone). Null when no entry
+// for the place holds one.
+function cachedTimeZone(placeId) {
+  if (typeof placeId !== 'string' || !placeId) return null;
+  const prefix = `intel:${placeId}:`;
+  for (const [k, hit] of intelCache) {
+    if (k.startsWith(prefix) && hit && hit.clock && typeof hit.clock.timeZone === 'string' && hit.clock.timeZone) {
+      return hit.clock.timeZone;
+    }
+  }
+  return null;
+}
+
 // Returned instead of a venue when the shared Places budget is spent, so the
 // route can answer 429 rather than pretend Google was unreachable.
 const BUDGET_EXCEEDED = Symbol('places_budget_exceeded');
@@ -3330,6 +3347,8 @@ module.exports = router;
 // builds it, and the one reading of its hour labels ("9 PM" is 21).
 module.exports.venueIntelligence = venueIntelligence;
 module.exports.hourOfLabel = hourOfLabel;
+// The zone that forecast's lookup named, read back without a lookup.
+module.exports.cachedTimeZone = cachedTimeZone;
 
 // Exposed for backend/__tests__/venueIntegrity.test.js only. The view window is
 // process-wide state, so a test that cannot reset it or see its bound is a test
@@ -3350,4 +3369,7 @@ module.exports.__test = {
   stripComparisonTypes,
   stripPeakWindow,
   STRIP_PEAK_WINDOWS,
+  // The owner's forecast cache, so a test can hold an entry's clock
+  // (__tests__/lastNightVerdict.test.js).
+  intelCache,
 };

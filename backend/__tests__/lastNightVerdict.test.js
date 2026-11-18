@@ -514,3 +514,105 @@ test('the day is still named, in the form the rest of the card uses', async () =
   assert.match(byId(out, `refuse_no_event_snapshot_${LAST_DAY}`).reason, /for your city on Aug 14/);
 });
 
+// ── 8. A venue outside the corpus keeps its own days ────────────────────────
+//
+// A verified venue with no ml_venues row is the usual case (services/
+// venueCorpus.js), and its days were UTC days: a Philadelphia bar's Saturday
+// 10 PM reading is 03:00 on Sunday in UTC, so "Yesterday" on Monday morning
+// graded Saturday's night as Sunday's. These handlers group raw readings the
+// way Postgres does, `(created_at AT TIME ZONE $2)::date`, so the zone the
+// service hands the query decides which day each reading lands on.
+const PHILLY_PLACE = 'ChIJphillyOutsideTheCorpus0000';
+const PHILLY_CTX = {
+  profile: { user_id: 7, google_place_id: PHILLY_PLACE, verified: true, business_name: 'Philly Bar', corpus_status: 'absent' },
+  mlVenue: null,
+};
+// 92 at 10 PM on Saturday Nov 14 and 40 at 9 PM on Sunday Nov 15, Eastern.
+const PHILLY_READINGS = [
+  { at: '2026-11-15T03:00:00Z', busy: 92 },
+  { at: '2026-11-16T02:00:00Z', busy: 40 },
+];
+// 9 AM on Monday Nov 16, Eastern.
+const PHILLY_MONDAY = new Date('2026-11-16T14:00:00Z');
+
+function dayIn(zone, iso) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(iso));
+}
+
+function readingsByDay(zone, readings) {
+  const days = new Map();
+  for (const r of readings) {
+    const day = dayIn(zone, r.at);
+    const d = days.get(day) || { day, peak_reading: 0, readings: 0, diverged: false };
+    d.peak_reading = Math.max(d.peak_reading, r.busy);
+    d.readings += 1;
+    days.set(day, d);
+  }
+  return [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
+}
+
+function scriptByZone(readings) {
+  handlers = [
+    [/FROM venue_owner_reports/, (params) => ({ rows: readingsByDay(params[1], readings) })],
+    [/FROM served_predictions/, () => ({ rows: [] })],
+    [/FROM night_context nc/, () => ({ rows: [] })],
+    [/FROM night_context_runs/, () => ({ rows: [{ watched: false }] })],
+  ];
+}
+
+const zonesAsked = () => queryLog
+  .filter((q) => /FROM venue_owner_reports|FROM served_predictions/.test(q.sql))
+  .map((q) => q.params[1]);
+
+test('a venue outside the corpus is graded on its own days, never on UTC ones', async () => {
+  scriptByZone(PHILLY_READINGS);
+  const out = await verdict.buildLastDayVerdict(PHILLY_CTX, { now: PHILLY_MONDAY });
+  const sunday = byId(out, 'owner_reading_2026-11-15');
+  assert.ok(sunday, `Sunday was graded: ${out.map((e) => e.id).join(', ')}`);
+  assert.match(sunday.label, /Your highest reading on Sunday Nov 15 was 40, from 1 reading\./,
+    "Saturday night's 92 was graded as Sunday's");
+  assert.strictEqual(sunday.value.peakReading, 40);
+  for (const zone of zonesAsked()) {
+    assert.strictEqual(zone, 'America/New_York', 'the days were read in the digest\'s own zone, not UTC');
+  }
+});
+
+test('the readings card reads the same days for a venue outside the corpus', async () => {
+  scriptByZone(PHILLY_READINGS);
+  const facts = await require('../services/advisorFacts').buildReadingsVsServed(PHILLY_CTX);
+  assert.strictEqual(byId(facts, 'owner_reading_2026-11-15').value.peakReading, 40);
+  assert.strictEqual(byId(facts, 'owner_reading_2026-11-14').value.peakReading, 92);
+  assert.deepStrictEqual([...new Set(zonesAsked())], ['America/New_York']);
+});
+
+test("the zone the dashboard's own lookup already holds wins over the default", async () => {
+  // A Chicago venue outside the corpus whose dashboard forecast is in memory:
+  // its Places lookup named the zone, and reading it back costs nothing.
+  const dash = require('../routes/venueDashboard');
+  const place = 'ChIJchicagoOutsideTheCorpus000';
+  const key = `intel:${place}:9:1`;
+  dash.__test.intelCache.set(key, {
+    ts: Date.now(), data: { available: true }, clock: { utcOffsetMinutes: -360, timeZone: 'America/Chicago' },
+  });
+  try {
+    // 9 PM on Sunday Nov 15 in Chicago is 03:00 on Monday in UTC and 10 PM in
+    // New York, so only Chicago's own clock keeps it on Sunday.
+    scriptByZone([{ at: '2026-11-16T03:00:00Z', busy: 55 }]);
+    const ctx = { profile: { ...PHILLY_CTX.profile, google_place_id: place }, mlVenue: null };
+    const out = await verdict.buildLastDayVerdict(ctx, { now: new Date('2026-11-16T15:00:00Z') });
+    assert.ok(byId(out, 'owner_reading_2026-11-15'), `Sunday was graded: ${out.map((e) => e.id).join(', ')}`);
+    assert.deepStrictEqual([...new Set(zonesAsked())], ['America/Chicago']);
+  } finally {
+    dash.__test.intelCache.delete(key);
+  }
+});
+
+test('a corpus venue keeps the zone its ml_venues row names', async () => {
+  scriptByZone(PHILLY_READINGS);
+  const ctx = { ...PHILLY_CTX, mlVenue: { timezone: 'America/Los_Angeles' } };
+  await verdict.buildLastDayVerdict(ctx, { now: PHILLY_MONDAY });
+  assert.deepStrictEqual([...new Set(zonesAsked())], ['America/Los_Angeles']);
+});
+

@@ -493,6 +493,45 @@ async function getVenueContext(userId) {
   return { profile, mlVenue };
 }
 
+// ─── The venue's own days ────────────────────────────────────────────────────
+//
+// WHICH ZONE A VENUE'S DAYS ARE READ IN. The verdict and the readings card
+// group the owner's readings and our serve log by `AT TIME ZONE` this, and a
+// venue outside the corpus (no ml_venues row, the usual case,
+// services/venueCorpus.js) used to fall back to UTC there: a Philadelphia
+// bar's 10 PM Saturday reading is 03:00 Sunday in UTC, so on Monday morning
+// "Yesterday" graded Saturday's night as Sunday's, and so did the Monday
+// email's lead.
+//
+// In order: the corpus row's zone; else the zone a Places lookup the server
+// already paid for named, read from memory (the dashboard's forecast entry,
+// then the shared Place Details cache), never a new lookup; else New York, the
+// digest's own default. Never UTC.
+const { validTimeZone, DEFAULT_VENUE_TIMEZONE } = require('../utils/venueZone');
+
+// Each lazy, as readCard below: loading this service does not load a router.
+const KNOWN_ZONE_READERS = [
+  // eslint-disable-next-line global-require
+  (placeId) => require('../routes/venueDashboard').cachedTimeZone(placeId),
+  // eslint-disable-next-line global-require
+  (placeId) => require('./placeDetailsCache').cachedTimeZone(placeId),
+];
+
+function venueTimeZone(ctx) {
+  const own = validTimeZone(ctx && ctx.mlVenue ? ctx.mlVenue.timezone : null);
+  if (own) return own;
+  const placeId = ctx && ctx.profile ? ctx.profile.google_place_id : null;
+  if (typeof placeId === 'string' && placeId) {
+    for (const read of KNOWN_ZONE_READERS) {
+      try {
+        const zone = validTimeZone(read(placeId));
+        if (zone) return zone;
+      } catch { /* the next reader, then the default */ }
+    }
+  }
+  return DEFAULT_VENUE_TIMEZONE;
+}
+
 // ─── Clock helpers ───────────────────────────────────────────────────────────
 
 // One formatter per zone (fourth recheck, 2026-11-06): building one is most of
@@ -2086,7 +2125,7 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
 // read a previous owner's slider posts back to the next one as theirs.
 async function buildReadingsVsServed(ctx) {
   const p = ctx.profile;
-  const tz = ctx.mlVenue?.timezone || 'UTC';
+  const tz = venueTimeZone(ctx);
   const out = [];
 
   const readings = await pool.query(
@@ -2223,6 +2262,7 @@ module.exports = {
   corpusGate,
   // context + cards
   getVenueContext,
+  venueTimeZone,
   buildWeekAhead,
   isShutDay,
   venueToday,

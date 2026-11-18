@@ -144,6 +144,7 @@ const { upstreamSignal } = require('../utils/upstream');
 // to 38/day alongside Text Search in the September outage, so this half of
 // Places can be just as dead while search looks fine.
 const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
+const { placeTimeZone } = require('../utils/venueZone');
 
 // The union of everything any consumer of a Place Details response reads. This
 // is routes/venueSearch.js's former DETAILS_FIELD_MASK unchanged; routes/crowd.js
@@ -612,9 +613,23 @@ function fetchPlacePhotos(placeId) {
   return flight;
 }
 
+/**
+ * The place's IANA zone off a fresh cached payload, or null. Never a request:
+ * Roost reads the days of a venue outside the corpus on it
+ * (services/advisorFacts.js venueTimeZone).
+ *
+ * @param {string} placeId
+ * @returns {string|null}
+ */
+function cachedTimeZone(placeId) {
+  const place = typeof placeId === 'string' && placeId ? readFresh(placeId) : null;
+  return place ? placeTimeZone(place) : null;
+}
+
 module.exports = {
   willCostUpstreamCall,
   fetchPlaceDetails,
+  cachedTimeZone,
   photosLookupWillCost,
   fetchPlacePhotos,
   isGonePlace,
