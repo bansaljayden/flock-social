@@ -14248,9 +14248,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // leaver's stop too, but this is the event every member is sent; a pin
       // they hold in another of this reader's plans stays.
       setFlockMemberLocations(prev => withoutPersonPin(prev, data.userId, data.flockId));
+      // And their vote. The server's tally counts accepted members only, but
+      // the one held here kept a leaver's vote, and their name among the
+      // voters, until the next read. Only a plan holding a tally has one to
+      // correct; any other reads fresh when it is opened.
+      if (plan && Array.isArray(plan.votes) && plan.votes.length > 0) loadFlockVotes(data.flockId);
     });
     return unsub;
-  }, []);
+  }, [loadFlockVotes]);
 
   // Typing indicator — throttled: emit once, suppress until stopped
   const typingTimeoutRef = useRef(null);
