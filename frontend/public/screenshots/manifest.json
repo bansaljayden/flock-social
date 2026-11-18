@@ -28,6 +28,22 @@
       "height": 1039
     },
     {
+      "file": "screenshots/bill-split-dark-v3-sheet-480w.webp",
+      "screen": "bill-split",
+      "title": "Split the bill, the sheet alone: $142.60 with an 18% tip, $28.52 each",
+      "mode": "dark",
+      "width": 480,
+      "height": 577
+    },
+    {
+      "file": "screenshots/bill-split-dark-v3-sheet@2x.webp",
+      "screen": "bill-split",
+      "title": "Split the bill, the sheet alone: $142.60 with an 18% tip, $28.52 each",
+      "mode": "dark",
+      "width": 780,
+      "height": 938
+    },
+    {
       "file": "screenshots/bill-split-dark-v3@2x.webp",
       "screen": "bill-split",
       "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
@@ -58,6 +74,22 @@
       "mode": "dark",
       "width": 480,
       "height": 1039
+    },
+    {
+      "file": "screenshots/budget-dark-v3-sheet-480w.webp",
+      "screen": "budget",
+      "title": "Private budget, the sheet alone: $35 typed in, and the note that nobody sees it",
+      "mode": "dark",
+      "width": 480,
+      "height": 663
+    },
+    {
+      "file": "screenshots/budget-dark-v3-sheet@2x.webp",
+      "screen": "budget",
+      "title": "Private budget, the sheet alone: $35 typed in, and the note that nobody sees it",
+      "mode": "dark",
+      "width": 780,
+      "height": 1078
     },
     {
       "file": "screenshots/budget-dark-v3@2x.webp",

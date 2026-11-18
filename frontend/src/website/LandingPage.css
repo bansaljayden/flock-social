@@ -2110,6 +2110,17 @@ html:has(.lp) body { overflow-x: clip; }
   border: 1px solid var(--edge-cream);
 }
 .lp-anno-glass { height: 100%; overflow: hidden; border-radius: 14.5cqw; background: var(--phone-glass); }
+/* A capture cut down to its sheet (shot.crop): the phone is cut straight
+   across at the sheet's top edge, so it has no top frame, no status row and
+   no room made for them above it. */
+.lp-anno.is-cropped .lp-anno-phone { margin-top: 0; }
+.lp-anno.is-cropped .lp-anno-device {
+  inset: 0 -3.8cqw -3.8cqw;
+  padding-top: 0;
+  border-top: 0;
+  border-radius: 0 0 18.3cqw 18.3cqw;
+}
+.lp-anno.is-cropped .lp-anno-glass { border-radius: 0 0 14.5cqw 14.5cqw; }
 .lp-anno-phone .lp-shot {
   position: relative;
   display: block;
@@ -2173,10 +2184,13 @@ html:has(.lp) body { overflow-x: clip; }
     margin-left: calc(var(--anno-x0) / var(--anno-w) * 100%);
     width: calc(240 / var(--anno-w) * 100%);
   }
-  .lp-anno-stage { aspect-ratio: var(--anno-w) / 519.38; }
+  /* --anno-h is the phone's height in units: 519.38 (390:844), or less for
+     a capture cut down to its sheet. */
+  .lp-anno-stage { aspect-ratio: var(--anno-w) / var(--anno-h, 519.38); }
   /* The room above and below the drawn phone: 16.7% and 3.8% of the phone's
      240 units, in percent of the stage's width. */
   .lp-anno-stage { margin: calc(40.08 / var(--anno-w) * 100%) 0 calc(9.12 / var(--anno-w) * 100%); }
+  .lp-anno.is-cropped .lp-anno-stage { margin-top: 0; }
   .lp-anno-phone {
     position: absolute;
     top: 0;

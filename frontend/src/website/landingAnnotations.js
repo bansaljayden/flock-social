@@ -17,6 +17,12 @@
    `y` moves a note's label off its target's line when two labels on one side
    would otherwise sit too close; the leader then bends in the gap beside the
    phone, never across the screen.
+   `crop` cuts a capture down to the sheet that is its subject (2026-11-06):
+   the budget and the bill were each a full phone of the app's blurred chat,
+   near-black, with the sheet in its lower half. The cut files start that
+   share of the way down, on the sheet's first whole row (rows 610 and 750
+   of 1688, so 36.14% and 44.43%), and the boxes here stay as measured on
+   the whole capture (AnnotatedShot.js maps them).
    The three Friday beats keep every note on the phone's far side from their
    words, so the words and the notes never compete for one side; their
    layouts are one-sided and the sides follow the beat: words left, notes right
@@ -55,9 +61,10 @@ export const ANNOTATIONS = {
   budget: {
     layout: 'left',
     shot: {
-      src: '/screenshots/budget-dark-v3@2x.webp',
-      srcSet: '/screenshots/budget-dark-v3-480w.webp 480w, /screenshots/budget-dark-v3@2x.webp 780w',
+      src: '/screenshots/budget-dark-v3-sheet@2x.webp',
+      srcSet: '/screenshots/budget-dark-v3-sheet-480w.webp 480w, /screenshots/budget-dark-v3-sheet@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
+      crop: 36.14,
     },
     caption: 'the maintainer’s budget sheet.',
     notes: [
@@ -82,9 +89,10 @@ export const ANNOTATIONS = {
   bill: {
     layout: 'left',
     shot: {
-      src: '/screenshots/bill-split-dark-v3@2x.webp',
-      srcSet: '/screenshots/bill-split-dark-v3-480w.webp 480w, /screenshots/bill-split-dark-v3@2x.webp 780w',
+      src: '/screenshots/bill-split-dark-v3-sheet@2x.webp',
+      srcSet: '/screenshots/bill-split-dark-v3-sheet-480w.webp 480w, /screenshots/bill-split-dark-v3-sheet@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Asad Ali, $28.52 each for five people.',
+      crop: 44.43,
     },
     caption: 'Split the Bill, after two paid back.',
     notes: [

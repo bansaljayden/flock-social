@@ -166,8 +166,9 @@ describe('LandingPage: images', () => {
     expect(shot('bill-split-dark').getAttribute('alt')).toMatch(/\$142\.60/);
     expect(shot('owner-dashboard-dark').getAttribute('alt')).toMatch(/dashboard/);
     // One theme for every capture on the site, the hero's own (2026-10-21).
+    // A capture cut down to its sheet carries -sheet (2026-11-06).
     for (const img of container.querySelectorAll('img.lp-shot')) {
-      expect(img.getAttribute('src')).toMatch(/-dark(-v\d+)?(@2x|-480w)\./);
+      expect(img.getAttribute('src')).toMatch(/-dark(-v\d+)?(-sheet)?(@2x|-480w)\./);
     }
     unmount();
   });
@@ -188,7 +189,9 @@ describe('LandingPage: images', () => {
       const img = fig.querySelector('img');
       expect(img.getAttribute('loading')).toBe('lazy');
       expect(img.getAttribute('width')).toBe('390');
-      expect(img.getAttribute('height')).toBe('844');
+      // 390 x 844, or the share of it a capture cut down to its sheet keeps.
+      if (fig.classList.contains('is-cropped')) expect(Number(img.getAttribute('height'))).toBeLessThan(844);
+      else expect(img.getAttribute('height')).toBe('844');
       const cap = fig.querySelector('figcaption');
       if (cap) {
         expect(cap.textContent.trim().length).toBeGreaterThan(10);

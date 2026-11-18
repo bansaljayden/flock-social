@@ -14,7 +14,7 @@ const fs = require('fs');
 const path = require('path');
 const React = require('react');
 const { render } = require('@testing-library/react');
-const { layoutNotes, phoneLeft, P, H } = require('../website/AnnotatedShot');
+const { layoutNotes, cropNotes, phoneHeight, phoneLeft, P, H } = require('../website/AnnotatedShot');
 const { ANNOTATIONS } = require('../website/landingAnnotations');
 
 jest.mock('../website/LiveDemo', () => ({ __esModule: true, default: () => null }));
@@ -24,9 +24,25 @@ const CSS = fs.readFileSync(path.join(__dirname, '..', 'website', 'LandingPage.c
 const overlap = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
 const entries = Object.entries(ANNOTATIONS);
 
+// Width and height of a WebP file, from its header (lossy, lossless or
+// extended), so the cut files can be checked against the crop they claim.
+function webpSize(file) {
+  const b = fs.readFileSync(file);
+  expect(b.toString('ascii', 0, 4)).toBe('RIFF');
+  expect(b.toString('ascii', 8, 12)).toBe('WEBP');
+  const kind = b.toString('ascii', 12, 16);
+  if (kind === 'VP8 ') return [b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff];
+  if (kind === 'VP8L') {
+    const bits = b.readUInt32LE(21);
+    return [(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1];
+  }
+  if (kind === 'VP8X') return [b.readUIntLE(24, 3) + 1, b.readUIntLE(27, 3) + 1];
+  throw new Error(`unknown WebP chunk ${kind} in ${file}`);
+}
+
 test('the stage is the phone\'s own ratio, in the SVG and in the CSS, so leaders land at every width', () => {
   expect(H).toBeCloseTo((P * 844) / 390, 6);
-  expect(CSS).toMatch(/aspect-ratio: var\(--anno-w\) \/ 519\.38;/);
+  expect(CSS).toMatch(/aspect-ratio: var\(--anno-w\) \/ var\(--anno-h, 519\.38\);/);
   expect(CSS).toMatch(/width: calc\(240 \/ var\(--anno-w\) \* 100%\);/);
   // From 1100px the whole stage, phone included, is drawn 1.3 times larger.
   expect(CSS).toMatch(/@media \(min-width: 1100px\) \{\s*\.lp-anno \{ --anno-scale: 1\.3; \}/);
@@ -35,8 +51,12 @@ test('the stage is the phone\'s own ratio, in the SVG and in the CSS, so leaders
 
 describe.each(entries)('%s', (id, a) => {
   const x0 = phoneLeft(a.layout);
-  const toBox = ([x1, y1, x2, y2]) => [x0 + (x1 / 100) * P, (y1 / 100) * H, x0 + (x2 / 100) * P, (y2 / 100) * H];
-  const rows = layoutNotes(a.layout, a.notes);
+  // A capture cut down to its sheet is a shorter phone; every box, label and
+  // number is checked in the cut's own percent (cropNotes).
+  const crop = a.shot.crop || 0;
+  const h = phoneHeight(crop);
+  const toBox = ([x1, y1, x2, y2]) => [x0 + (x1 / 100) * P, (y1 / 100) * h, x0 + (x2 / 100) * P, (y2 / 100) * h];
+  const rows = layoutNotes(a.layout, cropNotes(a.notes, crop), h);
 
   test('two to four notes, each naming a measured box on the screen', () => {
     expect(a.notes.length).toBeGreaterThanOrEqual(2);
@@ -86,7 +106,7 @@ describe.each(entries)('%s', (id, a) => {
     // An 18px number on a 224px phone (70vw at a 320px screen), in percent of
     // the capture.
     const hw = (9 / 224) * 100;
-    const hh = (9 / ((224 * 844) / 390)) * 100;
+    const hh = (9 / (((224 * 844) / 390) * (100 - crop) / 100)) * 100;
     for (const r of rows) {
       const [x, y] = r.dot;
       const dot = [x - hw, y - hh, x + hw, y + hh];
@@ -112,6 +132,34 @@ describe.each(entries)('%s', (id, a) => {
   });
 });
 
+test('a capture cut down to its sheet names nothing above the cut, and its files are that cut', () => {
+  // The budget and the bill were full phones of the app's blurred chat with
+  // the sheet in their lower half (2026-11-06). Their files are cut where
+  // the crop says, and every note lands below the cut.
+  const cut = entries.filter(([, a]) => a.shot.crop);
+  expect(cut.map(([id]) => id)).toEqual(['budget', 'bill']);
+  for (const [id, a] of cut) {
+    const { crop } = a.shot;
+    expect(crop).toBeGreaterThan(0);
+    expect(crop).toBeLessThan(60);
+    for (const n of a.notes) {
+      expect(`${id} "${n.text}" box top ${n.box[1]}`).toBe(`${id} "${n.text}" box top ${Math.max(n.box[1], crop + 2)}`);
+      expect(n.dot[1]).toBeGreaterThan(crop + 2);
+      if (n.y !== undefined) expect(n.y).toBeGreaterThan(crop + 2);
+    }
+    const files = [a.shot.src, ...a.shot.srcSet.split(',').map((c) => c.trim().split(' ')[0])];
+    for (const url of new Set(files)) {
+      expect(url).toMatch(/-sheet(@2x|-480w)\.webp$/);
+      const [w, hgt] = webpSize(path.join(__dirname, '..', '..', 'public', url));
+      // The cut keeps the whole width and (100 - crop)% of the 390:844 height.
+      expect(hgt / w).toBeCloseTo(((844 / 390) * (100 - crop)) / 100, 2);
+    }
+  }
+  // The phone around a cut capture has no top: no status row, no top frame.
+  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-device \{[^}]*border-top: 0;/);
+  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-stage \{ margin-top: 0; \}/);
+});
+
 test('the page draws all five, one marker per note, and on a phone the numbers match the list', () => {
   // eslint-disable-next-line global-require
   const Page = require('../website/LandingPage').default;
@@ -122,6 +170,10 @@ test('the page draws all five, one marker per note, and on a phone the numbers m
     const { notes } = entries[i][1];
     const svg = fig.querySelector('svg.lp-anno-lines');
     expect(svg.querySelectorAll('circle.lp-anno-end').length + svg.querySelectorAll('g.lp-anno-mark').length).toBe(notes.length);
+    const { crop } = entries[i][1].shot;
+    expect(fig.classList.contains('is-cropped')).toBe(Boolean(crop));
+    expect(fig.querySelector('.lp-reel-status') === null).toBe(Boolean(crop));
+    expect(fig.querySelector('img.lp-shot').getAttribute('height')).toBe(String(Math.round((844 * (100 - (crop || 0))) / 100)));
     const dots = Array.from(fig.querySelectorAll('.lp-anno-dot')).map((d) => d.textContent);
     const nums = Array.from(fig.querySelectorAll('li.lp-anno-note .lp-anno-num')).map((d) => d.textContent);
     expect(dots).toEqual(nums);
