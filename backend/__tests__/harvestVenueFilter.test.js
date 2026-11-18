@@ -176,9 +176,10 @@ function toRecord(v, day, { sayDay = true } = {}) {
 // page; `reportTotal` makes venues_n the box total rather than the page count
 // (the documentation does not say which it is, and the harvester must be right
 // under both). `noDayInt(v, day)` true leaves day_int out of that venue's
-// record for that day. Every request is recorded.
+// record for that day. `echoKey` puts the private key in every filter answer,
+// as an API that echoes its request might. Every request is recorded.
 function fakeBestTime(fixture, {
-  reportTotal = false, failDay = null, failStatus = 402, ignoreDay = false, noDayInt = () => false,
+  reportTotal = false, failDay = null, failStatus = 402, ignoreDay = false, noDayInt = () => false, echoKey = false,
 } = {}) {
   const requests = [];
   const fetchImpl = async (input, init = {}) => {
@@ -204,6 +205,7 @@ function fakeBestTime(fixture, {
         status: 'OK',
         venues: slice.map((v) => toRecord(v, ignoreDay ? 0 : day, { sayDay: !noDayInt(v, day) })),
         venues_n: reportTotal ? inBox.length : slice.length,
+        ...(echoKey ? { api_key_private: p.get('api_key_private'), echo: `key=${p.get('api_key_private')}` } : {}),
       });
     }
     return jsonResponse(404, {});
@@ -1504,4 +1506,79 @@ test('a market-day on which no venue said its day still aborts, and writes nothi
   assert.match(summary.abortReason, /none of the \d+ venues for Wed in philly said which day they are for; nothing is written/);
   assert.match(out, /ABORTED/);
   assert.deepStrictEqual(await snapshot(), before, 'an aborted run wrote');
+});
+
+test('--cache-dir keeps what an aborted run fetched, and a rerun answers from it without the network or the budget', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-harvest-cache-'));
+  try {
+    const fresh = fx('ven_cache_new', 39.9330, -75.2150, 'CAFE', 'ChIJharvestCacheNew01', 91, { name: 'Cache Corner Cafe' });
+    const fixture = [...AXIS, fresh];
+    const filterCalls = (fake) => fake.requests.filter((r) => r.path === '/api/v1/venues/filter');
+    const cacheFiles = () => fs.readdirSync(cacheDir).filter((f) => f.endsWith('.json'));
+
+    // Every question this scope asks, without a cache.
+    const plain = fakeBestTime(fixture);
+    const reference = await runHarvest(['--city=philly', '--new-only'], plain);
+    assert.strictEqual(reference.summary.exitCode, 0, reference.summary.abortReason);
+    const total = filterCalls(plain).length;
+    assert.strictEqual(fs.readdirSync(cacheDir).length, 0, 'a run without --cache-dir wrote a cache');
+
+    // An aborted run (the key refused on Thursday) keeps every answer it had.
+    const aborted = fakeBestTime(fixture, { failDay: 3, echoKey: true });
+    const first = await runHarvest(['--city=philly', '--new-only', `--cache-dir=${cacheDir}`], aborted);
+    assert.strictEqual(first.summary.aborted, true);
+    const answered = filterCalls(aborted).filter((r) => r.params.day_int !== '3').length;
+    assert.ok(answered > 0 && answered < total);
+    assert.strictEqual(cacheFiles().length, answered, 'one cache file per answered request');
+    for (const f of cacheFiles()) {
+      const text = fs.readFileSync(path.join(cacheDir, f), 'utf8');
+      assert.ok(!text.includes(FAKE_PRIVATE) && !text.includes(FAKE_PUBLIC), `${f} holds the key`);
+      assert.ok(!/api_key_private=/.test(text), `${f} names the key parameter`);
+      assert.match(JSON.parse(text).url, /^https:\/\/besttime\.app\/api\/v1\/venues\/filter\?/);
+    }
+
+    // The rerun asks the network only what the aborted run never answered.
+    const second = fakeBestTime(fixture);
+    const dry = await runHarvest(['--city=philly', '--new-only', `--cache-dir=${cacheDir}`], second);
+    assert.strictEqual(dry.summary.exitCode, 0, dry.summary.abortReason);
+    assert.strictEqual(filterCalls(second).length, total - answered);
+    assert.strictEqual(dry.summary.stats.cachedPages, answered);
+    assert.strictEqual(cacheFiles().length, total);
+
+    // And a third, every answer cached, makes no filter request at all, is not
+    // held to a budget of one page, and writes the week the answers give.
+    const offline = fakeBestTime([]);
+    const { summary, out } = await runHarvest(
+      ['--city=philly', '--new-only', '--commit', `--cache-dir=${cacheDir}`, '--result-budget=100'], offline
+    );
+    assertNoKey(out);
+    assert.strictEqual(summary.aborted, false, summary.abortReason);
+    assert.strictEqual(summary.exitCode, 0);
+    assert.deepStrictEqual(filterCalls(offline), [], 'a cached question went to the network');
+    assert.ok(offline.requests.every((r) => r.path.startsWith('/api/v1/keys/')), 'only the free key-status reads remain');
+    assert.deepStrictEqual([summary.stats.requests, summary.stats.venuesReturned, summary.stats.cachedPages, summary.budget.stopped],
+      [0, 0, total, false]);
+    assert.strictEqual(summary.stats.cachedResults, reference.summary.stats.venuesReturned);
+    assert.deepStrictEqual(summary.plan, reference.summary.plan);
+    assert.match(out, new RegExp(`answered ${total} filter pages from the cache \\(${summary.stats.cachedResults} results, not billed`));
+    assert.deepStrictEqual([summary.venuesInserted, summary.rowsWritten], [1, 168]);
+    const { rows: [row] } = await pool.query("SELECT id FROM ml_venues WHERE besttime_venue_id = 'ven_cache_new'");
+    const { rows } = await pool.query('SELECT day_of_week, hour, busyness_pct FROM ml_training_data WHERE venue_id = $1', [row.id]);
+    assert.strictEqual(rows.length, 168);
+    for (const r of rows) {
+      let want = null;
+      for (let d = 0; d < 7 && want === null; d++) {
+        for (let s = 0; s < 24; s++) {
+          const local = bestTimeSlotToLocal(s, bestTimeDayToJsDay(d));
+          if (local.dayOfWeek === r.day_of_week && local.hour === r.hour) { want = fresh.week[d][s]; break; }
+        }
+      }
+      assert.strictEqual(r.busyness_pct, want, `day ${r.day_of_week} hour ${r.hour}`);
+    }
+
+    assert.match(harvester.parseArgs(['node', 'h.js', '--cache-dir=']).error, /--cache-dir/);
+    assert.strictEqual(harvester.parseArgs(['node', 'h.js']).cacheDir, null);
+  } finally {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });

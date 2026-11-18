@@ -7,7 +7,9 @@
 //   node scripts/ml/harvestVenueFilter.js --city=all --new-only    every training city, new venues only (dry run)
 // --city takes CITIES keys, comma separated, or all (EVERY TRAINING CITY
 // below); --radius-km (default 20) sets how far each reaches; --result-budget
-// (default 60000) caps the results one run may be billed for.
+// (default 60000) caps the results one run may be billed for; --cache-dir=<dir>
+// keeps every answer the filter gives there and answers a repeated question
+// from it, unbilled (THE CACHE, above requestPage).
 //
 // WHY THIS EXISTS. The plan (Pro Package 100) meters 100 NEW venue admissions
 // a calendar month, and 100,000 Venue Filter results a calendar month (THE
@@ -209,6 +211,9 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { Pool } = require('pg');
 const { CITIES, bestTimeDayToJsDay, sleep: realSleep, withCorpusWriteLock } = require('./config');
 // IMPORTED, NEVER REIMPLEMENTED: the slot -> (venue-local day, hour) transform
@@ -457,7 +462,7 @@ function parseCities(argv) {
 function parseArgs(argv) {
   const known = ['--commit', '--all-types', '--no-place-id', '--new-only'];
   const valued = ['--city=', '--days=', '--tile-km=', '--page-size=', '--result-cap=', '--max-requests=', '--radius-km=',
-    '--result-budget='];
+    '--result-budget=', '--cache-dir='];
   for (const a of argv.slice(2)) {
     if (!known.includes(a) && !valued.some((p) => a.startsWith(p))) {
       return { error: `Unknown argument "${a}".` };
@@ -490,7 +495,12 @@ function parseArgs(argv) {
   if (pageSize.value > resultBudget.value) {
     return { error: `--result-budget (${resultBudget.value}) is smaller than one page (--page-size=${pageSize.value}).` };
   }
+  const cacheArg = argv.find((a) => a.startsWith('--cache-dir='));
+  if (cacheArg !== undefined && !cacheArg.slice('--cache-dir='.length).trim()) {
+    return { error: '--cache-dir takes a directory path (see THE CACHE).' };
+  }
   return {
+    cacheDir: cacheArg ? path.resolve(cacheArg.slice('--cache-dir='.length).trim()) : null,
     commit: argv.includes('--commit'),
     allTypes: argv.includes('--all-types'),
     askPlaceId: !argv.includes('--no-place-id'),
@@ -1055,12 +1065,90 @@ function buildFilterUrl(key, q, opts) {
   return `${FILTER_URL}?${params}`;
 }
 
+// ---------------------------------------------------------------------------
+// THE CACHE (--cache-dir). Every answer the filter gives, so a run that is
+// refused or aborted after it fetched does not have to buy those results
+// again. One file per question: <sha256 of the URL without the key>.json,
+// holding { url (without the key), fetchedAt, data (the parsed answer) }, with
+// any copy of either key in the answer replaced by [withheld] before it is
+// written. A question already in the directory is answered from it: no request,
+// no pacing, nothing counted against --result-budget or --max-requests, and the
+// summary counts it apart. Asked after the admission guard has approved the
+// URL, so the guard sees every question either way. Entries never expire, and
+// BestTime's stored forecasts change and are deleted after 31 days: a cache is
+// for re-running the same scope soon after, so give each new month's run a
+// fresh directory. Without --cache-dir nothing is read or written.
+// ---------------------------------------------------------------------------
+function cacheKeyUrl(url) {
+  const u = new URL(url);
+  u.searchParams.delete('api_key_private');
+  u.searchParams.delete('api_key_public');
+  return u.toString();
+}
+
+const cacheFile = (dir, keyless) => path.join(dir, `${crypto.createHash('sha256').update(keyless).digest('hex')}.json`);
+
+function readCache(dir, keyless) {
+  let entry;
+  try {
+    entry = JSON.parse(fs.readFileSync(cacheFile(dir, keyless), 'utf8'));
+  } catch {
+    return null; // absent, or cut short by a crash mid-write: asked again
+  }
+  return entry && entry.url === keyless && entry.data && typeof entry.data === 'object' ? entry.data : null;
+}
+
+function writeCache(ctx, keyless, data) {
+  let text = JSON.stringify({ url: keyless, fetchedAt: new Date().toISOString(), data });
+  for (const secret of ctx.secrets) text = text.split(secret).join('[withheld]');
+  const file = cacheFile(ctx.opts.cacheDir, keyless);
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, text);
+    fs.renameSync(tmp, file);
+    ctx.stats.cacheWrites++;
+  } catch (err) {
+    // A cache that cannot be written costs the next run, not this one.
+    const code = besttime.errorCode(err);
+    if (ctx.stats.cacheWriteFailures++ === 0) {
+      console.warn(`${TAG} WARNING: could not write to --cache-dir (${code}); the run goes on uncached.`);
+    }
+    try { fs.unlinkSync(tmp); } catch { /* never written */ }
+  }
+}
+
+// What a filter answer says: { venues, total, credits }, or an abort.
+function readFilterAnswer(data) {
+  if (!data || typeof data !== 'object') throw abortError('the venue filter answered without a JSON object.');
+  if (!Array.isArray(data.venues)) {
+    const msg = typeof data.message === 'string' ? data.message : '';
+    if (/no venues?|not found|none found/i.test(msg)) return { venues: [], total: 0, credits: null };
+    // What the answer meant, never its text: status and message both came
+    // back from BestTime and can echo the request, key included (logSafe.js).
+    throw abortError(`the venue filter answered without a venue list (${labelFor(msg)}).`);
+  }
+  const total = Number.isInteger(data.venues_n) ? data.venues_n : null;
+  const credits = typeof data.credits_charged === 'number' && Number.isFinite(data.credits_charged) ? data.credits_charged : null;
+  return { venues: data.venues, total, credits };
+}
+
 // One page. Retries what BestTime asks to be retried, throws an abort for
 // everything else. Never prints the URL or a fetch error's message: the URL
-// carries the private key.
+// carries the private key. With --cache-dir, a question already answered is
+// answered from the cache (THE CACHE), after the guard and before the network.
 async function requestPage(ctx, q) {
   const url = buildFilterUrl(ctx.key, q, ctx.opts);
   assertAllowedRequest(url, 'GET');
+  const keyless = ctx.opts.cacheDir ? cacheKeyUrl(url) : null;
+  if (keyless) {
+    const cached = readCache(ctx.opts.cacheDir, keyless);
+    if (cached) {
+      const answer = readFilterAnswer(cached);
+      ctx.stats.cachedPages++;
+      if (ctx.city) ctx.city.cachedPages++;
+      return { ...answer, cached: true };
+    }
+  }
   for (let attempt = 0; ; attempt++) {
     // A page holds at most --page-size venues, so this is the last moment the
     // budget can be kept rather than passed (THE RESULT BUDGET).
@@ -1121,17 +1209,9 @@ async function requestPage(ctx, q) {
         + 'The place_id flag and the types list are the two not yet confirmed against a live answer: '
         + '--no-place-id drops the first (refresh only, no new venues), --all-types the second.');
     }
-    if (!data || typeof data !== 'object') throw abortError('the venue filter answered without a JSON object.');
-    if (!Array.isArray(data.venues)) {
-      const msg = typeof data.message === 'string' ? data.message : '';
-      if (/no venues?|not found|none found/i.test(msg)) return { venues: [], total: 0, credits: null };
-      // What the answer meant, never its text: status and message both came
-      // back from BestTime and can echo the request, key included (logSafe.js).
-      throw abortError(`the venue filter answered without a venue list (${labelFor(msg)}).`);
-    }
-    const total = Number.isInteger(data.venues_n) ? data.venues_n : null;
-    const credits = typeof data.credits_charged === 'number' && Number.isFinite(data.credits_charged) ? data.credits_charged : null;
-    return { venues: data.venues, total, credits };
+    const answer = readFilterAnswer(data);
+    if (keyless) writeCache(ctx, keyless, data);
+    return { ...answer, cached: false };
   }
 }
 
@@ -1149,13 +1229,19 @@ async function fetchTile(ctx, tile, day) {
     const res = await requestPage(ctx, { tile, day, page });
     pages++;
     const n = res.venues.length;
-    ctx.stats.venuesReturned += n;
-    if (res.credits !== null) ctx.stats.creditsReported += res.credits;
-    // BestTime bills about one query credit per ten venues returned.
-    ctx.stats.creditsEstimated += Math.max(1, Math.ceil(n / 10));
-    if (ctx.city) {
-      ctx.city.results += n;
-      ctx.city.credits += Math.max(1, Math.ceil(n / 10));
+    if (res.cached) {
+      // Bought by an earlier run: not billed now, and not this run's budget.
+      ctx.stats.cachedResults += n;
+      if (ctx.city) ctx.city.cachedResults += n;
+    } else {
+      ctx.stats.venuesReturned += n;
+      if (res.credits !== null) ctx.stats.creditsReported += res.credits;
+      // BestTime bills about one query credit per ten venues returned.
+      ctx.stats.creditsEstimated += Math.max(1, Math.ceil(n / 10));
+      if (ctx.city) {
+        ctx.city.results += n;
+        ctx.city.credits += Math.max(1, Math.ceil(n / 10));
+      }
     }
     venues.push(...res.venues);
     // venues_n is documented as "the total number of found venues", and the
@@ -1692,6 +1778,8 @@ function emptyStats() {
   return {
     requests: 0, venuesReturned: 0, creditsReported: 0, creditsEstimated: 0, notFound: 0,
     splits: 0, truncatedTiles: 0, malformed: 0, unverifiable: 0,
+    // THE CACHE: pages answered from it and their results, and pages written.
+    cachedPages: 0, cachedResults: 0, cacheWrites: 0, cacheWriteFailures: 0,
     // Which field each venue-day's curve came from, and how the other compared.
     fromWhole: 0, fieldsIdentical: 0, fieldsDiffer: 0, fieldAltAbsent: 0,
   };
@@ -1702,6 +1790,7 @@ function emptyStats() {
 function emptyCityStats(tiles) {
   return {
     state: 'planned', tiles, leaves: 0, requests: 0, results: 0, credits: 0, venues: 0,
+    cachedPages: 0, cachedResults: 0,
     newPlanned: 0, knownPlanned: 0, knownSkipped: 0, rowsPlanned: 0,
     newWritten: 0, knownWritten: 0, rowsWritten: 0,
   };
@@ -1725,6 +1814,14 @@ function formatCityTable(summary, opts) {
   const width = head.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
   const line = (r) => `  ${String(r[0]).padEnd(width[0])}${r.slice(1).map((x, i) => `  ${String(x).padStart(width[i + 1])}`).join('')}`;
   return [line(head), ...rows.map(line)];
+}
+
+// Cached against fetched, for a run with --cache-dir (THE CACHE).
+function logCache(opts, s) {
+  console.log(`${TAG} CACHE: answered ${s.cachedPages} filter pages from the cache (${s.cachedResults} results, not billed `
+    + `and not counted against the budget); fetched ${s.requests} (${s.venuesReturned} results) and wrote ${s.cacheWrites} `
+    + `new answers to ${opts.cacheDir}${s.cacheWriteFailures ? ` (${s.cacheWriteFailures} could not be written)` : ''}. `
+    + 'A rerun of the same scope with this --cache-dir buys none of them again.');
 }
 
 async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
@@ -1761,6 +1858,22 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     + `${opts.allTypes ? 'all venue types' : `${Object.keys(TYPE_TO_CATEGORY).length} mapped venue types`}, `
     + `within ${opts.radiusKm} km, cap ${opts.resultCap}, page ${opts.pageSize}, result budget ${opts.resultBudget}`
     + `${opts.newOnly ? ', NEW VENUES ONLY (nothing is written for a venue the corpus holds)' : ''}.`);
+  if (opts.cacheDir) {
+    // Made, and its holdings counted, before any request (THE CACHE).
+    let held;
+    try {
+      fs.mkdirSync(opts.cacheDir, { recursive: true });
+      held = fs.readdirSync(opts.cacheDir).filter((f) => /^[0-9a-f]{64}\.json$/.test(f)).length;
+    } catch (err) {
+      const reason = `--cache-dir could not be made or read (${besttime.errorCode(err)}).`;
+      console.error(`${TAG} REFUSED: ${reason}`);
+      summary.aborted = true;
+      summary.abortReason = reason;
+      return summary;
+    }
+    console.log(`${TAG} CACHE: ${opts.cacheDir} holds ${held} filter answers; a question already there is answered `
+      + 'from it, with no request and nothing counted against the result budget, and every new answer is added.');
+  }
 
   // The size of the run, before any request: each first-pass box is asked once
   // a day at least, and splits and pages only add to that.
@@ -1805,6 +1918,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       const ctx = {
         key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS), city: null, area: null,
         dayTally: new Map(),
+        // Never written into the cache (THE CACHE).
+        secrets: [key, process.env.BESTTIME_API_KEY_PUBLIC].filter((x) => typeof x === 'string' && x.length > 0),
       };
       const s = ctx.stats;
 
@@ -1823,8 +1938,9 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           checkMarketDays(ctx, city);
           ctx.city.state = 'done';
           console.log(`${TAG} ${city}: ${ctx.city.tiles} tiles (${ctx.city.leaves} leaves), ${ctx.city.requests} requests, `
-            + `${ctx.city.results} results (~${ctx.city.credits} query credits). Run so far: ${s.venuesReturned} of the `
-            + `${opts.resultBudget}-result budget.`);
+            + `${ctx.city.results} results (~${ctx.city.credits} query credits)`
+            + `${opts.cacheDir ? `, and ${ctx.city.cachedPages} pages (${ctx.city.cachedResults} results) from the cache` : ''}. `
+            + `Run so far: ${s.venuesReturned} of the ${opts.resultBudget}-result budget.`);
         }
       } catch (err) {
         if (!err.budgetStop) throw err;
@@ -1994,6 +2110,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         + `${s.venuesReturned} of the ${opts.resultBudget} budget. Query credits: `
         + `${s.creditsReported > 0 ? `${s.creditsReported} reported by BestTime, ` : ''}~${s.creditsEstimated} estimated.`
         + `${opts.commit ? '' : ' A --commit run of the same scope asks the same questions and should cost the same.'}`);
+      if (opts.cacheDir) logCache(opts, s);
       console.log(`${TAG} BY CITY${opts.commit ? '' : ' (dry run: new, known and weekly rows are what --commit would write)'}: `
         + 'results are the venues the filter returned, billed one query credit per ten; venues are the distinct ones placed '
         + `in the city${opts.newOnly ? '' : '; known are refreshed in place'}.`);
@@ -2013,6 +2130,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     summary.exitCode = 1;
     summary.abortReason = err.message;
     console.error(`${TAG} ABORTED: ${describeError(err)}`);
+    if (opts.cacheDir) logCache(opts, summary.stats);
     if (err.abort) {
       // The run is over; the after-read still shows what was spent. Outside the
       // guard only because the guard is gone by now; it is the same allowed call.
