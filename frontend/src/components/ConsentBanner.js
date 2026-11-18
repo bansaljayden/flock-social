@@ -228,6 +228,12 @@ const CSS = `
     border-color: rgba(244, 239, 227, 0.18);
   }
 }
+/* On a phone the bar was 168px tall at 320, over the bottom of the home
+   page's "Start a plan" and everything under it (2026-11-06). Tighter there;
+   the buttons keep their 44px. */
+@media (max-width: 480px) {
+  .cb-wrap { padding: 10px 12px; font-size: 13.5px; }
+}
 .cb-copy { margin: 0; flex: 1 1 260px; min-width: 0; }
 .cb-actions { display: flex; gap: 8px; flex: 0 0 auto; }
 /* Both answers identical on purpose. Neither is the quiet one. */
