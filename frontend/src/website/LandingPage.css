@@ -1506,6 +1506,31 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-plan-note { font-size: var(--fs-note); color: var(--ink-2); }
 .lp-plan .lp-list { margin: 20px 0 26px; }
 .lp-plan .lp-btn { margin-top: auto; align-self: flex-start; }
+/* Side by side, the columns share rows (2026-11-06): the name, the price, the
+   note, the list, the button and the venue sign-in each sit on one line
+   across every plan. Each column used to stack on its own, so the venue list
+   started 48px below the free one and the two buttons landed 14px apart,
+   which reads as unfinished. Every plan has the same six parts in that order
+   (Free's sign-in row is empty), so each part is pinned to its row. The
+   parent's row gap is 0 here: the parts carry their own spacing, and a gap
+   would land between every row. Two plans sit side by side from about 720px,
+   three only from 900px. */
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 720px) {
+    .lp-plans:not(.lp-plans-3) { grid-template-rows: repeat(6, auto); row-gap: 0; }
+    .lp-plans:not(.lp-plans-3) > .lp-plan { display: grid; grid-row: span 6; grid-template-rows: subgrid; }
+  }
+  @media (min-width: 900px) {
+    .lp-plans.lp-plans-3 { grid-template-rows: repeat(6, auto); row-gap: 0; }
+    .lp-plans.lp-plans-3 > .lp-plan { display: grid; grid-row: span 6; grid-template-rows: subgrid; }
+  }
+  .lp-plan > h3 { grid-row: 1; }
+  .lp-plan > .lp-plan-price { grid-row: 2; }
+  .lp-plan > .lp-plan-note { grid-row: 3; }
+  .lp-plan > .lp-list { grid-row: 4; align-self: start; }
+  .lp-plan > .lp-btn { grid-row: 5; justify-self: start; align-self: start; }
+  .lp-plan > .lp-venue-signin { grid-row: 6; }
+}
 
 /* ============ Apple's App Store badge (AppStoreBadge.js) ============ */
 

@@ -190,6 +190,7 @@ const PAGE_BLOCKS = {
     ["h2", "Free for your friend group."],
     ["p", "Planning with your friends is free, with no ads. Venues are where Flock will make its money, and none is being charged yet."],
     ["h3", "Free"],
+    ["p", "No card needed."],
     ["li", "Unlimited flocks and friends"],
     ["li", "Venue voting and group chat"],
     ["li", "Crowd levels"],

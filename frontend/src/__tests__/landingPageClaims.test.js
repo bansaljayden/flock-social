@@ -508,6 +508,25 @@ describe('structural fingerprint', () => {
     expect(CSS).not.toMatch(/\.lp-hero-cta\b/);
   });
 
+  test('the pricing columns share rows: every plan has the same parts in the same order', () => {
+    // The venue list started 48px below the free one and the buttons landed
+    // 14px apart (2026-11-06). Side by side the plans are one subgrid, each
+    // part pinned to its row, which only holds while every plan keeps the
+    // order name, price, note, list, button.
+    expect(CSS).toMatch(/@supports \(grid-template-rows: subgrid\)/);
+    expect(CSS).toMatch(/grid-row: span 6; grid-template-rows: subgrid;/);
+    const plans = visible.split('<div className="lp-plan">').slice(1);
+    expect(plans.length).toBe(3); // Free, Pro (only while on sale), venues
+    for (const p of plans) {
+      const at = (re) => p.search(re);
+      const order = [/<h3>/, /className="lp-plan-price"/, /className="lp-plan-note"/, /className="lp-list"/, /className="lp-btn /];
+      const idx = order.map(at);
+      expect(idx.every((i) => i > -1)).toBe(true);
+      expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+    }
+    expect(visible).toMatch(/<div className="lp-plan-price">\$0<\/div>\s*<p className="lp-plan-note">No card needed\.<\/p>/);
+  });
+
   test('no eyebrows', () => {
     // An eyebrow is an ordinal device. This page had four, then two, over
     // headings that already stated the subject. When every section is

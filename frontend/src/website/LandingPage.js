@@ -901,7 +901,8 @@ export default function LandingPage() {
           <div className={proOffer ? 'lp-plans lp-plans-3' : 'lp-plans'}>
             <div className="lp-plan">
               <h3>Free</h3>
-              <div className="lp-plan-price">$0<small>no card needed</small></div>
+              <div className="lp-plan-price">$0</div>
+              <p className="lp-plan-note">No card needed.</p>
               <ul className="lp-list">
                 <li>Unlimited flocks and friends</li>
                 <li>Venue voting and group chat</li>
