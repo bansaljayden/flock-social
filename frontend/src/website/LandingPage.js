@@ -429,7 +429,7 @@ export default function LandingPage() {
             <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
             <p className="lp-lead">
               Flock is an app that helps a group of friends finalize plans by
-              integrating artificial intelligence &amp; industry-leading features
+              integrating artificial intelligence &amp; <span className="lp-keep">industry-leading</span> features
               while providing venues with insights into consumer demand.
             </p>
           </div>
