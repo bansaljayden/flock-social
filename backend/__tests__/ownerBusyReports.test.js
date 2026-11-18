@@ -405,8 +405,10 @@ test('the read SQL enforces the same TTL, window and strike count as the constan
     'expiry must be enforced in the database, at the constant');
   assert.ok(sql.includes(`INTERVAL '${ownerReports.OWNER_STRIKE_WINDOW_DAYS} days'`),
     'strike window must be enforced in the database, at the constant');
-  assert.ok(sql.includes(`COUNT(*) >= ${ownerReports.OWNER_DIVERGENCE_STRIKES}`),
+  assert.ok(sql.includes(`${ownerReports.strikeCountSql('r.google_place_id')} < ${ownerReports.OWNER_DIVERGENCE_STRIKES}`),
     'strike suppression must live in the read, so no caller can forget it');
+  assert.ok(ownerReports.strikeCountSql('r.google_place_id').includes(`/ ${ownerReports.OWNER_REPORT_TTL_MINUTES * 60}`),
+    'an assertion earns a strike per reading\'s life, at the TTL constant');
   assert.ok(/retracted = false/.test(sql), 'a retracted reading must never leave the database');
   assert.ok(/DISTINCT ON \(r\.google_place_id\)/.test(sql), 'newest reading per venue, exactly one');
 });

@@ -55,13 +55,13 @@ const OWNER_REPORT_TTL_MS = OWNER_REPORT_TTL_MINUTES * 60 * 1000;
 // disagreement about the same crowd.
 const OWNER_DIVERGENCE_POINTS = 25;
 
-// Strikes: this many inside the window (STRIKE_ROW_SQL, one per contradicted
-// assertion) and the venue's override is suppressed entirely — users see the
-// prediction again until strikes age out. Repeated divergence from the people
-// actually in the room has to cost the venue the thing it was gaming. Three
-// matches every other floor in this product (calibration reporters, budget
-// ceiling): one contradicted claim is a misjudged glance at the room, three
-// inside a month is a pattern.
+// Strikes: this many inside the window (strikeCountSql, one per contradicted
+// assertion, an assertion lasting one reading's life) and the venue's override
+// is suppressed entirely — users see the prediction again until strikes age
+// out. Repeated divergence from the people actually in the room has to cost
+// the venue the thing it was gaming. Three matches every other floor in this
+// product (calibration reporters, budget ceiling): one contradicted claim is a
+// misjudged glance at the room, three inside a month is a pattern.
 const OWNER_DIVERGENCE_STRIKES = 3;
 const OWNER_STRIKE_WINDOW_DAYS = 30;
 
@@ -81,28 +81,62 @@ const OWNER_BASIS = 'owner_report';
 //
 // A strike is a fact about a claim. One contested 80 nudged to 84 and 78 is
 // one claim and one disagreement, and counting its rows made it three strikes,
-// the whole suppression, from one misjudged reading. So a diverged row is a
-// strike only when no earlier diverged row of the place inside one reading's
-// life before it says materially the same thing: the assertion walk's own rule
-// (assertion_since below), applied to the stamped rows.
+// the whole suppression, from one misjudged reading. So the stamped rows are
+// read as runs: a row continues the run before it when it says materially the
+// same thing as the previous stamped row (within OWNER_DIVERGENCE_POINTS) and
+// came inside that row's life (under OWNER_REPORT_TTL_MINUTES after it), the
+// assertion walk's own rule (assertion_since below). Anything else opens a new
+// run.
 //
-// Shared with the owner dashboard's suppression notice (routes/
-// venueDashboard.js ownerBusyState), so the two cannot disagree about whether
-// a venue is suppressed. Served by 043's partial index on diverged rows.
-const STRIKE_ROW_SQL = `s.diverged = true
-              AND NOT EXISTS (
-                    SELECT 1 FROM venue_owner_reports e
-                     WHERE e.google_place_id = s.google_place_id
-                       AND e.diverged = true
-                       AND (e.created_at, e.id) < (s.created_at, s.id)
-                       AND e.created_at > s.created_at - INTERVAL '${OWNER_REPORT_TTL_MINUTES} minutes'
-                       AND ABS(e.busy_percent - s.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
-                  )`;
+// A run is not one strike for as long as it lasts. When each row only had to
+// be sheltered by the one before it, an owner re-posting the same false 95
+// every 89 minutes, contradicted every time, was one strike however long the
+// chain ran, and none once its first row left the month. An assertion lasts
+// one reading's life from its FIRST contradicted row, so a run earns
+// 1 + floor((last - first) / one reading's life): the nudged 80 is one strike,
+// and a number re-posted against the room for three hours is three, the
+// suppression.
+// Counted over the rows inside the strike window, so a run that began before
+// it still counts the part inside it.
+//
+// Window functions, not recursion: LAG marks where a run opens, a running SUM
+// of those marks numbers the runs.
+//
+// The ONE count of a place's strikes, as a scalar subquery over `placeRef`
+// (a column or a bind parameter). The read below and the owner dashboard's
+// suppression notice (routes/venueDashboard.js ownerBusyState) both use it, so
+// the two cannot disagree about whether a venue is suppressed. Served by 043's
+// partial index on diverged rows. No retracted predicate: retracting a reading
+// does not clear a strike already stamped.
+function strikeCountSql(placeRef) {
+  return `(
+      SELECT COALESCE(SUM(1 + FLOOR(EXTRACT(EPOCH FROM (a.last_at - a.first_at)) / ${OWNER_REPORT_TTL_MINUTES * 60})), 0)::int
+        FROM (
+          SELECT MIN(run.created_at) AS first_at, MAX(run.created_at) AS last_at
+            FROM (
+              SELECT step.created_at,
+                     SUM(step.opens) OVER (ORDER BY step.created_at, step.id ROWS UNBOUNDED PRECEDING) AS assertion
+                FROM (
+                  SELECT s.id, s.created_at,
+                         CASE WHEN LAG(s.id) OVER w IS NULL
+                                OR s.created_at - LAG(s.created_at) OVER w >= INTERVAL '${OWNER_REPORT_TTL_MINUTES} minutes'
+                                OR ABS(s.busy_percent - LAG(s.busy_percent) OVER w) > ${OWNER_DIVERGENCE_POINTS}
+                              THEN 1 ELSE 0 END AS opens
+                    FROM venue_owner_reports s
+                   WHERE s.google_place_id = ${placeRef}
+                     AND s.diverged = true
+                     AND s.created_at > NOW() - INTERVAL '${OWNER_STRIKE_WINDOW_DAYS} days'
+                  WINDOW w AS (ORDER BY s.created_at, s.id)
+                ) step
+            ) run
+           GROUP BY run.assertion
+        ) a
+    )`;
+}
 
 // Newest live reading per place id, strike-suppressed venues excluded IN THE
-// READ so no caller can forget the rule. The NOT EXISTS aggregates the
-// venue's strikes inside the strike window; HAVING without GROUP BY is
-// one row when the count clears the bar, zero rows otherwise.
+// READ so no caller can forget the rule: strikeCountSql over the venue's
+// stamped rows inside the strike window, against OWNER_DIVERGENCE_STRIKES.
 //
 // VERIFICATION IS RE-CHECKED HERE, AT SERVE TIME (the JOIN to
 // venue_profiles), and that is not a duplicate of the write path's check.
@@ -221,13 +255,7 @@ const LIVE_OWNER_REPORTS_SQL = `
    WHERE r.google_place_id = ANY($1::text[])
      AND r.retracted = false
      AND r.created_at > NOW() - INTERVAL '90 minutes'
-     AND NOT EXISTS (
-           SELECT 1 FROM venue_owner_reports s
-            WHERE s.google_place_id = r.google_place_id
-              AND ${STRIKE_ROW_SQL}
-              AND s.created_at > NOW() - INTERVAL '30 days'
-           HAVING COUNT(*) >= ${OWNER_DIVERGENCE_STRIKES}
-         )
+     AND ${strikeCountSql('r.google_place_id')} < ${OWNER_DIVERGENCE_STRIKES}
    ORDER BY r.google_place_id, r.created_at DESC`;
 
 // Map of place id -> raw row. NEVER throws: the owner override is an
@@ -483,7 +511,7 @@ function strikeableDivergence(feedbackRows, ownerRow, percent, nowMs) {
 }
 
 // Stamp a contradicted reading (whether it is a new strike is counted in the
-// read, STRIKE_ROW_SQL). Fire-and-forget from the serve path — a divergence is
+// read, strikeCountSql). Fire-and-forget from the serve path — a divergence is
 // bookkeeping about the OWNER, and the user's response must not wait on it or
 // fail with it.
 function markDiverged(reportId) {
@@ -590,9 +618,10 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   //
   // Every contradicted reading is stamped, a re-post of one already struck
   // included, because the stamp is also what keeps it out of the training
-  // export. Charging the claim once is the read's job: STRIKE_ROW_SQL counts
-  // one strike per assertion, so three strikes are three claims, not one
-  // claim nudged twice.
+  // export. Charging the claim is the read's job: strikeCountSql counts one
+  // strike per assertion, an assertion lasting one reading's life from its
+  // first contradicted row, so three strikes are three claims (or one held up
+  // through three readings' lives), not one claim nudged twice.
   if (ownerRow.id != null
       && ownerRow.diverged !== true
       && strikeableDivergence(options.feedbackRows, ownerRow, live.percent, options.now)) {
@@ -669,5 +698,5 @@ module.exports = {
   OWNER_STRIKE_WINDOW_DAYS,
   OWNER_BASIS,
   LIVE_OWNER_REPORTS_SQL,
-  STRIKE_ROW_SQL,
+  strikeCountSql,
 };

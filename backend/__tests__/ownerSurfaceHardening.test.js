@@ -133,7 +133,7 @@ function ctxHandler(placeId, overrides = {}) {
 // The two reads ownerBusyState makes after a write. Neither is under test here.
 const busyStateHandlers = [
   [/DISTINCT ON \(r\.google_place_id\)/, () => ({ rows: [] })],
-  [/AS strikes FROM venue_owner_reports/, () => ({ rows: [{ strikes: 0 }] })],
+  [/AS strikes$/, () => ({ rows: [{ strikes: 0 }] })],
 ];
 
 // ─── 1. THE COUNT-THEN-INSERT RACE ──────────────────────────────────────────

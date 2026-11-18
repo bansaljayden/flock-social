@@ -121,7 +121,7 @@ function world() {
     })],
 
     // The slider.
-    [/AS strikes FROM venue_owner_reports/, () => ({ rows: [{ strikes: 0 }] })],
+    [/AS strikes$/, () => ({ rows: [{ strikes: 0 }] })],
     [/^(BEGIN|COMMIT|ROLLBACK)$/, () => ({ rows: [] })],
     [/pg_advisory_xact_lock/, () => ({ rows: [] })],
     [/AS last_minute/, () => ({ rows: [{ last_minute: 0, last_day: 0 }] })],

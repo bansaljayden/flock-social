@@ -375,9 +375,10 @@ test('ABUSE O: retracting takes the number down, and takes the evidence with it 
 });
 
 test('ABUSE O2: retraction does NOT clear a strike already stamped', () => {
-  // The suppression subquery counts diverged rows with no retracted predicate.
-  const sql = ownerReports.LIVE_OWNER_REPORTS_SQL.replace(/\s+/g, ' ');
-  const suppression = sql.slice(sql.indexOf('NOT EXISTS'), sql.indexOf('ORDER BY'));
+  // The suppression count reads diverged rows with no retracted predicate.
+  const suppression = ownerReports.strikeCountSql('r.google_place_id').replace(/\s+/g, ' ');
+  assert.ok(ownerReports.LIVE_OWNER_REPORTS_SQL.includes(ownerReports.strikeCountSql('r.google_place_id')),
+    'the read suppresses on this count');
   assert.match(suppression, /s\.diverged = true/);
   assert.strictEqual(/retracted/.test(suppression), false,
     'an existing strike is counted whether or not the reading was later retracted');
@@ -404,13 +405,12 @@ test('HELD: the 90-minute expiry is enforced in SQL and again in JavaScript', ()
 });
 
 test('HELD: suppression is keyed on the place id, so moving the claim to a new account does not shed strikes', () => {
-  const sql = ownerReports.LIVE_OWNER_REPORTS_SQL.replace(/\s+/g, ' ');
-  const suppression = sql.slice(sql.indexOf('NOT EXISTS'), sql.indexOf('ORDER BY'));
+  const suppression = ownerReports.strikeCountSql('r.google_place_id').replace(/\s+/g, ' ');
   assert.match(suppression, /s\.google_place_id = r\.google_place_id/);
   assert.strictEqual(/venue_user_id/.test(suppression), false,
     'a fresh owner account on the same listing inherits the listing\'s strikes');
   assert.match(suppression, /INTERVAL '30 days'/);
-  assert.match(suppression, /HAVING COUNT\(\*\) >= 3/);
+  assert.ok(ownerReports.LIVE_OWNER_REPORTS_SQL.includes(`${ownerReports.strikeCountSql('r.google_place_id')} < 3`));
 });
 
 test('HELD: one account filing six reports is one reporter, so the strike floor is not row-countable', () => {

@@ -2872,16 +2872,14 @@ function oneAMinuteRefusal(waitSeconds) {
 // still RECORDED (it is an observation, and observations are the training
 // corpus) but not SERVED, and the owner is told so instead of being left to
 // wonder why users see the forecast. Strikes are counted by the read's own
-// rule (ownerReports.STRIKE_ROW_SQL, one per contradicted assertion), not by
+// count (ownerReports.strikeCountSql, one per contradicted assertion), not by
 // diverged rows, or a nudged reading would read as suppressed here while
 // users still see it.
 async function ownerBusyState(placeId) {
   const byPlace = await ownerReports.getLiveOwnerReports([placeId]);
   const live = ownerReports.liveOwnerReport(byPlace[placeId]);
   const { rows: [s] } = await pool.query(
-    `SELECT COUNT(*)::int AS strikes FROM venue_owner_reports s
-      WHERE s.google_place_id = $1 AND ${ownerReports.STRIKE_ROW_SQL}
-        AND s.created_at > NOW() - INTERVAL '${ownerReports.OWNER_STRIKE_WINDOW_DAYS} days'`,
+    `SELECT ${ownerReports.strikeCountSql('$1')} AS strikes`,
     [placeId]
   );
   const strikes = s?.strikes || 0;

@@ -137,13 +137,11 @@ async function contradicted(placeId) {
   return rows.map((r) => r.busy_percent);
 }
 
-// Strikes in the 30-day window, counted the way the owner dashboard counts
-// them (routes/venueDashboard.js ownerBusyState).
+// Strikes in the 30-day window, counted the way the owner dashboard and the
+// read count them (ownerReports.strikeCountSql).
 async function strikes(placeId) {
   const { rows: [s] } = await realQuery(
-    `SELECT COUNT(*)::int AS strikes FROM venue_owner_reports s
-      WHERE s.google_place_id = $1 AND ${ownerReports.STRIKE_ROW_SQL}
-        AND s.created_at > NOW() - INTERVAL '30 days'`,
+    `SELECT ${ownerReports.strikeCountSql('$1')} AS strikes`,
     [placeId]
   );
   return s.strikes;
@@ -257,10 +255,53 @@ test('three different claims inside the month still suppress the slider', async 
   assert.strictEqual(after.ownerReport, undefined);
 });
 
+// A reading the room contradicted on an earlier serve, written directly: the
+// read only serves the last 90 minutes, so a reading's earlier life cannot be
+// replayed through serve().
+async function struck(placeId, percent, agoMin) {
+  await realQuery(
+    `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent, created_at, diverged)
+     VALUES ($1, $2, $3, NOW() - make_interval(mins => $4), true)`,
+    [owners.get(placeId), placeId, percent, agoMin]
+  );
+}
+
+test('a number re-posted every 89 minutes against a room that keeps contradicting it keeps earning strikes, and is suppressed', async () => {
+  // Each re-post is inside one reading's life of the one before it. When every
+  // contradicted row sheltered the next, the whole chain was one strike for as
+  // long as the owner kept re-posting, and none once its first row left the
+  // month. An assertion lasts one reading's life from its first contradicted
+  // row, so 95 held up from 277 minutes ago to 10 is three of them.
+  const place = await listing();
+  for (const agoMin of [277, 188, 99]) await struck(place, 95, agoMin);
+  assert.strictEqual(await strikes(place), 2, '277 to 99 minutes ago is two readings\' lives');
+
+  await post(place, 95, 10);
+  assert.strictEqual((await serve(place, reports([81, 82, 83], 1, 5))).score, 95,
+    'the fourth re-post ships while it is judged');
+  assert.deepStrictEqual(await contradicted(place), [95, 95, 95, 95]);
+
+  const after = await serve(place, []);
+  assert.strictEqual(await strikes(place), 3);
+  assert.strictEqual(after.score, 30, 'held up through three readings\' lives, it is suppressed');
+  assert.strictEqual(after.ownerReport, undefined);
+});
+
+test('an assertion that began before the month still counts the part of it inside the month', async () => {
+  // Its first row aged out; the re-post an hour later did not.
+  const place = await listing();
+  await struck(place, 95, 30 * 24 * 60 + 30);
+  await struck(place, 95, 30 * 24 * 60 - 30);
+  assert.strictEqual(await strikes(place), 1);
+});
+
 test('the owner dashboard counts strikes by the read\'s rule, so its suppression notice cannot disagree with the card', () => {
   const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
   const state = src.slice(src.indexOf('async function ownerBusyState'), src.indexOf("router.get('/busy-now'"));
-  assert.match(state, /ownerReports\.STRIKE_ROW_SQL/);
+  assert.match(state, /ownerReports\.strikeCountSql\(/);
+  assert.ok(ownerReports.LIVE_OWNER_REPORTS_SQL.includes(
+    `${ownerReports.strikeCountSql('r.google_place_id')} < ${ownerReports.OWNER_DIVERGENCE_STRIKES}`
+  ), 'the read suppresses on the same count');
 });
 
 test('re-posting a number the room contradicted still carries the evidence forward', async () => {
