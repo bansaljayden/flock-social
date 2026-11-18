@@ -1855,8 +1855,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // ---------- external imperative API ----------
   useEffect(() => {
-    const map = mapInstanceRef.current;
-
     // The pin's coordinates go into the venue card's seed (here and for the
     // temp pin below), so its Get Directions can pin the place in Apple Maps
     // before Place Details answers, or after it fails, instead of searching.
@@ -1866,6 +1864,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     };
 
     window.__flockPanToVenue = (target) => {
+      // Read at call time, for the reason __flockGoToMyLocation below gives:
+      // on a first visit this effect runs before the map exists, and a plan
+      // chat's "show on map" then went nowhere until something re-ran it.
+      const map = mapInstanceRef.current;
       if (!map) return;
       const placeId = typeof target === 'string' ? target : target?.place_id;
       const fLat = typeof target === 'object' ? parseFloat(target?.lat) : NaN;
