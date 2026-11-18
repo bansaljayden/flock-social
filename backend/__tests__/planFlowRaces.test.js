@@ -1248,7 +1248,7 @@ test('a "Still in?" push that waited is not sent once the plan has begun, been c
   await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [lu.id, `fcm-pfr-${lu.id}-${'x'.repeat(40)}`]);
   const queue = async (flockId) => Number((await pool.query(
     `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
-     VALUES ($1, 'quiet', 'Still in?', 'Plan is in about 3 hours. Tap to say you''re still coming.', $2::jsonb,
+     VALUES ($1, 'quiet', 'Still in?', 'Plan starts at 9 PM. Tap to say you''re still coming.', $2::jsonb,
              NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
      RETURNING id`,
     [lu.id, JSON.stringify(data(flockId))]

@@ -17,8 +17,10 @@
 //
 // What is pinned:
 //   1. THE LEAD AND THE WORDS. reconfirmLeadHours is bounded and defaults;
-//      hoursOutPhrase never prints a clock time (event_time is a naive UTC
-//      wall clock, and a formatted hour is wrong in every zone but one).
+//      the push names the plan's start on the recipient's clock (the zone
+//      quiet hours read, else the venue's), and says a rounded distance only
+//      when neither zone is known, so a push held until 08:00 does not land
+//      saying "in about 3 hours" about a plan that is now one hour away.
 //   2. THE STATE. reconfirmState reads one statement for open, deadline, count
 //      and total over both rosters, answers the closed shape when there is no
 //      row, and hands back numbers.
@@ -100,6 +102,11 @@ pushMod.pushIfOffline = async (_io, userId, title, body, data) => {
 };
 pushMod.pushIfOfflineDebounced = async () => ({ skipped: true, reason: 'test' });
 pushMod.pushAlways = async () => ({ skipped: true, reason: 'test' });
+// The recipient's clock, the one quiet hours read (pushHelper.recipientZone),
+// answered from a map the test fills: no entry is a recipient whose devices
+// never named a zone.
+let deviceZones = new Map();
+pushMod.recipientZone = async (userId) => deviceZones.get(userId) || null;
 
 const authMod = require('../middleware/auth');
 const ME = { id: 1, name: 'Ava', email_verified: true, role: 'user', is_banned: false };
@@ -111,7 +118,7 @@ const {
   DEFAULT_LEAD_HOURS, MIN_LEAD_HOURS, MAX_LEAD_HOURS,
 } = require('../utils/reconfirm');
 const {
-  runReconfirmSweep, hoursOutPhrase, RECONFIRM_SWEEP_INTERVAL_MS, SETTLE_MINUTES, SWEEP_BATCH_SIZE,
+  runReconfirmSweep, hoursOutPhrase, reconfirmBody, RECONFIRM_SWEEP_INTERVAL_MS, SETTLE_MINUTES, SWEEP_BATCH_SIZE,
 } = require('../services/reconfirmSweep');
 const { guestEntryId } = require('../utils/guestRsvp');
 const flocksRouter = require('../routes/flocks');
@@ -145,6 +152,7 @@ test.beforeEach(() => {
   emits = [];
   pushes = [];
   pushFailFor = null;
+  deviceZones = new Map();
   delete process.env.FLOCK_RECONFIRM_LEAD_HOURS;
   delete process.env.FLOCK_SWEEP_ENABLED;
   guest.guestActionLog.clear();
@@ -264,7 +272,40 @@ test('hoursOutPhrase rounds to whole hours and never prints a clock time', () =>
     assert.strictEqual(hoursOutPhrase(hours), want, `hoursOutPhrase(${hours})`);
   }
   for (const h of [0, 0.9, 1, 2.5, 3, 12]) {
-    assert.ok(!/\d{1,2}:\d{2}/.test(hoursOutPhrase(h)), 'a naive UTC wall clock is wrong in every zone but one');
+    assert.ok(!/\d{1,2}:\d{2}/.test(hoursOutPhrase(h)), 'the distance is the fallback with no zone, so it never names a clock');
+  }
+});
+
+// The start, said the way the app's other clock words say an hour
+// (services/clockWords.js): "8:30 PM", "9 PM", "midnight", "noon".
+const at = (iso) => `${Date.parse(iso)}.000000`;   // EXTRACT(EPOCH ...) * 1000 arrives as a numeric string
+test('reconfirmBody names the start on the zone it is given, and says a distance only without one', () => {
+  const tail = " Tap to say you're still coming.";
+  const cases = [
+    // 00:30 UTC on the 17th is 8:30 PM on the 16th in New York (EDT).
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), zone: 'America/New_York', hoursOut: 2.9 },
+      'Dinner at The Bar starts at 8:30 PM.'],
+    // The same instant on the venue's clock in Chicago.
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), zone: 'America/Chicago', hoursOut: 2.9 },
+      'Dinner at The Bar starts at 7:30 PM.'],
+    // On the hour, no minutes; midnight and noon as words.
+    [{ where: 'Drinks', eventMs: at('2026-09-17T01:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Drinks starts at 9 PM.'],
+    [{ where: 'Late one', eventMs: at('2026-09-17T04:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Late one starts at midnight.'],
+    [{ where: 'Brunch', eventMs: at('2026-09-17T16:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Brunch starts at noon.'],
+    // The morning the decision named: an early plan whose push waited for 08:00.
+    [{ where: 'Run club', eventMs: at('2026-09-17T12:30:00Z'), zone: 'America/New_York', hoursOut: 2.5 }, 'Run club starts at 8:30 AM.'],
+    // A half-hour zone keeps its own minutes.
+    [{ where: 'Dinner', eventMs: at('2026-09-16T15:00:00Z'), zone: 'Asia/Kolkata', hoursOut: 3 }, 'Dinner starts at 8:30 PM.'],
+    // No name and no venue: the plan is still the subject.
+    [{ where: '', eventMs: at('2026-09-17T01:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Your plan starts at 9 PM.'],
+    // No usable zone: the distance, which is only ever sent undelayed (quiet
+    // hours hold nothing for a recipient with no zone).
+    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), zone: null, hoursOut: 2.9 }, 'Dinner is in about 3 hours.'],
+    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), zone: 'Mars/Olympus_Mons', hoursOut: 2.9 }, 'Dinner is in about 3 hours.'],
+    [{ where: 'Dinner', eventMs: null, zone: 'America/New_York', hoursOut: 0.4 }, 'Dinner is soon.'],
+  ];
+  for (const [input, want] of cases) {
+    assert.strictEqual(reconfirmBody(input), want + tail, JSON.stringify(input));
   }
 });
 
@@ -338,8 +379,10 @@ test('the sweep claims confirmed plans inside the lead that nobody has touched l
     'not on the heels of "It\'s happening!"');
   assert.match(sql, /ORDER BY event_time LIMIT \$3::int FOR UPDATE SKIP LOCKED \)/,
     'soonest first, never more than a batch, and the rows are taken, so a second sweep skips them rather than opening them twice');
-  assert.match(sql, /\) AND status = 'confirmed' AND reconfirm_opened_at IS NULL RETURNING id, name, venue_name, event_time, EXTRACT\(EPOCH FROM \(event_time - \(NOW\(\) AT TIME ZONE 'UTC'\)\)\) \/ 3600 AS hours_out$/,
+  assert.match(sql, /\) AND status = 'confirmed' AND reconfirm_opened_at IS NULL RETURNING id, name, venue_name, event_time, /,
     'the outer update re-checks what another writer could have changed since the select');
+  assert.match(sql, / RETURNING id, name, venue_name, event_time, EXTRACT\(EPOCH FROM \(event_time - \(NOW\(\) AT TIME ZONE 'UTC'\)\)\) \/ 3600 AS hours_out, EXTRACT\(EPOCH FROM \(event_time AT TIME ZONE 'UTC'\)\) \* 1000 AS event_ms, \(SELECT v\.timezone FROM ml_venues v WHERE v\.google_place_id = flocks\.venue_id LIMIT 1\) AS venue_zone$/,
+    'the start as an instant (event_time is naive UTC), and the venue\'s zone for a recipient with none, in the same round trip');
   assert.deepStrictEqual(params, [DEFAULT_LEAD_HOURS, SETTLE_MINUTES, SWEEP_BATCH_SIZE]);
   assert.strictEqual(SETTLE_MINUTES, 15);
   assert.strictEqual(SWEEP_BATCH_SIZE, 200);
@@ -356,11 +399,16 @@ test('FLOCK_RECONFIRM_LEAD_HOURS moves the lead without a deploy', async () => {
   assert.deepStrictEqual(log[0].params, [6, SETTLE_MINUTES, SWEEP_BATCH_SIZE]);
 });
 
+// Plan 7 is at 8:30 PM in New York, 7:30 PM in Chicago, where its venue is.
+// Plan 9's venue is outside the corpus, so it has no zone of its own.
+const DINNER_AT = '2026-09-17T00:30:00.000Z';
 function scriptOpened() {
   on(/^UPDATE flocks SET reconfirm_opened_at = NOW\(\)/, () => ({
     rows: [
-      { id: 7, name: 'Dinner', venue_name: 'The Bar', event_time: DEADLINE, hours_out: 2.9 },
-      { id: 9, name: 'Late one', venue_name: null, event_time: '2026-09-17T01:00:00.000Z', hours_out: 0.4 },
+      { id: 7, name: 'Dinner', venue_name: 'The Bar', event_time: DINNER_AT, hours_out: 2.9,
+        event_ms: at(DINNER_AT), venue_zone: 'America/Chicago' },
+      { id: 9, name: 'Late one', venue_name: null, event_time: '2026-09-17T01:00:00.000Z', hours_out: 0.4,
+        event_ms: at('2026-09-17T01:00:00.000Z'), venue_zone: null },
     ],
     rowCount: 2,
   }));
@@ -372,24 +420,34 @@ function scriptOpened() {
 
 test('an opened window is announced to each accepted member\'s room and pushed to each', async () => {
   scriptOpened();
+  // Member 2's phone named New York; member 1's never named a zone.
+  deviceZones.set(2, 'America/New_York');
   const n = await runReconfirmSweep(io);
   assert.strictEqual(n, 2);
   const members = ran(/FROM flock_members/)[0];
   assert.deepStrictEqual(members.params, [[7, 9]], 'the rosters of exactly the plans that opened');
   assert.deepStrictEqual(emits, [
-    { room: 'user:1', event: 'flock_reconfirm_opened', payload: { flockId: 7, deadline: DEADLINE } },
-    { room: 'user:2', event: 'flock_reconfirm_opened', payload: { flockId: 7, deadline: DEADLINE } },
+    { room: 'user:1', event: 'flock_reconfirm_opened', payload: { flockId: 7, deadline: DINNER_AT } },
+    { room: 'user:2', event: 'flock_reconfirm_opened', payload: { flockId: 7, deadline: DINNER_AT } },
     { room: 'user:1', event: 'flock_reconfirm_opened', payload: { flockId: 9, deadline: '2026-09-17T01:00:00.000Z' } },
   ]);
-  // Same voice as "It's happening!": the plan and the place, a rounded
-  // distance, no clock time.
+  // The plan and the place, and the start on the recipient's own clock: the
+  // phone's zone first (the one quiet hours read, so a push held until 08:00
+  // still says the right thing when it lands), the venue's when the phone
+  // never named one, and the rounded distance only with neither.
   assert.deepStrictEqual(pushes, [
-    { userId: 1, title: 'Still in?', body: "Dinner at The Bar is in about 3 hours. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
-    { userId: 2, title: 'Still in?', body: "Dinner at The Bar is in about 3 hours. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
+    { userId: 1, title: 'Still in?', body: "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
+    { userId: 2, title: 'Still in?', body: "Dinner at The Bar starts at 8:30 PM. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
     { userId: 1, title: 'Still in?', body: "Late one is soon. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '9' } },
   ]);
-  for (const p of pushes) assert.ok(!/\d{1,2}:\d{2}/.test(p.body), 'never a clock time');
   assert.deepStrictEqual(unknownSql, []);
+});
+
+test('a phone zone ICU will not take is no zone: the venue\'s clock is used instead', async () => {
+  scriptOpened();
+  deviceZones.set(1, 'Not/A_Zone');
+  await runReconfirmSweep(io);
+  assert.strictEqual(pushes[0].body, "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming.");
 });
 
 test('with no socket server the pushes still go out', async () => {
