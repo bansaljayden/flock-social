@@ -147,6 +147,7 @@ const PAGE_BLOCKS = {
     ["h1", "Nurturing friendship, one flock at a time."],
     ["p", "Flock is an app that helps a group of friends finalize plans by integrating artificial intelligence & industry-leading features while providing venues with insights into consumer demand."],
     ["p", "Now on the App Store. Released November 4, 2026"],
+    ["p", "Want to know the code?"],
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search any place below. Flock starts from how busy it usually gets at this hour and adjusts with live readings when it has them. Packed? It suggests a quieter spot nearby."],
     ["p", "Three reports from people at a venue move its score for that night and hour."],

@@ -487,6 +487,22 @@ describe('structural fingerprint', () => {
     expect(price).toMatch(/font-family: var\(--font-display\)/);
   });
 
+  test('the hero has one button beside the App Store badge, and the code is a link', () => {
+    // Two equal buttons side by side is the stock hero, and the GitHub one
+    // was louder on a phone than Apple's badge, the real download, under it
+    // (2026-11-06). One row now: "Start a plan" and the badge; the code is a
+    // plain link under the row, in its own words.
+    const hero = visible.slice(visible.indexOf('<section className="lp-hero'), visible.indexOf('<HeroReel'));
+    expect(hero.length).toBeGreaterThan(200);
+    expect((hero.match(/className="lp-btn\b/g) || []).length).toBe(1);
+    expect(hero).not.toMatch(/lp-btn-ghost|lp-hero-cta/);
+    const row = hero.slice(hero.indexOf('className="lp-hero-actions"'), hero.indexOf('className="lp-hero-code"'));
+    expect(row).toMatch(/href="\/signup">Start a plan</);
+    expect(row).toMatch(/<AppStoreBadge className="lp-appstore" \/>/);
+    expect(hero).toMatch(/<p className="lp-hero-code">\s*<a href=\{GITHUB_URL\} target="_blank" rel="noopener noreferrer">Want to know the code\?<\/a>/);
+    expect(CSS).not.toMatch(/\.lp-hero-cta\b/);
+  });
+
   test('no eyebrows', () => {
     // An eyebrow is an ordinal device. This page had four, then two, over
     // headings that already stated the subject. When every section is

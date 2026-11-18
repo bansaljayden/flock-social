@@ -44,7 +44,7 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-// Flock's code is public; the hero's second button opens it.
+// Flock's code is public; the hero's code link opens it.
 const GITHUB_URL = 'https://github.com/bansaljayden/flock-social';
 
 
@@ -399,10 +399,10 @@ export default function LandingPage() {
       <main id="lp-main" tabIndex={-1} {...pageInert}>
 
       {/* ---------------- hero ----------------
-          The tagline, then what Flock is for in plain words, and two actions:
-          start a plan, or read the code on GitHub (a new tab, so the page
-          stays open). Under them, since 2026-11-04, Apple's badge and the day
-          Flock went on the App Store. The old status line there (browser
+          The tagline, then what Flock is for in plain words, and one row of
+          actions: start a plan, or Apple's badge with the day Flock went on
+          the App Store (2026-11-04). The code on GitHub is a plain link under
+          the row (2026-11-06), so the two real ways in lead. The old status line there (browser
           today, iPhone app in review, the DECA award) came out on 2026-10-21,
           and the award is on /about. Flat navy: the soft glow at the top of a
           dark hero is the stock generated-site hero, and nothing in a printed
@@ -432,35 +432,34 @@ export default function LandingPage() {
               integrating artificial intelligence &amp; industry-leading features
               while providing venues with insights into consumer demand.
             </p>
-            <div className="lp-hero-cta">
-              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
-              <a
-                className="lp-btn lp-btn-ghost lp-btn-lg"
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Want to know the code?
-              </a>
-            </div>
           </div>
 
-          {/* Flock on the App Store, and the day it happened. A sibling of
-              .lp-hero-copy, not a child, on purpose: everything in there
-              rises on arrival, and Apple's badge never moves. The period is
-              for a screen reader and the crawler copy; on screen the line
-              break does its job. Now on the App Store is a blush pill, the
-              second accent, under navy words. */}
-          <div className="lp-hero-store">
-            <AppStoreBadge className="lp-appstore" />
-            <p className="lp-hero-store-note">
-              <strong>Now on the App Store</strong>
-              <span className="lp-sr">. </span>
-              <span className="lp-hero-store-date">
-                Released <time dateTime={APP_STORE_RELEASED}>November 4, 2026</time>
-              </span>
-            </p>
+          {/* One row of actions: start a plan on the web, or get the iPhone
+              app (Apple's badge, and the day Flock went on the App Store).
+              A sibling of .lp-hero-copy, not a child, on purpose: everything
+              in there rises on arrival, and Apple's badge never moves, so
+              this row stays still too. The period is for a screen reader and
+              the crawler copy; on screen the line break does its job. Now on
+              the App Store is a blush pill, the second accent, under navy
+              words. */}
+          <div className="lp-hero-actions">
+            <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
+            <div className="lp-hero-store">
+              <AppStoreBadge className="lp-appstore" />
+              <p className="lp-hero-store-note">
+                <strong>Now on the App Store</strong>
+                <span className="lp-sr">. </span>
+                <span className="lp-hero-store-date">
+                  Released <time dateTime={APP_STORE_RELEASED}>November 4, 2026</time>
+                </span>
+              </p>
+            </div>
           </div>
+          {/* The code, on GitHub in a new tab so the page stays open: a plain
+              link under the row, quieter than the two ways in above it. */}
+          <p className="lp-hero-code">
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">Want to know the code?</a>
+          </p>
         </div>
         {/* The screens, full width under the words (his ask, 2026-10-21):
             a strip that drifts, stops under the pointer and lifts the screen

@@ -940,22 +940,28 @@ html:has(.lp) body { overflow-x: clip; }
    tell (DESIGN-STANDARD.md A4). .lp-hero-note, the status and DECA line under
    the button, went too (2026-10-21, his ask); the award is on /about. */
 
-.lp-hero .lp-lead { margin-bottom: 30px; max-width: 44ch; }
-.lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
-/* On a phone the two buttons stack; full width keeps them one size. */
-@media (max-width: 480px) { .lp-hero-cta .lp-btn { flex: 1 1 100%; } }
-
-/* Under the buttons since 2026-11-04: Apple's badge, then the day Flock went
-   on the App Store. It is outside .lp-hero-copy, so the arrival below never
-   reaches it. The badge is 48px, so Apple's clear space is 12px: the 16px gap
-   keeps the words out of it, and 28px above stays clear of it even while the
-   buttons are still 14px low in their arrival. */
+.lp-hero .lp-lead { margin-bottom: 26px; max-width: 44ch; }
+/* One row since 2026-11-06: "Start a plan", then Apple's badge with the day
+   Flock went on the App Store. Two equal buttons side by side was the stock
+   hero, and the GitHub one outshouted the badge, the real download, on a
+   phone. The row sits outside .lp-hero-copy, so the arrival below never
+   reaches the badge. The badge is 48px, so Apple's clear space is 12px: the
+   14px and 24px gaps and the 16px inside .lp-hero-store keep everything out
+   of it. */
+.lp-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 24px;
+}
+/* On a phone the button takes the full width and the badge sits under it. */
+@media (max-width: 480px) { .lp-hero-actions > .lp-btn { flex: 1 1 100%; } }
 .lp-hero-store {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 14px 16px;
-  margin-top: 28px;
+  margin-top: 0;
 }
 /* Now on the App Store wears Flock's second accent (src/index.css,
    2026-11-07): a blush pill under the navy that goes on it, 9.63:1, as the
@@ -975,6 +981,19 @@ html:has(.lp) body { overflow-x: clip; }
   font-weight: 600;
 }
 .lp-hero-store-date { display: block; margin-top: 5px; font-size: 14px; color: var(--cream-2); }
+/* The code on GitHub: a link, underlined, in the lead's own --cream-2. The
+   10px of padding makes a 44px-tall target without making it look like a
+   button. */
+.lp-hero-code { margin-top: 18px; }
+.lp-hero-code a {
+  display: inline-block;
+  padding: 10px 0;
+  font-size: 15px;
+  color: var(--cream-2);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.lp-hero-code a:hover { color: var(--cream); }
 
 /* ---- The reel (HeroReel.js; 2026-10-21, his ask) ----
    One strip drawn twice and moved left by exactly one strip, so the loop has
