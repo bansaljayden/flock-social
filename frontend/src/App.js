@@ -19165,6 +19165,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // linked or unverified listing. Free at every tier, so it loads outside the
   // analytics capability gate.
   const [venueBusyNow, setVenueBusyNow] = useState(null);
+  // WHICH busy-now answer is newest. Every read takes a number when it starts
+  // and every write that lands takes one too; a read's answer is kept only if
+  // nothing has taken a number since. The reads are not awaited by anything
+  // (the expiry timer, a return to the app, a tab change), so a number set
+  // while one was out landed and was then replaced by the older answer, live
+  // reading and expiry timer with it.
+  const busyNowSeqRef = useRef(0);
   // Slider position while the owner is choosing; null = untouched, so the Set
   // button stays disabled until they actually move it.
   const [venueBusyDraft, setVenueBusyDraft] = useState(null);
@@ -19238,7 +19245,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     let cancelled = false;
     // The live number is free at every tier and the Map tab's slider needs
     // it too; forecasts, the strip and this-week stay Analytics-only reads.
-    getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
+    const seq = ++busyNowSeqRef.current;
+    const current = () => !cancelled && busyNowSeqRef.current === seq;
+    getVenueBusyNow().then((d) => { if (current()) setVenueBusyNow(d); }).catch(() => { if (current()) setVenueBusyNow({ available: false }); });
     if (venueTab === 'analytics') {
     getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch((e) => { if (!cancelled) setVenueIntel(intelFailure(e)); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
@@ -19259,7 +19268,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // users see it after it had expired. At expiresAt the reading is dropped
   // and busy-now read again, which also brings in a number set since from
   // another device. One already past its time on this clock is dropped with
-  // no read, so a clock that disagrees with the server's cannot loop.
+  // no read, so a clock that disagrees with the server's cannot loop. The read
+  // answers only if it is still the newest (busyNowSeqRef): a number set
+  // while it was out is not replaced by what the server held before it.
   const busyNowExpiresAt = venueBusyNow?.live?.expiresAt;
   useEffect(() => {
     const at = Date.parse(busyNowExpiresAt);
@@ -19268,18 +19279,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (at <= Date.now()) { drop(); return undefined; }
     const t = setTimeout(() => {
       drop();
-      getVenueBusyNow().then((d) => setVenueBusyNow(d)).catch(() => {});
+      const seq = ++busyNowSeqRef.current;
+      getVenueBusyNow().then((d) => { if (busyNowSeqRef.current === seq) setVenueBusyNow(d); }).catch(() => {});
     }, at - Date.now());
     return () => clearTimeout(t);
   }, [busyNowExpiresAt]);
   // And on a return to the app with the card on screen: a dashboard left in
-  // a pocket comes back to what the server holds now.
+  // a pocket comes back to what the server holds now. Same newest-only rule.
   const busyNowSeenVisibleRef = useRef(docVisible);
   useEffect(() => {
     const back = docVisible && !busyNowSeenVisibleRef.current;
     busyNowSeenVisibleRef.current = docVisible;
     if (!back || currentScreen !== 'venueDashboard' || (venueTab !== 'analytics' && venueTab !== 'map') || !venueProfile) return;
-    getVenueBusyNow().then((d) => setVenueBusyNow(d)).catch(() => {});
+    const seq = ++busyNowSeqRef.current;
+    getVenueBusyNow().then((d) => { if (busyNowSeqRef.current === seq) setVenueBusyNow(d); }).catch(() => {});
   }, [docVisible, currentScreen, venueTab, venueProfile]);
 
   // The Try again behind the forecast failure card. Clearing the state first
@@ -19360,6 +19373,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVenueBusySaving(true);
     try {
       const d = await updateVenueBusyNow(Math.round(shown));
+      // Newer than any read still out (busyNowSeqRef).
+      busyNowSeqRef.current += 1;
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
       refreshOwnerPublishedScore();
@@ -19375,8 +19390,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVenueBusySaving(true);
     try {
       await clearVenueBusyNow();
+      // A read started now is newer than any still out from before the clear.
+      const seq = ++busyNowSeqRef.current;
       const d = await getVenueBusyNow().catch(() => ({ ...venueBusyNow, live: null }));
-      setVenueBusyNow(d);
+      if (busyNowSeqRef.current === seq) setVenueBusyNow(d);
       setVenueBusyDraft(null);
       refreshOwnerPublishedScore();
       showToast('Cleared. Users see the forecast again.');
