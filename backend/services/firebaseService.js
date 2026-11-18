@@ -583,17 +583,25 @@ function normalizeTitle(title) {
 //                  second on the lock screen. One slot per table: a newer
 //                  alert about the same table replaces the older one, which is
 //                  out of date by then.
+//   ops_alert      names no plan and no person either, so every alert an admin
+//                  was sent shared one slot. Two alerts in one quiet-hours
+//                  night were merged into one held row and only the second
+//                  reached the morning, while services/opsAlert.js counted the
+//                  first as delivered. One slot per alert key: the same alert
+//                  raised again replaces itself.
 // ---------------------------------------------------------------------------
 const ONE_SLOT_PER_PAYER = new Set(['bill_settled']);
 const SAFETY_SLOT = new Set(['safety_alert', 'safety_alert_cancelled']);
 const ONE_SLOT_PER_TABLE = new Set(['table_alert']);
-const SCOPE_PREFIX = { flockId: 'f', senderId: 'u', fromUserId: 'u', table: 't' };
+const ONE_SLOT_PER_ALERT = new Set(['ops_alert']);
+const SCOPE_PREFIX = { flockId: 'f', senderId: 'u', fromUserId: 'u', table: 't', alert: 'a' };
 
 // The payload keys, in order, whose values name the conversation.
 function scopeKeys(data = {}) {
   const type = data.type ? String(data.type) : '';
   if (SAFETY_SLOT.has(type)) return data.fromUserId != null ? ['fromUserId'] : [];
   if (ONE_SLOT_PER_TABLE.has(type)) return data.table != null ? ['table'] : [];
+  if (ONE_SLOT_PER_ALERT.has(type)) return data.alert != null ? ['alert'] : [];
   if (data.flockId != null) {
     return ONE_SLOT_PER_PAYER.has(type) && data.fromUserId != null ? ['flockId', 'fromUserId'] : ['flockId'];
   }

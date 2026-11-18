@@ -352,6 +352,55 @@ test('an overnight hold merges on the same conversation the lock screen collapse
   }
 });
 
+// An ops alert names no plan and no person, so it had ONE slot for every
+// alert there is. services/serverFaultAlert.js can raise two in one run, and
+// at 03:00 the second was merged over the first: the admin heard about the
+// stalled job at 08:00 and never about the errors, while services/opsAlert.js
+// counted both as delivered and held the day's claim for each. One slot per
+// alert key; the same alert raised again still replaces itself.
+test('two different ops alerts held overnight are two notifications, and one alert raised twice is one', async () => {
+  const { collapseId } = firebaseService;
+  const errors = { type: 'ops_alert', alert: 'server_errors' };
+  const stalled = { type: 'ops_alert', alert: 'job_stalled' };
+  assert.notStrictEqual(collapseId(errors), collapseId(stalled), 'the second alert replaced the first on the lock screen');
+  assert.strictEqual(collapseId(errors), collapseId({ ...errors }));
+
+  const { localHourIn } = pushHelper;
+  const utcHour = new Date().getUTCHours();
+  let offset = (((3 - utcHour) % 24) + 24) % 24;
+  if (offset > 12) offset -= 24;
+  const zone = offset === 0 ? 'Etc/GMT' : (offset > 0 ? `Etc/GMT-${offset}` : `Etc/GMT+${-offset}`);
+  if (localHourIn(zone) === null) return;
+  reset();
+  deliverable();
+  handlers = handlers.filter(([re]) => !/SELECT timezone|INSERT INTO push_outbox/.test(re.source));
+  on(/SELECT timezone FROM device_tokens/i, () => ({ rows: [{ timezone: zone }] }));
+  // push_outbox, with the merge's WHERE clause applied term for term.
+  const outbox = [];
+  on(/^UPDATE push_outbox SET title/i, (p) => {
+    const [userId, type, title, body, json, , k1, v1, k2, v2] = p;
+    const hit = outbox.filter((r) => r.userId === userId && (r.data.type || '') === type
+      && (k1 == null || String(r.data[k1]) === v1) && (k2 == null || String(r.data[k2]) === v2));
+    for (const r of hit) Object.assign(r, { title, body, data: JSON.parse(json) });
+    return { rows: hit.map((r) => ({ id: r.id })), rowCount: hit.length };
+  });
+  on(/^INSERT INTO push_outbox/i, (p) => {
+    outbox.push({ id: outbox.length + 1, userId: p[0], title: p[2], body: p[3], data: JSON.parse(p[4]) });
+    return { rowCount: 1 };
+  });
+  firebaseService.isEnabled = () => true;
+  firebaseService.sendPushToUser = async () => { throw new Error('nothing may be sent at 3am'); };
+
+  const a = await pushHelper.pushAlways(1, 'Flock is answering errors', '40 failed requests in 15 minutes.', errors);
+  const b = await pushHelper.pushAlways(1, 'A background job has stopped', 'crowdAlerts has not succeeded.', stalled);
+  const c = await pushHelper.pushAlways(1, 'Flock is answering errors', '60 failed requests in 15 minutes.', errors);
+  for (const res of [a, b, c]) assert.strictEqual(res.reason, 'quiet-held');
+  assert.deepStrictEqual(outbox.map((r) => [r.data.alert, r.body]), [
+    ['server_errors', '60 failed requests in 15 minutes.'],
+    ['job_stalled', 'crowdAlerts has not succeeded.'],
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // 5. An alarm is not lost to a database blip
 // ---------------------------------------------------------------------------
