@@ -1312,12 +1312,18 @@ export default function LiveDemo() {
                     // the twelfth bar.
                     const isNow = i === 0;
                     const isBest = selected.best_index === i;
+                    // The best hour's label is always shown, so on an
+                    // every-other column it sat between two shown neighbours
+                    // and the three ran together ("10PM11PM12AM" at 390). Its
+                    // neighbours go quiet instead; Now never does.
+                    const besideBest = !isNow && Number.isInteger(selected.best_index)
+                      && Math.abs(selected.best_index - i) === 1;
                     // An hour the doors are shut has no crowd to draw. A stub
                     // in slate says "closed" instead of implying a quiet room.
                     const closed = h.open === false;
                     const hs = pct(h.score);
                     return (
-                      <div className="lpd-bar-col" key={`${i}-${h.hour}`}>
+                      <div className={besideBest ? 'lpd-bar-col is-quiet' : 'lpd-bar-col'} key={`${i}-${h.hour}`}>
                         <div
                           className="lpd-bar"
                           style={{

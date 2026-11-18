@@ -1845,9 +1845,26 @@ html:has(.lp) body { overflow-x: clip; }
    sets to about 16px at this size. */
 .lpd-bar-hour { font-size: 10px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lpd-bar-col:nth-child(even) .lpd-bar-hour { visibility: hidden; }
+/* The two columns beside the best hour (LiveDemo.js), whose labels would
+   otherwise touch the best hour's own. */
+.lpd-bar-col.is-quiet .lpd-bar-hour { visibility: hidden; }
 
 .lpd-note { margin: 14px 0 0; font-size: 12.5px; color: var(--ink-3); }
-.lpd-cta { margin-top: 14px; align-self: flex-start; }
+/* The card's own button, the longest label on the page. .lp-btn is nowrap and
+   46px tall, so from 320 to about 365px it ran out of the card and was cut at
+   "forecast in F". Here it may wrap to two lines, keeps its 46px floor, and on
+   a phone fills the card's width like the card's other blocks. */
+.lpd-cta {
+  margin-top: 14px;
+  align-self: flex-start;
+  white-space: normal;
+  height: auto;
+  min-height: 46px;
+  padding-block: 11px;
+  text-align: center;
+  max-width: 100%;
+}
+@media (max-width: 480px) { .lpd-cta { align-self: stretch; } }
 
 .lpd-empty { flex: 1; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--ink-3); font-size: 14px; padding: 20px; }
 
