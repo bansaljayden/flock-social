@@ -55,12 +55,13 @@ const OWNER_REPORT_TTL_MS = OWNER_REPORT_TTL_MINUTES * 60 * 1000;
 // disagreement about the same crowd.
 const OWNER_DIVERGENCE_POINTS = 25;
 
-// Strikes: this many diverged rows inside the window and the venue's override
-// is suppressed entirely — users see the prediction again until strikes age
-// out. Repeated divergence from the people actually in the room has to cost
-// the venue the thing it was gaming. Three matches every other floor in this
-// product (calibration reporters, budget ceiling): one diverged reading is a
-// misjudged glance at the room, three inside a month is a pattern.
+// Strikes: this many inside the window (STRIKE_ROW_SQL, one per contradicted
+// assertion) and the venue's override is suppressed entirely — users see the
+// prediction again until strikes age out. Repeated divergence from the people
+// actually in the room has to cost the venue the thing it was gaming. Three
+// matches every other floor in this product (calibration reporters, budget
+// ceiling): one contradicted claim is a misjudged glance at the room, three
+// inside a month is a pattern.
 const OWNER_DIVERGENCE_STRIKES = 3;
 const OWNER_STRIKE_WINDOW_DAYS = 30;
 
@@ -70,9 +71,37 @@ const OWNER_STRIKE_WINDOW_DAYS = 30;
 // one of exactly five sources.
 const OWNER_BASIS = 'owner_report';
 
+// WHICH DIVERGED ROWS ARE STRIKES, over the alias `s`.
+//
+// `diverged` is a fact about one reading: the people in the room contradicted
+// it, and the training export skips it (scripts/ml/train/ownerLabelExport.js).
+// So every contradicted reading is stamped, a re-post of one already stamped
+// included: the re-posted 95 is as false as the first, and left unstamped it
+// was a training label.
+//
+// A strike is a fact about a claim. One contested 80 nudged to 84 and 78 is
+// one claim and one disagreement, and counting its rows made it three strikes,
+// the whole suppression, from one misjudged reading. So a diverged row is a
+// strike only when no earlier diverged row of the place inside one reading's
+// life before it says materially the same thing: the assertion walk's own rule
+// (assertion_since below), applied to the stamped rows.
+//
+// Shared with the owner dashboard's suppression notice (routes/
+// venueDashboard.js ownerBusyState), so the two cannot disagree about whether
+// a venue is suppressed. Served by 043's partial index on diverged rows.
+const STRIKE_ROW_SQL = `s.diverged = true
+              AND NOT EXISTS (
+                    SELECT 1 FROM venue_owner_reports e
+                     WHERE e.google_place_id = s.google_place_id
+                       AND e.diverged = true
+                       AND (e.created_at, e.id) < (s.created_at, s.id)
+                       AND e.created_at > s.created_at - INTERVAL '${OWNER_REPORT_TTL_MINUTES} minutes'
+                       AND ABS(e.busy_percent - s.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
+                  )`;
+
 // Newest live reading per place id, strike-suppressed venues excluded IN THE
 // READ so no caller can forget the rule. The NOT EXISTS aggregates the
-// venue's diverged rows inside the strike window; HAVING without GROUP BY is
+// venue's strikes inside the strike window; HAVING without GROUP BY is
 // one row when the count clears the bar, zero rows otherwise.
 //
 // VERIFICATION IS RE-CHECKED HERE, AT SERVE TIME (the JOIN to
@@ -179,20 +208,7 @@ const LIVE_OWNER_REPORTS_SQL = `
             WHERE p.google_place_id = r.google_place_id
               AND p.created_at <= r.created_at
               AND p.created_at > r.created_at - INTERVAL '90 minutes'
-         ), '[]'::json) AS recent_readings,
-         -- WHETHER THIS ASSERTION HAS ALREADY COST A STRIKE, over the same rows
-         -- the walk above calls one assertion. One contested 80 nudged to 84
-         -- and 78 is one claim and one disagreement, and was three strikes:
-         -- the whole suppression, from one misjudged reading.
-         EXISTS (
-           SELECT 1
-             FROM venue_owner_reports p
-            WHERE p.google_place_id = r.google_place_id
-              AND p.created_at <= r.created_at
-              AND p.created_at > r.created_at - INTERVAL '90 minutes'
-              AND ABS(p.busy_percent - r.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
-              AND p.diverged = true
-         ) AS assertion_struck
+         ), '[]'::json) AS recent_readings
     FROM venue_owner_reports r
     JOIN venue_profiles vp
       ON vp.user_id = r.venue_user_id
@@ -208,7 +224,7 @@ const LIVE_OWNER_REPORTS_SQL = `
      AND NOT EXISTS (
            SELECT 1 FROM venue_owner_reports s
             WHERE s.google_place_id = r.google_place_id
-              AND s.diverged = true
+              AND ${STRIKE_ROW_SQL}
               AND s.created_at > NOW() - INTERVAL '30 days'
            HAVING COUNT(*) >= ${OWNER_DIVERGENCE_STRIKES}
          )
@@ -466,7 +482,8 @@ function strikeableDivergence(feedbackRows, ownerRow, percent, nowMs) {
   return Math.abs(gap) > OWNER_DIVERGENCE_POINTS;
 }
 
-// Stamp a strike. Fire-and-forget from the serve path — a divergence is
+// Stamp a contradicted reading (whether it is a new strike is counted in the
+// read, STRIKE_ROW_SQL). Fire-and-forget from the serve path — a divergence is
 // bookkeeping about the OWNER, and the user's response must not wait on it or
 // fail with it.
 function markDiverged(reportId) {
@@ -571,12 +588,13 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   // the correction was. Correct it to another number the room does not
   // recognise and it is still a false reading.
   //
-  // One strike per assertion (assertion_struck, from the read): re-posting a
-  // contested number inside 25 points is the same claim, already charged, and
-  // three strikes are meant to be three claims, not one claim nudged twice.
+  // Every contradicted reading is stamped, a re-post of one already struck
+  // included, because the stamp is also what keeps it out of the training
+  // export. Charging the claim once is the read's job: STRIKE_ROW_SQL counts
+  // one strike per assertion, so three strikes are three claims, not one
+  // claim nudged twice.
   if (ownerRow.id != null
       && ownerRow.diverged !== true
-      && ownerRow.assertion_struck !== true
       && strikeableDivergence(options.feedbackRows, ownerRow, live.percent, options.now)) {
     markDiverged(ownerRow.id);
   }
@@ -651,4 +669,5 @@ module.exports = {
   OWNER_STRIKE_WINDOW_DAYS,
   OWNER_BASIS,
   LIVE_OWNER_REPORTS_SQL,
+  STRIKE_ROW_SQL,
 };

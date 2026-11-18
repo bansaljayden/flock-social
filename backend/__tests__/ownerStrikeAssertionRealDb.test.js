@@ -8,7 +8,7 @@
 // the readings are posted into a migrated schema and the serve path reads them
 // back the way routes/crowd.js does.
 //
-// Two shapes used to cost an honest venue its slider for a month:
+// Three shapes used to cost an honest venue its slider for a month:
 //
 //   * THE RAMP. 40 while the room is quiet (three people in it say quiet,
 //     which agrees with 40), then 55, 60, 65 as it fills. Each new number is
@@ -24,8 +24,10 @@
 //     half alone. No carried report is dropped.
 //
 //   * THE NUDGE. One contested 80 (the room says 50), then 84 and 78. One
-//     disagreement about one claim was stamped three times, once per re-post.
-//     An assertion is struck once.
+//     disagreement about one claim counted three times, once per re-post.
+//     Every contradicted reading is still marked diverged, which is what keeps
+//     it out of the training export, but an assertion is one strike toward the
+//     suppression, however many of its readings were contradicted.
 const test = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
@@ -125,12 +127,26 @@ async function serve(placeId, feedbackRows) {
   return out;
 }
 
-async function struck(placeId) {
+// The readings marked diverged: the room contradicted them, and the training
+// export skips them. Strikes are counted from these, one per assertion.
+async function contradicted(placeId) {
   const { rows } = await realQuery(
     'SELECT busy_percent FROM venue_owner_reports WHERE google_place_id = $1 AND diverged = true ORDER BY created_at',
     [placeId]
   );
   return rows.map((r) => r.busy_percent);
+}
+
+// Strikes in the 30-day window, counted the way the owner dashboard counts
+// them (routes/venueDashboard.js ownerBusyState).
+async function strikes(placeId) {
+  const { rows: [s] } = await realQuery(
+    `SELECT COUNT(*)::int AS strikes FROM venue_owner_reports s
+      WHERE s.google_place_id = $1 AND ${ownerReports.STRIKE_ROW_SQL}
+        AND s.created_at > NOW() - INTERVAL '30 days'`,
+    [placeId]
+  );
+  return s.strikes;
 }
 
 test('an owner raising the number as the room fills is not struck by reports that agreed with the earlier number', async () => {
@@ -146,7 +162,7 @@ test('an owner raising the number as the room fills is not struck by reports tha
   await post(place, 65, 1);
   const last = await serve(place, room);
 
-  assert.deepStrictEqual(await struck(place), [],
+  assert.deepStrictEqual(await contradicted(place), [],
     'three quiet reports that agreed with 40 were charged against 55, 60 and 65');
   assert.strictEqual(last.score, 65, 'and the slider is still the number, not suppressed for a month');
 });
@@ -160,11 +176,11 @@ test('re-posting an unchanged reading does not turn a split room into a strike',
 
   await post(place, 50, 40);
   await serve(place, room);
-  assert.deepStrictEqual(await struck(place), []);
+  assert.deepStrictEqual(await contradicted(place), []);
   await post(place, 50, 1);
   const last = await serve(place, room);
 
-  assert.deepStrictEqual(await struck(place), [], 'the re-post was struck on half the room');
+  assert.deepStrictEqual(await contradicted(place), [], 'the re-post was struck on half the room');
   assert.strictEqual(last.score, 50);
 });
 
@@ -176,7 +192,7 @@ test('an owner who moves toward the room is not struck for the number they moved
   await post(place, 40, 50);
   await post(place, 60, 10);
   const last = await serve(place, reports([57, 58, 59], 3, 40));
-  assert.deepStrictEqual(await struck(place), []);
+  assert.deepStrictEqual(await contradicted(place), []);
   assert.strictEqual(last.score, 60);
 });
 
@@ -186,15 +202,65 @@ test('one contested reading nudged twice is one strike, not three', async () => 
 
   await post(place, 80, 50);
   await serve(place, room);
-  assert.deepStrictEqual(await struck(place), [80], 'the reading the room contradicted is struck');
+  assert.deepStrictEqual(await contradicted(place), [80], 'the reading the room contradicted is struck');
 
   await post(place, 84, 30);
   await serve(place, room);
   await post(place, 78, 10);
   const last = await serve(place, room);
 
-  assert.deepStrictEqual(await struck(place), [80], 'the same claim, re-posted, was struck again');
-  assert.strictEqual(last.score, 78, 'one disagreement is not a pattern, so nothing is suppressed');
+  assert.deepStrictEqual(await contradicted(place), [80, 84, 78],
+    'each re-post the room contradicted is marked, so none of them becomes a training label');
+  assert.strictEqual(await strikes(place), 1);
+  assert.strictEqual(last.score, 78, 'but they are one strike, not three, so nothing is suppressed');
+});
+
+test('re-posting a struck reading costs no second strike and is still kept out of the training labels', async () => {
+  // The re-post is the same claim, already charged. The room contradicted it
+  // as much as the first, and a row left unmarked is one
+  // scripts/ml/train/ownerLabelExport.js reads as a label.
+  const place = await listing();
+  const room = reports([61, 62, 63], 1, 30);
+  await post(place, 95, 40);
+  await serve(place, room);
+  assert.deepStrictEqual(await contradicted(place), [95]);
+
+  await post(place, 95, 1);
+  const last = await serve(place, room);
+
+  assert.deepStrictEqual(await contradicted(place), [95, 95], 'the contradicted re-post was left unmarked');
+  const { rows: [labels] } = await realQuery(
+    'SELECT COUNT(*)::int AS n FROM venue_owner_reports WHERE google_place_id = $1 AND retracted = false AND diverged = false',
+    [place]
+  );
+  assert.strictEqual(labels.n, 0, 'the export\'s own predicate finds nothing to train on');
+  assert.strictEqual(await strikes(place), 1);
+  assert.strictEqual(last.score, 95, 'one claim, one strike: not suppressed');
+});
+
+test('three different claims inside the month still suppress the slider', async () => {
+  // One strike per assertion must not turn into none: two earlier nights'
+  // contradicted readings, then tonight's.
+  const place = await listing();
+  for (const daysAgo of [3, 2]) {
+    await realQuery(
+      `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent, created_at, diverged)
+       VALUES ($1, $2, 95, NOW() - make_interval(days => $3), true)`,
+      [owners.get(place), place, daysAgo]
+    );
+  }
+  await post(place, 95, 10);
+  assert.strictEqual((await serve(place, reports([71, 72, 73], 1, 5))).score, 95, 'tonight\'s reading ships while it is judged');
+  const after = await serve(place, []);
+  assert.strictEqual(await strikes(place), 3);
+  assert.strictEqual(after.score, 30, 'the third strike suppresses the override');
+  assert.strictEqual(after.ownerReport, undefined);
+});
+
+test('the owner dashboard counts strikes by the read\'s rule, so its suppression notice cannot disagree with the card', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
+  const state = src.slice(src.indexOf('async function ownerBusyState'), src.indexOf("router.get('/busy-now'"));
+  assert.match(state, /ownerReports\.STRIKE_ROW_SQL/);
 });
 
 test('re-posting a number the room contradicted still carries the evidence forward', async () => {
@@ -204,16 +270,16 @@ test('re-posting a number the room contradicted still carries the evidence forwa
   await post(place, 95, 40);
   await post(place, 95, 0);
   await serve(place, reports([31, 32, 33], 1, 30));
-  assert.deepStrictEqual(await struck(place), [95]);
+  assert.deepStrictEqual(await contradicted(place), [95]);
 });
 
 test('a strike on an earlier claim does not shield a different claim', async () => {
   const place = await listing();
   await post(place, 90, 60);
   await serve(place, reports([41, 42, 43], 1, 55));
-  assert.deepStrictEqual(await struck(place), [90]);
+  assert.deepStrictEqual(await contradicted(place), [90]);
   // 20 is more than 25 points from 90, so it is a new assertion: still judged.
   await post(place, 20, 10);
   await serve(place, reports([44, 45, 46], 3, 5));
-  assert.deepStrictEqual(await struck(place), [90, 20]);
+  assert.deepStrictEqual(await contradicted(place), [90, 20]);
 });
