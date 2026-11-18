@@ -794,8 +794,10 @@ test('a send the server will always refuse has a way off the screen', () => {
 
 test('an unsent message stops being counted as unread', () => {
   // The badge is a server-backed count since 056, not derived from the array,
-  // so dropping the bubble left the row asserting an unread that is gone.
-  expect(appSource).toMatch(/\.\.\.\(removed && \(f\.unread \|\| 0\) > 0 \? \{ unread: f\.unread - 1 \} : \{\}\),/);
+  // so dropping the bubble left the row asserting an unread that is gone. It
+  // comes off only for a message that was one of the counted
+  // (flockUnsentUnreadBadge.test.js runs the rule).
+  expect(appSource).toMatch(/return badge\(was\) === 'drop' \? \{ \.\.\.f, unread: \(f\.unread \|\| 0\) - 1 \} : f;/);
 });
 
 test('search says what it actually searched, and can widen it', () => {
