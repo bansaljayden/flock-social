@@ -431,7 +431,7 @@ export default function LandingPage() {
             <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
             <p className="lp-lead">
               Flock is an app that helps a group of friends finalize plans by
-              integrating artificial intelligence &amp; <span className="lp-keep">industry-leading</span> features
+              integrating artificial intelligence <span className="lp-keep">&amp; industry-leading</span> features
               while providing venues with insights into consumer demand.
             </p>
           </div>
@@ -628,7 +628,7 @@ export default function LandingPage() {
             <h3 id="lp-h-beat-1">the maintainer starts a flock.</h3>
             <p>
               Friday Night Crew, 8 o’clock, four friends invited. Anyone without
-              the app joins from a link (budget too), no account needed.
+              the app joins from a link <span className="lp-keep">(budget too)</span>, no account needed.
             </p>
           </div>
         </div>
@@ -972,7 +972,7 @@ export default function LandingPage() {
             </div>
             <p className="lp-get-web">
               No iPhone? Flock runs in your browser too.{' '}
-              <a href="/signup">Create your account</a>.
+              <span className="lp-get-web-go"><a href="/signup">Create your account</a>.</span>
             </p>
           </div>
           <AppStoreListing />

@@ -956,7 +956,9 @@ html:has(.lp) body { overflow-x: clip; }
    tell (DESIGN-STANDARD.md A4). .lp-hero-note, the status and DECA line under
    the button, went too (2026-10-21, his ask); the award is on /about. */
 
-.lp-hero .lp-lead { margin-bottom: 26px; max-width: 44ch; font-size: clamp(17px, 1.8vw, 20px); }
+/* Balanced, and "& industry-leading" is one .lp-keep, so no line of the
+   lead ends on the ampersand or runs much shorter than the rest. */
+.lp-hero .lp-lead { margin-bottom: 26px; max-width: 44ch; font-size: clamp(17px, 1.8vw, 20px); text-wrap: balance; }
 /* One row since 2026-11-06: "Start a plan", then Apple's badge with the day
    Flock went on the App Store. Two equal buttons side by side was the stock
    hero, and the GitHub one outshouted the badge, the real download, on a
@@ -1452,7 +1454,8 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-safety-exhibits .lp-mail-small { font-size: 12px; }
 }
 .lp-list { display: grid; gap: 0; margin-top: 20px; }
-.lp-list li { list-style: none; font-size: var(--fs-body); color: var(--ink-2); line-height: 1.5; }
+/* pretty: a two-line row never ends on one word ("…once / verified"). */
+.lp-list li { list-style: none; font-size: var(--fs-body); color: var(--ink-2); line-height: 1.5; text-wrap: pretty; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Plain rows, no glyphs and no rules. A column of checkmarks is the single
    most template-looking thing a marketing page can do, and a hairline between
@@ -1568,8 +1571,12 @@ html:has(.lp) body { overflow-x: clip; }
    the footer start at the content edge. The words keep a 40rem measure. */
 .lp-cta-in.lp-get-in { max-width: 1160px; }
 .lp-get-in > div:first-child { max-width: 40rem; }
-/* nowrap on the link, so "Create your account" is never split across lines. */
+/* nowrap on the link, so "Create your account" is never split across lines.
+   The link's sentence takes its own line at every width: at 17px the pair
+   broke there anyway everywhere but 768-1024px, so the break is made on
+   purpose rather than left to the column. */
 .lp-get-web { margin: 22px 0 0; max-width: 62ch; font-size: var(--fs-body); line-height: 1.6; color: var(--cream-2); }
+.lp-get-web-go { display: block; }
 .lp-get-web a { color: var(--cream); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
 .lp-get-web a:hover { color: var(--cream-hi); }
 
@@ -1951,6 +1958,8 @@ html:has(.lp) body { overflow-x: clip; }
   padding-block: 11px;
   text-align: center;
   max-width: 100%;
+  /* Two even lines where it wraps (360-390px), never "…forecast in / Flock". */
+  text-wrap: balance;
 }
 @media (max-width: 480px) { .lpd-cta { align-self: stretch; } }
 
