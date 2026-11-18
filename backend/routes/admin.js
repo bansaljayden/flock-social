@@ -776,6 +776,13 @@ router.get('/reports', async (req, res) => {
               c.author_id AS content_author_id,
               c.created_at AS content_created_at,
               c.is_hidden AS content_is_hidden,
+              -- A guest answer retired because its person joined the plan
+              -- (migration 098, utils/guestRsvp.js) is hidden and no moderator
+              -- hid it. Read from is_hidden alone the console drew it as taken
+              -- down and offered Restore, which un-retires it and counts the
+              -- person twice, and never Hide, which the takedown below supports
+              -- on a retired row (alsoDue). True only for that row.
+              COALESCE(c.retired, false) AS content_retired,
               (r.content_id IS NOT NULL AND r.content_type <> 'profile' AND c.author_id IS NULL
                  AND c.body IS NULL AND c.created_at IS NULL) AS content_missing,
               -- The plan it was posted in was deleted and what the card shows is
@@ -866,16 +873,16 @@ router.get('/reports', async (req, res) => {
          -- detail endpoint reads too, so the excerpt and the full text can never
          -- describe the same row differently.
          SELECT ${CONTENT_TEXT_SQL.flock_message('m')} AS body, m.image_url, m.sender_id AS author_id,
-                m.created_at, COALESCE(m.is_hidden, false) AS is_hidden, false AS preserved
+                m.created_at, COALESCE(m.is_hidden, false) AS is_hidden, false AS preserved, false AS retired
          FROM messages m WHERE r.content_type = 'flock_message' AND m.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.dm('d')}, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false), false
+         SELECT ${CONTENT_TEXT_SQL.dm('d')}, d.image_url, d.sender_id, d.created_at, COALESCE(d.is_hidden, false), false, false
          FROM direct_messages d WHERE r.content_type = 'dm' AND d.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.story('s')}, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false), false
+         SELECT ${CONTENT_TEXT_SQL.story('s')}, s.image_url, s.user_id, s.created_at, COALESCE(s.is_hidden, false), false, false
          FROM stories s WHERE r.content_type = 'story' AND s.id = r.content_id
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false), false
+         SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false), false, false
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
          -- A reply's author is venue_reply_user_id. Its hidden state is its
@@ -883,7 +890,7 @@ router.get('/reports', async (req, res) => {
          -- a reply under a review taken down on another report still offers
          -- Hide, which is what keeps it down when the review is restored.
          SELECT ${CONTENT_TEXT_SQL.venue_reply('vy')}, NULL, vy.venue_reply_user_id, vy.created_at,
-                vy.venue_reply_hidden, false
+                vy.venue_reply_hidden, false, false
          FROM venue_reviews vy WHERE r.content_type = 'venue_reply' AND vy.id = r.content_id
            -- The reply the report was filed about: once a different author
            -- has answered the review (the venue changed hands), the reported
@@ -892,31 +899,32 @@ router.get('/reports', async (req, res) => {
          UNION ALL
          -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
          -- the reported content IS the guest's self-chosen display name.
-         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false), false
+         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false), false,
+                (gr.retired_at IS NOT NULL)
          FROM guest_rsvps gr WHERE r.content_type = 'guest_rsvp' AND gr.id = r.content_id
          UNION ALL
          SELECT ${CONTENT_TEXT_SQL.venue_promotion('vp')}, NULL, vp.venue_user_id,
-                vp.created_at, COALESCE(vp.is_hidden, false), false
+                vp.created_at, COALESCE(vp.is_hidden, false), false, false
          FROM venue_promotions vp WHERE r.content_type = 'venue_promotion' AND vp.id = r.content_id
          UNION ALL
          -- venue_event: owner-typed copy, takedown flag added by migration 019.
          -- Listed here for the same reason it is in TAKEDOWN_TARGETS below: a
          -- type the queue cannot render is a type a moderator cannot judge, and
          -- the report already reaches this table.
-         SELECT ${CONTENT_TEXT_SQL.venue_event('ve')}, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false), false
+         SELECT ${CONTENT_TEXT_SQL.venue_event('ve')}, NULL, ve.venue_user_id, ve.created_at, COALESCE(ve.is_hidden, false), false, false
          FROM venue_events ve WHERE r.content_type = 'venue_event' AND ve.id = r.content_id
          UNION ALL
          -- The copy a plan delete kept of a reported message or guest answer
          -- (migration 110, utils/reportEvidence.js), read only when the
          -- original is gone. The copy carries the original's own column names,
          -- so the same CONTENT_TEXT_SQL expression renders it.
-         SELECT ${CONTENT_TEXT_SQL.flock_message('em')}, em.image_url, em.author_id, em.created_at, em.is_hidden, true
+         SELECT ${CONTENT_TEXT_SQL.flock_message('em')}, em.image_url, em.author_id, em.created_at, em.is_hidden, true, false
          FROM content_report_evidence em
          WHERE r.content_type = 'flock_message' AND em.content_type = 'flock_message'
            AND em.content_id = r.content_id
            AND NOT EXISTS (SELECT 1 FROM messages lm WHERE lm.id = r.content_id)
          UNION ALL
-         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('eg')}, NULL, NULL, eg.created_at, eg.is_hidden, true
+         SELECT ${CONTENT_TEXT_SQL.guest_rsvp('eg')}, NULL, NULL, eg.created_at, eg.is_hidden, true, false
          FROM content_report_evidence eg
          WHERE r.content_type = 'guest_rsvp' AND eg.content_type = 'guest_rsvp'
            AND eg.content_id = r.content_id
@@ -930,7 +938,7 @@ router.get('/reports', async (req, res) => {
          -- action being a permanent ban. The keyed column is reported_user_id,
          -- not content_id — a profile report carries no content_id at all.
          SELECT ${CONTENT_TEXT_SQL.profile('pu')},
-                pu.profile_image_url, pu.id, pu.created_at::timestamptz, false, false
+                pu.profile_image_url, pu.id, pu.created_at::timestamptz, false, false, false
          FROM users pu WHERE r.content_type = 'profile' AND pu.id = r.reported_user_id
          LIMIT 1
        ) c ON true

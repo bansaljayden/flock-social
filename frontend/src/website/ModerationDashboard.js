@@ -897,10 +897,15 @@ export default function ModerationDashboard() {
                   // live to hide or restore, and the server refuses both.
                   const takedownable = !!own(HIDEABLE, r.content_type) && !!r.content_id
                     && !r.content_missing && !r.content_preserved;
-                  const canHide = takedownable && !r.content_is_hidden;
+                  // A guest answer retired because its person joined the plan
+                  // (content_retired) is hidden and no moderator hid it. Hide
+                  // makes it a takedown, which the server allows on a retired
+                  // row; Restore would un-retire it and count the person as a
+                  // member and a guest, so it is not offered.
+                  const canHide = takedownable && (!r.content_is_hidden || !!r.content_retired);
                   // Un-hide matters most after the fact: a mistaken takedown is
                   // discovered once the report is already resolved.
-                  const canRestore = takedownable && !!r.content_is_hidden;
+                  const canRestore = takedownable && !!r.content_is_hidden && !r.content_retired;
                   const canBan = !!r.reported_user_id;
                   // Dismissing something already finished changes nothing but the
                   // word on the row, so it stays with the unhandled reports.
@@ -1211,8 +1216,8 @@ function ReportRecord({ report: r, unhandled }) {
 //
 // Field names come from GET /api/admin/reports (backend/routes/admin.js):
 // content_excerpt, content_excerpt_clipped, content_has_image, content_image_url,
-// content_image_deferred, content_created_at, content_is_hidden, content_missing,
-// content_preserved.
+// content_image_deferred, content_created_at, content_is_hidden, content_retired,
+// content_missing, content_preserved.
 // The expanded body comes from GET /api/admin/reports/:id/content, which answers
 // { text, clipped, totalLength } and is capped server-side.
 function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text, onToggleText }) {
@@ -1245,7 +1250,9 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
       <div style={S.contentHead}>
         <span>Reported {label}</span>
         {r.content_created_at ? <span>· posted {fmt(r.content_created_at)}</span> : null}
-        {r.content_is_hidden ? <span style={S.hiddenTag}>HIDDEN</span> : null}
+        {/* A moderator's takedown. A guest answer retired because its
+            person joined the plan is hidden too, and nobody took it down. */}
+        {r.content_is_hidden && !r.content_retired ? <span style={S.hiddenTag}>HIDDEN</span> : null}
       </div>
 
       {r.content_preserved ? (

@@ -340,6 +340,54 @@ test('the same report filed five times at once is one row', async () => {
   assert.ok(answers.every((a) => a.body.report && a.body.report.id === rows[0].id), 'every answer names the one row');
 });
 
+// A GUEST ANSWER RETIRED BECAUSE ITS PERSON JOINED THE PLAN (migration 098,
+// utils/guestRsvp.js) is hidden, and no moderator hid it. The queue carried
+// is_hidden alone, so the console drew it as taken down, offered Restore (which
+// un-retires it: the person then counts as a member and as a guest) and never
+// Hide, which the route supports on a retired row. The queue now says which.
+test('a guest answer retired when its person joined reads as retired in the queue, and a hide makes it a takedown', async () => {
+  const host = await user('Host8');
+  const reporter = await user('Reporter8');
+  const admin = await user('Admin8', 'admin');
+  const flockId = (await pool.query(
+    `INSERT INTO flocks (name, creator_id, status) VALUES ('Guest Night', $1, 'planning') RETURNING id`, [host.id]
+  )).rows[0].id;
+  const guestId = (await pool.query(
+    `INSERT INTO guest_rsvps (flock_id, name, is_hidden, retired_at) VALUES ($1, 'Sam Rivers', TRUE, NOW()) RETURNING id`, [flockId]
+  )).rows[0].id;
+  const live = (await pool.query(
+    `INSERT INTO guest_rsvps (flock_id, name) VALUES ($1, 'Jo Lake') RETURNING id`, [flockId]
+  )).rows[0].id;
+  const report = async (contentId) => (await pool.query(
+    `INSERT INTO content_reports (reporter_id, content_type, content_id, reason) VALUES ($1, 'guest_rsvp', $2, 'harassment') RETURNING id`,
+    [reporter.id, contentId]
+  )).rows[0].id;
+  const retiredReport = await report(guestId);
+  const liveReport = await report(live);
+  const card = async (id) => {
+    const queue = await call('GET', '/api/admin/reports?status=all', admin);
+    assert.strictEqual(queue.status, 200, JSON.stringify(queue.body));
+    const rows = Array.isArray(queue.body) ? queue.body : (queue.body.reports || []);
+    const found = rows.find((r) => r.id === id);
+    assert.ok(found, `report ${id} is not in the queue`);
+    return found;
+  };
+
+  let c = await card(retiredReport);
+  assert.strictEqual(c.content_is_hidden, true);
+  assert.strictEqual(c.content_retired, true, 'a retired answer reads the same as one a moderator took down');
+  const other = await card(liveReport);
+  assert.strictEqual(other.content_retired, false);
+  assert.strictEqual(other.content_is_hidden, false);
+
+  // Hide is what the console now offers it, and it makes the row a takedown.
+  const hid = await call('PUT', `/api/admin/reports/${retiredReport}`, admin, { action: 'hide' });
+  assert.strictEqual(hid.status, 200, JSON.stringify(hid.body));
+  c = await card(retiredReport);
+  assert.strictEqual(c.content_is_hidden, true);
+  assert.strictEqual(c.content_retired, false, 'a moderator hid it now, so it is a takedown and Restore is its way back');
+});
+
 test('a reply retired by an edited review cannot be reported', async () => {
   const owner = await user('Owner3', 'venue_owner');
   const reviewer = await user('Reviewer3');

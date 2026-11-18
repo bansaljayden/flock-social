@@ -757,6 +757,34 @@ describe('every action the server can still honour is on the card', () => {
     expect(screen.queryByRole('button', { name: 'Unban user' })).toBeNull();
   });
 
+  // A guest answer retired because its person joined the plan
+  // (backend/utils/guestRsvp.js) is hidden, and no moderator hid it. Restore
+  // un-retires it, so the person counts as a member and as a guest; Hide makes
+  // it a takedown (backend/routes/admin.js, alsoDue). The queue says which
+  // (content_retired), and the card offers the one that fits.
+  const guestAnswer = (over) => ({
+    content_type: 'guest_rsvp', reported_user_id: null, reported_user_name: null, ...over,
+  });
+
+  test('a guest answer retired when its person joined offers Hide, not Restore', async () => {
+    onlyReport(guestAnswer({ content_is_hidden: true, content_retired: true }));
+    await renderConsole();
+
+    expect(screen.getByRole('button', { name: 'Hide content' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
+    // HIDDEN on this card means a moderator took it down, which nobody did.
+    expect(screen.queryByText('HIDDEN')).toBeNull();
+  });
+
+  test('a guest answer a moderator hid is a takedown like any other, with Restore its way back', async () => {
+    onlyReport(guestAnswer({ content_is_hidden: true, content_retired: false }));
+    await renderConsole();
+
+    expect(screen.getByRole('button', { name: 'Restore content' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
+    expect(screen.getByText('HIDDEN')).toBeInTheDocument();
+  });
+
   test('a refused action re-reads the queue instead of leaving the dead button up', async () => {
     onlyReport({});
     await renderConsole();
