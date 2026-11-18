@@ -8,6 +8,11 @@
  * badge kept counting a message that no longer exists until the next list
  * read. It mirrors the flock twin now.
  *
+ * And it subtracts only what it can show was counted. The count is their
+ * newest `unread` messages on the server, and a thread held here says which
+ * those are only when it ends at the server's newest row (historyIsCurrent)
+ * and holds that many of theirs. Otherwise the count is read again.
+ *
  * The handler is lifted out of App.js by source and run.
  *
  * HOW TO RUN
@@ -45,14 +50,24 @@ function unsentHandler(env) {
   return new Function(...names, `return ${fn};`)(...names.map((n) => env[n]));
 }
 
-function run(dms, data) {
+// List reads the handler asked for (loadDmConversations, through its ref).
+let rereads = 0;
+
+// `current`: whether the thread's history is known to end at the server's
+// newest row (historyIsCurrent in App.js: read while the socket was up, with
+// no drop since).
+function run(dms, data, { current = true } = {}) {
   let state = dms;
+  rereads = 0;
   const env = {
     noteRetraction: () => {},
     retractionsRef: { current: { log: [] } },
     setDirectMessages: (next) => { state = typeof next === 'function' ? next(state) : next; },
     applyTakedownToDms,
     sameContentId,
+    historyIsCurrent: () => current,
+    directMessagesRef: { get current() { return state; } },
+    loadDmConversationsRef: { current: () => { rereads += 1; } },
   };
   unsentHandler(env)(data);
   return state;
@@ -74,6 +89,27 @@ test('their message unsent before it was read comes off the row\'s count', () =>
   const [row] = run([thread()], { messageId: 31, senderId: 7 });
   expect(row.messages.map((m) => m.id)).toEqual([30]);
   expect(row.unread).toBe(1);
+  expect(rereads).toBe(0);
+});
+
+test('a thread holding history from before a drop is not trusted to say which message was unread', () => {
+  // 30 was read and the thread closed; the socket dropped and 31 arrived
+  // while it was down. The list read on reconnect kept the cached [30] beside
+  // the server's unread 1, which counts 31. Unsending 30 must not take 31's
+  // count away: the count is read again instead.
+  const [row] = run([thread({ unread: 1, messages: [{ id: 30, sender: 'Bo', text: 'are you coming' }] })],
+    { messageId: 30, senderId: 7 }, { current: false });
+  expect(row.messages).toEqual([]);
+  expect(row.unread).toBe(1);
+  expect(rereads).toBe(1);
+});
+
+test('a current thread holding fewer of their messages than the count is read again too', () => {
+  // The count reaches past what this device holds, so the held ones cannot
+  // say which of them were counted.
+  const [row] = run([thread({ unread: 3, messages: [{ id: 31, sender: 'Bo' }] })], { messageId: 31, senderId: 7 });
+  expect(row.unread).toBe(3);
+  expect(rereads).toBe(1);
 });
 
 test('your own unsend never touches the count, and the count never goes below zero', () => {
@@ -98,7 +134,35 @@ test('their message unsent after it was read leaves the newer unread one counted
   expect(run([mixed], { messageId: 32, senderId: 7 })[0].unread).toBe(0);
 });
 
-test('a message this device does not hold changes no count', () => {
+test('a thread is current only when it was read with the socket up and nothing dropped since', () => {
+  // The read notes the drop count it went out at, and only with the socket up.
+  const load = APP.slice(APP.indexOf('const loadDmMessages = useCallback'), APP.indexOf('const reloadFlockMessages'));
+  expect(load).toMatch(/const drops = getSocket\(\)\?\.connected \? socketDropsRef\.current : null;/);
+  expect(load).toMatch(/historyCurrentRef\.current\[`dm:\$\{userId\}`\] = drops;/);
+  // Every drop is counted, heard or sampled.
+  expect(APP).toMatch(/onSocketDisconnect\(\(\) => \{ socketAliveRef\.current = false; socketDropsRef\.current \+= 1; \}\)/);
+  expect(APP).toMatch(/if \(!live\) socketDropsRef\.current \+= 1;/);
+
+  const head = 'const historyIsCurrent = useCallback(';
+  const at = APP.indexOf(head);
+  const body = APP.slice(at + head.length, APP.indexOf(', []);', at));
+  // eslint-disable-next-line no-new-func
+  const make = (connected, marks, drops) => new Function('historyCurrentRef', 'socketDropsRef', 'getSocket', `return ${body};`)(
+    { current: marks }, { current: drops }, () => ({ connected }),
+  );
+  expect(make(true, { 'dm:7': 2 }, 2)('dm:7')).toBe(true);
+  expect(make(true, { 'dm:7': 1 }, 2)('dm:7')).toBe(false);
+  expect(make(false, { 'dm:7': 2 }, 2)('dm:7')).toBe(false);
+  expect(make(true, {}, 0)('dm:7')).toBe(false);
+});
+
+test('a message of theirs this device does not hold changes no count here, and the count is read again', () => {
   const [row] = run([thread()], { messageId: 99, senderId: 7 });
   expect(row.unread).toBe(2);
+  expect(rereads).toBe(1);
+  // Nothing to read for a thread with nothing unread, or for your own.
+  run([thread({ unread: 0 })], { messageId: 99, senderId: 7 });
+  expect(rereads).toBe(0);
+  run([thread()], { messageId: 99, senderId: 9 });
+  expect(rereads).toBe(0);
 });

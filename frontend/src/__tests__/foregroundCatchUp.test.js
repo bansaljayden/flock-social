@@ -473,6 +473,7 @@ function sampler() {
     // same tick keeps (chatEchoOrderAndRetraction.test.js runs that part).
     catchUpOwedRef: { current: false },
     heldWhileUpRef: { current: null },
+    socketDropsRef: { current: 0 },
     flocksRef: { current: [] },
     directMessagesRef: { current: [] },
     setReconnectTick: (f) => { state.ticks = f(state.ticks); },

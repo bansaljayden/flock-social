@@ -12031,6 +12031,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // "This conversation did not load" over the one now on screen.
   const historyReadSeqRef = useRef({});
 
+  // WHICH THREADS END AT THE SERVER'S NEWEST ROW. A history read that went out
+  // while the socket was up, with no drop since, is followed by every message
+  // that arrived after it, because each one came live and was appended. Any
+  // other thread (never read, read with the socket down, or read before a
+  // drop) can be missing what arrived while nobody was listening, however many
+  // rows it shows: the list read on reconnect keeps a thread's cached rows
+  // beside the server's fresh unread count. The unsend handlers ask this
+  // before deciding which of the cached rows the count was counting.
+  //
+  // socketDropsRef counts the drops (the disconnect listener and the sampler
+  // below); historyCurrentRef holds, on historyReadAtRef's keys, the count a
+  // successful read went out at.
+  const socketDropsRef = useRef(0);
+  const historyCurrentRef = useRef({});
+  const historyIsCurrent = useCallback((key) => (
+    historyCurrentRef.current[key] === socketDropsRef.current && !!getSocket()?.connected
+  ), []);
+
   // EVERY UNSEND, TAKEDOWN AND BLOCK THIS SESSION HAS SEEN, numbered. A history
   // read notes the number it went out at, and whatever was retracted after
   // that is dropped from its answer (retractedSince, dropRetracted), because a
@@ -12253,6 +12271,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (spin) { historyReadSeqRef.current['spinner:dm'] = spin; setDmMessagesLoading(true); }
     historyReadSeqRef.current['last:dm'] = `dm:${userId}`;
     setDmMessagesError('');
+    // Whether this read can leave the thread current (historyCurrentRef): only
+    // if the socket is up as it goes out, so what arrives after it comes live.
+    const drops = getSocket()?.connected ? socketDropsRef.current : null;
     return getDMs(userId)
       .then((data) => {
         if (overtaken()) return;
@@ -12320,6 +12341,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder, drop, held, reach }), unread: 0 }
             : d);
         });
+        if (drops === null) delete historyCurrentRef.current[`dm:${userId}`];
+        else historyCurrentRef.current[`dm:${userId}`] = drops;
         // The DM half of the delivery receipt, and the flock twin's comment
         // above applies word for word: delivered, never opened.
         //
@@ -12665,6 +12688,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (socketAliveRef.current === live) return;
       const firstSample = socketAliveRef.current === null;
       socketAliveRef.current = live;
+      // A drop the disconnect event did not report still ends every thread's
+      // claim to be current (historyCurrentRef).
+      if (!live) socketDropsRef.current += 1;
       // A first connect is not a RE-connect: the screen that needs history
       // fetches its own on entry.
       if (live && !firstSample) {
@@ -12672,7 +12698,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setReconnectTick(n => n + 1);
       }
     }, SOCKET_SAMPLE_MS);
-    const offDisconnect = onSocketDisconnect(() => { socketAliveRef.current = false; });
+    const offDisconnect = onSocketDisconnect(() => { socketAliveRef.current = false; socketDropsRef.current += 1; });
     return () => { clearInterval(id); offDisconnect(); };
   }, []);
 
@@ -14143,28 +14169,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return unsub;
   }, [clearUnsentFlockMessage]);
 
+  // loadDmConversations is declared further down; the unsend handler below
+  // reaches it through this.
+  const loadDmConversationsRef = useRef(null);
+
   useEffect(() => {
     const unsub = onDmMessageUnsent((data) => {
       // Logged first, so a DM read already in flight cannot restore it.
       noteRetraction(retractionsRef, { kind: 'dm', messageId: data.messageId });
+      // The badge, the flock twin's rule (clearUnsentFlockMessage): the row's
+      // unread is a server count, and a message it counted that was removed
+      // here is one it no longer includes. Never your own, and never one
+      // already read: opening a thread reads everything in it, so the count is
+      // their newest `unread` messages, and unsending an older one of theirs
+      // leaves every one still waiting counted.
+      //
+      // "Their newest `unread` messages" is a fact about the server, and the
+      // thread here says it only when it ends at the server's newest row
+      // (historyIsCurrent) and holds at least `unread` of theirs. A thread
+      // read before a drop does not: read 30, the socket drops, 31 arrives
+      // unheard, and the list read on reconnect keeps the cached [30] beside
+      // the server's unread 1, which counts 31. Taking 30 off that count left
+      // 31 waiting with no badge. So when the thread cannot show which rows
+      // were counted, nothing is subtracted here and the count is read again
+      // from the server, which already leaves the unsent message out ('reread').
+      // Likewise for one of theirs this device never held.
+      const badge = (d) => {
+        const unread = d.unread || 0;
+        if (unread <= 0) return null;
+        const theirs = (d.messages || []).filter(m => m.sender !== 'You');
+        const at = theirs.findIndex(m => sameContentId(m.id, data.messageId));
+        if (at === -1) return String(d.userId) === String(data.senderId) ? 'reread' : null;
+        if (theirs.length < unread || !historyIsCurrent(`dm:${d.userId}`)) return 'reread';
+        return at >= theirs.length - unread ? 'drop' : null;
+      };
+      if ((directMessagesRef.current || []).some(d => badge(d) === 'reread')) loadDmConversationsRef.current?.();
       setDirectMessages(prev => {
         // The takedown helper, not a bare filter: it also nulls reply quotes
         // that would keep the unsent words on screen, and clears a preview
         // that a removal just emptied.
         const removed = applyTakedownToDms(prev, { contentType: 'dm', contentId: data.messageId });
-        // The badge, the flock twin's subtraction (clearUnsentFlockMessage):
-        // the row's unread is a server count, and a message it counted that
-        // was removed here is one it no longer includes. Never your own, and
-        // never one already read: opening a thread reads everything in it, so
-        // the count is always their newest `unread` messages, and unsending an
-        // older one of theirs leaves every one still waiting counted.
         const cleaned = removed === prev ? prev : removed.map((d, i) => {
           const was = prev[i];
           if (d === was) return d;
-          const unread = d.unread || 0;
-          const theirs = (was.messages || []).filter(m => m.sender !== 'You');
-          const at = theirs.findIndex(m => sameContentId(m.id, data.messageId));
-          return at !== -1 && at >= theirs.length - unread ? { ...d, unread: unread - 1 } : d;
+          return badge(was) === 'drop' ? { ...d, unread: (d.unread || 0) - 1 } : d;
         });
         // A thread not loaded this session keeps only a stored lastMessage,
         // and nothing local can tell whether that preview IS the unsent
@@ -14178,7 +14226,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
     });
     return unsub;
-  }, []);
+  }, [historyIsCurrent]);
 
   // The confirm half of unsend, one per chat. The row leaves the screen only
   // when the tombstone is real, and a failure names itself instead of quietly
@@ -16797,6 +16845,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => { if (!overtaken()) setDmsError(userMessage(err, 'Your messages are not loading right now.')); })
       .finally(() => { if (!overtaken()) setDmsLoading(false); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  loadDmConversationsRef.current = loadDmConversations;
 
   // THE OTHER HALF OF RECOVERY, and the half the 2026-08-27 deploy blip
   // proved missing. The socket comes back by itself (socket.io-client redials

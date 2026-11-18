@@ -2113,6 +2113,9 @@ function liftedDmLoader(threads, { atTop = {} } = {}) {
     mergeHistory: H.mergeHistory,
     liftReaders,
     sendDmAck: (userId) => state.acks.push(userId),
+    getSocket: () => ({ connected: true }),
+    socketDropsRef: { current: 0 },
+    historyCurrentRef: { current: {} },
   });
   return { state, reads, load };
 }
@@ -2337,6 +2340,7 @@ describe('a catch-up after more than a page of messages leaves no hidden hole', 
       socketAliveRef: { current: null },
       catchUpOwedRef: { current: false },
       heldWhileUpRef: { current: null },
+      socketDropsRef: { current: 0 },
     };
     const sample = runLifted(`return ${liftListener(appSource, 'const id = setInterval(')};`, {
       getSocket: () => ({ connected: state.connected }),
