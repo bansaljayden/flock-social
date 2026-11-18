@@ -83,19 +83,27 @@ function reset() {
 reset();
 
 // The tally statement's answer, as Postgres gives it: one row a venue name,
-// its place id, the count and the voters' names, the most votes first.
-function tally(u1, u2) {
+// its place id, the count and the voters' names, the most votes first. The
+// voters' account ids ride beside the names, in the same order (the order the
+// votes were cast in, which is this array's), only when the statement asks for
+// them: `withIds` is read off the statement itself, so a door that stopped
+// asking would answer without them here as it would in Postgres.
+function tally(u1, u2, { withIds = true } = {}) {
   const byName = new Map();
   for (const v of votes) {
     if (v.user1_id !== Number(u1) || v.user2_id !== Number(u2)) continue;
-    if (!byName.has(v.venue_name)) byName.set(v.venue_name, { venue_name: v.venue_name, venue_id: null, vote_count: 0, voters: [] });
+    if (!byName.has(v.venue_name)) {
+      byName.set(v.venue_name, { venue_name: v.venue_name, venue_id: null, vote_count: 0, voters: [], ...(withIds ? { voter_ids: [] } : {}) });
+    }
     const g = byName.get(v.venue_name);
     if (v.venue_id && (g.venue_id === null || v.venue_id < g.venue_id)) g.venue_id = v.venue_id;
     g.vote_count += 1;
     g.voters.push(PEOPLE.find((p) => p.id === v.user_id).name);
+    if (withIds) g.voter_ids.push(v.user_id);
   }
   return [...byName.values()].sort((a, b) => b.vote_count - a.vote_count);
 }
+const ASKS_FOR_IDS = /ARRAY_AGG\(u\.name ORDER BY vv\.id\) AS voters, ARRAY_AGG\(u\.id ORDER BY vv\.id\) AS voter_ids/;
 
 async function dispatch(sql, params = []) {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
@@ -128,7 +136,9 @@ async function dispatch(sql, params = []) {
     votes.push({ user1_id: Number(u1), user2_id: Number(u2), user_id: Number(uid), venue_name: name, venue_id: vid });
     return out([], 1);
   }
-  if (/FROM dm_venue_votes vv JOIN users u ON u\.id = vv\.user_id/.test(flat)) return out(tally(params[0], params[1]));
+  if (/FROM dm_venue_votes vv JOIN users u ON u\.id = vv\.user_id/.test(flat)) {
+    return out(tally(params[0], params[1], { withIds: ASKS_FOR_IDS.test(flat) }));
+  }
   // utils/venueDeals.js: one venue's statement or the batch.
   if (/FROM venue_promotions p/.test(flat)) {
     if (dealsFail) throw new Error('canceling statement due to statement timeout');
@@ -147,7 +157,7 @@ pool.query = (sql, params) => dispatch(sql, params);
 pool.connect = async () => ({ query: (sql, params) => dispatch(sql, params), release: () => {} });
 
 const messagesRouter = require('../routes/messages');
-const { registerHandlers, __resetRateLimiters, dmVotesFor } = require('../sockets/handlers');
+const { registerHandlers, __resetRateLimiters, dmVotesFor, DM_VOTE_TALLY_SQL } = require('../sockets/handlers');
 
 // Every room an event was addressed to.
 function fakeIo() {
@@ -274,7 +284,7 @@ test('GET: an option with no deal carries no deal key, and a tally with none is 
   for (const [who, other] of [[ADA, TESS], [TESS, ADA]]) {
     const r = await call('GET', `/api/dm/${other.id}/venue-votes`, who);
     assert.strictEqual(r.status, 200, r.text);
-    for (const o of r.body.votes) assert.deepStrictEqual(Object.keys(o).sort(), ['venue_id', 'venue_name', 'vote_count', 'voters'], `${who.name}: ${o.venue_name}`);
+    for (const o of r.body.votes) assert.deepStrictEqual(Object.keys(o).sort(), ['venue_id', 'venue_name', 'vote_count', 'voter_ids', 'voters'], `${who.name}: ${o.venue_name}`);
   }
   assert.strictEqual(birthdayReads(), 0, 'no drink deal among the deals, so no birthday is read');
 });
@@ -344,6 +354,52 @@ test('dm_vote_venue as an un-vote: the copies of what is left follow the same ru
   const tessCopy = ada.emitted.find((e) => e.target === `user:${TESS.id}`);
   assert.deepStrictEqual(dealsByName(adaOwn.payload.votes), { 'Brunch Spot': MIMOSAS });
   assert.deepStrictEqual(dealsByName(tessCopy.payload.votes), { 'Brunch Spot': 'none' });
+});
+
+// ===========================================================================
+// Who voted, by account
+// ===========================================================================
+
+// The DM screen marks "your vote" by finding you among an option's voters, and
+// it looked for your display name. A name is not an account: two people can
+// share one, so the other person's vote read as yours. Every door now sends
+// the voters' account ids beside their names, in the same order, from the one
+// statement, and `voters` stays for display and for an older client.
+test('every door sends each option\'s voter ids beside its voters\' names, in the same order, from the one statement', async () => {
+  const [u1, u2] = pairOf(ADA, TESS);
+  // Both on the taqueria, Tess first.
+  votes = [
+    { user1_id: u1, user2_id: u2, user_id: TESS.id, venue_name: 'Taqueria', venue_id: TAQ },
+    { user1_id: u1, user2_id: u2, user_id: ADA.id, venue_name: 'Taqueria', venue_id: TAQ },
+  ];
+  const pick = (rows) => rows.map(({ venue_name, voters, voter_ids }) => ({ venue_name, voters, voter_ids }));
+
+  const g = await call('GET', `/api/dm/${TESS.id}/venue-votes`, ADA);
+  assert.strictEqual(g.status, 200, g.text);
+  assert.deepStrictEqual(pick(g.body.votes), [{ venue_name: 'Taqueria', voters: ['Tess', 'Ada'], voter_ids: [TESS.id, ADA.id] }], 'GET');
+
+  // Ada switches to the brunch spot over REST.
+  const p = await call('POST', `/api/dm/${TESS.id}/venue-votes`, ADA, { venue_name: 'Brunch Spot', venue_id: BRUNCH });
+  assert.strictEqual(p.status, 200, p.text);
+  assert.deepStrictEqual(pick(p.body.votes), [
+    { venue_name: 'Taqueria', voters: ['Tess'], voter_ids: [TESS.id] },
+    { venue_name: 'Brunch Spot', voters: ['Ada'], voter_ids: [ADA.id] },
+  ], 'POST');
+
+  // And back to the taqueria over the socket: her vote is the newer one there.
+  const ada = connect(ADA);
+  await ada.fire('dm_vote_venue', { receiverId: TESS.id, venue_name: 'Taqueria', venue_id: TAQ });
+  const copies = [...ada.emitted, ...ada.io.emitted].filter((e) => e.event === 'dm_new_vote');
+  assert.strictEqual(copies.length, 2, 'both people are told');
+  for (const e of copies) {
+    assert.deepStrictEqual(pick(e.payload.votes), [{ venue_name: 'Taqueria', voters: ['Tess', 'Ada'], voter_ids: [TESS.id, ADA.id] }], e.target || e.room);
+  }
+
+  const one = String(DM_VOTE_TALLY_SQL).replace(/\s+/g, ' ').trim();
+  const sent = calls.filter((c) => /FROM dm_venue_votes vv JOIN users u/.test(c.sql)).map((c) => c.sql);
+  assert.strictEqual(sent.length, 3, 'one tally read a door');
+  for (const s of sent) assert.strictEqual(s, one, 'every door sends the one statement');
+  assert.match(one, ASKS_FOR_IDS, 'the names and the ids are aggregated in the one order, the order the votes were cast in');
 });
 
 // ===========================================================================

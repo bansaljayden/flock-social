@@ -88,12 +88,18 @@ test('the typing indicator is reset when the open thread changes', () => {
 });
 
 test('one venue is one row in every DM tally', () => {
-  expect((messages.match(/GROUP BY venue_name ORDER BY vote_count DESC/g) || []).length).toBe(2);
+  // One statement since 2026-11-17 (sockets/handlers.js DM_VOTE_TALLY_SQL),
+  // sent by all three doors: GET and POST /api/dm/:userId/venue-votes, and
+  // dm_vote_venue. So the rule is pinned once, on that statement, and each
+  // door is pinned to send it rather than a tally of its own.
   expect((handlers.match(/GROUP BY venue_name ORDER BY vote_count DESC/g) || []).length).toBe(1);
-  expect(messages).not.toMatch(/GROUP BY venue_name, venue_id/);
-  expect(handlers).not.toMatch(/GROUP BY venue_name, venue_id/);
-  expect((messages.match(/MIN\(venue_id\) FILTER \(WHERE venue_id IS NOT NULL\) AS venue_id/g) || []).length).toBe(2);
   expect((handlers.match(/MIN\(venue_id\) FILTER \(WHERE venue_id IS NOT NULL\) AS venue_id/g) || []).length).toBe(1);
+  expect(handlers).toMatch(/const DM_VOTE_TALLY_SQL = `[^`]*GROUP BY venue_name ORDER BY vote_count DESC`;/);
+  expect(handlers).not.toMatch(/GROUP BY venue_name, venue_id/);
+  expect(messages).not.toMatch(/GROUP BY venue_name/);
+  expect(messages).not.toMatch(/FROM dm_venue_votes vv/);
+  expect((messages.match(/await pool\.query\(DM_VOTE_TALLY_SQL, \[user1, user2\]\)/g) || []).length).toBe(2);
+  expect((handlers.match(/await pool\.query\(DM_VOTE_TALLY_SQL, \[u1, u2\]\)/g) || []).length).toBe(1);
 });
 
 test('the person row shows something the server actually returns', () => {

@@ -384,10 +384,17 @@ test('a DM\'s vote: each of the two reads, and the voter is answered, the deal t
   await dmVotes(ada, tess);
   assert.strictEqual(await views(), viewsBefore, 'reading the DM vote counted a view');
 
+  // Each option names its voters by account beside the names, in the same
+  // order, so the screen can find "your vote" without trusting a name.
+  assert.deepStrictEqual([adaSees.Taqueria.voters, adaSees.Taqueria.voter_ids], [[ada.name], [ada.id]]);
+  assert.deepStrictEqual([tessSees['Brunch Spot'].voters, tessSees['Brunch Spot'].voter_ids], [[tess.name], [tess.id]]);
+
   // A vote through the real toggle: Tess switches to the taqueria.
   const voted = await call('POST', `/api/dm/${ada.id}/venue-votes`, tess, { venue_name: 'Taqueria', venue_id: PLACE.taqueria });
   assert.strictEqual(voted.status, 200, JSON.stringify(voted.body));
   assert.deepStrictEqual(voted.body.votes.map((o) => [o.venue_name, o.vote_count]), [['Taqueria', 2]]);
+  assert.deepStrictEqual([voted.body.votes[0].voters, voted.body.votes[0].voter_ids], [[ada.name, tess.name], [ada.id, tess.id]],
+    'Ada voted first, so she is first in both lists: one order for the names and the ids');
   await assertOptionsMatchPages(tess, voted.body.votes, 'Tess\'s answer to her vote');
   // And the un-vote: Ada takes hers back and is told what is left, as she sees it.
   const unvoted = await call('POST', `/api/dm/${tess.id}/venue-votes`, ada, { venue_name: 'Taqueria', venue_id: PLACE.taqueria });

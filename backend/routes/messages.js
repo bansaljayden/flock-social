@@ -64,6 +64,9 @@ const {
   // that person's venue page leads with, a drink deal only for a person known
   // to be 21. The socket vote sends the same, so the transports agree.
   dmVotesFor,
+  // The tally itself, the socket vote's own statement: each option's voters by
+  // name and by account id, in the same order.
+  DM_VOTE_TALLY_SQL,
   // A reaction is one emoji, by the rule dm_react applies. The two add routes
   // below take it rather than a length, which let a word through.
   normalizeEmoji,
@@ -2520,13 +2523,7 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4
       return res.status(403).json({ error: 'You can no longer interact with this user.' });
     }
     const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
-    const result = await pool.query(
-      `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
-       FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
-       WHERE vv.user1_id = $1 AND vv.user2_id = $2
-       GROUP BY venue_name ORDER BY vote_count DESC`,
-      [user1, user2]
-    );
+    const result = await pool.query(DM_VOTE_TALLY_SQL, [user1, user2]);
     // The reader's own view of each option's deal (sockets/handlers.js
     // dmVotesFor): a drink deal only when we know the reader is 21, whatever
     // the other person may see. A failed deals read answers the tally without
@@ -2635,13 +2632,7 @@ router.post('/dm/:userId/venue-votes',
       // Return updated tallies, as the voter's own view of each option's deal
       // (dmVotesFor, the read dm_vote_venue makes). The toggle is the un-vote
       // too, so what is left after one is told the same way.
-      const result = await pool.query(
-        `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
-         FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
-         WHERE vv.user1_id = $1 AND vv.user2_id = $2
-         GROUP BY venue_name ORDER BY vote_count DESC`,
-        [user1, user2]
-      );
+      const result = await pool.query(DM_VOTE_TALLY_SQL, [user1, user2]);
       const votesOf = await dmVotesFor(result.rows, [req.user.id]);
       res.json({ votes: votesOf(req.user.id) });
     } catch (err) {

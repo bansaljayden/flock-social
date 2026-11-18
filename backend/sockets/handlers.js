@@ -1519,6 +1519,22 @@ async function dmVotesFor(rows, viewerIds) {
   };
 }
 
+// THE DM VOTE TALLY, one statement for the three doors that send it: GET and
+// POST /api/dm/:userId/venue-votes in routes/messages.js, and dm_vote_venue
+// below. One row a venue name: its place id, the count, and who voted, twice
+// and in the same order. `voters` is the names, for display, and what a
+// client from before 2026-11-17 reads. `voter_ids` is the accounts, which the
+// DM screen finds "your vote" by: it looked for your display name, and a name
+// is not an account, so a counterpart who shares yours had their vote drawn
+// as your own. Both aggregates are ORDER BY vv.id, the order the votes were
+// cast in, so the i-th name and the i-th id are always the same vote.
+const DM_VOTE_TALLY_SQL = `
+  SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count,
+         ARRAY_AGG(u.name ORDER BY vv.id) AS voters, ARRAY_AGG(u.id ORDER BY vv.id) AS voter_ids
+    FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
+   WHERE vv.user1_id = $1 AND vv.user2_id = $2
+   GROUP BY venue_name ORDER BY vote_count DESC`;
+
 function registerHandlers(io, socket) {
   const user = socket.user; // Set by authenticateSocket middleware
 
@@ -3366,13 +3382,7 @@ function registerHandlers(io, socket) {
         dmVoteClient.release();
       }
 
-      const votes = await pool.query(
-        `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
-         FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
-         WHERE vv.user1_id = $1 AND vv.user2_id = $2
-         GROUP BY venue_name ORDER BY vote_count DESC`,
-        [u1, u2]
-      );
+      const votes = await pool.query(DM_VOTE_TALLY_SQL, [u1, u2]);
 
       // `withUserId` names the OTHER side of the conversation this tally
       // belongs to, and it is therefore different for each recipient. Without
@@ -4112,6 +4122,9 @@ module.exports = {
   // /api/dm/:userId/venue-votes through it, so the REST tally and the
   // dm_new_vote above never tell one person two different things.
   dmVotesFor,
+  // And the tally they are built from, one statement for both transports:
+  // the voters' names for display and their ids, in the same order.
+  DM_VOTE_TALLY_SQL,
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.
   allowEvent,

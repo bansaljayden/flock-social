@@ -83,6 +83,8 @@ import { useStableFn } from '../components/chat/useStableFn';
 import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, canQuote, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import { createDraftStore } from '../lib/draftStore';
+// "Your vote" in the DM tally, by account id, by name only for an old server.
+import { votedFor, moveMyVote, takeBackMyVote, votersCounted } from '../lib/dmVoteMine';
 /* The keyboard lane, the same hook the flock thread calls. See the block at
    its call below, and the longer version of the reasoning in ChatDetail.js. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
@@ -481,8 +483,10 @@ export default function DmDetail({
   const dmSearchQuery = showDmChatSearch && dmChatSearch.trim() ? dmChatSearch : '';
   const dmSourceRows = selectedDm?.messages || NO_DM_ROWS;
   const myDmId = authUser?.id;
-  /* The viewer's name is what a DM tally lists its voters by, so the row
-     dressing below reads it through this one const and lists it as a dep. */
+  /* Who the viewer is in a DM tally: the account id each option's voter_ids
+     lists, and the name, which an answer from an older server lists alone
+     (lib/dmVoteMine.js). The row dressing below reads both and lists them as
+     deps. */
   const myDmName = authUser?.name;
   /* Your own runs, in one place, because MessageList is handed it twice: once
      as ownColour and once from colourFor, and two copies of a colour drift. */
@@ -520,7 +524,7 @@ export default function DmDetail({
     const voteOnDmCard = (vd) => {
       const tally = dmVenueVotes.find(v => v.venue_name === vd.name);
       return {
-        active: (tally?.voters || []).includes(myDmName),
+        active: votedFor(tally, { id: myDmId, name: myDmName }),
         count: tally ? parseInt(tally.vote_count || 0) : 0,
       };
     };
@@ -545,7 +549,7 @@ export default function DmDetail({
       if (isCard || !q || typeof m.text !== 'string' || !m.text.toLowerCase().includes(q)) return carded;
       return { ...carded, text: highlightMatches(m.text, dmSearchQuery) };
     });
-  }, [dmSourceRows, dmSearchQuery, messagePreview, dmVenueVotes, myDmName]);
+  }, [dmSourceRows, dmSearchQuery, messagePreview, dmVenueVotes, myDmId, myDmName]);
 
   // The count line above the stream. Only drawn on a live query, and only when
   // something matched, exactly as it was.
@@ -679,18 +683,14 @@ export default function DmDetail({
           if (pressOpenedTheMenu()) return;
           const vName = vd.name;
           const vId = vd.place_id;
-          const mn = authUser?.name;
+          const me = { id: authUser?.id, name: authUser?.name };
           // Same capture as the panel's own vote button: this card is the third
           // way into the same tally and it rolled back no further than the
           // other two did.
           const previousVotes = dmVenueVotes;
           const existing = dmVenueVotes.find(v => v.venue_name === vName);
-          if (existing && (existing.voters || []).includes(mn)) return;
-          if (existing) {
-            setDmVenueVotes(prev => prev.map(v => ({ ...v, voters: v.venue_name === vName ? [...(v.voters || []), mn] : (v.voters || []).filter(x => x !== mn), vote_count: v.venue_name === vName ? parseInt(v.vote_count || 0) + 1 : (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === vName));
-          } else {
-            setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
-          }
+          if (existing && votedFor(existing, me)) return;
+          setDmVenueVotes(prev => moveMyVote(prev, vName, vId, me));
           if (commitDmVote(vName, vId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
         }}
       />
@@ -1116,9 +1116,12 @@ export default function DmDetail({
           against the response, this votes over a socket emit and reconciles
           against whether the emit went out. See commitDmVote. */}
       {showDmVotePanel && (() => {
-        const myName = authUser?.name;
-        const totalVoters = new Set(dmVenueVotes.flatMap(v => v.voters || [])).size;
-        const myVote = dmVenueVotes.find(v => (v.voters || []).includes(myName))?.venue_name || null;
+        /* Me by account, and by name for an older server's tally that lists
+           names alone (lib/dmVoteMine.js). Two people may share a name, so
+           the count is of accounts too. */
+        const me = { id: authUser?.id, name: authUser?.name };
+        const totalVoters = votersCounted(dmVenueVotes);
+        const myVote = dmVenueVotes.find(v => votedFor(v, me))?.venue_name || null;
         const pinnedName = dmPinnedVenue?.name || null;
 
         const handleDmQuickVote = (venueName, venueId) => {
@@ -1126,42 +1129,16 @@ export default function DmDetail({
           // left the device has something to put back. See commitDmVote.
           const previousVotes = dmVenueVotes;
           const existing = dmVenueVotes.find(v => v.venue_name === venueName);
-          if (existing) {
-            if ((existing.voters || []).includes(myName)) return; // already voted here
-            // Switch vote: remove from old, add to new
-            const newVotes = dmVenueVotes.map(v => ({
-              ...v,
-              voters: v.venue_name === venueName
-                ? [...(v.voters || []), myName]
-                : (v.voters || []).filter(x => x !== myName),
-              vote_count: v.venue_name === venueName
-                ? parseInt(v.vote_count || 0) + 1
-                : (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
-            })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === venueName);
-            setDmVenueVotes(newVotes);
-          } else {
-            // New vote: remove from old venues, add new entry
-            const newVotes = [
-              ...dmVenueVotes.map(v => ({
-                ...v,
-                voters: (v.voters || []).filter(x => x !== myName),
-                vote_count: (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
-              })).filter(v => parseInt(v.vote_count || 0) > 0),
-              { venue_name: venueName, venue_id: venueId || null, vote_count: 1, voters: [myName] },
-            ];
-            setDmVenueVotes(newVotes);
-          }
+          if (existing && votedFor(existing, me)) return; // already voted here
+          // Mine moves: off the option that held it, onto this one (made new
+          // if nobody had voted for it).
+          setDmVenueVotes(moveMyVote(dmVenueVotes, venueName, venueId, me));
           if (commitDmVote(venueName, venueId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
         };
 
         const handleDmUnvote = () => {
           const previousVotes = dmVenueVotes;
-          const newVotes = dmVenueVotes.map(v => ({
-            ...v,
-            voters: (v.voters || []).filter(x => x !== myName),
-            vote_count: (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
-          })).filter(v => parseInt(v.vote_count || 0) > 0);
-          setDmVenueVotes(newVotes);
+          setDmVenueVotes(takeBackMyVote(dmVenueVotes, me));
           if (myVote) commitDmVote(myVote, dmVenueVotes.find(v => v.venue_name === myVote)?.venue_id, previousVotes, "Clearing your vote didn't save.");
         };
 
@@ -1218,7 +1195,7 @@ export default function DmDetail({
               {sortedVotes.length > 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
                   {sortedVotes.map((v, idx) => {
-                    const isMyVote = (v.voters || []).includes(myName);
+                    const isMyVote = votedFor(v, me);
                     const voteCount = parseInt(v.vote_count || 0);
                     const votePercent = totalVoters > 0 ? Math.round((voteCount / totalVoters) * 100) : 0;
                     const isLeading = !v.isPinned && idx === 0 && voteCount > 0;
