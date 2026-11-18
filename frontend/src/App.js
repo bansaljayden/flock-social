@@ -13918,7 +13918,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // renderScreen switch to whatever tab happened to be selected, so
         // being kicked out of a deleted flock could land you on the chat list
         // or on nothing at all. 'main' is the name every other caller uses.
-        setCurrentScreen('main');
+        // Only from the plan's own two screens: selectedFlockId outlives a
+        // back arrow or a tab tap, and a plan left earlier used to throw you
+        // out of a DM and drop what you were writing there.
+        if (currentScreen === 'chatDetail' || currentScreen === 'detail') setCurrentScreen('main');
         setSelectedFlockId(null);
       }
       // 'emptied' is the last member walking out: nobody deleted the plan, so
@@ -13928,7 +13931,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         : `${data.flockName || 'A flock'} was deleted by ${data.deletedBy}`);
     });
     return unsub;
-  }, [selectedFlockId, showToast]);
+  }, [selectedFlockId, currentScreen, showToast]);
 
   // Listen for flock updated (name, venue, time, status)
   useEffect(() => {
