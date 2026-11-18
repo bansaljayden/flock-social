@@ -565,11 +565,20 @@ function isApprovalTokenShape(value) {
 const MINT_LOCK_SQL = 'SELECT id FROM users WHERE id = $1 FOR UPDATE';
 // Live: approved and not ended by its own dates, or still waiting inside its
 // approval window. A pending key whose window closed counts as neither.
+//
+// And not ended by its account: a key minted before a sign out everywhere, a
+// password change or a reset carries an older session_version and works for
+// nothing (deadReason). The dashboard lists it as Ended with no Revoke, so a
+// count that kept it refused the next mint with "Revoke one on the dashboard
+// first" and nothing there to revoke. The row is the minter's own, locked by
+// MINT_LOCK_SQL, so its token_version cannot move under the count.
 const MINT_COUNTS_SQL = `SELECT
-          COUNT(*) FILTER (WHERE approved_at IS NOT NULL OR approval_expires_at > NOW())::int AS live,
-          COUNT(*) FILTER (WHERE approved_at IS NULL AND approval_expires_at > NOW())::int AS pending
-     FROM admin_access_keys
-    WHERE created_by = $1 AND revoked_at IS NULL AND expires_at > NOW()`;
+          COUNT(*) FILTER (WHERE k.approved_at IS NOT NULL OR k.approval_expires_at > NOW())::int AS live,
+          COUNT(*) FILTER (WHERE k.approved_at IS NULL AND k.approval_expires_at > NOW())::int AS pending
+     FROM admin_access_keys k
+     JOIN users u ON u.id = k.created_by
+    WHERE k.created_by = $1 AND k.revoked_at IS NULL AND k.expires_at > NOW()
+      AND k.session_version = u.token_version`;
 const MINT_ACTIVE_SQL = `INSERT INTO admin_access_keys
        (name, key_hash, scopes, created_by, created_ip, session_version, expires_at, approved_at, approved_via)
      VALUES ($1, $2, $3::text[], $4, $5, $6, NOW() + make_interval(days => $7::int), NOW(), 'session')

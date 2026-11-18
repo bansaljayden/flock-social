@@ -501,6 +501,26 @@ test('one account holds at most the ceiling of live keys at once', async () => {
   await mint(owner, { name: 'replacement' });
 });
 
+test('a key ended by a password change no longer counts against the ceiling', async () => {
+  // An ended key is listed as Ended with no Revoke (the dashboard pins that on
+  // purpose), so a count that kept it would answer "Revoke one on the dashboard
+  // first" with nothing on the dashboard to revoke. Ten password changes in
+  // ninety days closed minting for the rest of the window.
+  const owner = await insertUser({ role: 'admin' });
+  for (let i = 0; i < keys.ADMIN_KEY_ACTIVE_MAX; i += 1) await mint(owner, { name: `before ${i}` });
+  await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [owner.id]);
+  const after = await freshRow(owner.id);
+  const made = await mint(after, { name: 'after the password change' });
+  assert.ok(made.key, 'a mint after the old keys ended was refused');
+  // And the ceiling still holds over the keys that are live now.
+  for (let i = 1; i < keys.ADMIN_KEY_ACTIVE_MAX; i += 1) await mint(after, { name: `after ${i}` });
+  const over = await call('POST', '/api/admin/keys', { bearer: session(after), body: { name: 'one more' } });
+  assert.strictEqual(over.status, 409, over.text);
+  // Twenty keys would crowd the bounded key list the later cases read, and the
+  // account going takes them with it.
+  await pool.query('DELETE FROM users WHERE id = $1', [owner.id]);
+});
+
 // ---------------------------------------------------------------------------
 // 3. A KEY AT WORK
 // ---------------------------------------------------------------------------
