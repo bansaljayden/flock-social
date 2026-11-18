@@ -129,6 +129,39 @@ test('a zone Postgres refuses is read again in UTC and reported unknown', async 
   assert.strictEqual(s.timeZone, null);
 });
 
+test('last night: an hour with fewer readings than tableHistory\'s floor is not called full', async () => {
+  // One test reading with every table drawn in use made a "full" hour, the
+  // same hole tableHistory closed for the usual full hours with
+  // FULL_HOURS_MIN_READINGS.
+  reset();
+  handlers.push([/FROM sensor_table_seatings s/, () => ({ rows: [{ seatings: 30, waited: 0, turn_median: 50, day: '2026-10-18' }] })]);
+  handlers.push([/FROM venue_sensor_data v/, () => ({
+    rows: [
+      { hour: 15, readings: 1, full_readings: 1 },
+      { hour: 20, readings: tableHistory.FULL_HOURS_MIN_READINGS, full_readings: tableHistory.FULL_HOURS_MIN_READINGS },
+    ],
+  })]);
+  const s = await tableInsights.lastNightSummary('place-a', NOW);
+  assert.deepStrictEqual(s.full_hours, [20], 'one reading is not most of an hour');
+});
+
+test('no seating longer than tableHistory\'s MAX_TURN_HOURS reaches a count, a turn or a wait share', async () => {
+  // A unit that lost power with tables seated closes them the next morning:
+  // twelve-hour "turns" that tableHistory leaves out of every figure. The
+  // three seating reads here are bound the same way, with the same constant.
+  reset({ stats: busyStats });
+  await tableInsights.lastNightSummary('place-a', NOW);
+  await tableInsights.turnsByDay('place-a', NOW);
+  await tableInsights.tablesWaitingMost('place-a', NOW);
+  const reads = queryLog.filter((q) => /FROM sensor_table_seatings s/.test(q.sql));
+  assert.strictEqual(reads.length, 3);
+  for (const q of reads) {
+    const bound = q.sql.match(/AND s\.left_at - s\.seated_at <= \(\$(\d)::int \* INTERVAL '1 hour'\)/);
+    assert.ok(bound, `a seating read has no turn bound: ${q.sql}`);
+    assert.strictEqual(q.params[Number(bound[1]) - 1], tableHistory.MAX_TURN_HOURS);
+  }
+});
+
 test('hour ranges join whole hours and wrap past midnight in words', () => {
   const { hourRanges } = tableInsights.__test;
   assert.deepStrictEqual(hourRanges([19, 20, 21, 23]), ['7 PM to 10 PM', '11 PM to 12 AM']);

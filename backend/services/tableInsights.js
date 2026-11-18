@@ -30,13 +30,19 @@
 // assertCleanCopy throws on one when a fact is built).
 //
 // Every statement binds its parameters with one cast each, the same way every
-// time ($1 varchar place, $2 text zone, $3 timestamptz now, $4 int window).
+// time ($1 varchar place, $2 text zone, $3 timestamptz now, $4 int window,
+// then the int turn bound in hours where a statement reads seatings).
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
 const tableHistory = require('./tableHistory');
 
-const { MIN_SEATINGS_FOR_MEDIAN, FULL_SHARE_MIN } = tableHistory;
+// tableHistory's sample rules, kept here too: no seating longer than
+// MAX_TURN_HOURS is a turn, and an hour needs FULL_HOURS_MIN_READINGS readings
+// before it is called full (that file's header says why).
+const {
+  MIN_SEATINGS_FOR_MEDIAN, FULL_SHARE_MIN, MAX_TURN_HOURS, FULL_HOURS_MIN_READINGS,
+} = tableHistory;
 
 const TURNS_WINDOW_DAYS = 28;
 const WEEK_DAYS = 7;
@@ -114,6 +120,7 @@ const LAST_NIGHT_SEATINGS_SQL = `
     FROM sensor_table_seatings s
    WHERE s.venue_place_id = $1::varchar
      AND s.left_at IS NOT NULL
+     AND s.left_at - s.seated_at <= ($4::int * INTERVAL '1 hour')
      AND s.seated_at >= $3::timestamptz - INTERVAL '3 days'
      AND (s.seated_at AT TIME ZONE $2::text)::date = (($3::timestamptz AT TIME ZONE $2::text)::date) - 1`;
 
@@ -146,15 +153,17 @@ async function lastNightSummary(placeId, now = new Date()) {
   const zone = await zoneFor(placeId);
   const nowIso = new Date(now).toISOString();
   const [seat, full] = await Promise.all([
-    queryInZone(LAST_NIGHT_SEATINGS_SQL, placeId, zone, nowIso),
+    queryInZone(LAST_NIGHT_SEATINGS_SQL, placeId, zone, nowIso, [MAX_TURN_HOURS]),
     queryInZone(LAST_NIGHT_FULL_SQL, placeId, zone, nowIso),
   ]);
   const row = seat.rows[0] || {};
   const seatings = Number(row.seatings) || 0;
   const waited = Number(row.waited) || 0;
   const turn = seatings >= MIN_SEATINGS_FOR_MEDIAN ? roundMinutes(row.turn_median) : null;
+  // One night has one date per hour, so of tableHistory's two floors only the
+  // reading count applies here.
   const fullHours = full.rows
-    .filter((r) => Number(r.readings) > 0 && Number(r.full_readings) / Number(r.readings) >= FULL_SHARE_MIN)
+    .filter((r) => Number(r.readings) >= FULL_HOURS_MIN_READINGS && Number(r.full_readings) / Number(r.readings) >= FULL_SHARE_MIN)
     .map((r) => Number(r.hour))
     .sort((a, b) => a - b);
   const timeZone = seat.timeZone && full.timeZone ? seat.timeZone : null;
@@ -202,6 +211,7 @@ const TURNS_BY_DAY_SQL = `
     FROM sensor_table_seatings s
    WHERE s.venue_place_id = $1::varchar
      AND s.left_at IS NOT NULL
+     AND s.left_at - s.seated_at <= ($5::int * INTERVAL '1 hour')
      AND s.seated_at >= $3::timestamptz - ($4::int * INTERVAL '1 day')
      AND s.seated_at < $3::timestamptz
    GROUP BY 1
@@ -210,7 +220,7 @@ const TURNS_BY_DAY_SQL = `
 /** [{ dow, seatings, turn_minutes, waited_percent }] (nulls under the floor) and timeZone. */
 async function turnsByDay(placeId, now = new Date(), days = TURNS_WINDOW_DAYS) {
   const zone = await zoneFor(placeId);
-  const { rows, timeZone } = await queryInZone(TURNS_BY_DAY_SQL, placeId, zone, new Date(now).toISOString(), [days]);
+  const { rows, timeZone } = await queryInZone(TURNS_BY_DAY_SQL, placeId, zone, new Date(now).toISOString(), [days, MAX_TURN_HOURS]);
   return {
     timeZone,
     days: rows.map((r) => {
@@ -233,13 +243,14 @@ const TABLES_WAITED_SQL = `
     FROM sensor_table_seatings s
    WHERE s.venue_place_id = $1::varchar
      AND s.left_at IS NOT NULL
+     AND s.left_at - s.seated_at <= ($4::int * INTERVAL '1 hour')
      AND s.seated_at >= $2::timestamptz - ($3::int * INTERVAL '1 day')
      AND s.seated_at < $2::timestamptz
    GROUP BY s.table_no`;
 
 /** Up to three table numbers whose seatings most often waited, each over TABLE_MIN_SEATINGS. */
 async function tablesWaitingMost(placeId, now = new Date(), days = TURNS_WINDOW_DAYS) {
-  const { rows } = await pool.query(TABLES_WAITED_SQL, [placeId, new Date(now).toISOString(), days]);
+  const { rows } = await pool.query(TABLES_WAITED_SQL, [placeId, new Date(now).toISOString(), days, MAX_TURN_HOURS]);
   return rows
     .map((r) => ({ table: Number(r.table_no), seatings: Number(r.seatings), waited: Number(r.waited) }))
     .filter((t) => t.seatings >= TABLE_MIN_SEATINGS && t.waited > 0)
