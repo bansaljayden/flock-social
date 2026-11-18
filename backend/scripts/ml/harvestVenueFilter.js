@@ -1151,7 +1151,7 @@ const budgetUsed = (s) => s.venuesReturned + s.resultsReserved;
 // BestTime cannot have billed it. Any other failure once the request was made
 // (our deadline passing, a connection dropped mid-answer, an answer that was
 // not JSON) may have been served and billed.
-const NEVER_SENT_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT/;
+const NEVER_SENT_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT|ENETUNREACH|EHOSTUNREACH|ENETDOWN|EHOSTDOWN/;
 
 // A request that may have been billed without an answer being read holds a
 // whole page against the budget, and the hold is never released: the retry

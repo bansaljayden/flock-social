@@ -1654,6 +1654,18 @@ test('a request that may have been billed without an answer keeps a page reserve
   assert.strictEqual(c.summary.stats.requests, reference.summary.stats.requests + 1);
   assert.deepStrictEqual([c.summary.budget.reserved, c.summary.budget.used], [0, counted]);
   assert.match(c.out, /network error \(ECONNREFUSED\); never sent, nothing reserved; retry 1\//);
+
+  // No route to BestTime at all is never sent either, so a run on a one-page
+  // budget still gets its retry.
+  for (const code of ['ENETUNREACH', 'EHOSTUNREACH']) {
+    const unreachable = failFirstFilter(fakeBestTime(AXIS), async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: { code, syscall: 'connect' } });
+    });
+    const u = await runHarvest(['--city=philly', '--days=0'], unreachable);
+    assert.strictEqual(u.summary.aborted, false, u.summary.abortReason);
+    assert.deepStrictEqual([u.summary.budget.reserved, u.summary.budget.used], [0, counted]);
+    assert.match(u.out, new RegExp(`network error \\(${code}\\); never sent, nothing reserved; retry 1/`));
+  }
 });
 
 test('a day mismatch seen before a budget stop still refuses the run, and nothing is written', async () => {
