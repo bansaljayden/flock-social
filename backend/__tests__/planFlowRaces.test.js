@@ -39,7 +39,8 @@
 //  10. THE HOST HEARS ONCE WHEN EVERYONE ELSE HAS VOTED (routes/venues.js
 //      notifyHostVotesIn). "Once" is an UPDATE that claims
 //      flocks.votes_in_pushed_at only while it is NULL, so it is run here,
-//      with two last votes fired together, rather than trusted. A push that
+//      with two last votes fired together, rather than trusted. A banned
+//      member, whose vote the tally leaves out, is not waited on. A push that
 //      waited (quiet hours, a retry) is asked again as it goes out, and is not
 //      sent once the plan is locked in, called off or done. Nor is a "Still
 //      in?" that waited, once the plan has begun, been called off or been
@@ -1102,6 +1103,33 @@ test('a plan already locked in, or voted on only by its host, sends nothing', as
     assert.deepStrictEqual(votesIn(sends), []);
     assert.strictEqual(await pushedAt(locked), null, 'a confirmed plan has nothing left to lock in');
     assert.strictEqual(await pushedAt(open), null);
+  });
+});
+
+// A ban leaves the membership accepted, and the tally leaves a banned
+// account's vote out, so the claim does too: it waited on a member who can
+// never sign in to vote, and the host never heard.
+test('the host is not kept waiting on a banned member, and a plan with only a banned member besides the host sends nothing', async () => {
+  await withPush(async (sends) => {
+    const host = await mkUser('Host Eighteen');
+    const mo = await mkUser('Mo Eighteen');
+    const zed = await mkUser('Zed Eighteen', { banned: true });
+    const flockId = await mkFlock(host);
+    await addMember(flockId, mo, 'accepted');
+    await addMember(flockId, zed, 'accepted');
+
+    await vote(mo, flockId, 'Kome');
+    const until = Date.now() + 3000;
+    while (votesIn(sends).length === 0 && Date.now() < until) await sleep(20);
+    assert.deepStrictEqual(votesIn(sends).map((s) => [s.userId, s.data.flockId]), [[host.id, String(flockId)]],
+      'the votes-in push waited on a banned member who never voted');
+
+    // Nobody but a banned account to wait on is nobody to wait on.
+    const alone = await mkFlock(host);
+    await addMember(alone, zed, 'accepted');
+    await vote(host, alone, 'Kome');
+    await settle();
+    assert.strictEqual(await pushedAt(alone), null);
   });
 });
 

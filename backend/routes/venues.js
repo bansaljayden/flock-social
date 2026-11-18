@@ -409,6 +409,11 @@ function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null, d
 // member who had not voted left), the claim is still taken and nothing is
 // sent: they are looking at it.
 //
+// NOT A BANNED ACCOUNT, in either half. A ban leaves the membership accepted,
+// the tally above leaves the account's vote out, and it can never sign in to
+// vote, so waiting on it meant the host never heard; nor is a plan whose only
+// other member is banned one whose votes are in.
+//
 // Nothing here touches the database when push is not configured, which is the
 // rule every push producer in this backend keeps (several suites assert a
 // push-triggering route issues no unscripted query), and nothing here throws:
@@ -423,10 +428,12 @@ const VOTES_IN_CLAIM_SQL = `
      AND f.votes_in_pushed_at IS NULL
      AND EXISTS (
        SELECT 1 FROM flock_members m
+         JOIN users u ON u.id = m.user_id AND u.is_banned IS NOT TRUE
         WHERE m.flock_id = f.id AND m.status = 'accepted' AND m.user_id <> f.creator_id
      )
      AND NOT EXISTS (
        SELECT 1 FROM flock_members m
+         JOIN users u ON u.id = m.user_id AND u.is_banned IS NOT TRUE
         WHERE m.flock_id = f.id AND m.status = 'accepted' AND m.user_id <> f.creator_id
           AND NOT EXISTS (
             SELECT 1 FROM venue_votes v WHERE v.flock_id = f.id AND v.user_id = m.user_id

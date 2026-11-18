@@ -113,10 +113,11 @@ test('the claim is one statement: planning only, not yet sent, every accepted no
   assert.match(sql, /UPDATE flocks f SET votes_in_pushed_at = NOW\(\)/);
   assert.match(sql, /f\.status = 'planning'/);
   assert.match(sql, /f\.votes_in_pushed_at IS NULL/);
-  // Somebody other than the host has to be on the plan at all.
-  assert.match(sql, /AND EXISTS \( SELECT 1 FROM flock_members m WHERE m\.flock_id = f\.id AND m\.status = 'accepted' AND m\.user_id <> f\.creator_id \)/);
-  // And none of them may be missing a vote.
-  assert.match(sql, /AND NOT EXISTS \( SELECT 1 FROM flock_members m WHERE m\.flock_id = f\.id AND m\.status = 'accepted' AND m\.user_id <> f\.creator_id AND NOT EXISTS \( SELECT 1 FROM venue_votes v WHERE v\.flock_id = f\.id AND v\.user_id = m\.user_id \) \)/);
+  // Somebody other than the host, and not banned, has to be on the plan at all.
+  assert.match(sql, /AND EXISTS \( SELECT 1 FROM flock_members m JOIN users u ON u\.id = m\.user_id AND u\.is_banned IS NOT TRUE WHERE m\.flock_id = f\.id AND m\.status = 'accepted' AND m\.user_id <> f\.creator_id \)/);
+  // And none of them may be missing a vote. A banned member, whose vote the
+  // tally leaves out, is not waited on (planFlowRaces runs it).
+  assert.match(sql, /AND NOT EXISTS \( SELECT 1 FROM flock_members m JOIN users u ON u\.id = m\.user_id AND u\.is_banned IS NOT TRUE WHERE m\.flock_id = f\.id AND m\.status = 'accepted' AND m\.user_id <> f\.creator_id AND NOT EXISTS \( SELECT 1 FROM venue_votes v WHERE v\.flock_id = f\.id AND v\.user_id = m\.user_id \) \)/);
   assert.match(sql, /RETURNING f\.creator_id, f\.name/);
 });
 
