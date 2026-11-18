@@ -145,7 +145,14 @@
 // 60,000) is per run: give a second run in a month what is left. A page holds
 // at most --page-size venues, so the run stops before any request that could
 // take its results past the budget, and says how many it used, in all and by
-// city. Stopping must not leave a venue with part of a week, so the harvest
+// city. A request that may have been billed without its answer being read (our
+// deadline passed, the connection dropped mid-answer, the answer was not JSON,
+// or a 5xx) holds a whole page against the budget, and a successful retry is
+// counted beside the hold, never instead of it, so retries cannot carry the
+// run past the budget; a request that never left (a refused connection, a
+// name that did not resolve), a 429 and a cached answer hold nothing. The
+// summary gives the results counted from answers and those reserved apart.
+// Stopping must not leave a venue with part of a week, so the harvest
 // goes leaf first: a box's first day finds its leaves (splitting as below),
 // and each leaf asks its other days before the next leaf starts. A leaf's
 // answers join the run only once its last day is in, and a split box's own
@@ -1132,6 +1139,25 @@ function readFilterAnswer(data) {
   return { venues: data.venues, total, credits };
 }
 
+// What the result budget has spent: the results counted from answers, and a
+// page held for every request that may have been billed without one.
+const budgetUsed = (s) => s.venuesReturned + s.resultsReserved;
+
+// A failure that shows the request never left this machine (a refused
+// connection, a name that did not resolve, a connection never made in time):
+// BestTime cannot have billed it. Any other failure once the request was made
+// (our deadline passing, a connection dropped mid-answer, an answer that was
+// not JSON) may have been served and billed.
+const NEVER_SENT_RE = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT/;
+
+// A request that may have been billed without an answer being read holds a
+// whole page against the budget, and the hold is never released: the retry
+// that succeeds is counted beside it (THE RESULT BUDGET).
+function reservePage(ctx) {
+  ctx.stats.resultsReserved += ctx.opts.pageSize;
+  return `${ctx.opts.pageSize} results reserved against the budget (${ctx.stats.resultsReserved} in all)`;
+}
+
 // One page. Retries what BestTime asks to be retried, throws an abort for
 // everything else. Never prints the URL or a fetch error's message: the URL
 // carries the private key. With --cache-dir, a question already answered is
@@ -1151,10 +1177,13 @@ async function requestPage(ctx, q) {
   }
   for (let attempt = 0; ; attempt++) {
     // A page holds at most --page-size venues, so this is the last moment the
-    // budget can be kept rather than passed (THE RESULT BUDGET).
-    if (ctx.stats.venuesReturned + ctx.opts.pageSize > ctx.opts.resultBudget) {
+    // budget can be kept rather than passed (THE RESULT BUDGET). Asked again
+    // before every retry, with the pages earlier attempts may have been billed
+    // for already held.
+    const used = budgetUsed(ctx.stats);
+    if (used + ctx.opts.pageSize > ctx.opts.resultBudget) {
       throw budgetStop(`the next page could take the run past --result-budget=${ctx.opts.resultBudget} `
-        + `(${ctx.stats.venuesReturned} results used).`);
+        + `(${used} results used: ${ctx.stats.venuesReturned} counted from answers, ${ctx.stats.resultsReserved} reserved).`);
     }
     if (ctx.stats.requests >= ctx.opts.maxRequests) {
       throw abortError(`REFUSED: the request ceiling (--max-requests=${ctx.opts.maxRequests}) was reached. `
@@ -1177,8 +1206,11 @@ async function requestPage(ctx, q) {
         && !(err && err.notJson)) {
         throw abortError(`the venue filter request failed (${code}).`);
       }
+      // Tested, never printed: the message can carry the URL.
+      const held = NEVER_SENT_RE.test(`${code} ${String((err && err.message) || '')}`)
+        ? 'never sent, nothing reserved' : reservePage(ctx);
       if (attempt >= RETRY_WAITS_MS.length) throw abortError(`the venue filter kept failing (${code}); stopping.`);
-      console.warn(`  network error (${code}); retry ${attempt + 1}/${RETRY_WAITS_MS.length} in ${RETRY_WAITS_MS[attempt] / 1000}s`);
+      console.warn(`  network error (${code}); ${held}; retry ${attempt + 1}/${RETRY_WAITS_MS.length} in ${RETRY_WAITS_MS[attempt] / 1000}s`);
       await ctx.sleep(RETRY_WAITS_MS[attempt]);
       continue;
     }
@@ -1199,9 +1231,12 @@ async function requestPage(ctx, q) {
         throw abortError(`HTTP ${status} from the venue filter: the key or the account was refused. Nothing further can succeed.`);
       }
       if (err && err.transient) {
+        // A 5xx came from a server that had the request and may have served
+        // and billed it before failing; a 429 is BestTime declining to serve it.
+        const held = status >= 500 ? reservePage(ctx) : 'throttled, nothing reserved';
         if (attempt >= RETRY_WAITS_MS.length) throw abortError(`HTTP ${status} from the venue filter after ${attempt + 1} tries; BestTime is not letting us in.`);
         const wait = status === 429 || status === 503 ? THROTTLE_WAIT_MS : RETRY_WAITS_MS[attempt];
-        console.warn(`  HTTP ${status}; retry ${attempt + 1}/${RETRY_WAITS_MS.length} in ${wait / 1000}s`);
+        console.warn(`  HTTP ${status}; ${held}; retry ${attempt + 1}/${RETRY_WAITS_MS.length} in ${wait / 1000}s`);
         await ctx.sleep(wait);
         continue;
       }
@@ -1777,6 +1812,9 @@ async function readAccount(key, label) {
 function emptyStats() {
   return {
     requests: 0, venuesReturned: 0, creditsReported: 0, creditsEstimated: 0, notFound: 0,
+    // THE RESULT BUDGET: a page held for each request that may have been
+    // billed without an answer, beside venuesReturned, counted from answers.
+    resultsReserved: 0,
     splits: 0, truncatedTiles: 0, malformed: 0, unverifiable: 0,
     // THE CACHE: pages answered from it and their results, and pages written.
     cachedPages: 0, cachedResults: 0, cacheWrites: 0, cacheWriteFailures: 0,
@@ -1831,7 +1869,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     skipped: null, rowsPlanned: 0, rowsWritten: 0, rowsInserted: 0, rowsRefreshed: 0,
     venuesInserted: 0, venuesWritten: 0, vanished: 0, claimed: 0, writeFailures: 0,
     incompleteWeeks: 0, knownSkipped: 0, stats: emptyStats(), byCity: {},
-    budget: { limit: null, used: 0, stopped: false, cutShort: null, unfinished: [] },
+    budget: { limit: null, used: 0, reserved: 0, stopped: false, cutShort: null, unfinished: [] },
     axis: null, axisAlt: null, axisVerdict: null, placeIds: null, nearDuplicates: null, peakHours: null,
   };
 
@@ -1940,7 +1978,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           console.log(`${TAG} ${city}: ${ctx.city.tiles} tiles (${ctx.city.leaves} leaves), ${ctx.city.requests} requests, `
             + `${ctx.city.results} results (~${ctx.city.credits} query credits)`
             + `${opts.cacheDir ? `, and ${ctx.city.cachedPages} pages (${ctx.city.cachedResults} results) from the cache` : ''}. `
-            + `Run so far: ${s.venuesReturned} of the ${opts.resultBudget}-result budget.`);
+            + `Run so far: ${budgetUsed(s)} of the ${opts.resultBudget}-result budget`
+            + `${s.resultsReserved ? ` (${s.resultsReserved} of them reserved for requests that may have been billed without an answer)` : ''}.`);
         }
       } catch (err) {
         if (!err.budgetStop) throw err;
@@ -1951,13 +1990,15 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         summary.budget.unfinished = opts.cities.slice(opts.cities.indexOf(current));
         summary.byCity[current].state = 'stopped';
         for (const city of summary.budget.unfinished.slice(1)) summary.byCity[city].state = 'not reached';
-        console.log(`${TAG} RESULT BUDGET: stopped in ${current} with ${s.venuesReturned} of ${opts.resultBudget} results `
-          + `used; the next page could have passed --result-budget. The leaf in progress and its box were dropped `
+        console.log(`${TAG} RESULT BUDGET: stopped in ${current} with ${budgetUsed(s)} of ${opts.resultBudget} results `
+          + `used (${s.venuesReturned} counted from answers, ${s.resultsReserved} reserved for requests that may have been `
+          + 'billed without one); the next page could have passed --result-budget. The leaf in progress and its box were dropped '
           + 'whole, so no venue is written with part of the week this run asked for. '
           + `Unfinished: ${summary.budget.unfinished.join(', ')}. To continue, with what the month has left: `
           + `--city=${summary.budget.unfinished.join(',')} (${current} starts again from its first box).`);
       }
-      summary.budget.used = s.venuesReturned;
+      summary.budget.used = budgetUsed(s);
+      summary.budget.reserved = s.resultsReserved;
       summary.leaves = opts.cities.reduce((n, city) => n + summary.byCity[city].leaves, 0);
       summary.venuesFound = venues.size;
 
@@ -2107,7 +2148,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
 
       console.log(`${TAG} ${s.requests} filter requests over ${summary.leaves} leaf tiles (${s.splits} splits, `
         + `${s.truncatedTiles} tiles still at the cap at minimum size, ${s.notFound} answered 404). Results: `
-        + `${s.venuesReturned} of the ${opts.resultBudget} budget. Query credits: `
+        + `${s.venuesReturned} counted from answers and ${s.resultsReserved} reserved for requests that may have been billed `
+        + `without one, ${budgetUsed(s)} of the ${opts.resultBudget} budget. Query credits: `
         + `${s.creditsReported > 0 ? `${s.creditsReported} reported by BestTime, ` : ''}~${s.creditsEstimated} estimated.`
         + `${opts.commit ? '' : ' A --commit run of the same scope asks the same questions and should cost the same.'}`);
       if (opts.cacheDir) logCache(opts, s);

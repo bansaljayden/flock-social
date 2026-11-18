@@ -37,7 +37,9 @@
 //   * --new-only writes nothing for a venue already held, by either id or as
 //     a near-duplicate, and a new venue's row carries its own city and zone;
 //   * the result budget stops a run before it could pass, and no venue is
-//     written with part of its week.
+//     written with part of its week;
+//   * a request that may have been billed without an answer holds a page
+//     against the budget and no retry is sent past it (2026-11-18).
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/harvestVenueFilter.test.js
@@ -1213,7 +1215,7 @@ test('the result budget stops the run before it could pass, and keeps every writ
   assert.strictEqual(summary.aborted, false, summary.abortReason);
   assert.strictEqual(summary.exitCode, 0, 'a budget stop with whole weeks written is a clean run');
   assert.deepStrictEqual(summary.budget, {
-    limit: budget, used: before + 20, stopped: true, cutShort: 'philly', unfinished: ['philly', 'lehigh'],
+    limit: budget, used: before + 20, reserved: 0, stopped: true, cutShort: 'philly', unfinished: ['philly', 'lehigh'],
   });
   assert.ok(summary.stats.venuesReturned <= budget);
   assert.strictEqual(summary.venuesFound, 24 + 20, "C's venues were dropped with its box");
@@ -1581,4 +1583,72 @@ test('--cache-dir keeps what an aborted run fetched, and a rerun answers from it
   } finally {
     fs.rmSync(cacheDir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// An independent review, 2026-11-18.
+// ---------------------------------------------------------------------------
+
+// The fake, with its first filter request handed to `fail(send)` instead:
+// `send()` delivers it to the fake and gives back the answer, so a request can
+// be lost after BestTime saw it, answered by a failure, or never sent at all.
+function failFirstFilter(fake, fail) {
+  const inner = fake.fetchImpl;
+  let failed = false;
+  fake.fetchImpl = async (input, init = {}) => {
+    if (!failed && new URL(String(input)).pathname === '/api/v1/venues/filter') {
+      failed = true;
+      return fail(() => inner(input, init));
+    }
+    return inner(input, init);
+  };
+  return fake;
+}
+
+test('a request that may have been billed without an answer keeps a page reserved, and no retry passes the budget', async () => {
+  const filterCalls = (fake) => fake.requests.filter((r) => r.path === '/api/v1/venues/filter').length;
+
+  // --page-size=100 --result-budget=100: BestTime answered the first page and
+  // its body was lost on the way back, so up to a hundred results may have
+  // been billed. A retry could bill a hundred more, and is not made.
+  const lost = failFirstFilter(fakeBestTime(AXIS), async (send) => {
+    const res = await send();
+    return { ...res, json: async () => { throw Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }); } };
+  });
+  const a = await runHarvest(['--city=philly', '--days=0', '--result-budget=100'], lost);
+  assertNoKey(a.out);
+  assert.strictEqual(a.summary.aborted, false, a.summary.abortReason);
+  assert.strictEqual(filterCalls(lost), 1, 'the retry was sent although it could pass the budget');
+  assert.deepStrictEqual(
+    [a.summary.budget.stopped, a.summary.budget.used, a.summary.budget.reserved, a.summary.stats.venuesReturned],
+    [true, 100, 100, 0]
+  );
+  assert.match(a.out, /network error \(AbortError\); 100 results reserved against the budget \(100 in all\)/);
+  assert.match(a.out, /RESULT BUDGET: stopped in philly with 100 of 100 results used \(0 counted from answers, 100 reserved/);
+
+  // A 5xx may have been served too. Its page stays reserved after the retry
+  // succeeds, beside what the retry counted.
+  const plain = fakeBestTime(AXIS);
+  const reference = await runHarvest(['--city=philly', '--days=0'], plain);
+  const counted = reference.summary.stats.venuesReturned;
+  assert.ok(counted > 0);
+  const busy = failFirstFilter(fakeBestTime(AXIS), async (send) => { await send(); return jsonResponse(502, {}); });
+  const b = await runHarvest(['--city=philly', '--days=0'], busy);
+  assert.strictEqual(b.summary.aborted, false, b.summary.abortReason);
+  assert.strictEqual(filterCalls(busy), filterCalls(plain) + 1);
+  assert.strictEqual(b.summary.stats.venuesReturned, counted);
+  assert.deepStrictEqual([b.summary.budget.reserved, b.summary.budget.used], [100, counted + 100]);
+  assert.match(b.out, /HTTP 502; 100 results reserved against the budget \(100 in all\); retry 1\//);
+  assert.match(b.out, new RegExp(`Results: ${counted} counted from answers and 100 reserved for requests that may have been billed `
+    + `without one, ${counted + 100} of the 60000 budget`));
+
+  // A refused connection never reached BestTime: nothing is reserved.
+  const refused = failFirstFilter(fakeBestTime(AXIS), async () => {
+    throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  });
+  const c = await runHarvest(['--city=philly', '--days=0'], refused);
+  assert.strictEqual(c.summary.aborted, false, c.summary.abortReason);
+  assert.strictEqual(c.summary.stats.requests, reference.summary.stats.requests + 1);
+  assert.deepStrictEqual([c.summary.budget.reserved, c.summary.budget.used], [0, counted]);
+  assert.match(c.out, /network error \(ECONNREFUSED\); never sent, nothing reserved; retry 1\//);
 });
