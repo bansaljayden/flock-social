@@ -239,12 +239,12 @@ test('every Place Details caller that reads Google\'s error body counts NOT_FOUN
   const path = require('path');
   // routes/ai.js is not listed: Birdie's crowd lookup reads Place Details
   // through services/placeDetailsCache.js, so the cache's check covers it.
-  for (const rel of ['services/placeDetailsCache.js', 'routes/badge.js']) {
+  // routes/publicCrowd.js joined them when its inline 404 check let an id that
+  // never decoded arm the alarm (__tests__/publicDemoPlaceIdHealth.test.js).
+  for (const rel of ['services/placeDetailsCache.js', 'routes/badge.js', 'routes/publicCrowd.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
     assert.match(src, /isPlaceNotFoundAnswer\(/, `${rel} records a retired place id as a Places failure again`);
   }
-  const demo = fs.readFileSync(path.join(__dirname, '..', 'routes', 'publicCrowd.js'), 'utf8');
-  assert.match(demo, /if \(resp\.status === 404\) recordPlacesResult\(true\);/);
 });
 
 test('a missing API key is NOT an outage', () => {

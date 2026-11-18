@@ -632,7 +632,9 @@ test('the pins draw on the same three, the embedded card first', async () => {
   // address's 20 misses an hour long before it gets here.
   resetDemoLimitsForTest();
   process.env.PAYWALL_ENABLED = 'true';
-  NEARBY = ['PIN_A', 'PIN_B', 'PIN_C', 'PIN_D', 'PIN_E'].map((id) => place(id));
+  // Six characters at least: the demo card refuses an id no Google place id
+  // could be (utils/places.js isPlaceIdShaped) before it calls anything.
+  NEARBY = ['PIN_AA', 'PIN_BB', 'PIN_CC', 'PIN_DD', 'PIN_EE'].map((id) => place(id));
   const res = await call('GET', '/api/public/demo/venues?lat=55.55&lng=66.66&localHour=20&localDay=5');
   assert.strictEqual(res.status, 200, res.text);
   assert.ok(res.body.card, 'the area search stopped embedding a card; this test is looking at nothing');

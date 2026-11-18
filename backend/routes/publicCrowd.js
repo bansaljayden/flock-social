@@ -19,7 +19,8 @@ const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { allowGlobalPlacesCall } = require('../utils/placesBudget');
 // Free outage detection. This is the file whose console.error below ran for five days in September with nobody counting it. See utils/placesHealth.js.
-const { recordPlacesResult } = require('../utils/placesHealth');
+const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
+const { isPlaceIdShaped } = require('../utils/places');
 const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, describePublishedArithmetic, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
@@ -992,7 +993,11 @@ router.get('/demo/venues',
 // ---------------------------------------------------------------------------
 router.get('/demo/venue/:placeId',
   [
-    param('placeId').trim().isLength({ min: 1, max: 200 }),
+    // Shaped like a place id before anything is spent on it: the id is the
+    // caller's to choose on this unauthenticated door, and Google can only
+    // refuse one that is not, as a paid call.
+    param('placeId').trim().isLength({ min: 1, max: 200 }).bail()
+      .custom((v) => isPlaceIdShaped(v)).withMessage('placeId is not a valid place id'),
     query('localHour').optional().isInt({ min: 0, max: 23 }),
     query('localDay').optional().isInt({ min: 0, max: 6 }),
   ],
@@ -1030,9 +1035,17 @@ router.get('/demo/venue/:placeId',
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
       }
       if (!resp.ok) {
-        // A 404 is Google ANSWERING, so it is health, not an outage.
-        if (resp.status === 404) recordPlacesResult(true);
-        if (resp.status === 404) return res.status(404).json({ error: 'Venue not found' });
+        // A 404 is Google ANSWERING, so it is health, not an outage. So is an
+        // id that never decoded (400 INVALID_ARGUMENT naming the place id),
+        // read by the predicate the shared details path uses; three of those
+        // used to arm the outage alarm. A dead key's INVALID_ARGUMENT names no
+        // place id and still counts.
+        let body = null;
+        try { body = await resp.json(); } catch { /* no readable body */ }
+        if (resp.status === 404 || isPlaceNotFoundAnswer(resp.status, body?.error)) {
+          recordPlacesResult(true);
+          return res.status(404).json({ error: 'Venue not found' });
+        }
         console.error(`[PublicDemo] Places details failed: HTTP ${resp.status}`);
         recordPlacesResult(false, `HTTP ${resp.status}`);
         return res.status(503).json({ error: DEMO_BUSY_MSG, unavailable: true });
