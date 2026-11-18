@@ -474,8 +474,15 @@ function normalizedAddress(addr) {
 // the same options here, so an unchanged address is never a change.
 // normalizedAddress itself stays as it is: it keys the stored ban and grace
 // digests (identityDigests, graceDigests), and changing it would orphan them.
-// `validator` is express-validator's own dependency, the copy its sanitizer
-// calls.
+// `validator` is declared in package.json on express-validator's own range,
+// so both resolve to the one copy its sanitizer calls.
+//
+// ONLY THE STORED SIDE IS NORMALIZED HERE. The submitted address has already
+// been through the route's .normalizeEmail(), and normalizeEmail is not
+// idempotent: Yahoo's rule drops the LAST -tag per call, so a second pass
+// turned a real move from sam@yahoo.com to sam-work-tag@yahoo.com
+// (sam-work@yahoo.com after the sanitizer) back into sam@yahoo.com, read it
+// as no change and dropped the new address.
 const validator = require('validator');
 
 function sanitizedAddress(addr) {
@@ -1362,7 +1369,7 @@ router.put('/profile',
       }
 
       // Check email uniqueness if changing email
-      const changingEmail = Boolean(email) && sanitizedAddress(email) !== sanitizedAddress(user.email);
+      const changingEmail = Boolean(email) && String(email).trim() !== sanitizedAddress(user.email);
       if (changingEmail) {
         // The same block all three account-creation paths in routes/auth.js
         // apply. Without it a throwaway address that signup refused was one

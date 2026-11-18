@@ -193,6 +193,19 @@ for (const [provider, address] of OAUTH_ADDRESSES) {
   });
 }
 
+test('a move to a several-tag Yahoo address is a change, not read back as the old one', async () => {
+  // normalizeEmail drops Yahoo's LAST -tag per call, so the sanitizer makes
+  // sam-work-tag@yahoo.com into sam-work@yahoo.com, and a second pass in the
+  // comparison made it sam@yahoo.com: the stored address, so the move read as
+  // no change and the new address was dropped. Only the stored side is
+  // normalized now. An OAuth row refuses the move, which proves it was seen.
+  oauthRow('google', 'sam@yahoo.com');
+  const res = await req('PUT', '/api/users/profile', { body: { email: 'sam-work-tag@yahoo.com', bio: 'x' } });
+  assert.strictEqual(res.status, 400, JSON.stringify(res.body));
+  assert.match(res.body.error, /managed by that provider/);
+  assert.strictEqual(lastUpdate, null);
+});
+
 test('a real change on a Google or Apple account is still refused', async () => {
   oauthRow('google', 'ivan@yandex.com');
   const res = await req('PUT', '/api/users/profile', { body: { email: 'someone.else@yandex.com', bio: 'x' } });
