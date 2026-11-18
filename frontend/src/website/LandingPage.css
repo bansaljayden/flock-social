@@ -2286,20 +2286,26 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* Venues: one paragraph and one way in, on navy (2026-10-21), beside the
    owner's dashboard with two of its parts named, the notes to its right.
-   Side by side from 1200px, where the 1.3 stage leaves the copy a reading
-   width (the stage takes its 684px first, the copy the rest), the copy
+   Side by side from 1200px, where the stage takes its 605px first and the
+   copy the rest, the copy
    centred against the phone itself: the caption is lifted out of the flow
    there, so it does not pull the centre down. Stacked below that, and on a
    phone the capture with numbered dots. The rest of the venue offer, and the
    sign-in for owners who already have an account, is the venue column under
    Pricing. */
 .lp-venues-in { display: grid; gap: 32px clamp(40px, 6vw, 80px); align-items: start; }
+/* The Flux line is a step under the lead, 14px below it and at a reading
+   measure (2026-11-06): it ran straight on from the lead in another size, and
+   at 1024 across the full 944px, 137 characters a line. From 1200px the
+   dashboard is drawn at 1.15 rather than 1.3, which gives the copy beside it
+   a reading width (427px at 1440, from 348). */
 @media (min-width: 1200px) {
-  .lp-venues-in { grid-template-columns: minmax(0, 1fr) minmax(0, 684px); align-items: center; column-gap: 48px; }
-  .lp-venues-in .lp-anno { position: relative; margin: 0; }
+  .lp-venues-in { grid-template-columns: minmax(0, 1fr) minmax(0, 605px); align-items: center; column-gap: 48px; }
+  .lp-venues-in .lp-anno { --anno-scale: 1.15; position: relative; margin: 0; }
   .lp-venues-in .lp-anno .lp-fig-cap { position: absolute; top: 100%; }
 }
 .lp-venues h2 { margin-bottom: 16px; }
+.lp-venues-note { margin-top: 14px; max-width: 56ch; font-size: var(--fs-note); }
 .lp-venues-actions { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
 .lp-venue-signin { margin-top: 14px; font-size: var(--fs-note); color: var(--ink-2); }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

@@ -849,7 +849,7 @@ export default function LandingPage() {
               you in their vote this week, and you can put a deal on your venue’s
               card while they decide.
             </p>
-            <p>
+            <p className="lp-venues-note">
               A <a href="/flux">Flux</a> box over the door, still a prototype, is
               being built to show which tables are free, seated, waiting on a
               server or ready to clear.
