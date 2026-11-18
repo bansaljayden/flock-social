@@ -92,14 +92,26 @@ describe('the hero screenshot preload lives on / only', () => {
   test('the shipped captures stay inside their weight: each @2x, each 480px cut, the PNG and the set', () => {
     const dir = path.join(FRONTEND, 'public', 'screenshots');
     const files = fs.readdirSync(dir).filter((f) => /-v3[@.-]/.test(f));
-    expect(files.length).toBe(36);
+    // 36 captures, and the home page's budget and bill plates cut down to
+    // their sheets (-v3-sheet, an @2x and a 480px cut each, 2026-11-06 pass).
+    expect(files.length).toBe(40);
+    expect(files.filter((f) => /-v3-sheet[@-]/.test(f)).sort()).toEqual([
+      'bill-split-dark-v3-sheet-480w.webp', 'bill-split-dark-v3-sheet@2x.webp',
+      'budget-dark-v3-sheet-480w.webp', 'budget-dark-v3-sheet@2x.webp',
+    ]);
     let total = 0;
     for (const f of files) {
       const buf = fs.readFileSync(path.join(dir, f));
       total += buf.length;
       if (f.endsWith('@2x.webp')) {
         expect(`${f} ${buf.length <= 120000}`).toBe(`${f} true`);
-        expect(webpInfo(buf)).toMatchObject({ width: 780, height: 1688 });
+        // A sheet cut keeps the full width and the lower part of the height.
+        if (/-sheet@2x/.test(f)) {
+          expect(webpInfo(buf).width).toBe(780);
+          expect(webpInfo(buf).height).toBeLessThan(1688);
+        } else {
+          expect(webpInfo(buf)).toMatchObject({ width: 780, height: 1688 });
+        }
       } else if (f.endsWith('-480w.webp')) {
         expect(`${f} ${buf.length <= 60000}`).toBe(`${f} true`);
         expect(webpInfo(buf).width).toBe(480);
