@@ -336,7 +336,9 @@ export default function LandingPage() {
   const pageInert = menuOpen ? { inert: true } : {};
 
   return (
-    <div className="lp">
+    // lp-home: rules only the home page takes from the stylesheet it shares
+    // with About, How it works, AI, Flux and Research (the lead's 18px floor).
+    <div className="lp lp-home">
       <a className="lp-skip" href="#lp-main">Skip to the main content</a>
 
       {/* ---------------- nav ---------------- */}

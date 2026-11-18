@@ -492,14 +492,17 @@
   font-variation-settings: inherit;
 }
 
-/* An 18px floor, so a lead always reads a step above the 17px body
-   (--fs-body). The hero's keeps 17px on a phone (.lp-hero .lp-lead), so the
-   first screen does not grow. */
 .lp-lead {
-  font-size: clamp(18px, 1.8vw, 20px);
+  font-size: clamp(17px, 1.8vw, 20px);
   max-width: 56ch;
   color: var(--ink-2);
 }
+/* On the home page a lead has an 18px floor, so it always reads a step above
+   the 17px body (--fs-body). The hero's keeps 17px on a phone (.lp-hero
+   .lp-lead, later in this file), so the first screen does not grow. Home
+   only: About, How it works, AI, Flux and Research share this stylesheet and
+   keep their 17px floor, since at 18px About's lead split "Asad Ali" at 390. */
+.lp-home .lp-lead { font-size: clamp(18px, 1.8vw, 20px); }
 
 .lp-on-navy { color: var(--cream); }
 .lp-on-navy h1, .lp-on-navy h2, .lp-on-navy h3 { color: var(--cream); }
