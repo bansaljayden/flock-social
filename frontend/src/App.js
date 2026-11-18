@@ -19487,7 +19487,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
       refreshOwnerPublishedScore();
-      showToast('Users see your number now.');
+      // A strike-suppressed venue's number is recorded but not served, and
+      // the answer says so. The card's own suppressed wording, cut short.
+      showToast(d?.suppressed
+        ? 'Your live numbers are paused, so users see the forecast for now.'
+        : 'Users see your number now.');
     } catch (e) {
       showToast(userMessage(e, "That didn't save. Try again."), 'error');
     } finally {

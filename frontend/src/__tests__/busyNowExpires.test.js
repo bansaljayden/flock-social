@@ -207,6 +207,48 @@ test('a number set while the return-to-app read is out is still there when that 
   expect(state.value).toEqual(fresh);
 });
 
+// WHAT THE TOAST SAYS AFTER A SAVE. A venue that is strike-suppressed still has
+// its number recorded, but users see the forecast, and POST busy-now answers
+// suppressed: true. The toast said "Users see your number now." either way. It
+// now says what the card says when suppressed, in the card's own words.
+async function toastAfterSave(answer) {
+  const showToast = jest.fn();
+  const state = holder({ available: true, ttlMinutes: 90, live: null });
+  await setBusyNowHandler({
+    venueBusyDraft: 70,
+    venueBusyNow: state.value,
+    setVenueBusySaving: () => {},
+    updateVenueBusyNow: () => Promise.resolve(answer),
+    setVenueBusyNow: state.set,
+    setVenueBusyDraft: () => {},
+    refreshOwnerPublishedScore: () => {},
+    showToast,
+    userMessage: (e, fallback) => fallback,
+    busyNowSeqRef: { current: 0 },
+  })();
+  expect(showToast).toHaveBeenCalledTimes(1);
+  return showToast.mock.calls[0][0];
+}
+
+const PAUSED_TOAST = 'Your live numbers are paused, so users see the forecast for now.';
+
+test('a save the server answers suppressed says the number is paused and users see the forecast', async () => {
+  const said = await toastAfterSave({ available: true, ttlMinutes: 90, live: null, suppressed: true });
+  expect(said).toBe(PAUSED_TOAST);
+  expect(said).not.toMatch(/see your number/i);
+});
+
+test('a save that is served still says users see the number', async () => {
+  const said = await toastAfterSave({ available: true, ttlMinutes: 90, live: live(90), suppressed: false });
+  expect(said).toBe('Users see your number now.');
+});
+
+test('the paused toast is the busy-now card\'s own suppressed wording, cut short', () => {
+  const dashboard = fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8');
+  expect(dashboard).toContain('Your live numbers are paused.');
+  expect(dashboard).toContain('so users see the forecast for now.');
+});
+
 test('of two reads, the older one answering last does not win', async () => {
   const seq = { current: 0 };
   const state = holder({ available: true, ttlMinutes: 90, live: null });
