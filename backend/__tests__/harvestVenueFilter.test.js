@@ -39,7 +39,8 @@
 //   * the result budget stops a run before it could pass, and no venue is
 //     written with part of its week;
 //   * a request that may have been billed without an answer holds a page
-//     against the budget and no retry is sent past it (2026-11-18).
+//     against the budget and no retry is sent past it (2026-11-18), and a
+//     record naming another day refuses the run, budget stop or not.
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/harvestVenueFilter.test.js
@@ -178,10 +179,12 @@ function toRecord(v, day, { sayDay = true } = {}) {
 // page; `reportTotal` makes venues_n the box total rather than the page count
 // (the documentation does not say which it is, and the harvester must be right
 // under both). `noDayInt(v, day)` true leaves day_int out of that venue's
-// record for that day. `echoKey` puts the private key in every filter answer,
-// as an API that echoes its request might. Every request is recorded.
+// record for that day, and `dayFor(v, day)` is the day_int that venue's record
+// names when `day` is asked. `echoKey` puts the private key in every filter
+// answer, as an API that echoes its request might. Every request is recorded.
 function fakeBestTime(fixture, {
   reportTotal = false, failDay = null, failStatus = 402, ignoreDay = false, noDayInt = () => false, echoKey = false,
+  dayFor = (v, day) => day,
 } = {}) {
   const requests = [];
   const fetchImpl = async (input, init = {}) => {
@@ -205,7 +208,7 @@ function fakeBestTime(fixture, {
       const slice = inBox.slice(page * limit, page * limit + limit);
       return jsonResponse(200, {
         status: 'OK',
-        venues: slice.map((v) => toRecord(v, ignoreDay ? 0 : day, { sayDay: !noDayInt(v, day) })),
+        venues: slice.map((v) => toRecord(v, ignoreDay ? 0 : dayFor(v, day), { sayDay: !noDayInt(v, day) })),
         venues_n: reportTotal ? inBox.length : slice.length,
         ...(echoKey ? { api_key_private: p.get('api_key_private'), echo: `key=${p.get('api_key_private')}` } : {}),
       });
@@ -1651,4 +1654,44 @@ test('a request that may have been billed without an answer keeps a page reserve
   assert.strictEqual(c.summary.stats.requests, reference.summary.stats.requests + 1);
   assert.deepStrictEqual([c.summary.budget.reserved, c.summary.budget.used], [0, counted]);
   assert.match(c.out, /network error \(ECONNREFUSED\); never sent, nothing reserved; retry 1\//);
+});
+
+test('a day mismatch seen before a budget stop still refuses the run, and nothing is written', async () => {
+  // Monday's answer in the box after a finished one names Sunday for one
+  // venue; the budget then stops Tuesday's request inside that box's leaf.
+  // The stop skipped the mismatch check, and the finished box's new venue was
+  // committed.
+  const order = harvester.planTiles(['philly'], 20, 20).filter((p) => p.city === 'philly').map((p) => p.tile);
+  const lastAxis = Math.max(...order.map((t, i) => (AXIS.some((v) => inBox(t, v)) ? i : -1)));
+  const c0 = harvester.CENTROIDS.philly;
+  const usable = order.slice(lastAxis + 1).filter((t) => t.n - t.s >= 40 && t.e - t.w >= 40);
+  assert.ok(usable.length >= 2, 'the philly grid has two boxes after the axis venues');
+  const nearCentre = (t) => ({
+    lat: Math.min(Math.max(c0.lat, (t.s + 15) / 1000), (t.n - 15) / 1000),
+    lng: Math.min(Math.max(c0.lon, (t.w + 15) / 1000), (t.e - 15) / 1000),
+  });
+  const [p0, p1] = [nearCentre(usable[0]), nearCentre(usable[1])];
+  const fresh = fx('ven_mismatch_fresh', p0.lat, p0.lng, 'CAFE', 'ChIJharvestMismatchF01', 63, { name: 'Mismatch Fresh Cafe' });
+  const wrong = fx('ven_mismatch_wrong', p1.lat, p1.lng, 'BAR', 'ChIJharvestMismatchW01', 73, { name: 'Mismatch Wrong Bar' });
+  for (const v of [fresh, wrong]) assert.ok(nearestPaCity(v.lat, v.lng).km < 19, 'a venue sits past the radius');
+  const fixture = [...AXIS, fresh, wrong];
+  const wrongAt = order.indexOf(usable[1]);
+  const before = 7 * order.slice(0, wrongAt).reduce((n, t) => n + fixture.filter((v) => inBox(t, v)).length, 0);
+  // Monday in the wrong venue's box fits (before + 100); Tuesday, after its
+  // one result, does not (before + 1 + 100).
+  const budget = before + 100;
+  const dayFor = (v, day) => (v.venueId === wrong.venueId && day === 0 ? 6 : day);
+
+  const snap = await snapshot();
+  const { summary, out } = await runHarvest(
+    ['--city=philly', '--new-only', '--commit', `--result-budget=${budget}`], fakeBestTime(fixture, { dayFor })
+  );
+  assertNoKey(out);
+  assert.match(out, new RegExp(`RESULT BUDGET: stopped in philly with ${before + 1} of ${budget} results used`),
+    'the budget did not stop the run where this test needs it');
+  assert.strictEqual(summary.aborted, true, 'a budget stop let an observed day mismatch through');
+  assert.strictEqual(summary.exitCode, 1);
+  assert.match(summary.abortReason, /BestTime answered 1 venues for a different day than the one asked \(1 when Mon was asked\)\. The day parameter is not being honoured; nothing from this run is written/);
+  assert.strictEqual(summary.stats.otherDay, 1);
+  assert.deepStrictEqual(await snapshot(), snap, 'the run wrote');
 });

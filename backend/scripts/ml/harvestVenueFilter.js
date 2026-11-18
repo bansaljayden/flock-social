@@ -159,7 +159,10 @@
 // first-day answer only once every leaf under it is; when the budget stops the
 // run, the leaf in progress and its box are dropped whole, and the summary
 // names the cities left unfinished and the --city= that continues them. These
-// are the questions the day-by-day order asked, in a different order.
+// are the questions the day-by-day order asked, in a different order. A budget
+// stop is never a way past the day check: a record naming a day other than
+// the one asked is counted as its page arrives, and any such record refuses
+// the run, stopped by the budget or not.
 //
 // NEW ROWS ARE INACTIVE, ON PURPOSE. collectRealtime.js sweeps every active PA
 // row with a BestTime id, hourly, and REFUSES (throws, every hour) once that
@@ -1250,6 +1253,23 @@ async function requestPage(ctx, q) {
   }
 }
 
+// Every record naming a day other than the one asked, counted for the run as
+// its page arrives, before the next request can be stopped by the budget. The
+// refusal in harvestDay comes only once its call has asked every box, and a
+// budget stop in between (a later page, a split box's quarter, or the other
+// days a leaf asks) skips it; checkMarketDays, which every run passes through
+// on its way to the commit, budget stop or not, refuses on this count.
+function noteOtherDays(ctx, day, records) {
+  let n = 0;
+  for (const raw of records) {
+    const v = readFilterVenue(raw);
+    if (v && v.dayInt !== null && v.dayInt !== day) n++;
+  }
+  if (n === 0) return;
+  ctx.stats.otherDay += n;
+  ctx.otherDays.set(day, (ctx.otherDays.get(day) || 0) + n);
+}
+
 // Pages one box for one day, up to the cap.
 async function fetchTile(ctx, tile, day) {
   // A box that cannot be split any further is paged to the cap even when page
@@ -1262,6 +1282,7 @@ async function fetchTile(ctx, tile, day) {
   let pages = 0;
   for (let page = 0; ; page++) {
     const res = await requestPage(ctx, { tile, day, page });
+    noteOtherDays(ctx, day, res.venues);
     pages++;
     const n = res.venues.length;
     if (res.cached) {
@@ -1364,8 +1385,15 @@ function tallyDay(ctx, day, verified, unverifiable) {
 // on which the whole market answered venues and not one said which day it was
 // for refuses the run, since nothing shows the day was honoured. Judged when
 // a city's boxes are all asked (or the budget stops it), then cleared for the
-// next city.
+// next city. First, any record this run has seen naming another day than the
+// one asked refuses it (noteOtherDays), whatever stopped the harvest.
 function checkMarketDays(ctx, city) {
+  if (ctx.stats.otherDay > 0) {
+    const asked = [...ctx.otherDays.entries()].sort((a, b) => a[0] - b[0])
+      .map(([day, n]) => `${n} when ${BT_DAY_NAMES[day]} was asked`).join(', ');
+    throw abortError(`BestTime answered ${ctx.stats.otherDay} venues for a different day than the one asked (${asked}). `
+      + 'The day parameter is not being honoured; nothing from this run is written.');
+  }
   const tally = ctx.dayTally || new Map();
   ctx.dayTally = new Map();
   for (const [day, t] of [...tally.entries()].sort((a, b) => a[0] - b[0])) {
@@ -1816,6 +1844,9 @@ function emptyStats() {
     // billed without an answer, beside venuesReturned, counted from answers.
     resultsReserved: 0,
     splits: 0, truncatedTiles: 0, malformed: 0, unverifiable: 0,
+    // Records naming a day other than the one asked, counted as each page
+    // arrives (checkMarketDays refuses the run on any).
+    otherDay: 0,
     // THE CACHE: pages answered from it and their results, and pages written.
     cachedPages: 0, cachedResults: 0, cacheWrites: 0, cacheWriteFailures: 0,
     // Which field each venue-day's curve came from, and how the other compared.
@@ -1956,6 +1987,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
       const ctx = {
         key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS), city: null, area: null,
         dayTally: new Map(),
+        // Asked day -> records that named another, for the whole run.
+        otherDays: new Map(),
         // Never written into the cache (THE CACHE).
         secrets: [key, process.env.BESTTIME_API_KEY_PUBLIC].filter((x) => typeof x === 'string' && x.length > 0),
       };
@@ -1983,8 +2016,6 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         }
       } catch (err) {
         if (!err.budgetStop) throw err;
-        // The cut city's market-days, over what it answered before the stop.
-        checkMarketDays(ctx, current);
         summary.budget.stopped = true;
         summary.budget.cutShort = current;
         summary.budget.unfinished = opts.cities.slice(opts.cities.indexOf(current));
@@ -1996,6 +2027,10 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           + 'whole, so no venue is written with part of the week this run asked for. '
           + `Unfinished: ${summary.budget.unfinished.join(', ')}. To continue, with what the month has left: `
           + `--city=${summary.budget.unfinished.join(',')} (${current} starts again from its first box).`);
+        // The cut city's market-days, over what it answered before the stop,
+        // and every record of the run that named another day: the stop can
+        // come before the call that saw one could refuse it.
+        checkMarketDays(ctx, current);
       }
       summary.budget.used = budgetUsed(s);
       summary.budget.reserved = s.resultsReserved;
