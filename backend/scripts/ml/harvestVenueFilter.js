@@ -1130,8 +1130,11 @@ async function fetchTile(ctx, tile, day) {
 // the cap, or could not be split further) so later days start from them. With
 // onLeaf, each leaf is handed over with its own answers the moment it is
 // found, and the queue waits while onLeaf asks the leaf's other days: the
-// leaf-first order of THE RESULT BUDGET. The checks below then judge the day
-// per call, which for the later days is one leaf's box.
+// leaf-first order of THE RESULT BUDGET. The mismatch check below judges each
+// call, since one record for another day is enough to refuse. A venue with no
+// day_int is skipped and counted here, and whether a day said nothing it could
+// verify is judged over the whole market-day (checkMarketDays), never per call:
+// a sparse leaf whose only venue carries no day_int is not a reason to stop.
 async function harvestDay(ctx, tiles, day, onLeaf = null) {
   const queue = tiles.slice();
   const leaves = [];
@@ -1145,8 +1148,9 @@ async function harvestDay(ctx, tiles, day, onLeaf = null) {
     for (const raw of res.venues) {
       const v = readFilterVenue(raw);
       if (!v) { ctx.stats.malformed++; continue; }
-      if (v.dayInt === null) { unverifiable++; continue; }
+      if (v.dayInt === null) { unverifiable++; tallyDay(ctx, day, 0, 1); continue; }
       if (v.dayInt !== day) { mismatched++; continue; }
+      tallyDay(ctx, day, 1, 0);
       if (!own.has(v.venueId)) own.set(v.venueId, v);
       if (!byVenue.has(v.venueId)) byVenue.set(v.venueId, v);
     }
@@ -1174,11 +1178,34 @@ async function harvestDay(ctx, tiles, day, onLeaf = null) {
     throw abortError(`BestTime answered ${mismatched} venues for a different day than ${BT_DAY_NAMES[day]} (day_int=${day}). `
       + 'The day parameter is not being honoured; nothing from this run is written.');
   }
-  if (unverifiable > 0 && byVenue.size === 0) {
-    throw abortError(`none of the ${unverifiable} venues for ${BT_DAY_NAMES[day]} said which day they are for; nothing is written.`);
-  }
   if (unverifiable > 0) ctx.stats.unverifiable += unverifiable;
   return { leaves, byVenue };
+}
+
+// One market-day's records, every box and leaf of the city in progress for
+// one weekday: those that named the day asked for, and those that named none.
+function tallyDay(ctx, day, verified, unverifiable) {
+  if (!ctx.dayTally) ctx.dayTally = new Map();
+  const t = ctx.dayTally.get(day) || { verified: 0, unverifiable: 0 };
+  t.verified += verified;
+  t.unverifiable += unverifiable;
+  ctx.dayTally.set(day, t);
+}
+
+// The day_int check as it stood before the harvest went leaf first: a weekday
+// on which the whole market answered venues and not one said which day it was
+// for refuses the run, since nothing shows the day was honoured. Judged when
+// a city's boxes are all asked (or the budget stops it), then cleared for the
+// next city.
+function checkMarketDays(ctx, city) {
+  const tally = ctx.dayTally || new Map();
+  ctx.dayTally = new Map();
+  for (const [day, t] of [...tally.entries()].sort((a, b) => a[0] - b[0])) {
+    if (t.unverifiable > 0 && t.verified === 0) {
+      throw abortError(`none of the ${t.unverifiable} venues for ${BT_DAY_NAMES[day]} in ${city} said which day they are for; `
+        + 'nothing is written.');
+    }
+  }
 }
 
 // The run's venues, one answer per (venue, day): the first to arrive, as the
@@ -1730,6 +1757,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
 
       const ctx = {
         key, opts, stats: summary.stats, sleep, pace: makePacer(sleep, START_INTERVAL_MS), city: null, area: null,
+        dayTally: new Map(),
       };
       const s = ctx.stats;
 
@@ -1745,6 +1773,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             ctx.area = area;
             await harvestBox(ctx, tile, venues);
           }
+          checkMarketDays(ctx, city);
           ctx.city.state = 'done';
           console.log(`${TAG} ${city}: ${ctx.city.tiles} tiles (${ctx.city.leaves} leaves), ${ctx.city.requests} requests, `
             + `${ctx.city.results} results (~${ctx.city.credits} query credits). Run so far: ${s.venuesReturned} of the `
@@ -1752,6 +1781,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
         }
       } catch (err) {
         if (!err.budgetStop) throw err;
+        // The cut city's market-days, over what it answered before the stop.
+        checkMarketDays(ctx, current);
         summary.budget.stopped = true;
         summary.budget.cutShort = current;
         summary.budget.unfinished = opts.cities.slice(opts.cities.indexOf(current));

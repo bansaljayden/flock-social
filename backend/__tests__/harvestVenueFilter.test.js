@@ -159,12 +159,13 @@ const FIXTURE = [...Object.values(V), ...AXIS];
 
 const jsonResponse = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 
-function toRecord(v, day) {
+function toRecord(v, day, { sayDay = true } = {}) {
   const rec = {
     venue_id: v.venueId, venue_name: v.name || `Venue ${v.venueId}`, venue_address: '1 Test St, Philadelphia, PA',
     venue_lat: v.lat, venue_lng: v.lng, venue_type: v.type, day_int: day, day_info: { day_int: day },
     day_raw_whole: v.week[day], rating: v.rating, reviews: v.reviews, price_level: 2,
   };
+  if (!sayDay) { delete rec.day_int; delete rec.day_info; }
   // The published schema names no place-id field; the harvester reads the
   // likely spellings, and this fake uses one of them.
   if (v.placeId) rec.place_id = v.placeId;
@@ -174,8 +175,11 @@ function toRecord(v, day) {
 // A fake BestTime. The filter answers by inclusive bounding box, day and
 // page; `reportTotal` makes venues_n the box total rather than the page count
 // (the documentation does not say which it is, and the harvester must be right
-// under both). Every request is recorded.
-function fakeBestTime(fixture, { reportTotal = false, failDay = null, failStatus = 402, ignoreDay = false } = {}) {
+// under both). `noDayInt(v, day)` true leaves day_int out of that venue's
+// record for that day. Every request is recorded.
+function fakeBestTime(fixture, {
+  reportTotal = false, failDay = null, failStatus = 402, ignoreDay = false, noDayInt = () => false,
+} = {}) {
   const requests = [];
   const fetchImpl = async (input, init = {}) => {
     const url = new URL(String(input));
@@ -198,7 +202,7 @@ function fakeBestTime(fixture, { reportTotal = false, failDay = null, failStatus
       const slice = inBox.slice(page * limit, page * limit + limit);
       return jsonResponse(200, {
         status: 'OK',
-        venues: slice.map((v) => toRecord(v, ignoreDay ? 0 : day)),
+        venues: slice.map((v) => toRecord(v, ignoreDay ? 0 : day, { sayDay: !noDayInt(v, day) })),
         venues_n: reportTotal ? inBox.length : slice.length,
       });
     }
@@ -1408,4 +1412,41 @@ test('--new-only writes nothing for a held Seoul venue that comes back under new
   assert.deepStrictEqual(second, [], 'the held Seoul venue was given a second identity');
   const { rows: [fresh] } = await pool.query("SELECT city, timezone FROM ml_venues WHERE besttime_venue_id = 'ven_seo_new'");
   assert.deepStrictEqual([fresh.city, fresh.timezone], ['seoul', 'Asia/Seoul']);
+});
+
+test('a sparse leaf whose only venue carries no day_int is skipped, and the run goes on', async () => {
+  // The day_int check judged each box or leaf on its own, so one leaf whose
+  // only venue left the day out aborted the whole run and wrote nothing.
+  const order = harvester.planTiles(['philly'], 20, 20).filter((p) => p.city === 'philly').map((p) => p.tile);
+  const fresh = fx('ven_sparse_fresh', 39.9300, -75.2100, 'CAFE', 'ChIJharvestSparseFrsh', 61, { name: 'Sparse Fresh Cafe' });
+  const lonely = order.find((t) => !AXIS.some((v) => inBox(t, v)) && !inBox(t, fresh));
+  assert.ok(lonely, 'the philly grid has a box with none of the other venues');
+  const sparse = fx('ven_sparse_dayless', (lonely.s + lonely.n) / 2000, (lonely.w + lonely.e) / 2000, 'BAR',
+    'ChIJharvestSparseNoDy', 71, { name: 'Sparse Dayless Bar' });
+  const fixture = [...AXIS, fresh, sparse];
+  const noDayInt = (v) => v.venueId === sparse.venueId;
+
+  const { summary, out } = await runHarvest(['--city=philly', '--new-only', '--commit'], fakeBestTime(fixture, { noDayInt }));
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.strictEqual(summary.exitCode, 0);
+  assert.strictEqual(summary.stats.unverifiable, 7, 'the day-less venue is counted once a day');
+  assert.deepStrictEqual([summary.venuesInserted, summary.rowsWritten], [1, 168]);
+  assert.doesNotMatch(out, /said which day they are for/);
+  const { rows } = await pool.query(
+    `SELECT v.besttime_venue_id AS id, COUNT(t.id)::int AS n FROM ml_venues v LEFT JOIN ml_training_data t ON t.venue_id = v.id
+      WHERE v.besttime_venue_id LIKE 'ven_sparse_%' GROUP BY 1 ORDER BY 1`
+  );
+  assert.deepStrictEqual(rows, [{ id: 'ven_sparse_fresh', n: 168 }]);
+});
+
+test('a market-day on which no venue said its day still aborts, and writes nothing', async () => {
+  const fresh = fx('ven_dayless_all', 39.9310, -75.2120, 'CAFE', 'ChIJharvestDaylessAll', 81, { name: 'Dayless All Cafe' });
+  const before = await snapshot();
+  const { summary, out } = await runHarvest(['--city=philly', '--new-only', '--commit'],
+    fakeBestTime([...AXIS, fresh], { noDayInt: (v, day) => day === 2 }));
+  assert.strictEqual(summary.aborted, true);
+  assert.strictEqual(summary.exitCode, 1);
+  assert.match(summary.abortReason, /none of the \d+ venues for Wed in philly said which day they are for; nothing is written/);
+  assert.match(out, /ABORTED/);
+  assert.deepStrictEqual(await snapshot(), before, 'an aborted run wrote');
 });
