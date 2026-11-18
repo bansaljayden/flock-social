@@ -2192,17 +2192,25 @@ html:has(.lp) body { overflow-x: clip; }
   border: 1px solid var(--edge-cream);
 }
 .lp-anno-glass { height: 100%; overflow: hidden; border-radius: 14.5cqw; background: var(--phone-glass); }
-/* A capture cut down to its sheet (shot.crop): the phone is cut straight
-   across at the sheet's top edge, so it has no top frame, no status row and
-   no room made for them above it. */
-.lp-anno.is-cropped .lp-anno-phone { margin-top: 0; }
-.lp-anno.is-cropped .lp-anno-device {
-  inset: 0 -3.8cqw -3.8cqw;
-  padding-top: 0;
-  border-top: 0;
-  border-radius: 0 0 18.3cqw 18.3cqw;
+/* A capture cut down to its sheet (shot.crop) is drawn as the sheet, with
+   no phone around it. The cut starts on the sheet's own top edge, so its
+   grabber shows, and its rounded top corners (5.1% of the width, measured on
+   the capture) are drawn here. It sits on a dark plate, the dimmed screen
+   behind a sheet, that shows as a 7% strip above it and is rounded at every
+   corner. A phone cut straight across at the sheet's top, its side bezels
+   running up into nothing, read as a broken picture (2026-11-06). The
+   status row is gone with the frame (AnnotatedShot.js). */
+@media (max-width: 767px) {
+  .lp-anno.is-cropped .lp-anno-phone { margin: calc(min(260px, 70vw) * 0.07) auto 0; }
 }
-.lp-anno.is-cropped .lp-anno-glass { border-radius: 0 0 14.5cqw 14.5cqw; }
+.lp-anno.is-cropped .lp-anno-device {
+  inset: -7cqw 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7cqw;
+  background: var(--phone-glass);
+}
+.lp-anno.is-cropped .lp-anno-glass { display: none; }
 .lp-anno-phone .lp-shot {
   position: relative;
   display: block;
@@ -2212,6 +2220,7 @@ html:has(.lp) body { overflow-x: clip; }
   border-radius: 0 0 14.5cqw 14.5cqw;
   background: var(--navy-deep);
 }
+.lp-anno.is-cropped .lp-anno-phone .lp-shot { border-radius: 5.1cqw 5.1cqw 7cqw 7cqw; }
 .lp-anno-lines { display: none; }
 /* Placed beside its element in landingAnnotations.js, clear of its text. */
 .lp-anno-dot {
@@ -2272,7 +2281,9 @@ html:has(.lp) body { overflow-x: clip; }
   /* The room above and below the drawn phone: 16.7% and 3.8% of the phone's
      240 units, in percent of the stage's width. */
   .lp-anno-stage { margin: calc(40.08 / var(--anno-w) * 100%) 0 calc(9.12 / var(--anno-w) * 100%); }
-  .lp-anno.is-cropped .lp-anno-stage { margin-top: 0; }
+  /* A cut capture's plate: its 7% strip above (16.8 of the phone's 240
+     units), and nothing below, since it has no frame. */
+  .lp-anno.is-cropped .lp-anno-stage { margin: calc(16.8 / var(--anno-w) * 100%) 0 0; }
   .lp-anno-phone {
     position: absolute;
     top: 0;

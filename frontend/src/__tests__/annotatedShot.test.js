@@ -155,9 +155,13 @@ test('a capture cut down to its sheet names nothing above the cut, and its files
       expect(hgt / w).toBeCloseTo(((844 / 390) * (100 - crop)) / 100, 2);
     }
   }
-  // The phone around a cut capture has no top: no status row, no top frame.
-  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-device \{[^}]*border-top: 0;/);
-  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-stage \{ margin-top: 0; \}/);
+  // A cut capture is drawn as the sheet on a dark plate, with no phone frame
+  // left to run up into nothing above it: no border or padding on the plate,
+  // the sheet's own rounded top corners, and the stage's room for the plate's
+  // strip above it and none below.
+  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-device \{[^}]*padding: 0;[^}]*border: 0;[^}]*background: var\(--phone-glass\);/);
+  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-phone \.lp-shot \{ border-radius: 5\.1cqw 5\.1cqw 7cqw 7cqw; \}/);
+  expect(CSS).toMatch(/\.lp-anno\.is-cropped \.lp-anno-stage \{ margin: calc\(16\.8 \/ var\(--anno-w\) \* 100%\) 0 0; \}/);
 });
 
 test('the page draws all five, one marker per note, and on a phone the numbers match the list', () => {

@@ -60,10 +60,11 @@ same-named file for a day.
 
 - The Friday plan: `chat-dark-v3`, then `budget-dark-v3-sheet` and
   `bill-split-dark-v3-sheet`: the budget and bill captures cut down to their
-  sheets, from each sheet's first whole row (rows 610 and 750 of 1688, so
-  36.14% and 44.43% off the top, the `crop` on each shot and the rig's
-  `sheetRow` for each frame), by `frontend/scripts/cut_sheet_captures.py`.
-  Run it again after the rig retakes either capture.
+  sheets, from each sheet's own top edge with its grabber, its first whole
+  row (rows 610 and 750 of 1688, so 36.14% and 44.43% off the top, the
+  `crop` on each shot and the rig's `sheetRow` for each frame), by
+  `frontend/scripts/cut_sheet_captures.py`. Run it again after the rig
+  retakes either capture.
 - Safety: `sos-dark-v3`. Venues: `owner-dashboard-dark-v3`.
 - Their callout boxes were measured as the frames were taken (the rig's
   anchors-v3.json), on the whole capture; a cut plate maps them into its cut.

@@ -135,9 +135,11 @@ export default function AnnotatedShot({ id, layout = 'center', shot, notes, capt
         <svg className="lp-anno-lines" viewBox={`0 0 ${W} ${h.toFixed(2)}`} aria-hidden="true" focusable="false">
           <defs>
             <clipPath id={clip}>
-              {/* A cut phone has square top corners: the rounded ones are
-                  drawn above the stage, out of sight. */}
-              <rect x={x0} y={crop ? -20 : 0} width={P} height={(h + (crop ? 20 : 0)).toFixed(2)} rx="20" />
+              {/* A cut capture is the sheet on its plate: the leaders run
+                  in over the sheet's sides, so the clip's top corners are
+                  drawn above the stage, out of sight, and its bottom ones
+                  follow the plate's 7% (16.8 units). */}
+              <rect x={x0} y={crop ? -20 : 0} width={P} height={(h + (crop ? 20 : 0)).toFixed(2)} rx={crop ? '16.8' : '20'} />
             </clipPath>
           </defs>
           {rows.map((r) => <path key={r.n} className="lp-anno-line" d={r.d} />)}

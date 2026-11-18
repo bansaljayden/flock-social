@@ -20,9 +20,9 @@
    `crop` cuts a capture down to the sheet that is its subject (2026-11-06):
    the budget and the bill were each a full phone of the app's blurred chat,
    near-black, with the sheet in its lower half. The cut files start that
-   share of the way down, on the sheet's first whole row (rows 610 and 750
-   of 1688, so 36.14% and 44.43%), and the boxes here stay as measured on
-   the whole capture (AnnotatedShot.js maps them).
+   share of the way down, on the sheet's own top edge, its first whole row
+   (rows 610 and 750 of 1688, so 36.14% and 44.43%), and the boxes here stay
+   as measured on the whole capture (AnnotatedShot.js maps them).
    The three Friday beats keep every note on the phone's far side from their
    words, so the words and the notes never compete for one side; their
    layouts are one-sided and the sides follow the beat: words left, notes right
