@@ -16981,6 +16981,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
   }, [currentScreen, selectedDmId, selectedDm?.messages, dmBlocked, docVisible]);
 
+  // READ ON THE RETURN, the DM twin of the flock read cursor and badge
+  // zeroing. The live handler below marks a DM read only while its thread is
+  // on screen AND the document is visible, and counts it on the row
+  // otherwise. A web tab hidden for a moment keeps its socket, so a DM landing
+  // then was counted and left unread in the database, and the return put
+  // neither right (a socket that missed nothing gets no catch-up read), while
+  // the Opened effect above told the sender it had been seen. So coming back
+  // to a thread that is still open zeroes what it counted while hidden and
+  // marks the newest from them read, the way markDmRead does live.
+  const dmHiddenOnRef = useRef(null);
+  useEffect(() => {
+    if (currentScreen !== 'dmDetail' || !selectedDmId) { dmHiddenOnRef.current = null; return; }
+    if (!docVisible) { dmHiddenOnRef.current = selectedDmId; return; }
+    if (dmHiddenOnRef.current !== selectedDmId) return;
+    dmHiddenOnRef.current = null;
+    if (!selectedDm?.unread || dmBlocked[String(selectedDmId)]) return;
+    setDirectMessages(prev => prev.map(d => (d.userId === selectedDmId && d.unread ? { ...d, unread: 0 } : d)));
+    const newest = newestFromOthers(selectedDm?.messages);
+    if (newest !== null) markDmRead(newest).catch(() => {});
+  }, [currentScreen, selectedDmId, selectedDm?.unread, selectedDm?.messages, dmBlocked, docVisible]);
+
   // Socket-sent DMs waiting for their own echo back from the server, keyed by
   // the optimistic bubble's temp id. Same job as pendingEchoRef in flock chat:
   // a connected socket is not proof of persistence, and a DM the server refused
