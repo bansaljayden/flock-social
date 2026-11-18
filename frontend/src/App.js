@@ -2974,8 +2974,9 @@ const resolveEventTime = (dayLabel, hourLabel, now = new Date()) => {
     case 'This Weekend': {
       const day = d.getDay(); // 0 Sun … 6 Sat
       if (day === 6 || day === 0) {
-        // Already the weekend. Keep today unless that hour is behind us.
-        if (d <= now) d.setDate(d.getDate() + (((6 - day + 7) % 7) || 7));
+        // Already the weekend. Keep today unless that hour is behind us: then
+        // Sunday from a Saturday, and the next Saturday from a Sunday.
+        if (d <= now) d.setDate(d.getDate() + (day === 6 ? 1 : 6));
       } else {
         d.setDate(d.getDate() + ((6 - day + 7) % 7));
       }
