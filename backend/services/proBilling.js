@@ -317,6 +317,27 @@ async function customerIdFor(userId) {
 // after the account is gone. Carrying on would create a Stripe customer, and
 // a payable session on it, that no account points at and nothing in Flock
 // can ever cancel.
+//
+// A CUSTOMER CAN BE ONE STRIPE HAS DELETED. Account deletion closes the
+// customer and clears the column before its own transaction (routes/users.js),
+// so a deletion that then failed leaves the account with no customer, and the
+// hourly key below still names the closed one: a checkout in the same hour was
+// handed it back and saved it, and every checkout and portal visit after that
+// failed for good. So the customer is asked for before anything is built on
+// it, the one on file and the one just made alike, and a deleted one is
+// replaced, swapped in only over the dead one. The replacement's key names the
+// customer it replaces, because the hourly key could hand that one back again.
+// Same rule as services/venueBilling.js ensureVenueCustomer.
+const missingAtStripe = (err) => !!err && (err.code === 'resource_missing' || err.statusCode === 404);
+
+function newCustomer(user, idempotencyKey) {
+  return stripe().customers.create({
+    email: user.email || undefined,
+    name: user.name || undefined,
+    metadata: { app_user_id: String(user.id) },
+  }, { idempotencyKey });
+}
+
 async function ensureCustomer(user) {
   const current = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [user.id]);
   const row = current && Array.isArray(current.rows) ? current.rows[0] : null;
@@ -325,24 +346,34 @@ async function ensureCustomer(user) {
     err.status = 404;
     throw err;
   }
-  if (row.stripe_customer_id) return row.stripe_customer_id;
-  const customer = await stripe().customers.create({
-    email: user.email || undefined,
-    name: user.name || undefined,
-    metadata: { app_user_id: String(user.id) },
-  // The key rolls over every hour. Stripe replays an idempotent response for
-  // a day, and account deletion deletes the customer; a user whose deletion
-  // then failed and who checks out again would otherwise be handed back the
-  // DELETED customer and fail for a day. An hour still covers the race it is
-  // for, two first checkouts landing together.
-  }, { idempotencyKey: `flock-customer-${user.id}-${Math.floor(Date.now() / 3600e3)}` });
-  const r = await pool.query(
+  let onFile = row.stripe_customer_id;
+  if (!onFile) {
+    // The key rolls over every hour. Stripe replays an idempotent response for
+    // a day; an hour still covers the race it is for, two first checkouts
+    // landing together.
+    const customer = await newCustomer(user, `flock-customer-${user.id}-${Math.floor(Date.now() / 3600e3)}`);
+    const r = await pool.query(
+      `UPDATE users SET stripe_customer_id = $1
+        WHERE id = $2 AND stripe_customer_id IS NULL
+        RETURNING stripe_customer_id`,
+      [customer.id, user.id]
+    );
+    onFile = r.rows[0] ? r.rows[0].stripe_customer_id : await customerIdFor(user.id);
+    if (!onFile) return null;
+  }
+  const existing = await stripe().customers.retrieve(onFile).catch((err) => {
+    if (missingAtStripe(err)) return { id: onFile, deleted: true };
+    throw err;
+  });
+  if (!existing || existing.deleted !== true) return onFile;
+  const replacement = await newCustomer(user, `flock-customer-${user.id}-replaces-${onFile}`);
+  const swapped = await pool.query(
     `UPDATE users SET stripe_customer_id = $1
-      WHERE id = $2 AND stripe_customer_id IS NULL
+      WHERE id = $2 AND stripe_customer_id = $3
       RETURNING stripe_customer_id`,
-    [customer.id, user.id]
+    [replacement.id, user.id, onFile]
   );
-  if (r.rows[0]) return r.rows[0].stripe_customer_id;
+  if (swapped.rows[0]) return swapped.rows[0].stripe_customer_id;
   return customerIdFor(user.id);
 }
 

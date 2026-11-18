@@ -32,11 +32,18 @@ const stripeCalls = [];
 // invoicePayments: PaymentIntent id -> the invoice ids it paid, the lookup
 // Stripe documents for finding a charge's subscription since 2025-03-31.basil.
 // invoices: invoice id -> the invoice, whose parent names its subscription.
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, invoicePayments: {}, invoices: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false };
+// createdIds: the ids customers.create answers with, in order (cus_TEST123 once
+// they run out). deletedCustomers: customers Stripe has deleted, which a
+// retrieve still answers, flagged deleted.
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, invoicePayments: {}, invoices: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false, createdIds: [], deletedCustomers: [] };
 function FakeStripe() {
   return {
     customers: {
-      create: async (args, opts) => { stripeCalls.push(['customers.create', args, opts]); return { id: 'cus_TEST123' }; },
+      create: async (args, opts) => { stripeCalls.push(['customers.create', args, opts]); return { id: stripeState.createdIds.shift() || 'cus_TEST123' }; },
+      retrieve: async (id) => {
+        stripeCalls.push(['customers.retrieve', id]);
+        return stripeState.deletedCustomers.includes(id) ? { id, object: 'customer', deleted: true } : { id, object: 'customer' };
+      },
       del: async (id) => { stripeCalls.push(['customers.del', id]); return { id, deleted: true }; },
     },
     subscriptions: {
@@ -233,6 +240,8 @@ test.beforeEach(() => {
   stripeState.refuseDiscounts = false;
   stripeState.sessions = {};
   stripeState.openSessions = [];
+  stripeState.createdIds = [];
+  stripeState.deletedCustomers = [];
   billing.__test.resetStripe();
 });
 test.afterEach(() => resetEnv());
@@ -585,6 +594,76 @@ test('closing a Stripe customer deletes it; with no key it reports "not closed" 
   setEnv({ STRIPE_SECRET_KEY: undefined });
   billing.__test.resetStripe();
   assert.strictEqual(await billing.closeCustomer('cus_TEST123'), false);
+});
+
+// A DELETED CUSTOMER IS NEVER THE ONE A CHECKOUT IS BUILT ON. Account deletion
+// closes the Stripe customer and clears the column before its own transaction
+// (routes/users.js), so a deletion that then failed leaves an account with no
+// customer, and the first checkout's hourly idempotency key still names the
+// deleted one: a checkout in the same hour was handed it back, saved it, and
+// every checkout and portal visit after that failed for good. The account's
+// customer table, as the routes write it: the WHERE clauses decide.
+function customerColumn(initial) {
+  let stored = initial;
+  return {
+    get: () => stored,
+    handler: async (sql, params) => {
+      if (sql.includes('SELECT is_premium')) return { rows: [{ is_premium: false }] };
+      if (sql.includes('SELECT stripe_customer_id')) return { rows: [{ stripe_customer_id: stored }] };
+      if (sql.includes('SELECT id, email, name FROM users')) return { rows: [{ id: 7, email: 'me@example.com', name: 'Me' }] };
+      if (sql.includes('UPDATE users SET stripe_customer_id')) {
+        const free = sql.includes('stripe_customer_id IS NULL') ? stored == null : stored === params[2];
+        if (!free) return { rows: [], rowCount: 0 };
+        stored = params[0];
+        return { rows: [{ stripe_customer_id: stored }], rowCount: 1 };
+      }
+      return null;
+    },
+  };
+}
+
+test('a checkout in the same hour as a failed account deletion does not save the deleted customer', async () => {
+  setEnv(ON);
+  // The hour's key hands back the customer the deletion closed.
+  stripeState.createdIds = ['cus_CLOSED', 'cus_FRESH'];
+  stripeState.deletedCustomers = ['cus_CLOSED'];
+  const column = customerColumn(null);
+  const { restore } = stubPool(column.handler);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(column.get(), 'cus_FRESH', 'the account kept a customer Stripe had deleted');
+    assert.strictEqual(stripeCalls.find((c) => c[0] === 'checkout.create')[1].customer, 'cus_FRESH');
+    const keys = stripeCalls.filter((c) => c[0] === 'customers.create').map((c) => c[2].idempotencyKey);
+    assert.match(keys[0], /^flock-customer-7-\d+$/);
+    assert.strictEqual(keys[1], 'flock-customer-7-replaces-cus_CLOSED',
+      'the replacement needs a key the hour\'s key cannot replay');
+  } finally { restore(); }
+});
+
+test('a deleted customer on file is replaced, and a live one is kept without creating anything', async () => {
+  setEnv(ON);
+  stripeState.createdIds = ['cus_FRESH'];
+  stripeState.deletedCustomers = ['cus_CLOSED'];
+  const dead = customerColumn('cus_CLOSED');
+  let pooled = stubPool(dead.handler);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(dead.get(), 'cus_FRESH');
+    assert.strictEqual(stripeCalls.find((c) => c[0] === 'checkout.create')[1].customer, 'cus_FRESH');
+  } finally { pooled.restore(); }
+
+  stripeCalls.length = 0;
+  const live = customerColumn('cus_TEST123');
+  pooled = stubPool(live.handler);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(live.get(), 'cus_TEST123');
+    assert.ok(!stripeCalls.some((c) => c[0] === 'customers.create'), 'a live customer was replaced');
+    assert.strictEqual(stripeCalls.find((c) => c[0] === 'checkout.create')[1].customer, 'cus_TEST123');
+  } finally { pooled.restore(); }
 });
 
 test('starting a checkout expires every open one first, so only one can ever be paid', async () => {
