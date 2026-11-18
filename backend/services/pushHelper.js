@@ -1646,23 +1646,40 @@ function quietWindowEnd(timeZone, at = new Date()) {
 // America/New_York, and was held while its owner was awake or rung at 03:00.
 // updated_at stays as the tiebreak for rows from before 085 that have not
 // registered since.
+async function readReportedZone(userId) {
+  const r = await pool.query(
+    `SELECT timezone FROM device_tokens
+      WHERE user_id = $1 AND timezone IS NOT NULL AND timezone <> ''
+      ORDER BY timezone_reported_at DESC NULLS LAST, updated_at DESC NULLS LAST, id DESC
+      LIMIT 1`,
+    [userId]
+  );
+  return r.rows.length && r.rows[0].timezone ? String(r.rows[0].timezone) : null;
+}
+
 async function recipientZone(userId) {
+  let zone;
   try {
-    const r = await pool.query(
-      `SELECT timezone FROM device_tokens
-        WHERE user_id = $1 AND timezone IS NOT NULL AND timezone <> ''
-        ORDER BY timezone_reported_at DESC NULLS LAST, updated_at DESC NULLS LAST, id DESC
-        LIMIT 1`,
-      [userId]
-    );
-    if (r.rows.length && r.rows[0].timezone) return String(r.rows[0].timezone);
+    zone = await readReportedZone(userId);
   } catch (err) {
     // Unknown, which below means deliver. A database blip must not hold
     // somebody's messages.
     return null;
   }
+  if (zone) return zone;
   const fallback = process.env.PUSH_QUIET_DEFAULT_TZ;
   return fallback ? String(fallback) : null;
+}
+
+// The zone a device of theirs actually reported, and never the
+// PUSH_QUIET_DEFAULT_TZ stand-in: what a message may call "your clock". Null
+// when no device named one, or the read failed.
+async function reportedZone(userId) {
+  try {
+    return await readReportedZone(userId);
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2594,8 +2611,10 @@ module.exports = {
   // The presence fix: which devices a live socket actually speaks for.
   attentiveTokens,
   repairMergedHold,
-  // Whose clock quiet hours read (migration 085).
+  // Whose clock quiet hours read (migration 085), and the device's own zone
+  // without the default standing in for it.
   recipientZone,
+  reportedZone,
   everyDeviceAttended,
   OUTCOME,
   // ---------------------------------------------------------------------------

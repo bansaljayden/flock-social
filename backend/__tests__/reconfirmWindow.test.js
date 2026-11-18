@@ -17,10 +17,12 @@
 //
 // What is pinned:
 //   1. THE LEAD AND THE WORDS. reconfirmLeadHours is bounded and defaults;
-//      the push names the plan's start on the recipient's clock (the zone
-//      quiet hours read, else the venue's), and says a rounded distance only
-//      when neither zone is known, so a push held until 08:00 does not land
-//      saying "in about 3 hours" about a plan that is now one hour away.
+//      the push names the plan's start on the venue's clock, with the venue
+//      zone's name when the recipient's device reads another clock, on the
+//      device's clock when the venue has no zone, with the day when the start
+//      is not on the day the push lands, and says a rounded distance only when
+//      neither zone is known, so a push held until 08:00 does not land saying
+//      "in about 3 hours" about a plan that is now one hour away.
 //   2. THE STATE. reconfirmState reads one statement for open, deadline, count
 //      and total over both rosters, answers the closed shape when there is no
 //      row, and hands back numbers.
@@ -102,11 +104,13 @@ pushMod.pushIfOffline = async (_io, userId, title, body, data) => {
 };
 pushMod.pushIfOfflineDebounced = async () => ({ skipped: true, reason: 'test' });
 pushMod.pushAlways = async () => ({ skipped: true, reason: 'test' });
-// The recipient's clock, the one quiet hours read (pushHelper.recipientZone),
+// The zone each recipient's device reported (pushHelper.reportedZone),
 // answered from a map the test fills: no entry is a recipient whose devices
-// never named a zone.
+// never named a zone. The clock quiet hours read (pushHelper.recipientZone)
+// is that, or PUSH_QUIET_DEFAULT_TZ standing in for it, as in pushHelper.
 let deviceZones = new Map();
-pushMod.recipientZone = async (userId) => deviceZones.get(userId) || null;
+pushMod.reportedZone = async (userId) => deviceZones.get(userId) || null;
+pushMod.recipientZone = async (userId) => deviceZones.get(userId) || process.env.PUSH_QUIET_DEFAULT_TZ || null;
 
 const authMod = require('../middleware/auth');
 const ME = { id: 1, name: 'Ava', email_verified: true, role: 'user', is_banned: false };
@@ -155,6 +159,7 @@ test.beforeEach(() => {
   deviceZones = new Map();
   delete process.env.FLOCK_RECONFIRM_LEAD_HOURS;
   delete process.env.FLOCK_SWEEP_ENABLED;
+  delete process.env.PUSH_QUIET_DEFAULT_TZ;
   guest.guestActionLog.clear();
   guest.newGuestLog.clear();
 });
@@ -279,33 +284,84 @@ test('hoursOutPhrase rounds to whole hours and never prints a clock time', () =>
 // The start, said the way the app's other clock words say an hour
 // (services/clockWords.js): "8:30 PM", "9 PM", "midnight", "noon".
 const at = (iso) => `${Date.parse(iso)}.000000`;   // EXTRACT(EPOCH ...) * 1000 arrives as a numeric string
-test('reconfirmBody names the start on the zone it is given, and says a distance only without one', () => {
+// `nowMs` is when the push lands; by default the instant `hoursOut` before
+// the plan, which is what the sweep's row says.
+const body = (o) => reconfirmBody({
+  nowMs: o.eventMs == null ? undefined : Number(o.eventMs) - (o.hoursOut || 0) * 3600000, ...o,
+});
+test('reconfirmBody names the start on the venue\'s clock, the device\'s without one, and a distance only without either', () => {
   const tail = " Tap to say you're still coming.";
+  const NY = 'America/New_York';
+  const CHI = 'America/Chicago';
   const cases = [
     // 00:30 UTC on the 17th is 8:30 PM on the 16th in New York (EDT).
-    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), zone: 'America/New_York', hoursOut: 2.9 },
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), venueZone: NY, deviceZone: NY, hoursOut: 2.9 },
       'Dinner at The Bar starts at 8:30 PM.'],
-    // The same instant on the venue's clock in Chicago.
-    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), zone: 'America/Chicago', hoursOut: 2.9 },
+    // The same instant at a Chicago venue, for a phone that says Chicago, or
+    // never said, or is on another zone whose clock reads the same (the app's
+    // rule, frontend lib/eventWhereWhen.js: a label only when the clocks differ).
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), venueZone: CHI, deviceZone: CHI, hoursOut: 2.9 },
       'Dinner at The Bar starts at 7:30 PM.'],
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), venueZone: CHI, deviceZone: null, hoursOut: 2.9 },
+      'Dinner at The Bar starts at 7:30 PM.'],
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), venueZone: CHI, deviceZone: 'America/Winnipeg', hoursOut: 2.9 },
+      'Dinner at The Bar starts at 7:30 PM.'],
+    // THE TRAVELLER: a phone whose row still says New York, at a Chicago plan.
+    // The venue's clock, and its zone, because the phone's clock reads 8:30.
+    [{ where: 'Dinner at The Bar', eventMs: at('2026-09-17T00:30:00Z'), venueZone: CHI, deviceZone: NY, hoursOut: 2.9 },
+      'Dinner at The Bar starts at 7:30 PM CDT.'],
+    // A zone with no short English name is labelled as Intl labels it.
+    [{ where: 'Dinner', eventMs: at('2026-09-16T19:00:00Z'), venueZone: 'Europe/London', deviceZone: NY, hoursOut: 3 },
+      'Dinner starts at 8 PM GMT+1.'],
+    // No venue zone: the phone's own clock, no label.
+    [{ where: 'Dinner', eventMs: at('2026-09-17T00:30:00Z'), venueZone: null, deviceZone: NY, hoursOut: 2.9 }, 'Dinner starts at 8:30 PM.'],
     // On the hour, no minutes; midnight and noon as words.
-    [{ where: 'Drinks', eventMs: at('2026-09-17T01:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Drinks starts at 9 PM.'],
-    [{ where: 'Late one', eventMs: at('2026-09-17T04:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Late one starts at midnight.'],
-    [{ where: 'Brunch', eventMs: at('2026-09-17T16:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Brunch starts at noon.'],
+    [{ where: 'Drinks', eventMs: at('2026-09-17T01:00:00Z'), venueZone: NY, hoursOut: 3 }, 'Drinks starts at 9 PM.'],
+    [{ where: 'Brunch', eventMs: at('2026-09-17T16:00:00Z'), venueZone: NY, hoursOut: 3 }, 'Brunch starts at noon.'],
     // The morning the decision named: an early plan whose push waited for 08:00.
-    [{ where: 'Run club', eventMs: at('2026-09-17T12:30:00Z'), zone: 'America/New_York', hoursOut: 2.5 }, 'Run club starts at 8:30 AM.'],
+    [{ where: 'Run club', eventMs: at('2026-09-17T12:30:00Z'), venueZone: NY, hoursOut: 2.5 }, 'Run club starts at 8:30 AM.'],
     // A half-hour zone keeps its own minutes.
-    [{ where: 'Dinner', eventMs: at('2026-09-16T15:00:00Z'), zone: 'Asia/Kolkata', hoursOut: 3 }, 'Dinner starts at 8:30 PM.'],
+    [{ where: 'Dinner', eventMs: at('2026-09-16T15:00:00Z'), venueZone: 'Asia/Kolkata', hoursOut: 3 }, 'Dinner starts at 8:30 PM.'],
     // No name and no venue: the plan is still the subject.
-    [{ where: '', eventMs: at('2026-09-17T01:00:00Z'), zone: 'America/New_York', hoursOut: 3 }, 'Your plan starts at 9 PM.'],
-    // No usable zone: the distance, which is only ever sent undelayed (quiet
-    // hours hold nothing for a recipient with no zone).
-    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), zone: null, hoursOut: 2.9 }, 'Dinner is in about 3 hours.'],
-    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), zone: 'Mars/Olympus_Mons', hoursOut: 2.9 }, 'Dinner is in about 3 hours.'],
-    [{ where: 'Dinner', eventMs: null, zone: 'America/New_York', hoursOut: 0.4 }, 'Dinner is soon.'],
+    [{ where: '', eventMs: at('2026-09-17T01:00:00Z'), deviceZone: NY, hoursOut: 3 }, 'Your plan starts at 9 PM.'],
+    // THE DAY. With FLOCK_RECONFIRM_LEAD_HOURS at 24, the plan can be on the
+    // next day: 9 PM Wednesday, for 8:30 PM Thursday.
+    [{ where: 'Dinner', eventMs: at('2026-09-18T00:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
+      'Dinner starts tomorrow at 8:30 PM.'],
+    [{ where: 'Dinner', eventMs: at('2026-09-18T00:30:00Z'), venueZone: CHI, deviceZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
+      'Dinner starts tomorrow at 7:30 PM CDT.'],
+    // Just after midnight is tonight, said at 9:30 PM: the small hours belong
+    // to the night before (routes/advisor.js, THE SMALL HOURS).
+    [{ where: 'Late one', eventMs: at('2026-09-17T04:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:30:00Z') },
+      'Late one starts tonight at 12:30 AM.'],
+    [{ where: 'Late one', eventMs: at('2026-09-17T04:00:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
+      'Late one starts tonight at midnight.'],
+    // Said in the small hours, "tomorrow" is heard both ways, so the day is
+    // named: at 1 AM Friday, a plan for 12:30 AM Saturday.
+    [{ where: 'Late one', eventMs: at('2026-09-19T04:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-18T05:00:00Z') },
+      'Late one starts Saturday at 12:30 AM.'],
+    // Inside the small hours, a plan later the same night needs no day.
+    [{ where: 'Late one', eventMs: at('2026-09-18T07:00:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-18T05:00:00Z') },
+      'Late one starts at 3 AM.'],
+    // Two days or more ahead: the weekday.
+    [{ where: 'Dinner', eventMs: at('2026-09-19T00:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-09-17T01:00:00Z') },
+      'Dinner starts Friday at 8:30 PM.'],
+    // The week the clocks change: 9 PM EDT Saturday 31 October, for 7:30 PM
+    // EST on Sunday, and the traveller's label is the zone's name on the night.
+    [{ where: 'Dinner', eventMs: at('2026-11-02T00:30:00Z'), venueZone: NY, nowMs: Date.parse('2026-11-01T01:00:00Z') },
+      'Dinner starts tomorrow at 7:30 PM.'],
+    [{ where: 'Dinner', eventMs: at('2026-11-02T00:30:00Z'), venueZone: NY, deviceZone: 'Europe/London', nowMs: Date.parse('2026-11-01T01:00:00Z') },
+      'Dinner starts tomorrow at 7:30 PM EST.'],
+    [{ where: 'Dinner', eventMs: at('2026-10-31T23:30:00Z'), venueZone: NY, deviceZone: 'Europe/London', nowMs: Date.parse('2026-10-31T21:00:00Z') },
+      'Dinner starts at 7:30 PM EDT.'],
+    // No usable zone either side: the distance.
+    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), hoursOut: 2.9 }, 'Dinner is in about 3 hours.'],
+    [{ where: 'Dinner', eventMs: at('2026-09-17T01:00:00Z'), venueZone: 'Mars/Olympus_Mons', deviceZone: 'Not/A_Zone', hoursOut: 2.9 },
+      'Dinner is in about 3 hours.'],
+    [{ where: 'Dinner', eventMs: null, venueZone: NY, hoursOut: 0.4 }, 'Dinner is soon.'],
   ];
   for (const [input, want] of cases) {
-    assert.strictEqual(reconfirmBody(input), want + tail, JSON.stringify(input));
+    assert.strictEqual(body(input), want + tail, JSON.stringify(input));
   }
 });
 
@@ -382,7 +438,7 @@ test('the sweep claims confirmed plans inside the lead that nobody has touched l
   assert.match(sql, /\) AND status = 'confirmed' AND reconfirm_opened_at IS NULL RETURNING id, name, venue_name, event_time, /,
     'the outer update re-checks what another writer could have changed since the select');
   assert.match(sql, / RETURNING id, name, venue_name, event_time, EXTRACT\(EPOCH FROM \(event_time - \(NOW\(\) AT TIME ZONE 'UTC'\)\)\) \/ 3600 AS hours_out, EXTRACT\(EPOCH FROM \(event_time AT TIME ZONE 'UTC'\)\) \* 1000 AS event_ms, \(SELECT v\.timezone FROM ml_venues v WHERE v\.google_place_id = flocks\.venue_id LIMIT 1\) AS venue_zone$/,
-    'the start as an instant (event_time is naive UTC), and the venue\'s zone for a recipient with none, in the same round trip');
+    'the start as an instant (event_time is naive UTC; less hours_out, it is the database\'s now, for the day the push names), and the venue\'s zone, in the same round trip');
   assert.deepStrictEqual(params, [DEFAULT_LEAD_HOURS, SETTLE_MINUTES, SWEEP_BATCH_SIZE]);
   assert.strictEqual(SETTLE_MINUTES, 15);
   assert.strictEqual(SWEEP_BATCH_SIZE, 200);
@@ -431,13 +487,14 @@ test('an opened window is announced to each accepted member\'s room and pushed t
     { room: 'user:2', event: 'flock_reconfirm_opened', payload: { flockId: 7, deadline: DINNER_AT } },
     { room: 'user:1', event: 'flock_reconfirm_opened', payload: { flockId: 9, deadline: '2026-09-17T01:00:00.000Z' } },
   ]);
-  // The plan and the place, and the start on the recipient's own clock: the
-  // phone's zone first (the one quiet hours read, so a push held until 08:00
-  // still says the right thing when it lands), the venue's when the phone
-  // never named one, and the rounded distance only with neither.
+  // The plan and the place, and the start on the venue's clock, as the app
+  // shows a plan's time: member 2's phone row says New York, so the time
+  // carries Chicago's zone (it used to say 8:30 PM, the phone row's clock, to a
+  // member who may well be in Chicago); member 1's phone never named a zone, so
+  // no label. The rounded distance only with neither zone.
   assert.deepStrictEqual(pushes, [
     { userId: 1, title: 'Still in?', body: "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
-    { userId: 2, title: 'Still in?', body: "Dinner at The Bar starts at 8:30 PM. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
+    { userId: 2, title: 'Still in?', body: "Dinner at The Bar starts at 7:30 PM CDT. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '7' } },
     { userId: 1, title: 'Still in?', body: "Late one is soon. Tap to say you're still coming.", data: { type: 'flock_reconfirm', flockId: '9' } },
   ]);
   assert.deepStrictEqual(unknownSql, []);
@@ -448,6 +505,46 @@ test('a phone zone ICU will not take is no zone: the venue\'s clock is used inst
   deviceZones.set(1, 'Not/A_Zone');
   await runReconfirmSweep(io);
   assert.strictEqual(pushes[0].body, "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming.");
+});
+
+test('PUSH_QUIET_DEFAULT_TZ is not anybody\'s clock: the venue\'s wins, unlabelled, and with no venue zone the distance', async () => {
+  scriptOpened();
+  process.env.PUSH_QUIET_DEFAULT_TZ = 'America/New_York';
+  await runReconfirmSweep(io);
+  assert.deepStrictEqual(pushes.map((p) => [p.userId, p.body]), [
+    [1, "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming."],
+    [2, "Dinner at The Bar starts at 7:30 PM. Tap to say you're still coming."],
+    [1, "Late one is soon. Tap to say you're still coming."],
+  ]);
+});
+
+test('with a 24-hour lead the push names the day, on the day it will land', async () => {
+  process.env.FLOCK_RECONFIRM_LEAD_HOURS = '24';
+  // 9 PM Wednesday in Chicago, for 8 PM Thursday and for 12:30 AM Thursday.
+  on(/^UPDATE flocks SET reconfirm_opened_at = NOW\(\)/, () => ({
+    rows: [
+      { id: 11, name: 'Dinner', venue_name: 'The Bar', event_time: '2026-09-18T01:00:00.000Z', hours_out: 23,
+        event_ms: at('2026-09-18T01:00:00.000Z'), venue_zone: 'America/Chicago' },
+      { id: 12, name: 'Late one', venue_name: null, event_time: '2026-09-17T05:30:00.000Z', hours_out: 3.5,
+        event_ms: at('2026-09-17T05:30:00.000Z'), venue_zone: 'America/Chicago' },
+    ],
+    rowCount: 2,
+  }));
+  on(/^SELECT flock_id, user_id FROM flock_members/, () => ({
+    rows: [{ flock_id: 11, user_id: 3 }, { flock_id: 11, user_id: 4 }, { flock_id: 12, user_id: 3 }],
+    rowCount: 3,
+  }));
+  deviceZones.set(3, 'America/Chicago');
+  // Member 4's phone says London, where it is 3 AM: quiet hours hold the push
+  // until 8 AM there, 2 AM Thursday in Chicago, and on Thursday the plan is
+  // not tomorrow. The words are for when it lands.
+  deviceZones.set(4, 'Europe/London');
+  await runReconfirmSweep(io);
+  assert.deepStrictEqual(pushes.map((p) => [p.userId, p.body]), [
+    [3, "Dinner at The Bar starts tomorrow at 8 PM. Tap to say you're still coming."],
+    [4, "Dinner at The Bar starts at 8 PM CDT. Tap to say you're still coming."],
+    [3, "Late one starts tonight at 12:30 AM. Tap to say you're still coming."],
+  ]);
 });
 
 test('with no socket server the pushes still go out', async () => {
