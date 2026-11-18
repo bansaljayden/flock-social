@@ -780,10 +780,10 @@ const MAX_VENUE_ROOMS_PER_SOCKET = 10;
 // --- Wire-value normalizers ------------------------------------------------
 //
 // Socket payloads get none of express-validator's coercion, so every handler
-// used to interpret ids and short strings its own way. These two are the
-// socket equivalents of `param('id').isInt()` and
-// `body('emoji').isLength({min:1,max:10})`, so the socket and REST twins of the
-// same feature agree on what they accept.
+// used to interpret ids and short strings its own way. asId is the socket
+// equivalent of `param('id').isInt()`, and normalizeEmoji is the one emoji rule
+// the REST routes call too, so the socket and REST twins of the same feature
+// agree on what they accept.
 //
 // STRICT on purpose: parseInt('5abc') is 5 and Number.isInteger says yes, and
 // Postgres silently trims ' 5 ' when casting to int — both produced ids that
@@ -811,11 +811,31 @@ function isLatLng(lat, lng) {
     && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
-// dm_emoji_reactions.emoji is VARCHAR(10); the REST twin enforces 1-10 chars.
+// ONE EMOJI, NOT A SHORT STRING (2026-11-17). This used to take any string of
+// 1-10 characters, so a reaction could be a word, a blocked one included, and
+// it became a pill under the message for every member: the chat screen reads
+// message_text and nothing reads a reaction. A reaction is now one emoji: a
+// pictograph with its optional variation selector or skin tone, joined to more
+// by zero-width joiners (families, the rainbow flag), a pair of regional
+// indicators (a country flag), a keycap, or a tag-sequence flag. Every one the
+// app offers passes (ChatDetail.js and App.js offer ❤️ 👍 😂 🔥).
+//
+// Bounded in CODE POINTS, which is what Postgres counts for the VARCHAR(10)
+// column (emoji_reactions and dm_emoji_reactions alike). A UTF-16 length let
+// six ❤️ (12 code points) through to a 22001 that came back a 500.
+//
+// routes/messages.js applies this to both add routes, so the three ways to add
+// a reaction take the same values.
+const ONE_EMOJI = /^(?:\p{Regional_Indicator}{2}|[0-9#*]\u{FE0F}?\u{20E3}|\p{Extended_Pictographic}(?:\u{FE0F}|\p{Emoji_Modifier})?(?:[\u{E0020}-\u{E007E}]+\u{E007F})?)(?:\u{200D}\p{Extended_Pictographic}(?:\u{FE0F}|\p{Emoji_Modifier})?)*$/u;
+const MAX_EMOJI_CODE_POINTS = 10;
 function normalizeEmoji(value) {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
-  if (trimmed.length < 1 || trimmed.length > 10) return null;
+  // Two UTF-16 units per code point at most, so this refuses nothing the
+  // column could hold and keeps a long string away from the pattern.
+  if (trimmed.length > MAX_EMOJI_CODE_POINTS * 2) return null;
+  if (!ONE_EMOJI.test(trimmed)) return null;
+  if ([...trimmed].length > MAX_EMOJI_CODE_POINTS) return null;
   return trimmed;
 }
 
@@ -3126,7 +3146,8 @@ function registerHandlers(io, socket) {
   // a Postgres error swallowed by the catch — but the same value is echoed
   // straight back out in `dm_reaction_added`, so a non-string (object, array)
   // reached the counterpart's client verbatim before the insert ever failed.
-  // normalizeEmoji is the socket copy of the REST validator; see module scope.
+  // normalizeEmoji is the one rule for a reaction, which the REST add routes
+  // apply too; see module scope.
   //
   // Round 18 — TAKEDOWN PARITY. POST /api/dm/messages/:id/react looks the
   // message up with `AND COALESCE(is_hidden, false) = false` and answers 404
@@ -4007,6 +4028,9 @@ module.exports = {
   // than spelling the shape a second time.
   readClientId,
   ownEcho,
+  // What a reaction may be, read the same way by dm_react and by the two REST
+  // add routes in routes/messages.js.
+  normalizeEmoji,
   // The thumbnail-not-photo rule for a freshly stored row, so the REST send
   // twins fan out the same shape as the socket paths and the history reads.
   toLiveImageShape,

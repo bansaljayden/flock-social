@@ -64,6 +64,9 @@ const {
   // that person's venue page leads with, a drink deal only for a person known
   // to be 21. The socket vote sends the same, so the transports agree.
   dmVotesFor,
+  // A reaction is one emoji, by the rule dm_react applies. The two add routes
+  // below take it rather than a length, which let a word through.
+  normalizeEmoji,
 } = require('../sockets/handlers');
 const { pushIfOfflineDebounced, pushBadgeSync } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
@@ -1653,7 +1656,9 @@ router.post('/messages/:id/react',
     // emoji_reactions.emoji is VARCHAR(10). `["👍"]` measures 2 through
     // isLength but reaches pg as the 5-character literal '{"👍"}', so a long
     // enough one-element array was a 22001 turned into a 500.
-    scalarOnly(body('emoji'), 'emoji').trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
+    // One emoji, not 1-10 characters: a word was a reaction every member saw,
+    // and isLength counts six ❤️ as 6 where the column counts 12.
+    scalarOnly(body('emoji'), 'emoji').trim().custom((v) => normalizeEmoji(v) !== null).withMessage('Emoji is required'),
   ],
   async (req, res) => {
     try {
@@ -1737,8 +1742,11 @@ router.delete('/messages/:id/react/:emoji',
     try {
       if (rejectInvalid(req, res)) return;
       const messageId = req.params.id;
-      // Bounded before it reaches a VARCHAR(10) column (schema 000_bootstrap).
-      const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
+      // Bounded before it reaches a VARCHAR(10) column (schema 000_bootstrap),
+      // in code points as the column counts them. Express has already decoded
+      // the param once; decoding it again threw a URIError, a 500, on a
+      // reaction of `%`, sent as %25.
+      const emoji = Array.from(req.params.emoji).slice(0, 10).join('');
 
       // Get flock_id for socket notification
       const msgResult = await pool.query('SELECT flock_id FROM messages WHERE id = $1', [messageId]);
@@ -2360,8 +2368,9 @@ function dmPairKey(a, b) {
 router.post('/dm/messages/:id/react',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID'),
+    // One emoji, the rule the flock twin above and dm_react apply.
     body('emoji').isString().withMessage('Emoji is required')
-      .trim().isLength({ min: 1, max: 10 }).withMessage('Emoji is required'),
+      .trim().custom((v) => normalizeEmoji(v) !== null).withMessage('Emoji is required'),
   ],
   async (req, res) => {
     try {
@@ -2427,7 +2436,8 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
   try {
     if (rejectInvalid(req, res)) return;
     const dmId = parseInt(req.params.id);
-    const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
+    // Express decodes the param once; see the flock twin above.
+    const emoji = Array.from(req.params.emoji).slice(0, 10).join('');
     // ONE ANSWER FOR "NOT YOURS": the 404 an id that was never issued gets,
     // byte for byte, and before anything else is asked. The block check below
     // used to run for anybody, reading the message's SENDER as the caller's

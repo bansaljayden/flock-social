@@ -769,13 +769,13 @@ test('dm_react refuses hidden messages and non-participants', async () => {
     registerHandlers(io, s);
 
     // Moderator-hidden DM: same 404-shaped silence as the REST twin.
-    await fire(s, 'dm_react', { dmId: 5, emoji: 'x' });
+    await fire(s, 'dm_react', { dmId: 5, emoji: '🔥' });
     assert.ok(!calls.some((c) => /INSERT INTO dm_emoji_reactions/.test(c.text)));
     assert.ok(!s.emitted.some((e) => e.event === 'dm_reaction_added'));
 
     // A DM between two OTHER people: the participant check refuses it.
     dmRows = [{ sender_id: 1101, receiver_id: 1102 }];
-    await fire(s, 'dm_react', { dmId: 6, emoji: 'x' });
+    await fire(s, 'dm_react', { dmId: 6, emoji: '🔥' });
     assert.ok(!calls.some((c) => /INSERT INTO dm_emoji_reactions/.test(c.text)));
     assert.ok(!s.emitted.some((e) => e.event === 'dm_reaction_added'));
   } finally { restore(); }
