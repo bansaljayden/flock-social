@@ -1047,7 +1047,7 @@ export default function LiveDemo() {
           name="demo-query"
           value={queryText}
           onChange={(e) => setQueryText(e.target.value)}
-          placeholder="Pizza, bars, bowling..."
+          placeholder="Try “pizza” or a bar’s name"
           aria-label="What kind of place"
           enterKeyHint="search"
           // type=search buys the phone keyboard a Search key and an inline
