@@ -414,6 +414,10 @@ async function insertForecastData(dbVenue, venue, city) {
   // fresh week, was refreshed ahead of venues whose curves were a month old.
   // A claim about data, made only when a row landed (collectWeekly's rule).
   // Migration 125 filled in the venues written before this line existed.
+  // The hourly collector's targeted baseline rebuild finds new weeks by this
+  // stamp (buildBaselines THE TARGETED REBUILD): if a run dies between the
+  // rows above and this line, run `node scripts/ml/buildBaselines.js` (the
+  // full rebuild) by hand afterwards.
   if (rows > 0) {
     try {
       await pool.query('UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1', [dbVenue.id]);

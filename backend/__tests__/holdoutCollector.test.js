@@ -36,7 +36,10 @@ test('the flag exists, is read from argv, and gates the refresh as a branch', ()
   assert.match(src, /catch \(err\) \{\n\s+rebuild = \{ due: true, full: true, reason: `the stamps could not be read/);
   const before = src.slice(src.indexOf('async function rebuildBeforeSweep'), src.indexOf('async function run()'));
   assert.match(before, /await refreshCollectedBaselines\(pool, \{ targeted: true, deadline: startedAt \+ TARGETED_REBUILD_BUDGET_MS \}\)/);
-  assert.match(before, /if \(!rebuild\.due \|\| rebuild\.full === true\) return 0;/);
+  // Its time, the due check's included, comes off the sweep on every path.
+  assert.match(before, /^\s+const startedAt = Date\.now\(\);\n\s+let rebuild;/m);
+  assert.match(before, /if \(!rebuild\.due \|\| rebuild\.full === true\) return Date\.now\(\) - startedAt;/);
+  assert.ok(!/return 0;/.test(before), 'a path of rebuildBeforeSweep reports no time spent');
   assert.match(before, /return Date\.now\(\) - startedAt;\n\}/);
   // A thrown sentinel would swallow real refresh errors; the branch must not
   // be reintroduced that way.

@@ -1059,7 +1059,8 @@ async function sweepVenues(cityOrder, {
   // and less any minutes spent before it on a baseline rebuild.
   const beforeMs = Math.max(0, beforeSweepMs);
   const runBudgetMs = runTimeBudgetMs(runClockStart - beforeMs, RUN_TIME_BUDGET_MS) - beforeMs;
-  if (beforeMs > 0) {
+  // Said when it is a rebuild's minutes, not the second the due check takes.
+  if (beforeMs >= 1000) {
     console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the `
       + `${((runBudgetMs + beforeMs) / 60000).toFixed(1)} this run had, less the ${(beforeMs / 60000).toFixed(1)} `
       + 'the baseline rebuild took before the sweep.');
@@ -2466,18 +2467,18 @@ const WATCHDOG_EXIT_CODE = 3;
 // THE TARGETED REBUILD RUNS BEFORE THE SWEEP (TARGETED_REBUILD_BUDGET_MS).
 // Only the targeted one: the full one, for a missing mark or a repair, waits
 // for the tail, where it has always run. Never throws; a failure costs the
-// rebuild, not the sweep. Returns the milliseconds it spent rebuilding, for
-// the sweep to take off its budget (0 when it did not rebuild).
+// rebuild, not the sweep. Returns the milliseconds it spent, the due check
+// included, on every path, for the sweep to take off its budget.
 async function rebuildBeforeSweep(runStartedAt) {
+  const startedAt = Date.now();
   let rebuild;
   try {
     rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
   } catch (err) {
     console.error(`[ML:Realtime] Baseline stamps could not be read before the sweep (${describeDbError(err)}); no targeted rebuild.`);
-    return 0;
+    return Date.now() - startedAt;
   }
-  if (!rebuild.due || rebuild.full === true) return 0;
-  const startedAt = Date.now();
+  if (!rebuild.due || rebuild.full === true) return Date.now() - startedAt;
   console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}. Targeted, before the sweep, `
     + `for up to ${TARGETED_REBUILD_BUDGET_MS / 60000} minutes.`);
   try {

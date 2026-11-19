@@ -269,7 +269,10 @@ const INSERT_NEW_SQL = `
 // partial index, once per unstamped venue without a baseline (12,535 venues
 // had no stamp on 2026-11-19, none of them with such rows). A stamped venue
 // whose rows are all NULL busyness stays a target and is averaged to nothing
-// on every pass (a few dozen, seconds).
+// on every pass (a few dozen, seconds). What no stamp can show: a
+// discoverBestTime run that rewrites a venue's EXISTING week and dies before
+// its stamp leaves the old stamp beside new rows. That script runs only by
+// hand; after a run that did not finish, run this file in full.
 const TARGETS_SQL = `
   SELECT v.google_place_id,
          v.besttime_status IS DISTINCT FROM 'harvested' AS stamped
@@ -498,8 +501,10 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
 // The stamps say whether anything moved. Every writer of weekly rows stamps
 // the venue's last_collected_at with its rows (collectWeekly.js and
 // harvestVenueFilter.js in the rows' own transaction), and every rebuild
-// records the newest stamp it saw (ml_baseline_marks, read under the corpus
-// lock before the rebuild's statements). So a rebuild is due exactly when the
+// records the newest stamp it saw (ml_baseline_marks: the full rebuild reads
+// it under the corpus lock before its statements, the targeted one just
+// before its target list, outside the lock; THE TARGETED REBUILD says what
+// that costs). So a rebuild is due exactly when the
 // newest stamp is not the one the last rebuild recorded: a write since then
 // raises it, and a repair that clears the newest venue's stamp lowers it.
 //
@@ -534,8 +539,10 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
 // minutes before the 09:07 fire, with no time reserved for it: its start had
 // read 08:07, not due, so its fill had used the minutes a rebuild is given
 // (collectRealtime FILL_EARLY_STOP_MS). Asked with the start, the run that
-// starts in the daily hour is the one that rebuilds, both asks agree, and its
-// fill leaves the room.
+// starts in the daily hour is the one that rebuilds and both asks agree. (Since
+// the same day that rebuild is the targeted one, before the sweep, with its
+// minutes taken off the sweep's budget: collectRealtime
+// TARGETED_REBUILD_BUDGET_MS. Only a full rebuild keeps the fill's room.)
 const DAILY_REBUILD_UTC_HOUR = 9;
 // Compared in SQL, at the columns' microseconds: a JS Date keeps milliseconds.
 const DUE_SQL = `
