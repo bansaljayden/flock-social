@@ -521,6 +521,37 @@ test('a key ended by a password change no longer counts against the ceiling', as
   await pool.query('DELETE FROM users WHERE id = $1', [owner.id]);
 });
 
+test('the key list puts every live key before every ended one, keys their account ended included', async () => {
+  // keyState reads a key whose account ended it (a password change, a lost
+  // admin role) as Ended, and the list sorted it among the live keys, newest
+  // first, so it sat above keys that still work (2026-11-19). The live key is
+  // minted first, so only the live-first rule can put it above the other two.
+  const live = await insertUser({ role: 'admin' });
+  const changed = await insertUser({ role: 'admin' });
+  const demoted = await insertUser({ role: 'admin' });
+  const liveKey = await mint(live, { name: 'still live' });
+  const changedKey = await mint(changed, { name: 'ended by a password change' });
+  const demotedKey = await mint(demoted, { name: 'ended by a lost role' });
+  await pool.query('UPDATE users SET token_version = token_version + 1 WHERE id = $1', [changed.id]);
+  await pool.query("UPDATE users SET role = 'user' WHERE id = $1", [demoted.id]);
+  try {
+    const list = await keys.listAdminKeys();
+    const at = (k) => list.findIndex((row) => row.id === Number(k.id));
+    for (const k of [liveKey, changedKey, demotedKey]) assert.ok(at(k) >= 0, `key ${k.id} is not in the list`);
+    assert.strictEqual(list[at(liveKey)].state, 'active');
+    assert.strictEqual(list[at(changedKey)].state, 'ended');
+    assert.strictEqual(list[at(demotedKey)].state, 'ended');
+    assert.ok(at(liveKey) < at(changedKey) && at(liveKey) < at(demotedKey),
+      `an ended key is listed among the live ones: ${list.map((k) => k.state).join(', ')}`);
+    const isLive = (k) => k.state === 'active' || k.state === 'pending';
+    const firstEnded = list.findIndex((k) => !isLive(k));
+    assert.ok(firstEnded === -1 || !list.slice(firstEnded).some(isLive),
+      `a live key comes after an ended one: ${list.map((k) => k.state).join(', ')}`);
+  } finally {
+    await pool.query('DELETE FROM users WHERE id = ANY($1::int[])', [[live.id, changed.id, demoted.id]]);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 3. A KEY AT WORK
 // ---------------------------------------------------------------------------
