@@ -579,6 +579,18 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // container started at :11:54.
 const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 
+// THE TARGETED REBUILD STOPS BY :04 (2026-11-19). A run due a rebuild stops
+// its fill FILL_EARLY_STOP_MS early, so its sweep ends near :56 and the
+// targeted rebuild (buildBaselines) gets the minutes to :04 of the next hour,
+// then the offsets, under a minute, and the run is done before the :07 fire.
+// It starts no chunk after this; a chunk is seconds. Measured from the hour
+// the run started in, so a run that was held up starts none.
+const TARGETED_REBUILD_END_MINUTE = 4;
+function targetedRebuildDeadline(runStartedAt) {
+  const hourMs = 60 * 60 * 1000;
+  return Math.floor(runStartedAt.getTime() / hourMs) * hourMs + hourMs + TARGETED_REBUILD_END_MINUTE * 60 * 1000;
+}
+
 // THE BUDGET RUNS FROM :12 (2026-10-31). The cron fires at :07 (`7 * * * *`,
 // set in the BESTTIME service's settings, not in this repository) and Railway
 // starts the container any time in the five minutes after it: of the 105 runs
@@ -2481,6 +2493,15 @@ async function run() {
       // from the start of the run, so a weekly write that landed during the
       // sweep is rebuilt now rather than next hour. Stamps that cannot be read
       // mean rebuild, the old behaviour.
+      //
+      // TARGETED UNLESS ASKED FOR THE FULL ONE (2026-11-19). The full rebuild
+      // reads the whole corpus, 20 minutes or more on production, past the
+      // next :07; buildBaselines' targeted one averages only the places whose
+      // stamps are newer than their baselines, in short transactions, and
+      // stops at TARGETED_REBUILD_END_MINUTE of the next hour so this run
+      // ends before the next fire. What it leaves is first in line next time.
+      // collectedBaselinesDue asks for the full one (`full`) only with no mark
+      // or a stamp that moved backwards, which a repair causes.
       let rebuild;
       try {
         rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
@@ -2491,11 +2512,15 @@ async function run() {
         console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}.`);
         try {
           console.log('[ML:Realtime] Refreshing venue baselines...');
-          const result = await refreshCollectedBaselines(pool);
+          const result = await refreshCollectedBaselines(pool, rebuild.full === true
+            ? {}
+            : { targeted: true, deadline: targetedRebuildDeadline(runStartedAt) });
           if (!result.ok) {
             console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
           } else {
-            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed`
+              + `${result.targeted ? `; targeted: ${result.places} places averaged, ${result.left} left for the next rebuild`
+                + `${result.marked ? '' : ', mark not moved'}` : '; full'})`);
           }
         } catch (err) {
           console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
@@ -2554,7 +2579,8 @@ module.exports = {
   NARROWER_OPEN_HOUR_RULES, weekDayMasks, narrowRuleCalls, createNarrowRuleTally,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
-  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, runTimeBudgetMs, parseFillCities, orderCityBlocks,
+  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, TARGETED_REBUILD_END_MINUTE, targetedRebuildDeadline,
+  runTimeBudgetMs, parseFillCities, orderCityBlocks,
   FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, loadRecordedThisHour, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,

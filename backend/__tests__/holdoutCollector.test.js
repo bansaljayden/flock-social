@@ -43,7 +43,7 @@ test('skipping is announced, so a silent run cannot be mistaken for a refresh', 
 test('the refresh still runs by default, so the existing hourly cron is unchanged', () => {
   const at = src.indexOf('const skipBaselines');
   const after = src.slice(at, at + 1800);
-  assert.match(after, /await refreshCollectedBaselines\(pool\)/);
+  assert.match(after, /await refreshCollectedBaselines\(pool[,)]/);
   // No flag on the command line means skipBaselines is false, so the branch runs.
   assert.ok(!/--no-baseline-refresh.*default/i.test(src), 'the flag must be opt in');
 });

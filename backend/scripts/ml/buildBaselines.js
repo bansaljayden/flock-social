@@ -171,8 +171,8 @@ const DELETE_STALE_SQL = `
 // writes, so a rebuild that changes nothing writes nothing. Same rows written,
 // same values, same stamps: the old statement updated a slot whatever its
 // source and inserted a missing one as 'collected', and so do these.
-const FRESH_SQL = `
-  CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS
+function averageSql(placeFilter = '') {
+  return `
   SELECT
     v.google_place_id,
     t.day_of_week,
@@ -183,9 +183,12 @@ const FRESH_SQL = `
   JOIN ml_venues v ON t.venue_id = v.id
   WHERE t.collection_mode = 'weekly'
     AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
-    AND t.busyness_pct IS NOT NULL
+    AND t.busyness_pct IS NOT NULL${placeFilter}
   GROUP BY v.google_place_id, t.day_of_week, t.hour
 `;
+}
+const FRESH_SQL = `
+  CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS${averageSql()}`;
 
 const UPDATE_CHANGED_SQL = `
   UPDATE ml_venue_baselines b
@@ -211,6 +214,76 @@ const INSERT_NEW_SQL = `
    )
 `;
 
+// THE TARGETED REBUILD (2026-11-19). Without the row locks the full rebuild
+// still READS the whole corpus: timed on production that day (15.5M slots,
+// rolled back), 11 minutes to average every weekly row, 6 to find stale
+// slots, 1 to find changed ones, 4 to find missing ones. Started at :56 it
+// ends past the next :07, so every full rebuild at a run's tail costs the
+// next sweep, and the corpus keeps growing. Most places cannot have changed.
+// A weekly writer stamps the venue (last_collected_at) with the rows'
+// own instant, and a rebuild stamps each slot with the newest row under it
+// (updated_at), so a place needs averaging again exactly when a venue's
+// stamp is newer than every slot's evidence, or when it has no slot at all.
+// That compares a venue with its own baseline, so unlike the corpus mark it
+// cannot be fooled by a write that waited on the lock and committed late
+// under an early stamp (the Paris harvest's commit on 2026-11-19 waited from
+// 09:03 to 11:41). Finding them reads the baselines once (37 s that day, 5 s
+// warm, for ~6,800 places: 5,579 harvested venues without a curve, 1,194
+// venues whose stamp sits 0.495 s after their rows, and a few dozen others).
+//
+// ONE SECOND OF SLACK, PER VENUE. Those 1,194 were stamped by collectWeekly
+// in a separate UPDATE after COMMIT, before it stamped in the rows' own
+// transaction, so no rebuild can bring their evidence up to their stamp:
+// without slack they were averaged on every targeted pass, about two minutes
+// each time (500 of them took 49 s on production) to change nothing. A
+// tolerance was wrong for the corpus mark (STAMPS AGAINST THE MARK, below),
+// where it compares the newest stamp of all venues with a mark and hid a
+// week written seconds after a rebuild. Here it compares one venue with its
+// own evidence, and a venue's next week comes days after its last, never
+// within a second.
+//
+// What it cannot see is what the corpus mark cannot see either: a weekly
+// row deleted, or a place id remapped, with no stamp moving
+// (repairBestTimeDiscoveredVenues.js). Those take the full rebuild, by hand
+// as before, and collectedBaselinesDue asks for the full one when the
+// newest stamp moves other than forward. So the hourly run's daily rebuild,
+// and a rebuild for a newer stamp, average only the targets, in chunks of
+// TARGET_CHUNK_PLACES places, each in its own short transaction under the
+// corpus lock, so a collector write waits seconds, not the whole rebuild.
+// Places whose venues serve the stamp go first; the mark is written once
+// none of those is left. Harvested places are not in the stamp, so those
+// left at the deadline are simply first in line next time.
+const TARGETS_SQL = `
+  SELECT v.google_place_id,
+         BOOL_OR(v.besttime_status IS DISTINCT FROM 'harvested') AS stamped
+    FROM ml_venues v
+    LEFT JOIN (
+      SELECT google_place_id, MAX(updated_at) AS evidence
+        FROM ml_venue_baselines
+       GROUP BY google_place_id
+    ) e ON e.google_place_id = v.google_place_id
+   WHERE v.google_place_id IS NOT NULL
+     AND v.last_collected_at IS NOT NULL
+     AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second')
+   GROUP BY v.google_place_id
+   ORDER BY stamped DESC, MIN(v.last_collected_at), v.google_place_id
+`;
+const TARGET_CHUNK_PLACES = 500;
+// The same average, the same delete, for the given place ids only. Every
+// ml_venues row carrying a place id joins it, so each slot written equals what
+// the full rebuild writes for it.
+const PLACES_FILTER = `
+    AND v.google_place_id = ANY($1::text[])`;
+const FRESH_EMPTY_SQL = `${FRESH_SQL}  WITH NO DATA`;
+const FRESH_PLACES_SQL = `
+  INSERT INTO baseline_fresh${averageSql(PLACES_FILTER)}`;
+const DELETE_STALE_PLACES_SQL = `${DELETE_STALE_SQL}    AND b.google_place_id = ANY($1::text[])
+`;
+const MARK_SQL = `
+  INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
+  ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at
+`;
+
 // Rebuild every source='collected' baseline from the corrected weekly corpus.
 // Safe to call any number of times, from anywhere, in any order.
 // Returns { ok, undeclared, deleted, upserted }.
@@ -228,12 +301,17 @@ const INSERT_NEW_SQL = `
 // outside the transaction; it is IF NOT EXISTS and takes no part in the race.
 // The one CREATE inside it is FRESH_SQL's temporary table, which belongs to
 // this transaction alone and is dropped at its COMMIT or ROLLBACK.
-async function refreshCollectedBaselines(pool) {
+//
+// `targeted: true` runs THE TARGETED REBUILD instead, until `deadline` (ms
+// since the epoch; none means until done), and also returns { targeted,
+// places, left, marked }.
+async function refreshCollectedBaselines(pool, { targeted = false, deadline = null, chunkPlaces = TARGET_CHUNK_PLACES } = {}) {
   await pool.query(CREATE_TABLE_SQL);
   await pool.query(MARK_TABLE_SQL);
   // Both columns are created by migration 023 on a booted server; these scripts
   // also run against databases that have not booted the current server.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+  if (targeted) return refreshTargets(pool, { deadline, chunkPlaces });
 
   return withCorpusWriteLock(pool, async (client) => {
     // The mark is read BEFORE the rebuild's own statements: a write that
@@ -256,13 +334,48 @@ async function refreshCollectedBaselines(pool) {
     const del = await client.query(DELETE_STALE_SQL);
     const changed = await client.query(UPDATE_CHANGED_SQL);
     const added = await client.query(INSERT_NEW_SQL);
-    await client.query(
-      `INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
-       ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at`,
-      [corpusAt]
-    );
+    await client.query(MARK_SQL, [corpusAt]);
     return { ok: true, undeclared: false, deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
   });
+}
+
+// THE TARGETED REBUILD, above. The undeclared check, the corpus stamp and the
+// target list are read before any chunk and outside the lock: the list is
+// only which places to average, and each chunk averages its places from the
+// rows as they stand under the lock. The stamp is read first, so a write that
+// lands after it is either in the list or newer than the mark it leaves, and
+// costs one more targeted pass next hour rather than going unseen.
+async function refreshTargets(pool, { deadline, chunkPlaces }) {
+  const { rows: [{ undeclared }] } = await pool.query(UNDECLARED_WEEKLY_SQL);
+  if (undeclared) {
+    return { ok: false, undeclared: true, deleted: 0, upserted: 0, targeted: true, places: 0, left: 0, marked: false };
+  }
+  const { rows: [{ corpus_at: corpusAt }] } = await pool.query(
+    `SELECT corpus_at::text AS corpus_at FROM (${CORPUS_STAMP_SQL}) c`);
+  const { rows: targets } = await pool.query(TARGETS_SQL);
+
+  let deleted = 0;
+  let upserted = 0;
+  let done = 0;
+  while (done < targets.length && (deadline == null || Date.now() < deadline)) {
+    const places = targets.slice(done, done + chunkPlaces).map((r) => r.google_place_id);
+    const chunk = await withCorpusWriteLock(pool, async (client) => {
+      await client.query(FRESH_EMPTY_SQL);
+      await client.query(FRESH_PLACES_SQL, [places]);
+      await client.query('ANALYZE baseline_fresh');
+      const del = await client.query(DELETE_STALE_PLACES_SQL, [places]);
+      const changed = await client.query(UPDATE_CHANGED_SQL);
+      const added = await client.query(INSERT_NEW_SQL);
+      return { deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
+    });
+    deleted += chunk.deleted;
+    upserted += chunk.upserted;
+    done += places.length;
+  }
+
+  const marked = !targets.slice(done).some((r) => r.stamped);
+  if (marked) await withCorpusWriteLock(pool, (client) => client.query(MARK_SQL, [corpusAt]));
+  return { ok: true, undeclared: false, deleted, upserted, targeted: true, places: done, left: targets.length - done, marked };
 }
 
 // IS A REBUILD DUE? (2026-10-30.) collectRealtime.js rebuilt every collected
@@ -295,9 +408,15 @@ async function refreshCollectedBaselines(pool) {
 // What the stamps cannot show is a weekly row DELETED or a venue's place id
 // REMAPPED with the newest stamp untouched (repairBestTimeDiscoveredVenues.js):
 // the baselines change and nothing marks it. Run this file after a repair, as
-// before; and the hourly run rebuilds once a day whatever the stamps say
-// (DAILY_REBUILD_UTC_HOUR), so nothing stays stale for more than a day. No
-// mark yet means due, and the caller treats a failure to read as due too.
+// before. The hourly run also rebuilds once a day whatever the stamps say
+// (DAILY_REBUILD_UTC_HOUR); since 2026-11-19 that is THE TARGETED REBUILD,
+// which catches every venue whose stamp is newer than its own baseline,
+// harvested or not, however late its write committed, but not a deletion or
+// a remap, so the run after a repair is still this file by hand. No mark yet
+// means due, and the caller treats a failure to read as due too. `full` says
+// which rebuild: the full one when there is no mark, or when the newest stamp
+// moved other than forward (a repair cleared it); the targeted one for a
+// newer stamp and for the daily hour.
 //
 // THE DAILY HOUR IS THE HOUR THE RUN STARTED (2026-11-19). `at` is the
 // caller's run start, not the moment it asks. A run starts at :07 to :12 and
@@ -321,26 +440,28 @@ const UNDEFINED_TABLE = '42P01';
 
 async function collectedBaselinesDue(db, { at = new Date() } = {}) {
   if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
-    return { due: true, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
+    return { due: true, full: false, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
   }
   let stamps;
   try {
     ({ rows: [stamps] } = await db.query(DUE_SQL));
   } catch (err) {
-    if (err && err.code === UNDEFINED_TABLE) return { due: true, reason: 'no rebuild has recorded a mark yet' };
+    if (err && err.code === UNDEFINED_TABLE) return { due: true, full: true, reason: 'no rebuild has recorded a mark yet' };
     throw err;
   }
   const iso = (v) => (v ? new Date(v).toISOString() : 'none');
-  if (!stamps.rebuilt_at) return { due: true, reason: 'no rebuild has recorded a mark yet' };
+  if (!stamps.rebuilt_at) return { due: true, full: true, reason: 'no rebuild has recorded a mark yet' };
   if (stamps.newer) {
     return {
       due: true,
+      full: false,
       reason: `a weekly curve was written at ${iso(stamps.corpus_at)}, after the last rebuild's mark (${iso(stamps.mark_at)})`,
     };
   }
   if (stamps.moved) {
     return {
       due: true,
+      full: true,
       reason: `the newest weekly stamp moved from ${iso(stamps.mark_at)} to ${iso(stamps.corpus_at)} since the last rebuild`,
     };
   }
@@ -364,9 +485,15 @@ async function main() {
     ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
   });
 
+  // --targeted: THE TARGETED REBUILD, to the end, in short transactions: what
+  // a status change needs (it moves no row), or a harvest backlog. Without it,
+  // the full rebuild: after a repair, or when in doubt. On production
+  // (2026-11-19) the full one holds the corpus lock 20 minutes or more, and
+  // every collector write waits for it.
+  const targeted = process.argv.includes('--targeted');
   try {
-    console.log('[Baselines] Computing from weekly collection data (venue-local axis)...');
-    const result = await refreshCollectedBaselines(pool);
+    console.log(`[Baselines] Computing from weekly collection data (venue-local axis, ${targeted ? 'targeted' : 'full'})...`);
+    const result = await refreshCollectedBaselines(pool, { targeted });
 
     if (!result.ok) {
       console.error(`[Baselines] ${REFUSAL_MESSAGE}`);
@@ -374,7 +501,8 @@ async function main() {
       return;
     }
 
-    console.log(`[Baselines] Removed ${result.deleted} stale slots, wrote ${result.upserted} changed slots`);
+    console.log(`[Baselines] Removed ${result.deleted} stale slots, wrote ${result.upserted} changed slots`
+      + `${targeted ? ` across ${result.places} places` : ''}`);
 
     const { rows: [stats] } = await pool.query(`
       SELECT COUNT(DISTINCT google_place_id) AS venues, COUNT(*) AS slots
@@ -397,6 +525,11 @@ module.exports = {
   FRESH_SQL,
   UPDATE_CHANGED_SQL,
   INSERT_NEW_SQL,
+  TARGETS_SQL,
+  FRESH_EMPTY_SQL,
+  FRESH_PLACES_SQL,
+  DELETE_STALE_PLACES_SQL,
+  TARGET_CHUNK_PLACES,
 };
 
 if (require.main === module) {

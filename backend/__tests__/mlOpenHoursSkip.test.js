@@ -927,15 +927,16 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   // No rebuild has run against this database yet, so there is no mark.
   await pool.query('DROP TABLE IF EXISTS ml_baseline_marks');
   const none = await due();
-  assert.deepStrictEqual(none, { due: true, reason: 'no rebuild has recorded a mark yet' });
+  assert.deepStrictEqual(none, { due: true, full: true, reason: 'no rebuild has recorded a mark yet' });
 
   await writeWeek('ChIJbaselineDueWeek1', at(0));
   await rebuild();
   const caughtUp = await due();
   assert.strictEqual(caughtUp.due, false, caughtUp.reason);
   assert.match(caughtUp.reason, new RegExp(`^no weekly curve written since the last rebuild \\(.+, mark ${at(0).toISOString().replace(/\./g, '\\.')}\\)$`));
-  // The daily hour rebuilds whatever the stamps say.
-  assert.strictEqual((await collectedBaselinesDue(pool, { at: dailyHour })).due, true);
+  // The daily hour rebuilds whatever the stamps say, and only the targets.
+  assert.deepStrictEqual(await collectedBaselinesDue(pool, { at: dailyHour }),
+    { due: true, full: false, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` });
 
   // Production on 2026-10-31: rows at one instant, the stamp 0.495 s after
   // them (a stamp written after COMMIT). A rebuild records that stamp, so
@@ -950,6 +951,7 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   await writeWeek('ChIJbaselineDueWeek2', at(60 * 1000 + 600));
   const soon = await due();
   assert.strictEqual(soon.due, true, soon.reason);
+  assert.strictEqual(soon.full, false, 'a newer stamp asks for the full rebuild; the targeted one sees it');
   assert.strictEqual(soon.reason, `a weekly curve was written at ${at(60 * 1000 + 600).toISOString()}, `
     + `after the last rebuild's mark (${at(60 * 1000 + 495).toISOString()})`);
   await rebuild();
@@ -975,6 +977,7 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   await pool.query(`UPDATE ml_venues SET last_collected_at = NULL WHERE google_place_id = 'ChIJbaselineMicroStmp'`);
   const moved = await due();
   assert.strictEqual(moved.due, true, moved.reason);
+  assert.strictEqual(moved.full, true, 'a stamp moved backwards is a repair, which only the full rebuild can follow');
   assert.match(moved.reason, /^the newest weekly stamp moved from .+ to .+ since the last rebuild$/);
   await rebuild();
   assert.strictEqual((await due()).due, false);
@@ -1001,4 +1004,124 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
     + `after the last rebuild's mark (${at(60 * 1000 + 600).toISOString()})`);
   await rebuild();
   assert.strictEqual((await due()).due, false);
+});
+
+// THE TARGETED REBUILD (buildBaselines, 2026-11-19). It averages exactly the
+// places whose venue stamp is newer than their own baselines, or that have
+// none, harvested or not: a place whose stamp is not newer keeps its rows as
+// they are, even a wrong value and a stale slot, which only the full rebuild
+// (after a repair) corrects; it deletes stale slots of the places it averages;
+// it lists the places that serve the stamp first; a deadline already passed
+// averages nothing and leaves the mark, so the hour stays due; and once the
+// stamp's places are done the mark moves and nothing is due.
+test('the targeted rebuild averages only the places whose stamp is newer than their baselines', async () => {
+  const {
+    refreshCollectedBaselines, collectedBaselinesDue, TARGETS_SQL, DAILY_REBUILD_UTC_HOUR,
+  } = require('../scripts/ml/buildBaselines');
+  const offHour = new Date(Date.UTC(2026, 9, 30, (DAILY_REBUILD_UTC_HOUR + 6) % 24, 30, 0));
+  const base = Date.now() + 2 * 3600 * 1000;
+  const at = (ms) => new Date(base + ms);
+  const writeWeek = async (place, rowsAt, status = null) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows: [{ id }] } = await client.query(
+        `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                                venue_category, timezone, is_active, besttime_status, last_collected_at)
+         VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, $5::text IS NULL, $5, $6)
+         RETURNING id`, [place, 'bt_' + place, CITY, TZ, status, rowsAt]);
+      await client.query(
+        `INSERT INTO ml_training_data
+           (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
+         SELECT $1, 'weekly', 'venue_local', d, h, 'bar', 30, $2
+           FROM generate_series(0, 6) d, generate_series(0, 23) h`, [id, rowsAt]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
+  const slot = async (place, d, h) => (await pool.query(
+    'SELECT baseline FROM ml_venue_baselines WHERE google_place_id = $1 AND day_of_week = $2 AND hour = $3',
+    [place, d, h])).rows[0];
+  const slotCount = async (place) => (await pool.query(
+    'SELECT COUNT(*)::int AS n FROM ml_venue_baselines WHERE google_place_id = $1', [place])).rows[0].n;
+  const venueId = async (place) => (await pool.query(
+    'SELECT id FROM ml_venues WHERE google_place_id = $1', [place])).rows[0].id;
+
+  // Two places, averaged by a full rebuild, so both are current.
+  await writeWeek('ChIJtargetUntouched', at(0));
+  await writeWeek('ChIJtargetRefreshed', at(1000));
+  assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
+
+  // The first is changed under its baselines without its stamp moving (what
+  // a repair does): one slot holds a wrong value, one weekly row is gone.
+  await pool.query(`UPDATE ml_venue_baselines SET baseline = 99
+                     WHERE google_place_id = 'ChIJtargetUntouched' AND day_of_week = 0 AND hour = 0`);
+  await pool.query('DELETE FROM ml_training_data WHERE venue_id = $1 AND day_of_week = 0 AND hour = 1',
+    [await venueId('ChIJtargetUntouched')]);
+  // The second gets a newer week, one hour short, stamped with it.
+  const refreshedId = await venueId('ChIJtargetRefreshed');
+  await pool.query(`UPDATE ml_training_data SET busyness_pct = 40, collected_at = $2
+                     WHERE venue_id = $1 AND collection_mode = 'weekly'`, [refreshedId, at(5000)]);
+  await pool.query('DELETE FROM ml_training_data WHERE venue_id = $1 AND day_of_week = 0 AND hour = 2', [refreshedId]);
+  await pool.query('UPDATE ml_venues SET last_collected_at = $2 WHERE id = $1', [refreshedId, at(5000)]);
+  // A new week of a live venue, and two harvested weeks.
+  await writeWeek('ChIJtargetNewWeek', at(6000));
+  await writeWeek('ChIJtargetHarvest1', at(7000), 'harvested');
+  await writeWeek('ChIJtargetHarvest2', at(8000), 'harvested');
+
+  const { rows: targets } = await pool.query(TARGETS_SQL);
+  const ids = targets.map((r) => r.google_place_id);
+  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+    assert.ok(ids.includes(place), `${place} is not a target`);
+  }
+  assert.ok(!ids.includes('ChIJtargetUntouched'), 'a place whose stamp is not newer than its baselines is a target');
+  // The test above wrote this one with its stamp 0.495 s after its rows, as
+  // collectWeekly once did; no rebuild closes that, so it is not a target.
+  assert.ok(!ids.includes('ChIJbaselineLateStamp'), 'a stamp a fraction of a second after its own evidence makes a target');
+  const lastStamped = Math.max(...targets.map((r, i) => (r.stamped ? i : -1)));
+  const firstHarvested = targets.findIndex((r) => !r.stamped);
+  assert.ok(firstHarvested === -1 || lastStamped < firstHarvested, 'a harvested place is listed before a place that serves the stamp');
+
+  const dueBefore = await collectedBaselinesDue(pool, { at: offHour });
+  assert.strictEqual(dueBefore.due, true, dueBefore.reason);
+  assert.strictEqual(dueBefore.full, false);
+
+  // A deadline already passed: nothing averaged, the mark left, still due.
+  const late = await refreshCollectedBaselines(pool, { targeted: true, deadline: Date.now() - 1 });
+  assert.strictEqual(late.ok, true);
+  assert.strictEqual(late.places, 0);
+  assert.strictEqual(late.left, targets.length);
+  assert.strictEqual(late.marked, false);
+  assert.strictEqual(await slotCount('ChIJtargetNewWeek'), 0);
+  assert.strictEqual((await collectedBaselinesDue(pool, { at: offHour })).due, true);
+
+  // To the end, one place per chunk.
+  const done = await refreshCollectedBaselines(pool, { targeted: true, chunkPlaces: 1 });
+  assert.strictEqual(done.ok, true);
+  assert.strictEqual(done.places, targets.length);
+  assert.strictEqual(done.left, 0);
+  assert.strictEqual(done.marked, true);
+  assert.strictEqual(done.deleted, 1, 'the refreshed place\'s missing hour was not removed, or another place lost a slot');
+  for (const place of ['ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+    assert.strictEqual(await slotCount(place), 168, `${place} was not averaged`);
+  }
+  assert.strictEqual(await slotCount('ChIJtargetRefreshed'), 167);
+  assert.strictEqual((await slot('ChIJtargetRefreshed', 3, 12)).baseline, 40);
+  assert.strictEqual((await slot('ChIJtargetUntouched', 0, 0)).baseline, 99, 'the targeted rebuild touched a place that was not a target');
+  assert.ok(await slot('ChIJtargetUntouched', 0, 1), 'the targeted rebuild deleted a slot of a place that was not a target');
+  const after = await collectedBaselinesDue(pool, { at: offHour });
+  assert.strictEqual(after.due, false, after.reason);
+  const { rows: still } = await pool.query(TARGETS_SQL);
+  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+    assert.ok(!still.some((r) => r.google_place_id === place), `${place} is still a target after its rebuild`);
+  }
+
+  // The full rebuild corrects what the stamps could not show.
+  assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
+  assert.strictEqual((await slot('ChIJtargetUntouched', 0, 0)).baseline, 30);
+  assert.strictEqual(await slot('ChIJtargetUntouched', 0, 1), undefined);
 });

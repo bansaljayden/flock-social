@@ -52,7 +52,7 @@ stubModule('../scripts/ml/eventService', {
 
 const {
   sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, LABEL_LIVE,
-  runTimeBudgetMs,
+  runTimeBudgetMs, TARGETED_REBUILD_END_MINUTE, targetedRebuildDeadline,
   FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask, holdoutFirst,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
@@ -416,6 +416,24 @@ test('run() asks per block, reports the skips, and counts them before refusing a
   assert.match(src, /skipped \+ closedSkips \+ recordedSkips \+ vanished < venues\.length/);
   // Only while the venue's own clock still reads the hour the block asked about.
   assert.match(src, /if \(recorded && recorded\.has\(venue\.id\) && sameSlot\(obs\)\) \{\n {10}recordedSkips\+\+;\n {10}continue;/);
+});
+
+test('the targeted rebuild stops at :04 of the hour after the run started, inside the minutes its fill left', () => {
+  assert.strictEqual(TARGETED_REBUILD_END_MINUTE, 4);
+  const at = (h, m, s = 0) => new Date(Date.UTC(2026, 10, 19, h, m, s));
+  assert.strictEqual(targetedRebuildDeadline(at(9, 7, 3)), at(10, 4).getTime());
+  assert.strictEqual(targetedRebuildDeadline(at(9, 11, 54)), at(10, 4).getTime());
+  // Across midnight.
+  assert.strictEqual(targetedRebuildDeadline(at(23, 8)), Date.UTC(2026, 10, 20, 0, 4));
+  // A sweep due a rebuild ends FILL_EARLY_STOP_MS before a budget that runs
+  // from :12 (THE BUDGET RUNS FROM :12), so the rebuild has the minutes from
+  // there to the deadline, and the deadline is before the next :07 fire.
+  const sweepEnd = at(9, 12).getTime() + 50 * MINUTE - FILL_EARLY_STOP_MS;
+  assert.ok(targetedRebuildDeadline(at(9, 7)) - sweepEnd >= 5 * MINUTE);
+  assert.ok(targetedRebuildDeadline(at(9, 7)) <= at(10, 7).getTime() - 2 * MINUTE);
+  const src = SRC.replace(/\r\n/g, '\n');
+  // Targeted unless the due check asked for the full one.
+  assert.match(src, /refreshCollectedBaselines\(pool, rebuild\.full === true\n\s+\? \{\}\n\s+: \{ targeted: true, deadline: targetedRebuildDeadline\(runStartedAt\) \}\);/);
 });
 
 test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {
