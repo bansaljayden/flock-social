@@ -1215,8 +1215,12 @@ test('the per-venue target list equals the grouped one it replaced', async () =>
     ['ChIJeqOneNewSlot', stamp, [null, before(5 * 86400 * 1000), before(500)], null],
     ['ChIJeqNoSlots', stamp, [], 'harvested'],
     ['ChIJeqUnstampedDated', null, [before(0)], 'harvested'],
-    // Postgres's earliest timestamp: a second taken from it is out of range.
+    // Postgres's earliest and latest timestamps, where a second taken or added
+    // is out of range, and infinity beside the latest.
     ['ChIJeqEarliest', '4714-11-24 00:00:00+00 BC', ['4714-11-24 00:00:00+00 BC'], null],
+    ['ChIJeqLatestAndInfinity', stamp, ['294276-12-31 23:59:59.999999+00', 'infinity'], null],
+    ['ChIJeqInfiniteStamp', 'infinity', [before(0)], null],
+    ['ChIJeqBothInfinite', 'infinity', ['infinity'], null],
   ];
   const places = edges.map(([p]) => p);
   try {
@@ -1241,7 +1245,7 @@ test('the per-venue target list equals the grouped one it replaced', async () =>
     assert.deepStrictEqual(perVenue, grouped);
     const listed = new Set(perVenue.map((r) => r.google_place_id));
     assert.deepStrictEqual(places.filter((p) => listed.has(p)),
-      ['ChIJeqUndatedStamped', 'ChIJeqUndatedUnstamped', 'ChIJeqJustOver', 'ChIJeqNoSlots']);
+      ['ChIJeqUndatedStamped', 'ChIJeqUndatedUnstamped', 'ChIJeqJustOver', 'ChIJeqNoSlots', 'ChIJeqInfiniteStamp']);
   } finally {
     await pool.query('DELETE FROM ml_venue_baselines WHERE google_place_id = ANY($1::text[])', [places]);
     await pool.query(`DELETE FROM ml_training_data WHERE venue_id IN
