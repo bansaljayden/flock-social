@@ -647,15 +647,17 @@ async function discardPendingKey(id) {
 // older session_version, tokenVersionOf counting a missing one as 0, or an
 // owner no longer an admin, or banned) reads Ended on the dashboard, so it
 // sorts with the other ended keys, not among the live ones (2026-11-19).
+// COALESCE to false: a NULL (no role, no approval window) would otherwise sort
+// FIRST under DESC, above every live key.
 const LIST_SQL = `SELECT k.id, k.name, k.scopes, k.created_at, k.created_ip, k.expires_at, k.approved_at, k.approved_via,
           k.approval_expires_at, k.last_used_at, k.last_used_ip, k.revoked_at, k.revoked_via, k.session_version,
           u.role, u.is_banned, u.token_version
      FROM admin_access_keys k
      JOIN users u ON u.id = k.created_by
-    ORDER BY (k.revoked_at IS NULL AND k.expires_at > NOW()
+    ORDER BY COALESCE(k.revoked_at IS NULL AND k.expires_at > NOW()
               AND COALESCE(k.session_version, 0) = COALESCE(u.token_version, 0)
               AND u.role = 'admin' AND u.is_banned IS NOT TRUE
-              AND (k.approved_at IS NOT NULL OR k.approval_expires_at > NOW())) DESC,
+              AND (k.approved_at IS NOT NULL OR k.approval_expires_at > NOW()), false) DESC,
              k.created_at DESC, k.id DESC
     LIMIT $1::int`;
 
