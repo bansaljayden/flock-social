@@ -280,7 +280,7 @@ const TARGET_CHUNK_PLACES = 250;
 // The last chunk may start at the deadline; nothing it runs may pass this
 // much after it (a statement or lock wait that would is cancelled, and the
 // chunk rolls back).
-const TARGET_OVERRUN_MS = 60 * 1000;
+const TARGET_OVERRUN_MS = 30 * 1000;
 // The undeclared-axis check for the chunk's own venues: the corpus-wide one
 // reads every weekly row (40 s on production, 2026-11-19).
 const UNDECLARED_PLACES_SQL = `
@@ -413,6 +413,7 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
   let targets;
   try {
     ({ rows: [{ corpus_at: corpusAt }] } = await read(`SELECT corpus_at::text AS corpus_at FROM (${CORPUS_STAMP_SQL}) c`));
+    if (deadline != null && Date.now() >= deadline) return result({ left: null });
     ({ rows: targets } = await read(TARGETS_SQL));
   } catch (err) {
     if (err && TIMED_OUT.has(err.code)) return result({ left: null, timedOut: true });
@@ -541,6 +542,16 @@ async function collectedBaselinesDue(db, { at = new Date() } = {}) {
   }
   const iso = (v) => (v ? new Date(v).toISOString() : 'none');
   if (!stamps.rebuilt_at) return { due: true, full: true, reason: 'no rebuild has recorded a mark yet' };
+  // A stamp moved other than forward (a repair) takes the full rebuild in the
+  // daily hour too; a targeted pass there would record a new mark and erase
+  // the only sign of it.
+  if (stamps.moved && !stamps.newer) {
+    return {
+      due: true,
+      full: true,
+      reason: `the newest weekly stamp moved from ${iso(stamps.mark_at)} to ${iso(stamps.corpus_at)} since the last rebuild`,
+    };
+  }
   if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
     return { due: true, full: false, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
   }
@@ -549,13 +560,6 @@ async function collectedBaselinesDue(db, { at = new Date() } = {}) {
       due: true,
       full: false,
       reason: `a weekly curve was written at ${iso(stamps.corpus_at)}, after the last rebuild's mark (${iso(stamps.mark_at)})`,
-    };
-  }
-  if (stamps.moved) {
-    return {
-      due: true,
-      full: true,
-      reason: `the newest weekly stamp moved from ${iso(stamps.mark_at)} to ${iso(stamps.corpus_at)} since the last rebuild`,
     };
   }
   return {

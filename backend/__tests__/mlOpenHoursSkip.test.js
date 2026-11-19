@@ -981,6 +981,9 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   const moved = await due();
   assert.strictEqual(moved.due, true, moved.reason);
   assert.strictEqual(moved.full, true, 'a stamp moved backwards is a repair, which only the full rebuild can follow');
+  // In the daily hour too: a targeted pass would record a new mark and erase
+  // the only sign of the repair.
+  assert.strictEqual((await collectedBaselinesDue(pool, { at: dailyHour })).full, true);
   assert.match(moved.reason, /^the newest weekly stamp moved from .+ to .+ since the last rebuild$/);
   await rebuild();
   assert.strictEqual((await due()).due, false);

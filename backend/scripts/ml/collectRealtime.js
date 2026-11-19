@@ -579,17 +579,6 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // container started at :11:54.
 const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 
-// THE TARGETED REBUILD STOPS BY :04 (2026-11-19). A run due a rebuild stops
-// its fill FILL_EARLY_STOP_MS early, so its sweep ends near :56 and the
-// targeted rebuild (buildBaselines) gets the minutes to :04 of the next hour,
-// then the offsets, under a minute, and the run is done before the :07 fire.
-// It starts no chunk after this; a chunk is seconds. Measured from the hour
-// the run started in, so a run that was held up starts none.
-const TARGETED_REBUILD_END_MINUTE = 4;
-function targetedRebuildDeadline(runStartedAt) {
-  const hourMs = 60 * 60 * 1000;
-  return Math.floor(runStartedAt.getTime() / hourMs) * hourMs + hourMs + TARGETED_REBUILD_END_MINUTE * 60 * 1000;
-}
 
 // THE BUDGET RUNS FROM :12 (2026-10-31). The cron fires at :07 (`7 * * * *`,
 // set in the BESTTIME service's settings, not in this repository) and Railway
@@ -607,6 +596,22 @@ function targetedRebuildDeadline(runStartedAt) {
 // hand or after the schedule moves, gets the fifty minutes exactly as before.
 const TRIGGER_MINUTE = 7;
 const LATEST_START_MINUTE = 12;
+
+// THE TARGETED REBUILD RUNS BEFORE THE SWEEP, UNTIL :11 (2026-11-19). The
+// tail has no room for it: the sweep's budget runs to :02, the trailing
+// offsets have taken three minutes (12:29 to 12:32 UTC that day), and the
+// next fire is :07. Before the sweep there are the minutes between the
+// container's start (:07 to :12) and :12, which THE BUDGET RUNS FROM :12
+// already gives back to a sweep that starts early, so the rebuild spends them
+// without moving the sweep's end. buildBaselines starts no chunk after :11
+// and stops anything still running 30 s later; what it leaves is first in
+// line next run. A container started near :12 has no minutes to give, and
+// rebuilds nothing.
+const TARGETED_REBUILD_END_MINUTE = LATEST_START_MINUTE - 1;
+function targetedRebuildDeadline(runStartedAt) {
+  const hourMs = 60 * 60 * 1000;
+  return Math.floor(runStartedAt.getTime() / hourMs) * hourMs + TARGETED_REBUILD_END_MINUTE * 60 * 1000;
+}
 
 function runTimeBudgetMs(startedAt, budgetMs) {
   const intoHour = startedAt % (60 * 60 * 1000);
@@ -2177,12 +2182,15 @@ async function collectRealtime() {
   // When the fill stops (FILL_EARLY_STOP_NO_REBUILD_MS): later when this run's
   // tail has no baseline rebuild. Asked before the sweep; the tail asks again.
   // A failure to read the stamps keeps the early stop, the old behaviour.
+  // Since 2026-11-19 the tail runs only the full rebuild (the targeted one
+  // runs before the sweep), so only a full one keeps the minutes.
   let fillEarlyStopMs = FILL_EARLY_STOP_MS;
   if (process.argv.includes('--no-baseline-refresh')) {
     fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;
   } else {
     try {
-      if (!(await collectedBaselinesDue(pool)).due) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;
+      const rebuildAtTail = await collectedBaselinesDue(pool);
+      if (!(rebuildAtTail.due && rebuildAtTail.full === true)) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;
     } catch (err) {
       console.error(`[ML:Realtime] Baseline stamps could not be read (${describeDbError(err)}); `
         + 'the fill stops early for a rebuild.');
@@ -2190,7 +2198,7 @@ async function collectRealtime() {
   }
   if (fillSet.size) {
     console.log(`[ML:Realtime] Fill stops ${fillEarlyStopMs / 60000} minutes before the budget this run `
-      + `(${fillEarlyStopMs === FILL_EARLY_STOP_MS ? 'a baseline rebuild is due' : 'no baseline rebuild'}).`);
+      + `(${fillEarlyStopMs === FILL_EARLY_STOP_MS ? 'a full baseline rebuild is due' : 'no baseline rebuild at the tail'}).`);
   }
   const {
     totalRows, skipped, closedSkips, recordedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
@@ -2442,6 +2450,36 @@ const HOLDOUT = (() => {
 const MAX_RUN_MS = 3 * 60 * 60 * 1000;
 const WATCHDOG_EXIT_CODE = 3;
 
+// THE TARGETED REBUILD RUNS BEFORE THE SWEEP (TARGETED_REBUILD_END_MINUTE).
+// Only the targeted one: the full one, for a missing mark or a repair, waits
+// for the tail, where it has always run. Never throws; a failure costs the
+// rebuild, not the sweep.
+async function rebuildBeforeSweep(runStartedAt) {
+  let rebuild;
+  try {
+    rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
+  } catch (err) {
+    console.error(`[ML:Realtime] Baseline stamps could not be read before the sweep (${describeDbError(err)}); no targeted rebuild.`);
+    return;
+  }
+  if (!rebuild.due || rebuild.full === true) return;
+  console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}. Targeted, before the sweep, until :${TARGETED_REBUILD_END_MINUTE}.`);
+  try {
+    const result = await refreshCollectedBaselines(pool, { targeted: true, deadline: targetedRebuildDeadline(runStartedAt) });
+    if (!result.ok) {
+      console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
+    } else if (result.left == null) {
+      console.log(`[ML:Realtime] Baselines not refreshed: the container started after :${TARGETED_REBUILD_END_MINUTE}; next run.`);
+    } else {
+      console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed; `
+        + `targeted: ${result.places} places averaged, ${result.left} left for the next run`
+        + `${result.timedOut ? ', stopped at its time limit' : ''}${result.marked ? '' : ', mark not moved'}).`);
+    }
+  } catch (err) {
+    console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
+  }
+}
+
 async function run() {
   const watchdog = setTimeout(() => {
     console.error(`[ML:Realtime] Watchdog: still running after ${Math.round(MAX_RUN_MS / 60000)} minutes; exiting so the next scheduled run can start.`);
@@ -2463,10 +2501,12 @@ async function run() {
     // email stack.
     // eslint-disable-next-line global-require
     await require('../../services/apiUptimeCheck').runApiUptimeCheck({ db: pool });
-    // The daily rebuild belongs to the run that STARTS in its hour; the tail
-    // asks with this instant (buildBaselines, THE DAILY HOUR IS THE HOUR THE
-    // RUN STARTED).
+    // The daily rebuild belongs to the run that STARTS in its hour; both asks
+    // use this instant (buildBaselines, THE DAILY HOUR IS THE HOUR THE RUN
+    // STARTED).
     const runStartedAt = new Date();
+    const skipBaselines = process.argv.includes('--no-baseline-refresh');
+    if (!skipBaselines) await rebuildBeforeSweep(runStartedAt);
     await collectRealtime();
     // Refresh baselines. This used to be a second, hand-written copy of
     // buildBaselines.js's statement that had drifted from it: no
@@ -2483,52 +2523,45 @@ async function run() {
     // already covers every city because the statement is not city-scoped.
     // A holdout hour used to skip it too, when it collected the holdout city
     // alone. It collects the training cities as well now, so it refreshes.
-    const skipBaselines = process.argv.includes('--no-baseline-refresh');
     if (skipBaselines) {
       console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
     }
     if (!skipBaselines) {
       // Only when something under the baselines moved, or once a day
       // (buildBaselines.collectedBaselinesDue). Asked again here, not carried
-      // from the start of the run, so a weekly write that landed during the
-      // sweep is rebuilt now rather than next hour. Stamps that cannot be read
+      // from the start of the run, so a repair that landed during the sweep
+      // is rebuilt now rather than next hour. Stamps that cannot be read
       // mean rebuild, the old behaviour.
       //
-      // TARGETED UNLESS ASKED FOR THE FULL ONE (2026-11-19). The full rebuild
-      // reads the whole corpus, 20 minutes or more on production, past the
-      // next :07; buildBaselines' targeted one averages only the places whose
-      // stamps are newer than their baselines, in short transactions, and
-      // stops at TARGETED_REBUILD_END_MINUTE of the next hour so this run
-      // ends before the next fire. What it leaves is first in line next time.
-      // collectedBaselinesDue asks for the full one (`full`) only with no mark
-      // or a stamp that moved backwards, which a repair causes.
+      // ONLY THE FULL REBUILD RUNS HERE (2026-11-19). The targeted one ran
+      // before the sweep (rebuildBeforeSweep); a weekly write that landed
+      // during the sweep is first in its list next run. The full one is asked
+      // for (`full`) only with no mark, or a stamp that moved backwards, which
+      // a repair causes; it reads the whole corpus, 20 minutes or more on
+      // production, and costs the next fire, which a repair is worth.
       let rebuild;
       try {
         rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
       } catch (err) {
-        rebuild = { due: true, reason: `the stamps could not be read (${describeDbError(err)})` };
+        rebuild = { due: true, full: true, reason: `the stamps could not be read (${describeDbError(err)})` };
       }
-      if (rebuild.due) {
+      if (rebuild.due && rebuild.full === true) {
         console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}.`);
         try {
           console.log('[ML:Realtime] Refreshing venue baselines...');
-          const result = await refreshCollectedBaselines(pool, rebuild.full === true
-            ? {}
-            : { targeted: true, deadline: targetedRebuildDeadline(runStartedAt) });
+          const result = await refreshCollectedBaselines(pool);
           if (!result.ok) {
             console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
           } else {
-            const how = !result.targeted ? 'full'
-              : result.left == null ? 'targeted: nothing averaged, its deadline had passed'
-                : `targeted: ${result.places} places averaged, ${result.left} left for the next rebuild`
-                  + `${result.timedOut ? ', stopped at its time limit' : ''}${result.marked ? '' : ', mark not moved'}`;
-            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed; ${how})`);
+            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed; full)`);
           }
         } catch (err) {
           console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
         }
       } else {
-        console.log(`[ML:Realtime] Baselines current, rebuild skipped: ${rebuild.reason}.`);
+        console.log(`[ML:Realtime] Baselines current, rebuild skipped: ${rebuild.due
+          ? `the targeted rebuild is due (${rebuild.reason}) and runs before a sweep, not after one`
+          : rebuild.reason}.`);
       }
 
       // THE TRAILING OFFSET, refreshed after the baselines and not before.

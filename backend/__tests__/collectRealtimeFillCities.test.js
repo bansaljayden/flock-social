@@ -418,28 +418,26 @@ test('run() asks per block, reports the skips, and counts them before refusing a
   assert.match(src, /if \(recorded && recorded\.has\(venue\.id\) && sameSlot\(obs\)\) \{\n {10}recordedSkips\+\+;\n {10}continue;/);
 });
 
-test('the targeted rebuild stops at :04 of the hour after the run started, inside the minutes its fill left', () => {
-  assert.strictEqual(TARGETED_REBUILD_END_MINUTE, 4);
+test('the targeted rebuild runs before the sweep and stops at :11, so the sweep still starts by :12', () => {
+  assert.strictEqual(TARGETED_REBUILD_END_MINUTE, 11);
   const at = (h, m, s = 0) => new Date(Date.UTC(2026, 10, 19, h, m, s));
-  assert.strictEqual(targetedRebuildDeadline(at(9, 7, 3)), at(10, 4).getTime());
-  assert.strictEqual(targetedRebuildDeadline(at(9, 11, 54)), at(10, 4).getTime());
-  // Across midnight.
-  assert.strictEqual(targetedRebuildDeadline(at(23, 8)), Date.UTC(2026, 10, 20, 0, 4));
-  // A sweep due a rebuild ends FILL_EARLY_STOP_MS before a budget that runs
-  // from :12 (THE BUDGET RUNS FROM :12), so the rebuild has the minutes from
-  // there to the deadline, and the deadline is before the next :07 fire.
-  const sweepEnd = at(9, 12).getTime() + 50 * MINUTE - FILL_EARLY_STOP_MS;
-  assert.ok(targetedRebuildDeadline(at(9, 7)) - sweepEnd >= 5 * MINUTE);
-  assert.ok(targetedRebuildDeadline(at(9, 7)) <= at(10, 7).getTime() - 2 * MINUTE);
-  const src = SRC.replace(/\r\n/g, '\n');
-  // Targeted unless the due check asked for the full one.
-  assert.match(src, /refreshCollectedBaselines\(pool, rebuild\.full === true\n\s+\? \{\}\n\s+: \{ targeted: true, deadline: targetedRebuildDeadline\(runStartedAt\) \}\);/);
+  assert.strictEqual(targetedRebuildDeadline(at(9, 7, 3)), at(9, 11).getTime());
+  assert.strictEqual(targetedRebuildDeadline(at(9, 10, 59)), at(9, 11).getTime());
+  // A container that started late has no minutes to spend: the deadline has passed.
+  assert.ok(targetedRebuildDeadline(at(9, 11, 54)) < at(9, 11, 54).getTime());
+  // With buildBaselines' 30 s overrun the sweep's clock still starts before
+  // :12, so THE BUDGET RUNS FROM :12 ends it where it always ended.
+  const overrunMs = 30 * 1000;
+  const sweepStart = targetedRebuildDeadline(at(9, 7, 3)) + overrunMs;
+  assert.ok(sweepStart < at(9, 12).getTime());
+  assert.strictEqual(sweepStart + runTimeBudgetMs(sweepStart, 50 * MINUTE), at(9, 12).getTime() + 50 * MINUTE);
 });
-
 test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {
   const src = SRC.replace(/\r\n/g, '\n');
   assert.match(src, /let fillEarlyStopMs = FILL_EARLY_STOP_MS;/);
-  assert.match(src, /if \(!\(await collectedBaselinesDue\(pool\)\)\.due\) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;/);
+  // Only a FULL rebuild keeps the minutes: the targeted one runs before the
+  // sweep (2026-11-19).
+  assert.match(src, /const rebuildAtTail = await collectedBaselinesDue\(pool\);\n\s+if \(!\(rebuildAtTail\.due && rebuildAtTail\.full === true\)\) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;/);
   // Stamps that cannot be read keep the early stop: the tail will rebuild.
   assert.match(src, /Baseline stamps could not be read \(\$\{describeDbError\(err\)\}\); `\n\s+\+ 'the fill stops early for a rebuild\.'/);
   assert.match(src, /Fill stops \$\{fillEarlyStopMs \/ 60000\} minutes before the budget this run /);

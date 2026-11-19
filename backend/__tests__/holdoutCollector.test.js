@@ -26,11 +26,17 @@ test('the flag exists, is read from argv, and gates the refresh as a branch', ()
   // Asked with the run's start, so the daily hour is the hour the run began
   // (2026-11-19: the 08:00 UTC run's tail read 09:03 as the daily hour).
   assert.match(src, /if \(!skipBaselines\) \{\n(\s+\/\/[^\n]*\n)*\s+let rebuild;\n\s+try \{\n\s+rebuild = await collectedBaselinesDue\(pool, \{ at: runStartedAt \}\);/);
-  assert.match(src, /const runStartedAt = new Date\(\);\n\s+await collectRealtime\(\);/);
-  assert.match(src, /if \(rebuild\.due\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
-  assert.match(src, /Baselines current, rebuild skipped: \$\{rebuild\.reason\}\./);
-  // Stamps that cannot be read rebuild, as every hour did before.
-  assert.match(src, /catch \(err\) \{\n\s+rebuild = \{ due: true, reason: `the stamps could not be read/);
+  // The targeted rebuild runs before the sweep, under the same flag, and the
+  // tail runs only the full one (2026-11-19).
+  assert.match(src, /const runStartedAt = new Date\(\);\n\s+const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);\n\s+if \(!skipBaselines\) await rebuildBeforeSweep\(runStartedAt\);\n\s+await collectRealtime\(\);/);
+  assert.match(src, /if \(rebuild\.due && rebuild\.full === true\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);\n\s+const result = await refreshCollectedBaselines\(pool\);/);
+  assert.match(src, /Baselines current, rebuild skipped: \$\{rebuild\.due\n/);
+  // Stamps that cannot be read rebuild, as every hour did before: in full,
+  // at the tail.
+  assert.match(src, /catch \(err\) \{\n\s+rebuild = \{ due: true, full: true, reason: `the stamps could not be read/);
+  const before = src.slice(src.indexOf('async function rebuildBeforeSweep'), src.indexOf('async function run()'));
+  assert.match(before, /if \(!rebuild\.due \|\| rebuild\.full === true\) return;/);
+  assert.match(before, /await refreshCollectedBaselines\(pool, \{ targeted: true, deadline: targetedRebuildDeadline\(runStartedAt\) \}\)/);
   // A thrown sentinel would swallow real refresh errors; the branch must not
   // be reintroduced that way.
   assert.ok(!/throw \{ skip: true \}/.test(src), 'the skip must be a branch, never a thrown sentinel');
@@ -42,8 +48,10 @@ test('skipping is announced, so a silent run cannot be mistaken for a refresh', 
 
 test('the refresh still runs by default, so the existing hourly cron is unchanged', () => {
   const at = src.indexOf('const skipBaselines');
-  const after = src.slice(at, at + 1800);
-  assert.match(after, /await refreshCollectedBaselines\(pool[,)]/);
+  const after = src.slice(at, at + 400);
+  assert.match(after, /if \(!skipBaselines\) await rebuildBeforeSweep\(runStartedAt\);/);
+  const tail = src.slice(src.indexOf('if (rebuild.due && rebuild.full === true) {'));
+  assert.match(tail.slice(0, 600), /await refreshCollectedBaselines\(pool\)/);
   // No flag on the command line means skipBaselines is false, so the branch runs.
   assert.ok(!/--no-baseline-refresh.*default/i.test(src), 'the flag must be opt in');
 });
