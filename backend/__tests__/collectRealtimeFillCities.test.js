@@ -444,6 +444,12 @@ test('minutes spent on a baseline rebuild before the sweep come off its budget, 
     { fillEarlyStopMs: FILL_EARLY_STOP_NO_REBUILD_MS, start: START + 8 * MINUTE, beforeSweepMs: MINUTE });
   const earlyLast = Math.max(...early.calls.map((c) => c.startAt));
   assert.ok(earlyLast <= fillEnd && earlyLast > fillEnd - MINUTE, `the fill stopped at ${new Date(earlyLast).toISOString()}`);
+  // The due check alone (milliseconds, every run) prints no budget line, even
+  // for a sweep that started after :12 and so has the plain fifty.
+  const quiet = await sweepWithFill([['philly', venuesFor('philly', 5, 1)]], [],
+    { start: START + 13 * MINUTE, beforeSweepMs: 30 });
+  assert.ok(!quiet.lines.some((l) => /Time budget \d/.test(l.text)),
+    `the due check's milliseconds printed a budget line: ${quiet.lines.filter((l) => /Time budget/.test(l.text)).map((l) => l.text)}`);
   const src = SRC.replace(/\r\n/g, '\n');
   assert.match(src, /const beforeSweepMs = skipBaselines \? 0 : await rebuildBeforeSweep\(runStartedAt\);\n\s+await collectRealtime\(\{ beforeSweepMs \}\);/);
   assert.match(src, /fillEarlyStopMs,\n\s+beforeSweepMs,\n\s+\}\);/);

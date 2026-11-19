@@ -299,6 +299,9 @@ const TARGET_CHUNK_PLACES = 250;
 // much after it (a statement or lock wait that would is cancelled, and the
 // chunk rolls back).
 const TARGET_OVERRUN_MS = 30 * 1000;
+// The mark's one-row write may wait this long for the lock even past the
+// overrun: a collector holds it for milliseconds.
+const MARK_TIMEOUT_MS = 5 * 1000;
 // The undeclared-axis check for the chunk's own venues: the corpus-wide one
 // reads every weekly row (40 s on production, 2026-11-19).
 const UNDECLARED_PLACES_SQL = `
@@ -397,10 +400,11 @@ async function refreshCollectedBaselines(pool, {
 // covering it; its own stamp is still newer than its own baseline, so the
 // next targeted pass, the daily hour's at the latest, averages it.
 //
-// With a deadline, nothing runs past it by more than TARGET_OVERRUN_MS: no
-// read starts after it, every statement and lock wait is cancelled at the
-// overrun (the chunk rolls back, and its places stay first in line), and the
-// mark moves only when no stamp-serving place is left.
+// With a deadline, nothing runs past it by more than TARGET_OVERRUN_MS (the
+// mark's one-row write excepted, MARK_TIMEOUT_MS): no read starts after it,
+// every statement and lock wait is cancelled at the overrun (the chunk rolls
+// back, and its places stay first in line), and the mark moves once no
+// stamp-serving place is left.
 const TIMED_OUT = new Set(['57014', '55P03']); // statement / lock timeout
 async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
   const hardStop = deadline == null ? null : deadline + overrunMs;
@@ -445,6 +449,23 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
   let upserted = 0;
   let done = 0;
   let timedOut = false;
+  // The mark is written as soon as no stamp-serving place is left, before the
+  // harvested chunks rather than after them, with a few seconds of its own:
+  // written after a chunk cancelled at the overrun it would have had none, and
+  // a collector's millisecond write on the lock would have kept it back.
+  let marked = false;
+  const markIfDone = async () => {
+    if (marked || targets.slice(done).some((r) => r.stamped)) return;
+    try {
+      await withCorpusWriteLock(pool, (client) => client.query(MARK_SQL, [corpusAt]),
+        hardStop == null ? {} : { timeoutMs: Math.max(MARK_TIMEOUT_MS, remaining()) });
+      marked = true;
+    } catch (err) {
+      if (!(err && TIMED_OUT.has(err.code))) throw err;
+      timedOut = true;
+    }
+  };
+  await markIfDone();
   while (done < targets.length && (deadline == null || Date.now() < deadline)) {
     const places = targets.slice(done, done + chunkPlaces).map((r) => r.google_place_id);
     let chunk;
@@ -474,18 +495,7 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
     deleted += chunk.deleted;
     upserted += chunk.upserted;
     done += places.length;
-  }
-
-  let marked = !targets.slice(done).some((r) => r.stamped);
-  if (marked) {
-    try {
-      await withCorpusWriteLock(pool, (client) => client.query(MARK_SQL, [corpusAt]),
-        hardStop == null ? {} : { timeoutMs: Math.max(1, remaining()) });
-    } catch (err) {
-      if (!(err && TIMED_OUT.has(err.code))) throw err;
-      marked = false;
-      timedOut = true;
-    }
+    await markIfDone();
   }
   return result({ deleted, upserted, places: done, left: targets.length - done, marked, timedOut });
 }

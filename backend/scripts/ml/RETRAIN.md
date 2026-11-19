@@ -2374,8 +2374,9 @@ That removes every row the harvest added. Their weekly rows go with them:
 `ml_training_data.venue_id` references `ml_venues(id)` `ON DELETE CASCADE`
 (migration 006), and nothing else holds a foreign key to `ml_venues`. Their
 `ml_venue_baselines` rows are keyed by place id with no foreign key, so they
-stay served until the next baseline refresh removes every `collected` slot left
-without weekly rows. Deleting harvested venues does not move the stamp the
+stay served until a full baseline refresh removes every `collected` slot left
+without weekly rows (the hourly run's targeted one never looks at a place
+with no `ml_venues` row). Deleting harvested venues does not move the stamp the
 hourly run reads (2026-11-18, above), and a deletion is the one change the
 targeted rebuild cannot see (2026-11-19), so run the full one,
 `node scripts/ml/buildBaselines.js`, at once. On production it holds the

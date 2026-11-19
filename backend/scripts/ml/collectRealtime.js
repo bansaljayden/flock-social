@@ -574,12 +574,12 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // written since the last one (buildBaselines.collectedBaselinesDue), which is
 // most hours: the tail is then the offsets, under a minute. Such a run's fill
 // stops this much before the budget instead, and the three minutes go to the
-// fill (about 360 calls at 500 ms). A run that finds a rebuild due after all,
-// a weekly write having landed mid-sweep, still ends about :04 from a
-// container started at :11:54. Since 2026-11-19 the tail's rebuild is only
-// the full one (a missing mark, or a repair); the targeted one runs before
-// the sweep (TARGETED_REBUILD_BUDGET_MS), and the offsets have since taken up
-// to three minutes (12:29 to 12:32 UTC that day).
+// fill (about 360 calls at 500 ms). Since 2026-11-19 the tail's rebuild is
+// only the full one (a missing mark, or a repair), and only that keeps the
+// six minutes; the targeted one runs before the sweep
+// (TARGETED_REBUILD_BUDGET_MS), so a weekly write that lands mid-sweep waits
+// for the next run's start. The offsets have since taken up to three minutes
+// (12:29 to 12:32 UTC that day).
 const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 
 
@@ -1064,9 +1064,9 @@ async function sweepVenues(cityOrder, {
     console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the `
       + `${((runBudgetMs + beforeMs) / 60000).toFixed(1)} this run had, less the ${(beforeMs / 60000).toFixed(1)} `
       + 'the baseline rebuild took before the sweep.');
-  } else if (runBudgetMs !== RUN_TIME_BUDGET_MS) {
+  } else if (runBudgetMs + beforeMs !== RUN_TIME_BUDGET_MS) {
     console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the fifty, plus the `
-      + `${((runBudgetMs - RUN_TIME_BUDGET_MS) / 60000).toFixed(1)} this sweep started before :12.`);
+      + `${((runBudgetMs + beforeMs - RUN_TIME_BUDGET_MS) / 60000).toFixed(1)} this sweep started before :12.`);
   }
   let budgetHit = false;
   let leftForNextRun = 0;
@@ -2539,6 +2539,10 @@ async function run() {
     // already covers every city because the statement is not city-scoped.
     // A holdout hour used to skip it too, when it collected the holdout city
     // alone. It collects the training cities as well now, so it refreshes.
+    // (Since 2026-11-19 only the full rebuild, for a missing mark or a repair,
+    // is that one corpus-wide transaction; the hourly one is targeted, in
+    // short chunks, before the sweep. One collector still owns both, and the
+    // flag still skips both.)
     if (skipBaselines) {
       console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
     }
