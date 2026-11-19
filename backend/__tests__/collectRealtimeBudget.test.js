@@ -725,19 +725,30 @@ test('the repair exits 1 when the index is not in place, and drops an INVALID le
 });
 
 test('a baseline refresh is serialized, and its stamp is the evidence date of the value it writes', () => {
-  // One transaction under the corpus lock: check, delete, upsert.
+  // One transaction under the corpus lock: check, average, delete, update, insert.
   const refresh = baselines.slice(baselines.indexOf('async function refreshCollectedBaselines'));
   assert.match(refresh, /return withCorpusWriteLock\(pool, async \(client\) => \{/);
-  for (const stmt of ['UNDECLARED_WEEKLY_SQL', 'DELETE_STALE_SQL', 'UPSERT_SQL']) {
+  for (const stmt of ['UNDECLARED_WEEKLY_SQL', 'FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL']) {
     assert.match(refresh, new RegExp('client\\.query\\(' + stmt + '\\)'), `${stmt} runs outside the locked transaction`);
   }
+  // The average lives only as long as the transaction that reads it.
+  assert.match(baselines, /CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS/);
   // updated_at moves only with the value: no GREATEST that lets an older value
   // inherit a newer stamp.
-  const upsert = baselines.slice(baselines.indexOf('const UPSERT_SQL'), baselines.indexOf('async function refreshCollectedBaselines'));
-  assert.match(upsert, /updated_at = EXCLUDED\.updated_at/);
-  assert.ok(!/GREATEST/.test(upsert), 'updated_at still takes GREATEST(old, new) independently of the value written');
+  const update = baselines.slice(baselines.indexOf('const UPDATE_CHANGED_SQL'), baselines.indexOf('const INSERT_NEW_SQL'));
+  assert.match(update, /updated_at = f\.updated_at/);
+  assert.ok(!/GREATEST/.test(update), 'updated_at still takes GREATEST(old, new) independently of the value written');
   // The churn guard is unchanged, because it is what keeps re-runs free.
-  assert.match(upsert, /WHERE ml_venue_baselines\.baseline IS DISTINCT FROM EXCLUDED\.baseline\s*\n\s*OR EXCLUDED\.updated_at > COALESCE\(ml_venue_baselines\.updated_at, 'epoch'::timestamptz\)/);
+  assert.match(update, /AND \(b\.baseline IS DISTINCT FROM f\.baseline\s*\n\s*OR f\.updated_at > COALESCE\(b\.updated_at, 'epoch'::timestamptz\)\)/);
+  // And it decides which rows are written at all. ON CONFLICT DO UPDATE locks
+  // every conflicting row before its WHERE is read, a write to every row of a
+  // ~12M-row table per rebuild (2026-11-19: 90 minutes, two sweeps lost).
+  const statements = require('../scripts/ml/buildBaselines');
+  for (const name of ['FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL']) {
+    assert.strictEqual(typeof statements[name], 'string', `${name} is not exported`);
+    assert.ok(!/ON CONFLICT/i.test(statements[name]),
+      `${name} has an ON CONFLICT clause again; DO UPDATE locks every row it meets`);
+  }
 });
 
 

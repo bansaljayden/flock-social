@@ -2451,6 +2451,10 @@ async function run() {
     // email stack.
     // eslint-disable-next-line global-require
     await require('../../services/apiUptimeCheck').runApiUptimeCheck({ db: pool });
+    // The daily rebuild belongs to the run that STARTS in its hour; the tail
+    // asks with this instant (buildBaselines, THE DAILY HOUR IS THE HOUR THE
+    // RUN STARTED).
+    const runStartedAt = new Date();
     await collectRealtime();
     // Refresh baselines. This used to be a second, hand-written copy of
     // buildBaselines.js's statement that had drifted from it: no
@@ -2479,7 +2483,7 @@ async function run() {
       // mean rebuild, the old behaviour.
       let rebuild;
       try {
-        rebuild = await collectedBaselinesDue(pool);
+        rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
       } catch (err) {
         rebuild = { due: true, reason: `the stamps could not be read (${describeDbError(err)})` };
       }

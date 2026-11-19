@@ -708,7 +708,7 @@ test('the exporter tolerates a database without the optional columns', async () 
 test('the anchor aggregate is buildBaselines\' statement, not a second definition', () => {
   const norm = (s) => s.replace(/--[^\n]*/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
   const mine = norm(exporter.BASELINE_AGGREGATE_SQL);
-  const theirs = norm(buildBaselines.UPSERT_SQL);
+  const theirs = norm(buildBaselines.FRESH_SQL);
   for (const clause of [
     "collection_mode = 'weekly'",
     "hour_axis = 'venue_local'",
@@ -719,7 +719,7 @@ test('the anchor aggregate is buildBaselines\' statement, not a second definitio
     assert.ok(norm(mine).replace(/t2\.|v2\./g, '').includes(c),
       `the export's anchor aggregate is missing "${c}"`);
     assert.ok(theirs.replace(/t\.|v\./g, '').includes(c),
-      `buildBaselines' UPSERT no longer contains "${c}" — the two definitions have drifted ` +
+      `buildBaselines' average no longer contains "${c}" — the two definitions have drifted ` +
       'and the export must be brought back in line with it, not the other way round');
   }
   assert.match(mine, /round\(avg\(t2\.busyness_pct\)\)/,

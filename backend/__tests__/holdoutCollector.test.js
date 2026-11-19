@@ -23,7 +23,10 @@ test('the flag exists, is read from argv, and gates the refresh as a branch', ()
   assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);/);
   // Since 2026-10-30 the branch rebuilds only when a rebuild is due (weekly
   // stamps newer than the baselines, or the daily hour), and says which.
-  assert.match(src, /if \(!skipBaselines\) \{\n(\s+\/\/[^\n]*\n)*\s+let rebuild;\n\s+try \{\n\s+rebuild = await collectedBaselinesDue\(pool\);/);
+  // Asked with the run's start, so the daily hour is the hour the run began
+  // (2026-11-19: the 08:00 UTC run's tail read 09:03 as the daily hour).
+  assert.match(src, /if \(!skipBaselines\) \{\n(\s+\/\/[^\n]*\n)*\s+let rebuild;\n\s+try \{\n\s+rebuild = await collectedBaselinesDue\(pool, \{ at: runStartedAt \}\);/);
+  assert.match(src, /const runStartedAt = new Date\(\);\n\s+await collectRealtime\(\);/);
   assert.match(src, /if \(rebuild\.due\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
   assert.match(src, /Baselines current, rebuild skipped: \$\{rebuild\.reason\}\./);
   // Stamps that cannot be read rebuild, as every hour did before.

@@ -38,8 +38,8 @@
 //
 // This is a DELTA model: the ONNX graph predicts `busyness - baseline` and
 // services/mlPredictor.js reconstructs `score = baseline + clamp(delta)`, where
-// its baseline comes from `ml_venue_baselines` — written by exactly one
-// statement, buildBaselines.js's UPSERT:
+// its baseline comes from `ml_venue_baselines` — written from exactly one
+// aggregate, buildBaselines.js's FRESH_SQL:
 //
 //     ROUND(AVG(busyness_pct)) over ml_training_data rows with
 //       collection_mode = 'weekly' AND hour_axis = 'venue_local'
@@ -320,7 +320,7 @@ function observedDate(row) {
 }
 
 // The production baseline, as one aggregate. Kept as a named constant so the
-// contract test can assert it against buildBaselines.UPSERT_SQL instead of
+// contract test can assert it against buildBaselines.FRESH_SQL instead of
 // trusting the comment above.
 const BASELINE_AGGREGATE_SQL = `
         SELECT v2.google_place_id, t2.day_of_week, t2.hour,

@@ -12,7 +12,7 @@
 // collectWeekly.js), averaged two different clocks into the same slot. Which
 // blend a venue's baseline held depended on which script had run last.
 // collectRealtime.js now calls refreshCollectedBaselines() from here, so there
-// is one statement and it cannot drift again.
+// is one definition (FRESH_SQL's average) and it cannot drift again.
 //
 // AXIS. Only rows that DECLARE `hour_axis = 'venue_local'` are averaged.
 // ml_venue_baselines.hour is read by services/mlPredictor.js as a venue wall
@@ -66,7 +66,9 @@ const MARK_TABLE_SQL = `
 // (DAILY_REBUILD_UTC_HOUR) still averages every weekly row, harvested or not:
 // its baseline lands within a day instead of within the hour. A venue promoted
 // out of 'harvested' joins the stamp, but its own stamp may be older than the
-// mark, so run this file by hand after a promotion, as after a repair.
+// mark, so run this file by hand after a promotion, as after a repair. (Most
+// of those minutes turned out to be the rebuild's own statement, which wrote
+// to every row of the table: ONLY THE ROWS THAT CHANGE ARE TOUCHED, below.)
 const CORPUS_STAMP_SQL = `SELECT MAX(last_collected_at) AS corpus_at FROM ml_venues
                            WHERE besttime_status IS DISTINCT FROM 'harvested'`;
 
@@ -87,24 +89,23 @@ const UNDECLARED_WEEKLY_SQL = `
 // used, and mlPredictor happily serves them. Restricted to source='collected':
 // mlPredictor.storeGoogleBaselines writes source='google' rows from Google
 // popular_times, which are on the venue-local axis already and are not ours.
+// A slot has a backing row exactly when the average has a group for it, so
+// this reads the average (FRESH_SQL, below) rather than the corpus a second
+// time; migration 023 runs the same test against the corpus directly.
 const DELETE_STALE_SQL = `
   DELETE FROM ml_venue_baselines b
   WHERE b.source = 'collected'
     AND NOT EXISTS (
       SELECT 1
-      FROM ml_training_data t
-      JOIN ml_venues v ON t.venue_id = v.id
-      WHERE v.google_place_id = b.google_place_id
-        AND t.day_of_week = b.day_of_week
-        AND t.hour = b.hour
-        AND t.collection_mode = 'weekly'
-        AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
-        AND t.busyness_pct IS NOT NULL
+      FROM baseline_fresh f
+      WHERE f.google_place_id = b.google_place_id
+        AND f.day_of_week = b.day_of_week
+        AND f.hour = b.hour
     )
 `;
 
 // The baseline itself: per (venue, weekday, venue-local hour) average of the
-// weekly forecast rows. The `WHERE ... IS DISTINCT FROM` on the conflict target
+// weekly forecast rows. The `WHERE ... IS DISTINCT FROM` of UPDATE_CHANGED_SQL
 // suppresses no-op rewrites, so a second run of this file writes literally
 // nothing — re-running it is free and leaves the table byte-identical.
 //
@@ -130,8 +131,8 @@ const DELETE_STALE_SQL = `
 // is true. NOW() would have been a claim about data we cannot date.
 //
 // THE STAMP MOVES ONLY WITH THE VALUE IT DESCRIBES. Whenever the row is
-// written, updated_at is EXCLUDED.updated_at, the evidence date of the value
-// being written, and nothing else. It used to be GREATEST(old stamp, new
+// written, updated_at is the average's own MAX(collected_at), the evidence
+// date of the value being written, and nothing else. It used to be GREATEST(old stamp, new
 // evidence), kept so that a row migration 023 had stamped with NOW() on
 // 2026-08-15 would not move backwards. That made (baseline, updated_at) two
 // facts from two different moments: a value that changed because rows moved
@@ -144,51 +145,89 @@ const DELETE_STALE_SQL = `
 // claiming freshness the rows cannot support.
 //
 // THE COST ARGUMENT WAS NEVER ABOUT GREATEST. What stops a mass rewrite of the
-// ~3.45M migration-stamped rows is the WHERE below, which is unchanged: a row
-// is written only when its value differs or its evidence is newer. Rows whose
+// ~3.45M migration-stamped rows is the WHERE of UPDATE_CHANGED_SQL: a row is
+// written only when its value differs or its evidence is newer. Rows whose
 // value and evidence both stand still are not touched, whatever their stamp.
 //
 // Re-running stays free. If no new weekly row arrived, MAX(collected_at) has
 // not moved either, so neither clause of the WHERE fires and the row is
 // untouched - which is what mlClockAxisBackfill.test.js pins.
-const UPSERT_SQL = `
-  INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+//
+// ONLY THE ROWS THAT CHANGE ARE TOUCHED (2026-11-19). This was one statement,
+// INSERT ... SELECT ... ON CONFLICT DO UPDATE ... WHERE <the row changed>, and
+// Postgres locks every conflicting row before it evaluates that WHERE ("all
+// rows will be locked when the ON CONFLICT DO UPDATE action is taken", the
+// INSERT documentation). A row lock is a write, to the row's header and to the
+// WAL, so every rebuild wrote to every row of the table even when it changed
+// none, and its cost grew with the table, not with the change: about three
+// minutes at ~3.5M rows in October, 43 to 60 minutes at 7 to 10M on 2026-11-18
+// (blamed then on the harvest's new rows), and on 2026-11-19 the daily rebuild
+// over ~12M rows, with nearly nothing left to write, held the corpus lock from
+// 09:03 UTC past 10:33, which skipped the 09:00 and 10:00 sweeps and held up
+// the harvest's commit behind it. Now the average goes into a temporary table
+// first (FRESH_SQL) and three statements read it: the DELETE removes slots it
+// lacks, the UPDATE rewrites only rows whose value or evidence moved, and the
+// INSERT adds only slots the table lacks. An UPDATE locks only the rows it
+// writes, so a rebuild that changes nothing writes nothing. Same rows written,
+// same values, same stamps: the old statement updated a slot whatever its
+// source and inserted a missing one as 'collected', and so do these.
+const FRESH_SQL = `
+  CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS
   SELECT
     v.google_place_id,
     t.day_of_week,
     t.hour,
-    ROUND(AVG(t.busyness_pct))::smallint,
-    'collected',
-    MAX(t.collected_at)
+    ROUND(AVG(t.busyness_pct))::smallint AS baseline,
+    MAX(t.collected_at) AS updated_at
   FROM ml_training_data t
   JOIN ml_venues v ON t.venue_id = v.id
   WHERE t.collection_mode = 'weekly'
     AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
     AND t.busyness_pct IS NOT NULL
   GROUP BY v.google_place_id, t.day_of_week, t.hour
-  ON CONFLICT (google_place_id, day_of_week, hour)
-  DO UPDATE SET
-    baseline = EXCLUDED.baseline,
-    updated_at = EXCLUDED.updated_at
-  WHERE ml_venue_baselines.baseline IS DISTINCT FROM EXCLUDED.baseline
-     OR EXCLUDED.updated_at > COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz)
+`;
+
+const UPDATE_CHANGED_SQL = `
+  UPDATE ml_venue_baselines b
+     SET baseline = f.baseline,
+         updated_at = f.updated_at
+    FROM baseline_fresh f
+   WHERE b.google_place_id = f.google_place_id
+     AND b.day_of_week = f.day_of_week
+     AND b.hour = f.hour
+     AND (b.baseline IS DISTINCT FROM f.baseline
+          OR f.updated_at > COALESCE(b.updated_at, 'epoch'::timestamptz))
+`;
+
+const INSERT_NEW_SQL = `
+  INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+  SELECT f.google_place_id, f.day_of_week, f.hour, f.baseline, 'collected', f.updated_at
+    FROM baseline_fresh f
+   WHERE NOT EXISTS (
+     SELECT 1 FROM ml_venue_baselines b
+      WHERE b.google_place_id = f.google_place_id
+        AND b.day_of_week = f.day_of_week
+        AND b.hour = f.hour
+   )
 `;
 
 // Rebuild every source='collected' baseline from the corrected weekly corpus.
 // Safe to call any number of times, from anywhere, in any order.
 // Returns { ok, undeclared, deleted, upserted }.
 //
-// SERIALIZED. The check, the delete and the upsert run in one transaction
-// under the corpus write lock (config.withCorpusWriteLock), the same lock the
-// collectors and the venue repair take. collectRealtime.js calls this at the
-// end of every hourly run and buildBaselines.js is run by hand after a repair,
-// so two refreshes can overlap, and two overlapping refreshes were how an
-// older value could be published under a newer stamp: each is one statement
-// over its own snapshot, and the later-started one can commit first. Under
-// the lock the second refresh starts after the first commits and reads a
-// corpus at least as new, so the newest snapshot is always the last written.
-// The DDL stays outside the transaction; it is IF NOT EXISTS and takes no
-// part in the race.
+// SERIALIZED. The check, the average, the delete, the update and the insert
+// run in one transaction under the corpus write lock
+// (config.withCorpusWriteLock), the same lock the collectors and the venue
+// repair take. collectRealtime.js calls this at the end of hourly runs and
+// buildBaselines.js is run by hand after a repair, so two refreshes can
+// overlap, and two overlapping refreshes were how an older value could be
+// published under a newer stamp: each read its own snapshot, and the
+// later-started one can commit first. Under the lock the second refresh
+// starts after the first commits and reads a corpus at least as new, so the
+// newest snapshot is always the last written. The permanent tables' DDL stays
+// outside the transaction; it is IF NOT EXISTS and takes no part in the race.
+// The one CREATE inside it is FRESH_SQL's temporary table, which belongs to
+// this transaction alone and is dropped at its COMMIT or ROLLBACK.
 async function refreshCollectedBaselines(pool) {
   await pool.query(CREATE_TABLE_SQL);
   await pool.query(MARK_TABLE_SQL);
@@ -210,14 +249,19 @@ async function refreshCollectedBaselines(pool) {
       return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
     }
 
+    // ANALYZE: a temporary table has no statistics until asked, and the three
+    // joins against a ~12M-row table should be planned on its real size.
+    await client.query(FRESH_SQL);
+    await client.query('ANALYZE baseline_fresh');
     const del = await client.query(DELETE_STALE_SQL);
-    const up = await client.query(UPSERT_SQL);
+    const changed = await client.query(UPDATE_CHANGED_SQL);
+    const added = await client.query(INSERT_NEW_SQL);
     await client.query(
       `INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
        ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at`,
       [corpusAt]
     );
-    return { ok: true, undeclared: false, deleted: del.rowCount, upserted: up.rowCount };
+    return { ok: true, undeclared: false, deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
   });
 }
 
@@ -254,6 +298,16 @@ async function refreshCollectedBaselines(pool) {
 // before; and the hourly run rebuilds once a day whatever the stamps say
 // (DAILY_REBUILD_UTC_HOUR), so nothing stays stale for more than a day. No
 // mark yet means due, and the caller treats a failure to read as due too.
+//
+// THE DAILY HOUR IS THE HOUR THE RUN STARTED (2026-11-19). `at` is the
+// caller's run start, not the moment it asks. A run starts at :07 to :12 and
+// its tail asks at :00 to :05 of the NEXT hour, so on 2026-11-19 the 08:00
+// UTC run's tail read 09:03 as the daily hour and began the full rebuild four
+// minutes before the 09:07 fire, with no time reserved for it: its start had
+// read 08:07, not due, so its fill had used the minutes a rebuild is given
+// (collectRealtime FILL_EARLY_STOP_MS). Asked with the start, the run that
+// starts in the daily hour is the one that rebuilds, both asks agree, and its
+// fill leaves the room.
 const DAILY_REBUILD_UTC_HOUR = 9;
 // Compared in SQL, at the columns' microseconds: a JS Date keeps milliseconds.
 const DUE_SQL = `
@@ -340,7 +394,9 @@ module.exports = {
   REFUSAL_MESSAGE,
   HOUR_AXIS_VENUE_LOCAL,
   DELETE_STALE_SQL,
-  UPSERT_SQL,
+  FRESH_SQL,
+  UPDATE_CHANGED_SQL,
+  INSERT_NEW_SQL,
 };
 
 if (require.main === module) {
