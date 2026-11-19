@@ -518,6 +518,45 @@ test('hiding or restoring a guest RSVP clears its retired stamp, and no other ta
   assert.match(ran(/UPDATE messages SET is_hidden/)[0].sql, /^UPDATE messages SET is_hidden = \$1 WHERE id = \$2 /);
 });
 
+// A guest answer still retired was put away by its person joining the plan,
+// not by a moderator (a moderator's hide clears the stamp), and restoring it
+// counts that person twice. The console stopped offering Restore on it; a
+// direct un-hide still did it until 2026-11-19.
+test('an un-hide never brings back a retired guest answer; a hide still takes one down', async () => {
+  const notRestorable = /^SELECT \(retired_at IS NOT NULL\) AS not_restorable FROM guest_rsvps WHERE id = \$1$/;
+  for (const [retired, words] of [[true, /count them twice/], [false, /not hidden/]]) {
+    handlers = [
+      [/SELECT \* FROM content_reports WHERE id/, () => ({ rows: [reportRow('guest_rsvp')], rowCount: 1 })],
+      [/UPDATE guest_rsvps SET is_hidden/, () => ({ rows: [], rowCount: 0 })],
+      [notRestorable, () => ({ rows: [{ not_restorable: retired }], rowCount: 1 })],
+    ];
+    log = [];
+    emitted = [];
+    // eslint-disable-next-line no-await-in-loop
+    const res = await call('PUT', '/api/admin/reports/7', { action: 'unhide' });
+    assert.strictEqual(res.status, 409, `retired ${retired}: ${res.text}`);
+    assert.match(res.body.error, words);
+    assert.match(res.body.error, /Dismiss the report/);
+    const [write] = ran(/UPDATE guest_rsvps SET is_hidden/);
+    assert.match(write.sql, /\) AND NOT \(retired_at IS NOT NULL\) RETURNING /, 'the un-hide must not match a retired row');
+    assert.strictEqual(ran(notRestorable).length, 1);
+    assert.strictEqual(ran(/INSERT INTO moderation_actions/).length, 0);
+    assert.strictEqual(ran(/UPDATE content_reports SET status/).length, 0);
+    assert.strictEqual(emitted.length, 0);
+    assert.ok(timeline().includes('ROLLBACK'));
+  }
+  // The hide is not guarded: a retired row is still due a moderator's hide.
+  handlers = moderationHandlers('guest_rsvp', 'guest_rsvps', { flock_id: 8, notify_a: null, notify_b: null });
+  log = [];
+  assert.strictEqual((await call('PUT', '/api/admin/reports/7', { action: 'hide' })).status, 200);
+  assert.ok(!/AND NOT \(retired_at/.test(ran(/UPDATE guest_rsvps SET is_hidden/)[0].sql), 'a hide must still reach a retired row');
+  // Every other type's un-hide is unchanged.
+  handlers = moderationHandlers('flock_message', 'messages', { flock_id: 8, notify_a: null, notify_b: null });
+  log = [];
+  await call('PUT', '/api/admin/reports/7', { action: 'unhide' });
+  assert.ok(!/AND NOT \(/.test(ran(/UPDATE messages SET is_hidden/)[0].sql));
+});
+
 test('a hidden DM reaches BOTH participants', async () => {
   handlers = moderationHandlers('dm', 'direct_messages', { flock_id: null, notify_a: 3, notify_b: 4 });
   await call('PUT', '/api/admin/reports/7', { action: 'hide' });

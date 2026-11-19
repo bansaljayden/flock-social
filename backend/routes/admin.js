@@ -1363,7 +1363,13 @@ const TAKEDOWN_TARGETS = {
   // `alsoDue` is the same fact from the other side: a retired row is hidden
   // and still due a moderator's hide, so the already-in-that-state guard on
   // the UPDATE below must not count it as done.
-  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id', alsoSet: 'retired_at = NULL', alsoDue: 'retired_at IS NOT NULL' },
+  //
+  // `notRestorable` keeps a retired row out of an un-hide. A moderator's hide
+  // clears retired_at, so a row still retired was hidden by its person joining
+  // the plan, not by a moderator, and bringing it back would count that person
+  // twice. The console stopped offering Restore on it (content_retired); a
+  // direct un-hide still cleared the stamp until 2026-11-19.
+  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id', alsoSet: 'retired_at = NULL', alsoDue: 'retired_at IS NOT NULL', notRestorable: 'retired_at IS NOT NULL' },
 };
 
 // ---------------------------------------------------------------------------
@@ -1693,19 +1699,25 @@ router.put('/reports/:id', async (req, res) => {
           // again. Ban has refused exactly this since it was written; Hide and
           // Restore now refuse it the same way.
           const changed = await client.query(
-            `UPDATE ${target.table} SET ${target.column || 'is_hidden'} = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(${target.column || 'is_hidden'}, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''})${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $3::int` : ''} RETURNING ${target.audience}`,
+            `UPDATE ${target.table} SET ${target.column || 'is_hidden'} = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(${target.column || 'is_hidden'}, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''})${!hiding && target.notRestorable ? ` AND NOT (${target.notRestorable})` : ''}${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $3::int` : ''} RETURNING ${target.audience}`,
             target.sameAuthor ? [hiding, report.content_id, report.reported_user_id] : [hiding, report.content_id]
           );
-          const stillThere = changed.rowCount === 0
+          // Why nothing changed, when nothing did: gone, already in that state,
+          // or (an un-hide only) a row that may not be restored.
+          const unrestorableAsked = !hiding && Boolean(target.notRestorable);
+          const stillRow = changed.rowCount === 0
             ? (await client.query(
-              `SELECT 1 FROM ${target.table} WHERE id = $1${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $2::int` : ''}`,
+              `SELECT ${unrestorableAsked ? `(${target.notRestorable}) AS not_restorable` : '1'} FROM ${target.table} WHERE id = $1${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $2::int` : ''}`,
               target.sameAuthor ? [report.content_id, report.reported_user_id] : [report.content_id]
-            )).rows.length > 0
-            : false;
+            )).rows[0] || null
+            : null;
+          const stillThere = Boolean(stillRow);
           if (changed.rowCount === 0 && stillThere) {
             refusal = hiding
               ? { status: 409, error: 'That content is already hidden. Dismiss the report instead.' }
-              : { status: 409, error: 'That content is not hidden, so there is nothing to restore. Dismiss the report instead.' };
+              : unrestorableAsked && stillRow.not_restorable === true
+                ? { status: 409, error: 'That guest answer was put away when its person joined the plan, so restoring it would count them twice. Dismiss the report instead.' }
+                : { status: 409, error: 'That content is not hidden, so there is nothing to restore. Dismiss the report instead.' };
           } else if (changed.rowCount === 0) {
             refusal = hiding
               ? { status: 404, error: 'That content no longer exists. Dismiss the report instead.' }
