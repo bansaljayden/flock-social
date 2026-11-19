@@ -2333,6 +2333,27 @@ def _slice_keys(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# THE COLUMNS THE CELL FITS READ (2026-11-19). The three functions below used
+# to copy the whole frame (every export column and every feature built so far)
+# to read these six: on the 2026-10-08 export that copy was most of this
+# script's 14.9 GB peak (build_category_cell_aggregates alone rose 10.4 GB),
+# about 4.2 GB per million rows, more than this PC holds for the
+# harvest-inclusive export. They now copy the fitted rows of these columns
+# only (and the group column), which are the only ones they read: same rows,
+# same values, same groups. On that export the peak fell to 8.1 GB and both
+# pickles and model_metadata.json compared equal key by key, column by column
+# and value by value to the old code's (a comparison that catches a change to
+# one feature value, one label or one cell sum).
+_CELL_FIT_COLS = ['venue_category', 'day_of_week', 'hour', 'price_level', 'rating', 'busyness_pct']
+
+
+def _cell_fit_frame(df: pd.DataFrame, rows=None, extra: Tuple[str, ...] = ()) -> pd.DataFrame:
+    """A copy of `rows` (all when None) of the columns the cell fits read, keyed."""
+    cols = _CELL_FIT_COLS + [c for c in extra if c not in _CELL_FIT_COLS]
+    d = df.loc[:, cols] if rows is None else df.loc[rows, cols]
+    return _slice_keys(d.copy())
+
+
 def _smooth_category_hours(cat: pd.DataFrame, by: List[str]) -> pd.DataFrame:
     """Blend each category-hour cell with its adjacent hours within `by`.
 
@@ -2387,8 +2408,7 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
     rebuilds THIS map exactly (verify_reproduces_shipped depends on the two
     fits seeing identical rows).
     """
-    df = df[vendor_provenance_mask(df)]
-    df = _slice_keys(df.copy())
+    df = _cell_fit_frame(df, vendor_provenance_mask(df))
 
     cat = (
         df.groupby(CAT_KEYS)['busyness_pct'].mean().round(1)
@@ -2539,8 +2559,7 @@ def build_category_cell_aggregates(fit_df: pd.DataFrame,
     # sums/counts rebuild that map per fold, so if a non-vendor row entered
     # here but not there, verify_reproduces_shipped would fail — and if it
     # entered both, a self-reported label would be shaping category features.
-    fit_df = fit_df[vendor_provenance_mask(fit_df)]
-    d = _slice_keys(fit_df.copy())
+    d = _cell_fit_frame(fit_df, vendor_provenance_mask(fit_df), (group_col,))
     groups = d[group_col].fillna('__unknown__').astype(str)
     group_levels, group_idx = np.unique(groups.to_numpy(), return_inverse=True)
 
@@ -2604,7 +2623,7 @@ def index_category_cells(rows_df: pd.DataFrame, agg: Dict) -> Dict:
     index from a different row order scores every row against the wrong cell and
     produces better-looking numbers that mean nothing.
     """
-    d = _slice_keys(rows_df.copy())
+    d = _cell_fit_frame(rows_df, None, (agg['group_col'],))
     group_levels = np.asarray(agg['groups'], dtype=object).astype(str)
     groups = d[agg['group_col']].fillna('__unknown__').astype(str).to_numpy()
     order = np.argsort(group_levels)
