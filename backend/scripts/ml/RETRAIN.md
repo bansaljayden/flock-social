@@ -2326,7 +2326,14 @@ Since 2026-11-18 a harvested venue's stamp does not make the hourly run
 rebuild (each city's commit had cost the next hourly sweep: a rebuild of that
 size ran 7 to 43 minutes, past the next :07), so that rebuild is the daily one
 at 09:00 UTC, or any hourly one a non-harvested write makes due, or
-`buildBaselines.js` by hand; run it by hand after promoting harvested venues.
+`buildBaselines.js` by hand. Since 2026-11-19 the hourly run's rebuild is the
+targeted one (buildBaselines.js, THE TARGETED REBUILD): before the sweep, up
+to four minutes, it averages only venues whose stamp is newer than their own
+baseline, a few thousand per due run, the rest at the next one. A big
+harvest's curves can take days that way, so after a harvest, and before
+promoting harvested venues, run `node scripts/ml/buildBaselines.js --targeted`
+by hand: it averages every venue left, in short transactions the collectors
+can interleave with. Promoting moves no row, so nothing else is needed.
 
 What does not change is anybody else's score. `log_neighbor_count` and
 `neighbor_baseline_same_hour` are inputs of the shipped model, and
@@ -2369,8 +2376,11 @@ That removes every row the harvest added. Their weekly rows go with them:
 `ml_venue_baselines` rows are keyed by place id with no foreign key, so they
 stay served until the next baseline refresh removes every `collected` slot left
 without weekly rows. Deleting harvested venues does not move the stamp the
-hourly run reads (2026-11-18, above), so that is the daily rebuild unless you
-run `node scripts/ml/buildBaselines.js` at once, which you should. Check first that none was promoted
+hourly run reads (2026-11-18, above), and a deletion is the one change the
+targeted rebuild cannot see (2026-11-19), so run the full one,
+`node scripts/ml/buildBaselines.js`, at once. On production it holds the
+corpus lock 20 minutes or more and every collector write waits, so start it
+right after an hourly sweep ends (about :03). Check first that none was promoted
 (`SELECT id, name FROM ml_venues WHERE besttime_status = 'harvested' AND
 is_active`), because a promoted row goes too. Not undone by the DELETE: the
 weekly rows the harvest refreshed on venues the corpus already held (known by
