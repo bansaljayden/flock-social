@@ -605,8 +605,8 @@ test('the discovery collector shares this transform rather than keeping its own'
 });
 
 // ---------------------------------------------------------------------------
-// 2026-09-04 audit, F5. refreshCollectedBaselines runs at the end of every
-// hourly cron and by hand after a repair, so two can overlap. The upsert
+// 2026-09-04 audit, F5. refreshCollectedBaselines runs from the hourly cron
+// and by hand after a repair, so two can overlap. The upsert
 // overwrote the value whenever it differed while the stamp took GREATEST on
 // its own, so a refresh over an older snapshot committing second published the
 // OLD value under the NEW stamp. Two properties close that: the stamp written

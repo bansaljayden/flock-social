@@ -259,9 +259,10 @@ function sleep(ms) {
 const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('ml_corpus_writer'))";
 
 // Runs fn(client) inside BEGIN, the lock, COMMIT, on one checked-out
-// connection, rolling back and rethrowing on any error. The lock is the first
-// statement after BEGIN, before any row is read or touched, so a waiter holds
-// nothing while it waits and the order cannot deadlock against row locks.
+// connection, rolling back and rethrowing on any error. The lock comes right
+// after BEGIN (and the optional SET LOCAL timeouts below), before any row is
+// read or touched, so a waiter holds nothing while it waits and the order
+// cannot deadlock against row locks.
 //
 // `timeoutMs` (2026-11-19): a caller with a deadline, buildBaselines'
 // targeted rebuild before an hourly run's sweep, bounds the wait for the lock

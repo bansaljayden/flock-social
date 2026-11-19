@@ -873,8 +873,9 @@ test('loadRecordedThisHour finds the venues holding this local hour\'s realtime 
   assert.deepStrictEqual([...(await loadRecordedThisHour([], local, { db: pool }))], []);
 });
 
-// buildBaselines.collectedBaselinesDue decides whether the hourly run's tail
-// rebuilds the baselines, and so when its fill stops, so it is pinned against
+// buildBaselines.collectedBaselinesDue decides whether the hourly run rebuilds
+// the baselines (targeted before its sweep, full at its tail), and so when its
+// fill stops, so it is pinned against
 // real rows: due before any rebuild has left a mark, not due once one has,
 // due for any week written after it however soon (a tolerance once hid
 // those), not due again for production's 0.495 s late stamp once a rebuild

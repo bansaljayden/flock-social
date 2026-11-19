@@ -2318,10 +2318,9 @@ not settled; read the dashboard before assuming either way.
 
 ### What changes once it lands, and what does not
 
-`refreshCollectedBaselines` reads every weekly row, so after the next rebuild
-each harvested venue has a served curve and a model-backed score for its own
-hours. That is the deploy; the first refresh after a full-week commit writes
-several hundred thousand `ml_venue_baselines` rows inside the corpus lock.
+Once its baseline is built each harvested venue has a served curve and a
+model-backed score for its own hours. That is the deploy; a full week's commit
+means several hundred thousand `ml_venue_baselines` rows to write (when, below).
 Since 2026-11-18 a harvested venue's stamp does not make the hourly run
 rebuild (each city's commit had cost the next hourly sweep: a rebuild of that
 size ran 7 to 43 minutes, past the next :07), so that rebuild is the daily one

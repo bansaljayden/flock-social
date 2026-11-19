@@ -77,8 +77,9 @@ const CORPUS_STAMP_SQL = `SELECT MAX(last_collected_at) AS corpus_at FROM ml_ven
                            WHERE besttime_status IS DISTINCT FROM 'harvested'`;
 
 // Is there a weekly row whose hour column is not a venue-local hour (or does
-// not say)? EXISTS, not COUNT: ml_training_data is ~4M rows and this runs at
-// the end of every realtime cron.
+// not say)? EXISTS, not COUNT. The full rebuild asks it of the whole corpus
+// (40 s on production, 2026-11-19); the targeted one asks it of each chunk's
+// venues (UNDECLARED_PLACES_SQL).
 const UNDECLARED_WEEKLY_SQL = `
   SELECT EXISTS (
     SELECT 1 FROM ml_training_data
@@ -336,7 +337,8 @@ const MARK_SQL = `
 // SERIALIZED. The check, the average, the delete, the update and the insert
 // run in one transaction under the corpus write lock
 // (config.withCorpusWriteLock), the same lock the collectors and the venue
-// repair take. collectRealtime.js calls this at the end of hourly runs and
+// repair take (the targeted rebuild instead takes it once per chunk, below).
+// collectRealtime.js calls this from hourly runs and
 // buildBaselines.js is run by hand after a repair, so two refreshes can
 // overlap, and two overlapping refreshes were how an older value could be
 // published under a newer stamp: each read its own snapshot, and the
