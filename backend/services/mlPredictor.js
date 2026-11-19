@@ -592,7 +592,8 @@ function switchedArithmeticOn() {
 // not a second gate on them (see DEVIATION_MAX_AGE_MS).
 //
 // HOW STALE A READING CAN BE HERE. The builder runs once an hour, after the
-// sweep that starts at :07 and after the baseline refresh behind it, so a
+// sweep that starts at :07 (and after a full baseline refresh, on the rare run
+// that has one; the targeted one runs before the sweep), so a
 // reading taken in hour H is in the table by the end of hour H in the usual
 // case, and this cache adds at most DEVIATION_CACHE_TTL on top. Staleness
 // never reaches the number, though: the nowcast measures a reading's age from
@@ -2761,8 +2762,9 @@ const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 // ---------------------------------------------------------------------------
 // scripts/ml/harvestVenueFilter.js can add thousands of venues at once from
 // BestTime's Venue Filter, as ml_venues rows with besttime_status 'harvested'.
-// buildBaselines gives each one a curve (within a day since 2026-11-18, when a
-// harvested venue's stamp stopped making the hourly run rebuild), and without this
+// buildBaselines gives each one a curve (since 2026-11-19 from the hourly run's
+// targeted rebuild, a few thousand per daily run, so a big harvest takes days
+// unless `buildBaselines.js --targeted` is run by hand), and without this
 // clause every one of them would join the box below: log_neighbor_count and
 // neighbor_baseline_same_hour are inputs of the shipped model, so every
 // existing venue's score would move within a cache TTL, by an amount no

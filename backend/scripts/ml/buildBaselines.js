@@ -399,8 +399,10 @@ async function refreshCollectedBaselines(pool, {
 // with a later stamp is in the list, or leaves the newest stamp past the mark
 // and makes the next hour due. One that commits late under an EARLY stamp
 // (its transaction began before it waited on the lock) can leave the mark
-// covering it; its own stamp is still newer than its own baseline, so the
-// next targeted pass, the daily hour's at the latest, averages it.
+// covering it; its own stamp is still newer than its own baseline, so it
+// stays a target and a later targeted pass averages it (stamp-serving places
+// go first, so the daily hour's pass reaches it unless a deadline stops that
+// pass before its turn).
 //
 // With a deadline, nothing runs past it by more than TARGET_OVERRUN_MS (the
 // mark's one-row write excepted, MARK_TIMEOUT_MS): no read starts after it,

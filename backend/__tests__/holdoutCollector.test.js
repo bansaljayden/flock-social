@@ -8,6 +8,9 @@
  * of 24, on the same Postgres that serves production. The holdout-city
  * collector therefore passes --no-baseline-refresh; the hourly PA run owns the
  * rebuild, and covers every city because the statement is not city-scoped.
+ * (Since 2026-11-19 a rebuild runs only when due, targeted in short chunks
+ * before the sweep, or full at the tail after a repair; one collector still
+ * owns both.)
  *
  * HOW TO RUN
  *   cd backend && node --test __tests__/holdoutCollector.test.js
