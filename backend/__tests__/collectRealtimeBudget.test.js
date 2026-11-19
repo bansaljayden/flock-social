@@ -616,7 +616,7 @@ test('every writer of the corpus takes one advisory lock, and the repair takes i
   // One name, one statement, defined once. Four callers spelling the key by
   // hand is four ways for one of them to hold a different lock.
   assert.match(mlConfig, /const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock\(hashtext\('ml_corpus_writer'\)\)";/);
-  assert.match(mlConfig, /async function withCorpusWriteLock\(pool, fn\) \{/);
+  assert.match(mlConfig, /async function withCorpusWriteLock\(pool, fn, \{ timeoutMs = null \} = \{\}\) \{/);
   // Lock first, before any row is read or touched, so a waiter holds nothing.
   const helper = mlConfig.slice(mlConfig.indexOf('async function withCorpusWriteLock'));
   assert.ok(helper.indexOf("await client.query('BEGIN');") < helper.indexOf('await client.query(ML_CORPUS_LOCK_SQL);'));

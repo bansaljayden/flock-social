@@ -928,6 +928,9 @@ test('collectedBaselinesDue: due exactly when the newest weekly stamp is not the
   await pool.query('DROP TABLE IF EXISTS ml_baseline_marks');
   const none = await due();
   assert.deepStrictEqual(none, { due: true, full: true, reason: 'no rebuild has recorded a mark yet' });
+  // Not even the daily hour takes the targeted rebuild before there is a mark.
+  assert.deepStrictEqual(await collectedBaselinesDue(pool, { at: dailyHour }),
+    { due: true, full: true, reason: 'no rebuild has recorded a mark yet' });
 
   await writeWeek('ChIJbaselineDueWeek1', at(0));
   await rebuild();
@@ -1090,11 +1093,12 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   assert.strictEqual(dueBefore.due, true, dueBefore.reason);
   assert.strictEqual(dueBefore.full, false);
 
-  // A deadline already passed: nothing averaged, the mark left, still due.
+  // A deadline already passed: nothing read, nothing averaged, the mark left,
+  // still due.
   const late = await refreshCollectedBaselines(pool, { targeted: true, deadline: Date.now() - 1 });
   assert.strictEqual(late.ok, true);
   assert.strictEqual(late.places, 0);
-  assert.strictEqual(late.left, targets.length);
+  assert.strictEqual(late.left, null, 'a pass past its deadline still read the target list');
   assert.strictEqual(late.marked, false);
   assert.strictEqual(await slotCount('ChIJtargetNewWeek'), 0);
   assert.strictEqual((await collectedBaselinesDue(pool, { at: offHour })).due, true);
@@ -1124,4 +1128,42 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   assert.strictEqual((await refreshCollectedBaselines(pool)).ok, true);
   assert.strictEqual((await slot('ChIJtargetUntouched', 0, 0)).baseline, 30);
   assert.strictEqual(await slot('ChIJtargetUntouched', 0, 1), undefined);
+
+  // A lock held past the overrun (a harvest commit, say): the chunk's wait is
+  // cancelled at the overrun, it rolls back, the pass returns, and the mark
+  // stays where it was, so the next hour is due again.
+  await writeWeek('ChIJtargetBlocked', at(9000));
+  const holder = await pool.connect();
+  try {
+    await holder.query('BEGIN');
+    await holder.query(realConfig.ML_CORPUS_LOCK_SQL);
+    const t0 = Date.now();
+    const blocked = await refreshCollectedBaselines(pool, { targeted: true, deadline: Date.now() + 200, overrunMs: 300 });
+    assert.ok(Date.now() - t0 < 5000, `the pass ran ${Date.now() - t0} ms past a 0.5 s limit`);
+    assert.strictEqual(blocked.ok, true);
+    assert.strictEqual(blocked.timedOut, true);
+    assert.strictEqual(blocked.places, 0);
+    assert.strictEqual(blocked.marked, false);
+  } finally {
+    await holder.query('ROLLBACK').catch(() => {});
+    holder.release();
+  }
+  assert.strictEqual(await slotCount('ChIJtargetBlocked'), 0);
+  assert.strictEqual((await collectedBaselinesDue(pool, { at: offHour })).due, true);
+
+  // A chunk whose venues hold a weekly row on another axis (BestTime's array
+  // index) refuses, as the full rebuild does, before it writes anything.
+  const blockedId = await venueId('ChIJtargetBlocked');
+  await pool.query(`UPDATE ml_training_data SET hour_axis = 'besttime_index'
+                     WHERE venue_id = $1 AND day_of_week = 0 AND hour = 0`, [blockedId]);
+  const refused = await refreshCollectedBaselines(pool, { targeted: true });
+  assert.strictEqual(refused.ok, false);
+  assert.strictEqual(refused.undeclared, true);
+  assert.strictEqual(await slotCount('ChIJtargetBlocked'), 0);
+  await pool.query(`UPDATE ml_training_data SET hour_axis = 'venue_local'
+                     WHERE venue_id = $1 AND day_of_week = 0 AND hour = 0`, [blockedId]);
+  const cleared = await refreshCollectedBaselines(pool, { targeted: true });
+  assert.strictEqual(cleared.ok, true);
+  assert.strictEqual(await slotCount('ChIJtargetBlocked'), 168);
+
 });

@@ -253,22 +253,46 @@ const INSERT_NEW_SQL = `
 // Places whose venues serve the stamp go first; the mark is written once
 // none of those is left. Harvested places are not in the stamp, so those
 // left at the deadline are simply first in line next time.
+//
+// ONE VENUE PER PLACE. ml_venues.google_place_id is NOT NULL UNIQUE
+// (migration 006), so a place's baselines average one venue's rows and that
+// venue's stamp is the place's. Two cases stay outside the list on purpose,
+// both empty on production that day: a venue with weekly rows but no stamp
+// (12,535 venues have no stamp; none of them has a usable weekly row and no
+// baseline), which the full rebuild still covers; and a stamped venue whose
+// rows are all NULL busyness, which is averaged on every pass to nothing (a
+// few dozen, seconds per pass).
 const TARGETS_SQL = `
   SELECT v.google_place_id,
-         BOOL_OR(v.besttime_status IS DISTINCT FROM 'harvested') AS stamped
+         v.besttime_status IS DISTINCT FROM 'harvested' AS stamped
     FROM ml_venues v
     LEFT JOIN (
       SELECT google_place_id, MAX(updated_at) AS evidence
         FROM ml_venue_baselines
        GROUP BY google_place_id
     ) e ON e.google_place_id = v.google_place_id
-   WHERE v.google_place_id IS NOT NULL
-     AND v.last_collected_at IS NOT NULL
+   WHERE v.last_collected_at IS NOT NULL
      AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second')
-   GROUP BY v.google_place_id
-   ORDER BY stamped DESC, MIN(v.last_collected_at), v.google_place_id
+   ORDER BY stamped DESC, v.last_collected_at, v.google_place_id
 `;
-const TARGET_CHUNK_PLACES = 500;
+// 250 places is ~40,000 slots: about 25 s on cold pages (500 took 49 s).
+const TARGET_CHUNK_PLACES = 250;
+// The last chunk may start at the deadline; nothing it runs may pass this
+// much after it (a statement or lock wait that would is cancelled, and the
+// chunk rolls back).
+const TARGET_OVERRUN_MS = 60 * 1000;
+// The undeclared-axis check for the chunk's own venues: the corpus-wide one
+// reads every weekly row (40 s on production, 2026-11-19).
+const UNDECLARED_PLACES_SQL = `
+  SELECT EXISTS (
+    SELECT 1
+      FROM ml_training_data t
+      JOIN ml_venues v ON v.id = t.venue_id
+     WHERE v.google_place_id = ANY($1::text[])
+       AND t.collection_mode = 'weekly'
+       AND (t.hour_axis IS DISTINCT FROM '${HOUR_AXIS_VENUE_LOCAL}')
+  ) AS undeclared
+`;
 // The same average, the same delete, for the given place ids only. Every
 // ml_venues row carrying a place id joins it, so each slot written equals what
 // the full rebuild writes for it.
@@ -305,13 +329,19 @@ const MARK_SQL = `
 // `targeted: true` runs THE TARGETED REBUILD instead, until `deadline` (ms
 // since the epoch; none means until done), and also returns { targeted,
 // places, left, marked }.
-async function refreshCollectedBaselines(pool, { targeted = false, deadline = null, chunkPlaces = TARGET_CHUNK_PLACES } = {}) {
+async function refreshCollectedBaselines(pool, {
+  targeted = false, deadline = null, chunkPlaces = TARGET_CHUNK_PLACES, overrunMs = TARGET_OVERRUN_MS,
+} = {}) {
   await pool.query(CREATE_TABLE_SQL);
   await pool.query(MARK_TABLE_SQL);
+  // The targeted rebuild runs from the hourly collector, against the booted
+  // server's database, and skips the ALTER below: even when the column exists
+  // it queues for an exclusive lock on the corpus table behind any open
+  // harvest transaction, and every reader of the table then queues behind it.
+  if (targeted) return refreshTargets(pool, { deadline, chunkPlaces, overrunMs });
   // Both columns are created by migration 023 on a booted server; these scripts
   // also run against databases that have not booted the current server.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
-  if (targeted) return refreshTargets(pool, { deadline, chunkPlaces });
 
   return withCorpusWriteLock(pool, async (client) => {
     // The mark is read BEFORE the rebuild's own statements: a write that
@@ -339,43 +369,103 @@ async function refreshCollectedBaselines(pool, { targeted = false, deadline = nu
   });
 }
 
-// THE TARGETED REBUILD, above. The undeclared check, the corpus stamp and the
-// target list are read before any chunk and outside the lock: the list is
-// only which places to average, and each chunk averages its places from the
-// rows as they stand under the lock. The stamp is read first, so a write that
-// lands after it is either in the list or newer than the mark it leaves, and
-// costs one more targeted pass next hour rather than going unseen.
-async function refreshTargets(pool, { deadline, chunkPlaces }) {
-  const { rows: [{ undeclared }] } = await pool.query(UNDECLARED_WEEKLY_SQL);
-  if (undeclared) {
-    return { ok: false, undeclared: true, deleted: 0, upserted: 0, targeted: true, places: 0, left: 0, marked: false };
+// THE TARGETED REBUILD, above. The corpus stamp and the target list are read
+// before any chunk and outside the lock: the list is only which places to
+// average, and each chunk averages its places from the rows as they stand
+// under the lock. The stamp is read first, so a write that commits after it
+// with a later stamp is in the list, or leaves the newest stamp past the mark
+// and makes the next hour due. One that commits late under an EARLY stamp
+// (its transaction began before it waited on the lock) can leave the mark
+// covering it; its own stamp is still newer than its own baseline, so the
+// next targeted pass, the daily hour's at the latest, averages it.
+//
+// With a deadline, nothing runs past it by more than TARGET_OVERRUN_MS: no
+// read starts after it, every statement and lock wait is cancelled at the
+// overrun (the chunk rolls back, and its places stay first in line), and the
+// mark moves only when no stamp-serving place is left.
+const TIMED_OUT = new Set(['57014', '55P03']); // statement / lock timeout
+async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
+  const hardStop = deadline == null ? null : deadline + overrunMs;
+  const remaining = () => (hardStop == null ? null : hardStop - Date.now());
+  const result = (extra) => ({
+    ok: true, undeclared: false, deleted: 0, upserted: 0, targeted: true, places: 0, left: 0, marked: false, ...extra,
+  });
+  if (deadline != null && Date.now() >= deadline) return result({ left: null });
+  // A read with the time left, in a transaction of its own so the limit
+  // ends with it.
+  const read = async (sql, params) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      if (hardStop != null) await client.query(`SET LOCAL statement_timeout = ${Math.max(1, remaining())}`);
+      const res = await client.query(sql, params);
+      await client.query('COMMIT');
+      return res;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  };
+
+  let corpusAt;
+  let targets;
+  try {
+    ({ rows: [{ corpus_at: corpusAt }] } = await read(`SELECT corpus_at::text AS corpus_at FROM (${CORPUS_STAMP_SQL}) c`));
+    ({ rows: targets } = await read(TARGETS_SQL));
+  } catch (err) {
+    if (err && TIMED_OUT.has(err.code)) return result({ left: null, timedOut: true });
+    throw err;
   }
-  const { rows: [{ corpus_at: corpusAt }] } = await pool.query(
-    `SELECT corpus_at::text AS corpus_at FROM (${CORPUS_STAMP_SQL}) c`);
-  const { rows: targets } = await pool.query(TARGETS_SQL);
 
   let deleted = 0;
   let upserted = 0;
   let done = 0;
+  let timedOut = false;
   while (done < targets.length && (deadline == null || Date.now() < deadline)) {
     const places = targets.slice(done, done + chunkPlaces).map((r) => r.google_place_id);
-    const chunk = await withCorpusWriteLock(pool, async (client) => {
-      await client.query(FRESH_EMPTY_SQL);
-      await client.query(FRESH_PLACES_SQL, [places]);
-      await client.query('ANALYZE baseline_fresh');
-      const del = await client.query(DELETE_STALE_PLACES_SQL, [places]);
-      const changed = await client.query(UPDATE_CHANGED_SQL);
-      const added = await client.query(INSERT_NEW_SQL);
-      return { deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
-    });
+    let chunk;
+    try {
+      chunk = await withCorpusWriteLock(pool, async (client) => {
+        const q = async (sql, params) => {
+          if (hardStop != null) await client.query(`SET LOCAL statement_timeout = ${Math.max(1, remaining())}`);
+          return client.query(sql, params);
+        };
+        const { rows: [{ undeclared }] } = await q(UNDECLARED_PLACES_SQL, [places]);
+        if (undeclared) return { undeclared: true };
+        await q(FRESH_EMPTY_SQL);
+        await q(FRESH_PLACES_SQL, [places]);
+        await q('ANALYZE baseline_fresh');
+        const del = await q(DELETE_STALE_PLACES_SQL, [places]);
+        const changed = await q(UPDATE_CHANGED_SQL);
+        const added = await q(INSERT_NEW_SQL);
+        return { deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
+      }, hardStop == null ? {} : { timeoutMs: Math.max(1, remaining()) });
+    } catch (err) {
+      if (err && TIMED_OUT.has(err.code)) { timedOut = true; break; }
+      throw err;
+    }
+    if (chunk.undeclared) {
+      return { ...result({ deleted, upserted, places: done, left: targets.length - done }), ok: false, undeclared: true };
+    }
     deleted += chunk.deleted;
     upserted += chunk.upserted;
     done += places.length;
   }
 
-  const marked = !targets.slice(done).some((r) => r.stamped);
-  if (marked) await withCorpusWriteLock(pool, (client) => client.query(MARK_SQL, [corpusAt]));
-  return { ok: true, undeclared: false, deleted, upserted, targeted: true, places: done, left: targets.length - done, marked };
+  let marked = !targets.slice(done).some((r) => r.stamped);
+  if (marked) {
+    try {
+      await withCorpusWriteLock(pool, (client) => client.query(MARK_SQL, [corpusAt]),
+        hardStop == null ? {} : { timeoutMs: Math.max(1, remaining()) });
+    } catch (err) {
+      if (!(err && TIMED_OUT.has(err.code))) throw err;
+      marked = false;
+      timedOut = true;
+    }
+  }
+  return result({ deleted, upserted, places: done, left: targets.length - done, marked, timedOut });
 }
 
 // IS A REBUILD DUE? (2026-10-30.) collectRealtime.js rebuilt every collected
@@ -439,9 +529,9 @@ const DUE_SQL = `
 const UNDEFINED_TABLE = '42P01';
 
 async function collectedBaselinesDue(db, { at = new Date() } = {}) {
-  if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
-    return { due: true, full: false, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
-  }
+  // The mark first, even in the daily hour: with none, only the full rebuild
+  // covers what no stamp marks, and the targeted one would leave a mark that
+  // stops the next hour from asking for it.
   let stamps;
   try {
     ({ rows: [stamps] } = await db.query(DUE_SQL));
@@ -451,6 +541,9 @@ async function collectedBaselinesDue(db, { at = new Date() } = {}) {
   }
   const iso = (v) => (v ? new Date(v).toISOString() : 'none');
   if (!stamps.rebuilt_at) return { due: true, full: true, reason: 'no rebuild has recorded a mark yet' };
+  if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
+    return { due: true, full: false, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
+  }
   if (stamps.newer) {
     return {
       due: true,

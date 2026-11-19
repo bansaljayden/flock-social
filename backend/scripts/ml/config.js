@@ -262,11 +262,21 @@ const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('ml_corpus_wri
 // connection, rolling back and rethrowing on any error. The lock is the first
 // statement after BEGIN, before any row is read or touched, so a waiter holds
 // nothing while it waits and the order cannot deadlock against row locks.
-async function withCorpusWriteLock(pool, fn) {
+//
+// `timeoutMs` (2026-11-19): a caller with a deadline, buildBaselines'
+// targeted rebuild at the end of an hourly run, bounds the wait for the lock
+// and its statements, so a harvest commit holding the lock cannot carry the
+// run past the next cron fire. A timeout rolls back like any other error.
+async function withCorpusWriteLock(pool, fn, { timeoutMs = null } = {}) {
   const client = await pool.connect();
   let broken = false;
   try {
     await client.query('BEGIN');
+    if (timeoutMs != null) {
+      const ms = Math.max(1, Math.floor(timeoutMs));
+      await client.query(`SET LOCAL lock_timeout = ${ms}`);
+      await client.query(`SET LOCAL statement_timeout = ${ms}`);
+    }
     await client.query(ML_CORPUS_LOCK_SQL);
     const result = await fn(client);
     await client.query('COMMIT');

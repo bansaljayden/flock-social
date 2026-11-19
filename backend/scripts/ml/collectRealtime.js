@@ -2518,9 +2518,11 @@ async function run() {
           if (!result.ok) {
             console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
           } else {
-            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed`
-              + `${result.targeted ? `; targeted: ${result.places} places averaged, ${result.left} left for the next rebuild`
-                + `${result.marked ? '' : ', mark not moved'}` : '; full'})`);
+            const how = !result.targeted ? 'full'
+              : result.left == null ? 'targeted: nothing averaged, its deadline had passed'
+                : `targeted: ${result.places} places averaged, ${result.left} left for the next rebuild`
+                  + `${result.timedOut ? ', stopped at its time limit' : ''}${result.marked ? '' : ', mark not moved'}`;
+            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed; ${how})`);
           }
         } catch (err) {
           console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
