@@ -232,9 +232,10 @@ const INSERT_NEW_SQL = `
 // That compares a venue with its own baseline, so unlike the corpus mark it
 // cannot be fooled by a write that waited on the lock and committed late
 // under an early stamp (the Paris harvest's commit on 2026-11-19 waited from
-// 09:03 to 11:41). Finding them reads the baselines once (37 s that day, 5 s
-// warm, for ~6,800 places: 5,579 harvested venues without a curve, 1,194
-// venues whose stamp sits 0.495 s after their rows, and a few dozen others).
+// 09:03 to 11:41). That morning there were ~6,800 such places: 5,579
+// harvested venues without a curve, 1,194 venues whose stamp sits 0.495 s
+// after their rows, and a few dozen others (EACH VENUE ASKS ITS OWN SLOTS,
+// below, for how they are found).
 //
 // ONE SECOND OF SLACK, PER VENUE. Those 1,194 were stamped by collectWeekly
 // in a separate UPDATE after COMMIT, before it stamped in the rows' own
@@ -274,18 +275,30 @@ const INSERT_NEW_SQL = `
 // discoverBestTime run that rewrites a venue's EXISTING week and dies before
 // its stamp leaves the old stamp beside new rows. That script runs only by
 // hand; after a run that did not finish, run this file in full.
+//
+// EACH VENUE ASKS ITS OWN SLOTS (2026-11-19). The list was first a join
+// against MAX(updated_at) grouped over the whole baseline table. At 16.5M
+// rows Postgres planned that as an ordered scan of all of them and it ran
+// past 90 s (the backlog drain's 18:03 UTC window got no further than the
+// list). "No slot with evidence within a second of the stamp" is the same
+// test as "stamp more than a second past the newest evidence", and the same
+// for a place with no slot or only undated ones, so each venue now asks
+// its own place's slots through the place index: 32 s
+// cold and 14 s warm on production that day, for 8,277 targets.
 const TARGETS_SQL = `
   SELECT v.google_place_id,
          v.besttime_status IS DISTINCT FROM 'harvested' AS stamped
     FROM ml_venues v
-    LEFT JOIN (
-      SELECT google_place_id, MAX(updated_at) AS evidence
-        FROM ml_venue_baselines
-       GROUP BY google_place_id
-    ) e ON e.google_place_id = v.google_place_id
    WHERE (v.last_collected_at IS NOT NULL
-          AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second'))
-      OR (v.last_collected_at IS NULL AND e.evidence IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ml_venue_baselines b
+             WHERE b.google_place_id = v.google_place_id
+               AND b.updated_at >= v.last_collected_at - interval '1 second'))
+      OR (v.last_collected_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM ml_venue_baselines b
+             WHERE b.google_place_id = v.google_place_id
+               AND b.updated_at IS NOT NULL)
           AND EXISTS (
             SELECT 1 FROM ml_training_data t
              WHERE t.venue_id = v.id

@@ -295,12 +295,27 @@ const pool = new Pool({
 // Dated holiday context (2026-08-12): every realtime row now records WHEN it
 // was observed and what special night it was, so retrains can learn eve/party/
 // ban effects. Weekly rows stay dateless by design ("typical Tuesday").
+//
+// ONLY A MISSING COLUMN IS ALTERED (2026-11-19). ADD COLUMN IF NOT EXISTS
+// asks for the table's exclusive lock before it looks for the column, so
+// every run's ALTERs queued behind any open read of the corpus, and every
+// reader after them queued behind the ALTER: at 18:07 UTC that day the
+// run's first one waited about 3 min 40 s behind a by-hand baseline read,
+// and the sweep started that much late. The catalog read takes no lock on the
+// table, and a database that has booted the server has every column.
 async function ensureHolidayColumns() {
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS observed_date DATE`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS is_holiday_eve BOOLEAN DEFAULT false`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night VARCHAR(40)`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_effect VARCHAR(8)`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_conf VARCHAR(4)`);
+  const { rows } = await pool.query(
+    `SELECT attname FROM pg_attribute
+      WHERE attrelid = to_regclass('ml_training_data') AND attnum > 0 AND NOT attisdropped`);
+  const present = new Set(rows.map((r) => r.attname));
+  const add = async (sql) => {
+    if (!present.has(sql.match(/ADD COLUMN IF NOT EXISTS (\w+)/)[1])) await pool.query(sql);
+  };
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS observed_date DATE`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS is_holiday_eve BOOLEAN DEFAULT false`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night VARCHAR(40)`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_effect VARCHAR(8)`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS special_night_conf VARCHAR(4)`);
   // Round 10: 'live' when BestTime reported live foot traffic, 'forecast' when
   // we fell back to their forecast. Both land in collection_mode='realtime',
   // and before this column existed both were exported as is_realtime=1 and
@@ -316,24 +331,24 @@ async function ensureHolidayColumns() {
   // find it missing and emit `NULL AS label_source`, silently exporting every
   // realtime row as 'unknown'. That is the failure this whole round is about,
   // and a column that only a hand-run collector creates can always re-enter it.
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS label_source VARCHAR(10)`);
   // Round 19: BestTime's own forecast for the same moment, stored on EVERY
   // realtime row whatever its label_source. On a 'forecast' row it equals
   // busyness_pct by construction; on a 'live' row it is the counterfactual, and
   // it is what makes a 'live' claim falsifiable after the fact instead of an
   // unbacked assertion. NULL on rows collected before this.
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS vendor_forecast_pct SMALLINT`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS vendor_forecast_pct SMALLINT`);
   // Which clock this row's `hour` is on. Normally created by migration 023;
   // created here too because these scripts also run against databases that have
   // not booted the current server, and the INSERT below names the column.
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
   // Migration 094 owns these three. Declared here too because this file
   // deploys with the BESTTIME collector, which can run before the main
   // service boots 094, and the INSERT below names them: a missing column
   // would fail every insert of the sweep. Same statements as the migration.
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_hour_start SMALLINT`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_venue_open BOOLEAN`);
-  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_local_time VARCHAR(48)`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_hour_start SMALLINT`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_venue_open BOOLEAN`);
+  await add(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS live_local_time VARCHAR(48)`);
 }
 
 // One query per run, not one per venue. It reads the same weekly rows the
@@ -1059,8 +1074,10 @@ async function sweepVenues(cityOrder, {
   // and less any minutes spent before it on a baseline rebuild.
   const beforeMs = Math.max(0, beforeSweepMs);
   const runBudgetMs = runTimeBudgetMs(runClockStart - beforeMs, RUN_TIME_BUDGET_MS) - beforeMs;
-  // Said when it is a rebuild's minutes, not the second the due check takes.
-  if (beforeMs >= 1000) {
+  // Said when it is a rebuild's minutes, not the seconds the due check takes
+  // (under three on a cold cache, 18:13 UTC 2026-11-19, printed as "less the
+  // 0.0"); a targeted rebuild's target list alone took 14 to 32 s there.
+  if (beforeMs >= 10 * 1000) {
     console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the `
       + `${((runBudgetMs + beforeMs) / 60000).toFixed(1)} this run had, less the ${(beforeMs / 60000).toFixed(1)} `
       + 'the baseline rebuild took before the sweep.');

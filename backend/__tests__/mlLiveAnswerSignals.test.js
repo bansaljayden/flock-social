@@ -77,6 +77,17 @@ test('storeReading writes the three columns, and the collector declares them bef
   assert.equal(`${liveAnswerColumns({}).map(([c]) => c)}`, 'live_hour_start,live_venue_open,live_local_time');
 });
 
+test('the collector alters only a column the table lacks, so no run queues for its exclusive lock', () => {
+  // ADD COLUMN IF NOT EXISTS takes the lock before it looks, and readers queue
+  // behind the waiting ALTER (2026-11-19: about 3 min 40 s at 18:07 UTC).
+  const ensure = COLLECTOR_SRC.replace(/\r\n/g, '\n').slice(COLLECTOR_SRC.replace(/\r\n/g, '\n').indexOf('async function ensureHolidayColumns('));
+  const ensureBody = ensure.slice(0, ensure.indexOf('\n}\n'));
+  assert.match(ensureBody, /FROM pg_attribute\n\s+WHERE attrelid = to_regclass\('ml_training_data'\) AND attnum > 0 AND NOT attisdropped/);
+  assert.match(ensureBody, /if \(!present\.has\(sql\.match\(\/ADD COLUMN IF NOT EXISTS \(\\w\+\)\/\)\[1\]\)\) await pool\.query\(sql\);/);
+  assert.doesNotMatch(ensureBody, /pool\.query\(`ALTER/, 'an ALTER that runs whether or not its column exists');
+  assert.strictEqual((ensureBody.match(/await add\(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS \w+ /g) || []).length, 11);
+});
+
 test('the export carries them as its last three columns, empty when nothing was recorded', () => {
   const header = exporter.HEADER.split(',');
   assert.deepEqual(header.slice(-3), ['live_hour_start', 'live_venue_open', 'live_local_time']);

@@ -1177,3 +1177,73 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   assert.strictEqual(await slotCount('ChIJtargetBlocked'), 168);
 
 });
+
+// The target list asks each venue's own slots (2026-11-19) instead of joining
+// MAX(updated_at) grouped over the whole table, which ran past 90 s on
+// production. Same list, same order, edges included: slots that are all
+// undated, evidence exactly a second before the stamp, and a thousandth past.
+test('the per-venue target list equals the grouped one it replaced', async () => {
+  const { TARGETS_SQL } = require('../scripts/ml/buildBaselines');
+  const GROUPED_SQL = `
+    SELECT v.google_place_id,
+           v.besttime_status IS DISTINCT FROM 'harvested' AS stamped
+      FROM ml_venues v
+      LEFT JOIN (
+        SELECT google_place_id, MAX(updated_at) AS evidence
+          FROM ml_venue_baselines
+         GROUP BY google_place_id
+      ) e ON e.google_place_id = v.google_place_id
+     WHERE (v.last_collected_at IS NOT NULL
+            AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second'))
+        OR (v.last_collected_at IS NULL AND e.evidence IS NULL
+            AND EXISTS (
+              SELECT 1 FROM ml_training_data t
+               WHERE t.venue_id = v.id
+                 AND t.collection_mode = 'weekly'
+                 AND t.hour_axis = 'venue_local'
+                 AND t.busyness_pct IS NOT NULL))
+     ORDER BY stamped DESC, v.last_collected_at NULLS LAST, v.google_place_id
+  `;
+  const stamp = new Date(Date.now() + 3 * 3600 * 1000);
+  const before = (ms) => new Date(stamp.getTime() - ms);
+  // [place, venue stamp, slot evidence (one per slot; null is undated), status]
+  const edges = [
+    ['ChIJeqUndatedStamped', stamp, [null, null], null],
+    ['ChIJeqUndatedUnstamped', null, [null, null], 'harvested'],
+    ['ChIJeqExactSecond', stamp, [before(1000)], null],
+    ['ChIJeqJustOver', stamp, [before(1001)], null],
+    ['ChIJeqOneNewSlot', stamp, [null, before(5 * 86400 * 1000), before(500)], null],
+    ['ChIJeqNoSlots', stamp, [], 'harvested'],
+    ['ChIJeqUnstampedDated', null, [before(0)], 'harvested'],
+  ];
+  const places = edges.map(([p]) => p);
+  try {
+    for (const [place, at, slots, status] of edges) {
+      const { rows: [{ id }] } = await pool.query(
+        `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                                venue_category, timezone, is_active, besttime_status, last_collected_at)
+         VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, $5::text IS NULL, $5, $6)
+         RETURNING id`, [place, 'bt_' + place, CITY, TZ, status, at]);
+      await pool.query(
+        `INSERT INTO ml_training_data
+           (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
+         VALUES ($1, 'weekly', 'venue_local', 2, 20, 'bar', 30, $2)`, [id, before(2000)]);
+      for (const [i, updatedAt] of slots.entries()) {
+        await pool.query(
+          `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+           VALUES ($1, 2, $2, 30, 'collected', $3)`, [place, i, updatedAt]);
+      }
+    }
+    const perVenue = (await pool.query(TARGETS_SQL)).rows;
+    const grouped = (await pool.query(GROUPED_SQL)).rows;
+    assert.deepStrictEqual(perVenue, grouped);
+    const listed = new Set(perVenue.map((r) => r.google_place_id));
+    assert.deepStrictEqual(places.filter((p) => listed.has(p)),
+      ['ChIJeqUndatedStamped', 'ChIJeqUndatedUnstamped', 'ChIJeqJustOver', 'ChIJeqNoSlots']);
+  } finally {
+    await pool.query('DELETE FROM ml_venue_baselines WHERE google_place_id = ANY($1::text[])', [places]);
+    await pool.query(`DELETE FROM ml_training_data WHERE venue_id IN
+                        (SELECT id FROM ml_venues WHERE google_place_id = ANY($1::text[]))`, [places]);
+    await pool.query('DELETE FROM ml_venues WHERE google_place_id = ANY($1::text[])', [places]);
+  }
+});
