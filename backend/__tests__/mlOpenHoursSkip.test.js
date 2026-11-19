@@ -1215,6 +1215,8 @@ test('the per-venue target list equals the grouped one it replaced', async () =>
     ['ChIJeqOneNewSlot', stamp, [null, before(5 * 86400 * 1000), before(500)], null],
     ['ChIJeqNoSlots', stamp, [], 'harvested'],
     ['ChIJeqUnstampedDated', null, [before(0)], 'harvested'],
+    // Postgres's earliest timestamp: a second taken from it is out of range.
+    ['ChIJeqEarliest', '4714-11-24 00:00:00+00 BC', ['4714-11-24 00:00:00+00 BC'], null],
   ];
   const places = edges.map(([p]) => p);
   try {

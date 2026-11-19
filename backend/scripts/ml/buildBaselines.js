@@ -282,7 +282,9 @@ const INSERT_NEW_SQL = `
 // past 90 s (the backlog drain's 18:03 UTC window got no further than the
 // list). "No slot with evidence within a second of the stamp" is the same
 // test as "stamp more than a second past the newest evidence", and the same
-// for a place with no slot or only undated ones, so each venue now asks
+// for a place with no slot or only undated ones (the second is added to the
+// evidence, as before, not taken from the stamp, so the same timestamps are
+// in range), so each venue now asks
 // its own place's slots through the place index: 32 s
 // cold and 14 s warm on production that day, for 8,277 targets.
 const TARGETS_SQL = `
@@ -293,7 +295,7 @@ const TARGETS_SQL = `
           AND NOT EXISTS (
             SELECT 1 FROM ml_venue_baselines b
              WHERE b.google_place_id = v.google_place_id
-               AND b.updated_at >= v.last_collected_at - interval '1 second'))
+               AND b.updated_at + interval '1 second' >= v.last_collected_at))
       OR (v.last_collected_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM ml_venue_baselines b
