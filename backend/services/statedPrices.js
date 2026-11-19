@@ -280,6 +280,34 @@ const STATED_PRICES = [
     pattern: 'Roost costs\\s+\\$(\\d+) a month or \\$([\\d,]+) a year\\s+per location',
     group: 2,
   },
+  // The Flock Pro offers in the site's structured data (frontend/public/
+  // index.html), what search results show beside the app since 2026-11-18.
+  // Each offer states its price twice, as the offer and as its unit price;
+  // the pattern matches only when the two agree (\\2 repeats the first).
+  {
+    id: 'pro-monthly-structured-data',
+    product: 'pro',
+    plan: 'monthly',
+    usd: 3.99,
+    file: 'frontend/public/index.html',
+    what: 'the Flock Pro monthly offer in the site\'s structured data',
+    kind: 'public',
+    pattern: '"name": "Flock Pro, monthly",\\s+"price": "(([\\d.]+))",\\s+"priceCurrency": "USD",\\s+'
+      + '"priceSpecification": \\{\\s+"@type": "UnitPriceSpecification",\\s+"price": "\\2"',
+    group: 1,
+  },
+  {
+    id: 'pro-yearly-structured-data',
+    product: 'pro',
+    plan: 'yearly',
+    usd: 29.99,
+    file: 'frontend/public/index.html',
+    what: 'the Flock Pro yearly offer in the site\'s structured data',
+    kind: 'public',
+    pattern: '"name": "Flock Pro, yearly",\\s+"price": "(([\\d.]+))",\\s+"priceCurrency": "USD",\\s+'
+      + '"priceSpecification": \\{\\s+"@type": "UnitPriceSpecification",\\s+"price": "\\2"',
+    group: 1,
+  },
 ];
 
 // EVERY ROOST TRIAL LENGTH WRITTEN DOWN, AND WHERE. A trial is not a Stripe
