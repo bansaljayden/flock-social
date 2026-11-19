@@ -1078,10 +1078,14 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   await writeWeek('ChIJtargetNewWeek', at(6000));
   await writeWeek('ChIJtargetHarvest1', at(7000), 'harvested');
   await writeWeek('ChIJtargetHarvest2', at(8000), 'harvested');
+  // And a week whose venue was never stamped (discoverBestTime stamps in a
+  // statement after its COMMIT, and a run can die between the two).
+  await writeWeek('ChIJtargetNoStamp', at(8500));
+  await pool.query(`UPDATE ml_venues SET last_collected_at = NULL WHERE google_place_id = 'ChIJtargetNoStamp'`);
 
   const { rows: targets } = await pool.query(TARGETS_SQL);
   const ids = targets.map((r) => r.google_place_id);
-  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2', 'ChIJtargetNoStamp']) {
     assert.ok(ids.includes(place), `${place} is not a target`);
   }
   assert.ok(!ids.includes('ChIJtargetUntouched'), 'a place whose stamp is not newer than its baselines is a target');
@@ -1113,7 +1117,7 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   assert.strictEqual(done.left, 0);
   assert.strictEqual(done.marked, true);
   assert.strictEqual(done.deleted, 1, 'the refreshed place\'s missing hour was not removed, or another place lost a slot');
-  for (const place of ['ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+  for (const place of ['ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2', 'ChIJtargetNoStamp']) {
     assert.strictEqual(await slotCount(place), 168, `${place} was not averaged`);
   }
   assert.strictEqual(await slotCount('ChIJtargetRefreshed'), 167);
@@ -1123,7 +1127,7 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
   const after = await collectedBaselinesDue(pool, { at: offHour });
   assert.strictEqual(after.due, false, after.reason);
   const { rows: still } = await pool.query(TARGETS_SQL);
-  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2']) {
+  for (const place of ['ChIJtargetRefreshed', 'ChIJtargetNewWeek', 'ChIJtargetHarvest1', 'ChIJtargetHarvest2', 'ChIJtargetNoStamp']) {
     assert.ok(!still.some((r) => r.google_place_id === place), `${place} is still a target after its rebuild`);
   }
 
@@ -1141,8 +1145,10 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
     await holder.query('BEGIN');
     await holder.query(realConfig.ML_CORPUS_LOCK_SQL);
     const t0 = Date.now();
-    const blocked = await refreshCollectedBaselines(pool, { targeted: true, deadline: Date.now() + 200, overrunMs: 300 });
-    assert.ok(Date.now() - t0 < 5000, `the pass ran ${Date.now() - t0} ms past a 0.5 s limit`);
+    // Three seconds for the reads to finish and a chunk to start; it then
+    // waits on the lock until half a second past the deadline.
+    const blocked = await refreshCollectedBaselines(pool, { targeted: true, deadline: Date.now() + 3000, overrunMs: 500 });
+    assert.ok(Date.now() - t0 < 8000, `the pass ran ${Date.now() - t0} ms against a 3.5 s limit`);
     assert.strictEqual(blocked.ok, true);
     assert.strictEqual(blocked.timedOut, true);
     assert.strictEqual(blocked.places, 0);

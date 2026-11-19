@@ -361,5 +361,5 @@ test('the collector opens every run with the outside check, before it collects',
   const run = /async function run\(\) \{([\s\S]*?)\n\}/.exec(src)[1];
   const check = run.indexOf("require('../../services/apiUptimeCheck').runApiUptimeCheck({ db: pool })");
   assert.ok(check > 0, 'the collector no longer checks the API from outside');
-  assert.ok(check < run.indexOf('await collectRealtime();'));
+  assert.ok(check < run.indexOf('await collectRealtime('));
 });

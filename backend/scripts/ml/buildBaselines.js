@@ -62,13 +62,17 @@ const MARK_TABLE_SQL = `
 // last one is still running. That day lost the 11:00, 13:00, 20:00 and 22:00 UTC
 // sweeps, about 4,000 live readings each, with twenty cities still to go. A
 // harvested venue is out of the hourly sweep and out of the neighbour box, so
-// nothing served waits on its baseline but its own score, and the daily rebuild
-// (DAILY_REBUILD_UTC_HOUR) still averages every weekly row, harvested or not:
-// its baseline lands within a day instead of within the hour. A venue promoted
-// out of 'harvested' joins the stamp, but its own stamp may be older than the
-// mark, so run this file by hand after a promotion, as after a repair. (Most
-// of those minutes turned out to be the rebuild's own statement, which wrote
-// to every row of the table: ONLY THE ROWS THAT CHANGE ARE TOUCHED, below.)
+// nothing served waits on its baseline but its own score. The daily rebuild
+// (DAILY_REBUILD_UTC_HOUR) picks harvested venues up: since 2026-11-19 it is
+// THE TARGETED REBUILD, below, which lists every venue newer than its own
+// baseline, harvested or not, and averages as many as its minutes allow, the
+// rest the next time a rebuild is due. A big harvest's baselines can take
+// days that way; `node scripts/ml/buildBaselines.js --targeted` by hand
+// averages the rest at once, in short transactions. A promoted venue
+// (out of 'harvested') moves no row, so it needs nothing new once its
+// baseline exists. (Most of those minutes turned out to be the rebuild's own
+// statement, which wrote to every row of the table: ONLY THE ROWS THAT
+// CHANGE ARE TOUCHED, below.)
 const CORPUS_STAMP_SQL = `SELECT MAX(last_collected_at) AS corpus_at FROM ml_venues
                            WHERE besttime_status IS DISTINCT FROM 'harvested'`;
 
@@ -256,12 +260,16 @@ const INSERT_NEW_SQL = `
 //
 // ONE VENUE PER PLACE. ml_venues.google_place_id is NOT NULL UNIQUE
 // (migration 006), so a place's baselines average one venue's rows and that
-// venue's stamp is the place's. Two cases stay outside the list on purpose,
-// both empty on production that day: a venue with weekly rows but no stamp
-// (12,535 venues have no stamp; none of them has a usable weekly row and no
-// baseline), which the full rebuild still covers; and a stamped venue whose
-// rows are all NULL busyness, which is averaged on every pass to nothing (a
-// few dozen, seconds per pass).
+// venue's stamp is the place's.
+//
+// NO STAMP, NO BASELINE, BUT WEEKLY ROWS: a target too. discoverBestTime.js
+// commits a venue's week and stamps it in a separate statement after, so a
+// run that dies between the two leaves rows no stamp points at. The full
+// rebuild used to average them every day; this asks the weekly key's own
+// partial index, once per unstamped venue without a baseline (12,535 venues
+// had no stamp on 2026-11-19, none of them with such rows). A stamped venue
+// whose rows are all NULL busyness stays a target and is averaged to nothing
+// on every pass (a few dozen, seconds).
 const TARGETS_SQL = `
   SELECT v.google_place_id,
          v.besttime_status IS DISTINCT FROM 'harvested' AS stamped
@@ -271,9 +279,16 @@ const TARGETS_SQL = `
         FROM ml_venue_baselines
        GROUP BY google_place_id
     ) e ON e.google_place_id = v.google_place_id
-   WHERE v.last_collected_at IS NOT NULL
-     AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second')
-   ORDER BY stamped DESC, v.last_collected_at, v.google_place_id
+   WHERE (v.last_collected_at IS NOT NULL
+          AND (e.evidence IS NULL OR v.last_collected_at > e.evidence + interval '1 second'))
+      OR (v.last_collected_at IS NULL AND e.evidence IS NULL
+          AND EXISTS (
+            SELECT 1 FROM ml_training_data t
+             WHERE t.venue_id = v.id
+               AND t.collection_mode = 'weekly'
+               AND t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
+               AND t.busyness_pct IS NOT NULL))
+   ORDER BY stamped DESC, v.last_collected_at NULLS LAST, v.google_place_id
 `;
 // 250 places is ~40,000 slots: about 25 s on cold pages (500 took 49 s).
 const TARGET_CHUNK_PLACES = 250;
@@ -395,6 +410,7 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
   // ends with it.
   const read = async (sql, params) => {
     const client = await pool.connect();
+    let broken = false;
     try {
       await client.query('BEGIN');
       if (hardStop != null) await client.query(`SET LOCAL statement_timeout = ${Math.max(1, remaining())}`);
@@ -402,10 +418,12 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
       await client.query('COMMIT');
       return res;
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      // A connection whose ROLLBACK failed is not one to hand back to the
+      // pool (config.withCorpusWriteLock does the same).
+      await client.query('ROLLBACK').catch(() => { broken = true; });
       throw err;
     } finally {
-      client.release();
+      client.release(broken || undefined);
     }
   };
 

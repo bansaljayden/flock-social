@@ -264,9 +264,9 @@ const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('ml_corpus_wri
 // nothing while it waits and the order cannot deadlock against row locks.
 //
 // `timeoutMs` (2026-11-19): a caller with a deadline, buildBaselines'
-// targeted rebuild at the end of an hourly run, bounds the wait for the lock
-// and its statements, so a harvest commit holding the lock cannot carry the
-// run past the next cron fire. A timeout rolls back like any other error.
+// targeted rebuild before an hourly run's sweep, bounds the wait for the lock
+// and its statements, so a harvest commit holding the lock cannot eat the
+// sweep's minutes. A timeout rolls back like any other error.
 async function withCorpusWriteLock(pool, fn, { timeoutMs = null } = {}) {
   const client = await pool.connect();
   let broken = false;

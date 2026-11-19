@@ -576,7 +576,10 @@ const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 // stops this much before the budget instead, and the three minutes go to the
 // fill (about 360 calls at 500 ms). A run that finds a rebuild due after all,
 // a weekly write having landed mid-sweep, still ends about :04 from a
-// container started at :11:54.
+// container started at :11:54. Since 2026-11-19 the tail's rebuild is only
+// the full one (a missing mark, or a repair); the targeted one runs before
+// the sweep (TARGETED_REBUILD_BUDGET_MS), and the offsets have since taken up
+// to three minutes (12:29 to 12:32 UTC that day).
 const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 
 
@@ -597,21 +600,19 @@ const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
 const TRIGGER_MINUTE = 7;
 const LATEST_START_MINUTE = 12;
 
-// THE TARGETED REBUILD RUNS BEFORE THE SWEEP, UNTIL :11 (2026-11-19). The
-// tail has no room for it: the sweep's budget runs to :02, the trailing
-// offsets have taken three minutes (12:29 to 12:32 UTC that day), and the
-// next fire is :07. Before the sweep there are the minutes between the
-// container's start (:07 to :12) and :12, which THE BUDGET RUNS FROM :12
-// already gives back to a sweep that starts early, so the rebuild spends them
-// without moving the sweep's end. buildBaselines starts no chunk after :11
-// and stops anything still running 30 s later; what it leaves is first in
-// line next run. A container started near :12 has no minutes to give, and
-// rebuilds nothing.
-const TARGETED_REBUILD_END_MINUTE = LATEST_START_MINUTE - 1;
-function targetedRebuildDeadline(runStartedAt) {
-  const hourMs = 60 * 60 * 1000;
-  return Math.floor(runStartedAt.getTime() / hourMs) * hourMs + TARGETED_REBUILD_END_MINUTE * 60 * 1000;
-}
+// THE TARGETED REBUILD RUNS BEFORE THE SWEEP, AND ITS MINUTES COME OFF THE
+// SWEEP (2026-11-19). The tail has no room for it: the sweep's budget runs to
+// about :02, the trailing offsets have taken three minutes (12:29 to 12:32
+// UTC that day), and the next fire is :07. Nor are the minutes before the
+// sweep free: a container's own setup already runs to about :12 (13:07:48 to
+// 13:12:26 that day). So a run due one spends up to this long on it before
+// the sweep (buildBaselines stops anything still running 30 s after), and the
+// sweep's budget is cut by the time it took (sweepVenues beforeSweepMs), so
+// the sweep, and the run, end where they would have without it. The price is
+// readings: a due run (the daily hour's, and the one after a weekly write)
+// sweeps up to four and a half minutes less. What the rebuild leaves is first
+// in line next time.
+const TARGETED_REBUILD_BUDGET_MS = 4 * 60 * 1000;
 
 function runTimeBudgetMs(startedAt, budgetMs) {
   const intoHour = startedAt % (60 * 60 * 1000);
@@ -954,6 +955,11 @@ async function sweepVenues(cityOrder, {
   // when the run's tail has no baseline rebuild).
   fillCities = new Set(),
   fillEarlyStopMs = FILL_EARLY_STOP_MS,
+  // How long this run spent before the sweep on a targeted baseline rebuild
+  // (TARGETED_REBUILD_BUDGET_MS): the budget is the one a sweep started that
+  // much earlier would have had, less that much, so the sweep ends where it
+  // would have ended without the rebuild.
+  beforeSweepMs = 0,
   // ALREADY RECORDED THIS HOUR (below): (cityKey, venues, local) resolves to
   // the ids of this block's venues that already have a realtime row for the
   // block's local day, hour and date. Null asks nothing and calls as before.
@@ -1049,9 +1055,15 @@ async function sweepVenues(cityOrder, {
   // call in flight answers.
   const RUN_TIME_BUDGET_MS = 50 * 60 * 1000;
   const runClockStart = now();
-  // Plus the minutes this sweep started before :12 (THE BUDGET RUNS FROM :12).
-  const runBudgetMs = runTimeBudgetMs(runClockStart, RUN_TIME_BUDGET_MS);
-  if (runBudgetMs !== RUN_TIME_BUDGET_MS) {
+  // Plus the minutes this sweep started before :12 (THE BUDGET RUNS FROM :12),
+  // and less any minutes spent before it on a baseline rebuild.
+  const beforeMs = Math.max(0, beforeSweepMs);
+  const runBudgetMs = runTimeBudgetMs(runClockStart - beforeMs, RUN_TIME_BUDGET_MS) - beforeMs;
+  if (beforeMs > 0) {
+    console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the `
+      + `${((runBudgetMs + beforeMs) / 60000).toFixed(1)} this run had, less the ${(beforeMs / 60000).toFixed(1)} `
+      + 'the baseline rebuild took before the sweep.');
+  } else if (runBudgetMs !== RUN_TIME_BUDGET_MS) {
     console.log(`[ML:Realtime] Time budget ${(runBudgetMs / 60000).toFixed(1)} minutes: the fifty, plus the `
       + `${((runBudgetMs - RUN_TIME_BUDGET_MS) / 60000).toFixed(1)} this sweep started before :12.`);
   }
@@ -1908,7 +1920,7 @@ async function storeReading(venue, at, live,
   }
 }
 
-async function collectRealtime() {
+async function collectRealtime({ beforeSweepMs = 0 } = {}) {
   await ensureHolidayColumns();
   await requireSlotIndex(pool, REALTIME_SLOT_INDEX);
   // The database's clock, not Node's. The post-run provenance audit below
@@ -2223,6 +2235,7 @@ async function collectRealtime() {
     recordedThisHour: (cityKey, cityVenues, local) => loadRecordedThisHour(cityVenues.map((v) => v.id), local),
     fillCities: fillSet,
     fillEarlyStopMs,
+    beforeSweepMs,
   });
 
   // Their own lines, so the summary below keeps the exact shape monitoring reads.
@@ -2450,34 +2463,36 @@ const HOLDOUT = (() => {
 const MAX_RUN_MS = 3 * 60 * 60 * 1000;
 const WATCHDOG_EXIT_CODE = 3;
 
-// THE TARGETED REBUILD RUNS BEFORE THE SWEEP (TARGETED_REBUILD_END_MINUTE).
+// THE TARGETED REBUILD RUNS BEFORE THE SWEEP (TARGETED_REBUILD_BUDGET_MS).
 // Only the targeted one: the full one, for a missing mark or a repair, waits
 // for the tail, where it has always run. Never throws; a failure costs the
-// rebuild, not the sweep.
+// rebuild, not the sweep. Returns the milliseconds it spent rebuilding, for
+// the sweep to take off its budget (0 when it did not rebuild).
 async function rebuildBeforeSweep(runStartedAt) {
   let rebuild;
   try {
     rebuild = await collectedBaselinesDue(pool, { at: runStartedAt });
   } catch (err) {
     console.error(`[ML:Realtime] Baseline stamps could not be read before the sweep (${describeDbError(err)}); no targeted rebuild.`);
-    return;
+    return 0;
   }
-  if (!rebuild.due || rebuild.full === true) return;
-  console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}. Targeted, before the sweep, until :${TARGETED_REBUILD_END_MINUTE}.`);
+  if (!rebuild.due || rebuild.full === true) return 0;
+  const startedAt = Date.now();
+  console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}. Targeted, before the sweep, `
+    + `for up to ${TARGETED_REBUILD_BUDGET_MS / 60000} minutes.`);
   try {
-    const result = await refreshCollectedBaselines(pool, { targeted: true, deadline: targetedRebuildDeadline(runStartedAt) });
+    const result = await refreshCollectedBaselines(pool, { targeted: true, deadline: startedAt + TARGETED_REBUILD_BUDGET_MS });
     if (!result.ok) {
       console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
-    } else if (result.left == null) {
-      console.log(`[ML:Realtime] Baselines not refreshed: the container started after :${TARGETED_REBUILD_END_MINUTE}; next run.`);
     } else {
       console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed; `
-        + `targeted: ${result.places} places averaged, ${result.left} left for the next run`
+        + `targeted: ${result.places} places averaged, ${result.left == null ? 'none read' : result.left} left for the next run`
         + `${result.timedOut ? ', stopped at its time limit' : ''}${result.marked ? '' : ', mark not moved'}).`);
     }
   } catch (err) {
     console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
   }
+  return Date.now() - startedAt;
 }
 
 async function run() {
@@ -2506,8 +2521,8 @@ async function run() {
     // STARTED).
     const runStartedAt = new Date();
     const skipBaselines = process.argv.includes('--no-baseline-refresh');
-    if (!skipBaselines) await rebuildBeforeSweep(runStartedAt);
-    await collectRealtime();
+    const beforeSweepMs = skipBaselines ? 0 : await rebuildBeforeSweep(runStartedAt);
+    await collectRealtime({ beforeSweepMs });
     // Refresh baselines. This used to be a second, hand-written copy of
     // buildBaselines.js's statement that had drifted from it: no
     // `collection_mode = 'weekly'` filter at all, so it averaged live realtime
@@ -2614,7 +2629,7 @@ module.exports = {
   NARROWER_OPEN_HOUR_RULES, weekDayMasks, narrowRuleCalls, createNarrowRuleTally,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
-  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, TARGETED_REBUILD_END_MINUTE, targetedRebuildDeadline,
+  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, TARGETED_REBUILD_BUDGET_MS,
   runTimeBudgetMs, parseFillCities, orderCityBlocks,
   FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, loadRecordedThisHour, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,

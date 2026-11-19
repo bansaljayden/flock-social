@@ -52,7 +52,7 @@ stubModule('../scripts/ml/eventService', {
 
 const {
   sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, LABEL_LIVE,
-  runTimeBudgetMs, TARGETED_REBUILD_END_MINUTE, targetedRebuildDeadline,
+  runTimeBudgetMs, TARGETED_REBUILD_BUDGET_MS,
   FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask, holdoutFirst,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
@@ -418,19 +418,35 @@ test('run() asks per block, reports the skips, and counts them before refusing a
   assert.match(src, /if \(recorded && recorded\.has\(venue\.id\) && sameSlot\(obs\)\) \{\n {10}recordedSkips\+\+;\n {10}continue;/);
 });
 
-test('the targeted rebuild runs before the sweep and stops at :11, so the sweep still starts by :12', () => {
-  assert.strictEqual(TARGETED_REBUILD_END_MINUTE, 11);
-  const at = (h, m, s = 0) => new Date(Date.UTC(2026, 10, 19, h, m, s));
-  assert.strictEqual(targetedRebuildDeadline(at(9, 7, 3)), at(9, 11).getTime());
-  assert.strictEqual(targetedRebuildDeadline(at(9, 10, 59)), at(9, 11).getTime());
-  // A container that started late has no minutes to spend: the deadline has passed.
-  assert.ok(targetedRebuildDeadline(at(9, 11, 54)) < at(9, 11, 54).getTime());
-  // With buildBaselines' 30 s overrun the sweep's clock still starts before
-  // :12, so THE BUDGET RUNS FROM :12 ends it where it always ended.
-  const overrunMs = 30 * 1000;
-  const sweepStart = targetedRebuildDeadline(at(9, 7, 3)) + overrunMs;
-  assert.ok(sweepStart < at(9, 12).getTime());
-  assert.strictEqual(sweepStart + runTimeBudgetMs(sweepStart, 50 * MINUTE), at(9, 12).getTime() + 50 * MINUTE);
+// THE TARGETED REBUILD RUNS BEFORE THE SWEEP, AND ITS MINUTES COME OFF THE
+// SWEEP: the sweep ends where it would have ended had the rebuild not run.
+test('minutes spent on a baseline rebuild before the sweep come off its budget, so it ends where it would have', async () => {
+  assert.strictEqual(TARGETED_REBUILD_BUDGET_MS, 4 * MINUTE);
+  // Container at :07:30, a three-minute rebuild, setup to :15: without the
+  // rebuild the sweep would have started at :12, so its fill stops at :59, as
+  // a sweep started at :12 stops it.
+  const main = venuesFor('philly', 100, 1);
+  const london = venuesFor('london', 1000, 1001);
+  const { result, calls, lines } = await sweepWithFill(
+    [['philly', main], ['london', london]], ['london'],
+    { fillEarlyStopMs: FILL_EARLY_STOP_NO_REBUILD_MS, start: START + 15 * MINUTE, beforeSweepMs: 3 * MINUTE });
+  const fillEnd = START + 12 * MINUTE + BUDGET_MS - FILL_EARLY_STOP_NO_REBUILD_MS;
+  const lastStart = Math.max(...calls.map((c) => c.startAt));
+  assert.ok(lastStart <= fillEnd, `a fill call started ${(lastStart - fillEnd) / SECOND} s after :59`);
+  assert.ok(lastStart > fillEnd - MINUTE, `the fill stopped at ${new Date(lastStart).toISOString()}, early`);
+  assert.strictEqual(result.budgetHit, true);
+  assert.ok(lines.some((l) => l.text === '[ML:Realtime] Time budget 47.0 minutes: the 50.0 this run had, less the 3.0 '
+    + 'the baseline rebuild took before the sweep.'), 'the cut budget was not reported');
+  // And one that started at :08 after a one-minute rebuild still gets the
+  // minutes before :12 the rebuild did not use.
+  const early = await sweepWithFill(
+    [['philly', venuesFor('philly', 100, 1)], ['london', venuesFor('london', 1000, 1001)]], ['london'],
+    { fillEarlyStopMs: FILL_EARLY_STOP_NO_REBUILD_MS, start: START + 8 * MINUTE, beforeSweepMs: MINUTE });
+  const earlyLast = Math.max(...early.calls.map((c) => c.startAt));
+  assert.ok(earlyLast <= fillEnd && earlyLast > fillEnd - MINUTE, `the fill stopped at ${new Date(earlyLast).toISOString()}`);
+  const src = SRC.replace(/\r\n/g, '\n');
+  assert.match(src, /const beforeSweepMs = skipBaselines \? 0 : await rebuildBeforeSweep\(runStartedAt\);\n\s+await collectRealtime\(\{ beforeSweepMs \}\);/);
+  assert.match(src, /fillEarlyStopMs,\n\s+beforeSweepMs,\n\s+\}\);/);
 });
 test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {
   const src = SRC.replace(/\r\n/g, '\n');
@@ -472,7 +488,7 @@ test('run() parses the flag, reads the fill with the main scope, orders it last 
   assert.match(src, /Fill open shares could not be read \(\$\{describeDbError\(err\)\}\); /);
   assert.match(src, /const cityOrder = holdoutFirst\(orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\),\n {4}HOLDOUT\.active \? HOLDOUT\.city : null\);/);
   assert.match(src, /Fill order by open share this hour: /);
-  assert.match(src, /fillCities: fillSet,\n {4}fillEarlyStopMs,\n {2}\}\);/);
+  assert.match(src, /fillCities: fillSet,\n {4}fillEarlyStopMs,\n {4}beforeSweepMs,\n {2}\}\);/);
   // The main scope must hold venues on its own: a run of fill cities alone is
   // not the run that was asked for.
   assert.match(src, /if \(mainVenues\.length === 0\) \{/);

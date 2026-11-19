@@ -32,7 +32,8 @@ test('a sweep stops calling after fifty minutes and says what it left', () => {
   assert.match(collect, /const runClockStart = now\(\);/);
   // Fifty minutes, plus what a sweep started between :07 and :12 started
   // before :12 (runTimeBudgetMs, driven in collectRealtimeFillCities.test.js).
-  assert.match(collect, /const runBudgetMs = runTimeBudgetMs\(runClockStart, RUN_TIME_BUDGET_MS\);/);
+  // Less any minutes a baseline rebuild took before the sweep (2026-11-19).
+  assert.match(collect, /const runBudgetMs = runTimeBudgetMs\(runClockStart - beforeMs, RUN_TIME_BUDGET_MS\) - beforeMs;/);
   assert.match(collect, /if \(budgetHit \|\| now\(\) - runClockStart > runBudgetMs\) \{/);
   assert.match(collect, /const blockBudgetMs = fillBlock \? runBudgetMs - fillEarlyStopMs : runBudgetMs;/);
   assert.match(collect, /leftForNextRun\+\+;/);
