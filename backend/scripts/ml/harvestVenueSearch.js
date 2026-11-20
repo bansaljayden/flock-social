@@ -81,12 +81,20 @@ function placeIdFromBestTimeId(venueId) {
   return decoded && h.isRealGooglePlaceId(decoded) ? decoded : null;
 }
 
-// This file's first commit. No venue created before it can be one this script
-// wrote, and every venue it writes is created after it.
-const WRITER_FIRST_COMMITTED = '2026-11-20T02:39:03Z';
+// Just before the first Venue Search request of the runs this script reads
+// (2026-11-20 02:01 UTC). No venue created earlier can hold a search answer
+// from them, whatever wrote it, and every venue this script writes is created
+// later.
+const SEARCH_RUNS_BEGAN = '2026-11-20T02:00:00Z';
 // The filter harvest's two statuses: a harvested venue, and one promoted out of
 // 'harvested' with its rows kept (scripts/ml/RETRAIN.md, the promotion step).
 const FILTER_HARVEST_STATUSES = [h.HARVEST_STATUS, 'harvest_measured'];
+// When a pseudo `bt_` venue was last created or updated, whatever did it.
+// discoverBestTime mints those ids and its upsert bumps updated_at on any venue
+// it touches, so a discovery run that reached one is never later than this.
+// NULL when none exist.
+const PSEUDO_LAST_SEEN_SQL = `(SELECT GREATEST(MAX(created_at), MAX(updated_at))
+     FROM ml_venues WHERE google_place_id LIKE 'bt\\_%' ESCAPE '\\')`;
 
 // The axis proof's reference: per row, the stored weekly venue-local cells that
 // no search produced, as weekCurve()s. Two kinds qualify.
@@ -95,34 +103,34 @@ const FILTER_HARVEST_STATUSES = [h.HARVEST_STATUS, 'harvest_measured'];
 //     invents one (WEEKLY_UPSERT_CONFLICT), and discoverBestTime.js, the only
 //     other writer that took values from the search field, sets it to NULL.
 //   * Every cell of a venue the filter harvest created (FILTER_HARVEST_STATUSES)
-//     before this script existed, never updated since, and created after
-//     discoverBestTime last created or touched a pseudo `bt_` venue. Its week
-//     came from the venue filter, whose axis each city's harvest proved against
-//     the corpus before writing; this script writes only venues it creates, so
-//     it cannot have written one; and discoverBestTime upserts every venue it
-//     writes rows for with updated_at = NOW() first, so a venue it touched
-//     fails the second test. Measured 2026-11-20: all 103,065 filter-harvested
-//     venues have updated_at at or before created_at (ml_venues has no
-//     trigger), the last `bt_` venue was created 2026-04-05 and touched
-//     2026-09-05, and the filter harvest's first venue was created 2026-09-29.
+//     before the search runs began, never updated since, and after a pseudo
+//     `bt_` venue was last created or touched. Its week came from the venue
+//     filter, and a filter harvest run commits only once its own axis proof
+//     passes (one pooled verdict per run; the first runs were checked against
+//     collectWeekly's Pennsylvania forecasts, 99.9% of cells within five
+//     points on 2026-11-02). This script writes only venues it creates, after
+//     the searches, so it cannot have written one. discoverBestTime upserts
+//     every venue it writes rows for with updated_at = NOW() first, so a venue
+//     it touched fails the second test. Measured 2026-11-20: all 103,065
+//     filter-harvested venues have updated_at at or before created_at
+//     (ml_venues has no trigger), the last `bt_` venue was created 2026-04-05
+//     and touched 2026-09-05, and the filter harvest's first venue was created
+//     2026-09-29.
 // The stamp alone was the rule first, and it found nothing: no weekly row in
 // production carried an epoch when this was measured (2026-11-20).
 async function loadReferenceWeeks(pool, rowIds) {
   const weeks = new Map();
-  const { rows: [seen] } = await pool.query(
-    `SELECT GREATEST(MAX(created_at), MAX(updated_at)) AS last
-       FROM ml_venues WHERE google_place_id LIKE 'bt\\_%'`
-  );
-  const lastDiscovery = seen && seen.last ? new Date(seen.last) : null;
-  if (rowIds.length === 0) return { weeks, stamped: 0, harvested: 0, lastDiscovery };
+  const { rows: [seen] } = await pool.query(`SELECT ${PSEUDO_LAST_SEEN_SQL} AS last`);
+  const pseudoLastSeen = seen && seen.last ? new Date(seen.last) : null;
+  if (rowIds.length === 0) return { weeks, stamped: 0, harvested: 0, pseudoLastSeen };
   const { rows: fromFilter } = await pool.query(
     `SELECT id FROM ml_venues
       WHERE id = ANY($1::bigint[])
         AND besttime_status = ANY($2::text[])
         AND created_at < $3::timestamptz
         AND updated_at <= created_at
-        AND ($4::timestamptz IS NULL OR created_at > $4::timestamptz)`,
-    [rowIds, FILTER_HARVEST_STATUSES, WRITER_FIRST_COMMITTED, lastDiscovery]
+        AND created_at > COALESCE(${PSEUDO_LAST_SEEN_SQL}, '-infinity'::timestamptz)`,
+    [rowIds, FILTER_HARVEST_STATUSES, SEARCH_RUNS_BEGAN]
   );
   const harvestedIds = fromFilter.map((r) => Number(r.id));
   const { rows } = await pool.query(
@@ -144,7 +152,7 @@ async function loadReferenceWeeks(pool, rowIds) {
   }
   const fromHarvest = new Set(harvestedIds);
   const harvested = [...weeks.keys()].filter((id) => fromHarvest.has(id)).length;
-  return { weeks, stamped: weeks.size - harvested, harvested, lastDiscovery };
+  return { weeks, stamped: weeks.size - harvested, harvested, pseudoLastSeen };
 }
 
 // A coordinate from a number or a numeric string, NaN for anything else
@@ -302,9 +310,10 @@ async function harvestSearch({ argv, pool }) {
   const verdict = h.axisVerdict(proof, { newOnly: true });
   summary.axis = proof;
   summary.axisVerdict = verdict;
+  summary.reference = { stamped: reference.stamped, harvested: reference.harvested, pseudoLastSeen: reference.pseudoLastSeen };
   console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with reference rows `
     + `(${reference.stamped} by a forecast's epoch, ${reference.harvested} created by the filter harvest; `
-    + `discoverBestTime last created or touched a venue ${reference.lastDiscovery ? reference.lastDiscovery.toISOString() : 'never'}); `
+    + `a pseudo bt_ venue last created or touched ${reference.pseudoLastSeen ? reference.pseudoLastSeen.toISOString() : 'never'}); `
     + `${proof.venues} compared (${proof.thin} thin and ${proof.flat} flat left out). Shift +k: the search's curve sits `
     + 'k hours later on the venue clock than the stored rows.');
   for (const line of h.formatAxisTable(proof)) console.log(line);
@@ -364,7 +373,7 @@ async function main(argv = process.argv, deps = {}) {
 
 module.exports = {
   main, harvestSearch, parseArgs, decodeBestTimeId, placeIdFromBestTimeId, readSearchVenue, loadSearchDir, loadReferenceWeeks,
-  WRITER_FIRST_COMMITTED, FILTER_HARVEST_STATUSES,
+  SEARCH_RUNS_BEGAN, FILTER_HARVEST_STATUSES,
 };
 
 if (require.main === module) {
