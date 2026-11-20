@@ -801,6 +801,43 @@ test('--new-only: a venue best a whole day off counts by hour, and by day only w
   assert.match(harvester.axisVerdict(dayClose, { newOnly: true }).reason, /r 0\.900 is only 0\.020 above rotation \+24's \(0\.880\)/);
 });
 
+test('--day-share-over-voters takes the day share over the voters alone and changes nothing else (Bangkok, 2026-11-20)', () => {
+  // Bangkok's refused commit: 514 of 589 compared venues line up by day, 548
+  // could vote. Its other numbers here are illustrative, all passing.
+  const rows = {
+    0: { mae: 3.1, exact: 0.7, within5: 0.86, r: 0.95, venuesBestHere: 560 },
+    1: { mae: 7.9, exact: 0.3, within5: 0.55, r: 0.86, venuesBestHere: 4 },
+    24: { mae: 8.2, exact: 0.3, within5: 0.52, r: 0.85, venuesBestHere: 9 },
+  };
+  const bangkok = proofTable({ venues: 589, bestShift: 0, rows, counts: { hourAligned: 580, dayInformative: 548, dayAligned: 514 } });
+  const strict = harvester.axisVerdict(bangkok, { newOnly: true });
+  assert.strictEqual(strict.pass, false);
+  assert.match(strict.reason, /by day, only 514 of 589 venues \(87\.3%\) hold whole weeks .* \(548 could vote\) \(at least 90\.0% needed\)/);
+  assert.doesNotMatch(strict.rule, /--day-share-over-voters/);
+  const loose = harvester.axisVerdict(bangkok, { newOnly: true, dayOverVoters: true });
+  assert.strictEqual(loose.pass, true, loose.reason);
+  assert.match(loose.reason, /by day, 514 of the 548 venues that could vote \(93\.8%; 589 compared\) hold whole weeks on both sides whose days differ by at least 3 points and fit rotation 0 within 1 point of their best whole-day rotation/);
+  assert.match(loose.rule, /--new-only hour-origin rule.*with the day share taken over the venues that could vote \(--day-share-over-voters\)/);
+  // The voters still need the same 90%.
+  const short = proofTable({ venues: 589, bestShift: 0, rows, counts: { hourAligned: 580, dayInformative: 548, dayAligned: 480 } });
+  assert.match(harvester.axisVerdict(short, { newOnly: true, dayOverVoters: true }).reason,
+    /by day, only 480 of the 548 venues that could vote \(87\.6%; 589 compared\) .* \(at least 90\.0% needed\)/);
+  // The hour share is still over every compared venue.
+  const hour = proofTable({ venues: 589, bestShift: 0, rows, counts: { hourAligned: 520, dayInformative: 548, dayAligned: 540 } });
+  assert.match(harvester.axisVerdict(hour, { newOnly: true, dayOverVoters: true }).reason, /by hour, only 520 of 589 venues \(88\.3%\)/);
+  // Still at least twenty voters, the pooled rotation at 0 and the r margin.
+  const fewVoters = proofTable({ venues: 589, bestShift: 0, rows, counts: { hourAligned: 580, dayInformative: 19, dayAligned: 19 } });
+  assert.match(harvester.axisVerdict(fewVoters, { newOnly: true, dayOverVoters: true }).reason, /only 19 compared venues hold whole weeks .* \(at least 20 are needed to prove the day\)/);
+  const dayOff = proofTable({ venues: 589, bestShift: 24, rows: { 24: { mae: 3, r: 0.96, venuesBestHere: 560 } }, counts: { hourAligned: 580, dayInformative: 548, dayAligned: 540 } });
+  assert.match(harvester.axisVerdict(dayOff, { newOnly: true, dayOverVoters: true }).reason, /rotation of \+24 hours, not 0/);
+  const close = proofTable({ venues: 589, bestShift: 0, rows: { ...rows, 24: { ...rows[24], r: 0.93 } }, counts: { hourAligned: 580, dayInformative: 548, dayAligned: 540 } });
+  assert.match(harvester.axisVerdict(close, { newOnly: true, dayOverVoters: true }).reason, /r 0\.950 is only 0\.020 above rotation \+24's \(0\.930\)/);
+  // It never loosens a commit that refreshes known rows.
+  const refresh = harvester.axisVerdict(bangkok, { dayOverVoters: true });
+  assert.strictEqual(refresh.pass, false);
+  assert.match(refresh.reason, /applies to the --new-only rule only/);
+});
+
 test('axisProof: a partial day error is refused, and a venue that cannot tell its days apart does not vote on the day', () => {
   const week = (seed) => harvester.weekCurve(harvester.weekCells(weekFor(seed).map((h, d) => [d, h])));
   const rotate = (c, k) => { const o = new Int16Array(168); for (let i = 0; i < 168; i++) o[(i + k + 168) % 168] = c[i]; return o; };
@@ -1052,6 +1089,8 @@ test('--city takes any training city, and --city=all is every one but the holdou
   assert.match(parse('--result-budget=50').error, /smaller than one page \(--page-size=100\)/);
   assert.strictEqual(parse('--result-budget=50', '--page-size=50').resultBudget, 50);
   assert.deepStrictEqual([parse().newOnly, parse('--new-only').newOnly], [false, true]);
+  assert.deepStrictEqual([parse('--new-only').dayOverVoters, parse('--new-only', '--day-share-over-voters').dayOverVoters], [false, true]);
+  assert.match(parse('--day-share-over-voters').error, /changes the --new-only rule only; pass --new-only with it/);
 });
 
 test('a PA run asks the boxes it always asked, alone, together, or inside --city=all', () => {

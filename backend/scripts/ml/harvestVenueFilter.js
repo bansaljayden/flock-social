@@ -9,7 +9,9 @@
 // below); --radius-km (default 20) sets how far each reaches; --result-budget
 // (default 60000) caps the results one run may be billed for; --cache-dir=<dir>
 // keeps every answer the filter gives there and answers a repeated question
-// from it, unbilled (THE CACHE, above requestPage).
+// from it, unbilled (THE CACHE, above requestPage); --day-share-over-voters
+// (with --new-only only) takes the gate's day share over the venues that could
+// vote, an option chosen for named cities (see AXIS_NEW_ONLY_MIN_VENUE_SHARE).
 //
 // WHY THIS EXISTS. The plan (Pro Package 100) meters 100 NEW venue admissions
 // a calendar month, and 100,000 Venue Filter results a calendar month (THE
@@ -387,6 +389,16 @@ const AXIS_MIN_VENUE_SHARE = 0.75;
 // exactly a day off passed. A city whose curves are all a day off is refused by the
 // pooled tests as before: the best pooled rotation must be 0, and r at 0 must
 // beat +-24 by the margin.
+// --day-share-over-voters (2026-11-20): Bangkok and Delhi were refused by day
+// at 87.3% (514 of 589) and 89.98% (395 of 439) with the pooled tests and the
+// hour test passed, and 93.8% and 96.6% of the venues that could vote lining
+// up. Taking the day share over the voters alone is the looser version the
+// review above dropped: it no longer holds venues that cannot vote, which may
+// sit a day off unseen, to the floor. It was chosen for those two cities after
+// seeing them refused, so it is an option a run must name, never the default,
+// and the runbook records it beside the cities it was used for. Everything
+// else in the rule stands: the pooled rotation, the hour share over every
+// venue, AXIS_MIN_VENUES voters and the r margin.
 const AXIS_NEW_ONLY_MIN_VENUE_SHARE = 0.9;
 const AXIS_DAY_TIE_MAE = 1;
 const AXIS_DAY_CONTRAST_MIN = 3;
@@ -516,7 +528,7 @@ function parseCities(argv) {
 }
 
 function parseArgs(argv) {
-  const known = ['--commit', '--all-types', '--no-place-id', '--new-only'];
+  const known = ['--commit', '--all-types', '--no-place-id', '--new-only', '--day-share-over-voters'];
   const valued = ['--city=', '--days=', '--tile-km=', '--page-size=', '--result-cap=', '--max-requests=', '--radius-km=',
     '--result-budget=', '--cache-dir='];
   for (const a of argv.slice(2)) {
@@ -555,12 +567,16 @@ function parseArgs(argv) {
   if (cacheArg !== undefined && !cacheArg.slice('--cache-dir='.length).trim()) {
     return { error: '--cache-dir takes a directory path (see THE CACHE).' };
   }
+  if (argv.includes('--day-share-over-voters') && !argv.includes('--new-only')) {
+    return { error: '--day-share-over-voters changes the --new-only rule only; pass --new-only with it.' };
+  }
   return {
     cacheDir: cacheArg ? path.resolve(cacheArg.slice('--cache-dir='.length).trim()) : null,
     commit: argv.includes('--commit'),
     allTypes: argv.includes('--all-types'),
     askPlaceId: !argv.includes('--no-place-id'),
     newOnly: argv.includes('--new-only'),
+    dayOverVoters: argv.includes('--day-share-over-voters'),
     cities,
     days,
     tileKm: tileKm.value,
@@ -881,10 +897,16 @@ const AXIS_RULE_WITHIN5 = 'the within-five rule, because this commit would refre
 const AXIS_RULE_NEW_ONLY = 'the --new-only hour-origin rule, because nothing known is written and only the new venues\' '
   + 'hour origin is in question (within five points is reported, not required)';
 
+const AXIS_RULE_DAY_OVER_VOTERS = ', with the day share taken over the venues that could vote (--day-share-over-voters)';
+
 // The --commit gate. Returns { pass, reason, rule }; `newOnly` picks the rule
-// (see AXIS_NEW_ONLY_MIN_VENUE_SHARE).
-function axisVerdict(proof, { newOnly = false } = {}) {
-  const rule = newOnly ? AXIS_RULE_NEW_ONLY : AXIS_RULE_WITHIN5;
+// (see AXIS_NEW_ONLY_MIN_VENUE_SHARE), and `dayOverVoters` takes its day share
+// over the voters alone (--day-share-over-voters, above it).
+function axisVerdict(proof, { newOnly = false, dayOverVoters = false } = {}) {
+  if (dayOverVoters && !newOnly) {
+    return { pass: false, reason: '--day-share-over-voters applies to the --new-only rule only', rule: AXIS_RULE_WITHIN5 };
+  }
+  const rule = newOnly ? AXIS_RULE_NEW_ONLY + (dayOverVoters ? AXIS_RULE_DAY_OVER_VOTERS : '') : AXIS_RULE_WITHIN5;
   const refuse = (reason) => ({ pass: false, reason, rule });
   const at0 = proof.table.find((r) => r.shift === 0);
   if (proof.venues < AXIS_MIN_VENUES) {
@@ -909,10 +931,15 @@ function axisVerdict(proof, { newOnly = false } = {}) {
         + `(at least ${AXIS_MIN_VENUES} are needed to prove the day)`);
     }
     // Over every compared venue: one that cannot vote counts against the day,
-    // so non-voters and voters a day off share one allowance.
-    const byDay = proof.dayAligned / proof.venues;
-    const dayFit = `${proof.dayAligned} of ${proof.venues} venues (${pct(byDay)}) hold ${daysApart} and fit rotation 0 `
-      + `within ${AXIS_DAY_TIE_MAE} point of their best whole-day rotation (${proof.dayInformative} could vote)`;
+    // so non-voters and voters a day off share one allowance. Over the voters
+    // alone only when the run names --day-share-over-voters.
+    const dayOver = dayOverVoters ? proof.dayInformative : proof.venues;
+    const byDay = proof.dayAligned / dayOver;
+    const dayFit = dayOverVoters
+      ? `${proof.dayAligned} of the ${proof.dayInformative} venues that could vote (${pct(byDay)}; ${proof.venues} `
+        + `compared) hold ${daysApart} and fit rotation 0 within ${AXIS_DAY_TIE_MAE} point of their best whole-day rotation`
+      : `${proof.dayAligned} of ${proof.venues} venues (${pct(byDay)}) hold ${daysApart} and fit rotation 0 `
+        + `within ${AXIS_DAY_TIE_MAE} point of their best whole-day rotation (${proof.dayInformative} could vote)`;
     if (byDay < AXIS_NEW_ONLY_MIN_VENUE_SHARE) return refuse(`by day, only ${dayFit} ${needed}`);
     const fit = `by hour, ${hourFit}; by day, ${dayFit}`;
     if (typeof at0.r !== 'number') return refuse('rotation 0 has no correlation to judge');
@@ -2014,7 +2041,7 @@ function logCache(opts, s) {
 
 async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   const summary = {
-    exitCode: 1, aborted: false, abortReason: null, commit: false, newOnly: false,
+    exitCode: 1, aborted: false, abortReason: null, commit: false, newOnly: false, dayOverVoters: false,
     tiles: 0, leaves: 0, venuesFound: 0, plan: { known_bt: 0, known_place: 0, known_near: 0, new: 0 },
     skipped: null, rowsPlanned: 0, rowsWritten: 0, rowsInserted: 0, rowsRefreshed: 0,
     venuesInserted: 0, venuesWritten: 0, vanished: 0, claimed: 0, writeFailures: 0,
@@ -2032,6 +2059,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
   }
   summary.commit = opts.commit;
   summary.newOnly = opts.newOnly;
+  summary.dayOverVoters = opts.dayOverVoters;
   summary.budget.limit = opts.resultBudget;
   const key = besttime.configuredKey();
   if (!key) {
@@ -2045,7 +2073,8 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     + `${opts.cities.join(' + ')}, days ${opts.days.map((d) => BT_DAY_NAMES[d]).join(',')}, `
     + `${opts.allTypes ? 'all venue types' : `${Object.keys(TYPE_TO_CATEGORY).length} mapped venue types`}, `
     + `within ${opts.radiusKm} km, cap ${opts.resultCap}, page ${opts.pageSize}, result budget ${opts.resultBudget}`
-    + `${opts.newOnly ? ', NEW VENUES ONLY (nothing is written for a venue the corpus holds)' : ''}.`);
+    + `${opts.newOnly ? ', NEW VENUES ONLY (nothing is written for a venue the corpus holds)' : ''}`
+    + `${opts.dayOverVoters ? ', DAY SHARE OVER THE VOTERS ALONE (--day-share-over-voters)' : ''}.`);
   if (opts.cacheDir) {
     // Made, and its holdings counted, before any request (THE CACHE).
     let held;
@@ -2238,7 +2267,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
           stored: stored.get(Number(item.row.id)),
         }));
       const proof = axisProof(pairsFor('days'));
-      const verdict = axisVerdict(proof, { newOnly: opts.newOnly });
+      const verdict = axisVerdict(proof, { newOnly: opts.newOnly, dayOverVoters: opts.dayOverVoters });
       summary.axis = proof;
       summary.axisVerdict = verdict;
       console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with stored weekly `
