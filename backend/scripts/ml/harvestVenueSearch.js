@@ -217,13 +217,13 @@ function readSearchVenue(line, info) {
 // BestTime types whose venues are filed by their Google types. BEER holds pubs,
 // sports bars and beer halls beside beer shops, and OTHER names nothing. Of the
 // 2026-11-20 run's 2,007 venues the corpus did not hold, 449 were BEER and 393
-// OTHER; the rule below files 379 and 288 of them (bar 495, cafe 47, restaurant
-// 40, brewery 31, nightclub 23, fast food 13, museum 10, and 8 malls, dessert
-// shops and entertainment venues between them). Only addDemandVenues' map
-// names a category, the one every venue added from the app's own searches is
-// filed by, exact matches only and with no restaurant default, so a beer shop
-// (liquor_store) or a venue typed only 'irish_pub' or 'cocktail_bar' is still
-// skipped. In order:
+// OTHER; the rule below files 379 and 309 of them (bar 468, restaurant 88,
+// cafe 41, nightclub 34, brewery 28, fast food 12, museum 10, and 7 malls,
+// entertainment venues and dessert shops between them). Categories come from
+// addDemandVenues' map, the one every venue added from the app's own searches
+// is filed by, exact matches only, and from a primary type naming a cuisine's
+// restaurant; there is no restaurant default, so a beer shop (liquor_store) or
+// a venue typed only 'irish_pub' or 'cocktail_bar' is still skipped. In order:
 //   * a venue that is also a shop, a shopping centre or a stadium
 //     (SHOP_OR_STADIUM_TYPES) is skipped: a supermarket that lists a cafe is
 //     not a cafe, nor a shopping centre with a cinema a cinema (on that run it
@@ -235,12 +235,17 @@ function readSearchVenue(line, info) {
 //     also listed one ('The Beer Café', a pub with a coffee_shop type);
 //   * the first type is Google's primary one (in 425 of that run's 429 lists
 //     of three or more, the rest are in alphabetical order), so it decides
-//     when the map names it, unless it is the generic 'restaurant': a
-//     McDonald's that also lists coffee_shop is fast food, a casino with a bar
-//     a casino;
+//     when it names a category: a McDonald's that also lists coffee_shop is
+//     fast food, a casino with a bar a casino, and a restaurant, or any
+//     cuisine's ('french_restaurant'), a restaurant, though it lists a bar or
+//     a dessert shop (a Chili's, a Cheesecake Factory). One exception keeps
+//     the map's ranking, which puts night_club first: a bar or pub that also
+//     lists night_club is a nightclub. A BEER venue's first type is passed
+//     over when it is one of NOT_FOR_BEER;
 //   * otherwise the map's own order over all of them.
-// Against the map's order alone, the second and third rules give 30 of that
-// run's venues a different category, the 9 BEER cafes among them.
+// Against the map's order alone, the second and third rules give 46 of that
+// run's venues a different category: 28 become restaurants, 8 BEER 'cafes'
+// bars and 3 McDonald's fast food.
 // Any other BestTime type stays with TYPE_TO_CATEGORY alone.
 const TYPES_FILED_BY_GOOGLE_TYPES = new Set(['BEER', 'OTHER']);
 const SHOP_OR_STADIUM_TYPES = new Set([
@@ -255,9 +260,15 @@ function searchCategory(v) {
   if (typeof v.type === 'string' && own(h.TYPE_TO_CATEGORY, v.type)) return h.TYPE_TO_CATEGORY[v.type];
   if (!TYPES_FILED_BY_GOOGLE_TYPES.has(v.type) || !Array.isArray(v.googleTypes)) return undefined;
   if (v.googleTypes.some((t) => SHOP_OR_STADIUM_TYPES.has(t))) return undefined;
-  const types = v.type === 'BEER' ? v.googleTypes.filter((t) => !NOT_FOR_BEER.has(t)) : v.googleTypes;
-  const primary = types.length > 0 && types[0] !== 'restaurant' ? exactCategoryFor([types[0]]) : null;
-  return primary || exactCategoryFor(types) || undefined;
+  const beer = v.type === 'BEER';
+  const types = beer ? v.googleTypes.filter((t) => !NOT_FOR_BEER.has(t)) : v.googleTypes;
+  const first = v.googleTypes[0];
+  if (first !== undefined && !(beer && NOT_FOR_BEER.has(first))) {
+    const primary = exactCategoryFor([first]) || (first.endsWith('_restaurant') ? 'restaurant' : null);
+    if (primary === 'bar' && v.googleTypes.includes('night_club')) return 'nightclub';
+    if (primary) return primary;
+  }
+  return exactCategoryFor(types) || undefined;
 }
 
 function readJsonl(file) {

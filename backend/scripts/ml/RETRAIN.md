@@ -2430,15 +2430,15 @@ and the new rows' labels are the filter harvest's `--new-only` ones, with one
 difference: a venue BestTime types BEER (pubs and beer halls beside beer shops)
 or OTHER, which the filter's type map leaves out, takes its category from the
 Google types BestTime lists beside it (`searchCategory`: addDemandVenues' map,
-exact matches, the primary type first, never a shop's or a stadium's, a BEER
-venue never a cafe). On the 2026-11-20 run that filed 667 of 842 such venues,
-495 of them bars. Everything above about `'harvested'` venues (inactive, out of
-the neighbour box and the default export, the rollback) applies unchanged. The
-axis proof compares only against stored rows no search produced:
-forecast-stamped cells, and venues the filter harvest created before the
-searches began and never updated since (the script's header gives the rule and
-why). Its first proof compared 1,329 venues: best at rotation 0, 99.9% of cells
-exact.
+Google's primary type first, never a shop's or a stadium's, a BEER venue never
+a cafe). On the 2026-11-20 run that filed 688 of 842 such venues, 468 of them
+bars and 88 restaurants. Everything above about `'harvested'` venues
+(inactive, out of the neighbour box and the default export, the rollback)
+applies unchanged. The axis proof compares only against stored rows no search
+produced: forecast-stamped cells, and venues the filter harvest created before
+the searches began and never updated since (the script's header gives the rule
+and why). Its first proof compared 1,329 venues: best at rotation 0, 99.9% of
+cells exact.
 
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 

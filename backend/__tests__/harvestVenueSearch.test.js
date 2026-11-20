@@ -82,25 +82,36 @@ test('a search line becomes the planner\'s venue shape, with seven whole days on
   assert.deepStrictEqual(s.readSearchVenue(line, { venue_types: 'bar' }).googleTypes, [], 'a string is not a list');
 });
 
-test('a BEER or OTHER venue is filed by its Google types, exact matches only; no other type is', () => {
+test('a BEER or OTHER venue is filed by its Google types, the primary one first; no other type is', () => {
   const cat = (type, googleTypes) => s.searchCategory({ type, googleTypes });
   assert.strictEqual(cat('BAR', []), 'bar', 'a mapped BestTime type decides alone');
   assert.strictEqual(cat('BAR', ['cafe']), 'bar');
   assert.strictEqual(cat('BEER', ['sports_bar', 'bar', 'restaurant']), 'bar', 'an unmapped primary: the map\'s order');
   assert.strictEqual(cat('BEER', ['pub']), 'bar');
-  // The primary (first) type decides when the map names it.
+  // The primary (first) type decides when it names a category.
   assert.strictEqual(cat('BEER', ['brewery', 'bar']), 'brewery');
   assert.strictEqual(cat('BEER', ['bar', 'brewery']), 'bar');
   assert.strictEqual(cat('OTHER', ['fast_food_restaurant', 'coffee_shop']), 'fast_food', 'a McDonald\'s is not a cafe');
   assert.strictEqual(cat('OTHER', ['casino', 'bar']), 'entertainment');
   assert.strictEqual(cat('OTHER', ['night_club', 'bar']), 'nightclub');
-  // ...unless it is the generic 'restaurant', or unmapped: then the map's order.
-  assert.strictEqual(cat('OTHER', ['restaurant', 'coffee_shop']), 'cafe');
+  // A restaurant first, or any cuisine's, is a restaurant whatever else it lists.
+  assert.strictEqual(cat('OTHER', ['restaurant', 'coffee_shop']), 'restaurant');
+  assert.strictEqual(cat('OTHER', ['american_restaurant', 'bar', 'dessert_shop']), 'restaurant', 'a Chili\'s');
+  assert.strictEqual(cat('BEER', ['french_restaurant', 'pub']), 'restaurant');
+  assert.strictEqual(cat('OTHER', ['american_restaurant']), 'restaurant');
+  // A bar or pub first that also lists night_club keeps the map's ranking.
+  assert.strictEqual(cat('OTHER', ['bar', 'cocktail_bar', 'night_club']), 'nightclub');
+  assert.strictEqual(cat('BEER', ['pub', 'night_club']), 'nightclub');
+  assert.strictEqual(cat('OTHER', ['restaurant', 'night_club']), 'restaurant');
+  // An unmapped primary: the map's order over all of them.
   assert.strictEqual(cat('OTHER', ['irish_pub', 'brewery', 'bar']), 'brewery');
-  // A BEER venue is never a cafe or a sweet shop; any other venue can be.
+  assert.strictEqual(cat('OTHER', ['restaurant_brasserie', 'cafe', 'bar']), 'cafe');
+  // A BEER venue is never a cafe or a sweet shop, and a first type that is one
+  // is passed over; any other venue can be.
   assert.strictEqual(cat('BEER', ['irish_pub', 'cafe', 'pub']), 'bar');
   assert.strictEqual(cat('BEER', ['beer_hall', 'bar', 'beer_store', 'coffee_shop']), 'bar');
   assert.strictEqual(cat('BEER', ['cafe', 'bar']), 'bar');
+  assert.strictEqual(cat('BEER', ['coffee_shop', 'bar', 'night_club']), 'nightclub');
   assert.strictEqual(cat('OTHER', ['cafe', 'pub']), 'cafe');
   assert.strictEqual(cat('OTHER', ['irish_pub', 'cafe', 'pub']), 'cafe');
   for (const [type, googleTypes] of [
