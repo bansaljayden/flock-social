@@ -3050,6 +3050,48 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
     return sorted(feature_cols)
 
 
+# WHAT A BUILT FRAME KEEPS (2026-11-19). Once a frame's last feature is built,
+# what follows reads its feature columns (into X, the NaN refusal and the
+# constant-slot check) and, by name, only the columns below: the cell fits, the
+# label and weight steps, and the keys both pickles carry. Everything else is
+# spent: the raw strings the one-hot families were built from (three Google
+# types, weather, season, event types), coordinates and intermediates. On the
+# 2026-10-08 export they were about a third of the training frame, and the two
+# frames are most of this script's peak. A whole-number feature column is only
+# ever read as a float32 in X, so it is held in the smallest integer type that
+# holds its values: the 0/1 one-hot columns take a byte a row, not eight. A step
+# added later that reads a dropped column by name stops with a KeyError; name
+# the column here.
+CARRIED_AFTER_FEATURES = frozenset(_CELL_FIT_COLS + [
+    LEAVE_OUT_COL, 'baseline_busyness', 'is_realtime', 'label_provenance', 'label_source',
+    'vendor_forecast_pct', 'events_observed', 'observed_date', 'weather_observed', 'venue_id',
+])
+
+
+def finish_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the columns no later step reads and narrow whole-number features."""
+    features = set(get_feature_columns(df))
+    spent = [c for c in df.columns if c not in features and c not in CARRIED_AFTER_FEATURES]
+    df = df.drop(columns=spent)
+    for c in df.columns:
+        if c in features and c not in CARRIED_AFTER_FEATURES and df[c].dtype == np.int64:
+            df[c] = pd.to_numeric(df[c], downcast='integer')
+    return df
+
+
+def feature_matrix(df: pd.DataFrame, feature_cols: List[str]) -> np.ndarray:
+    """`df[feature_cols].values.astype(np.float32)`, filled one column at a time.
+
+    The one-line form first interleaves every column into a float64 matrix
+    twice the size of the result. Same values (each column goes to float64,
+    then float32, as it did) and the same column-major layout.
+    """
+    X = np.empty((len(df), len(feature_cols)), dtype=np.float32, order='F')
+    for j, c in enumerate(feature_cols):
+        X[:, j] = df[c].to_numpy(dtype=np.float64)
+    return X
+
+
 def refuse_unfilled_features(df: pd.DataFrame, feature_cols: List[str], label: str) -> None:
     """A NaN in a feature column at this point is a fill somebody forgot.
 
@@ -3251,6 +3293,7 @@ def main():
         'train_rows_with_reading': int((train_df['weather_observed'] == 1).sum()),
         'train_rows_imputed': int((train_df['weather_observed'] == 0).sum()),
     }
+    train_df = finish_frame(train_df)
 
     # Feature engineering — holdout data (same transforms)
     if holdout_df is not None:
@@ -3291,6 +3334,7 @@ def main():
         holdout_df = add_live_features(holdout_df, live_reading_table, neighbor_table)
         holdout_df = add_holiday_features(holdout_df)
         holdout_df = add_sports_features(holdout_df)
+        holdout_df = finish_frame(holdout_df)
 
     # Compute delta label: y_delta = busyness_pct - baseline_busyness
     # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
@@ -3591,7 +3635,7 @@ def main():
         len(cell_stats['groups']), cell_stats['group_col'])
 
     train_data = {
-        'X': train_df[feature_cols].values.astype(np.float32),
+        'X': feature_matrix(train_df, feature_cols),
         'y': train_df['delta_label'].values.astype(np.float32),
         'y_actual': train_df['busyness_pct'].values.astype(np.float32),
         'baseline': train_df['baseline_busyness'].values.astype(np.float32),
@@ -3633,7 +3677,7 @@ def main():
         pickle.dump(train_data, f)
 
     holdout_data = {
-        'X': holdout_df[feature_cols].values.astype(np.float32),
+        'X': feature_matrix(holdout_df, feature_cols),
         'y': holdout_df['delta_label'].values.astype(np.float32),
         'y_actual': holdout_df['busyness_pct'].values.astype(np.float32),
         'baseline': holdout_df['baseline_busyness'].values.astype(np.float32),
