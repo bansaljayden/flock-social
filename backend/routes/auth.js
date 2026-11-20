@@ -3633,6 +3633,17 @@ router.post('/google', [
       }
 
       if (claimTarget) {
+        // THE AGE GATE RUNS BEFORE THE HANDOVER (2026-11-19). The claim below
+        // clears the password, the payment handles and every session, and it
+        // used to be written before enforceDobOnLogin further down could still
+        // refuse the sign-in. An account made in the iPhone app has no date of
+        // birth on file, so its owner's first Google sign-in on the website
+        // converted it and was then asked for a date: whoever stopped there was
+        // left signed out of an account whose password no longer worked, which
+        // happened in production. Asked first, a refusal changes nothing. A date
+        // it accepts is the owner's (the provider proved this row's address) and
+        // is on the row the claim returns, so the check below passes on it.
+        if (!(await enforceDobOnLogin(claimTarget, req, res))) return;
         // Round 13: the claim transferred the ROW but not the SESSION. The
         // squatter who pre-registered this address may be holding a JWT minted
         // minutes ago and good for another 24h, which would keep reading the
@@ -4111,6 +4122,9 @@ router.post('/apple', [
           });
         }
         if (decision === 'claim') {
+          // The age gate before the handover, as at the Google claim above: a
+          // sign-in it refuses must not have converted the account first.
+          if (!(await enforceDobOnLogin(existingByEmail, req, res))) return;
           // Round 13: same session handover as the Google claim — bump
           // token_version so any JWT the squatter still holds dies immediately.
           // ROUND 25 (R5-H3): and the same three payment-handle columns, for the

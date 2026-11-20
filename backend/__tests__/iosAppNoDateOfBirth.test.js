@@ -144,6 +144,19 @@ pool.query = async (text, params = []) => {
     row.date_of_birth = params[0];
     return { rows: [row], rowCount: 1 };
   }
+  // The verified-email claim: a provider that proved the address takes over
+  // the password row (routes/auth.js, the Google and Apple claim branches).
+  const claim = /^UPDATE users SET oauth_provider = '(google|apple)', oauth_id = \$1, password = NULL/.exec(sql);
+  if (claim) {
+    const row = users.find((u) => u.id === params[1]);
+    if (!row) return { rows: [], rowCount: 0 };
+    Object.assign(row, {
+      oauth_provider: claim[1], oauth_id: params[0], password: null, email_verified: true,
+      verified_email: row.email, venmo_username: null, cashapp_cashtag: null, zelle_identifier: null,
+      token_version: row.token_version + 1,
+    });
+    return { rows: [{ ...row }], rowCount: 1 };
+  }
   if (sql.startsWith('SELECT date_of_birth FROM users WHERE id')) {
     const row = users.find((u) => u.id === params[0]);
     return { rows: row ? [{ date_of_birth: row.date_of_birth }] : [] };
@@ -441,6 +454,83 @@ test('an account we know to be under 13 cannot sign in from the app', async () =
   assert.strictEqual(res.json.error, UNDERAGE_MSG);
   assert.ok(!('needsDob' in res.json));
   assert.ok(!('token' in res.json));
+});
+
+// ===========================================================================
+// A provider sign-in on the website to an account made in the app
+// ===========================================================================
+// The app asks for no date, so its password accounts have none on file, and
+// the website asks for one before it signs anybody in. The claim that hands a
+// password row to the provider that proved its address clears the password and
+// ends every session, so it must not be written for a sign-in the date question
+// then refuses: in production that left a person signed out with a password
+// that no longer worked (2026-11-19).
+test('a website Google sign-in that is asked for a date leaves the app-made password account as it was', async () => {
+  reset();
+  const row = mkPasswordUser('owner@gmail.com');
+  const profile = { sub: 'g-owner', email: 'owner@gmail.com', email_verified: true, name: 'Owner' };
+  const asked = await withGoogle(profile, () => fromWeb('/api/auth/google', { access_token: freshToken() }));
+  assert.strictEqual(asked.status, 403, JSON.stringify(asked.json));
+  assert.strictEqual(asked.json.needsDob, true);
+  assert.ok(!('dobGranularity' in asked.json), 'an existing account is asked for the full date');
+  assert.strictEqual(row.password, PASSWORD_HASH);
+  assert.strictEqual(row.oauth_provider, null);
+  assert.strictEqual(row.token_version, 0);
+  const password = await fromApp('/api/auth/login', { email: 'owner@gmail.com', password: 'Password1' });
+  assert.strictEqual(password.status, 200, 'the password still signs in after the refused Google attempt');
+
+  const answered = await withGoogle(profile, () => fromWeb('/api/auth/google', {
+    access_token: freshToken(), date_of_birth: ADULT_DOB,
+  }));
+  assert.strictEqual(answered.status, 200, JSON.stringify(answered.json));
+  assert.strictEqual(answered.json.user.id, row.id);
+  assert.strictEqual(row.oauth_provider, 'google');
+  assert.strictEqual(row.password, null);
+  assert.strictEqual(row.date_of_birth, ADULT_DOB);
+  assert.strictEqual(users.length, 1);
+});
+
+test('a website Apple sign-in that is asked for a date leaves the app-made password account as it was', async () => {
+  reset();
+  const row = mkPasswordUser('owner@icloud.com');
+  // Its own subject: the clock is pinned, so a token for a subject another test
+  // signs in with would be a replay of that one.
+  const token = () => appleIdentityToken({ sub: 'apple-web-owner', email: 'owner@icloud.com', email_verified: true });
+  const asked = await fromWeb('/api/auth/apple', { identityToken: token() });
+  assert.strictEqual(asked.status, 403, JSON.stringify(asked.json));
+  assert.strictEqual(asked.json.needsDob, true);
+  assert.strictEqual(row.password, PASSWORD_HASH);
+  assert.strictEqual(row.oauth_provider, null);
+  assert.strictEqual(row.token_version, 0);
+
+  const answered = await fromWeb('/api/auth/apple', { identityToken: token(), date_of_birth: ADULT_DOB });
+  assert.strictEqual(answered.status, 200, JSON.stringify(answered.json));
+  assert.strictEqual(row.oauth_provider, 'apple');
+  assert.strictEqual(row.password, null);
+  assert.strictEqual(row.date_of_birth, ADULT_DOB);
+});
+
+test('from the app, the same Google sign-in converts the account at once, with no date asked', async () => {
+  reset();
+  const row = mkPasswordUser('owner@gmail.com');
+  const profile = { sub: 'g-owner', email: 'owner@gmail.com', email_verified: true, name: 'Owner' };
+  const res = await withGoogle(profile, () => fromApp('/api/auth/google', { access_token: freshToken() }));
+  assert.strictEqual(res.status, 200, JSON.stringify(res.json));
+  assert.strictEqual(row.oauth_provider, 'google');
+  assert.strictEqual(row.date_of_birth, null);
+});
+
+test('an account known to be under 13 is refused without being converted', async () => {
+  reset();
+  const row = mkPasswordUser('young@gmail.com', CHILD_DOB);
+  const profile = { sub: 'g-young', email: 'young@gmail.com', email_verified: true, name: 'Young' };
+  for (const send of [fromApp, fromWeb]) {
+    const res = await withGoogle(profile, () => send('/api/auth/google', { access_token: freshToken() }));
+    assert.strictEqual(res.status, 403);
+    assert.strictEqual(res.json.error, UNDERAGE_MSG);
+    assert.strictEqual(row.oauth_provider, null);
+    assert.strictEqual(row.password, PASSWORD_HASH);
+  }
 });
 
 // ===========================================================================
