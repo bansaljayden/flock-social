@@ -2410,6 +2410,30 @@ larger than the page. If BestTime ever answers 400, `--no-place-id` runs
 without the place-id flag (refresh only) and `--all-types` without the types
 list.
 
+### Venues only a Venue Search finds (2026-11-19)
+
+The filter lists only venues BestTime already holds a forecast for, so a venue
+nobody has forecast never reaches the harvest. BestTime's Venue Search (5,000
+normal units a month on the package, one unit per 20 results, `fast=false`;
+the default is the fast search at five units) looks venues up and forecasts
+them, and `scripts/ml/harvestVenueSearch.js` files what a search run saved:
+
+```bash
+node scripts/ml/harvestVenueSearch.js --dir=<search run dir>            # dry run
+node scripts/ml/harvestVenueSearch.js --dir=<search run dir> --commit   # writes, once the axis proof passes
+```
+
+It makes no request itself. A search answer has no Google place id, but a
+BestTime venue id is one, hex-encoded backwards: it decoded to the stored place
+id on all 119,266 corpus rows that store a real one. Planning, the weekly rows
+and the new rows' labels are the filter harvest's `--new-only` ones, so
+everything above about `'harvested'` venues (inactive, out of the neighbour box
+and the default export, the rollback) applies unchanged. The axis proof
+compares only against stored rows no search produced: forecast-stamped cells,
+and venues the filter harvest created before the searches began and never
+updated since (the script's header gives the rule and why). Its first proof
+compared 1,329 venues: best at rotation 0, 99.9% of cells exact.
+
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 
 > **The cadence in this section is historical. Corrected 2026-09-06.** It runs
