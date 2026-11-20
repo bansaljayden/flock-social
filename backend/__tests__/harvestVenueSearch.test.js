@@ -7,7 +7,9 @@
 //   - a search line becomes the venue shape the planner reads, only with seven
 //     whole days, and takes its type, rating and reviews from the info line;
 //   - the planner keeps known venues out, places venues by market, and skips a
-//     new venue whose type maps to no category;
+//     new venue whose type maps to no category; a BEER or OTHER venue takes
+//     its category from its Google types, exact matches only, and no other
+//     type does;
 //   - a dry run proves the axis on the known venues and plans the new ones; a
 //     --commit whose axis proof fails writes nothing;
 //   - the proof's reference is only rows no search produced: forecast-stamped
@@ -71,7 +73,42 @@ test('a search line becomes the planner\'s venue shape, with seven whole days on
   assert.strictEqual(s.readSearchVenue({ ...line, days: twice }, null), null, 'a day given twice');
   const noInfo = s.readSearchVenue(line, null);
   assert.strictEqual(noInfo.type, null);
+  assert.deepStrictEqual(noInfo.googleTypes, []);
   assert.strictEqual(s.readSearchVenue(line, { rating: 9, reviews: -2 }).rating, null);
+  assert.deepStrictEqual(s.readSearchVenue(line, { venue_type: 'BEER', venue_types: [' Bar ', 7, null, 'irish_pub'] }).googleTypes,
+    ['bar', 'irish_pub']);
+  assert.deepStrictEqual(s.readSearchVenue(line, { venue_types: 'bar' }).googleTypes, [], 'a string is not a list');
+});
+
+test('a BEER or OTHER venue is filed by its Google types, exact matches only; no other type is', () => {
+  const cat = (type, googleTypes) => s.searchCategory({ type, googleTypes });
+  assert.strictEqual(cat('BAR', []), 'bar', 'a mapped BestTime type decides alone');
+  assert.strictEqual(cat('BAR', ['cafe']), 'bar');
+  assert.strictEqual(cat('BEER', ['sports_bar', 'bar', 'restaurant']), 'bar');
+  assert.strictEqual(cat('BEER', ['pub']), 'bar');
+  assert.strictEqual(cat('BEER', ['brewery', 'bar']), 'brewery', 'addDemandVenues\' order: brewery before bar');
+  assert.strictEqual(cat('OTHER', ['restaurant', 'coffee_shop']), 'cafe');
+  assert.strictEqual(cat('OTHER', ['night_club', 'bar']), 'nightclub');
+  for (const [type, googleTypes] of [
+    ['BEER', ['liquor_store', 'store']], // a beer shop
+    ['BEER', ['irish_pub']], // no exact match, and no default
+    ['OTHER', ['cocktail_bar', 'lounge']],
+    ['OTHER', []],
+    ['OTHER', ['supermarket', 'cafe']], // a shop's crowd, whatever counter it keeps
+    ['OTHER', ['coffee_shop', 'gas_station']],
+    ['BEER', ['bar', 'stadium']],
+    ['GROCERY', ['supermarket', 'cafe']], // only BEER and OTHER look past their type
+    ['SPORTS_COMPLEX', ['stadium', 'bar']],
+    [null, ['bar']],
+  ]) {
+    assert.strictEqual(cat(type, googleTypes), undefined, `${type} ${googleTypes}`);
+  }
+  assert.deepStrictEqual([...s.TYPES_FILED_BY_GOOGLE_TYPES], ['BEER', 'OTHER']);
+  assert.strictEqual(cat('OTHER', undefined), undefined, 'a venue shape with no type list');
+  const { exactCategoryFor } = require('../scripts/ml/addDemandVenues');
+  assert.strictEqual(exactCategoryFor(['restaurant', 'bar']), 'bar');
+  assert.strictEqual(exactCategoryFor(['establishment']), null);
+  assert.strictEqual(exactCategoryFor(undefined), null);
 });
 
 function writeDir(lines, info) {
@@ -104,7 +141,7 @@ test('the run\'s files load once per venue, joined to their info lines', () => {
 const PHILLY = { lat: 39.9526, lng: -75.1652 };
 
 function corpus({
-  knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR', epoch = 1763500000,
+  knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR', newGoogleTypes, epoch = 1763500000,
   status = 'found', created = '2026-10-01T00:00:00Z', updated = created, pseudoLastSeen = '2026-09-05T00:27:47Z',
 } = {}) {
   const known = [];
@@ -131,7 +168,8 @@ function corpus({
   for (let j = 0; j < newCount; j++) {
     const pid = placeId(500 + j);
     lines.push({ venue_id: btIdOf(pid), name: `Fresh Place ${j}`, lat: PHILLY.lat - 0.01 - 0.003 * j, lng: PHILLY.lng - 0.01, days: week(j) });
-    info.push({ venue_id: btIdOf(pid), status: 'OK', venue_type: newType, rating: 4.2, reviews: 50 });
+    info.push({ venue_id: btIdOf(pid), status: 'OK', venue_type: newType, rating: 4.2, reviews: 50,
+      ...(newGoogleTypes ? { venue_types: newGoogleTypes(j) } : {}) });
   }
   // One new venue at the Miami holdout: placed there, so skipped.
   const miami = placeId(900);
@@ -380,6 +418,26 @@ test('a new venue whose type maps to no category is skipped, not written as unkn
   const summary = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`], pool: fakePool(c) }));
   assert.strictEqual(summary.plan.new, 0);
   assert.strictEqual(summary.rowsPlanned, 0);
+});
+
+test('a new BEER venue whose Google types name a pub is written as a bar, and a beer shop is skipped', async () => {
+  // Five new BEER venues: three pubs, two beer shops.
+  const c = corpus({ newType: 'BEER', newGoogleTypes: (j) => (j < 3 ? ['pub', 'Bar'] : ['liquor_store']) });
+  const dir = writeDir(c.lines, c.info);
+  const writes = { venues: [], rows: [] };
+  const summary = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`, '--commit'], pool: fakePool(c, writes) }));
+  assert.strictEqual(summary.axisVerdict.pass, true, summary.axisVerdict.reason);
+  assert.strictEqual(summary.plan.new, 3);
+  assert.deepStrictEqual(summary.byGoogleTypes, { BEER: 3, OTHER: 0 });
+  assert.deepStrictEqual(writes.venues.map((v) => v.google_place_id).sort(), [placeId(500), placeId(501), placeId(502)]);
+  assert.ok(writes.venues.every((v) => v.venue_category === 'bar' && v.besttime_status === h.HARVEST_STATUS));
+  assert.strictEqual(summary.rowsWritten, 3 * 168);
+  // The filter harvest's own rule is unchanged: planned without searchCategory,
+  // the same venues are all skipped as unmapped.
+  const { venues } = s.loadSearchDir(dir);
+  const { plan, skipped } = h.planVenues(venues, { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, [...h.ALL_CITIES]);
+  assert.strictEqual(plan.filter((p) => p.kind === 'new' && /^Fresh Place/.test(p.venue.name)).length, 0);
+  assert.ok(skipped.unmappedType >= 5);
 });
 
 test('arguments: --dir is required and must hold venues.jsonl', () => {

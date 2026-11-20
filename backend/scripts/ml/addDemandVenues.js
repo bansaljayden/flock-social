@@ -122,15 +122,22 @@ const TYPE_TO_CATEGORY = [
   ['restaurant', 'restaurant'],
 ];
 
-function categoryFor(types) {
+// The first category TYPE_TO_CATEGORY names for these types, or null when it
+// names none. harvestVenueSearch.js files some search venues by it, where a
+// default would be a guess.
+function exactCategoryFor(types) {
   const set = new Set(types || []);
   for (const [gType, category] of TYPE_TO_CATEGORY) {
     if (set.has(gType)) return category;
   }
+  return null;
+}
+
+function categoryFor(types) {
   // Google stamps meal_delivery/food/establishment on almost anything edible;
   // a venue users met at is overwhelmingly likely a food-service place when
   // nothing sharper matched.
-  return 'restaurant';
+  return exactCategoryFor(types) || 'restaurant';
 }
 
 // A place somebody goes OUT to. The demand list is every place a crowd score
@@ -391,7 +398,7 @@ async function main() {
 
 module.exports = {
   PA_CITIES, MAX_KM, kmBetween, nearestMarket, nearestPaCity,
-  MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport,
+  MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport, exactCategoryFor,
 };
 
 // Only when run directly. The market rule above is required by

@@ -1667,7 +1667,13 @@ function placeVenue(lat, lng, markets) {
 // is skipped. Pure: the tests drive it without a database. `identities.nearby`
 // is every ml_venues row around the harvest (loadNearbyRows); without it rule 4
 // finds nothing. `placed` counts the venues placed in each city asked for.
-function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM } = {}) {
+// `categoryOf` names a new venue's category, undefined to skip it as
+// unmappedType; by default its BestTime type through TYPE_TO_CATEGORY, the
+// only rule this script uses.
+function planVenues(venues, identities, cities, {
+  radiusKm = DEFAULT_RADIUS_KM,
+  categoryOf = (v) => (v.type ? TYPE_TO_CATEGORY[v.type] : undefined),
+} = {}) {
   const plan = [];
   const skipped = {
     outsideMarkets: 0, otherMarket: 0, outsideRadius: 0, noPlaceId: 0, unusablePlaceId: 0,
@@ -1745,7 +1751,7 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
       continue;
     }
     if (where.km > radiusKm) { skipped.outsideRadius++; continue; }
-    const category = v.type ? TYPE_TO_CATEGORY[v.type] : undefined;
+    const category = categoryOf(v);
     if (!category) { skipped.unmappedType++; continue; }
     if (!v.name) { skipped.noName++; continue; }
     const hasSignal = [...v.days.values()].some((hours) => hours.some((x) => x != null && x > 0));

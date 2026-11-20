@@ -19,8 +19,9 @@
 //                     came with (seven days of `day_raw`, 24 slots each);
 //   venue_info.jsonl  for each venue the corpus did not hold when the search
 //                     ran, BestTime's GET /forecasts/week answer about it: the
-//                     venue type, rating and review count (free within a day of
-//                     the forecast the search made).
+//                     venue type and the finer types beside it, rating and
+//                     review count (free within a day of the forecast the
+//                     search made).
 // It makes no request to BestTime or anyone else. It reads those files and the
 // database, and writes the database only under --commit.
 //
@@ -39,8 +40,9 @@
 // known venue's curve from a search is the forecast the corpus already stores
 // or the filter refreshes, so nothing is written for it; it feeds the axis
 // proof. A new venue gets an inactive ml_venues row (besttime_status
-// 'harvested', its category from the venue type through TYPE_TO_CATEGORY, so a
-// type that maps to none is skipped) and its typical week, through
+// 'harvested', its category from the venue type through TYPE_TO_CATEGORY, or
+// for a BEER or OTHER venue from its Google types (searchCategory), so a venue
+// neither names a category for is skipped) and its typical week, through
 // harvestVenueFilter.writeOne: same transaction, lock, re-checks and rows as a
 // filter-harvested venue, labelled the same way (collection_mode 'weekly',
 // hour_axis 'venue_local', no epoch, a typical week's event stamp).
@@ -61,6 +63,7 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const h = require('./harvestVenueFilter');
+const { exactCategoryFor } = require('./addDemandVenues');
 const { requireSlotIndex, HOUR_AXIS_VENUE_LOCAL, WEEKLY_SLOT_INDEX } = require('./collectWeekly');
 const { requireVenueIdIndex } = require('./discoverBestTime');
 const { describeError, describeDbError, safeText } = require('./logSafe');
@@ -197,11 +200,42 @@ function readSearchVenue(line, info) {
     lat: coordinate(line.lat),
     lng: coordinate(line.lng),
     type: info && typeof info.venue_type === 'string' ? info.venue_type.toUpperCase() : null,
+    // The finer Google-style types BestTime lists beside its own ('pub',
+    // 'sports_bar', ...), lower-cased: a few arrive as 'Bar'.
+    googleTypes: info && Array.isArray(info.venue_types)
+      ? info.venue_types.filter((t) => typeof t === 'string').map((t) => t.trim().toLowerCase())
+      : [],
     rating: Number.isFinite(rating) && rating > 0 && rating <= 5 ? rating : null,
     reviews: Number.isInteger(reviews) && reviews > 0 ? reviews : null,
     days,
     altDays: new Map(),
   };
+}
+
+// BestTime types whose venues are filed by their Google types. BEER holds pubs,
+// sports bars and beer halls beside beer shops, and OTHER names nothing. Of the
+// 2026-11-20 run's 2,007 venues the corpus did not hold, 449 were BEER and 393
+// OTHER; the Google types beside them named a category for 379 and 287 (bar
+// 474, cafe 58, restaurant 39, brewery 34, nightclub 34, the rest fast food,
+// museum and four more). They go through addDemandVenues' map, the one every
+// venue added from the app's own searches is filed by, exact matches only and
+// with no restaurant default, so a beer shop (liquor_store) or a venue typed
+// only 'irish_pub' or 'cocktail_bar' is still skipped. Any other type stays
+// with TYPE_TO_CATEGORY alone, and a BEER or OTHER venue that is also a shop or
+// a stadium (SHOP_OR_STADIUM_TYPES) is skipped: a supermarket that lists a cafe
+// is not a cafe (on that run 4 listed supermarket, 3 grocery_store, 3
+// convenience_store and 2 gas_station).
+const TYPES_FILED_BY_GOOGLE_TYPES = new Set(['BEER', 'OTHER']);
+const SHOP_OR_STADIUM_TYPES = new Set(['supermarket', 'grocery_store', 'convenience_store', 'gas_station', 'stadium', 'arena']);
+
+// A new venue's category for planVenues: the BestTime type's, or for BEER and
+// OTHER the Google types', or undefined (skipped as unmappedType).
+function searchCategory(v) {
+  const byType = v.type ? h.TYPE_TO_CATEGORY[v.type] : undefined;
+  if (byType) return byType;
+  if (!TYPES_FILED_BY_GOOGLE_TYPES.has(v.type)) return undefined;
+  if ((v.googleTypes || []).some((t) => SHOP_OR_STADIUM_TYPES.has(t))) return undefined;
+  return exactCategoryFor(v.googleTypes) || undefined;
 }
 
 function readJsonl(file) {
@@ -276,9 +310,12 @@ async function harvestSearch({ argv, pool }) {
 
   const identities = await h.loadIdentities(pool, venues.map((v) => v.venueId), venues.map((v) => v.placeId).filter(Boolean));
   identities.nearby = await h.loadNearbyRows(pool, venues);
-  const { plan, skipped } = h.planVenues(venues, identities, [...h.ALL_CITIES], { radiusKm: opts.radiusKm });
+  const { plan, skipped } = h.planVenues(venues, identities, [...h.ALL_CITIES], {
+    radiusKm: opts.radiusKm, categoryOf: searchCategory,
+  });
   const writes = [];
   const byCity = new Map();
+  summary.byGoogleTypes = Object.fromEntries([...TYPES_FILED_BY_GOOGLE_TYPES].map((t) => [t, 0]));
   for (const item of plan) {
     summary.plan[item.kind]++;
     if (item.kind !== 'new') continue;
@@ -286,9 +323,11 @@ async function harvestSearch({ argv, pool }) {
     writes.push(item);
     summary.rowsPlanned += item.cells.length;
     byCity.set(item.city, (byCity.get(item.city) || 0) + 1);
+    if (TYPES_FILED_BY_GOOGLE_TYPES.has(item.venue.type)) summary.byGoogleTypes[item.venue.type]++;
   }
   console.log(`${TAG} Known by BestTime id: ${summary.plan.known_bt}. Known by Google place id: ${summary.plan.known_place}. `
-    + `Known as a near-duplicate of an existing row: ${summary.plan.known_near}. New: ${summary.plan.new}.`);
+    + `Known as a near-duplicate of an existing row: ${summary.plan.known_near}. New: ${summary.plan.new}, of them `
+    + `${Object.entries(summary.byGoogleTypes).map(([t, n]) => `${n} ${t}`).join(' and ')} filed by their Google types.`);
   console.log(`${TAG} Skipped: ${Object.entries(skipped).map(([k, n]) => `${k} ${n}`).join(', ')}.`);
   console.log(`${TAG} New by city: ${[...byCity.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ${n}`).join(', ') || 'none'}.`);
 
@@ -375,7 +414,7 @@ async function main(argv = process.argv, deps = {}) {
 
 module.exports = {
   main, harvestSearch, parseArgs, decodeBestTimeId, placeIdFromBestTimeId, readSearchVenue, loadSearchDir, loadReferenceWeeks,
-  SEARCH_RUNS_BEGAN, FILTER_HARVEST_STATUSES,
+  SEARCH_RUNS_BEGAN, FILTER_HARVEST_STATUSES, TYPES_FILED_BY_GOOGLE_TYPES, SHOP_OR_STADIUM_TYPES, searchCategory,
 };
 
 if (require.main === module) {
