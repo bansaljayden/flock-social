@@ -2377,8 +2377,15 @@ module.exports = {
   placeIdAgreement,
   axisProof,
   axisVerdict,
+  formatAxisTable,
   peakHourHistogram,
+  formatPeakHistogram,
   namesSimilar,
+  // harvestVenueSearch.js plans and writes the venues a venue search found
+  // through these same readers, so both paths decide identity the same way.
+  loadIdentities,
+  loadNearbyRows,
+  loadStoredWeeks,
   TYPE_TO_CATEGORY,
   FILTER_URL,
   HARVEST_STATUS,
