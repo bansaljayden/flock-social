@@ -2115,12 +2115,19 @@ async function enforceDobOnLogin(user, req, res) {
       [supplied, user.id]
     );
     revokeUserSessions(req.app.get('io'), user.id);
-    // PROVED (R5-H1). This runs only after /login has checked the password, or
-    // after a provider token verified for this row — so `user.email` is the
-    // address of an account the caller just demonstrated they hold, not a
-    // string they typed. A stranger cannot reach this line with somebody else's
-    // address, which is exactly what makes the wide 24-hour block safe here.
-    recordUnderageAttempt(user.email, req.ip, Date.now(), { addressProved: true });
+    // PROVED (R5-H1) only when the ROW proved its address. This runs after
+    // /login has checked the password, or after a provider token verified for
+    // this row, so the caller holds the account; but a password account that
+    // never confirmed its address holds a string somebody typed at signup.
+    // Treating that as proved (it was, until 2026-11-19) let a stranger sign up
+    // with a victim's address from the app (no date asked), sign in with their
+    // own password and an under-13 date, and put the wide 24-hour block on the
+    // victim's Google and Apple signups. An unconfirmed row now takes the
+    // narrow address-plus-IP key, as an asserted address does everywhere else.
+    // email_verified is NOT NULL; anything but a literal false is verified
+    // (rows from before migration 011 were grandfathered TRUE), as in
+    // claimDecision.
+    recordUnderageAttempt(user.email, req.ip, Date.now(), { addressProved: user.email_verified !== false });
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
@@ -4088,6 +4095,11 @@ router.post('/apple', [
     // Set when an address-holding row is found that is NOT claimable, so the
     // creation path below knows it has to release the address first.
     let existingByEmail = null;
+    // Set by the claim below, which exchanges the one-use authorization code
+    // before it writes; the exchange for existing accounts further down then
+    // stores this token instead of spending the code a second time.
+    let claimExchanged = false;
+    let claimRefreshToken = null;
 
     if (!user && email) {
       // SECURITY (audit 2026-08-12, revised round 8): same verified-email
@@ -4125,6 +4137,28 @@ router.post('/apple', [
           // The age gate before the handover, as at the Google claim above: a
           // sign-in it refuses must not have converted the account first.
           if (!(await enforceDobOnLogin(existingByEmail, req, res))) return;
+          // The code exchange before the handover too, for the reason the
+          // creation path gives below: it refuses with a 503 when Apple's token
+          // endpoint fails or returns no refresh token, and a 503 after the
+          // claim left the owner signed out of an account whose password had
+          // just been cleared. The token is stored once the claim has landed.
+          if (authorizationCode) {
+            const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
+            try {
+              const tokens = await exchangeAppleCode(authorizationCode, appleRefreshClientId || undefined);
+              if (tokens?.refresh_token) {
+                claimRefreshToken = tokens.refresh_token;
+              } else if (appleConfigured()) {
+                return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+              }
+            } catch (e) {
+              console.error('Apple code exchange error:', e.message);
+              if (appleConfigured()) {
+                return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+              }
+            }
+            claimExchanged = true;
+          }
           // Round 13: same session handover as the Google claim — bump
           // token_version so any JWT the squatter still holds dies immediately.
           // ROUND 25 (R5-H3): and the same three payment-handle columns, for the
@@ -4323,7 +4357,10 @@ router.post('/apple', [
     if (authorizationCode && !createdNow) {
       const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
       try {
-        const tokens = await exchangeAppleCode(authorizationCode, appleRefreshClientId || undefined);
+        // A claimed row's code was exchanged before the claim (see there).
+        const tokens = claimExchanged
+          ? { refresh_token: claimRefreshToken }
+          : await exchangeAppleCode(authorizationCode, appleRefreshClientId || undefined);
         if (tokens?.refresh_token) {
           // The token and the client it belongs to move together: an account
           // that signed in on the website and then on the iPhone now holds the

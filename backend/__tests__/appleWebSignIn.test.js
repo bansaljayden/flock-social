@@ -63,7 +63,7 @@ require.cache[jwksPath] = {
 
 // Apple's token endpoint, as the route sees it: which client each code was
 // exchanged as, and a refresh token named after the code.
-const apple = { configured: false, exchanges: [] };
+const apple = { configured: false, exchanges: [], failExchange: false };
 const appleAuthPath = require.resolve('../services/appleAuth');
 require.cache[appleAuthPath] = {
   id: appleAuthPath, filename: appleAuthPath, loaded: true,
@@ -71,6 +71,7 @@ require.cache[appleAuthPath] = {
     isConfigured: () => apple.configured,
     exchangeAppleCode: async (code, clientId) => {
       apple.exchanges.push({ code, clientId });
+      if (apple.failExchange) throw new Error('invalid_grant');
       return { refresh_token: `rt-${code}` };
     },
     revokeAppleToken: async () => true,
@@ -139,6 +140,16 @@ pool.query = async (text, params = []) => {
     });
     users.push(row);
     return { rows: [row], rowCount: 1 };
+  }
+  // The verified-email claim of a password row (routes/auth.js, Apple branch).
+  if (sql.startsWith("UPDATE users SET oauth_provider = 'apple', oauth_id = $1, password = NULL")) {
+    const row = users.find((u) => u.id === params[1]);
+    if (!row) return { rows: [], rowCount: 0 };
+    Object.assign(row, {
+      oauth_provider: 'apple', oauth_id: params[0], password: null, email_verified: true,
+      verified_email: row.email, token_version: row.token_version + 1,
+    });
+    return { rows: [{ ...row }], rowCount: 1 };
   }
   if (sql.startsWith('UPDATE users SET apple_refresh_token')) {
     const row = users.find((u) => u.id === params[1]);
@@ -231,6 +242,7 @@ function reset() {
   nextUserId = 1;
   apple.configured = false;
   apple.exchanges = [];
+  apple.failExchange = false;
   clearUnderageAttempts();
 }
 
@@ -409,6 +421,42 @@ test('a new account from the app keeps the app as its client: no year, and no cl
   assert.strictEqual(users[0].apple_refresh_token, 'rt-code-app-1');
   assert.strictEqual(users[0].apple_refresh_client_id, null, 'NULL is the app');
   assert.strictEqual(users[0].date_of_birth, null);
+});
+
+// ===========================================================================
+// Taking over a password account with the same address
+// ===========================================================================
+// The claim clears the password and ends every session, so nothing that can
+// still refuse the sign-in may run after it. The code exchange can: it answers
+// 503 when Apple's token endpoint fails (2026-11-19).
+test('a failed code exchange leaves the password account as it was, and a retry claims it once', async () => {
+  reset();
+  apple.configured = true;
+  users.push({
+    id: nextUserId++, email: 'pat@icloud.com', name: 'Pat', password: 'bcrypt-hash', token_version: 0,
+    is_banned: false, oauth_provider: null, oauth_id: null, date_of_birth: '2001-12-31', role: 'user',
+    email_verified: true, verified_email: 'pat@icloud.com', apple_refresh_token: null, apple_refresh_client_id: null,
+  });
+  const row = users[0];
+  const token = () => appleIdentityToken({ sub: 'apple-pat', email: 'pat@icloud.com', aud: APP_CLIENT });
+
+  apple.failExchange = true;
+  const failed = await fromApp({ identityToken: token(), authorizationCode: 'code-p1' });
+  assert.strictEqual(failed.status, 503, JSON.stringify(failed.json));
+  assert.strictEqual(row.password, 'bcrypt-hash');
+  assert.strictEqual(row.oauth_provider, null);
+  assert.strictEqual(row.token_version, 0);
+
+  apple.failExchange = false;
+  const signedIn = await fromApp({ identityToken: token(), authorizationCode: 'code-p2' });
+  assert.strictEqual(signedIn.status, 200, JSON.stringify(signedIn.json));
+  assert.strictEqual(signedIn.json.user.id, row.id);
+  assert.strictEqual(row.oauth_provider, 'apple');
+  assert.strictEqual(row.password, null);
+  assert.strictEqual(row.apple_refresh_token, 'rt-code-p2');
+  assert.strictEqual(row.apple_refresh_client_id, null, 'NULL is the app');
+  assert.deepStrictEqual(apple.exchanges.map((e) => e.code), ['code-p1', 'code-p2'],
+    'each one-use code is exchanged once');
 });
 
 // ===========================================================================

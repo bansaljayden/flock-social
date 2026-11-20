@@ -550,6 +550,32 @@ test('a legacy under-13 reveal also locks fresh account creation from the same p
   assert.strictEqual(users.length, 1, 'only the frozen legacy row may exist');
 });
 
+// 2026-11-19. The freeze records the address at full strength because a sign-in
+// proved it. A password account that never confirmed its address proves only
+// that somebody typed it at signup, and the iPhone app asks no date, so a
+// stranger could sign up with a victim's address, sign in with their own
+// password and an under-13 date, and deny the victim's Google and Apple signups
+// for a day from any network.
+test('a sign-in to an account that never confirmed its address cannot block that address everywhere', async () => {
+  reset();
+  const squat = mkPasswordUser('victim@example.com');
+  squat.email_verified = false;
+  squat.verified_email = null;
+  const res = await post('/api/auth/login', {
+    email: 'victim@example.com', password: 'Password1', date_of_birth: CHILD_DOB,
+  });
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(squat.date_of_birth, CHILD_DOB, 'the account itself is still frozen');
+  assert.strictEqual(underageBlocked('victim@example.com', '203.0.113.50'), false,
+    'the address is not blocked from a network the caller was never on');
+
+  reset();
+  mkPasswordUser('owner@example.com');
+  await post('/api/auth/login', { email: 'owner@example.com', password: 'Password1', date_of_birth: CHILD_DOB });
+  assert.strictEqual(underageBlocked('owner@example.com', '203.0.113.50'), true,
+    'a confirmed address keeps the full-strength block');
+});
+
 test('a stored under-13 DOB refuses sign-in even when the request says nothing about age', async () => {
   reset();
   mkPasswordUser('frozen@example.com', CHILD_DOB);
