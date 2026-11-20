@@ -3055,40 +3055,58 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
 # constant-slot check) and, by name, only the columns below: the cell fits, the
 # label and weight steps, and the keys both pickles carry. Everything else is
 # spent: the raw strings the one-hot families were built from (three Google
-# types, weather, season, event types), coordinates and intermediates. On the
-# 2026-10-08 export they were about a third of the training frame, and the two
-# frames are most of this script's peak. A whole-number feature column is only
-# ever read as a float32 in X, so it is held in the smallest integer type that
-# holds its values: the 0/1 one-hot columns take a byte a row, not eight. A step
-# added later that reads a dropped column by name stops with a KeyError; name
-# the column here.
+# types, weather, season, event types), coordinates and intermediates. A
+# whole-number feature column is only ever read as a float32 in X, so it is held
+# in the smallest integer type that holds its values: the 0/1 one-hot columns
+# take a byte a row, not eight. On the 2026-10-08 export this, with
+# feature_matrix, took the script's peak from 8.1 GB to 5.1 GB, and both pickles
+# are byte-identical to the previous code's. The strings, most of what is
+# dropped, each sit in their own block and are freed at once; a dropped or
+# narrowed number that shares a block with a kept column stays allocated until
+# the frame is next copied (the training frame, at the serving-population
+# filter; the smaller holdout frame, not before the end). A step added later that reads
+# a dropped column by name stops with a KeyError; name the column here.
 CARRIED_AFTER_FEATURES = frozenset(_CELL_FIT_COLS + [
     LEAVE_OUT_COL, 'baseline_busyness', 'is_realtime', 'label_provenance', 'label_source',
     'vendor_forecast_pct', 'events_observed', 'observed_date', 'weather_observed', 'venue_id',
 ])
 
 
+def _plain_numeric(dtypes) -> bool:
+    """Every dtype a NumPy signed integer or float64: what this script's features are."""
+    return all(isinstance(d, np.dtype) and (d.kind == 'i' or d == np.float64) for d in dtypes)
+
+
 def finish_frame(df: pd.DataFrame) -> pd.DataFrame:
     """Drop the columns no later step reads and narrow whole-number features."""
-    features = set(get_feature_columns(df))
-    spent = [c for c in df.columns if c not in features and c not in CARRIED_AFTER_FEATURES]
+    features = get_feature_columns(df)
+    spent = [c for c in df.columns if c not in set(features) and c not in CARRIED_AFTER_FEATURES]
     df = df.drop(columns=spent)
-    for c in df.columns:
-        if c in features and c not in CARRIED_AFTER_FEATURES and df[c].dtype == np.int64:
-            df[c] = pd.to_numeric(df[c], downcast='integer')
+    if _plain_numeric([df[c].dtype for c in features]):
+        for c in features:
+            if c not in CARRIED_AFTER_FEATURES and df[c].dtype == np.int64:
+                df[c] = pd.to_numeric(df[c], downcast='integer')
     return df
 
 
 def feature_matrix(df: pd.DataFrame, feature_cols: List[str]) -> np.ndarray:
     """`df[feature_cols].values.astype(np.float32)`, filled one column at a time.
 
-    The one-line form first interleaves every column into a float64 matrix
-    twice the size of the result. Same values (each column goes to float64,
-    then float32, as it did) and the same column-major layout.
+    The one-line form first interleaves every column into one matrix of their
+    common type (float64 whenever a float column is present) twice the size of
+    the result. Each column takes the same route here: through float64 when the
+    selection holds a float column, else through int64 (narrowing never changes
+    which), so the values and the column-major layout are the same. Any other
+    mix (bool, nullable, unsigned or narrower float columns) takes the one-line
+    form itself, and finish_frame leaves such a frame's integers unnarrowed.
     """
+    dtypes = [df[c].dtype for c in feature_cols]
+    if not dtypes or not _plain_numeric(dtypes):
+        return df[feature_cols].values.astype(np.float32)
+    via = np.float64 if any(d.kind == 'f' for d in dtypes) else np.int64
     X = np.empty((len(df), len(feature_cols)), dtype=np.float32, order='F')
     for j, c in enumerate(feature_cols):
-        X[:, j] = df[c].to_numpy(dtype=np.float64)
+        X[:, j] = df[c].to_numpy(dtype=via)
     return X
 
 

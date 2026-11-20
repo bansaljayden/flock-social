@@ -118,6 +118,32 @@ def test_feature_matrix_is_the_one_line_form_byte_for_byte():
     assert after[0, cols.index('big_whole_number_feature')] == np.float32(16_777_216)
 
 
+def test_an_integer_only_selection_rounds_once_as_the_one_line_form_does():
+    # With no float column the one-line form interleaves to int64 and rounds
+    # each value to float32 once; through float64 this value would round twice.
+    big = 2 ** 54 + 2 ** 30 + 1
+    df = pd.DataFrame({'gtype_bar': [0, 1, 1], 'big_whole_number_feature': [big, 3, big + 7]})
+    cols = ['big_whole_number_feature', 'gtype_bar']
+    before = df[cols].values.astype(np.float32)
+    after = feature_matrix(finish_frame(df), cols)
+    assert pickle.dumps(after) == pickle.dumps(before)
+    assert after[0, 0] == np.float32(np.int64(big)), after[0, 0]
+
+
+def test_a_frame_with_any_other_dtype_is_left_unnarrowed_and_takes_the_one_line_form():
+    for odd in (np.array([1.5, 2.5, 3.5], dtype=np.float32), np.array([True, False, True]),
+                pd.array([1, 2, 3], dtype='Int64'), np.array([1, 2, 3], dtype=np.uint16)):
+        df = pd.DataFrame({'gtype_bar': [0, 1, 1], 'big_whole_number_feature': [2 ** 40 + 1, 3, 9],
+                           'odd_feature': odd})
+        cols = get_feature_columns(df)
+        out = finish_frame(df)
+        assert out['gtype_bar'].dtype == np.int64, odd.dtype
+        before = df[cols].values.astype(np.float32)
+        after = feature_matrix(out, cols)
+        assert after.dtype == np.float32 and np.array_equal(after, before), odd.dtype
+        assert after.flags.f_contiguous == before.flags.f_contiguous, odd.dtype
+
+
 def _same(a, b, path='') -> None:
     if isinstance(a, dict):
         assert isinstance(b, dict) and set(a) == set(b), path
