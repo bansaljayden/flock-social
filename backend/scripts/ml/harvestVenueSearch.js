@@ -237,15 +237,18 @@ function readSearchVenue(line, info) {
 //     of three or more, the rest are in alphabetical order), so it decides
 //     when it names a category: a McDonald's that also lists coffee_shop is
 //     fast food, a casino with a bar a casino, and a restaurant, or any
-//     cuisine's ('french_restaurant'), a restaurant, though it lists a bar or
-//     a dessert shop (a Chili's, a Cheesecake Factory). One exception keeps
-//     the map's ranking, which puts night_club first: a bar or pub that also
-//     lists night_club is a nightclub. A BEER venue's first type is passed
-//     over when it is one of NOT_FOR_BEER;
+//     cuisine's ('french_restaurant'; 'dessert_restaurant' is dessert), a
+//     restaurant, whatever else it lists (a Chili's that lists a bar, a
+//     Cheesecake Factory a dessert shop, a brewpub restaurant a brewery). One
+//     exception, deliberately the only one, keeps the map's ranking, which
+//     puts night_club first: a bar or pub that also lists night_club is a
+//     nightclub. A BEER venue's first type is passed over when it is one of
+//     NOT_FOR_BEER;
 //   * otherwise the map's own order over all of them.
 // Against the map's order alone, the second and third rules give 46 of that
-// run's venues a different category: 28 become restaurants, 8 BEER 'cafes'
-// bars and 3 McDonald's fast food.
+// run's venues a different category (28 become restaurants, 8 BEER 'cafes'
+// bars and 3 McDonald's fast food), and file 21 more, all restaurants of a
+// cuisine, that the map names nothing for.
 // Any other BestTime type stays with TYPE_TO_CATEGORY alone.
 const TYPES_FILED_BY_GOOGLE_TYPES = new Set(['BEER', 'OTHER']);
 const SHOP_OR_STADIUM_TYPES = new Set([
@@ -263,8 +266,10 @@ function searchCategory(v) {
   const beer = v.type === 'BEER';
   const types = beer ? v.googleTypes.filter((t) => !NOT_FOR_BEER.has(t)) : v.googleTypes;
   const first = v.googleTypes[0];
-  if (first !== undefined && !(beer && NOT_FOR_BEER.has(first))) {
-    const primary = exactCategoryFor([first]) || (first.endsWith('_restaurant') ? 'restaurant' : null);
+  if (typeof first === 'string' && !(beer && NOT_FOR_BEER.has(first))) {
+    const primary = exactCategoryFor([first])
+      || (first === 'dessert_restaurant' ? 'dessert' : null)
+      || (first.endsWith('_restaurant') ? 'restaurant' : null);
     if (primary === 'bar' && v.googleTypes.includes('night_club')) return 'nightclub';
     if (primary) return primary;
   }

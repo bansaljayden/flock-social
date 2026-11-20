@@ -99,6 +99,8 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   assert.strictEqual(cat('OTHER', ['american_restaurant', 'bar', 'dessert_shop']), 'restaurant', 'a Chili\'s');
   assert.strictEqual(cat('BEER', ['french_restaurant', 'pub']), 'restaurant');
   assert.strictEqual(cat('OTHER', ['american_restaurant']), 'restaurant');
+  assert.strictEqual(cat('OTHER', ['dessert_restaurant', 'bakery']), 'dessert');
+  assert.strictEqual(cat('OTHER', ['restaurant', 'brewery', 'brewpub']), 'restaurant', 'the primary decides');
   // A bar or pub first that also lists night_club keeps the map's ranking.
   assert.strictEqual(cat('OTHER', ['bar', 'cocktail_bar', 'night_club']), 'nightclub');
   assert.strictEqual(cat('BEER', ['pub', 'night_club']), 'nightclub');
@@ -112,6 +114,7 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   assert.strictEqual(cat('BEER', ['beer_hall', 'bar', 'beer_store', 'coffee_shop']), 'bar');
   assert.strictEqual(cat('BEER', ['cafe', 'bar']), 'bar');
   assert.strictEqual(cat('BEER', ['coffee_shop', 'bar', 'night_club']), 'nightclub');
+  assert.strictEqual(cat('BEER', ['coffee_shop', 'bar', 'brewery']), 'brewery', 'not bar, as if bar were the primary');
   assert.strictEqual(cat('OTHER', ['cafe', 'pub']), 'cafe');
   assert.strictEqual(cat('OTHER', ['irish_pub', 'cafe', 'pub']), 'cafe');
   for (const [type, googleTypes] of [
@@ -140,6 +143,8 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
     ['__proto__', []],
     ['OTHER', 'bar'],
     ['OTHER', undefined],
+    ['OTHER', [7]],
+    ['OTHER', [null, 'bar_and_grill']],
   ]) {
     assert.strictEqual(cat(type, googleTypes), undefined, `${type} ${googleTypes}`);
   }
