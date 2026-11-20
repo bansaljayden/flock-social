@@ -3062,9 +3062,10 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
 # feature_matrix, took the script's peak from 8.1 GB to 5.1 GB, and both pickles
 # are byte-identical to the previous code's. The strings, most of what is
 # dropped, each sit in their own block and are freed at once; a dropped or
-# narrowed number that shares a block with a kept column stays allocated until
-# the frame is next copied (the training frame, at the serving-population
-# filter; the smaller holdout frame, not before the end). A step added later that reads
+# narrowed number that shares a block with a kept column can stay allocated
+# until the frame is next copied (drop() itself copies a block whose kept
+# columns are not one run; the training frame is copied at the serving-population
+# filter, the holdout whenever a row is excluded). A step added later that reads
 # a dropped column by name stops with a KeyError; name the column here.
 CARRIED_AFTER_FEATURES = frozenset(_CELL_FIT_COLS + [
     LEAVE_OUT_COL, 'baseline_busyness', 'is_realtime', 'label_provenance', 'label_source',
