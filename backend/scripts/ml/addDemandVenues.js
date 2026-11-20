@@ -398,7 +398,7 @@ async function main() {
 
 module.exports = {
   PA_CITIES, MAX_KM, kmBetween, nearestMarket, nearestPaCity,
-  MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport, exactCategoryFor,
+  MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport, exactCategoryFor, categoryFor,
 };
 
 // Only when run directly. The market rule above is required by

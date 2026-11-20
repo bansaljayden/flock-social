@@ -201,9 +201,11 @@ function readSearchVenue(line, info) {
     lng: coordinate(line.lng),
     type: info && typeof info.venue_type === 'string' ? info.venue_type.toUpperCase() : null,
     // The finer Google-style types BestTime lists beside its own ('pub',
-    // 'sports_bar', ...), lower-cased: a few arrive as 'Bar'.
+    // 'sports_bar', ...), primary first, in their coded form: some arrive as
+    // labels ('Bar', 'Fast food restaurant', 'Gas station').
     googleTypes: info && Array.isArray(info.venue_types)
-      ? info.venue_types.filter((t) => typeof t === 'string').map((t) => t.trim().toLowerCase())
+      ? info.venue_types.filter((t) => typeof t === 'string')
+        .map((t) => t.trim().toLowerCase().replace(/\s+/g, '_')).filter(Boolean)
       : [],
     rating: Number.isFinite(rating) && rating > 0 && rating <= 5 ? rating : null,
     reviews: Number.isInteger(reviews) && reviews > 0 ? reviews : null,
@@ -215,27 +217,47 @@ function readSearchVenue(line, info) {
 // BestTime types whose venues are filed by their Google types. BEER holds pubs,
 // sports bars and beer halls beside beer shops, and OTHER names nothing. Of the
 // 2026-11-20 run's 2,007 venues the corpus did not hold, 449 were BEER and 393
-// OTHER; the Google types beside them named a category for 379 and 287 (bar
-// 474, cafe 58, restaurant 39, brewery 34, nightclub 34, the rest fast food,
-// museum and four more). They go through addDemandVenues' map, the one every
-// venue added from the app's own searches is filed by, exact matches only and
-// with no restaurant default, so a beer shop (liquor_store) or a venue typed
-// only 'irish_pub' or 'cocktail_bar' is still skipped. Any other type stays
-// with TYPE_TO_CATEGORY alone, and a BEER or OTHER venue that is also a shop or
-// a stadium (SHOP_OR_STADIUM_TYPES) is skipped: a supermarket that lists a cafe
-// is not a cafe (on that run 4 listed supermarket, 3 grocery_store, 3
-// convenience_store and 2 gas_station).
+// OTHER; the rule below files 379 and 288 of them (bar 495, cafe 47, restaurant
+// 40, brewery 31, nightclub 23, fast food 13, museum 10, and 8 malls, dessert
+// shops and entertainment venues between them). Only addDemandVenues' map
+// names a category, the one every venue added from the app's own searches is
+// filed by, exact matches only and with no restaurant default, so a beer shop
+// (liquor_store) or a venue typed only 'irish_pub' or 'cocktail_bar' is still
+// skipped. In order:
+//   * a venue that is also a shop, a shopping centre or a stadium
+//     (SHOP_OR_STADIUM_TYPES) is skipped: a supermarket that lists a cafe is
+//     not a cafe, nor a shopping centre with a cinema a cinema (on that run it
+//     skipped venues the rest of the rule would have filed: 4 listing
+//     supermarket, 3 grocery_store, 3 convenience_store, 2 gas_station, 2
+//     shopping_center and 1 outlet_mall);
+//   * a BEER venue is never a cafe or a sweet shop (NOT_FOR_BEER): on that run
+//     every BEER venue the map filed as a cafe was a pub or a taproom that
+//     also listed one ('The Beer Café', a pub with a coffee_shop type);
+//   * the first type is Google's primary one (in 425 of that run's 429 lists
+//     of three or more, the rest are in alphabetical order), so it decides
+//     when the map names it, unless it is the generic 'restaurant': a
+//     McDonald's that also lists coffee_shop is fast food, a casino with a bar
+//     a casino;
+//   * otherwise the map's own order over all of them.
+// Against the map's order alone, the second and third rules give 30 of that
+// run's venues a different category, the 9 BEER cafes among them.
+// Any other BestTime type stays with TYPE_TO_CATEGORY alone.
 const TYPES_FILED_BY_GOOGLE_TYPES = new Set(['BEER', 'OTHER']);
-const SHOP_OR_STADIUM_TYPES = new Set(['supermarket', 'grocery_store', 'convenience_store', 'gas_station', 'stadium', 'arena']);
+const SHOP_OR_STADIUM_TYPES = new Set([
+  'supermarket', 'grocery_store', 'convenience_store', 'gas_station', 'shopping_center', 'outlet_mall', 'stadium', 'arena',
+]);
+const NOT_FOR_BEER = new Set(['cafe', 'coffee_shop', 'bakery', 'ice_cream_shop', 'dessert_shop']);
+const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 // A new venue's category for planVenues: the BestTime type's, or for BEER and
 // OTHER the Google types', or undefined (skipped as unmappedType).
 function searchCategory(v) {
-  const byType = v.type ? h.TYPE_TO_CATEGORY[v.type] : undefined;
-  if (byType) return byType;
-  if (!TYPES_FILED_BY_GOOGLE_TYPES.has(v.type)) return undefined;
-  if ((v.googleTypes || []).some((t) => SHOP_OR_STADIUM_TYPES.has(t))) return undefined;
-  return exactCategoryFor(v.googleTypes) || undefined;
+  if (typeof v.type === 'string' && own(h.TYPE_TO_CATEGORY, v.type)) return h.TYPE_TO_CATEGORY[v.type];
+  if (!TYPES_FILED_BY_GOOGLE_TYPES.has(v.type) || !Array.isArray(v.googleTypes)) return undefined;
+  if (v.googleTypes.some((t) => SHOP_OR_STADIUM_TYPES.has(t))) return undefined;
+  const types = v.type === 'BEER' ? v.googleTypes.filter((t) => !NOT_FOR_BEER.has(t)) : v.googleTypes;
+  const primary = types.length > 0 && types[0] !== 'restaurant' ? exactCategoryFor([types[0]]) : null;
+  return primary || exactCategoryFor(types) || undefined;
 }
 
 function readJsonl(file) {
@@ -414,7 +436,8 @@ async function main(argv = process.argv, deps = {}) {
 
 module.exports = {
   main, harvestSearch, parseArgs, decodeBestTimeId, placeIdFromBestTimeId, readSearchVenue, loadSearchDir, loadReferenceWeeks,
-  SEARCH_RUNS_BEGAN, FILTER_HARVEST_STATUSES, TYPES_FILED_BY_GOOGLE_TYPES, SHOP_OR_STADIUM_TYPES, searchCategory,
+  SEARCH_RUNS_BEGAN, FILTER_HARVEST_STATUSES, TYPES_FILED_BY_GOOGLE_TYPES, SHOP_OR_STADIUM_TYPES, NOT_FOR_BEER,
+  searchCategory,
 };
 
 if (require.main === module) {

@@ -8,8 +8,9 @@
 //     whole days, and takes its type, rating and reviews from the info line;
 //   - the planner keeps known venues out, places venues by market, and skips a
 //     new venue whose type maps to no category; a BEER or OTHER venue takes
-//     its category from its Google types, exact matches only, and no other
-//     type does;
+//     its category from its Google types (exact matches, the primary type
+//     first, never a shop's or a stadium's, a BEER venue never a cafe), and no
+//     other type does;
 //   - a dry run proves the axis on the known venues and plans the new ones; a
 //     --commit whose axis proof fails writes nothing;
 //   - the proof's reference is only rows no search produced: forecast-stamped
@@ -75,8 +76,9 @@ test('a search line becomes the planner\'s venue shape, with seven whole days on
   assert.strictEqual(noInfo.type, null);
   assert.deepStrictEqual(noInfo.googleTypes, []);
   assert.strictEqual(s.readSearchVenue(line, { rating: 9, reviews: -2 }).rating, null);
-  assert.deepStrictEqual(s.readSearchVenue(line, { venue_type: 'BEER', venue_types: [' Bar ', 7, null, 'irish_pub'] }).googleTypes,
-    ['bar', 'irish_pub']);
+  assert.deepStrictEqual(s.readSearchVenue(line, {
+    venue_type: 'BEER', venue_types: [' Bar ', 7, null, 'irish_pub', 'Fast food  restaurant', ' '],
+  }).googleTypes, ['bar', 'irish_pub', 'fast_food_restaurant'], 'labels take the coded form; blanks drop');
   assert.deepStrictEqual(s.readSearchVenue(line, { venue_types: 'bar' }).googleTypes, [], 'a string is not a list');
 });
 
@@ -84,31 +86,68 @@ test('a BEER or OTHER venue is filed by its Google types, exact matches only; no
   const cat = (type, googleTypes) => s.searchCategory({ type, googleTypes });
   assert.strictEqual(cat('BAR', []), 'bar', 'a mapped BestTime type decides alone');
   assert.strictEqual(cat('BAR', ['cafe']), 'bar');
-  assert.strictEqual(cat('BEER', ['sports_bar', 'bar', 'restaurant']), 'bar');
+  assert.strictEqual(cat('BEER', ['sports_bar', 'bar', 'restaurant']), 'bar', 'an unmapped primary: the map\'s order');
   assert.strictEqual(cat('BEER', ['pub']), 'bar');
-  assert.strictEqual(cat('BEER', ['brewery', 'bar']), 'brewery', 'addDemandVenues\' order: brewery before bar');
-  assert.strictEqual(cat('OTHER', ['restaurant', 'coffee_shop']), 'cafe');
+  // The primary (first) type decides when the map names it.
+  assert.strictEqual(cat('BEER', ['brewery', 'bar']), 'brewery');
+  assert.strictEqual(cat('BEER', ['bar', 'brewery']), 'bar');
+  assert.strictEqual(cat('OTHER', ['fast_food_restaurant', 'coffee_shop']), 'fast_food', 'a McDonald\'s is not a cafe');
+  assert.strictEqual(cat('OTHER', ['casino', 'bar']), 'entertainment');
   assert.strictEqual(cat('OTHER', ['night_club', 'bar']), 'nightclub');
+  // ...unless it is the generic 'restaurant', or unmapped: then the map's order.
+  assert.strictEqual(cat('OTHER', ['restaurant', 'coffee_shop']), 'cafe');
+  assert.strictEqual(cat('OTHER', ['irish_pub', 'brewery', 'bar']), 'brewery');
+  // A BEER venue is never a cafe or a sweet shop; any other venue can be.
+  assert.strictEqual(cat('BEER', ['irish_pub', 'cafe', 'pub']), 'bar');
+  assert.strictEqual(cat('BEER', ['beer_hall', 'bar', 'beer_store', 'coffee_shop']), 'bar');
+  assert.strictEqual(cat('BEER', ['cafe', 'bar']), 'bar');
+  assert.strictEqual(cat('OTHER', ['cafe', 'pub']), 'cafe');
+  assert.strictEqual(cat('OTHER', ['irish_pub', 'cafe', 'pub']), 'cafe');
   for (const [type, googleTypes] of [
     ['BEER', ['liquor_store', 'store']], // a beer shop
     ['BEER', ['irish_pub']], // no exact match, and no default
+    ['BEER', ['cafe']],
+    ['BEER', ['bakery', 'ice_cream_shop', 'dessert_shop', 'coffee_shop']],
     ['OTHER', ['cocktail_bar', 'lounge']],
     ['OTHER', []],
-    ['OTHER', ['supermarket', 'cafe']], // a shop's crowd, whatever counter it keeps
+    // A shop's crowd, a shopping centre's or a stadium's, whatever counter it keeps.
+    ['OTHER', ['supermarket', 'cafe']],
+    ['OTHER', ['grocery_store', 'bar']],
+    ['OTHER', ['convenience_store', 'cafe']],
     ['OTHER', ['coffee_shop', 'gas_station']],
+    ['OTHER', ['shopping_center', 'movie_theater', 'restaurant']],
+    ['OTHER', ['outlet_mall', 'restaurant']],
     ['BEER', ['bar', 'stadium']],
-    ['GROCERY', ['supermarket', 'cafe']], // only BEER and OTHER look past their type
-    ['SPORTS_COMPLEX', ['stadium', 'bar']],
+    ['BEER', ['arena', 'pub']],
+    // Only BEER and OTHER look past their type.
+    ['GROCERY', ['cafe']],
+    ['SPORTS_COMPLEX', ['bar']],
+    ['WINERY', ['bar']],
     [null, ['bar']],
+    // Shapes readSearchVenue never makes.
+    ['constructor', ['bar']],
+    ['__proto__', []],
+    ['OTHER', 'bar'],
+    ['OTHER', undefined],
   ]) {
     assert.strictEqual(cat(type, googleTypes), undefined, `${type} ${googleTypes}`);
   }
   assert.deepStrictEqual([...s.TYPES_FILED_BY_GOOGLE_TYPES], ['BEER', 'OTHER']);
-  assert.strictEqual(cat('OTHER', undefined), undefined, 'a venue shape with no type list');
-  const { exactCategoryFor } = require('../scripts/ml/addDemandVenues');
+  assert.deepStrictEqual([...s.SHOP_OR_STADIUM_TYPES].sort(), ['arena', 'convenience_store', 'gas_station',
+    'grocery_store', 'outlet_mall', 'shopping_center', 'stadium', 'supermarket']);
+  assert.deepStrictEqual([...s.NOT_FOR_BEER].sort(), ['bakery', 'cafe', 'coffee_shop', 'dessert_shop', 'ice_cream_shop']);
+  // Through readSearchVenue, labels are read in their coded form.
+  const line = { venue_id: btIdOf(placeId(4)), name: 'Four', lat: 39.96, lng: -75.15, days: week(4) };
+  const viaInfo = (venue_type, venue_types) => s.searchCategory(s.readSearchVenue(line, { venue_type, venue_types }));
+  assert.strictEqual(viaInfo('OTHER', ['Fast food restaurant']), 'fast_food');
+  assert.strictEqual(viaInfo('OTHER', ['Gas station', 'Restaurant']), undefined, 'the guard reads labels too');
+  const { exactCategoryFor, categoryFor } = require('../scripts/ml/addDemandVenues');
   assert.strictEqual(exactCategoryFor(['restaurant', 'bar']), 'bar');
   assert.strictEqual(exactCategoryFor(['establishment']), null);
   assert.strictEqual(exactCategoryFor(undefined), null);
+  // addDemandVenues' own rule keeps its restaurant default.
+  assert.strictEqual(categoryFor(['establishment']), 'restaurant');
+  assert.strictEqual(categoryFor(['bar', 'restaurant']), 'bar');
 });
 
 function writeDir(lines, info) {
@@ -433,11 +472,16 @@ test('a new BEER venue whose Google types name a pub is written as a bar, and a 
   assert.ok(writes.venues.every((v) => v.venue_category === 'bar' && v.besttime_status === h.HARVEST_STATUS));
   assert.strictEqual(summary.rowsWritten, 3 * 168);
   // The filter harvest's own rule is unchanged: planned without searchCategory,
-  // the same venues are all skipped as unmapped.
+  // the same venues are all skipped as unmapped, as BEER or as OTHER.
   const { venues } = s.loadSearchDir(dir);
-  const { plan, skipped } = h.planVenues(venues, { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, [...h.ALL_CITIES]);
-  assert.strictEqual(plan.filter((p) => p.kind === 'new' && /^Fresh Place/.test(p.venue.name)).length, 0);
-  assert.ok(skipped.unmappedType >= 5);
+  const fresh = venues.filter((v) => /^Fresh Place/.test(v.name));
+  assert.strictEqual(fresh.length, 5);
+  for (const type of ['BEER', 'OTHER']) {
+    const asType = fresh.map((v) => ({ ...v, type, googleTypes: ['bar'] }));
+    const { plan, skipped } = h.planVenues(asType, { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, [...h.ALL_CITIES]);
+    assert.strictEqual(plan.length, 0, type);
+    assert.strictEqual(skipped.unmappedType, 5, type);
+  }
 });
 
 test('arguments: --dir is required and must hold venues.jsonl', () => {
