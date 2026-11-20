@@ -520,6 +520,20 @@ test('from the app, the same Google sign-in converts the account at once, with n
   assert.strictEqual(row.date_of_birth, null);
 });
 
+test('an under-13 date sent with a website takeover freezes the row and does not convert it', async () => {
+  reset();
+  const row = mkPasswordUser('child@gmail.com');
+  const profile = { sub: 'g-child', email: 'child@gmail.com', email_verified: true, name: 'Child' };
+  const res = await withGoogle(profile, () => fromWeb('/api/auth/google', {
+    access_token: freshToken(), date_of_birth: CHILD_DOB,
+  }));
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.json.error, UNDERAGE_MSG);
+  assert.strictEqual(row.date_of_birth, CHILD_DOB, 'the freeze is written, as it is on every other door');
+  assert.strictEqual(row.oauth_provider, null);
+  assert.strictEqual(row.password, PASSWORD_HASH);
+});
+
 test('an account known to be under 13 is refused without being converted', async () => {
   reset();
   const row = mkPasswordUser('young@gmail.com', CHILD_DOB);

@@ -2139,6 +2139,9 @@ async function enforceDobOnLogin(user, req, res, { persist = true } = {}) {
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
+  // A row the caller does not hold yet: the passing date waits for the call
+  // after the claim (see `persist` above this function).
+  if (!persist) return true;
   // Round 22: guarded on date_of_birth IS NULL. Two concurrent sign-ins can
   // both read the row while its date is NULL; if the other one supplied an
   // under-13 date (persisting the actual knowledge above) and this one
@@ -2148,7 +2151,6 @@ async function enforceDobOnLogin(user, req, res, { persist = true } = {}) {
   // makes the first write win. Losing it means somebody else's date landed
   // between our read and this write, so re-read what landed and hold this
   // sign-in to THAT date, exactly as the freeze at the top would have.
-  if (!persist) return true;
   const persisted = await pool.query(
     'UPDATE users SET date_of_birth = $1 WHERE id = $2 AND date_of_birth IS NULL RETURNING date_of_birth',
     [supplied, user.id]
