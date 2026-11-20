@@ -2385,7 +2385,6 @@ module.exports = {
   // through these same readers, so both paths decide identity the same way.
   loadIdentities,
   loadNearbyRows,
-  loadStoredWeeks,
   TYPE_TO_CATEGORY,
   FILTER_URL,
   HARVEST_STATUS,

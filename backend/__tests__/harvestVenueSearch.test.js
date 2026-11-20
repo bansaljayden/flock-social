@@ -254,13 +254,20 @@ test('the axis is proved against forecast rows only, so search-derived stored ro
   assert.strictEqual(pool.connects, 0);
 });
 
-test('a database without the upsert targets is refused before anything is read or planned', async () => {
+test('a database missing either upsert target is refused before anything is read or planned', async () => {
   const c = corpus();
   const dir = writeDir(c.lines, c.info);
-  const pool = fakePool(c);
-  const inner = pool.query.bind(pool);
-  pool.query = async (sql, params) => (/FROM pg_class c/.test(String(sql)) ? { rows: [] } : inner(sql, params));
-  await assert.rejects(() => quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`], pool })), /does not exist/);
+  const { VENUE_ID_INDEX } = require('../scripts/ml/discoverBestTime');
+  const { WEEKLY_SLOT_INDEX } = require('../scripts/ml/collectWeekly');
+  assert.ok(VENUE_ID_INDEX && WEEKLY_SLOT_INDEX);
+  for (const missing of [VENUE_ID_INDEX, WEEKLY_SLOT_INDEX]) {
+    const pool = fakePool(c);
+    const inner = pool.query.bind(pool);
+    pool.query = async (sql, params) => (/FROM pg_class c/.test(String(sql)) && params[0] === missing
+      ? { rows: [] } : inner(sql, params));
+    await assert.rejects(() => quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`], pool })),
+      new RegExp(`${missing} does not exist`), missing);
+  }
 });
 
 test('a venue with no coordinates is skipped, not placed at 0,0, and an unusable first line does not hide a whole later one', () => {

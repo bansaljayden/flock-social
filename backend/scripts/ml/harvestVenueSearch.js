@@ -50,11 +50,11 @@
 // searches also return venues the corpus holds by BestTime id, and their curves
 // are compared with the weekly rows stored for them at every rotation of the
 // week; a --commit refuses unless the --new-only rule of axisVerdict passes.
-// The reference is ONLY rows collectWeekly wrote from a forecast by id, the one
-// writer that stamps besttime_epoch: discoverBestTime.js once wrote weekly rows
-// from this same search field through this same transform, and a proof against
-// those would compare the search with itself and pass whatever the axis
-// (loadForecastWeeks).
+// The reference is only weekly cells that carry a besttime_epoch, whose values
+// came from a forecast or the filter: discoverBestTime.js once wrote weekly rows
+// from this same search field through this same transform, always unstamped,
+// and a proof against those would compare the search with itself and pass
+// whatever the axis (loadForecastWeeks says why the stamp settles it).
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -115,8 +115,13 @@ async function loadForecastWeeks(pool, rowIds) {
   return out;
 }
 
-// A coordinate, or NaN for an absent one (Number(null) is 0, a real place).
-const coordinate = (x) => (x === null || x === undefined || x === '' ? NaN : Number(x));
+// A coordinate from a number or a numeric string, NaN for anything else
+// (Number(null), Number(' ') and Number([]) are all 0, a real place).
+const coordinate = (x) => {
+  if (typeof x === 'number') return x;
+  if (typeof x === 'string' && x.trim() !== '') return Number(x);
+  return NaN;
+};
 
 function readHours(raw) {
   if (!Array.isArray(raw) || raw.length !== 24) return null;
@@ -181,7 +186,7 @@ function loadSearchDir(dir) {
   const counts = { lines: 0, duplicates: 0, notWholeWeek: 0, withInfo: 0, noPlaceId: 0 };
   for (const line of readJsonl(path.join(dir, 'venues.jsonl'))) {
     counts.lines++;
-    if (seen.has(line.venue_id)) { counts.duplicates++; continue; }
+    if (seen.has(typeof line.venue_id === 'string' ? line.venue_id.trim() : line.venue_id)) { counts.duplicates++; continue; }
     const v = readSearchVenue(line, infoById.get(line.venue_id));
     if (!v) { counts.notWholeWeek++; continue; }
     // Marked only once a line was usable, so a later whole line for a venue
