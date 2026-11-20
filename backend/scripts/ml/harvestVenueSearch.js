@@ -91,8 +91,8 @@ const SEARCH_RUNS_BEGAN = '2026-11-20T02:00:00Z';
 const FILTER_HARVEST_STATUSES = [h.HARVEST_STATUS, 'harvest_measured'];
 // When a pseudo `bt_` venue was last created or updated, whatever did it.
 // discoverBestTime mints those ids and its upsert bumps updated_at on any venue
-// it touches, so a discovery run that reached one is never later than this.
-// NULL when none exist.
+// it touches, so a discovery run that reached one is never later than this
+// (migration 060 also updates them). NULL when none exist.
 const PSEUDO_LAST_SEEN_SQL = `(SELECT GREATEST(MAX(created_at), MAX(updated_at))
      FROM ml_venues WHERE google_place_id LIKE 'bt\\_%' ESCAPE '\\')`;
 
@@ -106,9 +106,11 @@ const PSEUDO_LAST_SEEN_SQL = `(SELECT GREATEST(MAX(created_at), MAX(updated_at))
 //     before the search runs began, never updated since, and after a pseudo
 //     `bt_` venue was last created or touched. Its week came from the venue
 //     filter, and a filter harvest run commits only once its own axis proof
-//     passes (one pooled verdict per run; the first runs were checked against
-//     collectWeekly's Pennsylvania forecasts, 99.9% of cells within five
-//     points on 2026-11-02). This script writes only venues it creates, after
+//     passes (one pooled verdict per run). The filter's axis was first settled
+//     against collectWeekly's forecasts: on the first dry run (philly,
+//     2026-09-28) 216 venues' curves matched their stored forecast rows exactly
+//     on 99.6% of 5,184 cells at rotation 0, r 0.999 (harvestVenueFilter.js,
+//     THE CURVE IS day_raw_whole). This script writes only venues it creates, after
 //     the searches, so it cannot have written one. discoverBestTime upserts
 //     every venue it writes rows for with updated_at = NOW() first, so a venue
 //     it touched fails the second test. Measured 2026-11-20: all 103,065
