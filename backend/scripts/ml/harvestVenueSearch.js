@@ -50,6 +50,11 @@
 // searches also return venues the corpus holds by BestTime id, and their curves
 // are compared with the weekly rows stored for them at every rotation of the
 // week; a --commit refuses unless the --new-only rule of axisVerdict passes.
+// The reference is ONLY rows collectWeekly wrote from a forecast by id, the one
+// writer that stamps besttime_epoch: discoverBestTime.js once wrote weekly rows
+// from this same search field through this same transform, and a proof against
+// those would compare the search with itself and pass whatever the axis
+// (loadForecastWeeks).
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -57,18 +62,61 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 const h = require('./harvestVenueFilter');
+const { requireSlotIndex, HOUR_AXIS_VENUE_LOCAL, WEEKLY_SLOT_INDEX } = require('./collectWeekly');
+const { requireVenueIdIndex } = require('./discoverBestTime');
 const { describeError, describeDbError, safeText } = require('./logSafe');
 
 const TAG = '[ML:SearchHarvest]';
+const WEEK_HOURS = 168;
 
-// "ven_" + hex(place id reversed) -> the place id, or null when the id is not
-// of that form or does not decode to an id of Google's shape.
-function placeIdFromBestTimeId(venueId) {
+// "ven_" + hex(place id reversed) -> the decoded string, or null when the id is
+// not of that form. placeIdFromBestTimeId keeps only a string of Google's shape.
+function decodeBestTimeId(venueId) {
   const m = /^ven_((?:[0-9a-f]{2})+)$/i.exec(String(venueId || ''));
   if (!m) return null;
-  const decoded = Buffer.from(m[1], 'hex').toString('latin1').split('').reverse().join('');
-  return h.isRealGooglePlaceId(decoded) ? decoded : null;
+  return Buffer.from(m[1], 'hex').toString('latin1').split('').reverse().join('');
 }
+
+function placeIdFromBestTimeId(venueId) {
+  const decoded = decodeBestTimeId(venueId);
+  return decoded && h.isRealGooglePlaceId(decoded) ? decoded : null;
+}
+
+// The axis proof's reference: per row, the weekly venue-local cells that carry
+// a besttime_epoch, as weekCurve()s. Why the epoch is the test: collectWeekly
+// stamps it from the forecast it writes; the filter harvest keeps a stamp a row
+// already has and never invents one (WEEKLY_UPSERT_CONFLICT); and
+// discoverBestTime.js, the only writer that took values from the search field,
+// sets it to NULL on every row it writes or overwrites. So a stamped cell's
+// value came from a forecast or from the filter, never from a search. Venues
+// that only the filter or the discovery path ever wrote (most of a harvested
+// city's) have no stamped rows and are left out; the cities the hourly
+// collector forecasts (philly, lehigh and the rest of its scope) hold plenty.
+async function loadForecastWeeks(pool, rowIds) {
+  const out = new Map();
+  if (rowIds.length === 0) return out;
+  const { rows } = await pool.query(
+    `SELECT venue_id, day_of_week, hour, busyness_pct
+       FROM ml_training_data
+      WHERE venue_id = ANY($1::bigint[])
+        AND collection_mode = 'weekly'
+        AND hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'
+        AND besttime_epoch IS NOT NULL
+        AND busyness_pct IS NOT NULL`,
+    [rowIds]
+  );
+  for (const r of rows) {
+    const id = Number(r.venue_id);
+    if (!out.has(id)) out.set(id, new Int16Array(WEEK_HOURS).fill(-1));
+    if (r.day_of_week >= 0 && r.day_of_week <= 6 && r.hour >= 0 && r.hour <= 23) {
+      out.get(id)[r.day_of_week * 24 + r.hour] = Math.max(0, Math.min(100, Math.round(Number(r.busyness_pct))));
+    }
+  }
+  return out;
+}
+
+// A coordinate, or NaN for an absent one (Number(null) is 0, a real place).
+const coordinate = (x) => (x === null || x === undefined || x === '' ? NaN : Number(x));
 
 function readHours(raw) {
   if (!Array.isArray(raw) || raw.length !== 24) return null;
@@ -94,11 +142,13 @@ function readSearchVenue(line, info) {
   return {
     venueId,
     placeId: placeIdFromBestTimeId(venueId),
-    rawPlaceId: null,
+    // What the id decoded to, so the planner counts an id that decodes to no
+    // Google shape as unusable rather than absent.
+    rawPlaceId: decodeBestTimeId(venueId),
     name: typeof line.name === 'string' ? line.name : '',
     address: typeof line.address === 'string' ? line.address : '',
-    lat: Number(line.lat),
-    lng: Number(line.lng),
+    lat: coordinate(line.lat),
+    lng: coordinate(line.lng),
     type: info && typeof info.venue_type === 'string' ? info.venue_type.toUpperCase() : null,
     rating: Number.isFinite(rating) && rating > 0 && rating <= 5 ? rating : null,
     reviews: Number.isInteger(reviews) && reviews > 0 ? reviews : null,
@@ -112,7 +162,9 @@ function readJsonl(file) {
   const out = [];
   for (const text of fs.readFileSync(file, 'utf8').split('\n')) {
     if (!text.trim()) continue;
-    try { out.push(JSON.parse(text)); } catch { /* a line cut by a stop mid-write */ }
+    let value;
+    try { value = JSON.parse(text); } catch { continue; /* a line cut by a stop mid-write */ }
+    if (value && typeof value === 'object' && !Array.isArray(value)) out.push(value);
   }
   return out;
 }
@@ -130,9 +182,11 @@ function loadSearchDir(dir) {
   for (const line of readJsonl(path.join(dir, 'venues.jsonl'))) {
     counts.lines++;
     if (seen.has(line.venue_id)) { counts.duplicates++; continue; }
-    seen.add(line.venue_id);
     const v = readSearchVenue(line, infoById.get(line.venue_id));
     if (!v) { counts.notWholeWeek++; continue; }
+    // Marked only once a line was usable, so a later whole line for a venue
+    // whose first was not is still read.
+    seen.add(v.venueId);
     if (infoById.has(v.venueId)) counts.withInfo++;
     if (!v.placeId) counts.noPlaceId++;
     venues.push(v);
@@ -161,6 +215,11 @@ async function harvestSearch({ argv, pool }) {
     rowsPlanned: 0, venuesWritten: 0, venuesInserted: 0, rowsWritten: 0, rowsInserted: 0,
     vanished: 0, claimed: 0, writeFailures: 0,
   };
+  // The filter harvest's two refusals, first: a database whose upsert targets
+  // are missing cannot take these writes, and a dry run against it would
+  // promise writes it cannot make.
+  await requireVenueIdIndex(pool);
+  await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
   const { venues, counts, infoLines } = loadSearchDir(opts.dir);
   summary.venues = venues.length;
   console.log(`${TAG} ${opts.commit ? 'COMMIT' : 'DRY RUN (nothing is written; --commit writes)'}: ${opts.dir}. `
@@ -188,11 +247,13 @@ async function harvestSearch({ argv, pool }) {
 
   const agree = h.placeIdAgreement(plan);
   console.log(`${TAG} PLACE IDS, venues known by BestTime id: ${agree.same} of ${agree.knownBt} decode to the stored `
-    + `google_place_id; ${agree.differs} to a different real one; ${agree.storedPseudo} are stored under a bt_ pseudo id.`);
+    + `google_place_id; ${agree.differs} to a different real one; ${agree.storedPseudo} are stored under a bt_ pseudo id; `
+    + `${agree.filterUnusable} decode to no Google shape; ${agree.filterNone} are not of the encoded form.`);
 
-  // THE AXIS PROOF, before a single row can be written.
+  // THE AXIS PROOF, before a single row can be written, against forecast rows
+  // only (loadForecastWeeks).
   const knownBt = plan.filter((item) => item.kind === 'known_bt');
-  const stored = await h.loadStoredWeeks(pool, knownBt.map((item) => Number(item.row.id)));
+  const stored = await loadForecastWeeks(pool, knownBt.map((item) => Number(item.row.id)));
   const pairs = knownBt
     .filter((item) => stored.has(Number(item.row.id)))
     .map((item) => ({
@@ -203,7 +264,7 @@ async function harvestSearch({ argv, pool }) {
   const verdict = h.axisVerdict(proof, { newOnly: true });
   summary.axis = proof;
   summary.axisVerdict = verdict;
-  console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with stored weekly rows; `
+  console.log(`${TAG} AXIS PROOF: ${knownBt.length} venues known by BestTime id, ${stored.size} with weekly rows from a forecast; `
     + `${proof.venues} compared (${proof.thin} thin and ${proof.flat} flat left out). Shift +k: the search's curve sits `
     + 'k hours later on the venue clock than the stored rows.');
   for (const line of h.formatAxisTable(proof)) console.log(line);
@@ -261,7 +322,9 @@ async function main(argv = process.argv, deps = {}) {
   }
 }
 
-module.exports = { main, harvestSearch, parseArgs, placeIdFromBestTimeId, readSearchVenue, loadSearchDir };
+module.exports = {
+  main, harvestSearch, parseArgs, decodeBestTimeId, placeIdFromBestTimeId, readSearchVenue, loadSearchDir, loadForecastWeeks,
+};
 
 if (require.main === module) {
   main().catch((err) => {

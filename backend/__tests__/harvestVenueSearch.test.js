@@ -100,7 +100,7 @@ test('the run\'s files load once per venue, joined to their info lines', () => {
 // ---------------------------------------------------------------------------
 const PHILLY = { lat: 39.9526, lng: -75.1652 };
 
-function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR' } = {}) {
+function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR', epoch = 1763500000 } = {}) {
   const known = [];
   const stored = [];
   const lines = [];
@@ -114,9 +114,12 @@ function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR
       latitude: lat, longitude: lng, city: 'philly', is_active: true, venue_category: 'bar' });
     lines.push({ venue_id: btIdOf(pid), name: `Known Venue ${i}`, lat, lng, days });
     // What the corpus stored for it, through the same transform, shifted by
-    // `storedShift` slots to model an axis the search does not share.
+    // `storedShift` slots to model an axis the search does not share, and
+    // stamped with an epoch as collectWeekly stamps a forecast (or not).
     const cells = h.weekCells(week(i, storedShift).map((d) => [d.day_int, d.day_raw]));
-    for (const c of cells) stored.push({ venue_id: 1000 + i, day_of_week: c.dayOfWeek, hour: c.hour, busyness_pct: c.busyness });
+    for (const c of cells) {
+      stored.push({ venue_id: 1000 + i, day_of_week: c.dayOfWeek, hour: c.hour, busyness_pct: c.busyness, besttime_epoch: epoch });
+    }
   }
   for (let j = 0; j < newCount; j++) {
     const pid = placeId(500 + j);
@@ -130,26 +133,66 @@ function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR
   return { known, stored, lines, info };
 }
 
-function fakePool({ known, stored }) {
+// The reads the planner and the proof make, the two index checks, and (when
+// `writes` is given) a client that records what writeOne sends under the lock.
+function fakePool({ known, stored }, writes = null) {
+  let nextId = 9000;
   return {
     connects: 0,
-    connect() { this.connects++; throw new Error('a write was attempted'); },
+    async connect() {
+      this.connects++;
+      if (!writes) throw new Error('a write was attempted');
+      return {
+        release() {},
+        async query(sql, params = []) {
+          const q = String(sql).replace(/\s+/g, ' ').trim();
+          if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(q) || /pg_advisory_xact_lock/.test(q)) return { rows: [] };
+          if (q.startsWith('SELECT 1 FROM ml_venues WHERE besttime_venue_id = $1 OR google_place_id = $2')) {
+            return { rows: known.filter((r) => r.besttime_venue_id === params[0] || r.google_place_id === params[1]) };
+          }
+          if (q.startsWith('SELECT id, name, latitude, longitude FROM ml_venues')) return { rows: [] };
+          if (q.startsWith('INSERT INTO ml_venues')) {
+            const cols = ['google_place_id', 'besttime_venue_id', 'name', 'address', 'city', 'latitude', 'longitude',
+              'venue_category', 'rating', 'review_count', 'timezone', 'besttime_status'];
+            const row = { id: nextId++, is_active: false, price_level: null };
+            cols.forEach((c, i) => { row[c] = params[i]; });
+            writes.venues.push(row);
+            return { rows: [row] };
+          }
+          if (q.startsWith('INSERT INTO ml_training_data')) {
+            // 26 parameters a cell (harvestVenueFilter upsertWeek); busyness is the 16th.
+            const n = params.length / 26;
+            for (let i = 0; i < n; i++) writes.rows.push({ venue_id: params[i * 26], busyness: params[i * 26 + 15] });
+            return { rows: Array.from({ length: n }, () => ({ inserted: true })) };
+          }
+          if (q.startsWith('UPDATE ml_venues SET last_collected_at')) return { rows: [] };
+          throw new Error(`unexpected write-path query: ${q.slice(0, 90)}`);
+        },
+      };
+    },
     async query(sql, params) {
       const q = String(sql);
+      if (/FROM pg_class c/.test(q)) return { rows: [{ indisvalid: true }] };
       if (/FROM ml_venues\s+WHERE besttime_venue_id = ANY/.test(q)) {
         return { rows: known.filter((r) => params[0].includes(r.besttime_venue_id) || params[1].includes(r.google_place_id)) };
       }
       if (/FROM ml_venues\s+WHERE latitude BETWEEN/.test(q)) return { rows: known };
-      if (/FROM ml_training_data/.test(q)) return { rows: stored.filter((r) => params[0].includes(Number(r.venue_id))) };
+      if (/FROM ml_training_data/.test(q)) {
+        const forecastOnly = /besttime_epoch IS NOT NULL/.test(q);
+        return { rows: stored.filter((r) => params[0].includes(Number(r.venue_id)) && (!forecastOnly || r.besttime_epoch != null)) };
+      }
       throw new Error(`unexpected query: ${q.slice(0, 80)}`);
     },
   };
 }
 
+// Quiet, and with every network call refused: the script reads files and the
+// database only, so a request from it or from anything it calls fails the test.
 const quiet = async (fn) => {
-  const saved = [console.log, console.error];
+  const saved = [console.log, console.error, globalThis.fetch];
   console.log = () => {}; console.error = () => {};
-  try { return await fn(); } finally { [console.log, console.error] = saved; }
+  globalThis.fetch = async () => { throw new Error('a network request was made'); };
+  try { return await fn(); } finally { [console.log, console.error, globalThis.fetch] = saved; }
 };
 
 test('a dry run proves the axis on the known venues and plans only the new ones', async () => {
@@ -175,6 +218,72 @@ test('a --commit whose axis proof fails writes nothing', async () => {
   assert.strictEqual(pool.connects, 0);
   assert.strictEqual(summary.venuesWritten, 0);
   assert.strictEqual(summary.exitCode, 1);
+});
+
+test('a --commit that passes writes the new venues, under their decoded place id, and nothing for the known', async () => {
+  const c = corpus({ newCount: 3 });
+  const dir = writeDir(c.lines, c.info);
+  const writes = { venues: [], rows: [] };
+  const summary = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`, '--commit'], pool: fakePool(c, writes) }));
+  assert.strictEqual(summary.axisVerdict.pass, true, summary.axisVerdict.reason);
+  assert.strictEqual(summary.venuesInserted, 3);
+  assert.strictEqual(summary.rowsWritten, 3 * 168);
+  assert.strictEqual(summary.exitCode, 0);
+  assert.deepStrictEqual(writes.venues.map((v) => v.google_place_id).sort(), [placeId(500), placeId(501), placeId(502)]);
+  for (const v of writes.venues) {
+    assert.strictEqual(v.besttime_venue_id, btIdOf(v.google_place_id));
+    assert.strictEqual(v.city, 'philly');
+    assert.strictEqual(v.timezone, 'America/New_York');
+    assert.strictEqual(v.venue_category, 'bar');
+    assert.strictEqual(v.besttime_status, h.HARVEST_STATUS);
+    assert.strictEqual(v.rating, 4.2);
+  }
+  const knownIds = new Set(c.known.map((r) => r.id));
+  assert.ok(writes.rows.every((r) => !knownIds.has(r.venue_id)), 'no row of a known venue is written');
+});
+
+test('the axis is proved against forecast rows only, so search-derived stored rows prove nothing', async () => {
+  // Stored rows with no epoch: discoverBestTime once wrote weekly rows from
+  // this same search field. Compared with themselves they would pass any axis.
+  const c = corpus({ epoch: null });
+  const dir = writeDir(c.lines, c.info);
+  const pool = fakePool(c);
+  const summary = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`, '--commit'], pool }));
+  assert.strictEqual(summary.axis.venues, 0);
+  assert.strictEqual(summary.axisVerdict.pass, false);
+  assert.strictEqual(pool.connects, 0);
+});
+
+test('a database without the upsert targets is refused before anything is read or planned', async () => {
+  const c = corpus();
+  const dir = writeDir(c.lines, c.info);
+  const pool = fakePool(c);
+  const inner = pool.query.bind(pool);
+  pool.query = async (sql, params) => (/FROM pg_class c/.test(String(sql)) ? { rows: [] } : inner(sql, params));
+  await assert.rejects(() => quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`], pool })), /does not exist/);
+});
+
+test('a venue with no coordinates is skipped, not placed at 0,0, and an unusable first line does not hide a whole later one', () => {
+  const pid = placeId(77);
+  const whole = { venue_id: btIdOf(pid), name: 'Late Whole', lat: 39.95, lng: -75.16, days: week(1) };
+  const dir = writeDir([
+    null,
+    { ...whole, days: week(1).slice(0, 3) },
+    whole,
+    { venue_id: btIdOf(placeId(78)), name: 'Nowhere', lat: null, lng: null, days: week(2) },
+  ], []);
+  const { venues, counts } = s.loadSearchDir(dir);
+  assert.deepStrictEqual(venues.map((v) => v.name), ['Late Whole', 'Nowhere']);
+  assert.strictEqual(counts.notWholeWeek, 1);
+  assert.ok(Number.isNaN(venues[1].lat) && Number.isNaN(venues[1].lng));
+  const { skipped } = h.planVenues(venues, { byBtId: new Map(), byPlaceId: new Map(), nearby: [] }, [...h.ALL_CITIES]);
+  assert.strictEqual(skipped.noCoordinates, 1);
+});
+
+test('an id that decodes to no Google shape is counted unusable, not absent', () => {
+  const v = s.readSearchVenue({ venue_id: btIdOf('EiAddressNotAVenue12345678'), name: 'X', lat: 39.95, lng: -75.16, days: week(1) }, null);
+  assert.strictEqual(v.placeId, null);
+  assert.strictEqual(v.rawPlaceId, 'EiAddressNotAVenue12345678');
 });
 
 test('a new venue whose type maps to no category is skipped, not written as unknown', async () => {
