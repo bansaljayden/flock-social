@@ -10,6 +10,9 @@
 //     new venue whose type maps to no category;
 //   - a dry run proves the axis on the known venues and plans the new ones; a
 //     --commit whose axis proof fails writes nothing;
+//   - the proof's reference is only rows no search produced: forecast-stamped
+//     cells, and venues the filter harvest created before this script existed,
+//     never updated since, and after discoverBestTime last ran;
 //   - the script never makes a network request.
 // No database: the pool is a dispatcher over in-memory rows.
 
@@ -100,7 +103,10 @@ test('the run\'s files load once per venue, joined to their info lines', () => {
 // ---------------------------------------------------------------------------
 const PHILLY = { lat: 39.9526, lng: -75.1652 };
 
-function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR', epoch = 1763500000 } = {}) {
+function corpus({
+  knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR', epoch = 1763500000,
+  status = 'found', created = '2026-10-01T00:00:00Z', updated = created, lastDiscovery = '2026-09-05T00:27:47Z',
+} = {}) {
   const known = [];
   const stored = [];
   const lines = [];
@@ -111,7 +117,8 @@ function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR
     const lng = PHILLY.lng + 0.002 * Math.floor(i / 10);
     const days = week(i);
     known.push({ id: 1000 + i, google_place_id: pid, besttime_venue_id: btIdOf(pid), name: `Known Venue ${i}`,
-      latitude: lat, longitude: lng, city: 'philly', is_active: true, venue_category: 'bar' });
+      latitude: lat, longitude: lng, city: 'philly', is_active: true, venue_category: 'bar',
+      besttime_status: status, created_at: new Date(created), updated_at: new Date(updated) });
     lines.push({ venue_id: btIdOf(pid), name: `Known Venue ${i}`, lat, lng, days });
     // What the corpus stored for it, through the same transform, shifted by
     // `storedShift` slots to model an axis the search does not share, and
@@ -130,12 +137,12 @@ function corpus({ knownCount = 30, newCount = 5, storedShift = 0, newType = 'BAR
   const miami = placeId(900);
   lines.push({ venue_id: btIdOf(miami), name: 'Holdout Bar', lat: 25.7617, lng: -80.1918, days: week(9) });
   info.push({ venue_id: btIdOf(miami), status: 'OK', venue_type: 'BAR' });
-  return { known, stored, lines, info };
+  return { known, stored, lines, info, lastDiscovery: lastDiscovery && new Date(lastDiscovery) };
 }
 
 // The reads the planner and the proof make, the two index checks, and (when
 // `writes` is given) a client that records what writeOne sends under the lock.
-function fakePool({ known, stored }, writes = null) {
+function fakePool({ known, stored, lastDiscovery = null }, writes = null) {
   let nextId = 9000;
   return {
     connects: 0,
@@ -177,9 +184,16 @@ function fakePool({ known, stored }, writes = null) {
         return { rows: known.filter((r) => params[0].includes(r.besttime_venue_id) || params[1].includes(r.google_place_id)) };
       }
       if (/FROM ml_venues\s+WHERE latitude BETWEEN/.test(q)) return { rows: known };
+      if (/FROM ml_venues WHERE google_place_id LIKE 'bt\\_%'/.test(q)) return { rows: [{ last: lastDiscovery }] };
+      if (/FROM ml_venues\s+WHERE id = ANY\(\$1::bigint\[\]\)\s+AND besttime_status = ANY\(\$2::text\[\]\)\s+AND created_at < \$3::timestamptz\s+AND updated_at <= created_at\s+AND \(\$4::timestamptz IS NULL OR created_at > \$4::timestamptz\)/.test(q)) {
+        const [ids, statuses, before, after] = params;
+        return { rows: known.filter((r) => ids.includes(r.id) && statuses.includes(r.besttime_status)
+          && r.created_at < new Date(before) && r.updated_at <= r.created_at && (after == null || r.created_at > after)) };
+      }
       if (/FROM ml_training_data/.test(q)) {
-        const forecastOnly = /besttime_epoch IS NOT NULL/.test(q);
-        return { rows: stored.filter((r) => params[0].includes(Number(r.venue_id)) && (!forecastOnly || r.besttime_epoch != null)) };
+        assert.match(q, /AND \(besttime_epoch IS NOT NULL OR venue_id = ANY\(\$2::bigint\[\]\)\)/);
+        return { rows: stored.filter((r) => params[0].includes(Number(r.venue_id))
+          && (r.besttime_epoch != null || params[1].includes(Number(r.venue_id)))) };
       }
       throw new Error(`unexpected query: ${q.slice(0, 80)}`);
     },
@@ -242,9 +256,10 @@ test('a --commit that passes writes the new venues, under their decoded place id
   assert.ok(writes.rows.every((r) => !knownIds.has(r.venue_id)), 'no row of a known venue is written');
 });
 
-test('the axis is proved against forecast rows only, so search-derived stored rows prove nothing', async () => {
-  // Stored rows with no epoch: discoverBestTime once wrote weekly rows from
-  // this same search field. Compared with themselves they would pass any axis.
+test('the axis is not proved against stored rows a search may have produced', async () => {
+  // Stored rows with no epoch on a venue the filter harvest did not create:
+  // discoverBestTime once wrote weekly rows from this same search field.
+  // Compared with themselves they would pass any axis.
   const c = corpus({ epoch: null });
   const dir = writeDir(c.lines, c.info);
   const pool = fakePool(c);
@@ -252,6 +267,50 @@ test('the axis is proved against forecast rows only, so search-derived stored ro
   assert.strictEqual(summary.axis.venues, 0);
   assert.strictEqual(summary.axisVerdict.pass, false);
   assert.strictEqual(pool.connects, 0);
+});
+
+test('a venue the filter harvest created before this script existed is a reference, epoch or not', async () => {
+  const c = corpus({ epoch: null, status: h.HARVEST_STATUS });
+  const dir = writeDir(c.lines, c.info);
+  const summary = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${dir}`], pool: fakePool(c) }));
+  assert.strictEqual(summary.axis.venues, 30);
+  assert.strictEqual(summary.axisVerdict.pass, true, summary.axisVerdict.reason);
+  assert.strictEqual(summary.exitCode, 0);
+  // Promoted out of 'harvested' with its rows kept: still the filter's week.
+  const promoted = corpus({ epoch: null, status: 'harvest_measured' });
+  const again = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(promoted.lines, promoted.info)}`], pool: fakePool(promoted) }));
+  assert.strictEqual(again.axis.venues, 30);
+  // And the filter's week still has to sit on the search's axis.
+  const shifted = corpus({ epoch: null, status: h.HARVEST_STATUS, storedShift: 6 });
+  const pool = fakePool(shifted);
+  const refused = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(shifted.lines, shifted.info)}`, '--commit'], pool }));
+  assert.strictEqual(refused.axisVerdict.pass, false);
+  assert.strictEqual(pool.connects, 0);
+});
+
+test('a harvested venue made after this script existed, updated since, or older than discovery\'s last run, is not a reference', async () => {
+  // Created after the first commit: it could be this script's own write, whose
+  // week is the search's curve itself.
+  const own = corpus({ epoch: null, status: h.HARVEST_STATUS, created: '2026-11-20T02:39:04Z' });
+  const a = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(own.lines, own.info)}`], pool: fakePool(own) }));
+  assert.strictEqual(a.axis.venues, 0);
+  assert.strictEqual(a.axisVerdict.pass, false);
+  // Created before discoverBestTime last created or touched a venue: that run
+  // may have overwritten its week with the search field.
+  const touched = corpus({ epoch: null, status: h.HARVEST_STATUS, created: '2026-10-01T00:00:00Z', lastDiscovery: '2026-10-02T00:00:00Z' });
+  const b = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(touched.lines, touched.info)}`], pool: fakePool(touched) }));
+  assert.strictEqual(b.axis.venues, 0);
+  // Updated after it was created: discoverBestTime's upsert sets updated_at on
+  // every venue it writes rows for, a run that minted no pseudo venue included.
+  const upserted = corpus({ epoch: null, status: h.HARVEST_STATUS, created: '2026-10-01T00:00:00Z', updated: '2026-10-01T00:00:01Z' });
+  const u = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(upserted.lines, upserted.info)}`], pool: fakePool(upserted) }));
+  assert.strictEqual(u.axis.venues, 0);
+  // A status no filter harvest writes is not a reference without a stamp.
+  const other = corpus({ epoch: null, status: 'found' });
+  const d = await quiet(() => s.harvestSearch({ argv: ['node', 'x', `--dir=${writeDir(other.lines, other.info)}`], pool: fakePool(other) }));
+  assert.strictEqual(d.axis.venues, 0);
+  assert.strictEqual(s.WRITER_FIRST_COMMITTED, '2026-11-20T02:39:03Z');
+  assert.deepStrictEqual(s.FILTER_HARVEST_STATUSES, [h.HARVEST_STATUS, 'harvest_measured']);
 });
 
 test('a database missing either upsert target is refused before anything is read or planned', async () => {
