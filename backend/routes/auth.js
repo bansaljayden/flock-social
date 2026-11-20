@@ -2026,7 +2026,14 @@ function dobAbsent(raw) {
   return raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '');
 }
 
-async function enforceDobOnLogin(user, req, res) {
+// `persist: false` is for a row the caller does not hold yet: the Google and
+// Apple claims ask before they take a password row over, and a passing date
+// typed into that request must not land on the row unless the claim does (an
+// Apple code exchange between the two can still refuse, and in the squat case
+// the row's password belongs to somebody else). Every refusal is the same, the
+// under-13 freeze included; only the passing-date write is left to the call
+// after the claim, which makes it on the claimed row.
+async function enforceDobOnLogin(user, req, res, { persist = true } = {}) {
   // ACTUAL-KNOWLEDGE FREEZE. If the row's stored date of birth computes to
   // under 13, we KNOW this account belongs to a child (16 CFR 312.2), and a
   // sign-in must not proceed no matter what today's request says. Before this
@@ -2124,10 +2131,11 @@ async function enforceDobOnLogin(user, req, res) {
     // own password and an under-13 date, and put the wide 24-hour block on the
     // victim's Google and Apple signups. An unconfirmed row now takes the
     // narrow address-plus-IP key, as an asserted address does everywhere else.
-    // email_verified is NOT NULL; anything but a literal false is verified
-    // (rows from before migration 011 were grandfathered TRUE), as in
-    // claimDecision.
-    recordUnderageAttempt(user.email, req.ip, Date.now(), { addressProved: user.email_verified !== false });
+    // Only a stored TRUE counts: the column is NOT NULL and rows from before
+    // migration 011 were grandfathered TRUE, so every real row carries it, and
+    // a row handed in without the field fails toward the narrow key, as the
+    // default on recordUnderageAttempt does.
+    recordUnderageAttempt(user.email, req.ip, Date.now(), { addressProved: user.email_verified === true });
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
@@ -2140,6 +2148,7 @@ async function enforceDobOnLogin(user, req, res) {
   // makes the first write win. Losing it means somebody else's date landed
   // between our read and this write, so re-read what landed and hold this
   // sign-in to THAT date, exactly as the freeze at the top would have.
+  if (!persist) return true;
   const persisted = await pool.query(
     'UPDATE users SET date_of_birth = $1 WHERE id = $2 AND date_of_birth IS NULL RETURNING date_of_birth',
     [supplied, user.id]
@@ -3647,10 +3656,10 @@ router.post('/google', [
         // birth on file, so its owner's first Google sign-in on the website
         // converted it and was then asked for a date: whoever stopped there was
         // left signed out of an account whose password no longer worked, which
-        // happened in production. Asked first, a refusal changes nothing. A date
-        // it accepts is the owner's (the provider proved this row's address) and
-        // is on the row the claim returns, so the check below passes on it.
-        if (!(await enforceDobOnLogin(claimTarget, req, res))) return;
+        // happened in production. Asked first, a refusal changes nothing. A
+        // passing date it accepts is written by the check below, on the claimed
+        // row, not on this one (see `persist` on enforceDobOnLogin).
+        if (!(await enforceDobOnLogin(claimTarget, req, res, { persist: false }))) return;
         // Round 13: the claim transferred the ROW but not the SESSION. The
         // squatter who pre-registered this address may be holding a JWT minted
         // minutes ago and good for another 24h, which would keep reading the
@@ -4135,8 +4144,9 @@ router.post('/apple', [
         }
         if (decision === 'claim') {
           // The age gate before the handover, as at the Google claim above: a
-          // sign-in it refuses must not have converted the account first.
-          if (!(await enforceDobOnLogin(existingByEmail, req, res))) return;
+          // sign-in it refuses must not have converted the account first. The
+          // passing date waits for the claim, as there.
+          if (!(await enforceDobOnLogin(existingByEmail, req, res, { persist: false }))) return;
           // The code exchange before the handover too, for the reason the
           // creation path gives below: it refuses with a 503 when Apple's token
           // endpoint fails or returns no refresh token, and a 503 after the

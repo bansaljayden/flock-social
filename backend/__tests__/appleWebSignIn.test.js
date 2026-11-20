@@ -459,6 +459,41 @@ test('a failed code exchange leaves the password account as it was, and a retry 
     'each one-use code is exchanged once');
 });
 
+test('a date sent with a takeover that then fails is not left on the row it did not take', async () => {
+  reset();
+  apple.configured = true;
+  users.push({
+    id: nextUserId++, email: 'sam@icloud.com', name: 'Sam', password: 'bcrypt-hash', token_version: 0,
+    is_banned: false, oauth_provider: null, oauth_id: null, date_of_birth: null, role: 'user',
+    email_verified: true, verified_email: 'sam@icloud.com', apple_refresh_token: null, apple_refresh_client_id: null,
+  });
+  const row = users[0];
+  const sam = { sub: 'apple-sam', email: 'sam@icloud.com' };
+
+  // The website asks an account with no date on file for its full date, and
+  // spends no code on asking.
+  const asked = await fromWeb(await webPopup(sam, { authorizationCode: 'code-s1' }));
+  assert.strictEqual(asked.status, 403, JSON.stringify(asked.json));
+  assert.strictEqual(asked.json.needsDob, true);
+  assert.deepStrictEqual(apple.exchanges, []);
+
+  // The date arrives, and Apple's token endpoint fails. Until the claim lands
+  // the row's password is somebody's, so the date must not be written to it.
+  apple.failExchange = true;
+  const failed = await fromWeb(await webPopup(sam, { authorizationCode: 'code-s2', date_of_birth: '1999-06-15' }));
+  assert.strictEqual(failed.status, 503, JSON.stringify(failed.json));
+  assert.strictEqual(row.date_of_birth, null);
+  assert.strictEqual(row.password, 'bcrypt-hash');
+
+  apple.failExchange = false;
+  const done = await fromWeb(await webPopup(sam, { authorizationCode: 'code-s3', date_of_birth: '1999-06-15' }));
+  assert.strictEqual(done.status, 200, JSON.stringify(done.json));
+  assert.strictEqual(row.oauth_provider, 'apple');
+  assert.strictEqual(row.date_of_birth, '1999-06-15', 'written on the claimed row');
+  assert.strictEqual(row.apple_refresh_token, 'rt-code-s3');
+  assert.strictEqual(row.apple_refresh_client_id, WEB_CLIENT);
+});
+
 // ===========================================================================
 // The stored token and its client move together
 // ===========================================================================
