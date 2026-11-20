@@ -1275,6 +1275,14 @@ test('--new-only writes nothing for a venue already held, and a new one gets its
   assert.match(dry.out, /By hour: 24 of 24 venues best at rotation 0 or a whole number of days from it\. By day: 24 of the 24 with whole weeks on both sides whose days differ by at least 3 points fit rotation 0 within 1 point of their best\. 0 tied in all\./);
   assert.match(dry.out, /--new-only: 27 known venues skipped \(25 by BestTime id, 1 by Google place id, 1 as near-duplicates\)/);
   assert.match(dry.out, /Would write 168 weekly rows for 1 venues and add 1 ml_venues rows .* 27 known venues skipped \(--new-only\)\./);
+  assert.doesNotMatch(dry.out, /DAY SHARE OVER THE VOTERS ALONE|--day-share-over-voters/);
+  // --day-share-over-voters reaches the gate through the run, and says so.
+  const voters = await runHarvest(['--city=london', '--new-only', '--day-share-over-voters'], fakeBestTime(fixture));
+  assert.strictEqual(voters.summary.exitCode, 0, voters.summary.abortReason);
+  assert.strictEqual(voters.summary.dayOverVoters, true);
+  assert.match(voters.out, /NEW VENUES ONLY \(nothing is written for a venue the corpus holds\), DAY SHARE OVER THE VOTERS ALONE \(--day-share-over-voters\)\./);
+  assert.match(voters.out, /by day, 24 of the 24 venues that could vote \(100\.0%; 24 compared\) hold whole weeks/);
+  assert.match(voters.out, /Judged by the --new-only hour-origin rule.*with the day share taken over the venues that could vote \(--day-share-over-voters\)/);
 
   const { summary, out } = await runHarvest(['--city=london', '--new-only', '--commit'], fakeBestTime(fixture));
   assertNoKey(out);
