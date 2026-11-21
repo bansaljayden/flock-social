@@ -213,6 +213,9 @@ const SUITE_SLOTS = {
                                  // statement: one strike per assertion, and a
                                  // carried report judged against the reading
                                  // on screen when it was filed.
+  setAsideHarvestedCurves: 94,   // new in 2026-11-21; the curve table swapped
+                                 // for one without the harvested venues'
+                                 // curves, and those put back for the ship.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
