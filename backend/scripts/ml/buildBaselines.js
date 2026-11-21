@@ -361,6 +361,13 @@ const DELETE_STALE_NOT_HARVESTED_SQL = `${DELETE_STALE_SQL}    AND NOT EXISTS (
       SELECT 1 FROM ml_venues hv
        WHERE hv.google_place_id = b.google_place_id AND hv.besttime_status = 'harvested')
 `;
+// The targeted chunk's two statements with the same condition, so a venue
+// listed as a target and harvested before its chunk ran is still left alone:
+// each statement reads the status as it stands, not as the list saw it.
+const FRESH_PLACES_NOT_HARVESTED_SQL = `
+  INSERT INTO baseline_fresh${averageSql(PLACES_FILTER + NOT_HARVESTED_FILTER)}`;
+const DELETE_STALE_PLACES_NOT_HARVESTED_SQL = `${DELETE_STALE_NOT_HARVESTED_SQL}    AND b.google_place_id = ANY($1::text[])
+`;
 const MARK_SQL = `
   INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
   ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at
@@ -525,9 +532,9 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs, includeH
         const { rows: [{ undeclared }] } = await q(UNDECLARED_PLACES_SQL, [places]);
         if (undeclared) return { undeclared: true };
         await q(FRESH_EMPTY_SQL);
-        await q(FRESH_PLACES_SQL, [places]);
+        await q(includeHarvested ? FRESH_PLACES_SQL : FRESH_PLACES_NOT_HARVESTED_SQL, [places]);
         await q('ANALYZE baseline_fresh');
-        const del = await q(DELETE_STALE_PLACES_SQL, [places]);
+        const del = await q(includeHarvested ? DELETE_STALE_PLACES_SQL : DELETE_STALE_PLACES_NOT_HARVESTED_SQL, [places]);
         const changed = await q(UPDATE_CHANGED_SQL);
         const added = await q(INSERT_NEW_SQL);
         return { deleted: del.rowCount, upserted: changed.rowCount + added.rowCount };
@@ -711,6 +718,8 @@ module.exports = {
   DELETE_STALE_PLACES_SQL,
   FRESH_NOT_HARVESTED_SQL,
   DELETE_STALE_NOT_HARVESTED_SQL,
+  FRESH_PLACES_NOT_HARVESTED_SQL,
+  DELETE_STALE_PLACES_NOT_HARVESTED_SQL,
   TARGET_CHUNK_PLACES,
 };
 

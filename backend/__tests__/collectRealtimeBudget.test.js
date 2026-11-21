@@ -750,7 +750,8 @@ test('a baseline refresh is serialized, and its stamp is the evidence date of th
   // ~12M-row table per rebuild (2026-11-19: 90 minutes, two sweeps lost).
   const statements = require('../scripts/ml/buildBaselines');
   for (const name of ['FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL',
-    'FRESH_NOT_HARVESTED_SQL', 'DELETE_STALE_NOT_HARVESTED_SQL']) {
+    'FRESH_NOT_HARVESTED_SQL', 'DELETE_STALE_NOT_HARVESTED_SQL',
+    'FRESH_PLACES_NOT_HARVESTED_SQL', 'DELETE_STALE_PLACES_NOT_HARVESTED_SQL']) {
     assert.strictEqual(typeof statements[name], 'string', `${name} is not exported`);
     assert.ok(!/ON CONFLICT/i.test(statements[name]),
       `${name} has an ON CONFLICT clause again; DO UPDATE locks every row it meets`);

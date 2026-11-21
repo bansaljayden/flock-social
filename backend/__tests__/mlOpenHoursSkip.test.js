@@ -1288,6 +1288,24 @@ test('with includeHarvested false neither rebuild writes or deletes a harvested 
     assert.deepStrictEqual(await slots(places[1]), { n: 0, lo: null, hi: null }, 'the full rebuild averaged a harvested venue');
     assert.deepStrictEqual(await slots(places[2]), { n: 168, lo: 60, hi: 60 });
 
+    // A venue harvested after the list was read is still left alone: a chunk's
+    // own statements read the status as it stands.
+    const {
+      FRESH_EMPTY_SQL, FRESH_PLACES_NOT_HARVESTED_SQL, DELETE_STALE_PLACES_NOT_HARVESTED_SQL,
+    } = require('../scripts/ml/buildBaselines');
+    const chunk = await pool.connect();
+    try {
+      await chunk.query('BEGIN');
+      await chunk.query(FRESH_EMPTY_SQL);
+      await chunk.query(FRESH_PLACES_NOT_HARVESTED_SQL, [[places[0], places[1]]]);
+      assert.strictEqual((await chunk.query('SELECT COUNT(*)::int AS n FROM baseline_fresh')).rows[0].n, 0);
+      const del = await chunk.query(DELETE_STALE_PLACES_NOT_HARVESTED_SQL, [[places[0]]]);
+      assert.strictEqual(del.rowCount, 0, 'a harvested place\'s stale slot was deleted');
+    } finally {
+      await chunk.query('ROLLBACK');
+      chunk.release();
+    }
+
     // By hand, as the ship step runs it, they are averaged again.
     assert.strictEqual((await refreshCollectedBaselines(pool, { targeted: true })).ok, true);
     assert.deepStrictEqual(await slots(places[0]), { n: 167, lo: 50, hi: 50 });

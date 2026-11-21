@@ -185,7 +185,7 @@ async function setAside(pool, { commit = false, log = console.log } = {}) {
       'SELECT $1::regclass::oid::text AS old_oid, $2::regclass::oid::text AS new_oid', [LIVE, BUILDING]);
     if (!/^\d+$/.test(oids.old_oid) || !/^\d+$/.test(oids.new_oid)) throw new Error('unexpected table identities');
     // The swap, as ONE message: the exclusive lock (readers queue behind it
-    // from the moment it is granted), the renames, a check that each name now
+    // while its request waits and until the transaction ends), the renames, a check that each name now
     // names the other table (by identity, not by a count that would hold every
     // reader while it scanned), and the COMMIT. A failure anywhere skips the
     // rest of the message and leaves the transaction to roll back below.
