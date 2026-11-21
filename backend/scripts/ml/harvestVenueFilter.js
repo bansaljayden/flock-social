@@ -172,10 +172,11 @@
 // harvest can find thousands of venues, so a new row is written is_active =
 // false with besttime_status = 'harvested', which keeps it out of both the
 // hourly sweep and collectWeekly's refresh. A harvested venue gets a served
-// baseline and scores for its own hours from the hourly run's targeted
-// rebuild, a few thousand venues per daily run (its stamp does not make the
-// hourly run rebuild; buildBaselines.js says why), or at once from
-// `buildBaselines.js --targeted` by hand after a big harvest. It
+// baseline, and scores for its own hours, only from `buildBaselines.js
+// --targeted` by hand: since 2026-11-21 the hourly run's rebuilds leave
+// harvested venues out until the ship step (buildBaselines.js, HARVESTED
+// VENUES' CURVES WAIT FOR THE SHIP STEP), which restores the set-aside curves
+// and runs that rebuild before the status change. It
 // does NOT move anybody else's score: services/mlPredictor.js leaves harvested
 // rows out of the neighbour box (log_neighbor_count and
 // neighbor_baseline_same_hour are inputs of the shipped model), and
