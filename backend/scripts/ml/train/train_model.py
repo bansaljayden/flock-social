@@ -700,7 +700,39 @@ class FoldCategoryBaselines:
 # ---------------------------------------------------------------------------
 # The split
 # ---------------------------------------------------------------------------
-def assert_group_disjoint(cv, X, y, groups) -> list:
+class LocoFolds:
+    """The leave-one-city-out folds as (train rows, validation rows, city).
+
+    Only each fold's validation rows are kept; its training rows are rebuilt
+    when the fold is reached, as the complement in row order, which is what
+    GroupKFold itself yields (np.arange(n)[~test_mask]): the same values in the
+    same order and dtype. A list of all thirty training index arrays held about
+    29 x 8 = 232 bytes a row for the whole run, several gigabytes at the
+    harvest-inclusive candidate's size.
+    """
+
+    def __init__(self, n_rows):
+        self._n = int(n_rows)
+        self._held = []
+
+    def append(self, va, city):
+        self._held.append((va, city))
+
+    def __len__(self):
+        return len(self._held)
+
+    def __getitem__(self, i):
+        va, city = self._held[i]
+        keep = np.ones(self._n, dtype=bool)
+        keep[va] = False
+        return np.flatnonzero(keep), va, city
+
+    def __iter__(self):
+        for i in range(len(self._held)):
+            yield self[i]
+
+
+def assert_group_disjoint(cv, X, y, groups) -> LocoFolds:
     """Every fold's train and validation sides must share no city.
 
     A venue belongs to exactly one city, so a city-disjoint fold is a
@@ -712,7 +744,7 @@ def assert_group_disjoint(cv, X, y, groups) -> list:
     """
     seen = np.zeros(len(y), dtype=np.int32)
     groups_arr = np.asarray(groups)
-    folds = []
+    folds = LocoFolds(len(y))
     for i, (tr, va) in enumerate(cv.split(X, y, groups=groups)):
         g_tr, g_va = set(groups_arr[tr]), set(groups_arr[va])
         overlap = g_tr & g_va
@@ -728,7 +760,7 @@ def assert_group_disjoint(cv, X, y, groups) -> list:
                 'This is meant to be leave-one-city-out; n_splits must equal the '
                 'number of cities.')
         seen[va] += 1
-        folds.append((tr, va, sorted(g_va)[0]))
+        folds.append(va, sorted(g_va)[0])
     if not np.all(seen == 1):
         raise LeakageError(
             f'{int((seen == 0).sum())} rows were never in a validation fold and '
@@ -797,17 +829,26 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
     guard = None
     if fold_cats is not None and fold_cats.active:
         guard = {j: X[:, j].copy() for j in fold_cats.col_index.values()}
+    # One fold's copies at a time: the validation copy is made after the fit,
+    # and both are released before the next fold's are made, so the loop holds
+    # X and one training copy rather than X and two whole-matrix pairs.
     for tr, va, city in folds:
-        Xtr, Xva = X[tr], X[va]
+        fold_cols = None
         if fold_cats is not None and fold_cats.active:
             fold_cols = fold_cats.columns_for_fold(city)
-            fold_cats.apply_to(Xtr, tr, fold_cols)
-            fold_cats.apply_to(Xva, va, fold_cols)
             shifts[str(city)] = fold_cats.fold_shift(X, fold_cols)
+        Xtr = X[tr]
+        if fold_cols is not None:
+            fold_cats.apply_to(Xtr, tr, fold_cols)
         m = clone(model)
         m.fit(Xtr, y[tr], sample_weight=sample_weight[tr])
+        del Xtr, tr
+        Xva = X[va]
+        if fold_cols is not None:
+            fold_cats.apply_to(Xva, va, fold_cols)
         oof[va] = m.predict(Xva)
         per_city[str(city)] = va
+        del Xva, m, fold_cols
 
     if guard is not None:
         for j, col in guard.items():
