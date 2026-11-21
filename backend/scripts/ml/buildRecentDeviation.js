@@ -440,8 +440,9 @@ function readingsOutcome(readings, offsetReadings) {
 // had grown past 27 million rows with the harvested venues' curves), and the
 // nowcast's stored readings aged past its lag cap within a few hours, so every
 // card lost the nowcast. Now the two run whatever the first did, on the rows
-// earlier runs made (a venue new this hour gets its readings next hour), and
-// the run still ends in the first statement's error, saying what was stored.
+// earlier runs made (a venue with no row yet gets its readings after the first
+// run whose offset statement succeeds), and the run still ends in the first
+// statement's error, saying what was stored.
 async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS, plan = false } = {}) {
   const t0 = Date.now();
   let written = null;
