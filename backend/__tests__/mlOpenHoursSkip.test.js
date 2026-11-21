@@ -1232,6 +1232,74 @@ test('the targeted rebuild averages only the places whose stamp is newer than th
 
 });
 
+// 2026-11-21: the harvested venues' curves were set aside until the ship step
+// (setAsideHarvestedCurves.js) and the hourly collector's rebuilds pass
+// includeHarvested false. Neither rebuild may then write or delete a harvested
+// venue's slot; a by-hand run, the ship step's, still includes them.
+test('with includeHarvested false neither rebuild writes or deletes a harvested venue\'s slots', async () => {
+  const { refreshCollectedBaselines } = require('../scripts/ml/buildBaselines');
+  const base = Date.now() + 4 * 3600 * 1000;
+  const at = (ms) => new Date(base + ms);
+  const writeWeek = async (place, rowsAt, status, pct) => {
+    const { rows: [{ id }] } = await pool.query(
+      `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                              venue_category, timezone, is_active, besttime_status, last_collected_at)
+       VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, $5::text IS NULL, $5, $6)
+       ON CONFLICT (google_place_id) DO UPDATE SET last_collected_at = EXCLUDED.last_collected_at
+       RETURNING id`, [place, 'bt_' + place, CITY, TZ, status, rowsAt]);
+    await pool.query(`DELETE FROM ml_training_data WHERE venue_id = $1 AND collection_mode = 'weekly'`, [id]);
+    await pool.query(
+      `INSERT INTO ml_training_data
+         (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
+       SELECT $1, 'weekly', 'venue_local', d, h, 'bar', $3, $2
+         FROM generate_series(0, 6) d, generate_series(0, 23) h`, [id, rowsAt, pct]);
+    return id;
+  };
+  const slots = async (place) => (await pool.query(
+    'SELECT COUNT(*)::int AS n, MIN(baseline) AS lo, MAX(baseline) AS hi FROM ml_venue_baselines WHERE google_place_id = $1',
+    [place])).rows[0];
+  const places = ['ChIJasideHasCurve', 'ChIJasideNoCurve', 'ChIJasideLive'];
+  try {
+    // A harvested venue averaged before the switch, one whose curve was set
+    // aside, and a live venue.
+    const hasCurve = await writeWeek(places[0], at(0), 'harvested', 30);
+    await writeWeek(places[1], at(10000), 'harvested', 30);
+    await writeWeek(places[2], at(20000), null, 30);
+    assert.strictEqual((await refreshCollectedBaselines(pool, { targeted: true })).ok, true);
+    await pool.query('DELETE FROM ml_venue_baselines WHERE google_place_id = $1', [places[1]]);
+    // Then every week moves, to new values under stamps a minute or more newer
+    // (the target list allows a second of slack), and the first venue loses a
+    // weekly row, so a rebuild that reached it would delete a slot.
+    await writeWeek(places[0], at(100000), 'harvested', 50);
+    await pool.query('DELETE FROM ml_training_data WHERE venue_id = $1 AND day_of_week = 0 AND hour = 0', [hasCurve]);
+    await writeWeek(places[1], at(110000), 'harvested', 50);
+    await writeWeek(places[2], at(120000), null, 50);
+
+    const targeted = await refreshCollectedBaselines(pool, { targeted: true, includeHarvested: false });
+    assert.strictEqual(targeted.ok, true);
+    assert.deepStrictEqual(await slots(places[0]), { n: 168, lo: 30, hi: 30 }, 'the targeted rebuild rewrote a harvested curve');
+    assert.deepStrictEqual(await slots(places[1]), { n: 0, lo: null, hi: null }, 'the targeted rebuild averaged a harvested venue');
+    assert.deepStrictEqual(await slots(places[2]), { n: 168, lo: 50, hi: 50 }, 'the live venue was not averaged');
+
+    await writeWeek(places[2], at(130000), null, 60);
+    const full = await refreshCollectedBaselines(pool, { includeHarvested: false });
+    assert.strictEqual(full.ok, true);
+    assert.deepStrictEqual(await slots(places[0]), { n: 168, lo: 30, hi: 30 }, 'the full rebuild touched a harvested curve');
+    assert.deepStrictEqual(await slots(places[1]), { n: 0, lo: null, hi: null }, 'the full rebuild averaged a harvested venue');
+    assert.deepStrictEqual(await slots(places[2]), { n: 168, lo: 60, hi: 60 });
+
+    // By hand, as the ship step runs it, they are averaged again.
+    assert.strictEqual((await refreshCollectedBaselines(pool, { targeted: true })).ok, true);
+    assert.deepStrictEqual(await slots(places[0]), { n: 167, lo: 50, hi: 50 });
+    assert.deepStrictEqual(await slots(places[1]), { n: 168, lo: 50, hi: 50 });
+  } finally {
+    await pool.query('DELETE FROM ml_venue_baselines WHERE google_place_id = ANY($1)', [places]);
+    await pool.query(
+      `DELETE FROM ml_training_data WHERE venue_id IN (SELECT id FROM ml_venues WHERE google_place_id = ANY($1))`, [places]);
+    await pool.query('DELETE FROM ml_venues WHERE google_place_id = ANY($1)', [places]);
+  }
+});
+
 // The target list asks each venue's own slots (2026-11-19) instead of joining
 // MAX(updated_at) grouped over the whole table, which ran past 90 s on
 // production. Same list, same order, edges included: slots that are all

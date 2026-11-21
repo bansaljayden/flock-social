@@ -32,13 +32,16 @@ test('the flag exists, is read from argv, and gates the refresh as a branch', ()
   // The targeted rebuild runs before the sweep, under the same flag, and the
   // tail runs only the full one (2026-11-19).
   assert.match(src, /const runStartedAt = new Date\(\);\n\s+const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);\n\s+const beforeSweepMs = skipBaselines \? 0 : await rebuildBeforeSweep\(runStartedAt\);\n\s+await collectRealtime\(\{ beforeSweepMs \}\);/);
-  assert.match(src, /if \(rebuild\.due && rebuild\.full === true\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);\n\s+const result = await refreshCollectedBaselines\(pool\);/);
+  // Both of the hourly run's rebuilds leave harvested venues' curves alone
+  // until the ship step (2026-11-21, buildBaselines includeHarvested).
+  assert.match(src, /if \(rebuild\.due && rebuild\.full === true\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);\n\s+const result = await refreshCollectedBaselines\(pool, \{ includeHarvested: false \}\);/);
   assert.match(src, /Baselines current, rebuild skipped: \$\{rebuild\.due\n/);
   // Stamps that cannot be read rebuild, as every hour did before: in full,
   // at the tail.
   assert.match(src, /catch \(err\) \{\n\s+rebuild = \{ due: true, full: true, reason: `the stamps could not be read/);
   const before = src.slice(src.indexOf('async function rebuildBeforeSweep'), src.indexOf('async function run()'));
-  assert.match(before, /await refreshCollectedBaselines\(pool, \{ targeted: true, deadline: startedAt \+ TARGETED_REBUILD_BUDGET_MS \}\)/);
+  assert.match(before, /await refreshCollectedBaselines\(pool, \{ targeted: true, deadline: startedAt \+ TARGETED_REBUILD_BUDGET_MS, includeHarvested: false \}\)/);
+  assert.equal((src.match(/refreshCollectedBaselines\(pool/g) || []).length, 2, 'a third rebuild call');
   // Its time, the due check's included, comes off the sweep on every path.
   assert.match(before, /^\s+const startedAt = Date\.now\(\);\n\s+let rebuild;/m);
   assert.match(before, /if \(!rebuild\.due \|\| rebuild\.full === true\) return Date\.now\(\) - startedAt;/);
@@ -58,7 +61,7 @@ test('the refresh still runs by default, so the existing hourly cron is unchange
   const after = src.slice(at, at + 400);
   assert.match(after, /const beforeSweepMs = skipBaselines \? 0 : await rebuildBeforeSweep\(runStartedAt\);/);
   const tail = src.slice(src.indexOf('if (rebuild.due && rebuild.full === true) {'));
-  assert.match(tail.slice(0, 600), /await refreshCollectedBaselines\(pool\)/);
+  assert.match(tail.slice(0, 600), /await refreshCollectedBaselines\(pool, \{ includeHarvested: false \}\)/);
   // No flag on the command line means skipBaselines is false, so the branch runs.
   assert.ok(!/--no-baseline-refresh.*default/i.test(src), 'the flag must be opt in');
 });

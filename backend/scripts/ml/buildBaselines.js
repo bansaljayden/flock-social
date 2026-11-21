@@ -340,6 +340,27 @@ const FRESH_PLACES_SQL = `
   INSERT INTO baseline_fresh${averageSql(PLACES_FILTER)}`;
 const DELETE_STALE_PLACES_SQL = `${DELETE_STALE_SQL}    AND b.google_place_id = ANY($1::text[])
 `;
+
+// HARVESTED VENUES' CURVES WAIT FOR THE SHIP STEP (2026-11-21). By then the
+// harvest's curves were nine tenths of ml_venue_baselines (about 24 of 27.2
+// million rows), and the hourly collector's recent-deviation rebuild, which
+// joins every live reading of 28 days with the whole table, ran past its
+// two-minute cap every hour from 17:01 UTC that day. On the maintainer's decision they
+// were set aside (setAsideHarvestedCurves.js), and the collector's rebuilds
+// pass `includeHarvested: false` from then on: the full rebuild averages no
+// harvested venue and deletes none of its slots, and the targeted one drops
+// harvested places from its list. A by-hand run still includes them, which is
+// what the ship step runs, after --restore and before the status change. The
+// average itself is FRESH_SQL's, with one condition added, so the export's
+// copy of it (mlExportContracts.test.js) is unchanged.
+const NOT_HARVESTED_FILTER = `
+    AND v.besttime_status IS DISTINCT FROM 'harvested'`;
+const FRESH_NOT_HARVESTED_SQL = `
+  CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS${averageSql(NOT_HARVESTED_FILTER)}`;
+const DELETE_STALE_NOT_HARVESTED_SQL = `${DELETE_STALE_SQL}    AND NOT EXISTS (
+      SELECT 1 FROM ml_venues hv
+       WHERE hv.google_place_id = b.google_place_id AND hv.besttime_status = 'harvested')
+`;
 const MARK_SQL = `
   INSERT INTO ml_baseline_marks (id, corpus_at, rebuilt_at) VALUES (1, $1::timestamptz, NOW())
   ON CONFLICT (id) DO UPDATE SET corpus_at = EXCLUDED.corpus_at, rebuilt_at = EXCLUDED.rebuilt_at
@@ -367,8 +388,13 @@ const MARK_SQL = `
 // `targeted: true` runs THE TARGETED REBUILD instead, until `deadline` (ms
 // since the epoch; none means until done), and also returns { targeted,
 // places, left, marked }.
+//
+// `includeHarvested: false` (the hourly collector, since 2026-11-21) leaves
+// every harvested venue's slots as they are: HARVESTED VENUES' CURVES WAIT FOR
+// THE SHIP STEP, above.
 async function refreshCollectedBaselines(pool, {
   targeted = false, deadline = null, chunkPlaces = TARGET_CHUNK_PLACES, overrunMs = TARGET_OVERRUN_MS,
+  includeHarvested = true,
 } = {}) {
   await pool.query(CREATE_TABLE_SQL);
   await pool.query(MARK_TABLE_SQL);
@@ -376,7 +402,7 @@ async function refreshCollectedBaselines(pool, {
   // server's database, and skips the ALTER below: even when the column exists
   // it queues for an exclusive lock on the corpus table behind any open
   // harvest transaction, and every reader of the table then queues behind it.
-  if (targeted) return refreshTargets(pool, { deadline, chunkPlaces, overrunMs });
+  if (targeted) return refreshTargets(pool, { deadline, chunkPlaces, overrunMs, includeHarvested });
   // Both columns are created by migration 023 on a booted server; these scripts
   // also run against databases that have not booted the current server.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
@@ -397,9 +423,9 @@ async function refreshCollectedBaselines(pool, {
 
     // ANALYZE: a temporary table has no statistics until asked, and the three
     // joins against a ~12M-row table should be planned on its real size.
-    await client.query(FRESH_SQL);
+    await client.query(includeHarvested ? FRESH_SQL : FRESH_NOT_HARVESTED_SQL);
     await client.query('ANALYZE baseline_fresh');
-    const del = await client.query(DELETE_STALE_SQL);
+    const del = await client.query(includeHarvested ? DELETE_STALE_SQL : DELETE_STALE_NOT_HARVESTED_SQL);
     const changed = await client.query(UPDATE_CHANGED_SQL);
     const added = await client.query(INSERT_NEW_SQL);
     await client.query(MARK_SQL, [corpusAt]);
@@ -425,7 +451,7 @@ async function refreshCollectedBaselines(pool, {
 // back, and its places stay first in line), and the mark moves once no
 // stamp-serving place is left.
 const TIMED_OUT = new Set(['57014', '55P03']); // statement / lock timeout
-async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
+async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs, includeHarvested = true }) {
   const hardStop = deadline == null ? null : deadline + overrunMs;
   const remaining = () => (hardStop == null ? null : hardStop - Date.now());
   const result = (extra) => ({
@@ -463,6 +489,8 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs }) {
     if (err && TIMED_OUT.has(err.code)) return result({ left: null, timedOut: true });
     throw err;
   }
+  // A harvested place is the list's unstamped kind (TARGETS_SQL's `stamped`).
+  if (!includeHarvested) targets = targets.filter((r) => r.stamped);
 
   let deleted = 0;
   let upserted = 0;
@@ -680,6 +708,8 @@ module.exports = {
   FRESH_EMPTY_SQL,
   FRESH_PLACES_SQL,
   DELETE_STALE_PLACES_SQL,
+  FRESH_NOT_HARVESTED_SQL,
+  DELETE_STALE_NOT_HARVESTED_SQL,
   TARGET_CHUNK_PLACES,
 };
 

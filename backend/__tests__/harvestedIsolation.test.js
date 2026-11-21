@@ -4,7 +4,8 @@
 //
 // scripts/ml/harvestVenueFilter.js adds venues as ml_venues rows with
 // besttime_status 'harvested', and buildBaselines gives each a served curve
-// within the hour. Two of the shipped model's inputs, log_neighbor_count and
+// (by hand since 2026-11-21: the hourly collector's rebuilds leave them out
+// until the ship step, includeHarvested). Two of the shipped model's inputs, log_neighbor_count and
 // neighbor_baseline_same_hour, are computed over every venue with a curve in a
 // box around the one being scored, so without a guard every existing venue's
 // score would move by an amount nothing had measured. Pinned here, against a

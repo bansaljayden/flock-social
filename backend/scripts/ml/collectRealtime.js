@@ -2499,7 +2499,9 @@ async function rebuildBeforeSweep(runStartedAt) {
   console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}. Targeted, before the sweep, `
     + `for up to ${TARGETED_REBUILD_BUDGET_MS / 60000} minutes.`);
   try {
-    const result = await refreshCollectedBaselines(pool, { targeted: true, deadline: startedAt + TARGETED_REBUILD_BUDGET_MS });
+    // Harvested venues' curves wait for the ship step (buildBaselines, HARVESTED
+    // VENUES' CURVES WAIT FOR THE SHIP STEP): the hourly rebuilds leave them out.
+    const result = await refreshCollectedBaselines(pool, { targeted: true, deadline: startedAt + TARGETED_REBUILD_BUDGET_MS, includeHarvested: false });
     if (!result.ok) {
       console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
     } else {
@@ -2586,7 +2588,7 @@ async function run() {
         console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}.`);
         try {
           console.log('[ML:Realtime] Refreshing venue baselines...');
-          const result = await refreshCollectedBaselines(pool);
+          const result = await refreshCollectedBaselines(pool, { includeHarvested: false });
           if (!result.ok) {
             console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
           } else {

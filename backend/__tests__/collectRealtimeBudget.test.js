@@ -729,9 +729,13 @@ test('a baseline refresh is serialized, and its stamp is the evidence date of th
   // One transaction under the corpus lock: check, average, delete, update, insert.
   const refresh = baselines.slice(baselines.indexOf('async function refreshCollectedBaselines'));
   assert.match(refresh, /return withCorpusWriteLock\(pool, async \(client\) => \{/);
-  for (const stmt of ['UNDECLARED_WEEKLY_SQL', 'FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL']) {
+  for (const stmt of ['UNDECLARED_WEEKLY_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL']) {
     assert.match(refresh, new RegExp('client\\.query\\(' + stmt + '\\)'), `${stmt} runs outside the locked transaction`);
   }
+  // The average and the delete, with or without the harvested venues
+  // (2026-11-21: the hourly collector passes includeHarvested false).
+  assert.match(refresh, /client\.query\(includeHarvested \? FRESH_SQL : FRESH_NOT_HARVESTED_SQL\)/);
+  assert.match(refresh, /client\.query\(includeHarvested \? DELETE_STALE_SQL : DELETE_STALE_NOT_HARVESTED_SQL\)/);
   // The average lives only as long as the transaction that reads it.
   assert.match(baselines, /CREATE TEMP TABLE baseline_fresh ON COMMIT DROP AS/);
   // updated_at moves only with the value: no GREATEST that lets an older value
@@ -745,7 +749,8 @@ test('a baseline refresh is serialized, and its stamp is the evidence date of th
   // every conflicting row before its WHERE is read, a write to every row of a
   // ~12M-row table per rebuild (2026-11-19: 90 minutes, two sweeps lost).
   const statements = require('../scripts/ml/buildBaselines');
-  for (const name of ['FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL']) {
+  for (const name of ['FRESH_SQL', 'DELETE_STALE_SQL', 'UPDATE_CHANGED_SQL', 'INSERT_NEW_SQL',
+    'FRESH_NOT_HARVESTED_SQL', 'DELETE_STALE_NOT_HARVESTED_SQL']) {
     assert.strictEqual(typeof statements[name], 'string', `${name} is not exported`);
     assert.ok(!/ON CONFLICT/i.test(statements[name]),
       `${name} has an ON CONFLICT clause again; DO UPDATE locks every row it meets`);
