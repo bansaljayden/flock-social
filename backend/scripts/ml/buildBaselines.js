@@ -62,13 +62,13 @@ const MARK_TABLE_SQL = `
 // last one is still running. That day lost the 11:00, 13:00, 20:00 and 22:00 UTC
 // sweeps, about 4,000 live readings each, with twenty cities still to go. A
 // harvested venue is out of the hourly sweep and out of the neighbour box, so
-// nothing served waits on its baseline but its own score. The daily rebuild
-// (DAILY_REBUILD_UTC_HOUR) picks harvested venues up: since 2026-11-19 it is
-// THE TARGETED REBUILD, below, which lists every venue newer than its own
-// baseline, harvested or not, and averages as many as its minutes allow, the
-// rest the next time a rebuild is due. A big harvest's baselines can take
-// days that way; `node scripts/ml/buildBaselines.js --targeted` by hand
-// averages the rest at once, in short transactions. A promoted venue
+// nothing served waits on its baseline but its own score. From 2026-11-19 to
+// 2026-11-21 the daily rebuild (DAILY_REBUILD_UTC_HOUR), THE TARGETED REBUILD
+// below, picked harvested venues up too; since then the collector's rebuilds
+// pass includeHarvested false and leave them out until the ship step
+// (HARVESTED VENUES' CURVES WAIT FOR THE SHIP STEP, below), and only
+// `node scripts/ml/buildBaselines.js --targeted` by hand averages them, in
+// short transactions. A promoted venue
 // (out of 'harvested') moves no row, so it needs nothing new once its
 // baseline exists. (Most of those minutes turned out to be the rebuild's own
 // statement, which wrote to every row of the table: ONLY THE ROWS THAT
@@ -581,8 +581,9 @@ async function refreshTargets(pool, { deadline, chunkPlaces, overrunMs, includeH
 // the baselines change and nothing marks it. Run this file after a repair, as
 // before. The hourly run also rebuilds once a day whatever the stamps say
 // (DAILY_REBUILD_UTC_HOUR); since 2026-11-19 that is THE TARGETED REBUILD,
-// which catches every venue whose stamp is newer than its own baseline,
-// harvested or not, however late its write committed, but not a deletion or
+// which catches every venue whose stamp is newer than its own baseline
+// (harvested ones only when run by hand, since 2026-11-21: the collector
+// passes includeHarvested false), however late its write committed, but not a deletion or
 // a remap, so the run after a repair is still this file by hand. No mark yet
 // means due, and the caller treats a failure to read as due too. `full` says
 // which rebuild: the full one when there is no mark, or when the newest stamp

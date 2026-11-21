@@ -21,32 +21,45 @@
 // rows deleted: the copy writes about a tenth as much, and leaves a table whose
 // pages hold only what the readers need (a DELETE leaves the heap at its size
 // until a VACUUM FULL, and every sequential scan reads it). In one transaction:
-// lock ml_venue_baselines in SHARE mode (its writers wait; its readers do not),
-// copy every row of a place that is not a harvested venue's into a new table,
-// build the same indexes and the same primary key, then take the table's
-// exclusive lock (readers queue behind it for at most LOCK_TIMEOUT_MS; past it
-// the transaction rolls back and nothing has changed) and swap the names. The
-// old table, all 27 million rows, becomes ml_venue_baselines_set_aside, with
-// its indexes renamed to match; the new one takes the old table's name and its
-// indexes the old names, so migrations 006 and 138 (CREATE INDEX IF NOT EXISTS
-// by name) find what they expect. Run it at :20 to :45 past an hour: the
-// collector's recent-deviation rebuild reads this table for minutes from about
-// :59, and the exclusive lock would wait for it.
+// lock ml_venues and then ml_venue_baselines in SHARE mode (their writers wait,
+// so no venue changes status and no curve changes under the copy; their
+// readers do not, and the hourly sweep, which writes neither, does not), copy
+// every row of a place that is not a harvested venue's into a new table, build
+// the same indexes and the same primary key, then take the curve table's
+// exclusive lock and swap the names. LOCK_TIMEOUT_MS bounds each WAIT for a
+// lock, not how long one is held, so the exclusive lock, the renames, the
+// check and the COMMIT go to the server as one message, and the session's
+// idle-in-transaction timeout ends it, and every lock with it, if this client
+// stops answering partway. Past any timeout the transaction rolls back and
+// nothing has changed. The old table, all 27 million rows, becomes
+// ml_venue_baselines_set_aside, with its indexes renamed to match; the new one
+// takes the old table's name and its indexes the old names, so migrations 006
+// and 138 (CREATE INDEX IF NOT EXISTS by name) find what they expect. Run it at
+// :20 to :45 past an hour: the collector's recent-deviation rebuild reads this
+// table for minutes from about :59, and the exclusive lock would wait for it.
 //
 // RESTORE. Every place with no curve in the live table gets its set-aside curve
 // back, whole (a place the live table has any slot for keeps the live curve),
-// in short transactions, ON CONFLICT DO NOTHING. The ship step runs it, then
-// `node scripts/ml/buildBaselines.js --targeted` for the venues harvested after
-// the set-aside, then the status change. The set-aside table is never dropped
-// here: removing it is the maintainer's call once a model has shipped.
+// a chunk of places per transaction, each under the corpus write lock the
+// rebuilds take and the curve table's SHARE ROW EXCLUSIVE lock, so no rebuild
+// or other writer can add a slot between the check and the copy. The ship step
+// runs it, then `node scripts/ml/buildBaselines.js --targeted` for the venues
+// harvested after the set-aside, then the status change. The set-aside table is
+// never dropped here: removing it is the maintainer's call once a model has shipped.
 // ---------------------------------------------------------------------------
 require('dotenv').config();
 const { Pool } = require('pg');
+const { withCorpusWriteLock } = require('./config');
 
 const LIVE = 'ml_venue_baselines';
 const SET_ASIDE = 'ml_venue_baselines_set_aside';
 const BUILDING = 'ml_venue_baselines_keep';
 const LOCK_TIMEOUT_MS = 5000;
+// The client may pause between statements for milliseconds; past this the
+// server ends the session and every lock it holds.
+const IDLE_TIMEOUT_MS = 15000;
+// The swap message itself is catalog renames and one check.
+const SWAP_STATEMENT_TIMEOUT_MS = 10000;
 const RESTORE_CHUNK_PLACES = 2000;
 // A place is set aside only when its venue is a harvested one. ml_venues'
 // google_place_id is unique (migration 006), so a place has one status; a slot
@@ -131,12 +144,17 @@ async function setAside(pool, { commit = false, log = console.log } = {}) {
   const client = await pool.connect();
   let broken = false;
   try {
-    // A dry run reads and locks nothing anyone else waits on.
+    // A dry run writes nothing, and reads under the lock any SELECT takes, so
+    // ordinary reads and writes go on beside it.
     await client.query(commit ? 'BEGIN' : 'BEGIN READ ONLY');
     await client.query(`SET LOCAL lock_timeout = ${LOCK_TIMEOUT_MS}`);
-    // The writers of the table wait from here to COMMIT; its readers never do
-    // until the exclusive lock below.
-    if (commit) await client.query(`LOCK TABLE ${LIVE} IN SHARE MODE`);
+    await client.query(`SET LOCAL idle_in_transaction_session_timeout = ${IDLE_TIMEOUT_MS}`);
+    // The writers of both tables wait from here to COMMIT; their readers never
+    // do until the exclusive lock below. Venues first, always in this order.
+    if (commit) {
+      await client.query('LOCK TABLE ml_venues IN SHARE MODE');
+      await client.query(`LOCK TABLE ${LIVE} IN SHARE MODE`);
+    }
     const s = await survey(client);
     if (s.refused) {
       await client.query('ROLLBACK');
@@ -164,27 +182,28 @@ async function setAside(pool, { commit = false, log = console.log } = {}) {
     }
     await client.query(`ANALYZE ${BUILDING}`);
     const { rows: [oids] } = await client.query(
-      'SELECT $1::regclass::oid AS old_oid, $2::regclass::oid AS new_oid', [LIVE, BUILDING]);
-    // The swap. Every reader of the table waits here, for at most the lock
-    // timeout; past it this throws, the transaction rolls back, and nothing
-    // has changed. Only catalog renames run under the lock, milliseconds.
-    await client.query(`LOCK TABLE ${LIVE} IN ACCESS EXCLUSIVE MODE`);
-    await client.query(`ALTER TABLE ${LIVE} RENAME TO ${SET_ASIDE}`);
-    for (const idx of renames) {
-      await client.query(`ALTER INDEX ${quoteIdent(idx.name)} RENAME TO ${quoteIdent(`${idx.name}_set_aside`)}`);
-    }
-    await client.query(`ALTER TABLE ${BUILDING} RENAME TO ${LIVE}`);
-    for (const idx of renames) {
-      await client.query(`ALTER INDEX ${quoteIdent(`${idx.name}_keep`)} RENAME TO ${quoteIdent(idx.name)}`);
-    }
-    // Each name now names the other table: checked by identity, not by a count
-    // that would hold every reader while it scanned.
-    const { rows: [after] } = await client.query(
-      'SELECT $1::regclass::oid AS live_oid, $2::regclass::oid AS aside_oid', [LIVE, SET_ASIDE]);
-    if (after.live_oid !== oids.new_oid || after.aside_oid !== oids.old_oid) {
-      throw new Error('after the swap the names do not point where they should');
-    }
-    await client.query('COMMIT');
+      'SELECT $1::regclass::oid::text AS old_oid, $2::regclass::oid::text AS new_oid', [LIVE, BUILDING]);
+    if (!/^\d+$/.test(oids.old_oid) || !/^\d+$/.test(oids.new_oid)) throw new Error('unexpected table identities');
+    // The swap, as ONE message: the exclusive lock (readers queue behind it
+    // from the moment it is granted), the renames, a check that each name now
+    // names the other table (by identity, not by a count that would hold every
+    // reader while it scanned), and the COMMIT. A failure anywhere skips the
+    // rest of the message and leaves the transaction to roll back below.
+    const swap = [
+      `SET LOCAL statement_timeout = ${SWAP_STATEMENT_TIMEOUT_MS}`,
+      `LOCK TABLE ${LIVE} IN ACCESS EXCLUSIVE MODE`,
+      `ALTER TABLE ${LIVE} RENAME TO ${SET_ASIDE}`,
+      ...renames.map((idx) => `ALTER INDEX ${quoteIdent(idx.name)} RENAME TO ${quoteIdent(`${idx.name}_set_aside`)}`),
+      `ALTER TABLE ${BUILDING} RENAME TO ${LIVE}`,
+      ...renames.map((idx) => `ALTER INDEX ${quoteIdent(`${idx.name}_keep`)} RENAME TO ${quoteIdent(idx.name)}`),
+      `DO $$ BEGIN
+         IF '${LIVE}'::regclass::oid <> ${oids.new_oid} OR '${SET_ASIDE}'::regclass::oid <> ${oids.old_oid} THEN
+           RAISE EXCEPTION 'after the swap the names do not point where they should';
+         END IF;
+       END $$`,
+      'COMMIT',
+    ];
+    await client.query(swap.join(';\n'));
     log(`[SetAside] Done: ${LIVE} holds ${s.kept} rows; ${SET_ASIDE} holds all ${s.total} as they stood.`);
     return { ok: true, total: s.total, kept: s.kept, indexes: renames.map((i) => i.name) };
   } catch (err) {
@@ -207,13 +226,19 @@ async function restore(pool, { chunkPlaces = RESTORE_CHUNK_PLACES, log = console
   let restored = 0;
   for (let i = 0; i < places.length; i += chunkPlaces) {
     const chunk = places.slice(i, i + chunkPlaces).map((r) => r.google_place_id);
-    const res = await pool.query(`
-      INSERT INTO ${LIVE} (google_place_id, day_of_week, hour, baseline, source, updated_at)
-      SELECT s.google_place_id, s.day_of_week, s.hour, s.baseline, s.source, s.updated_at
-        FROM ${SET_ASIDE} s
-       WHERE s.google_place_id = ANY($1::text[])
-         AND NOT EXISTS (SELECT 1 FROM ${LIVE} b WHERE b.google_place_id = s.google_place_id)
-      ON CONFLICT DO NOTHING`, [chunk]);
+    // The rebuilds write under the corpus lock, and every other writer of the
+    // table waits on SHARE ROW EXCLUSIVE, so the absence checked here is the
+    // absence the INSERT meets, and a place comes back whole or not at all.
+    const res = await withCorpusWriteLock(pool, async (client) => {
+      await client.query(`LOCK TABLE ${LIVE} IN SHARE ROW EXCLUSIVE MODE`);
+      return client.query(`
+        INSERT INTO ${LIVE} (google_place_id, day_of_week, hour, baseline, source, updated_at)
+        SELECT s.google_place_id, s.day_of_week, s.hour, s.baseline, s.source, s.updated_at
+          FROM ${SET_ASIDE} s
+         WHERE s.google_place_id = ANY($1::text[])
+           AND NOT EXISTS (SELECT 1 FROM ${LIVE} b WHERE b.google_place_id = s.google_place_id)
+        ON CONFLICT DO NOTHING`, [chunk]);
+    });
     restored += res.rowCount;
   }
   log(`[SetAside] Restored ${restored} slots for ${places.length} places; ${SET_ASIDE} is left as it was.`);

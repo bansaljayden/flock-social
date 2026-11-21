@@ -101,18 +101,23 @@ test('the dry run counts the slots it would keep and writes nothing', async () =
 
 test('a lock it cannot get in time leaves everything as it was', async () => {
   const before = await rowsOf(LIVE);
-  const holder = await pool.connect();
-  try {
-    await holder.query('BEGIN');
-    // An open write holds the table's ROW EXCLUSIVE lock, which SHARE waits on.
-    await holder.query(`UPDATE ${LIVE} SET baseline = baseline
-                         WHERE google_place_id = 'ChIJsetAsideLive1' AND day_of_week = 0 AND hour = 0`);
-    const t0 = Date.now();
-    await assert.rejects(setAside(pool, { commit: true, log: quiet }), (err) => err.code === '55P03');
-    assert.ok(Date.now() - t0 < 15000, 'it waited past its lock timeout');
-  } finally {
-    await holder.query('ROLLBACK');
-    holder.release();
+  // An open write holds a table's ROW EXCLUSIVE lock, which SHARE waits on:
+  // first on the curves, then on the venues, whose statuses decide the copy.
+  for (const write of [
+    `UPDATE ${LIVE} SET baseline = baseline WHERE google_place_id = 'ChIJsetAsideLive1' AND day_of_week = 0 AND hour = 0`,
+    "UPDATE ml_venues SET besttime_status = besttime_status WHERE google_place_id = 'ChIJsetAsideHarv1'",
+  ]) {
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(write);
+      const t0 = Date.now();
+      await assert.rejects(setAside(pool, { commit: true, log: quiet }), (err) => err.code === '55P03', write);
+      assert.ok(Date.now() - t0 < 15000, 'it waited past its lock timeout');
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
   }
   assert.deepEqual(await rowsOf(LIVE), before);
   assert.equal(await exists(SET_ASIDE), false);
@@ -150,7 +155,22 @@ test('the swap keeps every other place\'s slots under the same names and keeps t
 test('the restore puts back whole curves only for places the live table holds none for', async () => {
   // Harv2 has a live curve again (rebuilt after a promotion, say): it keeps that one.
   await curve('ChIJsetAsideHarv2', 77);
-  const r = await restore(pool, { log: quiet });
+  // It takes the corpus write lock a rebuild holds, so it waits for one.
+  const { ML_CORPUS_LOCK_SQL } = require('../scripts/ml/config');
+  const holder = await pool.connect();
+  let settled = false;
+  let pending;
+  try {
+    await holder.query('BEGIN');
+    await holder.query(ML_CORPUS_LOCK_SQL);
+    pending = restore(pool, { log: quiet }).then((x) => { settled = true; return x; });
+    await new Promise((res) => setTimeout(res, 500));
+    assert.equal(settled, false, 'the restore ran while a rebuild held the corpus lock');
+  } finally {
+    await holder.query('ROLLBACK');
+    holder.release();
+  }
+  const r = await pending;
   assert.equal(r.ok, true);
   assert.equal(r.places, 1);
   assert.equal(r.restored, 168);
