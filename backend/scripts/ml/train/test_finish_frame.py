@@ -11,6 +11,12 @@ differently (which is not), so both are pinned here: the steps after the
 features give the same answers on the finished frame as on the full one, and
 every column main() reads by name after finishing a frame is one it keeps.
 
+The 0/1 columns made from comparisons are built a byte a row from the start
+(FLAG_DTYPE, 2026-11-21), which took the same export's peak from 5.1 GB to
+3.75 GB with both pickles and model_metadata.json identical. The steps that
+build them run here twice, as before (int64) and as now, and must agree value
+for value, down to the finished frame's X.
+
 Run: python test_finish_frame.py     (no pytest needed)
 """
 import inspect
@@ -180,6 +186,103 @@ def test_the_steps_after_the_features_answer_the_same_on_the_finished_frame():
     full = _steps_after_the_features(df)
     _same(full, _steps_after_the_features(finish_frame(df)))
     assert full['run_lengths'].max() > 1, 'the fixture should hold a run of identical live readings'
+
+
+def raw_frame() -> pd.DataFrame:
+    """Export columns for the steps that build 0/1 columns, each flag taking both values
+    (but the no-schedule sports columns, which are zero by construction)."""
+    n = 60
+    i = np.arange(n)
+    pick = lambda values: np.array(values, dtype=object)[i % len(values)]  # noqa: E731
+    return pd.DataFrame({
+        'city': np.where(i < 30, 'nyc', 'boston'),
+        'venue_category': pick(['bar', 'cafe', 'nightclub', 'restaurant']),
+        'latitude': 40.7 + (i % 3) * 0.01,
+        'longitude': -74.0 - (i % 3) * 0.01,
+        'day_of_week': i % 7,
+        'hour': (i * 5) % 24,
+        'month': 1 + i % 12,
+        'season': pick(['winter', 'spring', 'summer', 'fall', None]),
+        'price_level': np.where(i % 5 == 0, np.nan, 1.0 + i % 3),
+        'rating': np.where(i % 7 == 0, np.nan, 3.8 + (i % 5) / 10),
+        'review_count': np.where(i % 6 == 0, np.nan, 10.0 * i),
+        'google_type_1': pick(['bar', 'cafe', 'restaurant']),
+        'google_type_2': pick(['food', None, 'point_of_interest']),
+        'google_type_3': pick([None, 'establishment']),
+        # missing on every fourth row; under 41 F on clear rows early on
+        'temperature': np.where(i % 4 == 0, np.nan, 30.0 + i),
+        'humidity': np.where(i % 4 == 0, np.nan, 60.0),
+        'wind_speed': np.where(i % 4 == 0, np.nan, 5.0),
+        'is_raining': np.where(i % 4 == 0, np.nan, (i % 3 == 0).astype(float)),
+        # nine codes against the missing fourth row, so every group lands on a reading
+        'weather_condition_code': np.where(i % 4 == 0, np.nan,
+                                           np.array([801, 800, 803, 500, 502, 600, 211, 741, 800])[i % 9]),
+        'has_nearby_event': np.where(i % 9 == 0, np.nan, (i % 2).astype(float)),
+        'nearest_event_attendance': np.where(i % 2 == 1, 1000.0 * i, np.nan),
+        'total_nearby_events': np.where(i % 2 == 1, 2.0, np.nan),
+        'total_nearby_attendance': np.where(i % 2 == 1, 1500.0 * i, np.nan),
+        'nearest_event_distance_km': np.where(i % 2 == 1, 0.5, np.nan),
+        'nearest_event_type': pick(['music', 'sports', 'arts', 'family', 'other', None, 'concert']),
+        'avg_user_crowd': np.nan,
+        'user_feedback_count': np.where(i % 5 == 0, 2.0, np.nan),
+        'avg_prediction_error': np.nan,
+        # New Year's Eve and July 3 are special nights, July 3 a holiday's eve too
+        'observed_date': pick(['2025-12-31', '2025-07-03', '2025-07-04', '2025-03-10', None]),
+    })
+
+
+def _flags_built_as(flag_dtype) -> pd.DataFrame:
+    """The steps that build 0/1 columns, in main()'s order, with FLAG_DTYPE set to flag_dtype."""
+    saved = pf.FLAG_DTYPE
+    pf.FLAG_DTYPE = flag_dtype
+    try:
+        df = pf.add_temporal_features(raw_frame())
+        df, _ = pf.add_venue_features(df)
+        df = pf.add_weather_features(df)
+        df = pf.add_user_feedback_features(df)
+        df = pf.add_event_features(df)
+        df = pf.add_astronomy_features(df)
+        df, _ = pf.add_climate_anomaly(df)
+        df = pf.add_holiday_features(df)
+        return pf.add_sports_features(df, path=Path(__file__).parent / 'no-sports-events-here.csv')
+    finally:
+        pf.FLAG_DTYPE = saved
+
+
+def test_flags_built_a_byte_a_row_hold_the_values_the_int64_build_held():
+    old, new = _flags_built_as(np.int64), _flags_built_as(pf.FLAG_DTYPE)
+    assert pf.FLAG_DTYPE == np.int8
+    assert list(new.columns) == list(old.columns)
+    narrowed = sorted(c for c in old.columns if new[c].dtype != old[c].dtype)
+    for c in narrowed:
+        assert (old[c].dtype, new[c].dtype) == (np.int64, np.int8), c
+        assert set(old[c].unique()) <= {0, 1}, c
+        assert (new[c].to_numpy(dtype=np.int64) == old[c].to_numpy()).all(), c
+    for c in old.columns:
+        if c not in narrowed:
+            assert old[c].equals(new[c]), c
+    expected = ({'is_weekend', 'is_friday_saturday_night', 'is_lunch_hour', 'is_dinner_hour',
+                 'is_late_night', 'is_morning', 'is_after_sunset', 'is_warm_anomaly_evening',
+                 'is_special_night', 'is_holiday_eve', 'weather_observed', 'cold_outdoor',
+                 'has_user_feedback', 'large_event_nearby',
+                 'sports_game_today', 'sports_games_count', 'sports_evening_game',
+                 'sports_home_game_today', 'sports_home_within_10km'}
+                | {c for c in old.columns if c.startswith(('season_', 'gtype_', 'etype_'))}
+                | {f'weather_{g}' for g in pf.WEATHER_GROUP_NAMES})
+    assert set(narrowed) == expected, set(narrowed) ^ expected
+    # A column whose values come from the export keeps its type until finish_frame
+    # has checked their range, and so do the products built from one.
+    for c in ('is_raining', 'has_nearby_event', 'rain_x_weekend', 'event_x_weekend', 'event_x_bar'):
+        assert new[c].dtype == np.int64, c
+    # Every flag but the no-schedule sports columns (zero by construction) takes
+    # both values somewhere, so the comparison above means something.
+    for c in narrowed:
+        if not c.startswith('sports_'):
+            assert set(old[c].unique()) == {0, 1}, c
+    cols = get_feature_columns(old)
+    assert get_feature_columns(new) == cols
+    assert pickle.dumps(feature_matrix(finish_frame(new), cols)) == \
+        pickle.dumps(feature_matrix(finish_frame(old), cols))
 
 
 def test_every_column_main_reads_by_name_after_finishing_a_frame_is_kept():

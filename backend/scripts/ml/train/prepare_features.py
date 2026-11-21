@@ -1346,6 +1346,19 @@ def enforce_label_contract(stats: Dict, label: str) -> None:
         )
 
 
+# A 0/1 column made from a comparison is held a byte a row from the start
+# (2026-11-21). A frame carries every one of them at once until finish_frame,
+# and at eight bytes a row those sixty-odd columns were a quarter of the
+# script's peak: on the 2026-10-08 export it fell from 5.1 GB to 3.75 GB, both
+# pickles and model_metadata.json identical. The values are the same 0s and 1s;
+# X reads them as float32 and every step in between only sums, multiplies or
+# compares them. A column whose values come from the export (is_raining,
+# has_nearby_event), or is a count or a code, keeps its type here, since a cast
+# to a narrow type wraps a value it cannot hold; finish_frame narrows those once
+# their range is known. test_finish_frame.py builds these columns both ways.
+FLAG_DTYPE = np.int8
+
+
 def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add cyclical and boolean temporal features."""
     # Cyclical encodings
@@ -1357,14 +1370,14 @@ def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     df['dow_cos'] = np.cos(2 * math.pi * df['day_of_week'] / 7)
 
     # Boolean flags
-    df['is_weekend'] = df['day_of_week'].isin([0, 6]).astype(int)  # Sun=0, Sat=6
+    df['is_weekend'] = df['day_of_week'].isin([0, 6]).astype(FLAG_DTYPE)  # Sun=0, Sat=6
     df['is_friday_saturday_night'] = (
         (df['day_of_week'].isin([5, 6])) & (df['hour'] >= 18)
-    ).astype(int)
-    df['is_lunch_hour'] = df['hour'].between(11, 13).astype(int)
-    df['is_dinner_hour'] = df['hour'].between(17, 21).astype(int)
-    df['is_late_night'] = (df['hour'].between(22, 23) | df['hour'].between(0, 3)).astype(int)
-    df['is_morning'] = df['hour'].between(6, 10).astype(int)
+    ).astype(FLAG_DTYPE)
+    df['is_lunch_hour'] = df['hour'].between(11, 13).astype(FLAG_DTYPE)
+    df['is_dinner_hour'] = df['hour'].between(17, 21).astype(FLAG_DTYPE)
+    df['is_late_night'] = (df['hour'].between(22, 23) | df['hour'].between(0, 3)).astype(FLAG_DTYPE)
+    df['is_morning'] = df['hour'].between(6, 10).astype(FLAG_DTYPE)
 
     # Season one-hot
     season = df['season'].astype('string').str.strip().str.lower()
@@ -1372,7 +1385,7 @@ def add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
         # fillna(False): an absent season is "not this season" for every level,
         # which is only ever reached under FLOCK_CALENDAR_POLICY=drop — where
         # these columns are removed from the feature set anyway.
-        df[f'season_{s}'] = (season == s).fillna(False).astype(int)
+        df[f'season_{s}'] = (season == s).fillna(False).astype(FLAG_DTYPE)
 
     return df
 
@@ -1397,7 +1410,7 @@ def add_astronomy_features(df: pd.DataFrame) -> pd.DataFrame:
     sunset_hour = 12 + daylight / 2.0
     hh = np.where(df['hour'] < 5, df['hour'] + 24, df['hour'])  # 1 AM belongs to the evening
     df['hours_after_sunset'] = (hh - sunset_hour).clip(-8, 12)
-    df['is_after_sunset'] = (df['hours_after_sunset'] > 0).astype(int)
+    df['is_after_sunset'] = (df['hours_after_sunset'] > 0).astype(FLAG_DTYPE)
     return df
 
 
@@ -1581,7 +1594,7 @@ def add_climate_anomaly(df: pd.DataFrame, norms: pd.DataFrame = None) -> Tuple[p
     if norms is None:
         norms = fit_temperature_norms(df)
     df['temp_anomaly'] = (df['temperature'] - df['temp_norm']).clip(-25, 25)
-    df['is_warm_anomaly_evening'] = ((df['temp_anomaly'] > 5) & (df['hour'] >= 17)).astype(int)
+    df['is_warm_anomaly_evening'] = ((df['temp_anomaly'] > 5) & (df['hour'] >= 17)).astype(FLAG_DTYPE)
     return df, norms
 
 
@@ -2018,10 +2031,10 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
     keys = df['city'].fillna('').astype(str) + '|' + df['observed_date'].fillna('').astype(str)
     lut = {k: ctx(k) for k in keys.unique()}
     vals = np.array([lut[k] for k in keys], dtype=float)
-    df['is_special_night'] = vals[:, 0].astype(int)
+    df['is_special_night'] = vals[:, 0].astype(FLAG_DTYPE)
     df['special_boost'] = vals[:, 1]
     df['special_suppress'] = vals[:, 2]
-    df['is_holiday_eve'] = vals[:, 3].astype(int)
+    df['is_holiday_eve'] = vals[:, 3].astype(FLAG_DTYPE)
     n = int(df['is_special_night'].sum())
     e = int(df['is_holiday_eve'].sum())
     logger.info(f'Holiday features: {n} special-night rows, {e} holiday-eve rows')
@@ -2079,7 +2092,7 @@ def add_sports_features(df: pd.DataFrame, path: Path = None) -> pd.DataFrame:
     path = Path(path) if path is not None else SCRIPT_DIR / 'sports_events.csv'
     if not path.exists():
         for c in cols_zero:
-            df[c] = 0
+            df[c] = np.zeros(len(df), dtype=FLAG_DTYPE)
         df['sports_home_dist_km'] = SPORTS_DIST_CAP_KM
         logger.info('Sports features: sports_events.csv absent, all-zero columns (run exportSportsEvents.js to arm)')
         return df
@@ -2227,7 +2240,7 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
 
     for t in top_types:
         col_name = f'gtype_{t}'
-        df[col_name] = 0
+        df[col_name] = np.zeros(len(df), dtype=FLAG_DTYPE)
         for tc in type_cols:
             df.loc[df[tc] == t, col_name] = 1
 
@@ -2256,7 +2269,7 @@ def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.Dat
 
     # CARRIED, never a feature: whether this row's weather is a reading or the
     # outage vector below. Recorded before any fill so it cannot be laundered.
-    df['weather_observed'] = df['temperature'].notna().astype(int)
+    df['weather_observed'] = df['temperature'].notna().astype(FLAG_DTYPE)
 
     # A missing temperature takes the climate norm for its (band, month), the
     # table mean when the cell has no observed row: mlPredictor.climateNorm,
@@ -2278,7 +2291,7 @@ def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.Dat
     # then the truthful level, not a silent stand-in for the whole corpus.
     df['weather_group'] = df['weather_condition_code'].apply(group_weather_code)
     for g in WEATHER_GROUP_NAMES:
-        df[f'weather_{g}'] = (df['weather_group'] == g).astype(int)
+        df[f'weather_{g}'] = (df['weather_group'] == g).astype(FLAG_DTYPE)
 
     # Interaction features
     df['rain_x_weekend'] = df['is_raining'] * df['is_weekend']
@@ -2310,7 +2323,7 @@ def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.Dat
     COLD_OUTDOOR_MAX_TEMP_F = 41.0  # 5C, in the imperial units the corpus is collected in
     df['cold_outdoor'] = (
         (df['temperature'] < COLD_OUTDOOR_MAX_TEMP_F) & (df['weather_clear'] == 1)
-    ).astype(int)
+    ).astype(FLAG_DTYPE)
 
     return df
 
@@ -2848,7 +2861,7 @@ def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.D
     df.drop(columns=['_price_tier', '_popularity'], inplace=True)
 
     # Flag whether we have a venue-specific baseline or are using category fallback
-    df['has_venue_baseline'] = (df['baseline_busyness'] > 0).astype(int)
+    df['has_venue_baseline'] = (df['baseline_busyness'] > 0).astype(FLAG_DTYPE)
 
     # Data freshness — realtime observations are more reliable
     df['is_realtime'] = df['is_realtime'].fillna(0).astype(int)
@@ -2861,7 +2874,7 @@ def add_user_feedback_features(df: pd.DataFrame) -> pd.DataFrame:
     df['avg_user_crowd'] = df['avg_user_crowd'].fillna(0)
     df['user_feedback_count'] = df['user_feedback_count'].fillna(0)
     df['log_user_feedback_count'] = np.log1p(df['user_feedback_count'])
-    df['has_user_feedback'] = (df['user_feedback_count'] > 0).astype(int)
+    df['has_user_feedback'] = (df['user_feedback_count'] > 0).astype(FLAG_DTYPE)
     df['avg_prediction_error'] = df['avg_prediction_error'].fillna(0)
     return df
 
@@ -2953,7 +2966,7 @@ def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     df['nearest_event_distance_km'] = df['nearest_event_distance_km'].fillna(0)
 
     # Large event flag
-    df['large_event_nearby'] = (df['nearest_event_attendance'] > 5000).astype(int)
+    df['large_event_nearby'] = (df['nearest_event_attendance'] > 5000).astype(FLAG_DTYPE)
 
     # Interaction features. add_temporal_features runs first and is the only
     # producer of is_weekend / is_dinner_hour — a soft df.get(..., 0) here used
@@ -2973,7 +2986,7 @@ def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     # normalise_event_types above has already refused any other value.
     types = df['nearest_event_type'].astype(object)
     for etype in EVENT_TYPE_VOCABULARY:
-        df[f'etype_{etype}'] = (types == etype).astype(int)
+        df[f'etype_{etype}'] = (types == etype).astype(FLAG_DTYPE)
 
     return df
 
@@ -3334,7 +3347,7 @@ def main():
         top_types = venue_metadata['top_google_types']
         for t in top_types:
             col_name = f'gtype_{t}'
-            holdout_df[col_name] = 0
+            holdout_df[col_name] = np.zeros(len(holdout_df), dtype=FLAG_DTYPE)
             for tc in ['google_type_1', 'google_type_2', 'google_type_3']:
                 holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
