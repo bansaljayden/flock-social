@@ -2762,18 +2762,18 @@ const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 // ---------------------------------------------------------------------------
 // scripts/ml/harvestVenueFilter.js can add thousands of venues at once from
 // BestTime's Venue Filter, as ml_venues rows with besttime_status 'harvested'.
-// buildBaselines gives each one a curve (since 2026-11-19 from the hourly run's
-// targeted rebuild, a few thousand per daily run, so a big harvest takes days
-// unless `buildBaselines.js --targeted` is run by hand), and without this
-// clause every one of them would join the box below: log_neighbor_count and
+// buildBaselines can give each one a curve (since 2026-11-21 only when run by
+// hand: the hourly run's rebuilds leave harvested venues out, and their curves
+// were set aside until the ship step, scripts/ml/setAsideHarvestedCurves.js),
+// and without this clause every one with a curve would join the box below: log_neighbor_count and
 // neighbor_baseline_same_hour are inputs of the shipped model, so every
 // existing venue's score would move within a cache TTL, by an amount no
 // evaluation had measured. So the box leaves them out, on both statements (the
 // totals and the self lookup, so a harvested venue is not subtracted from a
 // box it was never counted in), and train/export_training_data.js leaves them
 // out of the CSV by default for the same reason: training and serving see the
-// same neighbourhood. A harvested venue still gets its own baseline and its
-// own model-backed score; only its effect on OTHER venues waits. When a
+// same neighbourhood. A harvested venue with a curve gets its own model-backed
+// score (one without, the no-curve answer); only its effect on OTHER venues waits. When a
 // retrain that included them (export --include-harvested) ships, their status
 // is changed in the same step (scripts/ml/RETRAIN.md, "Venue Filter harvest"),
 // which lets both sides see them at once.

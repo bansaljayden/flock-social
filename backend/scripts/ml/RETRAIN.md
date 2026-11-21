@@ -2340,6 +2340,19 @@ promoting harvested venues, run `node scripts/ml/buildBaselines.js --targeted`
 by hand: it averages every venue left, in short transactions the collectors
 can interleave with. Promoting moves no row, so nothing else is needed.
 
+Since 2026-11-21 the hourly run's rebuilds leave harvested venues out
+entirely (`includeHarvested: false`): their curves had grown the curve table
+to 27 million rows, nine tenths of it theirs, and the collector's hourly
+recent-deviation rebuild, which reads the whole table, ran past its cap.
+`node scripts/ml/setAsideHarvestedCurves.js --commit` swapped the table for a
+copy without them and kept the old one whole as
+`ml_venue_baselines_set_aside`. So the step before promoting is now:
+`node scripts/ml/setAsideHarvestedCurves.js --restore` (each place the live
+table has no curve for gets its set-aside curve back, whole), then
+`node scripts/ml/buildBaselines.js --targeted` by hand (it includes harvested
+venues, and averages those harvested after the set-aside), then the status
+change.
+
 What does not change is anybody else's score. `log_neighbor_count` and
 `neighbor_baseline_same_hour` are inputs of the shipped model, and
 `services/mlPredictor.js` leaves `besttime_status = 'harvested'` out of the
