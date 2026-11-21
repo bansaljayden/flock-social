@@ -2084,6 +2084,12 @@ everything the market rule (`addDemandVenues.nearestPaCity`, 80 km) accepts. A
 tile's corner reaches past the circle: a known venue found there is refreshed,
 a new one is skipped (`outsideRadius`).
 
+A new venue takes its market's time zone, not its own, so a radius must stay
+inside that zone. At 40 km every training city does but Singapore, whose circle
+reaches Batam, Indonesia (an hour behind) at about 29 km: the 40 km pass of
+2026-11-21 runs Singapore at 25 km, which adds the rest of Johor Bahru, on
+Singapore's clock. Check the map before widening a city that sits near a border.
+
 Measured on the first philly dry run (Monday, 20 km): 91 requests over 29 leaf
 tiles, about 756 query credits, 3,933 venues found; 219 known by BestTime id,
 54 by Google place id, 1 near-duplicate, 2,791 new; 73,560 weekly rows for the
