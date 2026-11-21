@@ -2430,8 +2430,8 @@ and the new rows' labels are the filter harvest's `--new-only` ones, with one
 difference: a venue BestTime types BEER (pubs and beer halls beside beer shops)
 or OTHER, which the filter's type map leaves out, takes its category from the
 Google types BestTime lists beside it (`searchCategory`: addDemandVenues' map,
-Google's primary type first, never a shop's or a stadium's, a BEER venue never
-a cafe). On the 2026-11-20 run that filed 688 of 842 such venues, 468 of them
+Google's primary type first, never a shop's or a stadium's, nor a venue whose
+primary type is a shop, a BEER venue never a cafe). On the 2026-11-20 run that filed 688 of 842 such venues, 468 of them
 bars and 88 restaurants. Everything above about `'harvested'` venues
 (inactive, out of the neighbour box and the default export, the rollback)
 applies unchanged. The axis proof compares only against stored rows no search

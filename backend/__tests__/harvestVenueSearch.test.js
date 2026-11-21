@@ -117,8 +117,18 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   assert.strictEqual(cat('BEER', ['coffee_shop', 'bar', 'brewery']), 'brewery', 'not bar, as if bar were the primary');
   assert.strictEqual(cat('OTHER', ['cafe', 'pub']), 'cafe');
   assert.strictEqual(cat('OTHER', ['irish_pub', 'cafe', 'pub']), 'cafe');
+  // A shop further down the list decides nothing: pubs that sell takeaway list one.
+  assert.strictEqual(cat('BEER', ['pub', 'liquor_store', 'restaurant']), 'bar');
+  assert.strictEqual(cat('BEER', ['pub', 'bar', 'beer_store']), 'bar');
+  assert.strictEqual(cat('OTHER', ['bar', 'art_gallery', 'cocktail_bar', 'gastropub', 'liquor_store']), 'bar');
+  assert.strictEqual(cat('OTHER', ['market', 'restaurant']), 'restaurant', 'a food hall is not a shop');
   for (const [type, googleTypes] of [
     ['BEER', ['liquor_store', 'store']], // a beer shop
+    // A shop first is a shop, whatever it lists after.
+    ['BEER', ['liquor_store', 'bar']],
+    ['BEER', ['beer_store', 'pub', 'beer_hall']],
+    ['OTHER', ['coffee_store', 'cafe']],
+    ['OTHER', ['book_store', 'cafe', 'restaurant']],
     ['BEER', ['irish_pub']], // no exact match, and no default
     ['BEER', ['cafe']],
     ['BEER', ['bakery', 'ice_cream_shop', 'dessert_shop', 'coffee_shop']],
@@ -157,6 +167,7 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   const viaInfo = (venue_type, venue_types) => s.searchCategory(s.readSearchVenue(line, { venue_type, venue_types }));
   assert.strictEqual(viaInfo('OTHER', ['Fast food restaurant']), 'fast_food');
   assert.strictEqual(viaInfo('OTHER', ['Gas station', 'Restaurant']), undefined, 'the guard reads labels too');
+  assert.strictEqual(viaInfo('BEER', ['Liquor store', 'Bar']), undefined, 'and a shop first in label form');
   const { exactCategoryFor, categoryFor } = require('../scripts/ml/addDemandVenues');
   assert.strictEqual(exactCategoryFor(['restaurant', 'bar']), 'bar');
   assert.strictEqual(exactCategoryFor(['establishment']), null);

@@ -230,6 +230,12 @@ function readSearchVenue(line, info) {
 //     skipped venues the rest of the rule would have filed: 4 listing
 //     supermarket, 3 grocery_store, 3 convenience_store, 2 gas_station, 2
 //     shopping_center and 1 outlet_mall);
+//   * a venue whose primary type is a shop (any '_store', such as liquor_store
+//     or beer_store) is skipped: a bottle shop that lists a bar is a shop.
+//     Further down the list such a type decides nothing, because pubs list
+//     them beside pub (Sydney hotels that sell takeaway, London craft-beer
+//     pubs); on the 2026-11-19 and 2026-11-20 runs no venue filed had a shop
+//     first, and the two with 'market' first were food halls, which stay;
 //   * a BEER venue is never a cafe or a sweet shop (NOT_FOR_BEER): on that run
 //     every BEER venue the map filed as a cafe was a pub or a taproom that
 //     also listed one ('The Beer Café', a pub with a coffee_shop type);
@@ -263,9 +269,10 @@ function searchCategory(v) {
   if (typeof v.type === 'string' && own(h.TYPE_TO_CATEGORY, v.type)) return h.TYPE_TO_CATEGORY[v.type];
   if (!TYPES_FILED_BY_GOOGLE_TYPES.has(v.type) || !Array.isArray(v.googleTypes)) return undefined;
   if (v.googleTypes.some((t) => SHOP_OR_STADIUM_TYPES.has(t))) return undefined;
+  const first = v.googleTypes[0];
+  if (typeof first === 'string' && first.endsWith('_store')) return undefined;
   const beer = v.type === 'BEER';
   const types = beer ? v.googleTypes.filter((t) => !NOT_FOR_BEER.has(t)) : v.googleTypes;
-  const first = v.googleTypes[0];
   if (typeof first === 'string' && !(beer && NOT_FOR_BEER.has(first))) {
     const primary = exactCategoryFor([first])
       || (first === 'dessert_restaurant' ? 'dessert' : null)
