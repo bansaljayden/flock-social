@@ -122,6 +122,10 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   assert.strictEqual(cat('BEER', ['pub', 'bar', 'beer_store']), 'bar');
   assert.strictEqual(cat('OTHER', ['bar', 'art_gallery', 'cocktail_bar', 'gastropub', 'liquor_store']), 'bar');
   assert.strictEqual(cat('OTHER', ['market', 'restaurant']), 'restaurant', 'a food hall is not a shop');
+  assert.strictEqual(cat('OTHER', ['shopping_mall', 'movie_theater']), 'mall', 'the app\'s own mall');
+  // Food and Drink's '_shop' types are not shops.
+  assert.strictEqual(cat('OTHER', ['juice_shop', 'cafe']), 'cafe');
+  assert.strictEqual(cat('OTHER', ['coffee_shop', 'bar']), 'cafe');
   for (const [type, googleTypes] of [
     ['BEER', ['liquor_store', 'store']], // a beer shop
     // A shop first is a shop, whatever it lists after.
@@ -129,6 +133,12 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
     ['BEER', ['beer_store', 'pub', 'beer_hall']],
     ['OTHER', ['coffee_store', 'cafe']],
     ['OTHER', ['book_store', 'cafe', 'restaurant']],
+    ['OTHER', ['store', 'cafe']],
+    ['OTHER', ['gift_shop', 'cafe']],
+    ['OTHER', ['butcher_shop', 'restaurant']],
+    ['OTHER', ['garden_center', 'cafe']],
+    ['OTHER', ['farmers_market', 'restaurant']],
+    ['BEER', ['wholesaler', 'bar']],
     ['BEER', ['irish_pub']], // no exact match, and no default
     ['BEER', ['cafe']],
     ['BEER', ['bakery', 'ice_cream_shop', 'dessert_shop', 'coffee_shop']],
@@ -161,6 +171,8 @@ test('a BEER or OTHER venue is filed by its Google types, the primary one first;
   assert.deepStrictEqual([...s.TYPES_FILED_BY_GOOGLE_TYPES], ['BEER', 'OTHER']);
   assert.deepStrictEqual([...s.SHOP_OR_STADIUM_TYPES].sort(), ['arena', 'convenience_store', 'gas_station',
     'grocery_store', 'outlet_mall', 'shopping_center', 'stadium', 'supermarket']);
+  assert.deepStrictEqual([...s.PRIMARY_SHOP_TYPES].sort(), ['butcher_shop', 'discount_supermarket', 'farmers_market',
+    'flea_market', 'garden_center', 'gift_shop', 'hypermarket', 'store', 'supermarket', 'wholesaler']);
   assert.deepStrictEqual([...s.NOT_FOR_BEER].sort(), ['bakery', 'cafe', 'coffee_shop', 'dessert_shop', 'ice_cream_shop']);
   // Through readSearchVenue, labels are read in their coded form.
   const line = { venue_id: btIdOf(placeId(4)), name: 'Four', lat: 39.96, lng: -75.15, days: week(4) };
