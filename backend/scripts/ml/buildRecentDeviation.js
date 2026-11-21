@@ -329,12 +329,12 @@ async function jobQuery(sql, params, { plan = false, settings = [] } = {}) {
   }
 }
 
-async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false } = {}) {
+async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false, offsetStored = true } = {}) {
   try {
     const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep], { plan, settings: RECENT_READINGS_SETTINGS });
     return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
-    console.error('[ML:Deviation] Recent readings not stored (the offset was):', err.message);
+    console.error(`[ML:Deviation] Recent readings not stored (${offsetStored ? 'the offset was' : 'nor was the offset'}):`, err.message);
     return { updated: null, error: err.message, plan: null };
   }
 }
@@ -408,14 +408,20 @@ const OFFSET_READINGS_SQL = `
      AND d.offset_readings IS DISTINCT FROM l.readings
 `;
 
-async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK, plan = false } = {}) {
+async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK, plan = false, offsetStored = true } = {}) {
   try {
     const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep], { plan, settings: OFFSET_READINGS_SETTINGS });
     return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
-    console.error('[ML:Deviation] Offset readings not stored (the offset was):', err.message);
+    console.error(`[ML:Deviation] Offset readings not stored (${offsetStored ? 'the offset was' : 'nor was the offset'}):`, err.message);
     return { updated: null, error: err.message, plan: null };
   }
+}
+
+// What a run whose offset statement failed still stored, for the error it ends with.
+function readingsOutcome(readings, offsetReadings) {
+  const said = (name, r) => (r.error ? `${name} were not stored either` : `${name} were stored (${r.updated} venue rows changed)`);
+  return `${said('the nowcast\'s readings', readings)}, and ${said('the offset readings', offsetReadings)}`;
 }
 
 // WHERE THE SECONDS WENT. JOB_STATEMENT_TIMEOUT_MS is a cap on each statement,
@@ -424,14 +430,37 @@ async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READIN
 // carries each of the three, and the collector's hourly line prints them.
 // With `plan` (the collector passes planDue()), the three run under EXPLAIN
 // and `plans` carries each one's line; otherwise `plans` is null.
+//
+// A FAILED OFFSET STATEMENT NO LONGER COSTS THE TWO READINGS STATEMENTS
+// (2026-11-21). With CROWD_NOWCAST_ENABLED a card's number is the model plus
+// the strict offset from offset_readings plus the nowcast from recent_readings;
+// offset_pct, which the first statement writes, is what the switched-off
+// server adds. When that statement threw, the other two never ran: from 17:01
+// UTC on 2026-11-21 it passed the two-minute cap every hour (the curve table
+// had grown past 27 million rows with the harvested venues' curves), and the
+// nowcast's stored readings aged past its lag cap within a few hours, so every
+// card lost the nowcast. Now the two run whatever the first did, on the rows
+// earlier runs made (a venue new this hour gets its readings next hour), and
+// the run still ends in the first statement's error, saying what was stored.
 async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS, plan = false } = {}) {
   const t0 = Date.now();
-  const written = await jobQuery(UPSERT_SQL, [windowDays, maxReadings], { plan });
+  let written = null;
+  let offsetFailure = null;
+  try {
+    written = await jobQuery(UPSERT_SQL, [windowDays, maxReadings], { plan });
+  } catch (err) {
+    offsetFailure = err;
+  }
   const t1 = Date.now();
-  const readings = await storeLatestReadings({ plan });
+  const offsetStored = !offsetFailure;
+  const readings = await storeLatestReadings({ plan, offsetStored });
   const t2 = Date.now();
-  const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK, plan });
+  const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK, plan, offsetStored });
   const t3 = Date.now();
+  if (offsetFailure) {
+    offsetFailure.message = `${offsetFailure.message}; the offsets were not rebuilt, and ${readingsOutcome(readings, offsetReadings)}`;
+    throw offsetFailure;
+  }
   const pruned = await pool.query(PRUNE_SQL, [windowDays * 2]);
   return {
     written: written.rowCount,

@@ -607,6 +607,60 @@ test('without the column (092 not yet booted), the offsets are still rebuilt', a
   }
 });
 
+// 2026-11-21: from 17:01 UTC the offset statement passed its two-minute cap every
+// hour in production, and because it threw first the two readings statements
+// never ran, so the nowcast's stored readings aged out and every card lost it.
+test('when the offset statement fails, both readings statements still run, and the run ends in its error', async () => {
+  const { buildRecentDeviation } = require('../scripts/ml/buildRecentDeviation');
+  const place = 'ChIJdeviationOffsetFails';
+  const id = (await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, timezone, is_active)
+     VALUES ($1, $2, $1, $3, 39.95, -75.16, 'bar', $4, false) RETURNING id`,
+    [place, 'bt_' + place, CITY, TZ])).rows[0].id;
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      await pool.query(
+        `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source)
+         VALUES ($1, $2, $3, 40, 'collected')`, [place, d, h]);
+    }
+  }
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  for (const [hour, pct, hoursAgo] of [[10, 55, 2], [11, 45, 1]]) {
+    await pool.query(
+      `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                     busyness_pct, label_source, observed_date, collected_at)
+       VALUES ($1, 'realtime', 'venue_local', $2, $3, 'bar', $4, 'live', $5, NOW() - make_interval(hours => $6::int))`,
+      [id, now.getUTCDay(), hour, pct, date, hoursAgo]);
+  }
+  const row = async () => (await pool.query(
+    'SELECT offset_pct, recent_readings, offset_readings FROM ml_venue_recent_deviation WHERE google_place_id = $1',
+    [place])).rows[0];
+  const quiet = console.error;
+  const errors = [];
+  console.error = (...a) => errors.push(a.join(' '));
+  try {
+    await buildRecentDeviation();   // makes the venue's row, as an hour before would have
+    assert.strictEqual((await row()).offset_pct, 10, 'the median of 15 and 5');
+    await pool.query('UPDATE ml_venue_recent_deviation SET recent_readings = NULL, offset_readings = NULL WHERE google_place_id = $1', [place]);
+    // Only the offset statement writes offset_pct, so hiding it fails that statement alone.
+    await pool.query('ALTER TABLE ml_venue_recent_deviation RENAME COLUMN offset_pct TO offset_pct_hidden');
+    await assert.rejects(buildRecentDeviation(), (err) => {
+      assert.match(err.message, /offset_pct/, 'the offset statement\'s own error');
+      assert.match(err.message, /the offsets were not rebuilt, and the nowcast's readings were stored \(\d+ venue rows changed\), and the offset readings were stored \(\d+ venue rows changed\)$/);
+      return true;
+    });
+  } finally {
+    console.error = quiet;
+    await pool.query('ALTER TABLE ml_venue_recent_deviation RENAME COLUMN offset_pct_hidden TO offset_pct').catch(() => {});
+  }
+  const after = await row();
+  assert.deepStrictEqual(after.recent_readings.map((r) => [r.h, r.v]), [[11, 45], [10, 55]], 'the nowcast\'s readings were stored');
+  assert.deepStrictEqual(after.offset_readings.map((r) => [r.h, r.dev]), [[11, 5], [10, 15]], 'and the offset readings');
+  assert.ok(!errors.some((e) => /the offset was\)/.test(e)), 'nothing says the offset was stored');
+});
+
 test('each of the three aggregates gets the job\'s two minutes in its own transaction, and the pool keeps the API\'s cap', async () => {
   // From 2026-10-27 the API's 15-second cap on config/database.js's pool, which
   // this file runs on inside the hourly collector, cancelled the offset
