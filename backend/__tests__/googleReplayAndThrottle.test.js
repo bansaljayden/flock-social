@@ -320,12 +320,46 @@ test('R2-3: the replay cache is ONE cache shared with the Apple path', () => {
 // R2-3 — the nonce binding
 // ===========================================================================
 
-test('R2-3: a Google token bound to a nonce the client did not disclose is refused', async () => {
+test('R2-3: a Google token bound to one of our nonces, sent without it, is refused', async () => {
   reset();
-  const credential = googleCredential({ sub: 'g-hidden', email: 'hidden@gmail.com', nonce: 'not-ours' });
+  const nonce = await nonceOf();
+  const credential = googleCredential({ sub: 'g-hidden', email: 'hidden@gmail.com', nonce });
   const res = await post('/api/auth/google', { credential, date_of_birth: '2000-01-01' });
   assert.strictEqual(res.status, 401);
-  assert.strictEqual(users.length, 0, 'no account may be created on a token we cannot fully check');
+  assert.strictEqual(users.length, 0, 'a token bound to a nonce we handed out came back without it');
+  // The refusal spends nothing, so the sign-in the nonce belongs to can still finish.
+  const finished = await post('/api/auth/google', { credential, nonce, date_of_birth: '2000-01-01' });
+  assert.strictEqual(finished.status, 200);
+  assert.strictEqual(users.length, 1);
+});
+
+test("the iOS SDK's own nonce: a token carrying a nonce we never issued signs in, once", async () => {
+  // GoogleSignIn builds its request with AppAuth, which puts a random nonce in
+  // every request that does not set one, and the iPhone app never sees it.
+  // Every Google sign-in from the app was refused for it until 22 November
+  // 2026 (THE iOS SDK'S OWN NONCE in routes/auth.js).
+  reset();
+  const credential = googleCredential({ sub: 'g-ios', email: 'ios@gmail.com', nonce: 'appauth-random-1' });
+  const res = await post('/api/auth/google', { credential, date_of_birth: '2000-01-01' });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(users.length, 1);
+  const again = await post('/api/auth/google', { credential, date_of_birth: '2000-01-01' });
+  assert.strictEqual(again.status, 401, 'the same token was accepted twice');
+
+  // GOOGLE_REQUIRE_NONCE still refuses it, with the flag's own sentence.
+  reset();
+  process.env.GOOGLE_REQUIRE_NONCE = 'true';
+  try {
+    const gated = await post('/api/auth/google', {
+      credential: googleCredential({ sub: 'g-ios-2', email: 'ios2@gmail.com', nonce: 'appauth-random-2' }),
+      date_of_birth: '2000-01-01',
+    });
+    assert.strictEqual(gated.status, 400);
+    assert.deepStrictEqual(gated.json(), { error: 'Google sign-in failed' });
+    assert.strictEqual(users.length, 0);
+  } finally {
+    delete process.env.GOOGLE_REQUIRE_NONCE;
+  }
 });
 
 test('R2-3: a Google nonce must be one we issued, must match the token, and is single use', async () => {

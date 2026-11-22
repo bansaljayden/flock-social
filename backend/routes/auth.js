@@ -3457,15 +3457,37 @@ router.post('/google', [
       }
       claimedIdentity = credentialIdentity;
 
-      // NONCE BINDING (round 22, R2-3) — the same three cases, in the same
-      // order, as the Apple path. google-auth-library verifies signature,
-      // issuer, expiry and audience; it has no nonce parameter at all, so the
-      // caller has to compare the claim itself or the claim means nothing.
+      // NONCE BINDING (round 22, R2-3). google-auth-library verifies
+      // signature, issuer, expiry and audience; it has no nonce parameter at
+      // all, so the caller has to compare the claim itself or the claim means
+      // nothing.
       //   * client sent one — it must be one WE issued, unspent, and the
       //     token's `nonce` claim must match it (raw or SHA-256, constant time);
-      //   * client sent none but the token carries a nonce — the token is bound
-      //     to a value we cannot check, so we refuse rather than pretend;
-      //   * neither — allowed today, refused once GOOGLE_REQUIRE_NONCE is on.
+      //   * client sent none but the token carries one of OUR outstanding
+      //     nonces — the token was bound to a sign-in we handed a nonce to, and
+      //     it has to come back with it, so we refuse;
+      //   * client sent none and the token carries no nonce, or one we never
+      //     issued — allowed today, refused once GOOGLE_REQUIRE_NONCE is on.
+      //
+      // THE iOS SDK'S OWN NONCE (22 November 2026). This block used to refuse
+      // every token carrying a nonce the client did not send, the way the
+      // Apple path does. That refused every Google sign-in from the iPhone app.
+      // The app signs in through GoogleSignIn (@capgo/capacitor-social-login,
+      // useGoogleAuth.js) and passes no nonce. GoogleSignIn builds its request
+      // with AppAuth, which generates a random nonce for every request that
+      // does not set one, so the ID token carries a nonce the app never sees
+      // and cannot send. Production logs showed it: every FlockiOS POST to this
+      // route on 19 and 22 November was answered 401 with "carries a nonce the
+      // client did not send", while web Google sign-ins went through. The app
+      // ships its own copy of the web build, so only the server can repair the
+      // copies already installed. A nonce we never issued binds the token to
+      // nothing we can check, the same as a token with no nonce at all, which
+      // this branch already accepts; the single-use claim above still refuses
+      // a replay, and GOOGLE_REQUIRE_NONCE still refuses both.
+      //
+      // The lookup is on the raw value: Google echoes the nonce it was given
+      // (Identity Services and the iOS SDK alike), so a token bound to one of
+      // ours carries it as we issued it.
       {
         const tokenNonce = typeof gp.nonce === 'string' ? gp.nonce : '';
         if (suppliedNonce) {
@@ -3477,8 +3499,8 @@ router.post('/google', [
             console.warn(`[auth] Google ID token nonce did not match the issued nonce (${req.ip})`);
             return res.status(401).json({ error: 'Google sign-in expired, please try again' });
           }
-        } else if (tokenNonce) {
-          console.warn(`[auth] Google ID token carries a nonce the client did not send (${req.ip})`);
+        } else if (tokenNonce && oauthNonceValid(tokenNonce)) {
+          console.warn(`[auth] Google ID token is bound to a nonce we issued, sent without it (${req.ip})`);
           return res.status(401).json({ error: 'Google sign-in expired, please try again' });
         } else if (process.env.GOOGLE_REQUIRE_NONCE === 'true') {
           return res.status(400).json({ error: 'Google sign-in failed' });

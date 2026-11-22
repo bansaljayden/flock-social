@@ -1545,11 +1545,24 @@ test('E6 — the Google credential path checks audience, nonce and replay', asyn
     () => post('/api/auth/google', { credential: wire, date_of_birth: '2000-01-01' }));
   assert.strictEqual(ok2.status, 401, 'a Google ID token was accepted twice');
 
-  // A token carrying a nonce the client did not send is refused: we cannot check it.
+  // A token carrying a nonce we never issued, sent without one, counts as a
+  // token with no nonce: Google's iOS SDK puts its own in every request (THE
+  // iOS SDK'S OWN NONCE in routes/auth.js). Accepted, and still single use.
   const nonced = { ...payload, sub: 'g-cred-2', email: 'cred2@example.com', nonce: 'not-ours' };
+  const nwire = googleWire(nonced);
   const r = await withGoogleIdToken(nonced,
-    () => post('/api/auth/google', { credential: googleWire(nonced), date_of_birth: '2000-01-01' }));
-  assert.strictEqual(r.status, 401);
+    () => post('/api/auth/google', { credential: nwire, date_of_birth: '2000-01-01' }));
+  assert.strictEqual(r.status, 200);
+  const rAgain = await withGoogleIdToken(nonced,
+    () => post('/api/auth/google', { credential: nwire, date_of_birth: '2000-01-01' }));
+  assert.strictEqual(rAgain.status, 401, 'a token carrying a foreign nonce was accepted twice');
+
+  // A token bound to one of OUR nonces has to come back with it.
+  const outstanding = (await (await post('/api/auth/google/nonce', {})).json()).nonce;
+  const bound = { ...payload, sub: 'g-cred-5', email: 'cred5@example.com', nonce: outstanding };
+  const stripped = await withGoogleIdToken(bound,
+    () => post('/api/auth/google', { credential: googleWire(bound), date_of_birth: '2000-01-01' }));
+  assert.strictEqual(stripped.status, 401, 'a token bound to our nonce was accepted without it');
 
   // A nonce we never issued is refused even when the token echoes it.
   const forgedNonce = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
