@@ -155,9 +155,11 @@ async function issueSession(user, { authTime } = {}) {
 // Trade a refresh credential for a new access token and its successor.
 //
 // Returns { ok: true, token, refreshToken, userId } or { ok: false, status,
-// reason }. status is 401 for a credential that is unknown, expired, revoked,
-// replayed or from before a token_version bump, and 403 for a banned account,
-// matching what middleware/auth.js answers the access token with.
+// reason, userId? }. status is 401 for a credential that is unknown, expired,
+// revoked, replayed or from before a token_version bump, and 403 for a banned
+// account, matching what middleware/auth.js answers the access token with.
+// userId comes with every refusal of a credential that was found, for the
+// route's log line; an unknown one has no account to name.
 //
 // Everything happens in one transaction with the presented row locked, so two
 // presentations of one credential are serialised: the second one sees the
@@ -211,7 +213,7 @@ async function exchangeRefreshToken(raw) {
         );
       }
       await client.query('COMMIT');
-      return { ok: false, status, reason };
+      return { ok: false, status, reason, userId: row.user_id };
     };
 
     // Revoked: the family was signed out or caught replaying, or this one was

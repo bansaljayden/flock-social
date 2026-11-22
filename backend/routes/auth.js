@@ -3133,6 +3133,15 @@ router.post('/refresh', [
     }
     const result = await exchangeRefreshToken(req.body.refreshToken);
     if (!result.ok) {
+      // The reason goes to the log and never into the answer (one refusal for
+      // every dead credential, above). Only a replay or a fork logged anything
+      // before (services/refreshTokens.js); a revoked family, an expired or
+      // unknown credential and one from before a token_version bump were
+      // refused in silence. On 21 November four of five renewals sent at once
+      // from one address were answered 401 with no line at all, and the next
+      // day that browser was signed out, with no way to tell which (22
+      // November 2026).
+      console.warn(`[auth] refresh refused: ${result.reason}${result.userId ? ` (user ${result.userId})` : ''}`);
       if (result.status === 403) {
         return res.status(403).json({ error: 'This account has been suspended for violating our community guidelines.' });
       }
