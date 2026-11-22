@@ -704,19 +704,19 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
   assert.strictEqual(describeStatementSeconds({ offset: 24.94, recentReadings: 13.06, offsetReadings: 31.8 }),
     'offsets 24.9s, recent readings 13.1s, offset readings 31.8s');
   assert.strictEqual(sessions.length, 3, 'the offset, the recent readings and the offset readings, one transaction each');
-  // Each statement's planner settings (from production's plans, 12 November)
-  // are SET LOCAL inside its own transaction, after the cap and before the
-  // statement; the offsets statement has none.
+  // Each statement's planner settings (from production's plans, 12 and 22
+  // November) are SET LOCAL inside its own transaction, after the cap and
+  // before the statement; the offsets statement has none.
   const { RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS } = require('../scripts/ml/buildRecentDeviation');
   assert.deepStrictEqual(RECENT_READINGS_SETTINGS, ['SET LOCAL enable_nestloop = off']);
-  assert.deepStrictEqual(OFFSET_READINGS_SETTINGS, ['SET LOCAL enable_bitmapscan = off', 'SET LOCAL enable_indexscan = off']);
+  assert.deepStrictEqual(OFFSET_READINGS_SETTINGS, ['SET LOCAL enable_nestloop = off']);
   const settings = [[], RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS];
   sessions.forEach((said, i) => {
     const n = settings[i].length;
     assert.strictEqual(said.length, 4 + n);
     assert.deepStrictEqual(said.slice(0, 2), ['BEGIN', 'SET LOCAL statement_timeout = 120000']);
     assert.deepStrictEqual(said.slice(2, 2 + n), settings[i]);
-    assert.match(said[2 + n], /^(INSERT INTO ml_venue_recent_deviation|WITH ranked AS \()/);
+    assert.match(said[2 + n], /^(INSERT INTO ml_venue_recent_deviation|WITH ranked AS \(|WITH win AS MATERIALIZED \()/);
     assert.strictEqual(said[3 + n], 'COMMIT');
   });
   const capAfter = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
@@ -795,6 +795,35 @@ test('a plan reads as one line: the time, the reads, the slowest steps; and its 
   assert.strictEqual(rowCountOfPlan(top), 8, 'inserted plus updated on conflict');
   assert.strictEqual(rowCountOfPlan({ Plan: { 'Node Type': 'ModifyTable', Plans: [{ 'Actual Rows': 7, 'Actual Loops': 2 }] } }), 14,
     'an UPDATE: the rows its input hands it');
+});
+
+// The offset readings statement reads its window in a MATERIALIZED CTE
+// (2026-11-22). The CTE's plan hangs from the top node, listed before the
+// UPDATE's input, and runs inside the CTE Scan that pulls its rows.
+test('a CTE\'s plan is neither the statement\'s row count nor counted twice in its time', () => {
+  const { describePlan, rowCountOfPlan } = require('../scripts/ml/buildRecentDeviation');
+  const top = {
+    'Execution Time': 1000,
+    Plan: {
+      'Node Type': 'ModifyTable', 'Relation Name': 'ml_venue_recent_deviation', 'Actual Total Time': 1000, 'Actual Loops': 1, 'Actual Rows': 0,
+      Plans: [
+        {
+          'Node Type': 'Index Scan', 'Index Name': 'idx_ml_training_mode', 'Relation Name': 'ml_training_data',
+          'Parent Relationship': 'InitPlan', 'Subplan Name': 'CTE win', 'Actual Total Time': 600, 'Actual Loops': 1, 'Actual Rows': 30,
+        },
+        {
+          'Node Type': 'Hash Join', 'Parent Relationship': 'Outer', 'Actual Total Time': 950, 'Actual Loops': 1, 'Actual Rows': 3,
+          Plans: [{ 'Node Type': 'CTE Scan', 'CTE Name': 'win', 'Parent Relationship': 'Outer', 'Actual Total Time': 700, 'Actual Loops': 1, 'Actual Rows': 30 }],
+        },
+      ],
+    },
+  };
+  assert.strictEqual(rowCountOfPlan(top), 3, 'the rows the UPDATE\'s input hands it, not the CTE\'s 30');
+  // The CTE's 600 ms are inside the Hash Join's 950 (its CTE Scan pulled them),
+  // so the UPDATE keeps its own 50 ms and the steps add up to the 1,000.
+  assert.strictEqual(describePlan(top), '1.0s; from disk 0 MB, from cache 0 MB, temp files 0 MB; slowest steps: '
+    + 'Index Scan using idx_ml_training_mode on ml_training_data 0.6s (60%, 30 rows); Hash Join 0.3s (25%, 3 rows); '
+    + 'CTE Scan on win 0.1s (10%, 30 rows); ModifyTable on ml_venue_recent_deviation 0.1s (5%, 0 rows)');
 });
 
 // ---------------------------------------------------------------------------

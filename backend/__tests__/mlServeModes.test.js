@@ -825,6 +825,16 @@ test('the builder stores the offset\'s readings over the offset\'s own window an
   assert.match(stmt, /t\.label_source = 'live'[\s\S]*b\.baseline > 0/);
   assert.match(stmt, /ORDER BY t\.observed_date DESC, t\.hour DESC, t\.collected_at DESC/);
   assert.match(stmt, /'dev', deviation/);
+  // The window's rows are read first, in a MATERIALIZED step of their own
+  // written as the offsets statement's scan (2026-11-22; buildRecentDeviation.js
+  // has production's plans): without MATERIALIZED the planner folds the step
+  // back into the query, and an observed_date test inside it brings back the
+  // estimate that chose the realtime slot index.
+  const win = /WITH win AS MATERIALIZED \(([\s\S]*?)\)\s*,\s*ranked AS \(/.exec(stmt);
+  assert.ok(win, 'the window is its own MATERIALIZED step, before the ranking');
+  assert.doesNotMatch(win[1], /observed_date IS NOT NULL/);
+  assert.match(stmt, /FROM win t\s/);
+  assert.match(stmt, /t\.observed_date IS NOT NULL\s+AND b\.baseline > 0/);
   // Its own statement in its own try, after the offset's, so a missing 093
   // column cannot cost the offset or the nowcast's readings.
   const body = src.slice(src.indexOf('async function buildRecentDeviation('));

@@ -244,11 +244,15 @@ function planDue(now = new Date()) {
 // The statement's own row count, read from its plan: EXPLAIN returns the plan
 // in place of the count. An INSERT ... ON CONFLICT DO UPDATE counts the rows it
 // inserted and the ones it updated (every conflict is updated here, there is no
-// WHERE on the update); an UPDATE counts the rows its input hands it.
+// WHERE on the update); an UPDATE counts the rows its input hands it. A CTE's
+// plan hangs from the top node too, listed first (the offset readings
+// statement's MATERIALIZED window, 2026-11-22), and its rows are not the input's.
+const isInitPlan = (p) => p['Parent Relationship'] === 'InitPlan' || p['Parent Relationship'] === 'SubPlan';
+
 function rowCountOfPlan(top) {
   const root = top.Plan;
   if (root['Tuples Inserted'] !== undefined) return root['Tuples Inserted'] + (root['Conflicting Tuples'] || 0);
-  const input = (root.Plans || [])[0];
+  const input = (root.Plans || []).find((p) => !isInitPlan(p));
   return input ? Math.round(input['Actual Rows'] * (input['Actual Loops'] || 1)) : 0;
 }
 
@@ -256,13 +260,28 @@ const MB = (blocks) => Math.round(((blocks || 0) * 8192) / 1e6);
 
 // One line: the statement's time, what it read, and its slowest steps. A step's
 // time is its own (its children's taken off), and with parallel workers it is
-// summed over them, so the shares are of all the steps' time together.
+// summed over them, so the shares are of all the steps' time together. A CTE's
+// plan hangs from the node above, but it runs inside the CTE Scan that pulls
+// its rows, so its time is already in that scan's branch: it is taken off the
+// first CTE Scan of it, and not off the node it hangs from.
+const isCtePlan = (p) => isInitPlan(p) && (p['Subplan Name'] || '').startsWith('CTE ');
+
 function describePlan(top) {
   const steps = [];
+  const ms = (n) => (n['Actual Total Time'] || 0) * (n['Actual Loops'] || 1);
+  const cteMs = new Map();
+  (function findCtes(node) {
+    if (isCtePlan(node)) cteMs.set(node['Subplan Name'].slice(4), ms(node));
+    (node.Plans || []).forEach(findCtes);
+  })(top.Plan);
   (function walk(node) {
     const loops = node['Actual Loops'] || 1;
     const kids = node.Plans || [];
-    const below = kids.reduce((s, k) => s + (k['Actual Total Time'] || 0) * (k['Actual Loops'] || 1), 0);
+    let below = kids.filter((k) => !isCtePlan(k)).reduce((s, k) => s + ms(k), 0);
+    if (node['Node Type'] === 'CTE Scan' && cteMs.has(node['CTE Name'])) {
+      below += cteMs.get(node['CTE Name']);
+      cteMs.delete(node['CTE Name']);
+    }
     steps.push({ node, ms: Math.max(0, (node['Actual Total Time'] || 0) * loops - below), rows: Math.round((node['Actual Rows'] || 0) * loops) });
     kids.forEach(walk);
   })(top.Plan);
@@ -270,6 +289,7 @@ function describePlan(top) {
   const name = ({ node: n }) => n['Node Type']
     + (n['Index Name'] ? ` using ${n['Index Name']}` : '')
     + (n['Relation Name'] ? ` on ${n['Relation Name']}` : '')
+    + (n['CTE Name'] ? ` on ${n['CTE Name']}` : '')
     + (n['Sort Space Type'] === 'Disk' ? `, spilled ${Math.round((n['Sort Space Used'] || 0) / 1000)} MB` : '');
   const slowest = steps.filter((x) => x.ms / all >= 0.05).sort((a, b) => b.ms - a.ms).slice(0, 4)
     .map((x) => `${name(x)} ${(x.ms / 1000).toFixed(1)}s (${Math.round((100 * x.ms) / all)}%, ${x.rows.toLocaleString('en-US')} rows)`);
@@ -304,7 +324,32 @@ function describePlan(top) {
 // the shapes asked for: offset readings a sequential scan of ml_training_data
 // (14.2 s, 1,459,868 rows) and hash joins, recent readings a hash join whose
 // largest step is the curve table's sequential scan (7.6 s of 14.7 s).
-const OFFSET_READINGS_SETTINGS = ['SET LOCAL enable_bitmapscan = off', 'SET LOCAL enable_indexscan = off'];
+//
+// THE OFFSET READINGS STATEMENT AGAIN (22 November 2026). The harvests from 18
+// November added more than 13 million weekly rows to ml_training_data, and the
+// sequential scan followed the table, as the first paragraph says it would:
+// 65.3 s of the statement's 89.1 s at 07:00 UTC on 22 November (2,269,252
+// rows kept, 5,320 MB from disk), and 95 to 98 s an hour by midday, against
+// the two-minute cap. The planner puts the window's rows at about 16,000 where
+// there are 2.3 million, because it takes collection_mode, label_source and
+// observed_date IS NOT NULL as independent when every live reading carries all
+// three. So with index scans allowed it walks the realtime slot index in
+// venue order (heap reads scattered across the table, as the bitmap's were)
+// into a merge join with one curve lookup per reading. The offsets statement,
+// which has no observed_date test, is estimated high enough to get
+// idx_ml_training_mode and hash joins (the same rows in 28.0 s). So the
+// window's rows are now read first, in a MATERIALIZED CTE written as the
+// offsets statement's scan, and the observed_date and curve tests are applied
+// after it, before the ranking: the same rows reach the ranking, since a
+// reading with no date is dropped before it either way. Nested loops are off,
+// as in the recent readings statement. Read-only on production at 17:02 UTC
+// on 22 November: 49.8 s (the index scan 23.5 s, 790 MB from disk), and the
+// readings it would store equal the shipped statement's for all 19,868
+// venues, both read in one snapshot. The index scan reads the 2,957,840
+// realtime rows and none of the weekly ones, so the rows a harvest adds are
+// not read. MATERIALIZED is what keeps the CTE as written: without it the
+// planner folds a CTE read once back into the query, and the estimate with it.
+const OFFSET_READINGS_SETTINGS = ['SET LOCAL enable_nestloop = off'];
 const RECENT_READINGS_SETTINGS = ['SET LOCAL enable_nestloop = off'];
 
 async function jobQuery(sql, params, { plan = false, settings = [] } = {}) {
@@ -362,8 +407,18 @@ async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep =
 // file deploys with the collector before the main service's boot applies 093.
 const OFFSET_READINGS_SLACK = 4;
 
+// The window's rows come first, in a MATERIALIZED step of their own, for the
+// planner's sake only: "THE OFFSET READINGS STATEMENT AGAIN" above says why.
 const OFFSET_READINGS_SQL = `
-  WITH ranked AS (
+  WITH win AS MATERIALIZED (
+    SELECT t.venue_id, t.busyness_pct, t.observed_date, t.day_of_week, t.hour, t.collected_at
+      FROM ml_training_data t
+     WHERE t.collection_mode = 'realtime'
+       AND t.label_source = 'live'
+       AND t.busyness_pct IS NOT NULL
+       AND t.collected_at >= NOW() - ($1 || ' days')::interval
+  ),
+  ranked AS (
     SELECT
       v.google_place_id,
       t.busyness_pct - b.baseline AS deviation,
@@ -373,18 +428,14 @@ const OFFSET_READINGS_SQL = `
         PARTITION BY v.google_place_id
         ORDER BY t.observed_date DESC, t.hour DESC, t.collected_at DESC
       ) AS recency
-    FROM ml_training_data t
+    FROM win t
     JOIN ml_venues v ON v.id = t.venue_id
     JOIN ml_venue_baselines b
       ON b.google_place_id = v.google_place_id
      AND b.day_of_week = t.day_of_week
      AND b.hour = t.hour
-    WHERE t.collection_mode = 'realtime'
-      AND t.label_source = 'live'
-      AND t.busyness_pct IS NOT NULL
-      AND t.observed_date IS NOT NULL
+    WHERE t.observed_date IS NOT NULL
       AND b.baseline > 0
-      AND t.collected_at >= NOW() - ($1 || ' days')::interval
   ),
   latest AS (
     SELECT
