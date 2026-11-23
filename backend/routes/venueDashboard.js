@@ -2295,7 +2295,12 @@ async function buildIntelligence(placeId, userId, clockKey) {
     // answers a venue with no crowd history from this week and from `today`
     // only for the first two (advisorFacts.projectionFacts).
     scanFrom: fit.listed ? 'hours' : (fit.kind ? 'kind' : 'default'),
-    model: current.modelVersion || null,
+    // The artifact's own version, without the qualifiers a serving switch
+    // adds to one number (mlPredictor servedModelVersion: +curve_offset,
+    // +month_support, +zero_curve, +nowcast). The dashboard prints it under
+    // every bar of the strip as "Flock crowd model v...", and the current
+    // hour's qualifiers describe that hour's arithmetic, not the strip's.
+    model: current.modelVersion ? String(current.modelVersion).split('+')[0] : null,
     // Which arithmetic made the dial's number when a serving switch changed
     // it (crowdEngine.describeServedArithmetic). The dashboard names "Flock
     // crowd model v..." off `model` otherwise, which with curve_offset on

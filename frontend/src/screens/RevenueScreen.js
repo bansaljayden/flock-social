@@ -2749,7 +2749,7 @@ function HubModel({ h, colors }) {
                 Of forecasts made from a venue&apos;s own data. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.exactBand) && Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.exactBand)} at the exact level and ${hubCount(a.withinOneBand)} within one` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window. Within one alone would flatter a forecast that always named the same level, so the exact share sits beside it.
               </p>
             )}
-            {versions.length > 1 && `This window mixes ${versions.length} served versions: ${versions.join(', ')}. A +curve_offset or +nowcast ending names a switch that changed the number.`}
+            {versions.length > 1 && `This window mixes ${versions.length} served versions: ${versions.join(', ')}. A +curve_offset, +month_support, +zero_curve or +nowcast ending names a switch that changed the number.`}
             <p>
               Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the crowd levels the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
             </p>

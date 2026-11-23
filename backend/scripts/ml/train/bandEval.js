@@ -25,7 +25,9 @@
 //               flag and version check, then half the venue's trailing live
 //               offset (buildRecentDeviation.js, past-only), then the band
 //   fallback    crowdEngine.calculateCrowdScore wherever production would
-//               answer from the rule engine (no usable baseline)
+//               answer from the rule engine (no usable baseline; with
+//               CROWD_ZERO_CURVE_MODEL on, an hour whose own row blends to
+//               zero is the model's at baseline 0 here as it is there)
 //
 // and scores, on the SAME rows, the model as served against things it has to
 // beat to mean anything: the rule engine, the venue's weekly curve at that
@@ -733,29 +735,65 @@ function sportsScheduleReaders(art, inc) {
 // serving configuration. Every option defaults to what the process
 // environment says, exactly as predictBusyness reads it: `qmap`
 // (CROWD_QMAP_ENABLED), `serveMode` (CROWD_SERVE_MODE: 'model',
-// 'curve_offset' or 'model_when_fresh') and `nowcast` (CROWD_NOWCAST_ENABLED).
-// The switches' own arithmetic, the confidence rule, the version qualifier and
-// model_when_fresh's choice of side (isFreshReading) are mlPredictor's
-// functions, called here, not restated.
-async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
+// 'curve_offset' or 'model_when_fresh'), `nowcast` (CROWD_NOWCAST_ENABLED),
+// `monthSupport` (CROWD_MONTH_SUPPORT) and `zeroCurve`
+// (CROWD_ZERO_CURVE_MODEL). The switches' own arithmetic, the confidence rule,
+// the version qualifier and model_when_fresh's choice of side
+// (isFreshReading) are mlPredictor's functions, called here, not restated.
+async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast, monthSupport, zeroCurve } = {}) {
   const { I } = art;
   const qmapOn = qmap === undefined ? I.qmapEnabled() : Boolean(qmap);
   const mode = serveMode === undefined ? I.serveMode() : serveMode;
   const nowcastOn = nowcast === undefined ? I.nowcastEnabled() : Boolean(nowcast);
+  const monthOn = monthSupport === undefined ? I.monthSupportEnabled() : Boolean(monthSupport);
+  const zeroOn = zeroCurve === undefined ? I.zeroCurveModelEnabled() : Boolean(zeroCurve);
   if (!I.SERVE_MODES.includes(mode)) throw new Error(`unknown serve mode ${mode}; one of ${I.SERVE_MODES.join(', ')}`);
+  const mapsThisModel = (art.meta.model_version || '') === I.QMAP_FITTED_ON;
+  const qmapApplies = qmapOn && mapsThisModel;
+  // Whether a zero-curve hour is the model's under this configuration, the
+  // question predictBusyness asks (zeroCurveServes); each hour then needs its
+  // own row (rawCurve), which is what storedZeroSlot reads in production.
+  const zeroServes = zeroOn && I.zeroCurveServes(art.meta, { serveMode: mode, nowcast: nowcastOn, qmapApplies });
   const mlIdx = [];
   const vectors = [];
+  const zeroRow = [];
   prepared.forEach((r, i) => {
-    if (!(r.smoothed > 0)) return; // predictBusyness: no baseline -> rule engine
-    if (!I.hasTempReading(r.weather)
-        && (art.meta.feature_names || []).includes('temperature')
-        && I.tempForFeature(r.weather, r.lat, r.ts.getMonth() + 1) == null) return;
+    const weatherNormMissing = !I.hasTempReading(r.weather)
+      && (art.meta.feature_names || []).includes('temperature')
+      && I.tempForFeature(r.weather, r.lat, r.ts.getMonth() + 1) == null;
+    // predictBusyness: no baseline -> rule engine, unless the hour's own row
+    // blends to zero and CROWD_ZERO_CURVE_MODEL answers it at baseline 0.
+    const zero = !(r.smoothed > 0);
+    if (zero && !(zeroServes && r.rawCurve !== null)) return;
+    if (weatherNormMissing) return;
     mlIdx.push(i);
-    vectors.push(I.buildFeatureVector(r.venue, r.weather, r.ts, r.events, null, r.smoothed, r.neighbors,
+    zeroRow.push(zero);
+    vectors.push(I.buildFeatureVector(r.venue, r.weather, r.ts, r.events, null, zero ? 0 : r.smoothed, r.neighbors,
       { live: r.live, sports: prepared.sports }));
   });
-  const raw = await runGraph(art, vectors);
-  const mapsThisModel = (art.meta.model_version || '') === I.QMAP_FITTED_ON;
+  // CROWD_MONTH_SUPPORT: a vector outside the trained months is scored once
+  // per trained month and its output is their mean, through mlPredictor's own
+  // functions, in the configuration predictBusyness allows it in
+  // (monthSupportServes).
+  const monthServes = monthOn && I.monthSupportServes(art.meta, { serveMode: mode, nowcast: nowcastOn, qmapApplies });
+  const supports = vectors.map((v) => (monthServes ? I.monthSupportFor(art.meta, v) : null));
+  const width = (art.meta.feature_names || []).length;
+  const expanded = [];
+  vectors.forEach((v, k) => {
+    const s = supports[k];
+    if (!s) { expanded.push(v); return; }
+    const batch = I.monthSupportBatch(v, s);
+    for (let j = 0; j < s.months.length; j++) expanded.push(batch.slice(j * width, (j + 1) * width));
+  });
+  const outputs = await runGraph(art, expanded);
+  const raw = new Float64Array(vectors.length);
+  let at = 0;
+  vectors.forEach((v, k) => {
+    const s = supports[k];
+    const n = s ? s.months.length : 1;
+    raw[k] = s ? I.averageMonthOutputs(outputs.subarray(at, at + n), n) : outputs[at];
+    at += n;
+  });
   const accuracy = I.readServedAccuracy(art.meta);
   const version = art.meta.model_version || '2.1.0';
   // A rule-engine answer carries crowdEngine's own confidence and no version.
@@ -770,6 +808,9 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
   mlIdx.forEach((i, k) => {
     const r = prepared[i];
     const rawDelta = raw[k];
+    // A zero-curve hour the model answers (CROWD_ZERO_CURVE_MODEL): its
+    // baseline is 0, and it takes no nowcast.
+    const zero = zeroRow[k];
     // curve_offset serves every venue-hour the model path reaches, and never
     // runs the model, so a model output cannot divert it. model_when_fresh
     // serves it wherever the reading the serving code picked (nowcastPick) is
@@ -806,7 +847,7 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
       : parts.modelServed;
     let served = before;
     let nowcastApplied = null;
-    if (nowcastOn) {
+    if (nowcastOn && !zero) {
       const applied = I.applyNowcast(before, r.nowcastPick, I.nowcastBaseKey(curveOffset, qmapApplied, art.meta.model_version));
       if (applied) {
         const { score, ...detail } = applied;
@@ -814,12 +855,17 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
         nowcastApplied = detail;
       }
     }
+    // The month average is in the number only where the model's number is:
+    // never on the curve, never under a reading carried at full weight.
+    const monthInNumber = !curveOffset && I.monthReachesNumber(Boolean(supports[k]), nowcastApplied);
     const published = I.servedConfidence({
       accuracy,
       qmapApplied,
       hasWeather: I.hasTempReading(r.weather),
       curveOffset,
       nowcast: nowcastApplied,
+      monthSupport: monthInNumber,
+      zeroCurve: zero,
       ladder: () => r.ruleConfidence,
     });
     res[i] = {
@@ -829,12 +875,14 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
       mapped: parts.mapped,
       withOffset: parts.withOffset,
       curveOffset,
+      monthSupport: monthInNumber,
+      zeroCurve: zero,
       beforeNowcast: before,
       nowcast: nowcastApplied,
       served,
       confidence: published.confidence,
       confidenceMetric: published.confidenceMeasurement.metric,
-      modelVersion: I.servedModelVersion(version, curveOffset, nowcastApplied),
+      modelVersion: I.servedModelVersion(version, curveOffset, nowcastApplied, { monthSupport: monthInNumber, zeroCurve: zero }),
     };
   });
   return {
@@ -842,6 +890,8 @@ async function scoreArtifact(art, prepared, { qmap, serveMode, nowcast } = {}) {
     qmapApplied: qmapOn && mapsThisModel && mode !== 'curve_offset',
     serveMode: mode,
     nowcast: nowcastOn,
+    monthSupport: monthServes,
+    zeroCurve: zeroServes,
     rows: res,
   };
 }
@@ -1429,6 +1479,15 @@ async function main(argv = process.argv.slice(2)) {
   const incumbentServe = parseIncumbentServe(args['incumbent-serve'], art.I);
   const candidateServe = parseCandidateServe(args['candidate-serve']);
   const qmap = args.qmap === undefined ? undefined : args.qmap !== 'false';
+  // CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL as this process's
+  // environment sets them, like the other switches, except under --fit: the
+  // fit restates one model base for every configuration (servedAt), and the
+  // month average serves only model+nowcast (monthSupportServes), so --fit
+  // scores everything on the arithmetic as shipped, with both off.
+  const fixes = args.fit ? { monthSupport: false, zeroCurve: false } : {};
+  if (args.fit && (art.I.monthSupportEnabled() || art.I.zeroCurveModelEnabled())) {
+    console.log('[BandEval] --fit: CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL are set here and ignored; the fit scores the arithmetic as shipped.');
+  }
   const sections = {};
   const perRow = [];
 
@@ -1442,14 +1501,14 @@ async function main(argv = process.argv.slice(2)) {
     // reading and curve_offset elsewhere, the configuration decided on
     // 2026-11-05 for the November retrain and superseded on 2026-11-13 by
     // model+nowcast (RETRAIN.md).
-    const mine = await scoreArtifact(art, prepared, { qmap, ...candidateServe });
+    const mine = await scoreArtifact(art, prepared, { qmap, ...candidateServe, ...fixes });
     // The incumbent AS PRODUCTION SERVES IT: under --incumbent-serve when
     // given, else under the two switches exactly as this process's environment
     // sets them (run the gate with the main service's CROWD_SERVE_MODE and
     // CROWD_NOWCAST_ENABLED, as with CROWD_QMAP_ENABLED). Since 2026-09-25
     // production serves curve_offset + nowcast, and a candidate that beats the
     // model alone but not that arithmetic would make the card worse.
-    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, ...incumbentServe }) : null;
+    const theirs = inc ? await scoreArtifact(inc, prepared, { qmap, ...incumbentServe, ...fixes }) : null;
     // Every serving configuration the switches make, through the same serve
     // path, under the same quantile-map setting. The one the candidate is
     // gated in is `mine`, already scored.
@@ -1457,7 +1516,7 @@ async function main(argv = process.argv.slice(2)) {
     for (const cfg of SERVE_CONFIGS) {
       configs[cfg.name] = cfg.serveMode === mine.serveMode && cfg.nowcast === mine.nowcast
         ? mine
-        : await scoreArtifact(art, prepared, { qmap, serveMode: cfg.serveMode, nowcast: cfg.nowcast });
+        : await scoreArtifact(art, prepared, { qmap, serveMode: cfg.serveMode, nowcast: cfg.nowcast, ...fixes });
     }
     const served = prepared.map((r, i) => r.smoothed > 0 && mine.rows[i].ml);
     const mlRows = prepared.filter((_, i) => served[i]);
@@ -1503,7 +1562,16 @@ async function main(argv = process.argv.slice(2)) {
       window,
       // How `model_served:<version>`, `app_as_shown` and the rows file's
       // `served` column were made (--candidate-serve).
-      candidate_serving: { serve_mode: mine.serveMode, nowcast: mine.nowcast, config: configName(mine.serveMode, mine.nowcast) },
+      candidate_serving: {
+        serve_mode: mine.serveMode,
+        nowcast: mine.nowcast,
+        config: configName(mine.serveMode, mine.nowcast),
+        // Whether the month average and the zero-curve hours served here
+        // (monthSupportServes, zeroCurveServes): false for any artifact or
+        // configuration they were not measured in, whatever the switches say.
+        month_support: mine.monthSupport,
+        zero_curve: mine.zeroCurve,
+      },
       all_live_rows: report(prepared, allRows, cuts, labels, { slices: ['city'] }),
       model_served_rows: report(mlRows, predictors, cuts, labels),
       hedge_reference: mlActual.length ? bestConstantBand(mlActual, cuts, labels) : null,
@@ -1528,6 +1596,10 @@ async function main(argv = process.argv.slice(2)) {
       switched_offset_differs: mlRows.filter((r) => r.switchedOffset !== r.offset).length,
       qmap_applied: mine.qmapApplied,
       rows_without_served_baseline: prepared.length - mlRows.length,
+      // Of those, the hours whose own row blends to zero that the model
+      // answered at baseline 0 (CROWD_ZERO_CURVE_MODEL); the rest are the
+      // rule engine's. They are in all_live_rows, never in model_served_rows.
+      zero_curve_model_rows: prepared.filter((r, i) => !(r.smoothed > 0) && mine.rows[i].ml).length,
       rows_skipped_clock_disagreement: prepared.skipped,
     };
     prepared.forEach((r, i) => perRow.push({
@@ -1550,7 +1622,8 @@ async function main(argv = process.argv.slice(2)) {
   // Print.
   for (const [label, s] of Object.entries(sections)) {
     console.log(`\n[BandEval] ${label}: window ${s.window.from} .. ${s.window.to}, ${s.model_served_rows.rows} model-served rows over ${s.model_served_rows.dates} dates `
-      + `(${s.rows_without_served_baseline} more answered by the rule engine for want of a baseline, `
+      + `(${s.rows_without_served_baseline - s.zero_curve_model_rows} more answered by the rule engine for want of a baseline, `
+      + (s.zero_curve_model_rows ? `${s.zero_curve_model_rows} zero-curve hours by the model at baseline 0, ` : '')
       + `${s.rows_skipped_clock_disagreement} skipped: date and weekday disagree); quantile map ${s.qmap_applied ? 'ON' : 'off'}`);
     console.log(`  the candidate is scored as served[${s.candidate_serving.config}] (--candidate-serve); model_served and app_as_shown below are that`);
     console.log('  the serving configurations (CROWD_SERVE_MODE x CROWD_NOWCAST_ENABLED):');
@@ -1594,7 +1667,10 @@ async function main(argv = process.argv.slice(2)) {
     gateResult.quantile_map = { candidate: mine.qmapApplied, incumbent: theirs.qmapApplied };
     gateResult.incumbent_serving = { serve_mode: theirs.serveMode, nowcast: theirs.nowcast };
     // The configuration the verdict is about, so the ship serves the one that
-    // passed: CROWD_SERVE_MODE and CROWD_NOWCAST_ENABLED as gated.
+    // passed: CROWD_SERVE_MODE and CROWD_NOWCAST_ENABLED as gated. The month
+    // average and the zero-curve hours are left out of this registered record:
+    // neither serves a candidate or rule (b), and the section's
+    // candidate_serving says whether they served.
     gateResult.candidate_serving = { serve_mode: mine.serveMode, nowcast: mine.nowcast };
     console.log(`\n[BandEval] BAND GATE on ${gateResult.population_cities.join(', ')}: ${gateResult.pass ? 'PASS' : 'FAIL'}`
       + ` (candidate served as ${configName(mine.serveMode, mine.nowcast)}, incumbent as ${configName(theirs.serveMode, theirs.nowcast)})`);
@@ -1624,14 +1700,14 @@ async function main(argv = process.argv.slice(2)) {
     const I = art.I;
     const { prepared, served, mlRows, configs } = liveResult;
     const idxOf = (arr) => arr.filter((_, i) => served[i]);
-    const on = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: false });
-    const off = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: false });
+    const on = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: false, ...fixes });
+    const off = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: false, ...fixes });
     // The model path under the nowcast, with the map on and off: its number
     // before the blend is the model's with the switched offset, the base the
     // nowcast's model tables are fitted on; and its published figures are the
     // model tables' confidence figures below.
-    const mnOn = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: true });
-    const mnOff = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: true });
+    const mnOn = await scoreArtifact(art, prepared, { qmap: true, serveMode: 'model', nowcast: true, ...fixes });
+    const mnOff = await scoreArtifact(art, prepared, { qmap: false, serveMode: 'model', nowcast: true, ...fixes });
     const modelBase = {
       model_qmap: idxOf(on.rows.map((x) => x.served)),
       model: idxOf(off.rows.map((x) => x.served)),
@@ -1788,7 +1864,10 @@ async function main(argv = process.argv.slice(2)) {
       ['offset', (x) => x.r.offset], ['offset_readings', (x) => x.r.offsetReadings], ['prior_live', (x) => x.r.priorLive],
       ['neighbor_count', (x) => x.r.neighbors.count], ['neighbor_mean', (x) => Math.round(x.r.neighbors.mean * 100) / 100],
       ['temperature', (x) => (x.r.weather ? x.r.weather.temp : null)], ['events_observed', (x) => (x.r.events.observed ? 1 : 0)],
-      ['rule', (x) => x.r.rule], ['ml', (x) => (x.mine.ml ? 1 : 0)],
+      // `ml` stays the gate's population, the model path with a positive
+      // served baseline (compareCandidates.js reads it so): a zero-curve hour
+      // the model answered is ml 0 and zero_curve 1 (the last columns).
+      ['rule', (x) => x.r.rule], ['ml', (x) => (x.r.smoothed > 0 && x.mine.ml ? 1 : 0)],
       ['raw_delta', (x) => (x.mine.ml ? Math.round(x.mine.rawDelta * 1000) / 1000 : null)],
       ['reconstructed', (x) => (x.mine.ml ? x.mine.reconstructed : null)], ['mapped', (x) => (x.mine.ml ? x.mine.mapped : null)],
       ['with_offset', (x) => (x.mine.ml ? x.mine.withOffset : null)], ['served', (x) => x.mine.served],
@@ -1801,6 +1880,10 @@ async function main(argv = process.argv.slice(2)) {
       // model_when_fresh sends the row to the model (mlPredictor isFreshReading
       // on the same pick), 0 where it sends it to curve_offset.
       ['fresh_reading', (x) => (art.I.isFreshReading(x.r.nowcastPick) ? 1 : 0)],
+      // After it, for the same reason: CROWD_MONTH_SUPPORT's and
+      // CROWD_ZERO_CURVE_MODEL's account of the served number.
+      ['month_support', (x) => (x.mine.monthSupport ? 1 : 0)],
+      ['zero_curve', (x) => (x.mine.zeroCurve ? 1 : 0)],
     ]);
     console.log(`[BandEval] rows -> ${args['rows-out']}`);
   }

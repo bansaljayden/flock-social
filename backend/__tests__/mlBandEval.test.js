@@ -527,7 +527,9 @@ test('the gate scores the incumbent under the serving switches production has, o
   assert.deepEqual(B.parseIncumbentServe('curve_offset+nowcast', I), { serveMode: 'curve_offset', nowcast: true });
   assert.throws(() => B.parseIncumbentServe('curve', I), /not one of/);
   const src = fs.readFileSync(path.join(ML_DIR, 'train', 'bandEval.js'), 'utf8');
-  assert.match(src, /const theirs = inc \? await scoreArtifact\(inc, prepared, \{ qmap, \.\.\.incumbentServe \}\)/);
+  // `fixes` is CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL as the
+  // environment sets them (forced off under --fit); neither serves rule (b).
+  assert.match(src, /const theirs = inc \? await scoreArtifact\(inc, prepared, \{ qmap, \.\.\.incumbentServe, \.\.\.fixes \}\)/);
 });
 
 test('the schedule loads when EITHER artifact reads the sports features, the incumbent included', () => {
@@ -632,8 +634,13 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
   try {
     const report = JSON.parse(fs.readFileSync(out, 'utf8'));
     const g = report.band_gate;
+    // The registered record, unchanged; the section's candidate_serving says
+    // whether the month average or the zero-curve hours served (they never
+    // serve a candidate they were not measured on, or rule (b)).
     assert.deepEqual(g.candidate_serving, { serve_mode: 'model_when_fresh', nowcast: true });
     assert.deepEqual(g.incumbent_serving, { serve_mode: 'curve_offset', nowcast: true });
+    assert.equal(report.sections.live_time_holdout.candidate_serving.month_support, false);
+    assert.equal(report.sections.live_time_holdout.candidate_serving.zero_curve, false);
     assert.equal(report.sections.live_time_holdout.candidate_serving.config, 'model_when_fresh+nowcast');
     // The verdict in the candidate's own metadata says the same.
     const written = JSON.parse(fs.readFileSync(path.join(cand, 'model_metadata.json'), 'utf8')).ship_gate.band_gate;
@@ -659,7 +666,9 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
     for (const c of ['served_model_when_fresh', 'served_model_when_fresh_nowcast', 'fresh_reading']) {
       assert.ok(H.includes(c), `--rows-out does not write ${c}`);
     }
-    assert.equal(H[H.length - 1], 'fresh_reading', 'the new column comes last, so no earlier column moves');
+    // Each new column goes last, so no earlier column moves: fresh_reading,
+    // then the month average's and the zero-curve hour's flags.
+    assert.deepEqual(H.slice(-3), ['fresh_reading', 'month_support', 'zero_curve'], 'the new columns come last, so no earlier column moves');
     const ix = Object.fromEntries(H.map((k, i) => [k, i]));
     const num = (s) => (s === '' ? null : Number(s));
     let fresh = 0;
@@ -689,7 +698,8 @@ test('the gate scores the candidate as --candidate-serve says, records it, and t
       console.log = quiet;
     }
     const plain = JSON.parse(fs.readFileSync(plainOut, 'utf8'));
-    assert.deepEqual(plain.sections.live_time_holdout.candidate_serving, { serve_mode: 'model', nowcast: false, config: 'model' });
+    assert.deepEqual(plain.sections.live_time_holdout.candidate_serving,
+      { serve_mode: 'model', nowcast: false, config: 'model', month_support: false, zero_curve: false });
     const [ph, ...pl] = fs.readFileSync(plainRows, 'utf8').trim().split('\n');
     const pix = Object.fromEntries(ph.split(',').map((k, i) => [k, i]));
     assert.ok(pl.every((l) => { const f = l.split(','); return f[pix.ml] !== '1' || f[pix.served] === f[pix.served_model]; }));

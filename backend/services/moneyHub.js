@@ -3243,8 +3243,13 @@ async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAY
     // rest the trained model made. Says what was scored, not how well, so it
     // stands under the minimum like matched does.
     fromCurve: Math.min(count(row.from_curve), matched),
+    // Up to sixteen: each serving switch that changes a number names itself
+    // in the version (mlPredictor servedModelVersion: +curve_offset,
+    // +month_support, +zero_curve, +nowcast), so one artifact can serve eight
+    // versions and a window across a ship holds two artifacts', and five cut
+    // the list the card counts.
     versions: Array.isArray(row.versions)
-      ? row.versions.filter((v) => typeof v === 'string' && v).slice(0, 5).map((v) => v.slice(0, 60))
+      ? row.versions.filter((v) => typeof v === 'string' && v).slice(0, 16).map((v) => v.slice(0, 60))
       : [],
   };
 }

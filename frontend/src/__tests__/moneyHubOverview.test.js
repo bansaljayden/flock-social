@@ -922,7 +922,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(madeBy.textContent).not.toMatch(/nowcast/);
     expect(hubRow('Model version').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\.$/);
     expect(card.textContent).toMatch(/Of the 412 venue-hours scored, 300 came from the venue's own curve and live readings, 112 from the trained model\./);
-    expect(screen.getByText('This window mixes 2 served versions: 2.6.0-starling, 2.6.0-starling+curve_offset. A +curve_offset or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
+    expect(screen.getByText('This window mixes 2 served versions: 2.6.0-starling, 2.6.0-starling+curve_offset. A +curve_offset, +month_support, +zero_curve or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
   });
 
   test('in the mixed mode both are named, with where each one answers', async () => {
@@ -1053,7 +1053,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
       accuracy: { ...MODEL.accuracy, versions: ['2.6.0-starling+curve_offset', '2.7.0-swift+curve_offset'] },
     }));
     // The screen paints the last load first, so wait for this one.
-    expect(await screen.findByText('This window mixes 2 served versions: 2.6.0-starling+curve_offset, 2.7.0-swift+curve_offset. A +curve_offset or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
+    expect(await screen.findByText('This window mixes 2 served versions: 2.6.0-starling+curve_offset, 2.7.0-swift+curve_offset. A +curve_offset, +month_support, +zero_curve or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
     const row = hubRow('Model version');
     expect(within(row).getByText('Not loaded')).toBeInTheDocument();
     expect(row.textContent).toMatch(/No model is loaded in this server process yet, so this is the version of the artifact on disk/);

@@ -2008,7 +2008,14 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
 
   const cacheKey = `${placeId}_${dayOfWeek}_${hour}`;
   const cached = baselineCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < BASELINE_CACHE_TTL) return cached.data;
+  // `miss.rowMeta`: the provenance of the entry THIS call answered with (null
+  // when it has none: no row for the hour, or no lookup at all), so a caller
+  // can tell whether the hour's own row is behind the number it got. Read
+  // back out of the cache later it could be another request's newer entry.
+  if (cached && Date.now() - cached.ts < BASELINE_CACHE_TTL) {
+    if (miss) miss.rowMeta = cached.meta || null;
+    return cached.data;
+  }
 
   // Refused misses take the same branch a query error takes, and crucially do
   // NOT write a cache entry — an account that cannot query must also be unable
@@ -2023,7 +2030,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
     // venue onto the outage tag and undo the split.
     const reason = isPlaceIdShaped(placeId) ? 'refused' : 'none';
     noteBaselineMiss(cacheKey, reason);
-    if (miss) miss.reason = reason;
+    if (miss) { miss.reason = reason; miss.rowMeta = null; }
     return 0;
   }
 
@@ -2057,7 +2064,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
 
     if (rows.length === 0) {
       noteBaselineMiss(cacheKey, 'none');
-      if (miss) miss.reason = 'none';
+      if (miss) { miss.reason = 'none'; miss.rowMeta = null; }
       boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
       return 0;
     }
@@ -2073,13 +2080,13 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
     // a venue that has since been scored.
     if (entry.data > 0) baselineMissCache.delete(cacheKey);
     else noteBaselineMiss(cacheKey, 'none');
-    if (miss) miss.reason = entry.data > 0 ? null : 'none';
+    if (miss) { miss.reason = entry.data > 0 ? null : 'none'; miss.rowMeta = entry.meta || null; }
     boundedSet(baselineCache, cacheKey, { data: entry.data, ts: Date.now(), meta: entry.meta });
     return entry.data;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
     noteBaselineMiss(cacheKey, 'error');
-    if (miss) miss.reason = 'error';
+    if (miss) { miss.reason = 'error'; miss.rowMeta = null; }
     return 0;
   }
 }
@@ -4453,10 +4460,44 @@ function applyNowcast(score, pick, baseKey) {
   };
 }
 
-// The measured figure for a number a switch produced, or null when neither
-// switch changed this number's arithmetic (the model path as it always was,
-// whose figure is QMAP_MEASURED or the artifact's own, decided below).
-function switchedMeasurement(curveOffset, nowcast) {
+// The measured figure for a number a switch produced, or null when no switch
+// changed this number's arithmetic (the model path as it always was, whose
+// figure is QMAP_MEASURED or the artifact's own, decided below).
+// `monthSupport` and `zeroCurve` are CROWD_MONTH_SUPPORT's and
+// CROWD_ZERO_CURVE_MODEL's account of this number (monthReachesNumber; the
+// zero-curve hour), each with its own figures (MONTH_SUPPORT_MEASURED).
+function switchedMeasurement(curveOffset, nowcast, { monthSupport = false, zeroCurve = false } = {}) {
+  if (zeroCurve) {
+    const m = MONTH_SUPPORT_MEASURED.zeroCurve[monthSupport ? 'monthSupport' : 'asBuilt'];
+    return {
+      percent: m.within15,
+      metric: monthSupport ? 'within_15_zero_curve_month_support' : 'within_15_zero_curve',
+      population: MONTH_SUPPORT_POPULATION,
+      rows: m.rows,
+    };
+  }
+  if (monthSupport) {
+    // The model's part of the number is the month average, so the figure is
+    // the one measured on it. monthReachesNumber already left out a reading
+    // carried at full weight, whose figure below stays the nowcast's. A
+    // blending weight with no month figure keeps the nowcast's figure too:
+    // NOWCAST_WEIGHTS has none (__tests__/mlServingFixes.test.js pins a
+    // figure for every weight between 0 and 1), so only a fixture's own
+    // weight (scripts/birdie/birdieEval.js) lands there.
+    const m = nowcast
+      ? MONTH_SUPPORT_MEASURED.nowcast[nowcast.base] && MONTH_SUPPORT_MEASURED.nowcast[nowcast.base][nowcast.bucket]
+      : MONTH_SUPPORT_MEASURED.model;
+    if (m) {
+      return {
+        percent: m.within15,
+        metric: nowcast
+          ? `within_15_nowcast_${nowcast.base}_lag${nowcast.bucket === 4 ? '4plus' : nowcast.bucket}_month_support`
+          : 'within_15_month_support',
+        population: MONTH_SUPPORT_POPULATION,
+        rows: m.rows,
+      };
+    }
+  }
   if (nowcast) {
     const m = SERVE_MEASURED.nowcast[nowcast.base] && SERVE_MEASURED.nowcast[nowcast.base][nowcast.bucket];
     if (!m) return null;
@@ -4480,9 +4521,11 @@ function switchedMeasurement(curveOffset, nowcast) {
 
 // The version string a served number carries: the artifact's own, plus one
 // qualifier per switch that changed THIS number. A nowcast that was on but had
-// no reading to use changed nothing and adds nothing.
-function servedModelVersion(version, curveOffset, nowcast) {
-  return `${version}${curveOffset ? '+curve_offset' : ''}${nowcast ? '+nowcast' : ''}`;
+// no reading to use changed nothing and adds nothing; nor does a month average
+// under a reading carried at full weight (monthReachesNumber).
+function servedModelVersion(version, curveOffset, nowcast, { monthSupport = false, zeroCurve = false } = {}) {
+  return `${version}${curveOffset ? '+curve_offset' : ''}${monthSupport ? '+month_support' : ''}`
+    + `${zeroCurve ? '+zero_curve' : ''}${nowcast ? '+nowcast' : ''}`;
 }
 
 // THE CONFIDENCE FIGURE FOR A NUMBER THE MODEL PATH SERVED, and what it is
@@ -4496,18 +4539,22 @@ function servedModelVersion(version, curveOffset, nowcast) {
 //   hasWeather   whether the vector carried a live temperature reading
 //   curveOffset  whether CROWD_SERVE_MODE=curve_offset made the number
 //   nowcast      applyNowcast's account of this number, or null
+//   monthSupport whether the month average is in the number
+//                (monthReachesNumber), false by default
+//   zeroCurve    whether the number is a zero-curve hour the model answered
+//                (CROWD_ZERO_CURVE_MODEL), false by default
 //   ladder       () => crowdEngine's input-completeness figure for the venue,
 //                read only for an artifact that cannot state an accuracy
-function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, ladder }) {
+function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowcast, monthSupport = false, zeroCurve = false, ladder }) {
   let confidence;
   let confidenceMeasurement;
   // WHEN A SWITCH MADE THE NUMBER, neither the artifact's figure nor the
   // quantile map's describes it: both were measured on the model's own
   // arithmetic. The figure is the one measured for the arithmetic that did
-  // run (SERVE_MEASURED), with its own population string. Null whenever the
-  // number is the model path as it always was, which leaves the two branches
-  // after this one exactly as they were.
-  const switched = switchedMeasurement(curveOffset, nowcast);
+  // run (SERVE_MEASURED, MONTH_SUPPORT_MEASURED), with its own population
+  // string. Null whenever the number is the model path as it always was,
+  // which leaves the two branches after this one exactly as they were.
+  const switched = switchedMeasurement(curveOffset, nowcast, { monthSupport, zeroCurve });
   if (switched) {
     // The weather adjustment below exists because the MODEL runs on
     // climatology without a live reading. A number the model's output did
@@ -4590,6 +4637,213 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
   }
   return { confidence, confidenceMeasurement };
 }
+
+// ---------------------------------------------------------------------------
+// TWO MORE SWITCHES, BOTH OFF: CROWD_MONTH_SUPPORT AND CROWD_ZERO_CURVE_MODEL
+// (2026-11-23).
+//
+// Neither adds a weight or a curve. Both change only what the model is asked,
+// so the model still makes every number it made before, and with the second
+// one it also makes a set of hours the rule engine used to answer. Both were
+// measured on the November rehearsal export's live readings (2026-10-23..11-05,
+// 31 cities) through scripts/ml/train/bandEval.js, which replays them with the
+// functions below, and checked on two disjoint halves of the venues and by an
+// independent replay (RETRAIN-NOVEMBER-RUNBOOK.md, 2026-11-23).
+//
+// CROWD_MONTH_SUPPORT=true. v2.6.0-starling was trained on readings from
+// March, April and May only (its temp_norms cover exactly those months, and
+// __tests__/mlServingFixes.test.js pins MONTH_SUPPORT to them), so from June
+// on every vector carries a month the trees never saw. The graph's own split
+// thresholds read November as May on the month and its sine and as March on
+// its cosine. Outside the trained months the vector is scored once per trained
+// month, with the month and its two angles set as buildFeatureMap sets them
+// for that month and every other slot as built, and the model's answer is the
+// mean of the three outputs: its answer averaged over the months it knows,
+// rather than its answer for a combination of months that never occurred.
+// On the 558,808 model-served readings of 2026-10-30..11-05 (the choice made
+// on 10-23..10-29): within 10 points 78.64% -> 83.00% (+4.36, date-block 95%
+// interval 3.64 to 5.03), mean absolute error 7.70 -> 6.89, bias +1.60 ->
+// -0.16; better on every one of the 42 dates from 09-15 with 1,000 or more
+// model-served readings (both label regimes), and on each half of the venues.
+// Holding the month at April instead scored +3.54. It acts mostly as a level
+// correction: the model's own output falls by about 8 points almost
+// everywhere, which moves the published number wherever no reading replaces
+// it (27.6% of those readings, all down, by 6.4 points on average; a reading
+// carried at full weight is untouched). So the five cities the model did not
+// over-predict (Bangkok, Cape Town, Delhi, Dubai, Singapore) end up one to
+// two points under: per-city bias is worth a weekly look. Not for a vector
+// whose month the artifact was trained on, not for any artifact but the one
+// in MONTH_SUPPORT, and only in the configuration it was measured in
+// (monthSupportServes): CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
+// the quantile map off. The graph treats October to December alike and
+// January and February differently, so the figures below are for October to
+// December.
+//
+// CROWD_ZERO_CURVE_MODEL=true. An hour whose own curve row says zero, with
+// neighbours that say zero or nothing, blends to a baseline of 0, and the
+// no-baseline exit in predictBusyness handed it to the rule engine, which
+// does not read the venue's curve and answered 31 points too high on average
+// there. With the switch on, the model answers it at baseline 0, plus
+// DEVIATION_WEIGHT times the strict offset (trailingOffsetBefore), and no
+// nowcast, which was not measured there. On the 5,235 readings of such hours
+// in 2026-10-30..11-05 (78% of them exactly 0): within 10 points 8.0% ->
+// 80.6%, mean absolute error 33.8 -> 8.1 with the month average (72.7% and
+// 10.2 without it); on every live reading as shown, both switches together
+// +4.99 points within 10 (4.23 to 5.71). The gain is mostly the rule engine's
+// error going away: the model's number at a baseline of 0 is 5 or less on 94%
+// of these hours. In the week before the export's 10-12..10-23 feed outage
+// only one such reading in ten was 0, and on those 111 readings the model's
+// number was further off on average than the rule engine's (mean absolute
+// error 35.6 against 30.6), so these hours' bias is worth watching. Only where
+// the lookup found the hour's own row (storedZeroSlot); a venue with no row, a
+// refused lookup and a failed one are answered exactly as before. And
+// only in the configuration it was measured in (zeroCurveServes): the artifact
+// ZERO_CURVE_FITTED_ON, CROWD_SERVE_MODE model, CROWD_NOWCAST_ENABLED on and
+// the quantile map off. bandEval's model-served population stays the hours
+// with a positive baseline, so these hours are counted only among every live
+// reading as shown.
+//
+// BOTH SWITCHES NAME THEMSELVES on the number they changed: '+month_support'
+// and '+zero_curve' in modelVersion (servedModelVersion), which
+// served_predictions records, and a confidence figure measured on that
+// arithmetic (MONTH_SUPPORT_MEASURED).
+// ---------------------------------------------------------------------------
+const MONTH_SUPPORT = Object.freeze({
+  '2.6.0-starling': Object.freeze([3, 4, 5]),
+});
+const ZERO_CURVE_FITTED_ON = '2.6.0-starling';
+
+// 'true' and nothing else, in any case, like CROWD_NOWCAST_ENABLED.
+function monthSupportEnabled() {
+  return String(process.env.CROWD_MONTH_SUPPORT || '').trim().toLowerCase() === 'true';
+}
+
+function zeroCurveModelEnabled() {
+  return String(process.env.CROWD_ZERO_CURVE_MODEL || '').trim().toLowerCase() === 'true';
+}
+
+// The trained months to average a vector over and where its month slots are,
+// or null: an artifact MONTH_SUPPORT does not name, a vector with no month
+// slot, or a month the artifact was trained on. Pure; the caller reads the
+// switch and the quantile map.
+function monthSupportFor(meta, vector) {
+  const months = meta ? MONTH_SUPPORT[meta.model_version || ''] : null;
+  if (!months || !vector) return null;
+  const names = meta.feature_names || [];
+  const slots = { month: names.indexOf('month'), sin: names.indexOf('month_sin'), cos: names.indexOf('month_cos') };
+  if (slots.month < 0 || months.includes(vector[slots.month])) return null;
+  return { months, slots };
+}
+
+// The vector once per month, in MONTH_SUPPORT's order, one row after another.
+function monthSupportBatch(vector, { months, slots }) {
+  const width = vector.length;
+  const batch = new Float32Array(width * months.length);
+  months.forEach((m, k) => {
+    const at = k * width;
+    batch.set(vector, at);
+    batch[at + slots.month] = m;
+    if (slots.sin >= 0) batch[at + slots.sin] = Math.sin(2 * Math.PI * m / 12);
+    if (slots.cos >= 0) batch[at + slots.cos] = Math.cos(2 * Math.PI * m / 12);
+  });
+  return batch;
+}
+
+// The mean of the first `n` outputs, summed in order and divided once, which
+// is the arithmetic the measurement used. An output that is not a finite
+// number is returned as it is, so the non-finite guard in predictBusyness
+// refuses it as it refuses a single run's.
+function averageMonthOutputs(outputs, n) {
+  if (!outputs || outputs.length < n) return undefined;
+  let sum = 0;
+  for (let k = 0; k < n; k++) {
+    const o = outputs[k];
+    if (typeof o !== 'number' || !Number.isFinite(o)) return o;
+    sum += o;
+  }
+  return sum / n;
+}
+
+// Whether the month average is in the number published: it is, unless a
+// reading carried at full weight replaced the model's number entirely.
+function monthReachesNumber(monthSupported, nowcast) {
+  return Boolean(monthSupported) && !(nowcast && nowcast.weight >= 1);
+}
+
+// Whether the month average may run, under this artifact and these switches:
+// the artifact MONTH_SUPPORT names, in the configuration it was measured in.
+// Its figures (MONTH_SUPPORT_MEASURED) were measured with the strict offset
+// and the nowcast on, so with the nowcast off (the stored median, no reading)
+// a number would publish a figure for arithmetic that did not run; and the
+// quantile map was fitted on the outputs as they were. Pure, like the one
+// below, so bandEval asks it the same question.
+function monthSupportServes(meta, { serveMode: mode, nowcast, qmapApplies }) {
+  return Boolean(meta)
+    && Boolean(MONTH_SUPPORT[meta.model_version || ''])
+    && mode === 'model'
+    && nowcast === true
+    && !qmapApplies;
+}
+
+// Whether a zero-baseline hour may be answered by the model, under this
+// artifact and these switches. Pure, so bandEval asks it the same question
+// about the configuration it replays.
+function zeroCurveServes(meta, { serveMode: mode, nowcast, qmapApplies }) {
+  return Boolean(meta)
+    && (meta.model_version || '') === ZERO_CURVE_FITTED_ON
+    && meta.label_type === 'delta'
+    && mode === 'model'
+    && nowcast === true
+    && !qmapApplies;
+}
+
+// Whether a zero baseline is the hour's own row blending to zero, read off
+// THIS request's own lookup (getBaseline's `miss`): `rowMeta`, the provenance
+// of the very entry its number came from (only blendBaselineRows writes one,
+// and only for an hour with its own row), and `ownReason`. Never the cache
+// read again afterwards: another request can write the slot in between (a
+// positive baseline primed while this request's other lookups finish, and
+// this zero would be served as a zero-curve hour). Nor the miss the slot
+// RECORDED: an earlier failure's marker outlives the whole-curve read
+// (primeBaselineCache) that later answered the slot. A refused or failed
+// lookup reports no provenance; the reason is checked as well, so the rule
+// holds if one ever does.
+function storedZeroSlot(rowMeta, ownReason) {
+  return Boolean(rowMeta)
+    && rowMeta.basis === 'baseline_row_written'
+    && ownReason !== 'refused'
+    && ownReason !== 'error';
+}
+
+// THE CONFIDENCE FIGURES for a number either switch changed: within 15 of the
+// served number, measured through bandEval.js on every live reading of
+// 2026-10-23..11-05 that the arithmetic produced, as SERVE_MEASURED is for
+// the other switches, and published with their own population string. They
+// describe the label regime since the feed outage, in which live readings sit
+// much closer to the venue's pattern than in SERVE_MEASURED's September
+// window; a reading carried at full weight (SERVE_MEASURED, lag 1) was within
+// 15 points on 96.5% of these readings against the 83.0 it publishes.
+const MONTH_SUPPORT_POPULATION = 'live readings 2026-10-23..11-05 (31 cities, read-only rehearsal export of 2026-11-05), each number as CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL serve it, offset and nowcast weights as shipped; the month average was chosen on 10-23..10-29 of this window';
+const MONTH_SUPPORT_MEASURED = Object.freeze({
+  // The model's number with the strict offset and no nowcast reading it uses.
+  model: Object.freeze({ within15: 84.4, rows: 141664 }),
+  // A reading two or three hours old blended in at the model table's weight.
+  // One hour old is carried at full weight (its figure is SERVE_MEASURED's),
+  // and four or more weigh nothing.
+  nowcast: Object.freeze({
+    model: Object.freeze({
+      1: null,
+      2: Object.freeze({ within15: 85.6, rows: 50409 }),
+      3: Object.freeze({ within15: 90.4, rows: 17387 }),
+      4: null,
+    }),
+  }),
+  // A zero-curve hour the model answered, with and without the month average.
+  zeroCurve: Object.freeze({
+    monthSupport: Object.freeze({ within15: 85.2, rows: 7203 }),
+    asBuilt: Object.freeze({ within15: 85.3, rows: 7203 }),
+  }),
+});
 
 // ---------------------------------------------------------------------------
 // A VENUE WITH NO CURVE OF ITS OWN: CROWD_NO_CURVE_FALLBACK, OFF UNLESS SET.
@@ -5035,7 +5289,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       ? new Date(slotInstantMs)
       : venueInstant(ts, venue);
 
-    // This request's own baseline miss reason; see getBaseline.
+    // This request's own baseline lookup: why it came back zero (`reason`)
+    // and the provenance of the entry it answered with (`rowMeta`); see
+    // getBaseline.
     const baselineMiss = {};
     // How long each of the four lookups took, for noteSlowLookups. Timing
     // only: a lookup that rejects still rejects, and every value is the
@@ -5100,25 +5356,53 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // No-baseline guard (delta models only): the delta model reconstructs
     // score = baseline + clamp(delta, ±30). With baseline 0 that caps the
     // score at ~30 ("Not Busy") no matter how packed the venue really is —
-    // strictly worse than the rule engine. Only venues with NO stored
-    // baseline AND no popular_times land here; the rule engine answers, or,
-    // with CROWD_NO_CURVE_FALLBACK on and no curve at all, the category table
-    // (see the corpus-gap branch below).
+    // worse than the rule engine for a venue we know nothing about. Venues
+    // with NO stored baseline AND no popular_times land here, and so does an
+    // hour whose own row blends to zero; the rule engine answers, or, with
+    // CROWD_NO_CURVE_FALLBACK on and no curve at all, the category table (see
+    // the corpus-gap branch below). The exception is zeroCurveSlot, just
+    // below: for an hour whose own row says zero, the model at baseline 0 was
+    // measured far closer than the rule engine (CROWD_ZERO_CURVE_MODEL), and
+    // it skips this exit when that switch serves.
     // (Retrain plan: teach the model an absolute head so this path dies.)
     // The two-head candidate's profile head takes the stored baseline as an
     // input and was trained only on venues that have one, so it is held to
     // the same guard; a cold venue is out of its training distribution.
     const baselineRequired = metadata.label_type === 'delta' || metadata.label_type === 'two_head';
-    if (baselineRequired && (!baseline || baseline <= 0)) {
+    // Read here, above the no-baseline exit, because the zero-curve hour below
+    // needs them to decide whether that exit answers; the weather guard after
+    // the exit reads the same two values.
+    const hasWeather = hasTempReading(weather);
+    const weatherNormMissing = !hasWeather
+      && (metadata.feature_names || []).includes('temperature')
+      && tempForFeature(weather, lat, ts.getMonth() + 1) == null;
+    // Which of the three zeros this was, when the baseline is one. This
+    // request's own reason first; the slot's recorded reason only when this
+    // call answered from the cache and wrote none.
+    const miss = baselineMiss.reason !== undefined
+      ? baselineMiss.reason
+      : baselineMissFor(placeId, ts.getDay(), ts.getHours());
+    // CROWD_ZERO_CURVE_MODEL (the block above zeroCurveServes): an hour whose
+    // own curve row blends to zero is answered by the model at baseline 0,
+    // when the switch, the artifact and the serving configuration are the ones
+    // it was measured in. Everything else at a zero baseline takes the exit
+    // below exactly as it did before the switch existed.
+    const zeroCurveSlot = baselineRequired && !(baseline > 0) && !weatherNormMissing
+      && zeroCurveModelEnabled()
+      && zeroCurveServes(metadata, {
+        serveMode: serveMode(),
+        nowcast: nowcastEnabled(),
+        qmapApplies: qmapEnabled() && (metadata.model_version || '') === QMAP_FITTED_ON,
+      })
+      // The table answered, not a popular_times payload (the branch above).
+      && !venue.popular_times
+      && storedZeroSlot(baselineMiss.rowMeta, baselineMiss.reason);
+    if (baselineRequired && (!baseline || baseline <= 0) && !zeroCurveSlot) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
-      // Which of the three zeros this was. `no_baseline` stays the name of the
-      // corpus gap so every existing reader of that tag keeps its meaning; the
-      // two failures get their own names instead of borrowing it.
-      // This request's own reason first; the slot's recorded reason only
-      // when this call answered from the cache and wrote none.
-      const miss = baselineMiss.reason !== undefined
-        ? baselineMiss.reason
-        : baselineMissFor(placeId, ts.getDay(), ts.getHours());
+      // Which of the three zeros this was (`miss`, above). `no_baseline` stays
+      // the name of the corpus gap so every existing reader of that tag keeps
+      // its meaning; the two failures get their own names instead of
+      // borrowing it.
       result.predictionMethod = miss === 'refused' ? 'rule_engine_baseline_refused'
         : miss === 'error' ? 'rule_engine_baseline_error'
         : 'rule_engine_no_baseline';
@@ -5148,11 +5432,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // metadata has no climatology at all there is no in-distribution number to
     // hand a model that was trained on `temperature`, and zero-filling it would
     // be 0°F — so the rule engine, which handles a null reading honestly,
-    // answers instead of the model guessing cold.
-    const hasWeather = hasTempReading(weather);
-    if (!hasWeather
-        && (metadata.feature_names || []).includes('temperature')
-        && tempForFeature(weather, lat, ts.getMonth() + 1) == null) {
+    // answers instead of the model guessing cold. (hasWeather and
+    // weatherNormMissing are read above the no-baseline exit.)
+    if (weatherNormMissing) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
       result.predictionMethod = 'rule_engine_no_weather_norm';
       result.modelVersion = null;
@@ -5166,8 +5448,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // after every rule-engine exit has had its say, so curve_offset serves
     // exactly the venue-hours the model path would have and no others. It
     // needs a positive baseline to be a curve at all, which every delta
-    // artifact already guarantees at this line; under an artifact that serves
-    // without one, the model answers as it always has.
+    // artifact guarantees at this line except on a zero-curve hour
+    // (CROWD_ZERO_CURVE_MODEL, which serves only in 'model' mode); under an
+    // artifact that serves without one, the model answers as it always has.
     //
     // model_when_fresh chooses per number, so only that mode reads the venue's
     // row here, before any model runs: a fresh reading (isFreshReading) sends
@@ -5191,6 +5474,8 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // Whether the model's own live features held a reading (see
     // liveFeaturesUsedReadings): null unless the graph ran with them.
     let liveFeatureReadings = null;
+    // Whether the graph's output is the month average (CROWD_MONTH_SUPPORT).
+    let monthSupported = false;
     if (curveOffsetMode) {
       // The venue's own curve at this hour, the value blendBaselineRows
       // served. No model delta and no quantile map; the trailing offset joins
@@ -5225,11 +5510,30 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       }
       const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors, context);
       const inputName = metadata.onnx_input_name || 'input';
-      const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
-      const results = await session.run({ [inputName]: tensor });
-
       const outputName = session.outputNames[0];
-      const rawOutput = results[outputName].data[0];
+      // CROWD_MONTH_SUPPORT (the block above monthSupportFor): outside the
+      // months the artifact was trained on, the vector once per trained month
+      // in one run, and the outputs' mean, only in the configuration it was
+      // measured in (monthSupportServes).
+      const support = monthSupportEnabled()
+        && monthSupportServes(metadata, {
+          serveMode: mode,
+          nowcast: nowcastEnabled(),
+          qmapApplies: qmapEnabled() && (metadata.model_version || '') === QMAP_FITTED_ON,
+        })
+        ? monthSupportFor(metadata, vector)
+        : null;
+      let rawOutput;
+      if (support) {
+        const batch = monthSupportBatch(vector, support);
+        const results = await session.run({ [inputName]: new ort.Tensor('float32', batch, [support.months.length, vector.length]) });
+        rawOutput = averageMonthOutputs(results[outputName].data, support.months.length);
+        monthSupported = true;
+      } else {
+        const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
+        const results = await session.run({ [inputName]: tensor });
+        rawOutput = results[outputName].data[0];
+      }
       // A model output that is not a finite number must not reach the arithmetic
       // below: NaN (or an empty output tensor's undefined, or an int64 head's
       // BigInt) sails through clamp-and-round as NaN, getLabel(NaN) falls through
@@ -5334,7 +5638,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // already brought back, so it costs no query, and it never reads the
     // target hour's own reading (pickNowcastReading).
     let nowcastApplied = null;
-    if (devEntry && nowcastEnabled()) {
+    // Not on a zero-curve hour: it was measured without one, and the nowcast's
+    // weights were fitted on hours with a curve.
+    if (devEntry && nowcastEnabled() && !zeroCurveSlot) {
       const pick = pickNowcastReading(devEntry.readings, venueSlotOf(ts));
       const applied = applyNowcast(score, pick, nowcastBaseKey(curveOffsetMode, qmapApplied, metadata.model_version));
       if (applied) {
@@ -5359,12 +5665,17 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       throw new Error(`refusing to publish a confidence figure: ${accuracy.reason}`);
     }
 
+    // Whether the month average is in the published number: not when a
+    // reading carried at full weight replaced the model's number entirely.
+    const monthInNumber = monthReachesNumber(monthSupported, nowcastApplied);
     const { confidence, confidenceMeasurement } = servedConfidence({
       accuracy,
       qmapApplied,
       hasWeather,
       curveOffset: curveOffsetMode,
       nowcast: nowcastApplied,
+      monthSupport: monthInNumber,
+      zeroCurve: zeroCurveSlot,
       ladder: () => crowdEngine.calculateCrowdScore(venue, weather, timestamp).confidence,
     });
 
@@ -5396,7 +5707,8 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       // the table it already scores, and its footnote already names a window
       // that mixes them. Unqualified, as before, whenever neither switch moved
       // this number, so a switched-off server records exactly what it did.
-      modelVersion: servedModelVersion(metadata.model_version || '2.1.0', curveOffsetMode, nowcastApplied),
+      modelVersion: servedModelVersion(metadata.model_version || '2.1.0', curveOffsetMode, nowcastApplied,
+        { monthSupport: monthInNumber, zeroCurve: zeroCurveSlot }),
       // WHAT THE NUMBER ABOVE IS, said in the payload rather than left to be
       // inferred. `confidence` is one integer and cannot carry its own
       // provenance: which metric, over which population, how many rows, and
@@ -5917,7 +6229,8 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
 //     as, so the dial and the bar for one hour read one slot. The hours go
 //     first, so the headline reads what they just read.
 // The second answers are the venue's own curve where it has a row at that
-// hour and the rule engine where its curve is zero, which is what the rest of
+// hour and, where its curve is zero, the rule engine (or the model at
+// baseline 0 while CROWD_ZERO_CURVE_MODEL serves), which is what the rest of
 // the strip shows. Each hour scored again costs the one slot read its dropped
 // miss stood in for, charged like any slot lookup; the headline reads only
 // what the hours and the two calls in front of it just read. Every replaced
@@ -6277,6 +6590,21 @@ module.exports = {
     switchedMeasurement,
     servedModelVersion,
     servedConfidence,
+    // CROWD_MONTH_SUPPORT and CROWD_ZERO_CURVE_MODEL, for bandEval.js and
+    // __tests__/mlServingFixes.test.js.
+    MONTH_SUPPORT,
+    ZERO_CURVE_FITTED_ON,
+    MONTH_SUPPORT_MEASURED,
+    MONTH_SUPPORT_POPULATION,
+    monthSupportEnabled,
+    zeroCurveModelEnabled,
+    monthSupportFor,
+    monthSupportBatch,
+    averageMonthOutputs,
+    monthReachesNumber,
+    monthSupportServes,
+    zeroCurveServes,
+    storedZeroSlot,
     getRecentDeviation,
     recentDeviationEntry,
     // The live and sports feature families, for bandEval.js and the parity
