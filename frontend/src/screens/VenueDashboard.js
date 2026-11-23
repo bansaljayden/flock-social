@@ -1178,7 +1178,18 @@ export default function VenueDashboard({
     // price the Roost card prints: Stripe's while Roost is on sale on the web,
     // otherwise the one constant in App.js. Inside the app it names no price
     // and offers no upgrade (`native` above).
-    const LockedTab = ({ featureName, description }) => (
+    //
+    // CALLED, NOT MOUNTED (2026-11-22). It was `const LockedTab = (...) =>`
+    // used as <LockedTab />: a component declared inside this render is a new
+    // component type on every render, so React unmounted and remounted the
+    // whole lock each time, and the VenueBillingStatus inside it read
+    // /api/venue-billing/status again on every remount. That was once a minute
+    // while the lock was on screen (App.js's minute clock) and on every step of
+    // the busy-now slider: 29 reads in eight minutes for one owner on
+    // 2026-11-22, where one per visit was meant. Called as a function, the div,
+    // the status reader and the button sit in this tree with stable types and
+    // keep their mount, so the lock reads its price once.
+    const renderLockedTab = ({ featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: 'var(--r-lg)', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: '2px dashed #2d5a87' }}>
         {/* The last hand-drawn icon on this surface. It was a padlock with
             rounded caps and a rounded rect, which is a different drawing
@@ -1480,7 +1491,7 @@ export default function VenueDashboard({
               forecast, the strip, Roost's cards and questions, and the
               weekly summary. The live number above stays free. */}
           {venueTab === 'analytics' && !can.analytics && tierKnown && (
-            <LockedTab featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you, with Roost's cards, its answers and the This Week card." />
+            renderLockedTab({ featureName: 'Analytics', description: "Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you, with Roost's cards, its answers and the This Week card." })
           )}
           {venueTab === 'analytics' && can.analytics && tierKnown && (<>
           {/* No linked listing / loading states.
@@ -2111,7 +2122,7 @@ export default function VenueDashboard({
             </div>
           )}
           {venueTab === 'tables' && ownerTablesSeen && (ownerTablesLocked || (!can.analytics && tierKnown)) && (
-            <LockedTab featureName="Tables" description="Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour." />
+            renderLockedTab({ featureName: 'Tables', description: 'Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour.' })
           )}
           {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
             <VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} cameraLooks={ownerTableCameraLooks} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />

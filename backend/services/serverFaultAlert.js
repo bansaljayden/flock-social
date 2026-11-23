@@ -25,6 +25,7 @@ const JOB_CONSEQUENCE = {
   crowdAlerts: 'Pre-plan crowd alerts stop: no confirmed plan starting in the next 3 hours gets its push about how busy the venue usually is then.',
   photoPrune: 'Expired Places photos are not deleted, which the Places terms require.',
   storyPurge: 'Expired stories are not deleted.',
+  collectionHeartbeat: 'Nothing is checking that the BestTime collector is still writing rows: if it stops, the data-collection alert will not go out.',
 };
 
 function ago(ms) {

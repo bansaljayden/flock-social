@@ -1786,6 +1786,55 @@ async function primeVenueCurve(placeId, userId) {
   }
 }
 
+// THE STRIP'S UNMEASURED HOURS, ANSWERED FROM THE READ THAT JUST HAPPENED
+// (2026-11-22).
+//
+// primeBaselineCache writes only the slots a curve has a row for, and that is
+// right for rows a caller hands it: it cannot know a missing slot is empty. But
+// primeVenueCurve's read is the venue's WHOLE curve, so a slot it did not
+// return has no row, and getBaseline's three-row query for that slot can only
+// say what this says: {data: 0, meta: null}, reason 'none', cached for the
+// slot's TTL (blendBaselineRows answers 0 whenever the slot's own row is
+// missing, whatever its neighbours hold). Before this, the strip asked that
+// question again for every such hour, one after another, because the loop
+// awaits each hour: a cold card for a venue with no curve ran 24 sequential
+// round trips after the read that already knew the answer (production,
+// 2026-11-22 18:35:56Z: a 1,491 ms card, about 24 queries at ~58 ms in a row
+// on one connection, against 13 ms for the same card warm).
+//
+// Only THIS strip's slots, at most 24, never the whole week: baselineCache is
+// shared and bounded, and 168 zeros per curve-less venue would evict other
+// venues' real slots. Only from a fresh read (the one primeVenueCurve just made
+// or replayed); a refused or failed read left nothing in curveCache and fills
+// nothing. Never over an entry the cache already holds, so a newer positive
+// answer from a per-slot read is never replaced by a zero. The entry is stamped
+// with the read's own time, not now, so a replayed read cannot stretch a zero
+// past the life a per-slot read would have given it.
+function fillUnmeasuredStripSlots(placeId, slots) {
+  if (!placeId || !Array.isArray(slots) || slots.length === 0) return 0;
+  const read = curveCache.get(placeId);
+  if (!read || Date.now() - read.ts >= CURVE_CACHE_TTL) return 0;
+  // An empty remembered read that a later read has contradicted (some read in
+  // this process has seen the venue's rows since: curveSeen, which holds
+  // nothing while the no-curve fallback is off) is not evidence any more, so
+  // it fills nothing and each hour asks for itself, as before.
+  if (read.rows.length === 0 && curveSeen(placeId)) return 0;
+  const measured = blendCurveRows(read.rows);
+  let filled = 0;
+  for (const slot of slots) {
+    if (!slot || !(slot.ts instanceof Date)) continue;
+    const slotKey = `${slot.ts.getDay()}_${slot.ts.getHours()}`;
+    if (measured.has(slotKey)) continue;
+    const cacheKey = `${placeId}_${slotKey}`;
+    const held = baselineCache.get(cacheKey);
+    if (held && Date.now() - held.ts < BASELINE_CACHE_TTL) continue;
+    boundedSet(baselineCache, cacheKey, { data: 0, ts: read.ts, meta: null });
+    noteBaselineMiss(cacheKey, 'none');
+    filled += 1;
+  }
+  return filled;
+}
+
 // THE CURVE THE STRIPS JUST READ, for a caller that needs its open hours
 // (routes/venueDashboard.js, the week's nights, 2026-11-03). Through
 // primeVenueCurve, so it is the same read, the same charge and the same cache:
@@ -5711,6 +5760,9 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   try {
     const basePlaceId = venue.place_id || venue.placeId || venue.google_place_id || null;
     await primeVenueCurve(basePlaceId, options && options.userId);
+    // predictBusyness's own key, which (unlike the prime's) never reads
+    // venue.placeId: a venue known only by that has no baseline query to save.
+    fillUnmeasuredStripSlots(venue.place_id || venue.google_place_id || null, slots);
   } catch { /* prime nothing; the loop queries per hour, as before */ }
 
   // Read once, so every hour of one strip carries the same keys.

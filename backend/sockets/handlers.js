@@ -1563,6 +1563,21 @@ function registerHandlers(io, socket) {
     });
   }
 
+  // WHY A CONNECTION ENDED (2026-11-22). server.js logs every connect and
+  // nothing logged a disconnect, so whether realtime was dropping (a ping
+  // timeout, an edge cutoff, an eviction) or clients were leaving on purpose
+  // (a reload, the app backgrounded) could only be worked out by lining up
+  // edge request lines by address by hand. The disconnect handler below logs
+  // socket.io's own reason, how long the connection lived and how long since
+  // the client last sent anything, which engine.io's 'packet' event (pongs
+  // included) tells us. Guarded because the test harness's stub sockets have
+  // no engine connection.
+  const connectedAt = Date.now();
+  let lastInboundAt = connectedAt;
+  if (socket.conn && typeof socket.conn.on === 'function') {
+    socket.conn.on('packet', () => { lastInboundAt = Date.now(); });
+  }
+
   // Cap concurrent connections for this account (see MAX_SOCKETS_PER_USER).
   trackUserSocket(io, socket);
 
@@ -3916,7 +3931,13 @@ function registerHandlers(io, socket) {
 
   // --- Cleanup on disconnect ---
 
-  socket.on('disconnect', async () => {
+  socket.on('disconnect', async (reason) => {
+    // First and synchronous, so the line is written even if the cleanup
+    // below throws. The integer id only, as on the connect line (server.js),
+    // and whether a push token was named, never its value. The times are in
+    // the message because the platform's log timestamp runs seconds late.
+    const endedAt = Date.now();
+    console.log(`Socket disconnected: user ${user && user.id} reason=${String(reason || 'unknown').slice(0, 40)} life=${Math.round((endedAt - connectedAt) / 1000)}s quiet=${Math.round((endedAt - lastInboundAt) / 1000)}s transport=${(socket.conn && socket.conn.transport && socket.conn.transport.name) || '?'} device=${socket.handshake && socket.handshake.auth && socket.handshake.auth.pushToken ? 'yes' : 'no'}`);
     clearBuckets(socket);
 
     // The presence bookkeeping is decided FIRST and synchronously, so nothing

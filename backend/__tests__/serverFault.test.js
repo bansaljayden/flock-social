@@ -405,6 +405,7 @@ test('every watched sweep reports both its outcomes', () => {
     ['services/crowdAlerts.js', 'crowdAlerts'],
     ['services/photoStore.js', 'photoPrune'],
     ['server.js', 'storyPurge'],
+    ['services/collectionHeartbeat.js', 'collectionHeartbeat'],
   ]) {
     const src = read(file);
     assert.match(src, new RegExp(`recordJobRun\\('${name}', true,`), `${file} never reports a good ${name} run`);

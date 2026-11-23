@@ -138,7 +138,21 @@ async function nativeGoogleIdToken() {
   // No `scopes`: the provider's own default (email, profile, openid) is what
   // the backend needs, and passing them again would send them as ADDITIONAL
   // scopes on top of the same defaults.
-  const res = await SocialLogin.login({ provider: 'google', options: {} });
+  //
+  // forcePrompt, ALWAYS (2026-11-22). Without it the plugin first tries
+  // GIDSignIn's restorePreviousSignIn (GoogleProvider.swift), which hands back
+  // the ID token it already holds, unchanged, for most of that token's hour.
+  // The server makes every Google ID token single use (routes/auth.js
+  // claimOauthIdentity), so a "Confirm it's you" more than five minutes after
+  // a Google sign-in (users.js hasFreshSession) sent the same token again and
+  // was answered "Google sign-in expired, please try again" on every tap for up
+  // to an hour, with no Google sheet ever shown. forcePrompt skips the restore
+  // and runs GIDSignIn.signIn, which shows Google's sheet and mints a new
+  // token. On a phone with no saved Google session it changes nothing; where
+  // one is saved (a lost response, a reinstall, a sign-out whose plugin logout
+  // did not land) the restore was either refused or a silent sign-in as the
+  // previous Google user. Needs a real iPhone before the build ships.
+  const res = await SocialLogin.login({ provider: 'google', options: { forcePrompt: true } });
   const idToken = res?.result?.idToken;
   if (!idToken) throw new Error('Google sign-in did not return a token');
   return idToken;

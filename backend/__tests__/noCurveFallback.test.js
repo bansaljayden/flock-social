@@ -1015,38 +1015,46 @@ function landsAfterCurveRead(db, curves, placeId, curve) {
 
 const SLOT_READ = /FROM ml_venue_baselines WHERE google_place_id = \$1 AND \(/;
 
-test('one strip: a curve that lands between two of its hours leaves no table hour in the array it was handed, and the headline agrees with every hour', async () => {
-  // The strip's whole-curve read comes back empty and the rows land right
-  // after it, so the first hour stands on its slot's cached miss and takes the
-  // table while every later hour reads the rows. The caller publishes the
-  // array it handed over, so that is where the first hour has to change.
+// ONE STRIP, ONE READ (2026-11-22). The strip's whole-curve read now answers
+// every hour it shows, the hours it has no row for included
+// (mlPredictor.fillUnmeasuredStripSlots), so a curve the collector writes
+// after that read no longer reaches the strip's later hours through queries of
+// their own: those queries were 24 sequential round trips on a cold card. The
+// strip is one answer, the read's, and the rows are picked up by the next
+// whole-curve read (CURVE_CACHE_TTL, ten minutes) or, sooner, once any read in
+// this process has seen them, which is what agreeWithStrip repairs from.
+test('one strip, one read: a curve that lands during a strip leaves every hour on the strip\'s own read, and once the rows are seen the repair scores every hour and the headline from them', async () => {
   const v = venue();
   const curves = {};
   const db = landsAfterCurveRead(scriptedDb({ curves }), curves, v.place_id, allSlots(50));
   await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
-    const I = p._internals;
     // An earlier request: the probe's no is held and this hour's slot is a
     // cached zero.
     assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD);
     const before = p.predictionCoverage();
     const headline = await p.predictBusyness(v, WX, TS);
+    const sentBefore = db.sent.length;
     const strip = await p.predictHourlyForecast(v, WX, HOUR, 4, TS);
     assert.equal(headline.predictionMethod, METHOD, 'setup: the headline decided before the rows');
-    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, 'ml', 'ml', 'ml'],
-      'setup: the rows landed between the first two hours');
-    assert.equal(I.baselineCacheEntry(v.place_id, DOW, HOUR).data, 0, 'setup: the first hour stood on a cached miss');
-    const sent = db.sent.length;
+    assert.ok(curves[v.place_id], 'setup: the rows landed after the strip\'s curve read');
+    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, METHOD, METHOD, METHOD],
+      'every hour stands on the read the strip made');
+    assert.deepEqual(db.sent.slice(sentBefore).filter((s) => SLOT_READ.test(s.sql)), [],
+      'no hour asked for its own slot after the whole-curve read');
+    // That strip and its headline agree already: the same object back, nothing read.
+    const quiet = db.sent.length;
+    assert.strictEqual(await p.agreeWithStrip(headline, strip, v, WX, TS), headline);
+    assert.equal(db.sent.length, quiet);
+    // A read elsewhere in this process counts the rows (a profile save does;
+    // services/venueCorpus.js), and the repair scores every hour of the array
+    // the caller was handed from them.
+    p.noteCurveRowsSeen(v.place_id);
     const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
-    for (const h of strip) assert.notEqual(h.predictionMethod, METHOD, h.hour);
-    assert.equal(strip[0].predictionMethod, 'ml', 'the first hour read the rows once its miss was dropped');
-    assert.deepEqual(Object.keys(strip[0]), Object.keys(strip[1]), 'the hour written back has the keys of the hours beside it');
+    for (const h of strip) assert.equal(h.predictionMethod, 'ml', h.hour);
+    assert.deepEqual(Object.keys(strip[0]), Object.keys(strip[1]), 'the hours written back have the keys of the hours beside them');
     assert.equal(agreed.predictionMethod, 'ml');
     assert.equal(agreed.score, strip[0].score, 'the dial and the Now bar are one number');
     assert.equal(crowdEngine.describeServedArithmetic(agreed), strip[0].numberSource);
-    // One slot read: the slot whose cached miss was dropped. The headline
-    // read what that hour had just read.
-    const slotReads = db.sent.slice(sent).filter((s) => SLOT_READ.test(s.sql));
-    assert.deepEqual(slotReads.map((s) => s.params.slice(0, 3)), [[v.place_id, DOW, HOUR]]);
     const after = p.predictionCoverage();
     assert.equal(after.total - before.total, 1 + 4, 'one headline and four hours: the replaced answers are not counted');
     assert.equal(after.categoryCurve, before.categoryCurve);
@@ -1057,18 +1065,42 @@ test('one strip: a curve that lands between two of its hours leaves no table hou
   });
 });
 
-test('one strip: a headline that is not the table is scored again when its own hour was, so the dial and that bar read one slot', async () => {
-  // The strip first and the headline after it. By then the strip has noted
-  // the yes, so the headline reads the same cached miss its first hour read
-  // and comes back as the rule engine rather than the table.
+test('one strip, one read: a venue with no curve costs the strip its whole-curve read and nothing more, and every hour gets the answer its own slot read would have', async () => {
+  const v = venue();
+  // Switch off, the production configuration: the read and the cache, nothing else.
+  await withPredictor({ env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p, db) => {
+    const I = p._internals;
+    const sentBefore = db.sent.length;
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 24, TS);
+    const sent = db.sent.slice(sentBefore);
+    assert.equal(strip.length, 24);
+    assert.equal(sent.filter((s) => CURVE_READ.test(s.sql)).length, 1, 'one whole-curve read');
+    assert.deepEqual(sent.filter((s) => SLOT_READ.test(s.sql)), [], 'and no slot reads: they were 24 before');
+    for (const h of strip) assert.equal(h.predictionMethod, 'rule_engine_no_baseline', h.hour);
+    // Each slot holds exactly what getBaseline caches for a slot with no row.
+    const entry = I.baselineCacheEntry(v.place_id, DOW, HOUR);
+    assert.equal(entry.data, 0);
+    assert.equal(entry.meta, null);
+    // And the headline for that hour is answered from it: no query.
+    const quiet = db.sent.length;
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, 'rule_engine_no_baseline');
+    assert.equal(db.sent.filter((s, i) => i >= quiet && SLOT_READ.test(s.sql)).length, 0);
+  });
+});
+
+test('one strip: a headline scored after the rows are seen, on the slot the strip answered, is scored again with every hour, so the dial and that bar read one slot', async () => {
+  // The strip first, on its own read, then a read elsewhere sees the rows, and
+  // the headline after that reads the strip's cached miss under the yes, so it
+  // comes back as the rule engine rather than the table.
   const v = venue();
   const curves = {};
   const db = landsAfterCurveRead(scriptedDb({ curves }), curves, v.place_id, allSlots(50));
   await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
     assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD);
     const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, METHOD, METHOD], 'setup: one read, one answer');
+    p.noteCurveRowsSeen(v.place_id);
     const headline = await p.predictBusyness(v, WX, TS);
-    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, 'ml', 'ml'], 'setup');
     assert.equal(headline.predictionMethod, 'rule_engine_no_baseline', 'setup: the same miss, read after the yes');
     const before = p.predictionCoverage();
     const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);

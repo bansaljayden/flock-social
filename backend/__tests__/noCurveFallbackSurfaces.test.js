@@ -729,12 +729,18 @@ test('Birdie: a headline scored before the strip read the venue\'s first rows is
 // ===========================================================================
 // One strip, one answer.
 //
-// The collector can write a venue's rows while a strip is being scored. The
-// strip's whole-curve read comes back empty, its first hour takes the table
-// off that hour's cached miss, and every hour after it reads the rows, so one
-// array held the category's typical level beside the venue's own curve. Each
-// surface publishes the array it handed to mlPredictor.agreeWithStrip, which
-// scores that hour again inside it.
+// The collector can write a venue's rows while a strip is being scored. Until
+// 2026-11-22 the strip's whole-curve read came back empty, its first hour took
+// the table off that hour's cached miss, and every hour after it read the rows
+// with a query of its own, so one array held the category's typical level
+// beside the venue's own curve, and agreeWithStrip scored the first hour again
+// inside it. Those per-hour queries were 24 sequential round trips on every
+// cold card (mlPredictor.fillUnmeasuredStripSlots), and they are gone: the
+// strip's own read answers every hour now, so rows that land after it reach no
+// hour of that strip, and each surface publishes one answer, the read's. The
+// rows are read by the next whole-curve read, and the tests above (a headline
+// scored before its strip read the venue's first rows) cover the repair once a
+// read has seen them.
 // ===========================================================================
 
 // Every hour of the week below any typical level the table has for a bar at
@@ -763,7 +769,7 @@ async function heldMissAt(id, hour) {
 // the strip's read and before its first hour.
 const landMidStrip = (id, curve = ALL_SLOTS) => { landAfterCurveRead = { id, curve }; };
 
-test('the card: a curve that lands between two hours of its strip leaves no bar on the table, and the dial is the Now bar', async () => {
+test('the card: a curve that lands during its strip leaves every bar and the dial on the strip\'s one read', async () => {
   curveOn();
   await awayFromHourEdge();
   const id = freshId('CARDMID');
@@ -773,15 +779,14 @@ test('the card: a curve that lands between two hours of its strip leaves no bar 
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
   const c = res.body;
-  for (const h of c.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
-  assert.strictEqual(c.hourly[0].predictionMethod, 'ml', 'the first bar was scored again from the rows');
-  assert.strictEqual(c.predictionMethod, 'ml', 'the headline agrees with its strip');
+  for (const h of c.hourly) assert.strictEqual(h.predictionMethod, c.hourly[0].predictionMethod, h.hour);
+  assert.strictEqual(c.predictionMethod, c.hourly[0].predictionMethod, 'the headline agrees with its strip');
   assert.strictEqual(c.score, c.hourly[0].score);
   assert.strictEqual(c.numberSource, c.hourly[0].numberSource);
-  assert.deepStrictEqual(served[0][3], ['ml'], 'the serve is recorded as the number shown');
+  assert.deepStrictEqual(served[0][3], [c.predictionMethod], 'the serve is recorded as the number shown');
 });
 
-test('the public demo: a curve that lands between two hours of its strip leaves no bar on the table, and the dial is the first bar', async () => {
+test('the public demo: a curve that lands during its strip leaves every bar and the dial on the strip\'s one read', async () => {
   curveOn();
   publicCrowdRouter.__testables.resetDemoLimitsForTest();
   await awayFromHourEdge();
@@ -792,13 +797,12 @@ test('the public demo: a curve that lands between two hours of its strip leaves 
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
   const d = res.body;
-  for (const h of d.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
-  assert.strictEqual(d.hourly[0].predictionMethod, 'ml');
+  for (const h of d.hourly) assert.strictEqual(h.predictionMethod, d.hourly[0].predictionMethod, h.hour);
   assert.strictEqual(d.number_source, d.hourly[0].numberSource, 'the dial and the first bar name one source');
   assert.strictEqual(d.score, d.hourly[0].score);
 });
 
-test('Birdie: a curve that lands between two hours of the strip leaves no hour on the table, and the first hour is the headline', async () => {
+test('Birdie: a curve that lands during the strip leaves every hour and the headline on the strip\'s one read', async () => {
   curveOn();
   await awayFromHourEdge();
   const id = freshId('BIRDIEMID');
@@ -806,13 +810,11 @@ test('Birdie: a curve that lands between two hours of the strip leaves no hour o
   landMidStrip(id);
   const out = await executeTool('get_crowd_prediction', { place_id: id }, ++nextUser, { includeForecast: true });
   assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
-  for (const h of out.hourly_forecast) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
-  assert.notStrictEqual(out.crowd_method, 'category_typical');
-  assert.strictEqual(out.hourly_forecast[0].predictionMethod, 'ml', 'the first hour is the headline, scored from the rows');
+  for (const h of out.hourly_forecast) assert.strictEqual(h.predictionMethod, out.hourly_forecast[0].predictionMethod, h.hour);
   assert.strictEqual(out.hourly_forecast[0].crowd_method, out.hourly_forecast[1].crowd_method);
 });
 
-test('the venue dashboard: a curve that lands between two hours of the day leaves no bar on the table, and the dial agrees with its own bar', async () => {
+test('the venue dashboard: a curve that lands during the day\'s strip leaves every bar on one read, and the dial agrees with its own bar', async () => {
   curveOn();
   await awayFromHourEdge();
   CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
@@ -826,15 +828,13 @@ test('the venue dashboard: a curve that lands between two hours of the day leave
   assert.strictEqual(res.body.available, true, res.text);
   assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
   const bars = res.body.todayHourly;
-  for (const h of bars) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
-  assert.strictEqual(bars[0].predictionMethod, 'ml', 'the 6 AM bar was scored again from the rows');
-  assert.notStrictEqual(res.body.now.method, METHOD);
+  for (const h of bars) assert.strictEqual(h.predictionMethod, bars[0].predictionMethod, h.hour);
   // The dial is this hour; from 6 AM on, this hour is one of the bars.
   const hour = new Date().getUTCHours();
   if (hour >= 6) assert.strictEqual(res.body.now.method, bars[hour - 6].predictionMethod, 'the dial and its own bar are one answer');
 });
 
-test('the venue dashboard\'s strip: a curve that lands between two hours of the evening leaves the owner\'s peak off the table', async () => {
+test('the venue dashboard\'s strip: a curve that lands during the evening\'s strip leaves the owner\'s row and its peak on one read', async () => {
   curveOn();
   await awayFromHourEdge();
   CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
@@ -847,9 +847,8 @@ test('the venue dashboard\'s strip: a curve that lands between two hours of the 
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(res.body.available, true, res.text);
   assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
-  assert.notStrictEqual(res.body.you.method, METHOD);
   assert.strictEqual(typeof res.body.you.peakLiveReadings, 'boolean', 'setup: the row names what made its peak');
-  assert.notStrictEqual(res.body.you.peakMethod, METHOD, 'the peak is an hour the table answered before the rows were read');
+  assert.strictEqual(res.body.you.peakMethod, res.body.you.method, 'the peak is an hour of the same read as the row');
 });
 
 // ===========================================================================
@@ -999,20 +998,29 @@ async function sendsTheStatementsItSentBefore() {
   // surface whose strip runs past midnight into a second weekday, six more
   // for the dashboard's week, none for the one-day strip or the warm repeats.
   // The slot, curve and presence counts did not move.
+  //
+  // SINCE 2026-11-22 A COLD STRIP READS NO SLOTS. The whole-curve read now
+  // answers every hour of the strip it has no row for
+  // (mlPredictor.fillUnmeasuredStripSlots) with what that hour's own slot read
+  // would have cached, so the 24 slot reads of a cold card (90 for the
+  // dashboard's day and nights, 8 for its strip row, 23 for the card again)
+  // are gone, and each cold surface reads one slot: its headline's, which is
+  // scored beside the strip. Curved venues, the area answer, presence and the
+  // curve read itself are unchanged: a full curve has no unmeasured hour.
   const same = (presence, slot, curve, total) => ({ presence, slot, curve, total });
   assert.deepStrictEqual(counts, {
-    'card cold': same(0, 24, 1, 32),
-    'demo cold': same(0, 24, 1, 28),
-    'birdie cold': same(0, 24, 1, 29),
-    'intelligence cold': same(0, 90, 1, 100),
-    'strip cold': same(0, 8, 1, 12),
+    'card cold': same(0, 1, 1, 9),
+    'demo cold': same(0, 1, 1, 5),
+    'birdie cold': same(0, 1, 1, 6),
+    'intelligence cold': same(0, 1, 1, 11),
+    'strip cold': same(0, 1, 1, 5),
     'card curved': same(0, 1, 1, 10),
     'demo curved': same(0, 1, 1, 6),
     'birdie curved': same(0, 1, 1, 7),
     'intelligence curved': same(0, 1, 1, 12),
     'strip curved': same(0, 1, 1, 6),
     area: same(0, 2, 1, 8),
-    'card cold again': same(0, 23, 1, 28),
+    'card cold again': same(0, 0, 1, 5),
     'card curved again': same(0, 0, 0, 5),
   });
 }

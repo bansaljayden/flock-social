@@ -72,13 +72,19 @@ const FUNCTIONS = /^(set|handle|load|open|render|retry|cancel|switch|calc|get|cr
 const WEB_PRICE = (tier) => (tier === 'pro' ? '$99/mo' : null);
 
 function dashboard(overrides = {}) {
+  return render(dashboardElement(overrides));
+}
+
+// The element alone, so a test can hand rerender a fresh one: new props, the
+// way App.js re-renders the dashboard on every one of its own renders.
+function dashboardElement(overrides = {}) {
   const props = {};
   for (const name of PARAMS) {
     if (COMPONENTS.has(name)) props[name] = () => null;
     else if (FUNCTIONS.test(name)) props[name] = jest.fn();
     else props[name] = undefined;
   }
-  return render(
+  return (
     <VenueDashboard
       {...props}
       colors={new Proxy({}, { get: () => '#2d5a87' })}
@@ -142,6 +148,23 @@ describe('the locked Analytics tab', () => {
     expect(container.textContent).toContain("Roost's cards");
     // And nothing asked the server for prices that could not be shown.
     expect(getVenueBillingStatus).not.toHaveBeenCalled();
+  });
+
+  test('the dashboard rendering again reads the price once, and the Upgrade button stays the same button', async () => {
+    // The lock was a component declared inside the dashboard's render, so
+    // each render was a new type and remounted it: the price was read again
+    // every minute and on every slider step (VenueDashboard.js
+    // renderLockedTab).
+    const { rerender } = dashboard({ venueTab: 'analytics' });
+    await settle();
+    const button = screen.getByRole('button', { name: 'Upgrade to Roost' });
+    expect(getVenueBillingStatus).toHaveBeenCalledTimes(1);
+    rerender(dashboardElement({ venueTab: 'analytics' }));
+    await settle();
+    rerender(dashboardElement({ venueTab: 'analytics' }));
+    await settle();
+    expect(getVenueBillingStatus).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Upgrade to Roost' })).toBe(button);
   });
 });
 

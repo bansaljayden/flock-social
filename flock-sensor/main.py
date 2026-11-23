@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.26.0'
+VERSION = '1.26.1'
 
 # The Pi 5's GPIO library (rpi-lgpio, under RPi.GPIO) makes a small file in
 # the working directory before it will drive a pin, and the service runs in
@@ -3959,7 +3959,12 @@ class Pusher:
         self.rate_limits = min(self.rate_limits + 1, 20)
         base = RATE_LIMIT_RETRY_MIN if retry_after is None else max(RATE_LIMIT_RETRY_MIN, retry_after)
         delay = min(base * (2 ** (self.rate_limits - 1)), float(PUSH_INTERVAL))
-        delay *= random.uniform(0.85, 1.15)
+        # The jitter only ever ADDS. It was 0.85-1.15, so a first retry could
+        # leave 1.7 s after a 429 that asked for 2, earn a second 429 and a
+        # doubled wait (seen in a backlog drain on 2026-11-15); the server
+        # measures its 2 s from the previous accepted reading, and the 429
+        # arrives about 0.1 s after that, so no extra margin is needed.
+        delay *= random.uniform(1.0, 1.15)
         self.next_attempt = time.monotonic() + delay
 
     def _schedule_retry(self, auth_error=False):

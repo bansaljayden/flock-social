@@ -45,6 +45,7 @@
 
 const pool = require('../config/database');
 const { opsAlert } = require('./opsAlert');
+const { recordJobRun } = require('../utils/serverFault');
 
 const WINDOW_HOURS = 26;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
@@ -82,6 +83,13 @@ async function runCollectionHeartbeat() {
           AND collected_at > NOW() - ($1 || ' hours')::interval`,
       [WINDOW_HOURS]
     );
+    // A run that READ the data is a good run, whether or not it then alerts:
+    // the money watch's stalled-job alert is for the heartbeat itself going
+    // blind. From 2026-11-18 09:09 to 11-21 02:05 UTC this COUNT timed out at
+    // every hourly run (a harvest put millions of weekly rows inside the
+    // collected_at window), and because the catch below only logged, 74
+    // failures in a row reached nobody (2026-11-22).
+    recordJobRun('collectionHeartbeat', true, null, SWEEP_INTERVAL_MS);
     const fresh = rows[0]?.n ?? 0;
     const hours = rows[0]?.hours ?? 0;
     const rowsLow = fresh < MIN_HEALTHY_ROWS;
@@ -141,7 +149,9 @@ async function runCollectionHeartbeat() {
       console.error(`[HEARTBEAT] Collection ${state}: ${fresh} realtime rows over ${hours} distinct hours in ${WINDOW_HOURS}h.`);
     }
   } catch (err) {
-    // The heartbeat must never take the app down with it.
+    // The heartbeat must never take the app down with it. recordJobRun never
+    // throws; it is what lets a heartbeat that cannot run raise job_stalled.
+    recordJobRun('collectionHeartbeat', false, err, SWEEP_INTERVAL_MS);
     console.error('[HEARTBEAT] sweep failed:', err && err.message ? err.message : err);
   }
 }

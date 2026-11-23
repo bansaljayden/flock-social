@@ -19363,7 +19363,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const seq = ++busyNowSeqRef.current;
     const current = () => !cancelled && busyNowSeqRef.current === seq;
     getVenueBusyNow().then((d) => { if (current()) setVenueBusyNow(d); }).catch(() => { if (current()) setVenueBusyNow({ available: false }); });
-    if (venueTab === 'analytics') {
+    // Only for a plan the server has named as Roost (VenueDashboard.js
+    // onRoost, the same two stored words). A known free venue is not asked:
+    // the server would refuse all three and the lock never draws their
+    // answers, so every Analytics visit by a free venue sent three guaranteed
+    // 403s (production, 2026-11-15 to 11-22). A tier not known yet (a failed
+    // plan check) asks nothing either; the tab shows its skeleton then, as it
+    // did, and venueTierKnown below re-runs this once the plan is read.
+    if (venueTab === 'analytics' && venueTierKnown && (venueTier === 'pro' || venueTier === 'premium')) {
     getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch((e) => { if (!cancelled) setVenueIntel(intelFailure(e)); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
     // A refusal is not a failed read: this-week sits behind the Pro gate, so a
@@ -19375,7 +19382,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // after a purchase the tier changes while the tab and the place do not,
     // so the refusals stayed on screen for a venue that had just paid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [venueTab, venueProfile?.google_place_id, venueTier]);
+  }, [venueTab, venueProfile?.google_place_id, venueTier, venueTierKnown]);
 
   // THE LIVE NUMBER ENDS WHEN ITS TIME DOES. Users see the owner's number for
   // its 90 minutes and then the forecast, but this was read only on a change

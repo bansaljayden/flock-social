@@ -1299,7 +1299,7 @@ const INVENTORY = [
   },
   {
     file: 'utils/serverFault.js', name: 'jobs', kind: 'cache',
-    key: 'a background job name, a string literal at each recordJobRun call site (flockSweep, reconfirmSweep, crowdAlerts, photoPrune, storyPurge)',
+    key: 'a background job name, a string literal at each recordJobRun call site (flockSweep, reconfirmSweep, crowdAlerts, photoPrune, storyPurge, collectionHeartbeat)',
     callerControls: 'nothing. No request reaches recordJobRun',
     protects: 'nothing scarce. The last success and last failure of each job, read by the stalled-job alert',
     denominator: 'not a counter beyond failures since the last success',

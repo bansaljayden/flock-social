@@ -108,6 +108,15 @@ describe('both readers go through it', () => {
     expect(dash).toMatch(/venueMapState\.detail\s*\n?\s*\|\| 'The venue lookup failed\./);
   });
 
+  test('the effect asks the three Roost reads only of a plan the server named as Roost', () => {
+    /* A known free venue was sent all three on every Analytics visit and the
+       server refused each one (three 403s a visit, 2026-11-15 to 11-22); the
+       lock never draws their answers. A tier not known yet asks nothing, and
+       venueTierKnown re-runs the effect once it is. */
+    expect(APP).toMatch(/if \(venueTab === 'analytics' && venueTierKnown && \(venueTier === 'pro' \|\| venueTier === 'premium'\)\) \{\n\s*getVenueIntelligence\(\)/);
+    expect(APP).toMatch(/\}, \[venueTab, venueProfile\?\.google_place_id, venueTier, venueTierKnown\]\);/);
+  });
+
   test('the effect and the retry both call it', () => {
     expect(APP).toMatch(/getVenueIntelligence\(\)\.then\(\(d\) => \{ if \(!cancelled\) setVenueIntel\(d\); \}\)\.catch\(\(e\) => \{ if \(!cancelled\) setVenueIntel\(intelFailure\(e\)\); \}\);/);
     const retry = APP.slice(APP.indexOf('const retryVenueIntel = () => {'));

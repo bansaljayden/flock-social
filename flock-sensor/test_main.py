@@ -705,6 +705,22 @@ class Delivery(unittest.TestCase):
         self.assertGreaterEqual(delay, main.RATE_LIMIT_RETRY_MIN * 0.8)
         self.assertLessEqual(delay, main.PUSH_INTERVAL * 1.2)
 
+    def test_a_first_slow_down_retry_never_comes_before_the_wait_it_was_told(self):
+        # The jitter at its lowest: the retry must still wait the full floor.
+        real_uniform = main.random.uniform
+        main.random.uniform = lambda a, b: a
+        try:
+            pusher = main.Pusher()
+            pusher._schedule_rate_limit_retry(2)
+            delay = pusher.next_attempt - time.monotonic()
+            self.assertGreaterEqual(delay + 0.01, main.RATE_LIMIT_RETRY_MIN,
+                                    'a retry earlier than Retry-After only earns another 429')
+            pusher = main.Pusher()
+            pusher._schedule_rate_limit_retry(3)
+            self.assertGreaterEqual(pusher.next_attempt - time.monotonic() + 0.01, 3.0)
+        finally:
+            main.random.uniform = real_uniform
+
     def test_a_retry_after_the_backend_did_not_send_falls_back_to_the_floor(self):
         self.assertIsNone(main._retry_after_seconds('not json at all'))
         self.assertIsNone(main._retry_after_seconds('{"error":"too fast"}'))

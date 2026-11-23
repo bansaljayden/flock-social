@@ -160,6 +160,10 @@ describe('the native path is used on native iOS and nowhere else', () => {
     await waitFor(() => expect(onLoginSuccess).toHaveBeenCalledWith({ id: 7 }));
 
     expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
+    // Always a fresh sheet and a newly minted token: without forcePrompt the
+    // plugin hands back GIDSignIn's held ID token, which the server refuses as
+    // a replay for most of its hour (useGoogleAuth.js nativeGoogleIdToken).
+    expect(mockSocialLogin.login).toHaveBeenCalledWith({ provider: 'google', options: { forcePrompt: true } });
     // The popup that leaves the app is exactly what must not happen.
     expect(mockWebStart).not.toHaveBeenCalled();
     expect(api.googleLoginWithToken).not.toHaveBeenCalled();
