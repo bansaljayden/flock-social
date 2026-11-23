@@ -148,10 +148,12 @@ const PRUNE_SQL = `
 // A row whose venue has no reading inside it is set back to NULL, so a stale
 // list can never outlive the readings it names.
 //
-// ITS OWN STATEMENT, run after the offset's and inside its own try, because
+// ITS OWN STATEMENT, in its own transaction and inside its own try, because
 // this file deploys with the BESTTIME collector while migration 092 is applied
 // by the main service's boot. Until that boot, this statement fails on the
-// missing column, and the offset above must not fail with it.
+// missing column, and the offset must not fail with it. Since 2026-11-22 it
+// runs before the offset (buildRecentDeviation says why); the transaction and
+// the try are what keep its failure from reaching the offset, in either order.
 const READINGS_KEPT = 3;
 const READINGS_WINDOW_HOURS = 48;
 
@@ -374,14 +376,20 @@ async function jobQuery(sql, params, { plan = false, settings = [] } = {}) {
   }
 }
 
-async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false, offsetStored = true } = {}) {
+// `quiet` leaves the failure line to the caller: buildRecentDeviation runs this
+// before the offsets (below) and only knows afterwards which line to write.
+async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT, plan = false, offsetStored = true, quiet = false } = {}) {
   try {
     const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep], { plan, settings: RECENT_READINGS_SETTINGS });
     return { updated: res.rowCount, error: null, plan: res.plan || null };
   } catch (err) {
-    console.error(`[ML:Deviation] Recent readings not stored (${offsetStored ? 'the offset was' : 'nor was the offset'}):`, err.message);
+    if (!quiet) logReadingsFailure(offsetStored, err.message);
     return { updated: null, error: err.message, plan: null };
   }
+}
+
+function logReadingsFailure(offsetStored, message) {
+  console.error(`[ML:Deviation] Recent readings not stored (${offsetStored ? 'the offset was' : 'nor was the offset'}):`, message);
 }
 
 // ---------------------------------------------------------------------------
@@ -485,17 +493,32 @@ function readingsOutcome(readings, offsetReadings) {
 // A FAILED OFFSET STATEMENT NO LONGER COSTS THE TWO READINGS STATEMENTS
 // (2026-11-21). With CROWD_NOWCAST_ENABLED a card's number is the model plus
 // the strict offset from offset_readings plus the nowcast from recent_readings;
-// offset_pct, which the first statement writes, is what the switched-off
+// offset_pct, which the offsets statement writes, is what the switched-off
 // server adds. When that statement threw, the other two never ran: from 17:01
 // UTC on 2026-11-21 it passed the two-minute cap every hour (the curve table
 // had grown past 27 million rows with the harvested venues' curves), and the
 // nowcast's stored readings aged past its lag cap within a few hours, so every
-// card lost the nowcast. Now the two run whatever the first did, on the rows
-// earlier runs made (a venue with no row yet gets its readings after the first
-// run whose offset statement succeeds), and the run still ends in the first
-// statement's error, saying what was stored.
+// card lost the nowcast. Now the two run whatever the offsets statement did,
+// on the rows earlier runs made (a venue with no row yet gets its readings
+// after the first run whose offset statement succeeds), and the run still ends
+// in the offsets statement's error, saying what was stored. (The recent
+// readings run first since 2026-11-22, the offset readings last.)
+//
+// THE NOWCAST'S READINGS GO FIRST (2026-11-22). The sweep ends between :59 and
+// :02, and this ran the 47-68 s offsets statement before the 7-12 s readings
+// one, so the hour-old reading reached serving between 3 s before and 3.5 min
+// after the hour (after it in 13 of 15 runs on 11-22/23, median 30 s), and
+// until then a card scored the hour on the reading from two hours back: within
+// 10 points 88.2% with the hour-old reading against 63.4% without it, on the
+// rehearsal replay's six cities. Run first, they land about a minute sooner.
+// The readings statement still runs in its own transaction and its own try,
+// so it can never cost the offsets, which is what running it second protected.
+// It only updates rows that exist, so a venue new this hour gets its readings
+// one run later, as it does when the offsets statement fails.
 async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS, plan = false } = {}) {
   const t0 = Date.now();
+  const readings = await storeLatestReadings({ plan, quiet: true });
+  const t1 = Date.now();
   let written = null;
   let offsetFailure = null;
   try {
@@ -503,10 +526,9 @@ async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MA
   } catch (err) {
     offsetFailure = err;
   }
-  const t1 = Date.now();
-  const offsetStored = !offsetFailure;
-  const readings = await storeLatestReadings({ plan, offsetStored });
   const t2 = Date.now();
+  const offsetStored = !offsetFailure;
+  if (readings.error) logReadingsFailure(offsetStored, readings.error);
   const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK, plan, offsetStored });
   const t3 = Date.now();
   if (offsetFailure) {
@@ -521,8 +543,8 @@ async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MA
     offsetReadings,
     seconds: (Date.now() - t0) / 1000,
     statementSeconds: {
-      offset: (t1 - t0) / 1000,
-      recentReadings: (t2 - t1) / 1000,
+      offset: (t2 - t1) / 1000,
+      recentReadings: (t1 - t0) / 1000,
       offsetReadings: (t3 - t2) / 1000,
     },
     plans: plan

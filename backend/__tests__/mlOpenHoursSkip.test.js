@@ -539,7 +539,17 @@ test('the precompute stores each venue\'s newest live readings, newest first, an
   const quiet = console.error;
   console.error = () => {};
   let res;
-  try { res = await buildRecentDeviation(); } finally { console.error = quiet; }
+  try {
+    // The readings statement runs before the offsets since 2026-11-22 and only
+    // updates rows that exist, so a venue whose row the offsets statement is
+    // creating gets its readings on the next run.
+    const first = await buildRecentDeviation();
+    assert.strictEqual((await pool.query(
+      'SELECT recent_readings FROM ml_venue_recent_deviation WHERE google_place_id = $1', [PRECOMPUTE_PLACE])).rows[0].recent_readings,
+    null, 'a row made by this run has no readings yet');
+    assert.strictEqual(first.readings.error, null);
+    res = await buildRecentDeviation();
+  } finally { console.error = quiet; }
   assert.strictEqual(res.readings.error, null, 'the readings statement ran');
   assert.strictEqual(res.offsetReadings.error, null, 'and the offset readings statement');
   const row = async (place) => (await pool.query(
@@ -703,14 +713,15 @@ test('each of the three aggregates gets the job\'s two minutes in its own transa
     /^offsets \d+\.\ds, recent readings \d+\.\ds, offset readings \d+\.\ds$/);
   assert.strictEqual(describeStatementSeconds({ offset: 24.94, recentReadings: 13.06, offsetReadings: 31.8 }),
     'offsets 24.9s, recent readings 13.1s, offset readings 31.8s');
-  assert.strictEqual(sessions.length, 3, 'the offset, the recent readings and the offset readings, one transaction each');
+  assert.strictEqual(sessions.length, 3, 'the recent readings, the offset and the offset readings, one transaction each');
   // Each statement's planner settings (from production's plans, 12 and 22
   // November) are SET LOCAL inside its own transaction, after the cap and
-  // before the statement; the offsets statement has none.
+  // before the statement; the offsets statement has none. The recent readings
+  // run first since 2026-11-22 (buildRecentDeviation says why).
   const { RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS } = require('../scripts/ml/buildRecentDeviation');
   assert.deepStrictEqual(RECENT_READINGS_SETTINGS, ['SET LOCAL enable_nestloop = off']);
   assert.deepStrictEqual(OFFSET_READINGS_SETTINGS, ['SET LOCAL enable_nestloop = off']);
-  const settings = [[], RECENT_READINGS_SETTINGS, OFFSET_READINGS_SETTINGS];
+  const settings = [RECENT_READINGS_SETTINGS, [], OFFSET_READINGS_SETTINGS];
   sessions.forEach((said, i) => {
     const n = settings[i].length;
     assert.strictEqual(said.length, 4 + n);

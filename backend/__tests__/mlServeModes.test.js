@@ -797,9 +797,11 @@ test('the builder stores as many readings as serving expects, over a window the 
   assert.ok(windowHours >= 2 * I.NOWCAST_MAX_LAG_HOURS);
   // The same population as the offset, and past-only in the serving sense.
   assert.match(src, /t\.label_source = 'live'[\s\S]*b\.baseline > 0[\s\S]*make_interval\(hours => \$1::int\)/);
-  // Its own statement, after the offset's, so a missing column cannot cost the offset.
+  // Its own statement in its own try, so a missing column cannot cost the
+  // offset, and since 2026-11-22 BEFORE the offset's, so the hour-old reading
+  // reaches serving about a minute sooner after each sweep.
   const body = src.slice(src.indexOf('async function buildRecentDeviation('));
-  assert.ok(body.indexOf('storeLatestReadings(') > 0 && body.indexOf('UPSERT_SQL') < body.indexOf('storeLatestReadings('));
+  assert.ok(body.indexOf('storeLatestReadings(') > 0 && body.indexOf('storeLatestReadings(') < body.indexOf('UPSERT_SQL'));
   assert.match(src, /async function storeLatestReadings[\s\S]*catch \(err\)/);
 });
 
