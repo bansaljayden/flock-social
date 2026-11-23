@@ -1649,6 +1649,9 @@ function primeBaselineCache(placeId, rows) {
   // (primeVenueCurve), as the read that fetched it did. Nothing while the
   // switch is off.
   if (primed > 0) noteCurvePresence(placeId, true, ts);
+  // A caller's rows that the remembered read lacks make that read stale (a
+  // replay passes the remembered rows themselves, which never contradict).
+  if (primed > 0) forgetContradictedCurve(placeId, [...blended.keys()]);
   return primed;
 }
 
@@ -1757,13 +1760,22 @@ async function primeVenueCurve(placeId, userId) {
 
   const askedAt = Date.now();
   const sentAfter = curvePresenceWrites;
+  // Marked by forgetContradictedCurve if another read sees rows while this
+  // one is out; see curveInflightState.
+  const inflightState = { contradicted: false };
+  curveInflightState.set(placeId, inflightState);
   const pending = pool.query(
     `SELECT day_of_week, hour, baseline, source, updated_at
        FROM ml_venue_baselines
       WHERE google_place_id = $1`,
     [placeId]
   ).then(({ rows }) => {
-    boundedSet(curveCache, placeId, { ts: Date.now(), rows }, CURVE_CACHE_MAX);
+    // Rows seen by another read after this one was sent may be missing from
+    // it (forgetContradictedCurve): kept for its own slots, never for a fill.
+    const fillable = !inflightState.contradicted;
+    // askedAt too: a snapshot's age runs from when the read was SENT, so the
+    // fill's window cannot be stretched by a slow query (round 4).
+    boundedSet(curveCache, placeId, { ts: Date.now(), askedAt, rows, fillable }, CURVE_CACHE_MAX);
     // The same read says whether the venue has a curve at all, which is the
     // no-curve fallback's question (noteCurvePresence): a yes for any row,
     // and a no for none that stands only if nothing newer has landed since
@@ -1783,6 +1795,7 @@ async function primeVenueCurve(placeId, userId) {
     // key behind. Every caller awaits this promise inside its own try/catch,
     // which is why a rejection here cannot escape as an unhandled one.
     curveInflight.delete(placeId);
+    if (curveInflightState.get(placeId) === inflightState) curveInflightState.delete(placeId);
   }
 }
 
@@ -1810,17 +1823,67 @@ async function primeVenueCurve(placeId, userId) {
 // answer from a per-slot read is never replaced by a zero. The entry is stamped
 // with the read's own time, not now, so a replayed read cannot stretch a zero
 // past the life a per-slot read would have given it.
+//
+// ONLY FROM A YOUNG READ, AND NEVER FROM A CONTRADICTED ONE (review of
+// bb5bb9b7, 2026-11-22). The remembered read can be ten minutes old, and rows
+// the collector wrote since are invisible to it: a strip that replayed an empty
+// read filled zeros where the per-slot path would have found the rows. So the
+// fill trusts only a read made in the last FILL_READ_MAX_AGE_MS, which covers
+// one request's fan-out (the card's strip right after its read, the venue
+// dashboard's seven strips) and nothing longer; an older read leaves each
+// unheld hour to its own query, as before. And a remembered read that any
+// newer read has contradicted (a slot read, a caller's rows or a corpus count
+// that found rows it lacks) is dropped at once (forgetContradictedCurve), so
+// the next strip reads again rather than filling from it.
+const FILL_READ_MAX_AGE_MS = 30 * 1000;
+
+// A whole-curve read still in flight when another read sees rows (round 2 of
+// the same review) was sent before them and may not hold them, but it lands
+// after, so the delete below cannot reach it. Its own state says so instead,
+// and it is remembered unfillable (primeVenueCurve); its rows still prime the
+// slots they hold. One entry per read in flight, created when it is sent and
+// deleted when it settles, so nothing can evict it (round 3: a bounded map of
+// marks lost a held read's mark to fifty other reads).
+const curveInflightState = new Map(); // placeId -> { contradicted: boolean }
+
+function forgetContradictedCurve(placeId, seenSlotKeys) {
+  if (!placeId) return;
+  const inflightState = curveInflightState.get(placeId);
+  if (inflightState) inflightState.contradicted = true;
+  const read = curveCache.get(placeId);
+  if (!read) return;
+  if (seenSlotKeys === null) {
+    // Rows were counted without their slots (noteCurveRowsSeen): only an
+    // empty remembered read is contradicted by that.
+    if (read.rows.length === 0) curveCache.delete(placeId);
+    return;
+  }
+  const remembered = new Set(read.rows.map((r) => `${Number(r.day_of_week)}_${Number(r.hour)}`));
+  if (seenSlotKeys.some((k) => !remembered.has(k))) curveCache.delete(placeId);
+}
+
 function fillUnmeasuredStripSlots(placeId, slots) {
   if (!placeId || !Array.isArray(slots) || slots.length === 0) return 0;
   const read = curveCache.get(placeId);
-  if (!read || Date.now() - read.ts >= CURVE_CACHE_TTL) return 0;
+  if (!read || read.fillable === false) return 0;
+  // Measured from when the read was sent: its rows are a snapshot of that
+  // moment, however long the query then took.
+  const snapshotAt = Number.isFinite(read.askedAt) ? read.askedAt : read.ts;
+  if (Date.now() - snapshotAt >= Math.min(CURVE_CACHE_TTL, FILL_READ_MAX_AGE_MS)) return 0;
   // An empty remembered read that a later read has contradicted (some read in
   // this process has seen the venue's rows since: curveSeen, which holds
   // nothing while the no-curve fallback is off) is not evidence any more, so
   // it fills nothing and each hour asks for itself, as before.
   if (read.rows.length === 0 && curveSeen(placeId)) return 0;
   const measured = blendCurveRows(read.rows);
-  let filled = 0;
+  // Every slot is decided BEFORE anything is written. The cache is bounded, so
+  // each write can evict its oldest entry, and that can be a later slot of this
+  // same strip: deciding as it wrote, the loop found that slot's fresh positive
+  // entry gone and wrote a zero over a real baseline (a full cache and a
+  // remembered empty read turned a cached 70 into rule_engine_no_baseline;
+  // review of bb5bb9b7, 2026-11-22). Decided first, an evicted slot is simply a
+  // miss, which its own query answers in the loop, as before.
+  const toFill = [];
   for (const slot of slots) {
     if (!slot || !(slot.ts instanceof Date)) continue;
     const slotKey = `${slot.ts.getDay()}_${slot.ts.getHours()}`;
@@ -1828,11 +1891,13 @@ function fillUnmeasuredStripSlots(placeId, slots) {
     const cacheKey = `${placeId}_${slotKey}`;
     const held = baselineCache.get(cacheKey);
     if (held && Date.now() - held.ts < BASELINE_CACHE_TTL) continue;
+    if (!toFill.includes(cacheKey)) toFill.push(cacheKey);
+  }
+  for (const cacheKey of toFill) {
     boundedSet(baselineCache, cacheKey, { data: 0, ts: read.ts, meta: null });
     noteBaselineMiss(cacheKey, 'none');
-    filled += 1;
   }
-  return filled;
+  return toFill.length;
 }
 
 // THE CURVE THE STRIPS JUST READ, for a caller that needs its open hours
@@ -1986,6 +2051,9 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
     // when this hour blends to zero (noteCurvePresence; nothing while the
     // no-curve fallback is off). No row says nothing about the other hours.
     if (rows.length > 0) noteCurvePresence(placeId, true, askedAt);
+    // Rows a remembered whole-curve read did not have make that read stale:
+    // drop it, so no strip fills hours from it (fillUnmeasuredStripSlots).
+    if (rows.length > 0) forgetContradictedCurve(placeId, rows.map((r) => `${Number(r.day_of_week)}_${Number(r.hour)}`));
 
     if (rows.length === 0) {
       noteBaselineMiss(cacheKey, 'none');
@@ -2948,6 +3016,9 @@ async function getSelfBaselines(placeId, userId) {
       // nothing while the no-curve fallback is off). No rows here says
       // nothing: the join and the harvest filter drop venues that have one.
       noteCurvePresence(placeId, true, askedAt);
+      // And a remembered whole-curve read without these rows is stale
+      // (fillUnmeasuredStripSlots must not fill from it).
+      forgetContradictedCurve(placeId, r.rows.map((row) => `${Number(row.dow)}_${Number(row.hour)}`));
       const byDowHour = new Map();
       for (const row of r.rows) {
         byDowHour.set(`${row.dow}_${row.hour}`, parseFloat(row.baseline) || 0);
@@ -4782,6 +4853,8 @@ async function venueHasCurve(placeId, userId) {
     const { rows } = await pool.query(CURVE_PRESENCE_SQL, [placeId]);
     const data = Array.isArray(rows) && rows.length > 0;
     noteCurvePresence(placeId, data, askedAt, sentAfter);
+    // Rows exist: a remembered EMPTY whole-curve read is stale.
+    if (data) forgetContradictedCurve(placeId, null);
     // An answer that landed while this probe was in flight is newer than it,
     // and is the one the gate acts on.
     const held = curvePresenceCache.get(placeId);
@@ -5938,7 +6011,9 @@ module.exports = {
   // A venue's rows counted outside this file (services/venueCorpus.js): the
   // same yes any read of them gives the no-curve fallback (noteCurvePresence).
   // Keeps nothing while CROWD_NO_CURVE_FALLBACK is off.
-  noteCurveRowsSeen: (placeId) => noteCurvePresence(placeId, true, Date.now()),
+  // Also drops a remembered EMPTY whole-curve read, which these rows
+  // contradict, whether or not the no-curve fallback is on.
+  noteCurveRowsSeen: (placeId) => { forgetContradictedCurve(placeId, null); noteCurvePresence(placeId, true, Date.now()); },
   // The third Ticketmaster ledger's reader. routes/admin.js's cost panel had
   // meters for the other two and none for this one, so both the observed count
   // and the worst-case ceiling it published were short by a whole ledger.
@@ -6111,6 +6186,7 @@ module.exports = {
       // see the previous case's remembered rows and count one too few.
       curveCache.clear();
       curveInflight.clear();
+      curveInflightState.clear();
       // And the no-curve fallback's presence answers, charged to the same
       // budget, for the same reason.
       curvePresenceCache.clear();

@@ -1088,6 +1088,240 @@ test('one strip, one read: a venue with no curve costs the strip its whole-curve
   });
 });
 
+// The hour `h` of TS's day (h past 23 runs into the next day).
+const tsAt = (h) => { const d = new Date(TS); d.setHours(h); return d; };
+
+test('one strip, one read: on a full cache the fill never writes a zero over a later hour\'s real baseline that its own writes evicted', async () => {
+  // Review of bb5bb9b7 (2026-11-22): deciding each slot as it wrote, the fill's
+  // first writes evicted the oldest cache entry, which was a later hour of the
+  // same strip holding a real baseline, and when the loop reached that hour it
+  // wrote a zero there. Every slot is decided first now, so an evicted hour is
+  // a plain miss and its own query answers it.
+  const v = venue();
+  const curves = { [v.place_id]: allSlots(70) };
+  // The whole-curve read answers from a snapshot taken before the rows landed
+  // (empty), while a slot read sees them: the one way a fresh read can lack a
+  // slot the cache already holds a real answer for.
+  const db = scriptedDb({ curves });
+  const send = db.query;
+  db.query = async (text, params = []) => {
+    if (params[0] === v.place_id && CURVE_READ.test(String(text).replace(/\s+/g, ' ').trim())) {
+      db.sent.push({ sql: String(text).replace(/\s+/g, ' ').trim(), params });
+      return { rows: [] };
+    }
+    return send(text, params);
+  };
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    // The 11 PM headline reads its slot first and holds 70.
+    assert.equal((await p.predictBusyness(v, WX, tsAt(23))).predictionMethod, 'ml', 'setup');
+    assert.equal(I.baselineCacheEntry(v.place_id, DOW, 23).data, 70, 'setup');
+    // Other venues fill the cache until that 11 PM entry is the oldest one left.
+    let k = 0;
+    while (I.baselineCacheSize() < 2000) p.primeBaselineCache(`ChIJfiller${String(++k).padStart(6, '0')}`, [{ day_of_week: 0, hour: 0, baseline: 10 }]);
+    assert.equal(I.baselineCacheEntry(v.place_id, DOW, 23).data, 70, 'setup: the 11 PM baseline is still held');
+    // The strip's own read comes back empty, so 9, 10 and 12 are filled.
+    const sentBefore = db.sent.length;
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 4, TS);
+    assert.equal(strip[2].hour, '11 PM');
+    assert.equal(strip[2].predictionMethod, 'ml', 'the 11 PM hour is scored from its real baseline, not a written zero');
+    assert.equal(I.baselineCacheEntry(v.place_id, DOW, 23).data, 70);
+    const slotReads = db.sent.slice(sentBefore).filter((s) => SLOT_READ.test(s.sql)).map((s) => s.params.slice(0, 3));
+    assert.deepEqual(slotReads, [[v.place_id, DOW, 23]], 'the evicted hour asked its own slot, and only it did');
+  });
+});
+
+test('one strip, one read: a remembered empty read that a later slot read contradicts is dropped, so the next strip reads again and finds the rows (switch off, as in production)', async () => {
+  // Review of bb5bb9b7: the next strip replayed the remembered empty read and
+  // filled zeros beside the one hour that had read the rows.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    await p.predictHourlyForecast(v, WX, 12, 2, TS);
+    curves[v.place_id] = allSlots(50);
+    assert.equal((await p.predictBusyness(v, WX, tsAt(15))).predictionMethod, 'ml', 'setup: 3 PM read its slot and found the rows');
+    const strip = await p.predictHourlyForecast(v, WX, 14, 4, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml', 'ml', 'ml']);
+  });
+});
+
+test('one strip, one read: a remembered PARTIAL read that a later slot read contradicts is dropped too, with the switch off and on', async () => {
+  for (const env of [{ CROWD_SERVE_MODE: 'curve_offset' }, { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' }]) {
+    const v = venue();
+    const evening = {};
+    for (let h = 18; h < 24; h++) evening[`${DOW}_${h}`] = 60;
+    const curves = { [v.place_id]: { ...evening } };
+    const db = scriptedDb({ curves });
+    await withPredictor({ db, env }, async (p) => {
+      await p.predictHourlyForecast(v, WX, 18, 2, TS);
+      for (let h = 12; h < 18; h++) curves[v.place_id][`${DOW}_${h}`] = 50;
+      assert.equal((await p.predictBusyness(v, WX, tsAt(15))).predictionMethod, 'ml', 'setup');
+      const strip = await p.predictHourlyForecast(v, WX, 14, 4, TS);
+      assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml', 'ml', 'ml'], JSON.stringify(env));
+    });
+  }
+});
+
+test('one strip, one read: a whole-curve read still in flight when another read finds rows is never filled from, so its strip reads the rows hour by hour', async () => {
+  // Round 2 of the review: the read was sent before the rows landed, a slot
+  // read found them while it was out, and then it landed and was remembered.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  let curveSent;
+  const sentSignal = new Promise((resolve) => { curveSent = resolve; });
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  const send = db.query;
+  db.query = async (text, params = []) => {
+    if (params[0] === v.place_id && CURVE_READ.test(String(text).replace(/\s+/g, ' ').trim())) {
+      // Answered with what the table held when it was sent, held until released.
+      const answer = send(text, params);
+      curveSent();
+      await released;
+      return answer;
+    }
+    return send(text, params);
+  };
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const pending = p.predictHourlyForecast(v, WX, 12, 2, TS);
+    await sentSignal;
+    curves[v.place_id] = allSlots(50);
+    assert.equal((await p.predictBusyness(v, WX, tsAt(15))).predictionMethod, 'ml', 'setup: 3 PM read the rows while the curve read was out');
+    // Round 3: fifty other venues' whole-curve reads finish while it is still
+    // out, which once evicted its mark from a bounded map.
+    for (let i = 0; i < 60; i++) {
+      const id = `ChIJnocurveBUSY${String(i).padStart(6, '0')}`;
+      curves[id] = { [`${DOW}_12`]: 30 };
+      await p.venueCurveRows(id);
+    }
+    release();
+    const strip = await pending;
+    assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml']);
+  });
+});
+
+test('one strip, one read: the fill\'s thirty seconds run from when the read was sent, so a slow read cannot stretch them', async () => {
+  // Round 4 of the review: an empty snapshot took 10 s to come back, the rows
+  // landed while it was out, and a strip 35 s after it was sent still filled
+  // zeros because its completion was only 25 s old.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  let curveSent;
+  const sentSignal = new Promise((resolve) => { curveSent = resolve; });
+  let release;
+  const released = new Promise((resolve) => { release = resolve; });
+  const send = db.query;
+  let held = false;
+  db.query = async (text, params = []) => {
+    if (!held && params[0] === v.place_id && CURVE_READ.test(String(text).replace(/\s+/g, ' ').trim())) {
+      held = true;
+      const answer = send(text, params);
+      curveSent();
+      await released;
+      return answer;
+    }
+    return send(text, params);
+  };
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const realNow = Date.now;
+    let offset = 0;
+    Date.now = () => realNow() + offset;
+    try {
+      const first = p.predictHourlyForecast(v, WX, 12, 2, TS);
+      await sentSignal;
+      offset = 10 * 1000;
+      curves[v.place_id] = allSlots(50);
+      release();
+      await first;
+      offset = 35 * 1000;
+      const strip = await p.predictHourlyForecast(v, WX, 14, 2, TS);
+      assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml']);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
+test('one strip, one read: rows the self-baseline read sees contradict a remembered partial read too', async () => {
+  const v = venue();
+  const evening = {};
+  for (let h = 18; h < 24; h++) evening[`${DOW}_${h}`] = 60;
+  const curves = { [v.place_id]: { ...evening } };
+  const db = scriptedDb({ curves });
+  const send = db.query;
+  db.query = async (text, params = []) => {
+    const sql = String(text).replace(/\s+/g, ' ').trim();
+    if (params[0] === v.place_id && /JOIN ml_venue_baselines b ON b\.google_place_id = v\.google_place_id WHERE v\.google_place_id = \$1/.test(sql)) {
+      db.sent.push({ sql, params });
+      return { rows: Object.entries(curves[v.place_id]).map(([k, b]) => {
+        const [dow, hour] = k.split('_').map(Number);
+        return { lat: v.location.latitude, lng: v.location.longitude, dow, hour, baseline: String(b) };
+      }) };
+    }
+    return send(text, params);
+  };
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    await p.predictHourlyForecast(v, WX, 18, 2, TS);
+    for (let h = 12; h < 18; h++) curves[v.place_id][`${DOW}_${h}`] = 50;
+    I.__resetNeighborCaches();
+    assert.ok(await I.getSelfBaselines(v.place_id), 'setup: the self read saw the afternoon rows');
+    const strip = await p.predictHourlyForecast(v, WX, 14, 4, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml', 'ml', 'ml']);
+  });
+});
+
+test('one strip, one read: from a fresh read the fill gives every hour exactly what the per-slot path gives it, on a partial curve over midnight', async () => {
+  // Rows at some hours and not others, neighbours with rows around empty
+  // hours, and a strip that runs into the next weekday. The per-slot path is
+  // the same strip once its remembered read is older than the fill trusts
+  // (FILL_READ_MAX_AGE_MS), so every unheld hour asks its own slot.
+  const tomorrow = (DOW + 1) % 7;
+  const curveOf = () => ({ [`${DOW}_18`]: 40, [`${DOW}_20`]: 60, [`${DOW}_21`]: 70, [`${DOW}_23`]: 30, [`${tomorrow}_1`]: 25 });
+  for (const env of [{ CROWD_SERVE_MODE: 'curve_offset' }, { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' }]) {
+    const run = async (perSlot) => {
+      const v = { ...venue(), place_id: `ChIJnocurveEQUIV${perSlot ? 'S' : 'F'}${JSON.stringify(env).length}` };
+      const db = scriptedDb({ curves: { [v.place_id]: curveOf() } });
+      return withPredictor({ db, env }, async (p) => {
+        const I = p._internals;
+        const realNow = Date.now;
+        try {
+          if (perSlot) {
+            // A one-hour strip at a measured hour remembers the read and fills nothing.
+            await p.predictHourlyForecast(v, WX, 20, 1, TS);
+            Date.now = () => realNow() + 31 * 1000;
+          }
+          const sentBefore = db.sent.length;
+          const strip = await p.predictHourlyForecast(v, WX, 17, 12, TS);
+          const out = strip.map((h) => ({ hour: h.hour, m: h.predictionMethod, s: h.score, b: h.baselineScore, src: h.numberSource }));
+          const entries = [];
+          for (let i = 0; i < 12; i++) {
+            const t = tsAt(17 + i);
+            const e = I.baselineCacheEntry(v.place_id, t.getDay(), t.getHours());
+            // asOf is the row's updated_at, which this test's database stamps
+            // at each query; everything else in the provenance must match.
+            const meta = e && e.meta ? (({ asOf, ...rest }) => rest)(e.meta) : (e ? e.meta : undefined);
+            entries.push(e ? { data: e.data, meta } : null, I.baselineMissFor(v.place_id, t.getDay(), t.getHours()));
+          }
+          const slotReads = db.sent.slice(sentBefore).filter((s) => SLOT_READ.test(s.sql)).length;
+          return { out, entries, slotReads };
+        } finally {
+          Date.now = realNow;
+        }
+      });
+    };
+    const fill = await run(false);
+    const perSlot = await run(true);
+    assert.deepEqual(fill.out, perSlot.out, JSON.stringify(env));
+    assert.deepEqual(fill.entries, perSlot.entries, JSON.stringify(env));
+    assert.equal(fill.slotReads, 0, 'the fill path reads no slots');
+    assert.ok(perSlot.slotReads > 0, 'setup: the per-slot path did read slots');
+  }
+});
+
 test('one strip: a headline scored after the rows are seen, on the slot the strip answered, is scored again with every hour, so the dial and that bar read one slot', async () => {
   // The strip first, on its own read, then a read elsewhere sees the rows, and
   // the headline after that reads the strip's cached miss under the yes, so it
