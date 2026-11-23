@@ -17,6 +17,8 @@ const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
 const { weekdayOffset, venueLocalNow, hedgeLabel, NO_CURVE_FALLBACK_METHOD } = require('../services/crowdEngine');
 // The venue's IANA zone off the Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
+// When the hour's live readings are in, for the badge cache below.
+const { readingsExpiry, secondsUntilReadingsExpiry } = require('../utils/liveReadingsClock');
 
 const router = express.Router();
 
@@ -86,6 +88,13 @@ const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
 // delete-before-set so a refreshed key moves to the END of insertion order.
 // Without that, Map.set keeps a key's original position and oldest-first
 // evicts the HOTTEST badge in the map.
+// THE HOUR TURNS UNDER A BADGE (2026-11-23). The pill says "... right now",
+// and the key is the place alone, so a badge made at :58 went on saying the
+// last hour's number until :13, and every browser was told to keep it fifteen
+// minutes more. A badge now lives no longer than its TTL, the next turn of the
+// hour, or, made in the first minutes after one, the minute that hour's live
+// readings are in by (utils/liveReadingsClock.js), and the max-age it is
+// served with is the time it has left, never more.
 const cache = new Map();
 const TTL = 15 * 60 * 1000;
 const BADGE_CACHE_MAX = 500;
@@ -94,18 +103,27 @@ const BADGE_CACHE_LOW_WATER = Math.floor(BADGE_CACHE_MAX * 0.9);
 function getBadge(placeId) {
   const hit = cache.get(placeId);
   if (!hit) return null;
-  if (Date.now() - hit.ts >= TTL) { cache.delete(placeId); return null; }
+  if (Date.now() >= hit.expiresAt) { cache.delete(placeId); return null; }
   return hit.svg;
 }
 
-function setBadge(placeId, svg) {
+// `madeAt` is when the request started making the badge, so one scored just
+// before a boundary and stored just after it still ends at that boundary.
+function setBadge(placeId, svg, madeAt = Date.now()) {
   cache.delete(placeId);
-  cache.set(placeId, { ts: Date.now(), svg });
+  const ts = Math.min(madeAt, Date.now());
+  cache.set(placeId, { ts, svg, expiresAt: readingsExpiry(ts, TTL) });
   if (cache.size <= BADGE_CACHE_MAX) return;
   const now = Date.now();
-  for (const [k, v] of cache) if (now - v.ts >= TTL) cache.delete(k);
+  for (const [k, v] of cache) if (now >= v.expiresAt) cache.delete(k);
   if (cache.size <= BADGE_CACHE_MAX) return;
   while (cache.size > BADGE_CACHE_LOW_WATER) cache.delete(cache.keys().next().value);
+}
+
+// The Cache-Control a badge is served with: what its cached copy has left.
+function badgeCacheControl(placeId) {
+  const hit = cache.get(placeId);
+  return `public, max-age=${hit ? secondsUntilReadingsExpiry(hit.ts, TTL, Date.now()) : 0}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,10 +358,13 @@ router.get('/:placeId.svg',
       // refusal is not a new oracle for which ids are the right shape.
       if (!isPlaceIdShaped(placeId)) return res.status(404).send('');
 
+      // When this request starts making the badge, which is what its cached
+      // copy's expiry is counted from (setBadge).
+      const startedAt = Date.now();
       const cachedSvg = getBadge(placeId);
       if (cachedSvg) {
         res.set('Content-Type', 'image/svg+xml');
-        res.set('Cache-Control', 'public, max-age=900');
+        res.set('Cache-Control', badgeCacheControl(placeId));
         return res.send(cachedSvg);
       }
 
@@ -467,9 +488,9 @@ router.get('/:placeId.svg',
           : svgBadge(text, dot);
       }
 
-      setBadge(placeId, svg);
+      setBadge(placeId, svg, startedAt);
       res.set('Content-Type', 'image/svg+xml');
-      res.set('Cache-Control', 'public, max-age=900');
+      res.set('Cache-Control', badgeCacheControl(placeId));
       res.send(svg);
     } catch (err) {
       console.error('Badge error:', err.message);
@@ -498,6 +519,7 @@ module.exports.__test = {
   TTL,
   getBadge,
   setBadge,
+  badgeCacheControl,
   allowBadgeMiss,
   chargeBadgeDay,
   badgeDaySpent: () => badgeDayCount,

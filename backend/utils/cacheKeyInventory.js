@@ -129,7 +129,7 @@ const INVENTORY = [
     callerControls: 'all of it, and UNAUTHENTICATED — but only within PLACE_ID_RE',
     protects: 'a paid Google Place Details call, a weather call and an ML prediction, plus one unauthenticated Postgres query per miss',
     denominator: 'cached SVGs; the spend leg is allowGlobalPlacesCall(1) per miss, now under allowBadgeMiss (120/IP/hr, 600/day)',
-    bound: 'BADGE_CACHE_MAX 500, low-water 450, expire-then-oldest-first with delete-before-set',
+    bound: 'BADGE_CACHE_MAX 500, low-water 450, expire-then-oldest-first with delete-before-set; each entry lives 15 min or to the next turn of the hour, or to :03 when made in its first three minutes (utils/liveReadingsClock.js)',
     verdict: 'FIXED-THIS-ROUND',
     why: 'Three things were missing and all three are in now. (1) It was the one paid Places surface with no isPlaceIdShaped check, so any 300-char string bought an unauthenticated Postgres lookup; the shape gate refuses those for free and answers 404, the same answer an unknown venue already gets, so it is not a new oracle. (2) The map had no maxEntries and no sweep at all — the verified-venue set bounded it in practice, which is an argument about the data rather than a bound in the code; it now has the house eviction, and delete-before-set so a refreshed badge is not treated as the oldest. (3) It was the only unauthenticated Places door with NO caller dimension whatsoever, so allowBadgeMiss adds a per-IP hourly gate on the MISS (hits stay free) plus a BADGE_DAILY sub-ceiling pinned BELOW GLOBAL_DAILY.',
   },
@@ -196,7 +196,7 @@ const INVENTORY = [
     callerControls: 'placeId only (shape-checked by isPlaceIdShaped). The hour and day are the SERVER\'s on both prefixes, never the caller\'s localHour/localDay',
     protects: 'paid Google Places calls (1 for /:placeId, 2 for /alternatives) + ML CPU',
     denominator: 'cached predictions; the spend meter is allowPlacesSearch (30/user/hr)',
-    bound: '200 entries shared by every prefix, expire-then-oldest-first, 10 min TTL',
+    bound: '200 entries shared by every prefix, expire-then-oldest-first, 10 min TTL; full: and alt: entries also end at the next turn of the hour, or at :03 when made in its first three minutes (utils/liveReadingsClock.js)',
     verdict: 'SAFE',
     why: 'Each venue has one live key per prefix and the venue half is shape-checked, so a key cannot be walked. It was not SAFE on the old keys: the caller\'s localHour/localDay made 168 keys per venue for one answer (the venue clock overrides both before scoring), and once the Place Details and neighbour search were warm a miss spent no Places unit, so one account could flush the map every card shares for free. The card moved to the server clock first; /alternatives followed on 2026-09-27.',
   },
@@ -962,7 +962,7 @@ const INVENTORY = [
       + 'baselineCache lookup, which allowVenueLookup already meters at '
       + '1500/hr and 5000/day per account. It adds one keyed read to a request '
       + 'that was already making one, and never fans out',
-    bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, 5 minute TTL',
+    bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, 5 minute TTL, never past the next turn of the hour, or :03 when read in its first three minutes (utils/liveReadingsClock.js)',
     verdict: 'SAFE',
     why: 'Five minutes rather than the baseline cache\'s 24 hours, and the short '
       + 'TTL is the point rather than caution. A baseline is static; this tracks '

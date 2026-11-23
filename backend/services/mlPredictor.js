@@ -18,6 +18,8 @@ const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone, when the venue shape carries one. See
 // forecastSlots and venueInstant below for what it changes.
 const { validTimeZone, instantForWallClock, serverWallDate, zoneHourSlots } = require('../utils/venueZone');
+// When the hour's live readings are in, for the recent-deviation cache below.
+const { readingsExpiry } = require('../utils/liveReadingsClock');
 
 const MODEL_DIR = path.join(__dirname, '..', 'scripts', 'ml', 'models');
 const ONNX_PATH = path.join(MODEL_DIR, 'crowd_model.onnx');
@@ -595,12 +597,16 @@ function switchedArithmeticOn() {
 // sweep that starts at :07 (and after a full baseline refresh, on the rare run
 // that has one; the targeted one runs before the sweep), so a
 // reading taken in hour H is in the table by the end of hour H in the usual
-// case, and this cache adds at most DEVIATION_CACHE_TTL on top. Staleness
-// never reaches the number, though: the nowcast measures a reading's age from
-// its own venue-local slot to the slot being scored and weighs it by that lag,
-// so a reading that arrived late is weighed as the older reading it is, and a
-// builder that stops running ages every reading past NOWCAST_MAX_LAG_HOURS
-// within half a day.
+// case. A stale entry never reaches the number as a wrong age: the nowcast
+// measures a reading's age from its own venue-local slot to the slot being
+// scored and weighs it by that lag, so a reading that arrived late is weighed
+// as the older reading it is, and a builder that stops running ages every
+// reading past NOWCAST_MAX_LAG_HOURS within half a day. What a stale entry
+// costs is the newer reading: one read at :57 carried the reading from two
+// hours back into the next hour's numbers until :02, when the hour-old one
+// was already in. So since 2026-11-23 an entry never lives past the next
+// turn of the hour, nor, read in the first minutes after one, past the minute
+// that hour's readings are in by (utils/liveReadingsClock.js).
 async function recentDeviationEntry(placeId) {
   if (!pool || !placeId) return null;
 
@@ -611,9 +617,12 @@ async function recentDeviationEntry(placeId) {
   const cached = deviationCache.get(placeId);
   // An entry read with both switches off carries no readings, so with one on
   // that entry is a miss rather than an answer of "no readings".
-  if (cached && Date.now() - cached.ts < DEVIATION_CACHE_TTL
+  if (cached && Date.now() < readingsExpiry(cached.ts, DEVIATION_CACHE_TTL)
     && (!withReadings || cached.offsetReadings !== undefined)) return cached;
 
+  // The entry's age is counted from when the row was asked for, so a read
+  // sent at :02:59 and answered after :03 still ends at :03.
+  const askedAt = Date.now();
   try {
     const { rows } = await pool.query(
       withReadings ? RECENT_DEVIATION_SWITCHED_SQL : RECENT_DEVIATION_SQL,
@@ -633,7 +642,7 @@ async function recentDeviationEntry(placeId) {
         readings: Number(row.n_readings),
       };
     }
-    const entry = { data, ts: Date.now() };
+    const entry = { data, ts: askedAt };
     // The readings do not share the offset's floor or its age limit: one
     // reading an hour ago is the nowcast's best evidence and an anecdote to
     // the median, and the nowcast has its own limit, on the reading's age.
@@ -650,7 +659,7 @@ async function recentDeviationEntry(placeId) {
     // A missing table is the expected state before migration 070 has run
     // anywhere, and it must not be an error condition.
     console.error('[MLPredictor] Recent-deviation lookup failed:', err.message);
-    const entry = { data: null, ts: Date.now() };
+    const entry = { data: null, ts: askedAt };
     if (withReadings) {
       entry.readings = null;
       entry.offsetReadings = null;

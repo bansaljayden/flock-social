@@ -32,6 +32,8 @@ const VENUE_GONE = 'This venue is no longer listed on Google.';
 // Google's `timeZone` off a Places payload, and the same check for a zone a
 // client forwards in a batch body. See utils/venueZone.js.
 const { placeTimeZone, validTimeZone } = require('../utils/venueZone');
+// When the hour's live readings are in, for the card cache below.
+const { readingsExpiry } = require('../utils/liveReadingsClock');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -416,22 +418,37 @@ const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 // ---------------------------------------------------------------------------
 // Cache (10-min TTL for crowd predictions)
 // ---------------------------------------------------------------------------
+// An entry that holds crowd numbers (the card, the alternatives) also never
+// lives past the next turn of the hour, nor, made in the first minutes after
+// one, past the minute that hour's live readings are in by
+// (utils/liveReadingsClock.js): a card made at 11:00:30 from the readings of
+// two hours back stayed on screen until 11:10:30, after the hour-old reading
+// was in. The neighbour search ('altsearch:') holds no crowd number and keeps
+// the plain TTL, so the boundary costs no paid search.
 const crowdCache = new Map();
 const CACHE_TTL = 10 * 60 * 1000;
 
 function getCached(key) {
   const entry = crowdCache.get(key);
-  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data;
+  if (entry && Date.now() < entry.expiresAt) return entry.data;
   if (entry) crowdCache.delete(key);
   return null;
 }
 
-function setCache(key, data) {
-  crowdCache.set(key, { data, ts: Date.now() });
+// `madeAt` is when the request started making the answer. A number scored
+// at 12:02:59 from readings read before 12:03, and stored at 12:03:01, is
+// still a number from before 12:03.
+function setCache(key, data, { crowdNumbers = false, madeAt = Date.now() } = {}) {
+  const ts = Date.now();
+  crowdCache.set(key, {
+    data,
+    ts,
+    expiresAt: crowdNumbers ? readingsExpiry(Math.min(madeAt, ts), CACHE_TTL) : ts + CACHE_TTL,
+  });
   if (crowdCache.size > 200) {
     const now = Date.now();
     for (const [k, v] of crowdCache) {
-      if (now - v.ts > CACHE_TTL) crowdCache.delete(k);
+      if (now >= v.expiresAt) crowdCache.delete(k);
     }
     // Fresh-but-oversized: evict oldest so unique-key spam can't grow it (round 8)
     while (crowdCache.size > 200) crowdCache.delete(crowdCache.keys().next().value);
@@ -1274,7 +1291,7 @@ router.get('/:placeId',
         },
       };
 
-      setCache(cacheKey, result);
+      setCache(cacheKey, result, { crowdNumbers: true, madeAt: now.getTime() });
       bestTimeForCard.set(result, bestTimeAt);
       // Owner override AFTER setCache, same rule as the cache-hit path above:
       // what is cached is the model's answer; what ships is the answer with
@@ -2318,7 +2335,7 @@ router.get('/:placeId/alternatives',
       const carriesOwnerReport = (row) => row && row.ownerReport != null;
       const anyOwnerAsserted = carriesOwnerReport(payload.currentVenue)
         || scoredNearby.some(carriesOwnerReport);
-      if (!anyOwnerAsserted) setCache(cacheKey, payload);
+      if (!anyOwnerAsserted) setCache(cacheKey, payload, { crowdNumbers: true, madeAt: now.getTime() });
       res.json(onlyVisible(payload));
     } catch (err) {
       console.error('[Crowd] Alternatives error:', err);
@@ -2386,6 +2403,9 @@ module.exports.__test = {
   },
   // Put a known alternatives payload in the cache, so a test can check what a
   // spent account is shown from it without depending on which fake neighbour
-  // the predictor happens to score as quieter.
-  seedCache: (key, data) => setCache(key, data),
+  // the predictor happens to score as quieter. `options` as setCache takes
+  // them (crowdNumbers: the card's and the alternatives' expiry).
+  seedCache: (key, data, options) => setCache(key, data, options),
+  // The read every cached answer goes through, for hourBoundaryCaches.test.js.
+  getCached,
 };
