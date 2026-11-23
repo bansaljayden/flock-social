@@ -1076,6 +1076,22 @@ const INVENTORY = [
       + 'a poisoned promise behind for the next caller to await.',
   },
   {
+    file: 'services/mlPredictor.js', name: 'curveInflightState', kind: 'inflight',
+    key: 'the same placeId as curveCache, one entry per whole-curve read in flight',
+    callerControls: 'same',
+    protects: 'nothing scarce. A flag that another read saw rows while this read was out, so the '
+      + 'read is remembered unfillable and fillUnmeasuredStripSlots never writes zeros from a '
+      + 'snapshot that may lack them',
+    denominator: 'in-flight reads',
+    bound: 'none, created when primeVenueCurve sends a read and deleted in its finally',
+    verdict: 'SAFE',
+    why: 'Written only by primeVenueCurve, after allowVenueLookup has charged the read, and '
+      + 'deleted when that read settles, so it can never hold more entries than reads in flight. '
+      + 'A bounded map of marks was tried first and lost a held read\'s mark to fifty other reads '
+      + '(review of bb5bb9b7, round 3); the worst a caller can do is mark a read it raced, which '
+      + 'only sends that strip\'s unmeasured hours back to their own queries.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'curvePresenceCache', kind: 'cache',
     key: 'placeId alone: whether ml_venue_baselines holds any row for that venue',
     callerControls: 'the whole placeId, the same 256-char field POST /api/crowd/batch '
