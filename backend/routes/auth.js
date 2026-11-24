@@ -3325,6 +3325,45 @@ router.post('/logout-all', authenticate, async (req, res) => {
 //     trusting userinfo — otherwise any third-party app's token could log
 //     its users into Flock accounts.
 
+// THE LIBRARY'S REFUSALS OF A TOKEN ARE THE TOKEN'S FAULT (2026-11-23).
+// google-auth-library 10.x refuses an ID token in verifySignedJwtWithCertsAsync
+// with an Error whose message starts with what was wrong and then quotes the
+// token, its header or its whole payload, the address and the Google subject
+// included. Two of those messages ("Token used too late", "Invalid token
+// signature") reached the 401 at the bottom of the /google handler. The rest
+// (a key id Google does not publish, another app's audience, another issuer, a
+// token issued in the future, a missing iat) were answered 500 "Google sign-in
+// failed" and printed in full by its console.error: an unauthenticated 500
+// anyone could produce with a JWT of their own, which is the round-20 shape
+// guard's complaint again, with the payload in the log on top.
+// __tests__/googleSignInRealDb.test.js signs real tokens and runs the real
+// library to pin each one. A failure to FETCH Google's certificates starts
+// "Failed to retrieve verification certificates" and is deliberately not here:
+// an outage is not an expired sign-in, and it still reaches that 500.
+const GOOGLE_TOKEN_REFUSALS = Object.freeze([
+  'Wrong number of segments in token',
+  "Can't parse token envelope",
+  "Can't parse token payload",
+  'No pem found for envelope',
+  'Invalid token signature',
+  'No issue time in token',
+  'No expiration time in token',
+  'iat field using invalid format',
+  'exp field using invalid format',
+  'Expiration time too far in future',
+  'Token used too early',
+  'Token used too late',
+  'Invalid issuer',
+  'Wrong recipient',
+]);
+
+// What the library said was wrong with the token, without the token: the
+// matching prefix, or null for anything that is not a refusal of the token.
+function googleTokenRefusal(err) {
+  const message = err && typeof err.message === 'string' ? err.message : '';
+  return GOOGLE_TOKEN_REFUSALS.find((prefix) => message.startsWith(prefix)) || null;
+}
+
 // POST /api/auth/google/nonce — hand out a single-use nonce for the next Google
 // sign-in. The Apple twin below is the same endpoint over the same store; see
 // the oauthNonces block above for why this exists and why sending one is not
@@ -3424,11 +3463,22 @@ router.post('/google', [
       if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(req.body.credential)) {
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
-      // Verify the Google ID token
-      const ticket = await googleClient.verifyIdToken({
-        idToken: req.body.credential,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
+      // Verify the Google ID token. A token the library refuses is answered
+      // here, logged by what was wrong and never by its contents (see
+      // GOOGLE_TOKEN_REFUSALS); anything else, a certificate outage included,
+      // goes on to the catch at the bottom.
+      let ticket;
+      try {
+        ticket = await googleClient.verifyIdToken({
+          idToken: req.body.credential,
+          audience: process.env.GOOGLE_CLIENT_ID,
+        });
+      } catch (err) {
+        const refusal = googleTokenRefusal(err);
+        if (!refusal) throw err;
+        console.warn(`[auth] refused Google ID token: ${refusal} (${req.ip})`);
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
       // FAIL CLOSED (round 13): an ABSENT email_verified must not count as
       // verified — the whole account-claim below hangs on this flag meaning
       // "Google vouches for this address". Mirrors the Apple branch.

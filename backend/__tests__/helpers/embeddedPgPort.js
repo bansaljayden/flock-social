@@ -216,6 +216,9 @@ const SUITE_SLOTS = {
   setAsideHarvestedCurves: 94,   // new in 2026-11-21; the curve table swapped
                                  // for one without the harvested venues'
                                  // curves, and those put back for the ship.
+  googleSignInRealDb: 83,        // new in 2026-11-23; an iPhone Google sign-in
+                                 // through the real token check and the real
+                                 // route, onto a migrated schema.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
