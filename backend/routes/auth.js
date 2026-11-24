@@ -3337,9 +3337,17 @@ router.post('/logout-all', authenticate, async (req, res) => {
 // anyone could produce with a JWT of their own, which is the round-20 shape
 // guard's complaint again, with the payload in the log on top.
 // __tests__/googleSignInRealDb.test.js signs real tokens and runs the real
-// library to pin each one. A failure to FETCH Google's certificates starts
-// "Failed to retrieve verification certificates" and is deliberately not here:
-// an outage is not an expired sign-in, and it still reaches that 500.
+// library to pin each one.
+//
+// So everything verifyIdToken throws is the token's fault but one thing: a
+// failure to FETCH Google's certificates, which the library reports as
+// "Failed to retrieve verification certificates: ...". An outage is not an
+// expired sign-in, and that one still reaches the 500. Code review found
+// refusals no message names (an ES256 header with a short signature fails in
+// the library's joseToDer, a key id that is an object with no usable toString
+// fails converting it to a property key), so the rule is "not the outage",
+// not "one of these messages"; the list below only names what was wrong.
+const GOOGLE_CERT_FETCH_FAILURE = 'Failed to retrieve verification certificates';
 const GOOGLE_TOKEN_REFUSALS = Object.freeze([
   'Wrong number of segments in token',
   "Can't parse token envelope",
@@ -3357,11 +3365,21 @@ const GOOGLE_TOKEN_REFUSALS = Object.freeze([
   'Wrong recipient',
 ]);
 
-// What the library said was wrong with the token, without the token: the
-// matching prefix, or null for anything that is not a refusal of the token.
+const errorMessageOf = (err) => (err && typeof err.message === 'string' ? err.message : '');
+
+function googleCertificateFetchFailed(err) {
+  return errorMessageOf(err).startsWith(GOOGLE_CERT_FETCH_FAILURE);
+}
+
+// What was wrong with the token, without the token: a prefix the list names,
+// or else the error's class and its message up to the first colon, cut short,
+// because what follows a colon is where the library quotes the token.
 function googleTokenRefusal(err) {
-  const message = err && typeof err.message === 'string' ? err.message : '';
-  return GOOGLE_TOKEN_REFUSALS.find((prefix) => message.startsWith(prefix)) || null;
+  const message = errorMessageOf(err);
+  const named = GOOGLE_TOKEN_REFUSALS.find((prefix) => message.startsWith(prefix));
+  if (named) return named;
+  const name = err && typeof err.name === 'string' && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'Error';
+  return `${name}: ${message.split(':')[0].slice(0, 80) || 'no message'}`;
 }
 
 // POST /api/auth/google/nonce — hand out a single-use nonce for the next Google
@@ -3464,9 +3482,9 @@ router.post('/google', [
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
       // Verify the Google ID token. A token the library refuses is answered
-      // here, logged by what was wrong and never by its contents (see
-      // GOOGLE_TOKEN_REFUSALS); anything else, a certificate outage included,
-      // goes on to the catch at the bottom.
+      // here, logged by what was wrong and never by its contents; a failure
+      // to fetch Google's certificates goes on to the catch at the bottom
+      // (see GOOGLE_TOKEN_REFUSALS).
       let ticket;
       try {
         ticket = await googleClient.verifyIdToken({
@@ -3474,9 +3492,8 @@ router.post('/google', [
           audience: process.env.GOOGLE_CLIENT_ID,
         });
       } catch (err) {
-        const refusal = googleTokenRefusal(err);
-        if (!refusal) throw err;
-        console.warn(`[auth] refused Google ID token: ${refusal} (${req.ip})`);
+        if (googleCertificateFetchFailed(err)) throw err;
+        console.warn(`[auth] refused Google ID token: ${googleTokenRefusal(err)} (${req.ip})`);
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
       // FAIL CLOSED (round 13): an ABSENT email_verified must not count as

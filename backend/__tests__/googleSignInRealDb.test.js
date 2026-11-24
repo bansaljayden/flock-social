@@ -130,7 +130,7 @@ function person() {
 
 // An ID token as GoogleSignIn on iOS gets it when the app names a server
 // client: the audience is the server's client id and azp the iOS client's.
-function idToken(who, overrides = {}, { key = GOOGLE_KEY.privateKey, kid = KID, noIat = false } = {}) {
+function claimsFor(who, overrides = {}) {
   const now = Math.floor(Date.now() / 1000);
   const claims = {
     iss: 'https://accounts.google.com',
@@ -149,11 +149,21 @@ function idToken(who, overrides = {}, { key = GOOGLE_KEY.privateKey, kid = KID, 
     ...overrides,
   };
   for (const k of Object.keys(claims)) if (claims[k] === undefined) delete claims[k];
+  return claims;
+}
+
+function idToken(who, overrides = {}, { key = GOOGLE_KEY.privateKey, kid = KID, noIat = false } = {}) {
+  const claims = claimsFor(who, overrides);
   // jsonwebtoken keeps an iat the payload already has, and adds one when it has
   // none unless told not to, which also drops one that is there.
   if (noIat) delete claims.iat;
   return jwt.sign(claims, key, { algorithm: 'RS256', keyid: kid, noTimestamp: noIat });
 }
+
+// A token with a header no signing library would write: three base64url
+// segments, so it passes the route's shape guard and reaches the library.
+const seg = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+const handMade = (header, claims, signature) => `${seg(header)}.${seg(claims)}.${signature}`;
 
 // ── The iPhone app ───────────────────────────────────────────────────────────
 
@@ -252,6 +262,12 @@ test('a token the library refuses is a 401, whatever it got wrong; nothing is wr
     ['expired an hour ago', (who) => idToken(who, { iat: now - 7200, exp: now - 3600 })],
     ['issued in the future', (who) => idToken(who, { iat: now + 3600, exp: now + 7200 })],
     ['carrying no issue time', (who) => idToken(who, {}, { noIat: true })],
+    // Found in review: refusals the library words in no message the route
+    // could list. ES256 fails in its joseToDer on a short signature, and a key
+    // id that is an object with no usable toString fails as a property key.
+    ['an ES256 header with a short signature', (who) => handMade({ alg: 'ES256', typ: 'JWT', kid: KID }, claimsFor(who), 'AA')],
+    ['a key id that is an object', (who) => handMade({ alg: 'RS256', typ: 'JWT', kid: { toString: null, valueOf: null } },
+      claimsFor(who), crypto.randomBytes(256).toString('base64url'))],
   ];
   for (const [label, make] of cases) {
     const who = person();
