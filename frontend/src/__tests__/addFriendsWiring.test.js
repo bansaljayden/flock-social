@@ -104,6 +104,9 @@ function relationshipScope(over = {}) {
     needsEmailVerification: (err, what) => { calls.verify.push(what); return Boolean(err && err.data && err.data.emailVerificationRequired); },
     userMessage,
     blockedIdsRef: { current: new Set() },
+    // The server's word on one person, asked when an answer and newer news
+    // disagree (settleFromServer). Held unless a test answers it.
+    getFriendshipStatus: (id) => { calls.api.push(['status', String(id)]); return new Promise(() => {}); },
     ...over.scope,
   };
   const src = [
@@ -111,6 +114,7 @@ function relationshipScope(over = {}) {
     statementAt(APP, 'const refreshFriendCount = useCallback('),
     statementAt(APP, 'const relationshipWrittenRef = useRef('),
     statementAt(APP, 'const applyRelationship = useCallback('),
+    statementAt(APP, 'const settleFromServer = useCallback('),
   ].join('\n');
   return { state, calls, scope, src };
 }
@@ -966,7 +970,7 @@ describe('6. the wiring that is only source', () => {
 
   test("Decline's Undo lives on the row for the window, and no toast can take it away", () => {
     expect(APP).toContain('const DECLINE_UNDO_MS = 5000;');
-    expect(APP).toMatch(/decliningRef\.current\.set\(userId, \{ timer: setTimeout\(send, DECLINE_UNDO_MS\), at, request \}\);/);
+    expect(APP).toMatch(/decliningRef\.current\.set\(userId, \{ timer: setTimeout\(send, DECLINE_UNDO_MS\), at, request, movedSince \}\);/);
     // The decline raises no toast of its own, and the toast has no buttons
     // but Dismiss: one slot, so any later toast replaced it, Undo and all.
     const decline = statementAt(APP, 'const handleDeclineFriendRequest = useCallback(');
@@ -1232,6 +1236,36 @@ describe('7. the request lists, read again', () => {
     expect(state.statuses[7]).toBe('incoming');
   });
 
+  test("Cancel, then Add again at once: the Cancel's answer after the Add's asks the server, and its word is what shows", async () => {
+    const { state, held, cancel, add } = lists();
+    const cancelling = cancel(7);
+    const adding = add(person(7, 'Dee'));
+    // The server took the Add first (the request was still there), then the Cancel.
+    held.send[0].resolve({ status: 'pending', message: 'Friend request already sent' });
+    await adding;
+    expect(state.statuses[7]).toBe('pending');
+    held.cancel[0].resolve({ status: 'none' });
+    await cancelling;
+    // Asked rather than guessed.
+    expect(held.status).toHaveLength(1);
+    held.status[0].resolve({ status: 'none' });
+    await tick();
+    expect(state.outgoing).toEqual([]);
+    expect(state.statuses[7]).toBe('none');
+  });
+
+  test("the server's word tells whose request it is", async () => {
+    const { state, held, cancel, apply } = lists();
+    const cancelling = cancel(7);
+    apply(person(7, 'Dee'), 'incoming');
+    held.cancel[0].resolve({ status: 'none' });
+    await cancelling;
+    held.status[0].resolve({ status: 'pending', requester_id: 7 });
+    await tick();
+    expect(state.statuses[7]).toBe('incoming');
+    expect(state.pending.map((r) => r.id)).toEqual([7, 1]);
+  });
+
   test('a Sent list that fails to load is said, and a later one that loads takes the sentence away', async () => {
     const { state, held, refresh } = lists();
     refresh();
@@ -1385,6 +1419,21 @@ describe('8. a block, and what was still on its way about them', () => {
       expect(state.pending).toEqual([]);
       jest.advanceTimersByTime(6000);
       expect(calls.api).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('Decline, then your own code makes you friends, then Undo: there is no request to put back', () => {
+    jest.useFakeTimers();
+    try {
+      const { state, decline, undo, apply } = blocking();
+      decline(1);
+      apply(person(1, 'Ava'), 'accepted');
+      undo(1);
+      expect(state.pending).toEqual([]);
+      expect(state.declining).toEqual([]);
+      expect(state.statuses[1]).toBe('accepted');
     } finally {
       jest.useRealTimers();
     }

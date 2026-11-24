@@ -88,7 +88,9 @@ test('the friend count moves when a request is accepted', () => {
   // Accept lands through applyRelationship, the one writer of where you stand
   // with somebody, and its accepted branch reads the count again.
   const i = app.indexOf('const handleAcceptFriendRequest = useCallback');
-  const fn = app.slice(i, i + 1200);
+  // Bounded on the handler's own closing line, so a comment inside it cannot
+  // push the checked line out of a byte window.
+  const fn = app.slice(i, app.indexOf('}, [pendingRequests, showToast, needsEmailVerification, applyRelationship, settleFromServer]);', i));
   expect(fn).toMatch(/applyRelationship\(request \|\| \{ id: userId \}, 'accepted'\);/);
   const writer = app.slice(app.indexOf('const applyRelationship = useCallback('), app.indexOf('}, [refreshFriendCount]);'));
   expect(writer).toMatch(/if \(status === 'accepted'\) refreshFriendCount\(\);/);

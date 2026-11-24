@@ -7135,6 +7135,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (status === 'accepted') refreshFriendCount();
   }, [refreshFriendCount]);
 
+  /* WHEN AN ANSWER AND NEWER NEWS DISAGREE, THE SERVER SETTLES IT. An answer
+     that lands after something newer was written about the same person (a
+     socket event, another tap's answer, a block) cannot tell from here which
+     the server did first: a Cancel answered after an Add that the server took
+     before it, or after their new request, are the same to this device. So
+     neither is drawn over the other, and the person's standing is read again
+     (GET /api/friends/status/:userId, which also says whose request it is).
+     Newer news again while that is asked answers for itself. A failed read
+     leaves things as they are for the next list read. */
+  const settleFromServer = useCallback((user) => {
+    if (!user || user.id === undefined || user.id === null) return;
+    const askedAt = relationshipWrittenRef.current.now;
+    getFriendshipStatus(user.id)
+      .then((s) => {
+        if ((relationshipWrittenRef.current.at.get(String(user.id)) || 0) > askedAt) return;
+        const status = s?.status === 'accepted' ? 'accepted'
+          : s?.status === 'pending' ? (s.requester_id != null && String(s.requester_id) === String(user.id) ? 'incoming' : 'pending')
+          : 'none';
+        applyRelationship(user, status);
+      })
+      .catch(() => { /* the next list read settles it */ });
+  }, [applyRelationship]);
+
   /* OPTIMISTIC, WITH A ROLLBACK, like updateFlockVotes. This waited for the
      round trip before the button changed at all, while confirmClick painted a
      full-button green tick for 1.1 seconds the moment it was pressed, so a
@@ -7174,9 +7197,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         applyRelationship(user, 'accepted');
         if (data?.message && !moved) showToast(data.message);
       } else if (status === 'pending') {
-        if (!movedSince()) applyRelationship(user, 'pending');
+        if (movedSince()) settleFromServer(user);
+        else applyRelationship(user, 'pending');
       } else {
-        if (!movedSince()) applyRelationship(user, 'none');
+        if (movedSince()) settleFromServer(user);
+        else applyRelationship(user, 'none');
         showToast(data?.message || "That friend request didn't send.", 'error');
       }
     } catch (err) {
@@ -7194,13 +7219,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           else next[user.id] = before;
           return next;
         });
+      } else {
+        // A failure that may still have reached the server, beside newer news.
+        settleFromServer(user);
       }
       if (needsEmailVerification(err, 'add friends')) return;
       if (!moved) showToast(userMessage(err, "That friend request didn't send."), 'error');
     } finally {
       friendRequestBusyRef.current.delete(busyKey);
     }
-  }, [showToast, needsEmailVerification, applyRelationship]);
+  }, [showToast, needsEmailVerification, applyRelationship, settleFromServer]);
 
   // Add Friends screen handlers
   const addFriendsTimerRef = useRef(null);
@@ -7431,15 +7459,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     friendRequestBusyRef.current.add(userId);
     const at = pendingRequests.findIndex(r => r.id === userId);
     const request = at === -1 ? null : pendingRequests[at];
-    // A block either way while the Accept is out is newer news: the server has
-    // removed the request with it (routes/moderation.js), so the answer, or a
-    // failure, puts nothing back and says nothing.
+    // News written about them while the Accept is out (a block either way,
+    // which removed the request: routes/moderation.js) outranks its answer:
+    // nothing is put back and nothing is said, and the server says where you
+    // stand (settleFromServer).
     const tappedAt = relationshipWrittenRef.current.now;
     const movedSince = () => (relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt;
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await acceptFriendRequest(userId);
-      if (movedSince()) return;
+      if (movedSince()) { settleFromServer(request || { id: userId }); return; }
       // Friends now, through the one writer: off Requests and Sent both (a
       // list reload that landed during the wait can have drawn it back), every
       // row reads Friends, and the header count, which only ever moved on boot
@@ -7455,7 +7484,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast('That request was withdrawn.');
         return;
       }
-      if (movedSince()) return;
+      if (movedSince()) { settleFromServer(request || { id: userId }); return; }
       setPendingRequests(prev => withRowAt(prev, at, request));
       // The server's "confirm your email" refusal used to land here as a red
       // toast with no resend, beside a request that stayed on screen.
@@ -7464,7 +7493,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       friendRequestBusyRef.current.delete(userId);
     }
-  }, [pendingRequests, showToast, needsEmailVerification, applyRelationship]);
+  }, [pendingRequests, showToast, needsEmailVerification, applyRelationship, settleFromServer]);
 
   /* DECLINE, WITH FIVE SECONDS TO TAKE IT BACK. The X sits beside Accept, and
      a mis-tap on it lost the request for good: the person who asked could not
@@ -7499,7 +7528,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       friendRequestBusyRef.current.add(userId);
       try {
         await declineFriendRequest(userId);
-        if (movedSince()) return;
+        if (movedSince()) { settleFromServer(request || { id: userId }); return; }
         // Nothing between you now, through the one writer: off again (for the
         // same reload as Accept), and no Accept left on their other rows.
         applyRelationship(request || { id: userId }, 'none');
@@ -7507,23 +7536,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Nothing pending from them any more (withdrawn, or answered on another
         // device): the row stays gone, which is what the tap asked for.
         if (err?.status === 404) return;
-        if (movedSince()) return;
+        if (movedSince()) { settleFromServer(request || { id: userId }); return; }
         setPendingRequests(prev => withRowAt(prev, at, request));
         if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
       } finally {
         friendRequestBusyRef.current.delete(userId);
       }
     };
-    decliningRef.current.set(userId, { timer: setTimeout(send, DECLINE_UNDO_MS), at, request });
-  }, [pendingRequests, showToast, applyRelationship]);
+    decliningRef.current.set(userId, { timer: setTimeout(send, DECLINE_UNDO_MS), at, request, movedSince });
+  }, [pendingRequests, showToast, applyRelationship, settleFromServer]);
   // Undo, from the row, inside the window: the request goes back where it
-  // was, and the decline is never sent.
+  // was, and the decline is never sent. Unless news about them landed inside
+  // the window (your own Add or code made you friends over the decline): then
+  // there is no request left to put back, only the window to end.
   const handleUndoDecline = useCallback((userId) => {
     const waiting = decliningRef.current.get(userId);
     if (!waiting) return;
     clearTimeout(waiting.timer);
     decliningRef.current.delete(userId);
     setDecliningRequests(prev => prev.filter(r => r.id !== userId));
+    if (waiting.movedSince && waiting.movedSince()) return;
     setPendingRequests(prev => withRowAt(prev, waiting.at, waiting.request));
   }, []);
   // A decline still inside its window when the session ends is never sent.
@@ -7558,8 +7590,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // success, for the same reload as Accept, and its Pending mark with it.
       // Unless news landed while the answer was on its way: a request of
       // theirs that came over the socket since is newer than this Cancel, and
-      // 'none' drawn over it took it off Requests.
-      if (!movedSince()) applyRelationship(request || { id: userId }, 'none');
+      // 'none' drawn over it took it off Requests; nor an Add of yours the
+      // server took before this Cancel, which 'pending' would leave on Sent.
+      if (movedSince()) settleFromServer(request || { id: userId });
+      else applyRelationship(request || { id: userId }, 'none');
     } catch (err) {
       // They accepted it while this list was stale. The friendship stays, and
       // the row goes where a friend's row goes.
@@ -7570,9 +7604,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       // Nothing left to cancel: the row stays gone.
       if (err?.status === 404) return;
-      // Their side moved meanwhile, and says where you stand better than a
-      // Cancel that did not go through.
-      if (movedSince()) return;
+      // Their side moved meanwhile: nothing is put back over it, and the
+      // server says where you stand.
+      if (movedSince()) { settleFromServer(request || { id: userId }); return; }
       setOutgoingRequests(prev => withRowAt(prev, at, request));
       // Back to what it said, unless something newer has been written since
       // the tap's 'none'.
@@ -7587,7 +7621,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       friendRequestBusyRef.current.delete(key);
     }
-  }, [outgoingRequests, showToast, applyRelationship]);
+  }, [outgoingRequests, showToast, applyRelationship, settleFromServer]);
 
   /* ONE ADD BY CODE, for the box, the scanner and a link's sheet. The server's
      answer is where the person lands (applyRelationship): a request sent puts
@@ -7605,6 +7639,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const movedSince = (relationshipWrittenRef.current.at.get(String(data.user.id)) || 0) > askedAt;
       if (status === 'accepted') applyRelationship(data.user, 'accepted');
       else if (!movedSince) applyRelationship(data.user, status === 'pending' ? 'pending' : 'none');
+      else settleFromServer(data.user);
     }
     if (pendingFriendCode() === code) forgetFriendCode();
     return {
@@ -7613,7 +7648,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       user: data?.user || null,
       message: data?.message || (status === 'accepted' ? "You're friends now." : status === 'pending' ? 'Friend request sent.' : "That friend request didn't send."),
     };
-  }, [applyRelationship]);
+  }, [applyRelationship, settleFromServer]);
 
   // The code box. `typed` is the box's own value when Return sent it, because
   // the box publishes friendCodeInput on a pause and a Return inside that
