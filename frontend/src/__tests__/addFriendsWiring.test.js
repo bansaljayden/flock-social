@@ -157,6 +157,34 @@ describe('1. one writer for where you stand with somebody', () => {
     expect(state.friendCount).toBe(5);
   });
 
+  test("two reads of one person's standing: an older one landing first does not shut out the newer", async () => {
+    const r = relationshipScope();
+    const reads = [];
+    r.scope.getFriendshipStatus = () => new Promise((resolve) => { reads.push(resolve); });
+    const { settle } = lift(r.src, '{ settle: settleFromServer }', r.scope);
+    settle(person(7, 'Dee'));
+    settle(person(7, 'Dee'));
+    reads[0]({ status: 'none' });
+    await tick();
+    expect(r.state.statuses[7]).toBe('pending');
+    reads[1]({ status: 'pending', requester_id: 42 });
+    await tick();
+    expect(r.state.statuses[7]).toBe('pending');
+    expect(r.state.outgoing.map((x) => x.id)).toEqual([7]);
+  });
+
+  test('a read of their standing still yields to news written while it was out', async () => {
+    const r = relationshipScope();
+    const reads = [];
+    r.scope.getFriendshipStatus = () => new Promise((resolve) => { reads.push(resolve); });
+    const { settle, apply } = lift(r.src, '{ settle: settleFromServer, apply: applyRelationship }', r.scope);
+    settle(person(7, 'Dee'));
+    apply(person(7, 'Dee'), 'accepted');
+    reads[0]({ status: 'none' });
+    await tick();
+    expect(r.state.statuses[7]).toBe('accepted');
+  });
+
   test('two reads of the count answering out of order: the later read is the count', async () => {
     const r = relationshipScope();
     const reads = [];

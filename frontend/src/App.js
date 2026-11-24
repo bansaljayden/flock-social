@@ -7112,7 +7112,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // sent, accepted, declined or cancelled, or one that arrived live, would be
   // drawn back the way the server had it a moment earlier.
   // refreshFriendRequests reads it.
-  const relationshipWrittenRef = useRef({ now: 0, at: new Map() });
+  // `settling` numbers each person's reads by settleFromServer, below.
+  const relationshipWrittenRef = useRef({ now: 0, at: new Map(), settling: new Map() });
   const applyRelationship = useCallback((user, status) => {
     if (!user || user.id === undefined || user.id === null) return;
     const id = user.id;
@@ -7142,14 +7143,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      before it, or after their new request, are the same to this device. So
      neither is drawn over the other, and the person's standing is read again
      (GET /api/friends/status/:userId, which also says whose request it is).
-     Newer news again while that is asked answers for itself. A failed read
-     leaves things as they are for the next list read. */
+     Newer news again while that is asked answers for itself, and so does a
+     newer read of the same person: an older read that lands first writes
+     nothing, or its write would count as news and shut the newer read out. A
+     failed read leaves things as they are for the next list read. */
   const settleFromServer = useCallback((user) => {
     if (!user || user.id === undefined || user.id === null) return;
-    const askedAt = relationshipWrittenRef.current.now;
+    const written = relationshipWrittenRef.current;
+    const id = String(user.id);
+    const mine = (written.settling.get(id) || 0) + 1;
+    written.settling.set(id, mine);
+    const askedAt = written.now;
     getFriendshipStatus(user.id)
       .then((s) => {
-        if ((relationshipWrittenRef.current.at.get(String(user.id)) || 0) > askedAt) return;
+        if (written.settling.get(id) !== mine || (written.at.get(id) || 0) > askedAt) return;
         const status = s?.status === 'accepted' ? 'accepted'
           : s?.status === 'pending' ? (s.requester_id != null && String(s.requester_id) === String(user.id) ? 'incoming' : 'pending')
           : 'none';
