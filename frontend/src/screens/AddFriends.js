@@ -257,6 +257,7 @@ export default function AddFriends({
   openQrScanner,
   openUserProfile,
   outgoingRequests,
+  outgoingRequestsError,
   outgoingRequestsLoaded,
   pendingRequests,
   pendingRequestsError,
@@ -753,10 +754,18 @@ export default function AddFriends({
 
               {/* What you sent. Read when the screen opens, so it can land a
                   moment after the rest: two rows in its shape until then,
-                  under its own heading, where nothing it pushes can move. */}
-              {(outgoingRequests.length > 0 || outgoingRequestsLoaded === false) && (
+                  under its own heading, where nothing it pushes can move. A
+                  read that failed is said there, with a retry, like the
+                  requests' own above, never left to read as nothing sent. */}
+              {(outgoingRequests.length > 0 || outgoingRequestsLoaded === false || outgoingRequestsError) && (
                 <>
                   <h2 style={BAND}>Sent</h2>
+                  {outgoingRequestsError && (
+                    <div role="status" style={ERROR_ROW}>
+                      <p style={ERROR_TEXT}>{outgoingRequestsError}</p>
+                      <button type="button" className="hit44" onClick={() => loadAddFriendsData()} style={RETRY}>Try again</button>
+                    </div>
+                  )}
                   {outgoingRequests.length > 0 ? (
                     <div style={GROUP}>
                       {outgoingRequests.map((req, i) => personRow(req, {
@@ -765,7 +774,7 @@ export default function AddFriends({
                         actions: <button type="button" className="hit44" aria-label={`Cancel your request to ${req.name}`} onClick={() => handleCancelOutgoingRequest(req.id)} style={TEXT_BUTTON}>Cancel</button>,
                       }))}
                     </div>
-                  ) : (
+                  ) : outgoingRequestsError ? null : (
                     <SkeletonStatus label="Loading the requests you sent">
                       <div style={GROUP}>
                         {['44%', '36%'].map((w) => (
@@ -777,7 +786,7 @@ export default function AddFriends({
                 </>
               )}
 
-              {!pendingRequestsError && requestRows.length === 0 && outgoingRequests.length === 0 && outgoingRequestsLoaded !== false && (
+              {!pendingRequestsError && !outgoingRequestsError && requestRows.length === 0 && outgoingRequests.length === 0 && outgoingRequestsLoaded !== false && (
                 <BirdNote
                   bird={WARM_BIRD}
                   size={72}

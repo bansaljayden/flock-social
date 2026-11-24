@@ -1099,6 +1099,7 @@ describe('7. the request lists, read again', () => {
       withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
       setPendingRequestsError: () => {},
       setOutgoingRequestsLoaded: () => {},
+      setOutgoingRequestsError: (v) => { r.state.outgoingError = v; },
     });
     const fns = lift([
       r.src,
@@ -1231,6 +1232,18 @@ describe('7. the request lists, read again', () => {
     expect(state.statuses[7]).toBe('incoming');
   });
 
+  test('a Sent list that fails to load is said, and a later one that loads takes the sentence away', async () => {
+    const { state, held, refresh } = lists();
+    refresh();
+    held.outgoing[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await tick();
+    expect(state.outgoingError).toBe('The connection dropped.');
+    refresh();
+    held.outgoing[1].resolve({ requests: [person(7, 'Dee')] });
+    await tick();
+    expect(state.outgoingError).toBe('');
+  });
+
   test('a Cancel that fails with nothing newer puts the row back, and says so', async () => {
     const { state, calls, held, cancel } = lists();
     const cancelling = cancel(7);
@@ -1276,7 +1289,7 @@ describe('7. the request lists, read again', () => {
     expect(state.statuses[8]).toBe('none');
     expect(state.statuses[1]).toBe('none');
     expect(APP).toMatch(/await cancelFriendRequest\(userId\);[\s\S]{0,600}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
-    expect(APP).toMatch(/await declineFriendRequest\(userId\);[\s\S]{0,240}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
+    expect(APP).toMatch(/await declineFriendRequest\(userId\);[\s\S]{0,600}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
   });
 });
 
@@ -1372,6 +1385,23 @@ describe('8. a block, and what was still on its way about them', () => {
       expect(state.pending).toEqual([]);
       jest.advanceTimersByTime(6000);
       expect(calls.api).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a Decline answered after your own add made you friends does not make them read Add', async () => {
+    jest.useFakeTimers();
+    try {
+      const { state, held, decline, apply } = blocking();
+      decline(1);
+      jest.advanceTimersByTime(5000);
+      // A code typed meanwhile: the server takes it as an accept of the
+      // declined request, and its answer lands first.
+      apply(person(1, 'Ava'), 'accepted');
+      held.decline[0].resolve({});
+      await tick();
+      expect(state.statuses[1]).toBe('accepted');
     } finally {
       jest.useRealTimers();
     }

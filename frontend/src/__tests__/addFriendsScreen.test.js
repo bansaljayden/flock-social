@@ -62,7 +62,7 @@ const CONTRACT = [
   'loadAddFriendsData',
   'myFriendCode', 'myFriendCodeFailed', 'myFriendCodeQr', 'myName', 'myPhotoUrl',
   'openEditProfile', 'openQrScanner', 'openUserProfile',
-  'outgoingRequests', 'outgoingRequestsLoaded', 'pendingRequests', 'pendingRequestsError',
+  'outgoingRequests', 'outgoingRequestsError', 'outgoingRequestsLoaded', 'pendingRequests', 'pendingRequestsError',
   'phoneDiscoverable', 'phoneLookupError', 'phoneLookupInput', 'phoneLookupLoading', 'phoneLookupUsers', 'phoneOnFile',
   'requestsTabBadge',
   'setAddFriendsResults', 'setAddFriendsSearch', 'setAddFriendsTab', 'setCurrentScreen', 'setFriendCodeInput',
@@ -127,6 +127,7 @@ function props(over = {}) {
     openQrScanner: jest.fn(),
     openUserProfile: jest.fn(),
     outgoingRequests: [],
+    outgoingRequestsError: '',
     outgoingRequestsLoaded: true,
     pendingRequests: [],
     pendingRequestsError: '',
@@ -488,6 +489,17 @@ describe('Requests', () => {
     unmount();
     draw({ pendingRequestsError: error });
     expect(screen.queryByText(error)).toBeNull();
+  });
+
+  test('a failed read of Sent is said under its heading with a retry, never as no requests', () => {
+    const error = 'The requests you sent are not loading right now.';
+    const { p } = draw({ addFriendsTab: 'requests', outgoingRequestsError: error });
+    expect(screen.getByRole('heading', { name: 'Sent' })).toBeInTheDocument();
+    expect(screen.getByText(error)).toBeInTheDocument();
+    expect(screen.queryByText('Loading the requests you sent')).toBeNull();
+    expect(screen.queryByText('No requests right now')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(p.loadAddFriendsData).toHaveBeenCalledTimes(1);
   });
 });
 

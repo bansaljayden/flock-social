@@ -38,10 +38,11 @@ test('the screen says the error, offers a retry, and suppresses the empty state 
   expect(screenSrc).toContain('{pendingRequestsError && (');
   expect(screenSrc).toContain('{friendSuggestionsError && (');
   expect(screenSrc).toContain('{friendSuggestionsError ? null : friendSuggestions.length === 0 ? (');
-  // Three retries: the requests error, the Quick Add error, and the friend
-  // code, which the server issues now and which can therefore fail to load.
-  // All three reload through the same loadAddFriendsData.
-  expect((screenSrc.match(/onClick=\{\(\) => loadAddFriendsData\(\)\}/g) || []).length).toBe(3);
+  // Four retries: the requests error, the Sent list's, the Quick Add error,
+  // and the friend code, which the server issues now and which can therefore
+  // fail to load. All four reload through the same loadAddFriendsData.
+  expect(screenSrc).toContain('{outgoingRequestsError && (');
+  expect((screenSrc.match(/onClick=\{\(\) => loadAddFriendsData\(\)\}/g) || []).length).toBe(4);
   // Plain text for an error; the warm bird stays on the true-empty state only.
   const errBlock = screenSrc.slice(screenSrc.indexOf('{friendSuggestionsError && ('), screenSrc.indexOf('{friendSuggestionsError ? null'));
   expect(errBlock).not.toContain('BirdNote');

@@ -6982,6 +6982,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Whether the Sent list has been read at least once, so the Requests tab can
   // draw rows still on their way as skeletons instead of as "no requests".
   const [outgoingRequestsLoaded, setOutgoingRequestsLoaded] = useState(false);
+  // A failed read of the Sent list, said like pendingRequestsError: with no
+  // rows yet it was drawn as "No requests right now", hiding requests you had
+  // sent and their Cancel.
+  const [outgoingRequestsError, setOutgoingRequestsError] = useState('');
   // The badge on the Requests segment: the same count, handed over on its own
   // so the screen's header does not recompute it.
   const requestsTabBadge = pendingRequests.length;
@@ -7319,6 +7323,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return kept.length ? [...kept, ...requests] : requests;
       });
       setOutgoingRequestsLoaded(true);
+      setOutgoingRequestsError('');
       // Seed the search rows too: a request you have already sent must read
       // "Pending", not a fresh Add button that would send a second one. Over
       // a 'none' as well: the list was asked for after that was written (a
@@ -7352,8 +7357,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }).catch(e => {
       console.error('[AddFriends] Outgoing:', e.message);
       // The wait is over either way: the list stays as it was rather than
-      // drawing rows on their way that are not coming.
-      if (o === outgoingReadSeqRef.current) setOutgoingRequestsLoaded(true);
+      // drawing rows on their way that are not coming, and the failure is
+      // said, so an empty list is not read as nothing sent.
+      if (o !== outgoingReadSeqRef.current) return;
+      setOutgoingRequestsLoaded(true);
+      setOutgoingRequestsError(userMessage(e, 'The requests you sent are not loading right now.'));
     });
   }, [applyRelationship]);
 
@@ -7477,8 +7485,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (friendRequestBusyRef.current.has(userId) || decliningRef.current.has(userId)) return;
     const at = pendingRequests.findIndex(r => r.id === userId);
     const request = at === -1 ? null : pendingRequests[at];
-    // As for Accept: a block since the tap took the request away for good.
+    // As for Accept: news since the tap outranks this Decline's answer. A block
+    // took the request away for good; your own Add (or a code) since the tap
+    // made you friends over the decline, which 'none' would undo on screen.
     const tappedAt = relationshipWrittenRef.current.now;
+    const movedSince = () => (relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt;
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     // `at` goes with the row so the tab can draw it where it was.
     setDecliningRequests(prev => [...prev.filter(r => r.id !== userId), { ...(request || { id: userId, name: '', profile_image_url: null }), at }]);
@@ -7488,6 +7499,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       friendRequestBusyRef.current.add(userId);
       try {
         await declineFriendRequest(userId);
+        if (movedSince()) return;
         // Nothing between you now, through the one writer: off again (for the
         // same reload as Accept), and no Accept left on their other rows.
         applyRelationship(request || { id: userId }, 'none');
@@ -7495,7 +7507,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Nothing pending from them any more (withdrawn, or answered on another
         // device): the row stays gone, which is what the tap asked for.
         if (err?.status === 404) return;
-        if ((relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt) return;
+        if (movedSince()) return;
         setPendingRequests(prev => withRowAt(prev, at, request));
         if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
       } finally {
@@ -21701,6 +21713,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         openQrScanner,
         openUserProfile,
         outgoingRequests,
+        outgoingRequestsError,
         outgoingRequestsLoaded,
         pendingRequests,
         pendingRequestsError,
