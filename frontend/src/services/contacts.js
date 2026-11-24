@@ -230,11 +230,14 @@ const inStableOrder = (numbers) => numbers
 // one only over the same book. The size alone let a number replaced by another
 // land before the cursor, where no run of the pass would ever check it while
 // the pass said nothing was left. A 32-bit FNV-1a hash of the keys: it names
-// the book without holding a single number of it.
+// the book without holding a single number of it. With each key, whether the
+// number starts with a +, because the server reads 442079460018 and
+// +442079460018 differently: a number saved without its + and then corrected
+// is a number no run has looked up, so the book is another book.
 const bookPrint = (ordered) => {
   let h = 0x811c9dc5;
   for (const raw of ordered) {
-    const key = `${dedupeKey(raw)},`;
+    const key = `${raw.trim().startsWith('+') ? '+' : ''}${dedupeKey(raw)},`;
     for (let i = 0; i < key.length; i += 1) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
   }
   return h.toString(36);

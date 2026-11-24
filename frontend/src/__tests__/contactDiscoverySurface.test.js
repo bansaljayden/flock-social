@@ -555,6 +555,26 @@ describe('syncContacts stops where the server said it would', () => {
     expect(bare.startBatch).toBe(0);
   });
 
+  test('a number given its + since the last run makes the book another book, so the corrected number is checked', async () => {
+    // The same digits sort to the same place, and the server reads them apart:
+    // without its + a foreign number is unreadable, with it a number somebody
+    // can be found on.
+    const size = service.CONTACT_BATCH_SIZE * 5;
+    const before = book(size);
+    before.contacts[0] = { phones: [{ type: 'mobile', number: '442079460018' }] };
+    mockPlugin.getContacts.mockResolvedValue(before);
+    const one = await service.syncContacts(jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE - 1 }));
+
+    const after = book(size);
+    after.contacts[0] = { phones: [{ type: 'mobile', number: '+442079460018' }] };
+    mockPlugin.getContacts.mockResolvedValue(after);
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+    const again = await service.syncContacts(lookup, { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
+    expect(again.book).not.toBe(one.book);
+    expect(again.startBatch).toBe(0);
+    expect(lookup.mock.calls.flatMap(([batch]) => batch)).toContain('+442079460018');
+  });
+
   test('numbers the server could not read are counted apart from numbers not reached', async () => {
     // A number saved without its area code, or a foreign one without + and its
     // country code, used to read as "not checked yet, try the rest in an hour"
