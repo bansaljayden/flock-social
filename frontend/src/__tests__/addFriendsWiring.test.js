@@ -986,8 +986,9 @@ describe('6. the wiring that is only source', () => {
     expect(APP).toMatch(/if \(document\.visibilityState !== 'visible' \|\| Date\.now\(\) - lastReadAt < FRIEND_REQUESTS_REREAD_MS\) return;\s*lastReadAt = Date\.now\(\);\s*refreshFriendRequests\(\);/);
     expect(APP).toContain('const FRIEND_REQUESTS_REREAD_MS = 30000;');
     expect(APP).toMatch(/if \(reconnectTick\) refreshFriendRequests\(\);/);
-    // A Sent row that left the list is asked about, not guessed at (section 7).
-    expect(APP).toMatch(/getFriendshipStatus\(id\)\s*\.then\(\(s\) => \{[\s\S]{0,160}?if \(s\?\.status === 'accepted'\) applyRelationship/);
+    // A Sent row that left the list is asked about, not guessed at, through
+    // the one numbered read (section 7).
+    expect(APP).toMatch(/\.forEach\(\(id\) => settleFromServer\(\{ id: Number\(id\) \|\| id \}\)\);/);
   });
 
   test("a signed-out install says what a friend's link is for, and keeps it through the sign-in", () => {
@@ -1122,7 +1123,7 @@ describe('7. the request lists, read again', () => {
     const hold = (into) => new Promise((resolve, reject) => { into.push({ resolve, reject }); });
     held.cancel = [];
     Object.assign(r.scope, {
-      getPendingRequests: () => Promise.resolve({ requests: [person(1, 'Ava')] }),
+      getPendingRequests: () => Promise.resolve({ requests: over.pendingRows || [person(1, 'Ava')] }),
       getOutgoingRequests: () => hold(held.outgoing),
       getFriendshipStatus: (id) => { r.calls.api.push(['status', id]); return hold(held.status); },
       sendFriendRequest: (id) => { r.calls.api.push(['send', id]); return hold(held.send); },
@@ -1142,7 +1143,7 @@ describe('7. the request lists, read again', () => {
       statementAt(APP, 'const pendingReadSeqRef = useRef('),
       statementAt(APP, 'const outgoingReadSeqRef = useRef('),
       statementAt(APP, 'const refreshFriendRequests = useCallback('),
-    ].join('\n'), '{ refresh: refreshFriendRequests, add: handleSendFriendRequest, cancel: handleCancelOutgoingRequest, apply: applyRelationship }', r.scope);
+    ].join('\n'), '{ refresh: refreshFriendRequests, add: handleSendFriendRequest, cancel: handleCancelOutgoingRequest, apply: applyRelationship, settle: settleFromServer }', r.scope);
     return { ...r, held, ...fns };
   }
   const sentToBo = { status: 'pending', message: 'Friend request sent to Bo' };
@@ -1152,7 +1153,7 @@ describe('7. the request lists, read again', () => {
     refresh();
     held.outgoing[0].resolve({ requests: [] });
     await tick();
-    expect(calls.api).toEqual([['status', '7'], ['status', '8']]);
+    expect(calls.api).toEqual([['status', 7], ['status', 8]]);
     expect(state.outgoing).toEqual([]);
     held.status[0].resolve({ status: 'accepted' });
     held.status[1].resolve({ status: 'none' });
@@ -1205,7 +1206,7 @@ describe('7. the request lists, read again', () => {
     held.outgoing[0].resolve({ requests: [person(7, 'Dee')] });
     await tick();
     expect(state.outgoing.map((r) => r.id)).toEqual([7]);
-    expect(calls.api).toEqual([['send', 2], ['status', '2']]);
+    expect(calls.api).toEqual([['send', 2], ['status', 2]]);
     held.status[0].resolve({ status: 'none' });
     await tick();
     expect(state.statuses[2]).toBe('none');
@@ -1262,6 +1263,48 @@ describe('7. the request lists, read again', () => {
     await cancelling;
     expect(state.pending.map((r) => r.id)).toEqual([7, 1]);
     expect(state.statuses[7]).toBe('incoming');
+  });
+
+  test("withdrawn and sent again from another device: an older read's 'none' does not land over the newer Sent list", async () => {
+    const { state, held, refresh } = lists();
+    // Withdrawn on the other device: this read leaves Dee off Sent, and asks about her.
+    refresh();
+    held.outgoing[0].resolve({ requests: [] });
+    await tick();
+    expect(held.status).toHaveLength(1);
+    // Sent again there, and the screen opened again: a newer list names her.
+    refresh();
+    held.outgoing[1].resolve({ requests: [person(7, 'Dee')] });
+    await tick();
+    expect(state.statuses[7]).toBe('pending');
+    // The older read lands last.
+    held.status[0].resolve({ status: 'none' });
+    await tick();
+    expect(state.statuses[7]).toBe('pending');
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+  });
+
+  test("a request named on a newer Requests list: an older read of its sender's standing does not take it off", async () => {
+    const { state, held, refresh, settle } = lists({ pendingRows: [person(1, 'Ava'), person(3, 'Cy')] });
+    settle(person(3, 'Cy'));
+    refresh();
+    await tick();
+    expect(state.pending.map((r) => r.id)).toEqual([1, 3]);
+    held.status[0].resolve({ status: 'none' });
+    await tick();
+    expect(state.pending.map((r) => r.id)).toEqual([1, 3]);
+  });
+
+  test("but a read asked after the list was asked is the newer word, and lands", async () => {
+    const { state, held, refresh, settle } = lists();
+    refresh();
+    settle(person(7, 'Dee'));
+    held.outgoing[0].resolve({ requests: [person(7, 'Dee')] });
+    await tick();
+    held.status[0].resolve({ status: 'accepted' });
+    await tick();
+    expect(state.statuses[7]).toBe('accepted');
+    expect(state.outgoing).toEqual([]);
   });
 
   test("Cancel, then Add again at once: the Cancel's answer after the Add's asks the server, and its word is what shows", async () => {

@@ -7112,8 +7112,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // sent, accepted, declined or cancelled, or one that arrived live, would be
   // drawn back the way the server had it a moment earlier.
   // refreshFriendRequests reads it.
-  // `settling` numbers each person's reads by settleFromServer, below.
-  const relationshipWrittenRef = useRef({ now: 0, at: new Map(), settling: new Map() });
+  // `settling` numbers each person's reads by settleFromServer, below, and
+  // `settlingAt` says when the latest was asked, on the same clock: a read of
+  // the request lists asked after it supersedes it (refreshFriendRequests).
+  // Asks move the clock too, so no two are ever the same moment.
+  const relationshipWrittenRef = useRef({ now: 0, at: new Map(), settling: new Map(), settlingAt: new Map() });
   const applyRelationship = useCallback((user, status) => {
     if (!user || user.id === undefined || user.id === null) return;
     const id = user.id;
@@ -7153,7 +7156,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const id = String(user.id);
     const mine = (written.settling.get(id) || 0) + 1;
     written.settling.set(id, mine);
+    written.now += 1;
     const askedAt = written.now;
+    written.settlingAt.set(id, askedAt);
     getFriendshipStatus(user.id)
       .then((s) => {
         if (written.settling.get(id) !== mine || (written.at.get(id) || 0) > askedAt) return;
@@ -7329,14 +7334,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // Anybody written here after this moment (an answer, a socket event) keeps
     // what they have now, whatever these lists say: the server can have read
     // them before it stored that change (relationshipWrittenRef).
-    const asked = relationshipWrittenRef.current.now;
-    const writtenSince = (id) => (relationshipWrittenRef.current.at.get(String(id)) || 0) > asked;
+    const written = relationshipWrittenRef.current;
+    written.now += 1;
+    const asked = written.now;
+    const writtenSince = (id) => (written.at.get(String(id)) || 0) > asked;
+    // And the people a list names are its news over any read of their
+    // standing asked before it (settleFromServer), which then writes nothing:
+    // one that left Sent, asked about, and back on a newer list (sent again
+    // from another device) would otherwise land its older 'none' over it.
+    const supersedeOlderReads = (rows) => {
+      for (const r of rows) {
+        const id = String(r.id);
+        if ((written.settlingAt.get(id) || 0) < asked) written.settling.set(id, (written.settling.get(id) || 0) + 1);
+      }
+    };
     const p = ++pendingReadSeqRef.current;
     getPendingRequests()
       .then(d => {
         if (p !== pendingReadSeqRef.current) return;
         const settling = (r) => friendRequestBusyRef.current.has(r.id) || decliningRef.current.has(r.id) || writtenSince(r.id);
         const rows = (Array.isArray(d) ? d : (d?.requests || [])).filter(r => !settling(r));
+        supersedeOlderReads(rows);
         setPendingRequests(prev => {
           const kept = prev.filter(r => writtenSince(r.id));
           return kept.length ? [...kept, ...rows] : rows;
@@ -7353,6 +7371,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // person's row is theirs to settle, not this read's.
       const unsettled = (id) => friendRequestBusyRef.current.has(`out:${id}`) || friendRequestBusyRef.current.has(`add:${id}`) || writtenSince(id);
       const requests = listed.filter(r => !unsettled(r.id));
+      supersedeOlderReads(requests);
       setOutgoingRequests(prev => {
         const kept = prev.filter(r => writtenSince(r.id));
         return kept.length ? [...kept, ...requests] : requests;
@@ -7371,24 +7390,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
       // A row that was Pending and has left Sent since the last read was
       // accepted, or withdrawn from another device. Which one is asked rather
-      // than guessed (a handful at most; usually there is none).
+      // than guessed (a handful at most; usually there is none), through the
+      // same numbered read as any other (settleFromServer): newer news, a
+      // newer read of them, or a newer list naming them answers for itself.
+      // Withdrawn reads as 'none', said rather than left as a gap a contacts
+      // row's older word would show through.
       Object.keys(before)
         .filter(id => before[id] === 'pending' && !sent.has(id) && !unsettled(id))
         .slice(0, 5)
-        .forEach((id) => {
-          getFriendshipStatus(id)
-            .then((s) => {
-              // Newer news about them while this was asked answers for itself.
-              if (unsettled(id)) return;
-              if (s?.status === 'accepted') applyRelationship({ id: Number(id) || id }, 'accepted');
-              else if (s?.status !== 'pending') {
-                // Withdrawn: nothing between you, said rather than left as a
-                // gap a contacts row's older word would show through.
-                setFriendStatuses(prev => (prev[id] !== 'pending' ? prev : { ...prev, [id]: 'none' }));
-              }
-            })
-            .catch(() => { /* left as it was; the next read asks again */ });
-        });
+        .forEach((id) => settleFromServer({ id: Number(id) || id }));
     }).catch(e => {
       console.error('[AddFriends] Outgoing:', e.message);
       // The wait is over either way: the list stays as it was rather than
@@ -7398,7 +7408,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setOutgoingRequestsLoaded(true);
       setOutgoingRequestsError(userMessage(e, 'The requests you sent are not loading right now.'));
     });
-  }, [applyRelationship]);
+  }, [settleFromServer]);
 
   // SOMEBODY WHO ASKED YOU READS ACCEPT, WHEREVER THEY APPEAR. The rows on
   // Search, People you may know and Contacts read friendStatuses, and nothing
