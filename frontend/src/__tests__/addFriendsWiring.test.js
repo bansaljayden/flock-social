@@ -830,13 +830,52 @@ describe('5. contacts', () => {
     expect(saved()).toBeNull();
   });
 
-  test('a finished book one run checks whole asks no card: its saved people are never drawn', async () => {
-    const { calls, go } = sync({
-      cursor: { total: 7, book: 'b1', users: [person(1, 'Ana')] },
-      runs: [result({ users: [person(1, 'Ana')], book: 'b1', total: 7, sent: 7, checked: 7, notReached: 0, startBatch: 0, nextBatch: null })],
+  test('a run the allowance cuts short draws no saved person the re-check found gone, whatever the size of the book', async () => {
+    // A finished book of 400 numbers. A saved match blocked you while the app
+    // was away; the next check gets one batch in before the hour's allowance.
+    const { state, calls, go } = sync({
+      cursor: { total: 400, book: 'b1', users: [person(1, 'Ana'), person(2, 'Bo')] },
+      gone: ['2'],
+      runs: [result({ users: [], book: 'b1', total: 400, sent: 200, checked: 200, answered: 1, throttled: true, retryAt: '2026-11-24T10:40:00.000Z', startBatch: 0, nextBatch: 1, notReached: 200 })],
     });
     await go();
-    expect(calls.cards).toEqual([]);
+    expect(calls.cards.sort()).toEqual(['1', '1', '2']);
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+  });
+
+  test('somebody the re-check finds gone leaves the screen and the cursor even when the run itself fails', async () => {
+    const failed = Object.assign(new Error('Something went wrong'), { status: 500, userFacing: true });
+    const { state, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo')] },
+      users: [person(1, 'Ana'), person(2, 'Bo')],
+      result: { checked: 600, total: 1240, sent: 600, unreadable: 0, notReached: 640, throttled: false, retryAt: null, book: 'b1', matched: 2 },
+      gone: ['2'],
+      runs: [() => Promise.reject(failed)],
+    });
+    await go();
+    await tick();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1 }));
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana']);
+  });
+
+  test('the list on screen is re-checked too, not only the saved people', async () => {
+    // Drawn before the app went to the background, and saved nowhere (a
+    // device that keeps no storage for this site).
+    const { state, calls, go } = sync({
+      users: [person(1, 'Ana'), person(5, 'Eve')],
+      result: { checked: 7, total: 7, sent: 7, unreadable: 0, notReached: 0, throttled: false, retryAt: null, book: 'b1', matched: 2 },
+      gone: ['5'],
+      runs: [result({ users: [], book: 'b1', total: 7, sent: 0, checked: 0, answered: 0, throttled: true, retryAt: '2026-11-24T10:40:00.000Z', startBatch: 0, nextBatch: 0, notReached: 7 })],
+    });
+    await go();
+    expect(calls.cards).toContain('5');
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1 }));
+  });
+
+  test('when this screen goes, nobody is signed in for a late answer', () => {
+    expect(APP).toMatch(/useEffect\(\(\) => \(\) => \{ contactsAccountRef\.current = null; \}, \[\]\);/);
   });
 
   test('at most forty cards are asked, a third of the hour\'s card budget', async () => {

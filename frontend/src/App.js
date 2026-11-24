@@ -17,7 +17,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock
 // know which platform it is on or which API answers. See services/contacts.js.
 // contactsPermissionState only READS the permission (checkPermissions); the
 // prompt still fires from syncContacts alone, behind its button.
-import { contactsAvailable, contactsPermissionState, syncContacts, CONTACT_BATCH_SIZE, MAX_BATCHES } from './services/contacts';
+import { contactsAvailable, contactsPermissionState, syncContacts } from './services/contacts';
 // Add Friends' three server calls that are not in the line above: Cancel on a
 // Sent request (pending only, never a friendship), where one person stands,
 // and who a friend's code belongs to before anything is sent.
@@ -5585,10 +5585,10 @@ const writeContactsCursor = (userId, cursor) => {
   } catch { /* storage blocked: the next check starts at the top of the book */ }
 };
 // The stretch of time the app has been in front of the person: a launch, or
-// a return from the background (contactsEpochRef). The cursor is stamped with
-// the one that wrote it, and the people a run in an earlier one saved are
-// checked again before they are drawn (handleSyncContacts): an app that was
-// closed, or asleep in the background, heard no blocked_by event.
+// a return from the background (contactsEpochRef). The people a check drew or
+// saved before this stretch are checked again before they are drawn
+// (handleSyncContacts): an app that was closed, or asleep in the background,
+// heard no blocked_by event.
 const newContactsEpoch = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 // The cursor without the given people, in this pass and the last.
 const dropPeople = (cursor, gone) => (gone.size
@@ -7831,15 +7831,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     document.addEventListener('visibilitychange', onHide);
     return () => document.removeEventListener('visibilitychange', onHide);
   }, []);
-  // The re-check of one account's saved people in one stretch, shared by
-  // every tap in it: a second tap while the first is still out waits for that
-  // one rather than asking for every card again ({ key, promise }).
+  // THE RE-CHECK, once per account and stretch, shared by every tap in it
+  // ({ key, promise }): a second tap while it is still out waits for it rather
+  // than asking for every card again. It covers everybody a check could draw
+  // from before this stretch, the cursor's people and the list on screen alike,
+  // whatever the size of the book: a run the allowance cuts short draws the
+  // last pass's people too.
   const contactsRecheckRef = useRef(null);
-  // Who is signed in now, for a run that lands after a sign-out: the sign-out
-  // sweep takes the cursor away, and a write after it would put the last
-  // account's matches back on the device.
+  // Who is signed in now, for a run or a re-check that lands after a sign-out:
+  // the sign-out sweep takes the cursor away, and a write after it would put
+  // the last account's matches back on the device. Emptied when this screen's
+  // tree goes, so a late answer after it finds nobody signed in.
   const contactsAccountRef = useRef(authUser?.id);
   contactsAccountRef.current = authUser?.id;
+  useEffect(() => () => { contactsAccountRef.current = null; }, []);
   const handleSyncContacts = useCallback(async () => {
     if (contactsRunRef.current) return;
     if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
@@ -7848,40 +7853,39 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setContactsDenied(false);
     setContactsUnavailable(false);
     const userId = authUser?.id;
-    const epoch = contactsEpochRef.current;
-    const saved = readContactsCursor(userId);
-    // People a run in an earlier launch, or before the app last went to the
-    // background, saved are checked again, while the book is read, before any
-    // of them is drawn: a block either way, or a ban, since then reached this
-    // device through no event, and handleUserBlocked only hears the live ones
-    // (peopleGoneSince). What it finds is written back the moment it is
-    // known, stamped with this stretch, whatever the run itself does: a run
-    // that throws (a refused permission, a dropped connection) does not leave
-    // it to be asked again on the next tap. Written over the cursor as it is
-    // then, not as it was read.
-    // Only when the saved people can be drawn at all: a pass part way through
-    // draws them, and so does a finished one over a book bigger than one run,
-    // until the new pass has been through it. A finished book one run checks
-    // whole draws only what that run finds, and asks no card.
     const signedIn = () => contactsAccountRef.current === userId;
-    const fromEarlier = Boolean(saved && saved.launch !== epoch);
-    const drawsSaved = Boolean(saved) && (Number.isInteger(saved.nextBatch) || Number(saved.total) > CONTACT_BATCH_SIZE * MAX_BATCHES)
-      && ((saved.users || []).length > 0 || (saved.previous || []).length > 0);
-    let recheck = Promise.resolve(new Set());
-    if (fromEarlier && drawsSaved) {
-      const key = `${userId}:${epoch}`;
-      if (!contactsRecheckRef.current || contactsRecheckRef.current.key !== key) {
-        contactsRecheckRef.current = {
-          key,
-          promise: peopleGoneSince(saved).then((gone) => {
-            const current = signedIn() ? readContactsCursor(userId) : null;
-            if (current) writeContactsCursor(userId, { ...dropPeople(current, gone), launch: epoch });
+    const saved = readContactsCursor(userId);
+    // The people a check before this stretch (a launch, or a return from the
+    // background) drew or saved are checked again, while the book is read,
+    // before any of them is drawn again: a block either way, or a ban, since
+    // then reached this device through no event, and handleUserBlocked hears
+    // only the live ones (peopleGoneSince). What it finds leaves the cursor
+    // and the list on screen the moment it is known, whatever the run itself
+    // does: a run that throws (a refused permission, a dropped connection)
+    // does not leave a blocked row on screen, nor the question for later.
+    const key = `${userId}:${contactsEpochRef.current}`;
+    if (!contactsRecheckRef.current || contactsRecheckRef.current.key !== key) {
+      const onScreen = Array.isArray(contactsUsersRef.current) ? contactsUsersRef.current : [];
+      const before = { users: [...((saved && saved.users) || []), ...onScreen], previous: (saved && saved.previous) || [] };
+      contactsRecheckRef.current = {
+        key,
+        promise: (before.users.length || before.previous.length ? peopleGoneSince(before) : Promise.resolve(new Set()))
+          .then((gone) => {
+            if (gone.size && signedIn()) {
+              const current = readContactsCursor(userId);
+              if (current) writeContactsCursor(userId, dropPeople(current, gone));
+              const shown = Array.isArray(contactsUsersRef.current) ? contactsUsersRef.current : [];
+              const removed = shown.filter(u => gone.has(String(u.id))).length;
+              if (removed) {
+                setContactsUsers(prev => (Array.isArray(prev) ? prev.filter(u => !gone.has(String(u.id))) : prev));
+                setContactsResult(prev => (prev ? { ...prev, matched: Math.max(0, (prev.matched || 0) - removed) } : prev));
+              }
+            }
             return gone;
           }),
-        };
-      }
-      recheck = contactsRecheckRef.current.promise;
+      };
     }
+    const recheck = contactsRecheckRef.current.promise;
     try {
       const [data, gone] = await Promise.all([syncContacts(findFriendsByPhone, { cursor: saved }), recheck]);
       const cursor = saved ? dropPeople(saved, gone) : saved;
@@ -7968,8 +7972,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // through keeps the last pass's people with it, for after a relaunch.
       const keptLast = clean(lastPass);
       if (signedIn()) writeContactsCursor(userId, done
-        ? { total: data.total, book: data.book, users: pass, launch: epoch }
-        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}), launch: epoch });
+        ? { total: data.total, book: data.book, users: pass }
+        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}) });
       setContactsUsers(shown);
       setContactsResult(summary(shown.length));
       setContactsRetryAt(null);
