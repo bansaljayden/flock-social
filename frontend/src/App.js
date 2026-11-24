@@ -5584,6 +5584,22 @@ const writeContactsCursor = (userId, cursor) => {
     }
   } catch { /* storage blocked: the next check starts at the top of the book */ }
 };
+// This launch of the app. The cursor is stamped with the launch that wrote
+// it, and the people a run in an earlier launch saved are checked again before
+// they are drawn (handleSyncContacts).
+const CONTACTS_LAUNCH = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// Who among the cursor's people this account can no longer see: blocked
+// either way, banned or deleted since that earlier launch, none of which
+// reaches a device that was closed at the time. The card read
+// (GET /api/users/:id/card) answers one 404 for all of those and for an id
+// that never existed, so it shows nothing a tap on their row would not; a
+// read that fails any other way (no connection, a 500) keeps the person.
+const peopleGoneSince = async (cursor) => {
+  const ids = [...new Set([...(cursor.users || []), ...(cursor.previous || [])].map(u => String(u.id)))];
+  const gone = new Set();
+  await Promise.all(ids.map(id => getUserCard(id).catch((err) => { if (err?.status === 404) gone.add(id); })));
+  return gone;
+};
 // Somebody blocked leaves the pass's people as well as the list on screen: the
 // next run of the pass merges the cursor's people back in, and the server,
 // which leaves them out of its own answers from now on, could not stop that.
@@ -7518,6 +7534,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // back to re-toast on every tap (friends audit, 2026-09-05).
       if (err?.status === 404) {
         setPendingRequests(prev => prev.filter(r => r.id !== userId));
+        // And nothing between you, written down: a Contacts or By-number row
+        // reads the server's word from when its check ran, and kept offering
+        // an Accept that answered 404 on every tap.
+        if (!movedSince()) applyRelationship(request || { id: userId }, 'none');
         showToast('That request was withdrawn.');
         return;
       }
@@ -7787,9 +7807,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setContactsDenied(false);
     setContactsUnavailable(false);
     const userId = authUser?.id;
-    const cursor = readContactsCursor(userId);
+    const saved = readContactsCursor(userId);
+    // People a run in an earlier launch of the app saved are checked again,
+    // while the book is read, before any of them is drawn: a block either way,
+    // or a ban, since then reached this device through no event, and
+    // handleUserBlocked only hears the live ones (peopleGoneSince).
+    const fromEarlierLaunch = Boolean(saved && saved.launch !== CONTACTS_LAUNCH);
+    const recheck = fromEarlierLaunch && ((saved.users || []).length || (saved.previous || []).length)
+      ? peopleGoneSince(saved)
+      : Promise.resolve(new Set());
     try {
-      const data = await syncContacts(findFriendsByPhone, { cursor });
+      const [data, gone] = await Promise.all([syncContacts(findFriendsByPhone, { cursor: saved }), recheck]);
+      const kept = (u) => !gone.has(String(u.id));
+      const cursor = saved && gone.size
+        ? { ...saved, users: (saved.users || []).filter(kept), ...(saved.previous ? { previous: saved.previous.filter(kept) } : {}) }
+        : saved;
+      // Checked for this launch, and written back at once, so a run refused
+      // before it checked anything does not ask about them again.
+      if (fromEarlierLaunch) writeContactsCursor(userId, { ...cursor, launch: CONTACTS_LAUNCH });
       if (data.permission === 'granted' || data.permission === 'limited') setContactsPermissionRead(data.permission);
       // The runs this one carried on from, when it did: their counts, and the
       // people they found.
@@ -7869,8 +7904,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // through keeps the last pass's people with it, for after a relaunch.
       const keptLast = clean(lastPass);
       writeContactsCursor(userId, done
-        ? { total: data.total, book: data.book, users: pass }
-        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}) });
+        ? { total: data.total, book: data.book, users: pass, launch: CONTACTS_LAUNCH }
+        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}), launch: CONTACTS_LAUNCH });
       setContactsUsers(shown);
       setContactsResult(summary(shown.length));
       setContactsRetryAt(null);

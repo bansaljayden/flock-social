@@ -637,12 +637,21 @@ describe('5. contacts', () => {
   // The real cursor, kept in this page's localStorage the way the app keeps
   // it, so what a relaunch finds is what was really written.
   const CURSOR_KEY = 'flock_contacts_cursor_42';
-  const saved = () => JSON.parse(localStorage.getItem(CURSOR_KEY) || 'null');
+  // The cursor as stored, less the launch that wrote it (CONTACTS_LAUNCH),
+  // which differs on every lift; the tests that need it read it themselves.
+  const saved = () => {
+    const s = JSON.parse(localStorage.getItem(CURSOR_KEY) || 'null');
+    if (s) delete s.launch;
+    return s;
+  };
   afterEach(() => localStorage.clear());
 
-  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null }) {
+  // `gone` are the ids whose card answers 404 (blocked either way, banned or
+  // deleted since the launch that saved them), `cardFails` the ids whose card
+  // read fails some other way.
+  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null, gone = [], cardFails = [] }) {
     const state = { users, result, loading: [], denied: [], unavailable: [], permission: null, retryAt: null };
-    const calls = { syncs: [], verifyPrompt: [], toasts: [] };
+    const calls = { syncs: [], verifyPrompt: [], toasts: [], cards: [] };
     let run = 0;
     const scope = {
       useCallback: (fn) => fn,
@@ -666,6 +675,12 @@ describe('5. contacts', () => {
       needsEmailVerification: () => false,
       userMessage,
       blockedIdsRef: { current: new Set() },
+      getUserCard: (id) => {
+        calls.cards.push(String(id));
+        if (gone.includes(String(id))) return Promise.reject(Object.assign(new Error('User not found'), { status: 404, userFacing: true }));
+        if (cardFails.includes(String(id))) return Promise.reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+        return Promise.resolve({ id });
+      },
     };
     const src = [
       statementAt(APP, 'const contactsCursorKey = (userId) =>'),
@@ -673,6 +688,8 @@ describe('5. contacts', () => {
       statementAt(APP, 'const cursorPeople = (list) =>'),
       statementAt(APP, 'const readContactsCursor = (userId) =>'),
       statementAt(APP, 'const writeContactsCursor = (userId, cursor) =>'),
+      statementAt(APP, 'const CONTACTS_LAUNCH = '),
+      statementAt(APP, 'const peopleGoneSince = async (cursor) =>'),
       statementAt(APP, 'const forgetContactsMatch = (userId, personId) =>'),
       statementAt(APP, 'const contactsRunRef = useRef('),
       statementAt(APP, 'const contactsUsersRef = useRef('),
@@ -703,6 +720,43 @@ describe('5. contacts', () => {
     expect(calls.verifyPrompt).toEqual(['add friends']);
   });
 
+  test('people a run in an earlier launch saved are checked again before they are drawn, and one this account can no longer see is dropped', async () => {
+    // Bo blocked you while the app was closed: no event reached this phone.
+    const { state, calls, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo')] },
+      gone: ['2'],
+      runs: [result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(calls.cards.sort()).toEqual(['1', '2']);
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana']);
+  });
+
+  test('checked once a launch: a later run in the same launch does not ask again', async () => {
+    const { calls, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana')] },
+      runs: [
+        result({ users: [], book: 'b1', startBatch: 3, nextBatch: 0, answered: 0, sent: 0, checked: 0, throttled: true, retryAt: '2026-11-24T10:40:00.000Z' }),
+        result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 }),
+      ],
+    });
+    await go();
+    expect(calls.cards).toEqual(['1']);
+    await go();
+    expect(calls.cards).toEqual(['1']);
+  });
+
+  test('a card that could not be read for another reason keeps the person', async () => {
+    const { state, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana')] },
+      cardFails: ['1'],
+      runs: [result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+  });
+
   test('a big book: counts add up across runs, and the next run starts where the last one stopped', async () => {
     const { calls, state, go } = sync({
       runs: [
@@ -715,7 +769,7 @@ describe('5. contacts', () => {
     expect(state.result).toEqual(expect.objectContaining({ sent: 600, checked: 600, notReached: 640, matched: 1, total: 1240 }));
     await go();
     // The second run was handed the cursor the first one left.
-    expect(calls.syncs[1]).toEqual({ cursor: { nextBatch: 3, total: 1240, sent: 600, checked: 600, users: [person(9, 'Tobias')] } });
+    expect(calls.syncs[1]).toEqual({ cursor: expect.objectContaining({ nextBatch: 3, total: 1240, sent: 600, checked: 600, users: [person(9, 'Tobias')] }) });
     expect(state.result).toEqual(expect.objectContaining({ sent: 1200, checked: 1190, unreadable: 10, notReached: 40, matched: 2 }));
     // Matches merge, by name, and go on with the pass.
     expect(state.users.map((u) => u.name)).toEqual(['Maya', 'Tobias']);
@@ -1499,6 +1553,15 @@ describe('8. a block, and what was still on its way about them', () => {
     ].join('\n'), '{ add: handleSendFriendRequest, accept: handleAcceptFriendRequest, decline: handleDeclineFriendRequest, undo: handleUndoDecline, block: handleUserBlocked, apply: applyRelationship, declining: decliningRef }', r.scope);
     return { ...r, held, ...fns };
   }
+
+  test('an Accept answered 404 writes that nothing is between you, so a Contacts row stops offering Accept', async () => {
+    const { state, calls, held, accept } = blocking();
+    const accepting = accept(1);
+    held.accept[0].reject(Object.assign(new Error('No pending request from this user'), { status: 404, userFacing: true }));
+    await accepting;
+    expect(state.statuses[1]).toBe('none');
+    expect(calls.toasts).toEqual([['That request was withdrawn.', 'success']]);
+  });
 
   test("an Accept that fails after a block does not put the request back on Requests, or say anything", async () => {
     // Ava asked you; you tap Accept, then block her from her photo.
