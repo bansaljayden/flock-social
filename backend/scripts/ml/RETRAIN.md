@@ -2459,6 +2459,35 @@ the searches began and never updated since (the script's header gives the rule
 and why). Its first proof compared 1,329 venues: best at rotation 0, 99.9% of
 cells exact.
 
+### When the subscription ends (2026-11-24)
+
+The package ends on the November export day, and Stripe ends it the moment it
+is cancelled, not at the end of the paid month. So the order is: stop anything
+still asking BestTime, cancel, then run the export. What stops with it, and
+what does not:
+
+- **Live readings stop.** Once BestTime refuses the key, the collector treats
+  the refusal as fatal (`classifyHttpFailure`: a 401, 402 or 403 ends the run),
+  so each hourly run aborts and writes nothing. The nowcast reads the
+  last few hours' readings, so it stops applying within hours of the last one,
+  and serving refuses an offset older than seven days (`DEVIATION_MAX_AGE_MS`).
+  The model keeps answering from the stored curves. Pause the cron, or unset
+  its key, once the export is done, so it does not fail every hour.
+- **Nothing on a request path calls BestTime.** The only other caller is the
+  money hub's read of the key, which will then report a refused key.
+- **The stored curves stay.** Every weekly row the corpus holds stays usable;
+  what ends is a refresh by id, a new admission and the venue filter.
+- **Filter answers kept before the end.** The harvests' own answers
+  (`--cache-dir`) and, for cities no harvest covered, the same questions asked
+  city by city, are kept outside the database in the harvest's cache format.
+  They are forecasts, never observations. The holdout cities' answers are among
+  them and must never reach anything a model trains on.
+  `harvestVenueFilter.js --cache-dir` cannot import them once the key is gone,
+  because it checks the key before its first question, so an import needs a
+  path of its own.
+- **The cost line.** `services/costModel.js` lists the package as a monthly
+  cost; end it the day the subscription ends.
+
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 
 > **The cadence in this section is historical. Corrected 2026-09-06.** It runs
