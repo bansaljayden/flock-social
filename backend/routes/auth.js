@@ -3339,21 +3339,30 @@ router.post('/logout-all', authenticate, async (req, res) => {
 // __tests__/googleSignInRealDb.test.js signs real tokens and runs the real
 // library to pin each one.
 //
-// So everything verifyIdToken throws is the token's fault but one thing: a
-// failure to FETCH Google's certificates, which the library reports as
-// "Failed to retrieve verification certificates: ...". An outage is not an
-// expired sign-in, and that one still reaches the 500. Code review found
-// refusals no message names (an ES256 header with a short signature fails in
-// the library's joseToDer, a key id that is an object with no usable toString
-// fails converting it to a property key), so the rule is "not the outage",
-// not "one of these messages"; the list below only names what was wrong.
+// A refusal is a message that starts with one of the prefixes below, and is
+// logged as that prefix alone, so nothing of the token can reach the log. It
+// is a list and not "everything but the outage" on purpose: code review showed
+// that a certificate endpoint answering 200 with `null` makes the library throw
+// an unprefixed TypeError ("Cannot convert undefined or null to object") on
+// every token, and a fault upstream must stay the 500 it was, never become
+// "your sign-in expired" for everybody. A failure to FETCH the certificates is
+// "Failed to retrieve verification certificates: ..." and keeps its message on
+// the way to that 500 (it carries no token). Anything else unlisted goes there
+// too, under a message of its own class name only, because an unlisted message
+// could quote anything. The last two prefixes came from the same review: an
+// ES256 header with a short signature fails in the library's joseToDer, and a
+// header or claim that is an object with no usable toString or valueOf fails
+// where the library makes a property key or a number of it (the key id, iat,
+// exp, iss).
 const GOOGLE_CERT_FETCH_FAILURE = 'Failed to retrieve verification certificates';
 const GOOGLE_TOKEN_REFUSALS = Object.freeze([
   'Wrong number of segments in token',
   "Can't parse token envelope",
   "Can't parse token payload",
   'No pem found for envelope',
-  'Invalid token signature',
+  // "Invalid token signature" in 10.x; the shorter prefix is the one the
+  // handler's catch has always read as an expired sign-in.
+  'Invalid token',
   'No issue time in token',
   'No expiration time in token',
   'iat field using invalid format',
@@ -3363,6 +3372,8 @@ const GOOGLE_TOKEN_REFUSALS = Object.freeze([
   'Token used too late',
   'Invalid issuer',
   'Wrong recipient',
+  '"ES256" signatures must be',
+  'Cannot convert object to primitive value',
 ]);
 
 const errorMessageOf = (err) => (err && typeof err.message === 'string' ? err.message : '');
@@ -3371,15 +3382,17 @@ function googleCertificateFetchFailed(err) {
   return errorMessageOf(err).startsWith(GOOGLE_CERT_FETCH_FAILURE);
 }
 
-// What was wrong with the token, without the token: a prefix the list names,
-// or else the error's class and its message up to the first colon, cut short,
-// because what follows a colon is where the library quotes the token.
+// The listed prefix a refusal starts with, or null when it is not one.
 function googleTokenRefusal(err) {
   const message = errorMessageOf(err);
-  const named = GOOGLE_TOKEN_REFUSALS.find((prefix) => message.startsWith(prefix));
-  if (named) return named;
+  return GOOGLE_TOKEN_REFUSALS.find((prefix) => message.startsWith(prefix)) || null;
+}
+
+// An unlisted failure, renamed so the 500's log line carries its class and
+// nothing it said.
+function googleVerifyFault(err) {
   const name = err && typeof err.name === 'string' && /^[A-Za-z]{1,40}$/.test(err.name) ? err.name : 'Error';
-  return `${name}: ${message.split(':')[0].slice(0, 80) || 'no message'}`;
+  return new Error(`Google ID token check failed with an unlisted ${name}`);
 }
 
 // POST /api/auth/google/nonce — hand out a single-use nonce for the next Google
@@ -3482,9 +3495,9 @@ router.post('/google', [
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
       // Verify the Google ID token. A token the library refuses is answered
-      // here, logged by what was wrong and never by its contents; a failure
-      // to fetch Google's certificates goes on to the catch at the bottom
-      // (see GOOGLE_TOKEN_REFUSALS).
+      // here, logged by what was wrong and never by its contents; a failed
+      // certificate fetch, or anything else, goes on to the catch at the
+      // bottom and its 500 (see GOOGLE_TOKEN_REFUSALS).
       let ticket;
       try {
         ticket = await googleClient.verifyIdToken({
@@ -3492,9 +3505,12 @@ router.post('/google', [
           audience: process.env.GOOGLE_CLIENT_ID,
         });
       } catch (err) {
-        if (googleCertificateFetchFailed(err)) throw err;
-        console.warn(`[auth] refused Google ID token: ${googleTokenRefusal(err)} (${req.ip})`);
-        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+        const refusal = googleTokenRefusal(err);
+        if (refusal) {
+          console.warn(`[auth] refused Google ID token: ${refusal} (${req.ip})`);
+          return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+        }
+        throw googleCertificateFetchFailed(err) ? err : googleVerifyFault(err);
       }
       // FAIL CLOSED (round 13): an ABSENT email_verified must not count as
       // verified — the whole account-claim below hangs on this flag meaning

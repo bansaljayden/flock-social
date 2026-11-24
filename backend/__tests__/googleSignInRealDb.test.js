@@ -286,6 +286,31 @@ test('a token the library refuses is a 401, whatever it got wrong; nothing is wr
   }
 });
 
+test("a certificate endpoint answering null is Google's fault: a 500, and the log quotes nothing of the token", async () => {
+  const saved = OAuth2Client.prototype.getFederatedSignonCertsAsync;
+  OAuth2Client.prototype.getFederatedSignonCertsAsync = async function nullCerts() {
+    return { certs: null, format: 'PEM' };
+  };
+  try {
+    const who = person();
+    const credential = idToken(who);
+    let r;
+    const logged = await capturingLogs(async () => {
+      r = await call('POST', '/api/auth/google', { origin: IOS_ORIGIN, body: { credential } });
+    });
+    assert.equal(r.status, 500, r.text);
+    assert.equal(r.body.error, 'Google sign-in failed');
+    assert.match(logged, /unlisted TypeError/);
+    for (const secret of [who.email, who.sub, credential.split('.')[1], credential.split('.')[2]]) {
+      assert.ok(!logged.includes(secret), 'the log must not quote the token or its claims');
+    }
+    const n = await pool.query('SELECT COUNT(*)::int AS n FROM users WHERE oauth_id = $1', [who.sub]);
+    assert.equal(n.rows[0].n, 0);
+  } finally {
+    OAuth2Client.prototype.getFederatedSignonCertsAsync = saved;
+  }
+});
+
 test("Google's keys being out of reach is not an expired sign-in", async () => {
   const saved = OAuth2Client.prototype.getFederatedSignonCertsAsync;
   OAuth2Client.prototype.getFederatedSignonCertsAsync = async function outage() {
