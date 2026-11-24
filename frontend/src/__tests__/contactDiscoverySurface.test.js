@@ -111,11 +111,9 @@ describe('the permission prompt fires only after the screen that explains it', (
   test('that one call sits inside the button handler, not an effect', () => {
     const handler = app.slice(app.indexOf('const handleSyncContacts'));
     const body = handler.slice(0, handler.indexOf('\n  const handleLookupByNumber'));
-    // With where the last check stopped in a big book (the saved cursor), and
-    // with nothing else that could reach the address book. It is awaited
-    // beside the re-check of people an earlier launch saved, which reads no
-    // address book.
-    expect(body).toMatch(/await Promise\.all\(\[syncContacts\(findFriendsByPhone, \{ cursor: saved \}\), recheck\]\)/);
+    // With where the last check stopped in a big book (the cursor), and with
+    // nothing else that could reach the address book.
+    expect(body).toMatch(/await syncContacts\(findFriendsByPhone, \{ cursor \}\)/);
     // An unconfirmed address is told before the prompt, not after the book
     // was read and the server refused it.
     expect(body.indexOf("if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }"))

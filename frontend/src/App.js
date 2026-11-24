@@ -5584,44 +5584,6 @@ const writeContactsCursor = (userId, cursor) => {
     }
   } catch { /* storage blocked: the next check starts at the top of the book */ }
 };
-// The stretch of time the app has been in front of the person: a launch, or
-// a return from the background (contactsEpochRef). The people a check drew or
-// saved before this stretch are checked again before they are drawn
-// (handleSyncContacts): an app that was closed, or asleep in the background,
-// heard no blocked_by event.
-const newContactsEpoch = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-// The cursor without the given people, in this pass and the last.
-const dropPeople = (cursor, gone) => (gone.size
-  ? { ...cursor, users: (cursor.users || []).filter(u => !gone.has(String(u.id))), ...(cursor.previous ? { previous: cursor.previous.filter(u => !gone.has(String(u.id))) } : {}) }
-  : cursor);
-// Who among the cursor's people this account can no longer see: blocked
-// either way, banned or deleted since. The card read (GET /api/users/:id/card)
-// answers one 404 for all of those and for an id that never existed, so it
-// shows nothing a tap on their row would not, and a read that fails any other
-// way (no connection, a 500) keeps the person. It answers that same 404 once
-// the account's card budget is spent, on purpose (routes/users.js), so a 404
-// counts only if the budget was still there after the last of these reads:
-// somebody whose card did answer is asked again, and must answer again. With
-// nobody answering, nothing is known, and nobody is dropped. At most
-// RECHECK_MOST people are asked, a third of the hour's card budget at most,
-// which the avatar taps on every other screen share; any beyond are kept.
-const RECHECK_MOST = 40;
-const peopleGoneSince = async (cursor) => {
-  const ids = [...new Set([...(cursor.users || []), ...(cursor.previous || [])].map(u => String(u.id)))].slice(0, RECHECK_MOST);
-  const answered = [];
-  const notFound = new Set();
-  await Promise.all(ids.map(id => getUserCard(id).then(
-    () => { answered.push(id); },
-    (err) => { if (err?.status === 404) notFound.add(id); },
-  )));
-  if (!notFound.size || !answered.length) return new Set();
-  try {
-    await getUserCard(answered[0]);
-    return notFound;
-  } catch {
-    return new Set();
-  }
-};
 // Somebody blocked leaves the pass's people as well as the list on screen: the
 // next run of the pass merges the cursor's people back in, and the server,
 // which leaves them out of its own answers from now on, could not stop that.
@@ -7821,27 +7783,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // pass's cursor it carries, would have put them back. Unblocking somebody
   // takes them out of it.
   const contactsBlockedRef = useRef(new Set());
-  // Which stretch in front of the person this is (newContactsEpoch): a new
-  // one at every return from the background, when a block made meanwhile
-  // could have been missed. Made once, not on every render.
-  const contactsEpochRef = useRef(null);
-  if (contactsEpochRef.current === null) contactsEpochRef.current = newContactsEpoch();
-  useEffect(() => {
-    const onHide = () => { if (document.visibilityState === 'hidden') contactsEpochRef.current = newContactsEpoch(); };
-    document.addEventListener('visibilitychange', onHide);
-    return () => document.removeEventListener('visibilitychange', onHide);
-  }, []);
-  // THE RE-CHECK, once per account and stretch, shared by every tap in it
-  // ({ key, promise }): a second tap while it is still out waits for it rather
-  // than asking for every card again. It covers everybody a check could draw
-  // from before this stretch, the cursor's people and the list on screen alike,
-  // whatever the size of the book: a run the allowance cuts short draws the
-  // last pass's people too.
-  const contactsRecheckRef = useRef(null);
-  // Who is signed in now, for a run or a re-check that lands after a sign-out:
-  // the sign-out sweep takes the cursor away, and a write after it would put
-  // the last account's matches back on the device. Emptied when this screen's
-  // tree goes, so a late answer after it finds nobody signed in.
+  // Who is signed in now, for a run that lands after a sign-out: the sign-out
+  // sweep takes the cursor away, and a write after it would put the last
+  // account's matches back on the device. Emptied when this screen's tree
+  // goes, so a late answer after it finds nobody signed in.
   const contactsAccountRef = useRef(authUser?.id);
   contactsAccountRef.current = authUser?.id;
   useEffect(() => () => { contactsAccountRef.current = null; }, []);
@@ -7854,45 +7799,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setContactsUnavailable(false);
     const userId = authUser?.id;
     const signedIn = () => contactsAccountRef.current === userId;
-    const saved = readContactsCursor(userId);
-    // The people a check before this stretch (a launch, or a return from the
-    // background) drew or saved are checked again, while the book is read,
-    // before any of them is drawn again: a block either way, or a ban, since
-    // then reached this device through no event, and handleUserBlocked hears
-    // only the live ones (peopleGoneSince). What it finds leaves the cursor
-    // and the list on screen the moment it is known, whatever the run itself
-    // does: a run that throws (a refused permission, a dropped connection)
-    // does not leave a blocked row on screen, nor the question for later.
-    const key = `${userId}:${contactsEpochRef.current}`;
-    if (!contactsRecheckRef.current || contactsRecheckRef.current.key !== key) {
-      const onScreen = Array.isArray(contactsUsersRef.current) ? contactsUsersRef.current : [];
-      const before = { users: [...((saved && saved.users) || []), ...onScreen], previous: (saved && saved.previous) || [] };
-      contactsRecheckRef.current = {
-        key,
-        promise: (before.users.length || before.previous.length ? peopleGoneSince(before) : Promise.resolve(new Set()))
-          .then((gone) => {
-            if (gone.size && signedIn()) {
-              const current = readContactsCursor(userId);
-              if (current) writeContactsCursor(userId, dropPeople(current, gone));
-              const shown = Array.isArray(contactsUsersRef.current) ? contactsUsersRef.current : [];
-              const removed = shown.filter(u => gone.has(String(u.id))).length;
-              if (removed) {
-                setContactsUsers(prev => (Array.isArray(prev) ? prev.filter(u => !gone.has(String(u.id))) : prev));
-                setContactsResult(prev => (prev ? { ...prev, matched: Math.max(0, (prev.matched || 0) - removed) } : prev));
-              }
-            }
-            return gone;
-          }),
-      };
-    }
-    const recheck = contactsRecheckRef.current.promise;
+    const cursor = readContactsCursor(userId);
     try {
-      const [data, gone] = await Promise.all([syncContacts(findFriendsByPhone, { cursor: saved }), recheck]);
-      const cursor = saved ? dropPeople(saved, gone) : saved;
-      // Off the list on screen too, whatever this run goes on to draw.
-      const drawnNow = Array.isArray(contactsUsersRef.current) ? contactsUsersRef.current : [];
-      const shownNow = gone.size ? drawnNow.filter(u => !gone.has(String(u.id))) : drawnNow;
-      if (gone.size) setContactsUsers(shownNow);
+      const data = await syncContacts(findFriendsByPhone, { cursor });
       if (data.permission === 'granted' || data.permission === 'limited') setContactsPermissionRead(data.permission);
       // The runs this one carried on from, when it did: their counts, and the
       // people they found.
@@ -7931,6 +7840,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Nobody blocked: by you, from here or from another device since the
       // cursor was written (blockedIdsRef, declared further down), or blocking
       // you in this session (contactsBlockedRef).
+      //
+      // WHAT IS NOT CAUGHT, ON PURPOSE. Somebody who blocked you while this app
+      // was closed, or asleep in the background, heard by no event, stays on a
+      // big book's list until the pass has been through every number, and a tap
+      // on them answers "User not found". The server answers a block, a ban, a
+      // deleted account and a spent probe budget with one and the same 404, on
+      // purpose (routes/users.js /card), so nothing a client can ask tells a
+      // block from the rest without telling a blocked person they are blocked.
+      // Re-reading every saved person's card on each return was tried (Add
+      // Friends review, 2026-11-24): it could not tell a block from a spent
+      // card budget (a rolling window, and reads the client retries), so it
+      // dropped people who were there, and it spent the budget the person cards
+      // on every other screen share.
       const passSoFar = carried ? (carried.users || []) : [];
       const lastPass = !sameBook ? [] : (carried ? (carried.previous || []) : (cursor.users || []));
       const clean = (list) => list.filter(u => !blockedIdsRef.current.has(String(u.id)) && !contactsBlockedRef.current.has(String(u.id)));
@@ -7944,8 +7866,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const onScreen = contactsResultRef.current;
         if (onScreen && onScreen.book === data.book) {
           // What is on screen is about this book, and stays, with when the
-          // next run can go: less anybody the re-check found gone, counted.
-          setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt, ...(gone.size ? { matched: shownNow.length } : {}) } : prev));
+          // next run can go.
+          setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt } : prev));
         } else if (carried) {
           // Nothing on screen yet (the app was closed part way through a
           // pass): what the pass's earlier runs checked and found.
