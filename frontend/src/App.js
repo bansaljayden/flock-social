@@ -7800,8 +7800,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const userId = authUser?.id;
     const signedIn = () => contactsAccountRef.current === userId;
     const cursor = readContactsCursor(userId);
+    // Your own block list, read again beside the book: a block you made on
+    // another device while this one was asleep reached it through no event,
+    // and the cursor's people would bring that person back. The server's
+    // whole list, as loadBlockedUsers reads it; a failed read leaves it be.
+    const blocksRead = getBlockedUsers()
+      .then((d) => { if (signedIn() && Array.isArray(d?.blocked)) blockedIdsRef.current = new Set(d.blocked.map(b => String(b.user_id))); })
+      .catch(() => { /* the list stays as it was */ });
     try {
-      const data = await syncContacts(findFriendsByPhone, { cursor });
+      const [data] = await Promise.all([syncContacts(findFriendsByPhone, { cursor }), blocksRead]);
       if (data.permission === 'granted' || data.permission === 'limited') setContactsPermissionRead(data.permission);
       // The runs this one carried on from, when it did: their counts, and the
       // people they found.

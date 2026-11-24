@@ -128,7 +128,9 @@ export default function QrScanner({
     scannerRef.current = null;
     if (!scanner) return;
     try { await scanner.stop(); } catch { /* not running yet, or already stopped */ }
-    try { scanner.clear(); } catch { /* already empty */ }
+    // stop() takes this scanner's own picture away; clear() empties the whole
+    // element, so it waits for no newer start to have the element by now.
+    if (!scannerRef.current) { try { scanner.clear(); } catch { /* already empty */ } }
   }, []);
 
   const passing = useCallback((kind) => {
@@ -248,10 +250,13 @@ export default function QrScanner({
     }
 
     if (!stillOpen()) {
-      // Closed while the camera was coming up: turn it straight back off.
+      // Closed while the camera was coming up: turn it straight back off. Its
+      // own picture only: a newer start (the page hidden and shown again) can
+      // be drawing into the same element by now, and clear() empties the whole
+      // element, which left a blank viewfinder under "Point your camera".
       try { await scanner.stop(); } catch { /* it never got going */ }
-      try { scanner.clear(); } catch { /* already empty */ }
       if (scannerRef.current === scanner) scannerRef.current = null;
+      if (!scannerRef.current) { try { scanner.clear(); } catch { /* already empty */ } }
       return;
     }
     if (failure) {

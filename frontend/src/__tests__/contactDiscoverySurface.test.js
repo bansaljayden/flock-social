@@ -113,11 +113,15 @@ describe('the permission prompt fires only after the screen that explains it', (
     const body = handler.slice(0, handler.indexOf('\n  const handleLookupByNumber'));
     // With where the last check stopped in a big book (the cursor), and with
     // nothing else that could reach the address book.
-    expect(body).toMatch(/await syncContacts\(findFriendsByPhone, \{ cursor \}\)/);
+    // It is awaited beside a read of the account's own block list, which reads
+    // no address book.
+    expect(body).toMatch(/await Promise\.all\(\[syncContacts\(findFriendsByPhone, \{ cursor \}\), blocksRead\]\)/);
     // An unconfirmed address is told before the prompt, not after the book
     // was read and the server refused it.
     expect(body.indexOf("if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }"))
       .toBeLessThan(body.indexOf('syncContacts(findFriendsByPhone'));
+    expect(body.indexOf("if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }"))
+      .toBeLessThan(body.indexOf('getBlockedUsers()'));
     expect(body.indexOf("if (emailUnconfirmed) {")).toBeGreaterThan(-1);
     // Both of these are the shapes a prompt-on-mount would take.
     expect(both).not.toMatch(/useEffect\([^)]*handleSyncContacts/);

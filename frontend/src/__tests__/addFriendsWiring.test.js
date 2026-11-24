@@ -640,7 +640,9 @@ describe('5. contacts', () => {
   const saved = () => JSON.parse(localStorage.getItem(CURSOR_KEY) || 'null');
   afterEach(() => localStorage.clear());
 
-  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null }) {
+  // `serverBlocks` is the account's block list as the server has it, when a
+  // block was made elsewhere; by default the list this device already holds.
+  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null, serverBlocks = null }) {
     const state = { users, result, loading: [], denied: [], unavailable: [], permission: null, retryAt: null };
     const calls = { syncs: [], verifyPrompt: [], toasts: [] };
     let run = 0;
@@ -668,6 +670,7 @@ describe('5. contacts', () => {
       blockedIdsRef: { current: new Set() },
       // Who is signed in; a test signs out by setting it to null.
       contactsAccountRef: { current: 42 },
+      getBlockedUsers: () => Promise.resolve({ blocked: (serverBlocks || [...scope.blockedIdsRef.current]).map((id) => ({ user_id: Number(id) })) }),
     };
     const src = [
       statementAt(APP, 'const contactsCursorKey = (userId) =>'),
@@ -707,6 +710,17 @@ describe('5. contacts', () => {
     await go();
     expect(calls.syncs).toEqual([]);
     expect(calls.verifyPrompt).toEqual(['add friends']);
+  });
+
+  test('a block you made on another device while this one slept is read before the merge, and the cursor does not bring them back', async () => {
+    const { state, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo')] },
+      serverBlocks: ['2'],
+      runs: [result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana']);
   });
 
   test('a run that lands after a sign-out writes no cursor back', async () => {

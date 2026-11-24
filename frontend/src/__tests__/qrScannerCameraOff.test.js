@@ -23,7 +23,7 @@ const path = require('path');
 
 // The stand-in library. Each start() is settled by the test, so a close can
 // land while the camera is still coming up.
-const lib = { instances: [], starts: [] };
+const lib = { instances: [], starts: [], clears: [] };
 jest.mock('html5-qrcode', () => {
   class FakeScanner {
     constructor(id, config) {
@@ -54,7 +54,8 @@ jest.mock('html5-qrcode', () => {
       return Promise.resolve();
     }
 
-    clear() {}
+    // The real clear() empties the whole shared element (innerHTML = "").
+    clear() { lib.clears.push(this); }
   }
   return { Html5Qrcode: FakeScanner, Html5QrcodeSupportedFormats: { QR_CODE: 0 } };
 });
@@ -84,6 +85,7 @@ const lastStart = () => lib.starts[lib.starts.length - 1];
 beforeEach(() => {
   lib.instances.length = 0;
   lib.starts.length = 0;
+  lib.clears.length = 0;
   Object.defineProperty(window.navigator, 'mediaDevices', {
     value: { getUserMedia: jest.fn() },
     configurable: true,
@@ -184,6 +186,31 @@ describe('the camera goes off on every way out', () => {
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     await flush();
     expect(lib.starts.length).toBe(2);
+  });
+
+  test('hidden and shown again while the camera was starting: the first start, landing last, does not blank the new viewfinder', async () => {
+    mount();
+    await flush();
+    // Hidden before the first start answered, and shown again.
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    await flush();
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    await flush();
+    expect(lib.starts.length).toBe(2);
+    const [first, second] = lib.instances;
+    // The second start answers first, and the scanner is looking.
+    await act(async () => { lib.starts[1].resolve(); });
+    await flush();
+    expect(screen.getByRole('status').textContent).toBe("Point your camera at a friend's Flock code.");
+    const clearsBefore = lib.clears.length;
+    // Then the first one lands, long after it was given up on.
+    await act(async () => { lib.starts[0].resolve(); });
+    await flush();
+    expect(first.running).toBe(false);
+    expect(second.running).toBe(true);
+    expect(lib.clears.length).toBe(clearsBefore);
   });
 
   test('a browser with no camera API goes straight to the code field', async () => {
