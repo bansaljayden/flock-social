@@ -9,14 +9,20 @@
  * Contacts Picker, iPhone Safari included, and that is where people who
  * signed up from a guest link are. So the web had no way to invite anybody.
  *
+ * Since the rebuild of 2026-11-23 the header carries Invite on every tab as
+ * well, so the button under an empty search is the second way in, not the
+ * only one; each check below is scoped to the tab's own content.
+ *
  * What is pinned, rendered rather than grepped:
  *   1. Search's empty state carries the button, on the web layout (no
  *      Contacts tab) and on the app layout alike.
  *   2. A search that found nobody carries it too, since that is the moment
  *      the person being looked for is most likely not on Flock.
- *   3. It is the same handler as the Contacts card, and it waits for the code
- *      it sends: disabled, and inert, until myFriendCode has loaded.
- *   4. The Contacts card is still there, unchanged.
+ *   3. It is the same handler as the header's and the Contacts tab's, it
+ *      waits for the code it sends (disabled, and inert, until myFriendCode
+ *      has loaded), and it draws no success tick: a share sheet closed
+ *      without sending is not a success.
+ *   4. The Contacts tab keeps its own way to invite.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test addFriendsInviteOnSearch --watchAll=false
@@ -31,9 +37,9 @@ const noop = () => {};
 function renderAddFriends(overrides) {
   const props = {
     DialogBehavior: () => null,
+    EmailConfirmLine: () => null,
     ListSkeleton: () => null,
-    SearchInputLocal: ({ initialValue, onCommit, transform, ...rest }) => React.createElement('input', { ...rest, defaultValue: initialValue }),
-    BottomNav: () => null,
+    SearchInputLocal: ({ initialValue, onCommit, transform, inputRef, ...rest }) => React.createElement('input', { ...rest, ref: inputRef, defaultValue: initialValue }),
     addFriendsError: '',
     addFriendsResults: [],
     addFriendsSearch: '',
@@ -43,11 +49,16 @@ function renderAddFriends(overrides) {
     confirmClick: jest.fn(),
     contactsDenied: false,
     contactsLoading: false,
+    contactsPermission: null,
     contactsResult: null,
+    contactsRetryAt: null,
     // The web layout: no address book, so no Contacts tab at all.
     contactsSupported: false,
     contactsUnavailable: false,
     contactsUsers: [],
+    decliningRequests: [],
+    emailUnconfirmed: false,
+    focusCodeFieldRequest: 0,
     friendCodeInput: '',
     friendCodeLoading: false,
     friendStatuses: {},
@@ -60,21 +71,32 @@ function renderAddFriends(overrides) {
     handleDeclineFriendRequest: noop,
     handleInviteFriend: jest.fn(),
     handleLookupByNumber: noop,
+    handleOpenAppSettings: undefined,
     handleSendFriendRequest: noop,
+    handleShareMyCode: noop,
     handleSyncContacts: noop,
+    handleTogglePhoneDiscovery: noop,
+    handleUndoDecline: noop,
     loadAddFriendsData: noop,
     myFriendCode: 'FLOCK-AB12CD34',
     myFriendCodeFailed: false,
+    myFriendCodeQr: 'https://www.flockcorp.com/add/FLOCK-AB12CD34',
+    myName: 'Casey Crawler',
+    myPhotoUrl: null,
+    openEditProfile: noop,
+    openQrScanner: noop,
     openUserProfile: noop,
     outgoingRequests: [],
+    outgoingRequestsLoaded: true,
     pendingRequests: [],
     pendingRequestsError: '',
+    phoneDiscoverable: null,
     phoneLookupError: '',
     phoneLookupInput: '',
     phoneLookupLoading: false,
     phoneLookupUsers: null,
-    qrScanError: '',
-    qrScannerDivId: 'qr-reader',
+    phoneOnFile: false,
+    requestsTabBadge: 0,
     setAddFriendsResults: noop,
     setAddFriendsSearch: noop,
     setAddFriendsTab: noop,
@@ -83,11 +105,8 @@ function renderAddFriends(overrides) {
     setPhoneLookupError: noop,
     setPhoneLookupInput: noop,
     setPhoneLookupUsers: noop,
-    showQrScanner: false,
     showToast: noop,
     startNewDmWithUser: noop,
-    startQrScanner: noop,
-    stopQrScanner: noop,
     styles: { card: {} },
     ...overrides,
   };
@@ -95,40 +114,54 @@ function renderAddFriends(overrides) {
   return props;
 }
 
-const inviteButton = () => screen.getByRole('button', { name: /Invite a friend/ });
+// The tab's own content, so the header's Invite is not the one found.
+const tab = () => within(screen.getByRole('tabpanel'));
+const inviteButton = () => tab().getByRole('button', { name: /Invite a friend/ });
 
 describe('Search, before anything is typed', () => {
   test('on the web, where there is no Contacts tab, the empty state offers the invite', () => {
     const props = renderAddFriends();
-    expect(screen.queryByRole('button', { name: /Contacts/ })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Contacts/ })).toBeNull();
     expect(screen.getByText('Find people you know')).toBeInTheDocument();
     expect(screen.getByText('Search by the name they signed up with. Not on Flock yet? Send them your code.')).toBeInTheDocument();
 
     fireEvent.click(inviteButton());
     expect(props.handleInviteFriend).toHaveBeenCalledTimes(1);
-    expect(props.confirmClick).toHaveBeenCalledTimes(1);
+    // No success tick before anything has been sent.
+    expect(props.confirmClick).not.toHaveBeenCalled();
   });
 
   test('in the app, with a Contacts tab, the tab it opens on offers it too', () => {
     const props = renderAddFriends({ contactsSupported: true });
-    expect(screen.getByRole('button', { name: /Contacts/ })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /Contacts/ })).toBeInTheDocument();
     fireEvent.click(inviteButton());
     expect(props.handleInviteFriend).toHaveBeenCalledTimes(1);
   });
 
-  test('it waits for the code it sends: disabled, and a tap sends nothing', () => {
-    const props = renderAddFriends({ myFriendCode: '' });
-    const button = inviteButton();
-    expect(button).toBeDisabled();
-    fireEvent.click(button);
+  test('it waits for the code it sends: disabled, and a tap sends nothing, here and in the header', () => {
+    const props = renderAddFriends({ myFriendCode: '', myFriendCodeQr: '' });
+    const buttons = screen.getAllByRole('button', { name: /Invite a friend/ });
+    expect(buttons).toHaveLength(2);
+    buttons.forEach((b) => {
+      expect(b).toBeDisabled();
+      fireEvent.click(b);
+    });
     expect(props.handleInviteFriend).not.toHaveBeenCalled();
+  });
+
+  test('somebody to suggest takes the empty state\'s place, and the header still invites', () => {
+    const props = renderAddFriends({ friendSuggestions: [{ id: 3, name: 'Sam Ortiz', mutual_count: 2 }] });
+    expect(screen.getByText('People you may know')).toBeInTheDocument();
+    expect(tab().queryByRole('button', { name: /Invite a friend/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Invite a friend' }));
+    expect(props.handleInviteFriend).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('Search, after a search that found nobody', () => {
   test('the no-results note offers the invite as well', () => {
     const props = renderAddFriends({ addFriendsSearch: 'Maya' });
-    expect(screen.getByText('No users found for "Maya"')).toBeInTheDocument();
+    expect(screen.getByText('No one called "Maya" yet')).toBeInTheDocument();
     expect(screen.getByText('Not on Flock yet? Send them your code.')).toBeInTheDocument();
     fireEvent.click(inviteButton());
     expect(props.handleInviteFriend).toHaveBeenCalledTimes(1);
@@ -140,19 +173,18 @@ describe('Search, after a search that found nobody', () => {
       addFriendsResults: [{ id: 7, name: 'Maya', profile_image_url: null }],
     });
     expect(screen.getByText('Maya')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Invite a friend/ })).toBeNull();
+    expect(tab().queryByRole('button', { name: /Invite a friend/ })).toBeNull();
   });
 
   test('a failed search is said as a failure, not answered with an invite', () => {
     renderAddFriends({ addFriendsSearch: 'Maya', addFriendsError: 'Search is not working right now.' });
     expect(screen.getByText('Search is not working right now.')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Invite a friend/ })).toBeNull();
+    expect(tab().queryByRole('button', { name: /Invite a friend/ })).toBeNull();
   });
 });
 
-test('the Contacts card keeps its own invite', () => {
+test('the Contacts tab keeps its own invite', () => {
   const props = renderAddFriends({ contactsSupported: true, addFriendsTab: 'contacts' });
-  const card = screen.getByText('Nobody there yet?').parentElement;
-  fireEvent.click(within(card).getByRole('button', { name: /Invite a friend/ }));
+  fireEvent.click(tab().getByRole('button', { name: 'Not on Flock yet? Invite a friend' }));
   expect(props.handleInviteFriend).toHaveBeenCalledTimes(1);
 });

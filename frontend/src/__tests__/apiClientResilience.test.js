@@ -18,7 +18,7 @@
  *   - Writes are never retried, full stop: a replayed POST double-posts.
  */
 
-import request, { getBlockedUsers, uploadProfileImage } from '../services/api';
+import request, { getBlockedUsers, getFriendByCode, uploadProfileImage } from '../services/api';
 import { voteForVenue } from '../services/api';
 import { queueSync, pullSettings } from '../services/userSettings';
 import * as socketApi from '../services/socket';
@@ -197,6 +197,22 @@ describe('retry policy', () => {
     expect(err.message).not.toContain('<');
     expect(global.fetch).toHaveBeenCalledTimes(3);
   }, 10000);
+
+  test("a look at a friend's code is sent once, even on a 503 or a dropped connection", async () => {
+    // A GET, but every attempt that reaches GET /api/friends/by-code is charged
+    // to the caller's friend probes, so a retry would spend three on one look.
+    global.fetch.mockResolvedValue(jsonRes({ error: 'upstream' }, 503));
+    const err = await rejection(getFriendByCode('FLOCK-NJQXUGUM'));
+    expect(err.status).toBe(503);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(global.fetch.mock.calls[0][0]).toMatch(/\/api\/friends\/by-code\/FLOCK-NJQXUGUM$/);
+
+    global.fetch.mockReset();
+    global.fetch.mockImplementation(netFail);
+    const dropped = await rejection(getFriendByCode('FLOCK-NJQXUGUM'));
+    expect(dropped.isNetworkError).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
 
   test('a write is sent exactly once even on a 503', async () => {
     global.fetch.mockResolvedValue(jsonRes({ error: 'upstream' }, 503));

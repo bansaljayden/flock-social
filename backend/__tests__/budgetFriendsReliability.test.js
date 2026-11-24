@@ -190,6 +190,12 @@ async function dispatch(text, params = [], ctx = null) {
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
 
+  // utils/ownAvatar.js: the sender's own capped photo, which the live
+  // friend_request_received event carries. Nobody in this fixture has one.
+  if (has('END AS url') && has('FROM users WHERE id = $1')) {
+    return { rows: [{ url: null }], rowCount: 1 };
+  }
+
   // users directory. `is_banned` joined this statement when the ban gap was
   // closed: POST /request and POST /add-by-code fold a banned row into the same
   // single miss a missing row gets, so the column has to come back from the one
@@ -222,10 +228,12 @@ async function dispatch(text, params = [], ctx = null) {
   if (has('= ANY($2::int[])') && has('FROM friendships')) {
     const me = Number(params[0]);
     const ids = (params[1] || []).map(Number);
+    // requester_id comes back as the real statement selects it: which side
+    // asked is what separates a request the caller sent from one they got.
     const rows = friendships
       .filter((f) => (f.requester_id === me && ids.includes(f.addressee_id))
         || (f.addressee_id === me && ids.includes(f.requester_id)))
-      .map((f) => ({ friend_id: f.requester_id === me ? f.addressee_id : f.requester_id, status: f.status }));
+      .map((f) => ({ friend_id: f.requester_id === me ? f.addressee_id : f.requester_id, status: f.status, requester_id: f.requester_id }));
     return { rows, rowCount: rows.length };
   }
 
@@ -1001,7 +1009,9 @@ test('friends: contact sync asks for N friendship statuses with ONE query, not N
   assert.strictEqual(res.body.users.length, 3);
   const byId = Object.fromEntries(res.body.users.map((u) => [u.id, u.friendship_status]));
   assert.strictEqual(byId[2], 'accepted');
-  assert.strictEqual(byId[3], 'pending');
+  // User 3 sent the caller a request, so the row offers Accept (Add Friends
+  // rebuild, 2026-11-23); it used to read 'pending' as if the caller had asked.
+  assert.strictEqual(byId[3], 'incoming');
   assert.strictEqual(byId[4], null);
   // Three matches, ONE friendships statement — the ANY($2::int[]) batch. A
   // per-match loop would be 3 here and 200 at the cap.

@@ -183,6 +183,14 @@ https://:version.:project.pages.dev/*
   Referrer-Policy: no-referrer
   Cache-Control: private, no-store
 
+# A friend's code (website/FriendLink.js). The same three as an invite link:
+# the code is one person's, so it is not indexed, not sent on as a referrer
+# and not kept by a cache.
+/add/*
+  X-Robots-Tag: noindex, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
 /app
   X-Robots-Tag: noindex
   Link: <https://accounts.google.com>; rel=preconnect

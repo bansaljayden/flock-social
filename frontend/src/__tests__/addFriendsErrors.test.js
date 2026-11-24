@@ -21,7 +21,11 @@ test('the two list reads keep their own error, cleared on a landed read', () => 
   const app = read('App.js');
   expect(app).toContain("const [pendingRequestsError, setPendingRequestsError] = useState('');");
   expect(app).toContain("const [friendSuggestionsError, setFriendSuggestionsError] = useState('');");
-  expect(app).toContain("setPendingRequests(d.requests || []); setPendingRequestsError('');");
+  // The requests read leaves out a request answered on this device whose
+  // answer is still out, or written here since the read was asked for
+  // (refreshFriendRequests), and clears its error.
+  expect(app).toContain('.filter(r => !settling(r));');
+  expect(app).toMatch(/setPendingRequests\(prev => \{\s*const kept = prev\.filter\(r => writtenSince\(r\.id\)\);\s*return kept\.length \? \[\.\.\.kept, \.\.\.rows\] : rows;\s*\}\);\s*setPendingRequestsError\(''\);/);
   expect(app).toContain("setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError('');");
   // In the server's words when api.js wrote them for people (userMessage),
   // in the screen's own otherwise; never an error's raw text.
@@ -50,7 +54,7 @@ test('a request the other person withdrew leaves the list on the 404 instead of 
   expect(at).toBeGreaterThan(-1);
   // Bounded on the handler's own closing line rather than a byte count, so a
   // comment added inside it cannot push a checked line out of the window.
-  const end = app.indexOf('}, [pendingRequests, showToast, needsEmailVerification]);', at);
+  const end = app.indexOf('}, [pendingRequests, showToast, needsEmailVerification, applyRelationship]);', at);
   expect(end).toBeGreaterThan(at);
   const handler = app.slice(at, end);
   expect(handler).toContain('if (err?.status === 404) {');
@@ -60,9 +64,14 @@ test('a request the other person withdrew leaves the list on the 404 instead of 
 
 test('the friend code is asked of the server, and a failed ask is remembered for the screen', () => {
   const app = read('App.js');
-  const at = app.indexOf('const loadAddFriendsData = useCallback(async () => {');
+  // Every load of the screen, and every Try again, asks through
+  // loadMyFriendCode, which is the one read of the code.
+  const loadAt = app.indexOf('const loadAddFriendsData = useCallback(async () => {');
+  expect(loadAt).toBeGreaterThan(-1);
+  expect(app.slice(loadAt, app.indexOf('\n  }, [', loadAt))).toContain('loadMyFriendCode();');
+  const at = app.indexOf('const loadMyFriendCode = useCallback(() => {');
   expect(at).toBeGreaterThan(-1);
-  const load = app.slice(at, app.indexOf('\n  }, [', at));
+  const load = app.slice(at, app.indexOf('\n  }, [authUser?.id]);', at));
 
   // Asked for, never worked out. backend friendCodeAgreement.test.js sweeps
   // every frontend file for a derivation; this pins the one read that
@@ -71,19 +80,22 @@ test('the friend code is asked of the server, and a failed ask is remembered for
   expect(load).not.toMatch(/'FLOCK-'\s*\+/);
   expect(load).not.toMatch(/toString\(36\)/);
 
-  // Both ways the read can fail set the flag: an answer with no code in it,
-  // and a request that threw.
-  expect(load).toContain('if (d?.code) setMyFriendCode(d.code); else setMyFriendCodeFailed(true);');
-  expect(load).toMatch(/\.catch\(\(e\) => \{[^}]*setMyFriendCodeFailed\(true\);/);
-
-  // Both are cleared before the read goes out, so a retry is a spinner again
-  // rather than the old error, and a different account never sees the last
-  // account's code while its own is on the way.
-  const ask = load.indexOf('getMyFriendCode()');
-  expect(load.indexOf("setMyFriendCode('');")).toBeGreaterThan(-1);
-  expect(load.indexOf("setMyFriendCode('');")).toBeLessThan(ask);
+  // Both ways the read can fail set the flag, an answer with no code in it and
+  // a request that threw, but only when there is no code on screen at all: the
+  // code never changes once issued, so the one already drawn (kept on the
+  // device, per account) stays drawn through a failed refresh.
+  expect(load).toMatch(/if \(!code\) \{\s*if \(!myFriendCodeRef\.current\) setMyFriendCodeFailed\(true\);/);
+  expect(load).toMatch(/\.catch\(\(e\) => \{[^}]*if \(!myFriendCodeRef\.current\) setMyFriendCodeFailed\(true\);/);
+  // The flag is cleared before the read goes out, so a retry is a spinner
+  // again rather than the old error.
   expect(load.indexOf('setMyFriendCodeFailed(false);')).toBeGreaterThan(-1);
-  expect(load.indexOf('setMyFriendCodeFailed(false);')).toBeLessThan(ask);
+  expect(load.indexOf('setMyFriendCodeFailed(false);')).toBeLessThan(load.indexOf('getMyFriendCode()'));
+  // The code is never blanked for a read any more. What keeps a different
+  // account from seeing the last one's is the copy on the device, which is
+  // only read for the account it was written for.
+  expect(load).not.toContain("setMyFriendCode('');");
+  expect(load).toContain('localStorage.setItem(FRIEND_CODE_CACHE_KEY, JSON.stringify({ userId, code, url, qr }))');
+  expect(app).toMatch(/if \(!saved \|\| !authUser\?\.id \|\| String\(saved\.userId\) !== String\(authUser\.id\)\) return null;/);
 
   // And the flag reaches the screen.
   expect(app).toContain('const [myFriendCodeFailed, setMyFriendCodeFailed] = useState(false);');
@@ -102,24 +114,29 @@ const noop = () => {};
 function renderQrTab(overrides) {
   const props = {
     DialogBehavior: () => null,
+    EmailConfirmLine: () => null,
     ListSkeleton: () => null,
     // The real box keeps its own state and commits on a pause; the tab only
     // needs an input to be there.
-    SearchInputLocal: ({ initialValue, onCommit, transform, ...rest }) => React.createElement('input', { ...rest, defaultValue: initialValue }),
-    BottomNav: () => null,
+    SearchInputLocal: ({ initialValue, onCommit, transform, inputRef, ...rest }) => React.createElement('input', { ...rest, ref: inputRef, defaultValue: initialValue }),
     addFriendsError: '',
     addFriendsResults: [],
     addFriendsSearch: '',
     addFriendsSearching: false,
     addFriendsTab: 'qr',
-    colors: { navy: '#0d2847', navyBg: '#0d2847', cream: '#f4ede4', creamDark: '#e5dccd', borderDefault: '#d6d6d6', amber: '#d97706' },
+    colors: { navy: '#0d2847', navyBg: '#0d2847', cream: '#f4ede4', creamDark: '#e5dccd', borderDefault: '#d6d6d6', amber: '#d97706', redText: '#b91c1c' },
     confirmClick: noop,
     contactsDenied: false,
     contactsLoading: false,
+    contactsPermission: null,
     contactsResult: null,
+    contactsRetryAt: null,
     contactsSupported: false,
     contactsUnavailable: false,
     contactsUsers: [],
+    decliningRequests: [],
+    emailUnconfirmed: false,
+    focusCodeFieldRequest: 0,
     friendCodeInput: '',
     friendCodeLoading: false,
     friendStatuses: {},
@@ -132,21 +149,32 @@ function renderQrTab(overrides) {
     handleDeclineFriendRequest: noop,
     handleInviteFriend: noop,
     handleLookupByNumber: noop,
+    handleOpenAppSettings: undefined,
     handleSendFriendRequest: noop,
+    handleShareMyCode: noop,
     handleSyncContacts: noop,
+    handleTogglePhoneDiscovery: noop,
+    handleUndoDecline: noop,
     loadAddFriendsData: jest.fn(),
     myFriendCode: '',
     myFriendCodeFailed: false,
+    myFriendCodeQr: '',
+    myName: 'Casey Crawler',
+    myPhotoUrl: null,
+    openEditProfile: noop,
+    openQrScanner: noop,
     openUserProfile: noop,
     outgoingRequests: [],
+    outgoingRequestsLoaded: true,
     pendingRequests: [],
     pendingRequestsError: '',
+    phoneDiscoverable: null,
     phoneLookupError: '',
     phoneLookupInput: '',
     phoneLookupLoading: false,
     phoneLookupUsers: [],
-    qrScanError: '',
-    qrScannerDivId: 'qr-reader',
+    phoneOnFile: false,
+    requestsTabBadge: 0,
     setAddFriendsResults: noop,
     setAddFriendsSearch: noop,
     setAddFriendsTab: noop,
@@ -155,11 +183,8 @@ function renderQrTab(overrides) {
     setPhoneLookupError: noop,
     setPhoneLookupInput: noop,
     setPhoneLookupUsers: noop,
-    showQrScanner: false,
     showToast: noop,
     startNewDmWithUser: noop,
-    startQrScanner: noop,
-    stopQrScanner: noop,
     styles: { card: {} },
     ...overrides,
   };

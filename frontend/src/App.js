@@ -12,10 +12,21 @@ import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, getPublicEvents, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent, userMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, getPublicEvents, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent, userMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
-import { contactsAvailable, syncContacts } from './services/contacts';
+// contactsPermissionState only READS the permission (checkPermissions); the
+// prompt still fires from syncContacts alone, behind its button.
+import { contactsAvailable, contactsPermissionState, syncContacts } from './services/contacts';
+// Add Friends' three server calls that are not in the line above: Cancel on a
+// Sent request (pending only, never a friendship), where one person stands,
+// and who a friend's code belongs to before anything is sent.
+import { cancelFriendRequest, getFriendshipStatus, getFriendByCode } from './services/api';
+// A friend's code in every shape it arrives in, the code waiting through a
+// sign-in, and the share sheet that carries it. See lib/friendCode.js.
+import { friendCodeFrom, friendCodeLink, friendQrText, rememberFriendCode, pendingFriendCode, forgetFriendCode, shareFriendCode } from './lib/friendCode';
+// The sheet a friend's /add/ link raises: who the code is for, and one button.
+import FriendCodeSheet from './components/FriendCodeSheet';
 import { hapticTap, hapticSuccess, hapticLocked, hapticSelection, hapticRefused, hapticAlarm } from './services/haptics';
 import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Location goes through this shim, never the browser API directly. Calling the
@@ -37,12 +48,13 @@ import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentR
 import { pullSettings, queueSync, sameAsAccount, latestPull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
-// import() inside startQrScanner, the one place that uses it. See the note
-// there for the measurement; the short version is that it bundles its own
-// barcode decoding engine and it was the largest single thing on the startup
-// path, downloaded by every user on every launch for a screen almost nobody
-// opens. `frontend/src/__tests__/bundleWeightManifest.test.js` fails if a
-// static import of it comes back.
+// import() inside components/QrScanner.js, the one place that uses it, and
+// that component is itself a lazy chunk (loadQrScanner below). The short
+// version of the measurement is that it bundles its own barcode decoding
+// engine and it was the largest single thing on the startup path, downloaded
+// by every user on every launch for a screen almost nobody opens.
+// `frontend/src/__tests__/bundleWeightManifest.test.js` fails if a static
+// import of it comes back.
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 // VenueLoginScreen and ModerationSheet are NOT imported here any more. Both
@@ -229,7 +241,10 @@ import { heroAction, heroFaces, heroNames, heroNote, heroStatus, placeLine, plan
 // screen and is imported by screens/ProfileSettings.js now, not here.
 import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
-import EmailConfirmLine from './components/EmailConfirmLine';
+// The confirm line as drawn. EmailConfirmLine below is the same line bound to
+// this session's resend and re-check, for a screen that is handed the
+// component rather than the element.
+import EmailConfirmLineView from './components/EmailConfirmLine';
 // The one-sentence bar at the top of the app, which makes room for itself.
 import NoticeBar from './components/NoticeBar';
 // The support address in a sentence, as a link and text that copies.
@@ -526,6 +541,31 @@ let EventDetailOverlay = React.lazy(loadEventDetailOverlay);
    nothing else. */
 const rearmEventDetailOverlay = () => {
   EventDetailOverlay = React.lazy(loadEventDetailOverlay);
+};
+
+/* THE FRIEND-CODE SCANNER, a full-screen camera that only a tap on "Scan a
+   friend's code" ever opens. It lives in components/QrScanner.js and arrives
+   the first time qrScannerOpen turns true, and the decoding library it uses
+   is a second fetch behind it (warmed when the QR tab is shown).
+
+   THE CATCH IS THE SAME LOAD-BEARING CATCH loadAttendanceModal carries: the
+   scanner is mounted in this component's root JSX, beside the screen
+   ErrorBoundary rather than inside it, and React.lazy rethrows a rejected
+   import during render. Resolving to a screen that says the download failed,
+   with a Close and Type the code instead, keeps the damage the size of the
+   scanner. */
+const loadQrScanner = () => import('./components/QrScanner')
+  .catch((err) => {
+    console.warn('Scanner chunk did not load', err);
+    return { default: chunkFallback(QrScannerUnavailable, err) };
+  });
+let QrScanner = React.lazy(loadQrScanner);
+
+/* RE-ARMING JUST THIS ONE, from the fallback's own way out, for the reason the
+   event overlay has a helper of its own: Add Friends is live under the
+   scanner, and the blanket rearmLazyScreens would remount it. */
+const rearmQrScanner = () => {
+  QrScanner = React.lazy(loadQrScanner);
 };
 
 /* THE TWO MONEY SHEETS, the third lazy thing in this file that is not a
@@ -1153,6 +1193,10 @@ const rearmLazyScreens = () => {
   // helper, which is also what keeps a remount of an open panel to one findable
   // line rather than a side effect of a screen crash.
   rearmBirdiePanel();
+  // And the friend-code scanner, for the same reason again: its loader
+  // RESOLVES, to the "did not load" screen, so without a re-arm the next Scan
+  // would paint that screen again without asking the network.
+  rearmQrScanner();
   // And the venue card a pin opens. A plain binding rather than a helper,
   // because its loader REJECTS rather than resolving to a fallback: the failure
   // arrives in the screen ErrorBoundary that calls this, so there is no open
@@ -4917,10 +4961,19 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
     timerRef.current = setTimeout(publish, debounceMs);
     document.addEventListener('pointerdown', publish, true);
   };
+  // A BLUR PUBLISHES TOO, for the same reason a tap does. Return on a search
+  // box blurs it to put the keys away, and the search has to run on the last
+  // keystroke, not the one before the pause. It publishes exactly what the
+  // timer would have published a moment later, then hands the blur on.
+  const { onBlur } = inputProps;
+  const handleBlur = (e) => {
+    if (armedRef.current) armedRef.current();
+    if (typeof onBlur === 'function') onBlur(e);
+  };
   if (as === 'textarea') {
-    return <textarea {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
+    return <textarea {...inputProps} ref={inputRef} value={val} onChange={handleChange} onBlur={handleBlur} />;
   }
-  return <input {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
+  return <input {...inputProps} ref={inputRef} value={val} onChange={handleChange} onBlur={handleBlur} />;
 });
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -5307,6 +5360,9 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
     toastTimerRef.current = null;
     setToast(null);
   }, []);
+  // No buttons but Dismiss. One slot means any later toast replaces this
+  // one, so nothing that has to stay reachable for its whole time (the Undo
+  // on a declined friend request, which lives on its row) belongs here.
   const showToast = useCallback((message, type = 'success') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
@@ -5414,6 +5470,114 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
     </div>
   );
 });
+
+/* THE CONFIRM LINE, AS A COMPONENT A SCREEN CAN BE HANDED. The Nest and the
+   create screen are handed the element App.js builds (emailConfirmLine), and
+   that suits a screen that draws it once in a fixed place. Add Friends is
+   handed the component, as it is handed DialogBehavior and SearchInputLocal,
+   so it can put the line where its layout wants it; but the line is only true
+   with this session's resend, re-check and cooldown behind it, and the screen
+   has none of those. So the component reads them from the provider FlockAppInner
+   puts around the screen, and whatever props the screen passes win over them.
+   Module scope, so its identity is fixed and a render of the app never
+   remounts it (extractionEquivalence.test.js). */
+const EmailConfirmContext = React.createContext(null);
+const EmailConfirmLine = (props) => {
+  const bound = React.useContext(EmailConfirmContext);
+  return <EmailConfirmLineView {...bound} {...props} />;
+};
+
+/* WHAT THE SCANNER IS, IF ITS CHUNK CANNOT BE FETCHED: a full screen of its
+   own, so the person is never left on a black overlay with no way out, the
+   two ways forward the real scanner offers (Close, and Type the code instead),
+   and a Close that re-arms just this lazy, so the next Scan is a real second
+   request rather than a replay of this fallback. */
+const QrScannerUnavailable = ({ DialogBehavior, onClose, onTypeCode, chunkError }) => {
+  const close = () => { rearmQrScanner(); onClose(); };
+  const typeInstead = () => { rearmQrScanner(); onTypeCode('asked'); };
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', paddingBottom: 'calc(24px + var(--safe-bottom))', boxSizing: 'border-box' }}>
+      <DialogBehavior onClose={close} label="The scanner did not load" />
+      <div role="alert" style={{ width: '100%', maxWidth: '340px', textAlign: 'center', color: '#ffffff' }}>
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', margin: '0 0 8px', color: '#ffffff' }}>The scanner did not load</h2>
+        <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, margin: '0 0 18px', color: 'rgba(255,255,255,0.8)' }}>
+          Check your connection and try again, or type your friend's code instead.
+        </p>
+        <NewerBuildNote error={chunkError} />
+        <button type="button" className="hit44" onClick={typeInstead} style={{ width: '100%', height: '48px', borderRadius: 'var(--r-md)', border: 'none', background: '#ffffff', color: '#1e293b', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Type the code instead</button>
+        <button type="button" className="hit44" onClick={close} style={{ width: '100%', height: '48px', marginTop: '8px', borderRadius: 'var(--r-md)', border: '1px solid rgba(255,255,255,0.28)', background: 'rgba(255,255,255,0.14)', color: '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+};
+
+// What the scanner's frame shows while its chunk is on its way: the same
+// black screen, with the way out already in place.
+const QrScannerLoading = ({ onClose }) => (
+  <div style={{ position: 'fixed', inset: 0, zIndex: 9999, backgroundColor: '#000' }}>
+    <DialogBehavior onClose={onClose} label="Scan a Flock code" />
+    <p className="sr-only" role="status">Opening the scanner.</p>
+    <button type="button" aria-label="Close the scanner" className="hit44" onClick={onClose} style={{ position: 'absolute', top: 'calc(12px + var(--safe-top))', left: '16px', width: '44px', height: '44px', borderRadius: 'var(--r-pill)', border: 'none', backgroundColor: 'rgba(0,0,0,0.5)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      {Icons.x('white', 20)}
+    </button>
+  </div>
+);
+
+// The iPhone app's own page in Settings, where its camera, contacts and
+// notification switches are. Capacitor hands a URL that is not the app's own
+// to the system, and app-settings: is the one iOS opens Settings > Flock with.
+// Never offered on the web, where there is no such page.
+const openAppSettings = () => {
+  try { window.location.href = 'app-settings:'; } catch { /* nothing to open */ }
+};
+
+// The account's own friend code and its link, kept on the device as
+// { userId, code, url } so the QR draws with no network. A flock* key, so the
+// sign-out sweep (services/api.js) takes it with the account.
+const FRIEND_CODE_CACHE_KEY = 'flock_friend_code';
+
+// Where the last contacts check stopped in a big address book, per account,
+// and who the checks so far had found: { nextBatch, total, sent, checked,
+// users }. See handleSyncContacts. The people go with the cursor because the
+// list on screen does not outlive the app: a pass carried on after a relaunch
+// used to show none of the matches its earlier runs had found, and say that
+// nobody matched. Kept as a Flock id, name and photo only, never where you
+// stood with them, which is read fresh (friendStatuses) and would be stale.
+const contactsCursorKey = (userId) => `flock_contacts_cursor_${userId}`;
+const cursorPerson = (u) => (u && (typeof u.id === 'number' || typeof u.id === 'string')
+  ? { id: u.id, name: typeof u.name === 'string' ? u.name : '', profile_image_url: typeof u.profile_image_url === 'string' ? u.profile_image_url : null }
+  : null);
+const readContactsCursor = (userId) => {
+  if (!userId) return null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(contactsCursorKey(userId)) || 'null');
+    if (!saved || typeof saved !== 'object') return null;
+    return { ...saved, users: Array.isArray(saved.users) ? saved.users.map(cursorPerson).filter(Boolean) : [] };
+  } catch {
+    return null;
+  }
+};
+const writeContactsCursor = (userId, cursor) => {
+  if (!userId) return;
+  try {
+    if (!cursor) { localStorage.removeItem(contactsCursorKey(userId)); return; }
+    const users = (cursor.users || []).map(cursorPerson).filter(Boolean);
+    try {
+      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, users }));
+    } catch {
+      // Too much for what this site may keep, which the photos are nearly all
+      // of: kept without them, and those rows draw an initial until a check
+      // finds them again.
+      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, users: users.map(u => ({ ...u, profile_image_url: null })) }));
+    }
+  } catch { /* storage blocked: the next check starts at the top of the book */ }
+};
+
+// How long a decline waits before it is sent, which is how long its Undo is
+// good for (handleDeclineFriendRequest).
+const DECLINE_UNDO_MS = 5000;
+// Requests are read again on a return to the app, at most this often.
+const FRIEND_REQUESTS_REREAD_MS = 30000;
 
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
@@ -6167,6 +6331,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       note={verifyPrompt ? '' : verifyNote}
     />
   ) : null;
+  // The same seven values, for a screen handed the component instead
+  // (EmailConfirmLine at module scope, which reads them from this).
+  const emailConfirmBound = useMemo(() => ({
+    email: authUser?.email || '',
+    onResend: resendVerification,
+    onCheck: checkEmailConfirmedNow,
+    cooldown: verifyCooldown,
+    refused: verifyRefused,
+    checking: verifyChecking,
+    note: verifyPrompt ? '' : verifyNote,
+  }), [authUser?.email, resendVerification, checkEmailConfirmedNow, verifyCooldown, verifyRefused, verifyChecking, verifyPrompt, verifyNote]);
 
   // `quiet` is the automatic read on entering the tab: it still records the
   // failure in state, it just does not throw a toast at somebody who did not
@@ -6783,12 +6958,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [pendingRequestsError, setPendingRequestsError] = useState('');
   const [friendSuggestionsError, setFriendSuggestionsError] = useState('');
   const [outgoingRequests, setOutgoingRequests] = useState([]);
+  // Whether the Sent list has been read at least once, so the Requests tab can
+  // draw rows still on their way as skeletons instead of as "no requests".
+  const [outgoingRequestsLoaded, setOutgoingRequestsLoaded] = useState(false);
+  // The badge on the Requests segment: the same count, handed over on its own
+  // so the screen's header does not recompute it.
+  const requestsTabBadge = pendingRequests.length;
   const [friendSuggestions, setFriendSuggestions] = useState([]);
   const [addFriendsSearch, setAddFriendsSearch] = useState('');
   const [addFriendsResults, setAddFriendsResults] = useState([]);
   const [addFriendsSearching, setAddFriendsSearching] = useState(false);
   const [addFriendsError, setAddFriendsError] = useState('');
-  const [myFriendCode, setMyFriendCode] = useState('');
+  // THE ACCOUNT'S OWN CODE, KEPT ON THE DEVICE. A code never changes once the
+  // server has issued it, and it used to be blanked and asked for again on
+  // every visit and every unrelated Try again, so the QR was a grey square for
+  // a round trip each time and nothing at all offline, in exactly the
+  // basement where two people try to swap codes. It starts from the copy kept
+  // for THIS account (a flock* key, so a sign-out sweeps it) and the read
+  // refreshes it quietly. myFriendCodeUrl is the link to /add/<code> the share
+  // sheet sends, as the server built it. myFriendCodeQr is what the QR code
+  // carries, which the server decides (lib/friendCode.js friendQrText): the
+  // JSON every build's scanner reads, until the build that reads links is the
+  // one in the App Store.
+  const cachedFriendCode = useMemo(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FRIEND_CODE_CACHE_KEY) || 'null');
+      if (!saved || !authUser?.id || String(saved.userId) !== String(authUser.id)) return null;
+      const code = friendCodeFrom(String(saved.code || ''));
+      return code ? { code, url: typeof saved.url === 'string' && saved.url ? saved.url : friendCodeLink(code), qr: friendQrText(code, saved.qr) } : null;
+    } catch {
+      return null;
+    }
+  }, [authUser?.id]);
+  const [myFriendCode, setMyFriendCode] = useState(() => cachedFriendCode?.code || '');
+  const [myFriendCodeUrl, setMyFriendCodeUrl] = useState(() => cachedFriendCode?.url || '');
+  const [myFriendCodeQr, setMyFriendCodeQr] = useState(() => cachedFriendCode?.qr || '');
   const [myFriendCodeFailed, setMyFriendCodeFailed] = useState(false);
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendCodeLoading, setFriendCodeLoading] = useState(false);
@@ -6797,8 +7001,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // null until a check has actually run. It is what separates "you have not
   // looked yet" from "we looked and found nobody", and the second of those is
   // the common answer at launch, so the screen may never guess at it.
-  // { checked, total, throttled } straight from services/contacts.js.
+  // { checked, total, throttled, unreadable, notReached, sent, contactCount,
+  //   permission, retryAt, matched }, built by handleSyncContacts from
+  // services/contacts.js and the runs before it (see there for each count).
   const [contactsResult, setContactsResult] = useState(null);
+  // When a check can run again, for a check the server refused before it had
+  // checked anything, with nothing found earlier to show: the result stays
+  // null, because nothing was checked, and the tab's Continue waits for this
+  // (an ISO time, or null). Once there is a result it carries its own retryAt.
+  const [contactsRetryAt, setContactsRetryAt] = useState(null);
+  // What iOS says about the address book, READ ONLY (checkPermissions never
+  // prompts): 'prompt' | 'granted' | 'limited' | 'denied' | 'unavailable', or
+  // null before the first read. Read when Add Friends opens, when the
+  // Contacts tab does, and on every return to the app while it is open, so
+  // somebody who turned Contacts on in Settings comes back to a tab that knows.
+  // The screen reads contactsPermission, below, which a refusal this session
+  // overrides.
+  const [contactsPermissionRead, setContactsPermissionRead] = useState(null);
   // iOS asks for the address book once per install and a denial is permanent
   // until the person changes it in Settings. This flag turns the tab into the
   // one honest thing left to say, and there is no second prompt behind it.
@@ -6807,6 +7026,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // reachable today, but it is a real answer from the service and rendering it
   // as an error would be a lie about the device.
   const [contactsUnavailable, setContactsUnavailable] = useState(false);
+  // One word for the tab: what a refusal or a dead plugin said this session,
+  // else what the last read of the permission said.
+  const contactsPermission = contactsDenied ? 'denied' : contactsUnavailable ? 'unavailable' : contactsPermissionRead;
   // The half that needs no permission, no plugin and no address book: type one
   // number. `phoneLookupUsers` stays null until a lookup has run, for the same
   // reason contactsResult does.
@@ -6817,42 +7039,118 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Computed eagerly (not defaulted to false) so the Contacts tab does not
   // flash into existence for one render before the check runs.
   const [contactsSupported, setContactsSupported] = useState(contactsAvailable);
-  const [showQrScanner, setShowQrScanner] = useState(false);
-  const [qrScanError, setQrScanError] = useState('');
-  const qrScannerRef = useRef(null);
-  // WHICH OPENING OF THE SCANNER IS LIVE. Starting it takes a 300ms wait, a
-  // fetched library and a camera prompt, and Close (or leaving the screen)
-  // during any of that found no running scanner to stop: stop() threw on a
-  // scanner still starting, the ref was cleared, and then start() resolved
-  // and the camera stayed on behind a closed screen with nothing left to turn
-  // it off (app audit 2026-10-03). Every start and every stop takes a number;
-  // a start that finishes after its number moved on stops itself.
-  const qrSessionRef = useRef(0);
-  const qrScannerDivId = 'flock-qr-scanner';
+  // THE SCANNER IS A SCREEN OF ITS OWN NOW (components/QrScanner.js), mounted
+  // at the root beside the chat camera rather than inside the QR tab, and it
+  // owns its camera: every start and every stop takes a number there, and a
+  // start that finishes after its number moved on stops itself. All this
+  // component holds is whether it is open.
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
+  // Counts the times "Type the code instead" was used. The screen focuses its
+  // code field each time this moves, which a boolean could not say twice.
+  const [focusCodeFieldRequest, setFocusCodeFieldRequest] = useState(0);
+  // The friend's code a link brought in, while its sheet is up:
+  // { code, phase: 'loading' | 'ready' | 'missing' | 'error', user, status,
+  // busy }, or null. See openFriendLink.
+  const [friendLinkSheet, setFriendLinkSheet] = useState(null);
+
+  // The header's friend count, read again after a change that moved it. The
+  // count only ever moved on boot and on the other person's socket event, so
+  // accepting here left it a friend behind.
+  const refreshFriendCount = useCallback(() => {
+    getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
+  }, []);
+
+  /* ONE WRITER FOR WHERE YOU STAND WITH SOMEBODY.
+     The same person used to show as Add, Friends and an open request at once:
+     friendStatuses, the two request lists and the friend count were each
+     written by whichever handler happened to know, and none of them told the
+     others. Every server answer (send, accept, decline, cancel, a code typed,
+     scanned or linked) and every socket event goes through this now, with
+     one of four answers:
+       'incoming'  they asked you: their request is on Requests
+       'pending'   you asked them: they are on Sent
+       'accepted'  friends: on neither list, and the count is read again
+       'none'      nothing between you: on neither list
+     friendStatuses carries the same word for the rows on every tab, so a
+     person who asked you reads Accept wherever they appear. 'none' is
+     written down too, not left as a gap: a contacts match carries the
+     server's word from when the check ran (friendship_status), and a gap let
+     that old word show through, so a request cancelled on Sent still read
+     Pending on Contacts, and one declined still offered Accept there. */
+  // WHEN EACH PERSON WAS LAST WRITTEN HERE, on a count that only goes up, so a
+  // list read can tell its rows from newer news. A read asked for before an
+  // answer or a socket event landed must not undo it: the request a tap just
+  // sent, accepted, declined or cancelled, or one that arrived live, would be
+  // drawn back the way the server had it a moment earlier.
+  // refreshFriendRequests reads it.
+  const relationshipWrittenRef = useRef({ now: 0, at: new Map() });
+  const applyRelationship = useCallback((user, status) => {
+    if (!user || user.id === undefined || user.id === null) return;
+    const id = user.id;
+    const written = relationshipWrittenRef.current;
+    written.now += 1;
+    written.at.set(String(id), written.now);
+    const row = { id, name: user.name || '', profile_image_url: user.profile_image_url || null, created_at: user.created_at || new Date().toISOString() };
+    setFriendStatuses(prev => ({ ...prev, [id]: status }));
+    setPendingRequests(prev => (status === 'incoming'
+      ? (prev.some(r => r.id === id) ? prev : [row, ...prev])
+      : prev.filter(r => r.id !== id)));
+    setOutgoingRequests(prev => (status === 'pending'
+      ? (prev.some(r => r.id === id) ? prev : [row, ...prev])
+      : prev.filter(r => r.id !== id)));
+    if (status === 'accepted') refreshFriendCount();
+  }, [refreshFriendCount]);
 
   /* OPTIMISTIC, WITH A ROLLBACK, like updateFlockVotes. This waited for the
      round trip before the button changed at all, while confirmClick painted a
-     full-button green tick for 1.1 seconds the moment it was pressed — so a
+     full-button green tick for 1.1 seconds the moment it was pressed, so a
      request that failed showed a confirmation for something that had not
      happened, which is worse than showing nothing. The pill now flips to
-     Pending immediately and goes back to Add if the server refuses. */
+     Pending immediately and goes back to Add if the server refuses.
+
+     The answer is where the row lands, through applyRelationship: an Add on
+     somebody who had already asked you is an accept (the server makes it one),
+     so they leave Requests and the count moves, and the server's sentence
+     says so. An answer that is neither (a request the server could not send)
+     is said rather than shown as Pending. */
   const handleSendFriendRequest = useCallback(async (user) => {
+    // Read through the ref, as Cancel does: friendStatuses is declared further
+    // down this component.
+    const before = friendStatusesRef.current[user.id];
+    // Marked while the answer is out, so a Sent list read that lands meanwhile
+    // (one the server can have read before it stored this request) leaves the
+    // tap's Pending alone. See refreshFriendRequests.
+    const busyKey = `add:${user.id}`;
+    friendRequestBusyRef.current.add(busyKey);
     setFriendStatuses(prev => ({ ...prev, [user.id]: 'pending' }));
     try {
       const data = await sendFriendRequest(user.id);
-      setFriendStatuses(prev => ({ ...prev, [user.id]: data.status || 'pending' }));
+      const status = data?.status || 'pending';
+      if (status === 'accepted') {
+        applyRelationship(user, 'accepted');
+        if (data?.message) showToast(data.message);
+      } else if (status === 'pending') {
+        applyRelationship(user, 'pending');
+      } else {
+        applyRelationship(user, 'none');
+        showToast(data?.message || "That friend request didn't send.", 'error');
+      }
     } catch (err) {
       // Put the button back. Without this the row keeps saying Pending for a
-      // request the server never accepted, until the screen is reloaded.
+      // request the server never accepted, until the screen is reloaded. Back
+      // to what it was, so somebody who had asked you still reads Accept.
       setFriendStatuses(prev => {
         const next = { ...prev };
-        delete next[user.id];
+        if (before === undefined) delete next[user.id];
+        else next[user.id] = before;
         return next;
       });
       if (needsEmailVerification(err, 'add friends')) return;
       showToast(userMessage(err, "That friend request didn't send."), 'error');
+    } finally {
+      friendRequestBusyRef.current.delete(busyKey);
     }
-  }, [showToast, needsEmailVerification]);
+  }, [showToast, needsEmailVerification, applyRelationship]);
 
   // Add Friends screen handlers
   const addFriendsTimerRef = useRef(null);
@@ -6884,36 +7182,167 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }, 400);
   }, []);
 
+  // THE ACCOUNT'S OWN CODE, read quietly. The server issues it (routes/
+  // friends.js, migration 079); it used to be worked out here from the user
+  // id, which is exactly what made every account's code guessable. A code on
+  // screen stays there while the read is out, the answer replaces it and the
+  // copy on the device, and the failure flag goes up only when there is no
+  // code at all to show. One read at a time: a second ask while one is out
+  // shares it. The copy is keyed by account, so a different account never
+  // sees the last one's code (cachedFriendCode above).
+  const myFriendCodeRef = useRef(myFriendCode);
+  myFriendCodeRef.current = myFriendCode;
+  const friendCodeReadRef = useRef(null);
+  const loadMyFriendCode = useCallback(() => {
+    const userId = authUser?.id;
+    if (!userId) return Promise.resolve(null);
+    if (friendCodeReadRef.current) return friendCodeReadRef.current;
+    setMyFriendCodeFailed(false);
+    const read = getMyFriendCode()
+      .then((d) => {
+        const code = d?.code ? (friendCodeFrom(String(d.code)) || String(d.code)) : '';
+        if (!code) {
+          if (!myFriendCodeRef.current) setMyFriendCodeFailed(true);
+          return null;
+        }
+        const url = typeof d.url === 'string' && d.url ? d.url : friendCodeLink(code);
+        setMyFriendCode(code);
+        setMyFriendCodeUrl(url);
+        const qr = friendQrText(code, d.qr);
+        setMyFriendCodeQr(qr);
+        try { localStorage.setItem(FRIEND_CODE_CACHE_KEY, JSON.stringify({ userId, code, url, qr })); } catch { /* storage blocked: read again next visit */ }
+        return code;
+      })
+      .catch((e) => {
+        console.error('[AddFriends] Friend code:', e.message);
+        if (!myFriendCodeRef.current) setMyFriendCodeFailed(true);
+        return null;
+      })
+      .finally(() => { friendCodeReadRef.current = null; });
+    friendCodeReadRef.current = read;
+    return read;
+  }, [authUser?.id]);
+
+  // Requests answered on this device whose answer is still out, or (for a
+  // decline) still inside its Undo window. A list read that lands meanwhile
+  // must not draw them back. Keyed by the person's id for Accept and Decline,
+  // `out:<id>` for Cancel and `add:<id>` for Add. Declared here because the
+  // reads below filter on them; the handlers that fill them are further down.
+  const friendRequestBusyRef = useRef(new Set());
+  const decliningRef = useRef(new Map());
+
+  // BOTH REQUEST LISTS, READ AGAIN. On entering Add Friends, on a return to
+  // the app (at most every 30 seconds) and on a socket that came back: a
+  // phone asleep in a pocket hears no socket event and the server keeps none
+  // for it, so a request accepted overnight still read Pending in the
+  // morning, and Cancel on that row used to delete the friendship. Each list
+  // keeps its own error and its own sequence, so a slower read never lands
+  // over a newer one.
+  const pendingReadSeqRef = useRef(0);
+  const outgoingReadSeqRef = useRef(0);
+  const refreshFriendRequests = useCallback(() => {
+    // Anybody written here after this moment (an answer, a socket event) keeps
+    // what they have now, whatever these lists say: the server can have read
+    // them before it stored that change (relationshipWrittenRef).
+    const asked = relationshipWrittenRef.current.now;
+    const writtenSince = (id) => (relationshipWrittenRef.current.at.get(String(id)) || 0) > asked;
+    const p = ++pendingReadSeqRef.current;
+    getPendingRequests()
+      .then(d => {
+        if (p !== pendingReadSeqRef.current) return;
+        const settling = (r) => friendRequestBusyRef.current.has(r.id) || decliningRef.current.has(r.id) || writtenSince(r.id);
+        const rows = (Array.isArray(d) ? d : (d?.requests || [])).filter(r => !settling(r));
+        setPendingRequests(prev => {
+          const kept = prev.filter(r => writtenSince(r.id));
+          return kept.length ? [...kept, ...rows] : rows;
+        });
+        setPendingRequestsError('');
+      })
+      .catch(e => { if (p !== pendingReadSeqRef.current) return; console.error('[AddFriends] Pending:', e.message); setPendingRequestsError(userMessage(e, 'Your friend requests are not loading right now.')); });
+    const o = ++outgoingReadSeqRef.current;
+    getOutgoingRequests().then(d => {
+      if (o !== outgoingReadSeqRef.current) return;
+      const listed = d?.requests || [];
+      const sent = new Set(listed.map(r => String(r.id)));
+      // A Cancel or an Add whose answer is still out, or newer news: that
+      // person's row is theirs to settle, not this read's.
+      const unsettled = (id) => friendRequestBusyRef.current.has(`out:${id}`) || friendRequestBusyRef.current.has(`add:${id}`) || writtenSince(id);
+      const requests = listed.filter(r => !unsettled(r.id));
+      setOutgoingRequests(prev => {
+        const kept = prev.filter(r => writtenSince(r.id));
+        return kept.length ? [...kept, ...requests] : requests;
+      });
+      setOutgoingRequestsLoaded(true);
+      // Seed the search rows too: a request you have already sent must read
+      // "Pending", not a fresh Add button that would send a second one. Over
+      // a 'none' as well: the list was asked for after that was written (a
+      // newer one is left out of `requests` above), so the list is the news.
+      const before = friendStatusesRef.current;
+      setFriendStatuses(prev => {
+        const next = { ...prev };
+        for (const r of requests) if (!next[r.id] || next[r.id] === 'none') next[r.id] = 'pending';
+        return next;
+      });
+      // A row that was Pending and has left Sent since the last read was
+      // accepted, or withdrawn from another device. Which one is asked rather
+      // than guessed (a handful at most; usually there is none).
+      Object.keys(before)
+        .filter(id => before[id] === 'pending' && !sent.has(id) && !unsettled(id))
+        .slice(0, 5)
+        .forEach((id) => {
+          getFriendshipStatus(id)
+            .then((s) => {
+              // Newer news about them while this was asked answers for itself.
+              if (unsettled(id)) return;
+              if (s?.status === 'accepted') applyRelationship({ id: Number(id) || id }, 'accepted');
+              else if (s?.status !== 'pending') {
+                // Withdrawn: nothing between you, said rather than left as a
+                // gap a contacts row's older word would show through.
+                setFriendStatuses(prev => (prev[id] !== 'pending' ? prev : { ...prev, [id]: 'none' }));
+              }
+            })
+            .catch(() => { /* left as it was; the next read asks again */ });
+        });
+    }).catch(e => {
+      console.error('[AddFriends] Outgoing:', e.message);
+      // The wait is over either way: the list stays as it was rather than
+      // drawing rows on their way that are not coming.
+      if (o === outgoingReadSeqRef.current) setOutgoingRequestsLoaded(true);
+    });
+  }, [applyRelationship]);
+
+  // SOMEBODY WHO ASKED YOU READS ACCEPT, WHEREVER THEY APPEAR. The rows on
+  // Search, People you may know and Contacts read friendStatuses, and nothing
+  // used to put a received request there, so the person who had asked you was
+  // offered Add. Kept in step with the Requests list from here, whichever way
+  // the list changed: the boot read, a refresh, the socket, an answer. A
+  // request that has left the list (withdrawn, or declined) leaves 'none'
+  // behind, so a contacts match that said 'incoming' when the check ran stops
+  // offering Accept. One whose Accept is still out keeps its word until the
+  // answer writes where they land: an Add in the meantime would read as a tap
+  // that had failed.
+  useEffect(() => {
+    const answering = (id) => friendRequestBusyRef.current.has(id) || friendRequestBusyRef.current.has(Number(id));
+    setFriendStatuses(prev => {
+      const asked = new Set(pendingRequests.map(r => String(r.id)));
+      let next = prev;
+      const edit = () => { if (next === prev) next = { ...prev }; return next; };
+      for (const r of pendingRequests) {
+        if (prev[r.id] !== 'incoming' && prev[r.id] !== 'accepted') edit()[r.id] = 'incoming';
+      }
+      for (const id of Object.keys(prev)) {
+        if (prev[id] === 'incoming' && !asked.has(id) && !answering(id)) edit()[id] = 'none';
+      }
+      return next;
+    });
+  }, [pendingRequests]);
+
   const loadAddFriendsData = useCallback(async () => {
     setContactsSupported(contactsAvailable());
-    // The server issues the friend code (routes/friends.js, migration 079). It
-    // used to be worked out here from the user id, which is exactly what made
-    // every account's code guessable. Until it arrives the QR and the share
-    // button wait on an empty code; cleared first so a different account never
-    // shows the last one's.
     if (!authUser?.id) return;
-    setMyFriendCode('');
-    setMyFriendCodeFailed(false);
-    getMyFriendCode()
-      .then((d) => { if (d?.code) setMyFriendCode(d.code); else setMyFriendCodeFailed(true); })
-      .catch((e) => { console.error('[AddFriends] Friend code:', e.message); setMyFriendCodeFailed(true); });
     // Load each independently so one failure doesn't block the rest
-    getPendingRequests()
-      .then(d => { setPendingRequests(d.requests || []); setPendingRequestsError(''); })
-      .catch(e => { console.error('[AddFriends] Pending:', e.message); setPendingRequestsError(userMessage(e, 'Your friend requests are not loading right now.')); });
-    getOutgoingRequests().then(d => {
-      const requests = d.requests || [];
-      setOutgoingRequests(requests);
-      // Seed the search rows too: a request you have already sent must read
-      // "Pending", not a fresh Add button that would send a second one.
-      if (requests.length) {
-        setFriendStatuses(prev => {
-          const next = { ...prev };
-          for (const r of requests) if (!next[r.id]) next[r.id] = 'pending';
-          return next;
-        });
-      }
-    }).catch(e => console.error('[AddFriends] Outgoing:', e.message));
+    loadMyFriendCode();
+    refreshFriendRequests();
     getFriendSuggestions()
       .then(d => { setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError(''); })
       .catch(e => { console.error('[AddFriends] Suggestions:', e.message); setFriendSuggestionsError(userMessage(e, 'Quick Add is not loading right now.')); });
@@ -6932,7 +7361,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       }
     }).catch(e => console.error('[AddFriends] Friends:', e.message));
-  }, [authUser]);
+  }, [authUser?.id, loadMyFriendCode, refreshFriendRequests]);
 
   // ANSWERING A REQUEST, ON THE TAP. Accept, Decline and Cancel each waited for
   // the server before the row moved, and Accept drew its success tick on the
@@ -6940,8 +7369,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the way Add marks Pending at once (handleSendFriendRequest), a refusal puts
   // it back where it was with a toast, and success is said only once the
   // server has said it. One answer per person at a time: the row is gone after
-  // the first tap, but a fast double tap lands both before React redraws.
-  const friendRequestBusyRef = useRef(new Set());
+  // the first tap, but a fast double tap lands both before React redraws
+  // (friendRequestBusyRef, declared above beside the reads it guards).
 
   const handleAcceptFriendRequest = useCallback(async (userId) => {
     if (friendRequestBusyRef.current.has(userId)) return;
@@ -6951,13 +7380,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await acceptFriendRequest(userId);
-      // Off again now that the server agrees: a list reload that landed during
-      // the wait (Add Friends opening, Try again) can have drawn it back.
-      setPendingRequests(prev => prev.filter(r => r.id !== userId));
-      setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
-      // The header count only ever moved on boot and on the other person's
-      // socket event, so accepting here left it a friend behind.
-      getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
+      // Friends now, through the one writer: off Requests and Sent both (a
+      // list reload that landed during the wait can have drawn it back), every
+      // row reads Friends, and the header count, which only ever moved on boot
+      // and on the other person's socket event, is read again.
+      applyRelationship(request || { id: userId }, 'accepted');
       showToast('Friend request accepted.');
     } catch (err) {
       // The requester withdrew it (Cancel on Sent Requests tells nobody), so
@@ -6976,28 +7403,66 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       friendRequestBusyRef.current.delete(userId);
     }
-  }, [pendingRequests, showToast, needsEmailVerification]);
+  }, [pendingRequests, showToast, needsEmailVerification, applyRelationship]);
 
-  const handleDeclineFriendRequest = useCallback(async (userId) => {
-    if (friendRequestBusyRef.current.has(userId)) return;
-    friendRequestBusyRef.current.add(userId);
+  /* DECLINE, WITH FIVE SECONDS TO TAKE IT BACK. The X sits beside Accept, and
+     a mis-tap on it lost the request for good: the person who asked could not
+     ask again for a day, and nothing on the screen said so. Now the request
+     leaves the list on the tap, its row says Declined in its own place with an
+     Undo (decliningRequests, drawn by the Requests tab), and the decline is
+     only sent once that window has passed. Undo puts the row back and nothing
+     ever reaches the server. A list read that lands inside the window leaves
+     the row off (decliningRef), and a sign-out inside it sends nothing.
+
+     THE UNDO IS ON THE ROW, NOT ON A TOAST. The toast has one slot, and any
+     toast after it (an accept, a request arriving, a second decline) took the
+     Undo away while the decline still went out, so clearing several requests
+     in a row, which is when an Undo is wanted most, left only the last one
+     undoable. Each row in its window keeps its own. */
+  const [decliningRequests, setDecliningRequests] = useState([]);
+  const handleDeclineFriendRequest = useCallback((userId) => {
+    if (friendRequestBusyRef.current.has(userId) || decliningRef.current.has(userId)) return;
     const at = pendingRequests.findIndex(r => r.id === userId);
     const request = at === -1 ? null : pendingRequests[at];
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
-    try {
-      await declineFriendRequest(userId);
-      // Off again on success, for the same reload as Accept.
-      setPendingRequests(prev => prev.filter(r => r.id !== userId));
-    } catch (err) {
-      // Nothing pending from them any more (withdrawn, or answered on another
-      // device): the row stays gone, which is what the tap asked for.
-      if (err?.status === 404) return;
-      setPendingRequests(prev => withRowAt(prev, at, request));
-      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
-    } finally {
-      friendRequestBusyRef.current.delete(userId);
-    }
-  }, [pendingRequests, showToast]);
+    // `at` goes with the row so the tab can draw it where it was.
+    setDecliningRequests(prev => [...prev.filter(r => r.id !== userId), { ...(request || { id: userId, name: '', profile_image_url: null }), at }]);
+    const send = async () => {
+      decliningRef.current.delete(userId);
+      setDecliningRequests(prev => prev.filter(r => r.id !== userId));
+      friendRequestBusyRef.current.add(userId);
+      try {
+        await declineFriendRequest(userId);
+        // Nothing between you now, through the one writer: off again (for the
+        // same reload as Accept), and no Accept left on their other rows.
+        applyRelationship(request || { id: userId }, 'none');
+      } catch (err) {
+        // Nothing pending from them any more (withdrawn, or answered on another
+        // device): the row stays gone, which is what the tap asked for.
+        if (err?.status === 404) return;
+        setPendingRequests(prev => withRowAt(prev, at, request));
+        if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
+      } finally {
+        friendRequestBusyRef.current.delete(userId);
+      }
+    };
+    decliningRef.current.set(userId, { timer: setTimeout(send, DECLINE_UNDO_MS), at, request });
+  }, [pendingRequests, showToast, applyRelationship]);
+  // Undo, from the row, inside the window: the request goes back where it
+  // was, and the decline is never sent.
+  const handleUndoDecline = useCallback((userId) => {
+    const waiting = decliningRef.current.get(userId);
+    if (!waiting) return;
+    clearTimeout(waiting.timer);
+    decliningRef.current.delete(userId);
+    setDecliningRequests(prev => prev.filter(r => r.id !== userId));
+    setPendingRequests(prev => withRowAt(prev, waiting.at, waiting.request));
+  }, []);
+  // A decline still inside its window when the session ends is never sent.
+  useEffect(() => () => {
+    decliningRef.current.forEach((waiting) => clearTimeout(waiting.timer));
+    decliningRef.current.clear();
+  }, []);
 
   const handleCancelOutgoingRequest = useCallback(async (userId) => {
     const key = `out:${userId}`;
@@ -7009,39 +7474,100 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // component, so it cannot be one of this callback's dependencies.
     const statusBefore = friendStatusesRef.current[userId];
     setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
-    setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
+    setFriendStatuses(prev => ({ ...prev, [userId]: 'none' }));
     try {
-      await removeFriend(userId);
-      // Off again on success, for the same reload as Accept.
-      setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
-      setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
+      // CANCEL ONLY EVER CANCELS A REQUEST. It used to be DELETE
+      // /api/friends/:id, which removes whatever the pair has, so Cancel on a
+      // row that still read Pending after the other person had accepted (the
+      // phone asleep, no socket to say so) silently unfriended them.
+      await cancelFriendRequest(userId);
+      // Nothing between you now, through the one writer: off again on
+      // success, for the same reload as Accept, and its Pending mark with it.
+      applyRelationship(request || { id: userId }, 'none');
     } catch (err) {
+      // They accepted it while this list was stale. The friendship stays, and
+      // the row goes where a friend's row goes.
+      if (err?.status === 409 && err?.data?.status === 'accepted') {
+        applyRelationship(request || { id: userId }, 'accepted');
+        showToast(`${request?.name || 'They'} already accepted. You're friends now.`);
+        return;
+      }
       // Nothing left to cancel: the row stays gone.
       if (err?.status === 404) return;
       setOutgoingRequests(prev => withRowAt(prev, at, request));
-      if (statusBefore !== undefined) {
-        setFriendStatuses(prev => (prev[userId] !== undefined ? prev : { ...prev, [userId]: statusBefore }));
-      }
+      // Back to what it said, unless something newer has been written since
+      // the tap's 'none'.
+      setFriendStatuses(prev => {
+        if (prev[userId] !== 'none') return prev;
+        const next = { ...prev };
+        if (statusBefore === undefined) delete next[userId];
+        else next[userId] = statusBefore;
+        return next;
+      });
       if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't cancel that request. Try again."), 'error');
     } finally {
       friendRequestBusyRef.current.delete(key);
     }
-  }, [outgoingRequests, showToast]);
+  }, [outgoingRequests, showToast, applyRelationship]);
 
-  const handleAddByCode = useCallback(async () => {
-    if (!friendCodeInput.trim()) return;
+  /* ONE ADD BY CODE, for the box, the scanner and a link's sheet. The server's
+     answer is where the person lands (applyRelationship): a request sent puts
+     them on Sent, and a code whose owner had already asked you is an accept,
+     so they leave Requests and the count moves. Every caller says the
+     server's sentence; this only reports it. */
+  const sendFriendCode = useCallback(async (code) => {
+    const data = await addFriendByCode(code);
+    const status = data?.status || 'pending';
+    if (data?.user) applyRelationship(data.user, status === 'accepted' || status === 'pending' ? status : 'none');
+    if (pendingFriendCode() === code) forgetFriendCode();
+    return {
+      ok: status === 'pending' || status === 'accepted',
+      status,
+      user: data?.user || null,
+      message: data?.message || (status === 'accepted' ? "You're friends now." : status === 'pending' ? 'Friend request sent.' : "That friend request didn't send."),
+    };
+  }, [applyRelationship]);
+
+  // The code box. `typed` is the box's own value when Return sent it, because
+  // the box publishes friendCodeInput on a pause and a Return inside that
+  // pause would otherwise send the code one character short; a tap on Add
+  // passes nothing and reads friendCodeInput. Any shape friendCodeFrom reads
+  // works here (a pasted invite, a link, no prefix, a space, a full stop),
+  // and the box itself is left alone: the screen puts the keys away.
+  const friendCodeBusyRef = useRef(false);
+  const handleAddByCode = useCallback(async (typed) => {
+    const raw = typeof typed === 'string' ? typed : friendCodeInput;
+    if (!raw || !raw.trim() || friendCodeBusyRef.current) return;
+    const code = friendCodeFrom(raw);
+    if (!code) {
+      showToast("That isn't a Flock code. A code looks like FLOCK-XXXXXXXX.", 'error');
+      return;
+    }
+    // Said here rather than spent on a request the server would refuse.
+    if (myFriendCode && code === myFriendCode) {
+      showToast("That's your own code.");
+      return;
+    }
+    friendCodeBusyRef.current = true;
     setFriendCodeLoading(true);
     try {
-      const data = await addFriendByCode(friendCodeInput.trim());
-      showToast(data.message);
-      if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
-      setFriendCodeInput('');
+      const result = await sendFriendCode(code);
+      if (result.ok) {
+        showToast(result.message);
+        setFriendCodeInput('');
+      } else {
+        showToast(result.message, 'error');
+      }
     } catch (err) {
-      if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, "Couldn't add that friend. Try again."), 'error');
+      // Kept for after the confirmation: the sheet that follows it offers the
+      // same person again, so the code is not typed twice.
+      if (needsEmailVerification(err, 'add friends')) { rememberFriendCode(code); return; }
+      showToast(userMessage(err, "Couldn't add that friend. Try again."), 'error');
     } finally {
+      friendCodeBusyRef.current = false;
       setFriendCodeLoading(false);
     }
-  }, [friendCodeInput, showToast, needsEmailVerification]);
+  }, [friendCodeInput, myFriendCode, showToast, needsEmailVerification, sendFriendCode]);
 
   // Reading the address book, on whichever platform this is. Nothing here
   // touches navigator.contacts: that is the WEB Contacts Picker, it does not
@@ -7053,14 +7579,90 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // into Settings, so the only thing allowed to trigger it is a deliberate tap
   // on a screen that has already explained what leaves the phone. Do not call
   // this on mount, on tab change, or from an effect.
+  //
+  // WHAT ONE TAP DOES NOW, and what it used to get wrong:
+  //   - An unconfirmed address is told first. find-by-phone is refused until
+  //     the email is confirmed, and this used to spend iOS's one prompt and
+  //     read the whole book before that refusal came back.
+  //   - A big book is checked in passes. Three batches of 200 an hour is the
+  //     server's allowance, and every run used to send the same first 600;
+  //     the run now starts where the last one stopped (a cursor per account,
+  //     kept on the device) and the counts add up across the pass.
+  //   - What was found is never wiped. Matches merge across runs, and a run
+  //     the server refused before it checked anything (the hourly allowance
+  //     spent) changes nothing but the time the next one can go. The fourth
+  //     check of an hour used to erase every friend it had found and say none
+  //     of your numbers were on Flock.
+  //   - Nor lost to a relaunch. The cursor carries the people its pass has
+  //     found, so a run that carries the pass on after the app was closed
+  //     shows them again rather than "nobody matched" over the numbers they
+  //     were found in. And a refused run with nothing on screen and no pass to
+  //     carry on draws no result at all, because nothing was checked: only
+  //     when the next one can go (contactsRetryAt).
+  const contactsRunRef = useRef(false);
+  const contactsUsersRef = useRef(contactsUsers);
+  contactsUsersRef.current = contactsUsers;
+  const contactsResultRef = useRef(contactsResult);
+  contactsResultRef.current = contactsResult;
   const handleSyncContacts = useCallback(async () => {
+    if (contactsRunRef.current) return;
+    if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
+    contactsRunRef.current = true;
     setContactsLoading(true);
     setContactsDenied(false);
     setContactsUnavailable(false);
+    const userId = authUser?.id;
+    const cursor = readContactsCursor(userId);
     try {
-      const data = await syncContacts(findFriendsByPhone);
-      setContactsUsers(data.users);
-      setContactsResult({ checked: data.checked, total: data.total, throttled: data.throttled });
+      const data = await syncContacts(findFriendsByPhone, { cursor });
+      if (data.permission === 'granted' || data.permission === 'limited') setContactsPermissionRead(data.permission);
+      // The runs this one carried on from, when it did: their counts, and the
+      // people they found.
+      const carried = data.startBatch > 0 && cursor ? cursor : null;
+      const sent = data.sent + (carried ? Number(carried.sent) || 0 : 0);
+      const checked = data.checked + (carried ? Number(carried.checked) || 0 : 0);
+      const summary = (matched) => ({
+        checked,
+        total: data.total,
+        sent,
+        unreadable: Math.max(0, sent - checked),
+        notReached: data.notReached,
+        throttled: data.throttled,
+        retryAt: data.retryAt,
+        contactCount: data.contactCount,
+        permission: data.permission,
+        matched,
+      });
+      // Everyone found so far, once each, in name order: by the runs the
+      // cursor carries, by the runs earlier this session, and by this one.
+      const everyone = (found) => {
+        const byId = new Map();
+        for (const u of [...(carried ? carried.users || [] : []), ...contactsUsersRef.current, ...found]) byId.set(u.id, u);
+        return [...byId.values()].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      };
+      if (data.throttled && data.answered === 0) {
+        if (contactsResultRef.current) {
+          // What is on screen stays, with when the next run can go.
+          setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt } : prev));
+        } else if (carried) {
+          // Nothing on screen yet (the app was closed part way through a
+          // pass): what the pass's earlier runs checked and found.
+          const merged = everyone([]);
+          setContactsUsers(merged);
+          setContactsResult(summary(merged.length));
+          setContactsRetryAt(null);
+        } else {
+          // Nothing checked, so nothing to say about anybody.
+          setContactsRetryAt(data.retryAt);
+        }
+        return;
+      }
+      const merged = everyone(data.users);
+      writeContactsCursor(userId, data.nextBatch === null ? null : { nextBatch: data.nextBatch, total: data.total, sent, checked, users: merged });
+      setContactsUsers(merged);
+      setContactsResult(summary(merged.length));
+      setContactsRetryAt(null);
+      if (data.failed) showToast("Some of your contacts couldn't be checked. Try again in a moment.", 'error');
     } catch (err) {
       // Dismissing a picker is not an error and gets no toast at all. The
       // screen is exactly as it was before the tap, which is the truth.
@@ -7074,9 +7676,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // partial result and reports it through `throttled`.
       if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, 'Could not check your contacts'), 'error');
     } finally {
+      contactsRunRef.current = false;
       setContactsLoading(false);
     }
-  }, [showToast, needsEmailVerification]);
+  }, [authUser?.id, emailUnconfirmed, showToast, needsEmailVerification]);
 
   // One number, typed. No permission, no plugin, no address book, and metered
   // on the server as the friend probe rather than as a contact sync.
@@ -7089,6 +7692,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const handleLookupByNumber = useCallback(async (typed) => {
     const value = (typeof typed === 'string' ? typed : phoneLookupInput).trim();
     if (!value) return;
+    // Refused by the server until the email is confirmed, so it is said
+    // before the request rather than after it.
+    if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
     setPhoneLookupLoading(true);
     setPhoneLookupError('');
     try {
@@ -7110,7 +7716,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } finally {
       setPhoneLookupLoading(false);
     }
-  }, [phoneLookupInput, needsEmailVerification]);
+  }, [phoneLookupInput, emailUnconfirmed, needsEmailVerification]);
 
   // Inviting somebody who does not have an account yet.
   //
@@ -7119,134 +7725,182 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // person, and refusing to say that is the whole reason a batch of 200 that
   // matches 3 people cannot be narrowed for free. So the recipient is chosen
   // in Messages, by the person sending it, and Flock never learns who.
+  //
+  // IT CARRIES THE LINK NOW, not an App Store link and a code to retype. The
+  // link (myFriendCodeUrl, /add/<code>) opens the website's page for somebody
+  // without Flock, with the App Store and the web app on it, and it keeps the
+  // code through their sign-up, so the account they make is shown who sent it.
+  // The share sheet (navigator.share) wherever there is one, the clipboard on
+  // a computer, and a copy that fails still hands over the code
+  // (lib/friendCode.js shareFriendCode, which also says why).
   const handleInviteFriend = useCallback(async () => {
-    const text = `Add me on Flock, my code is ${myFriendCode}. https://apps.apple.com/app/id6781442127`;
-    // The share sheet wherever there is one: the app, iPhone Safari, Chrome on
-    // Android. Closing it rejects with an AbortError, which is a decision, not
-    // a failure, so nothing is said. Any other refusal falls through.
-    if (typeof navigator.share === 'function') {
-      try {
-        await navigator.share({ text });
-        return;
-      } catch (e) {
-        if (e?.name === 'AbortError') return;
-      }
-    }
-    // NO SHARE SHEET MEANS A COMPUTER. This used to hand the invite to an sms:
-    // link, which a desktop browser has no app for, so the button did nothing
-    // at all there (found by the button sweep, 2026-10-20). The clipboard is
-    // the same rung the plan invite in ChatDetail.js and CreateScreen.js falls
-    // to, and a copy that fails still hands over the code, which is the part
-    // a friend needs.
+    await shareFriendCode({ code: myFriendCode, url: myFriendCodeUrl, showToast, copiedNote: 'Invite copied. Paste it into a text.' });
+  }, [myFriendCode, myFriendCodeUrl, showToast]);
+
+  // The Share button on the QR card: the same link, for a friend who is not
+  // standing next to you.
+  const handleShareMyCode = useCallback(async () => {
+    await shareFriendCode({ code: myFriendCode, url: myFriendCodeUrl, showToast });
+  }, [myFriendCode, myFriendCodeUrl, showToast]);
+
+  // THE SCANNER, OPENED AND CLOSED. components/QrScanner.js owns the camera,
+  // the decoding and every state in between; this decides only whether it is
+  // on screen, and what a read code does.
+  const openQrScanner = useCallback(() => { setQrScannerOpen(true); }, []);
+  const closeQrScanner = useCallback(() => { setQrScannerOpen(false); }, []);
+  // "Type the code instead": the scanner closes, the QR tab is the one on
+  // screen, and the screen puts the caret in the code field (it focuses it
+  // each time focusCodeFieldRequest moves). Also where a browser with no
+  // camera at all is sent.
+  const typeCodeInstead = useCallback((reason) => {
+    setQrScannerOpen(false);
+    setAddFriendsTab('qr');
+    setFocusCodeFieldRequest(n => n + 1);
+    if (reason === 'unsupported') showToast("This browser can't open the camera. Type your friend's code instead.", 'warning');
+  }, [showToast]);
+  // A code the scanner read. It sends at once, because pointing a camera at a
+  // friend's phone is the deliberate act a link's tap is not, and the scanner
+  // shows what the server said (QrScanner.js). Never written into the code
+  // box: that left a filled box and a live Add behind a request already sent.
+  const addFromScanner = useCallback(async (code) => {
     try {
-      await navigator.clipboard.writeText(text);
-      showToast('Invite copied. Paste it into a text.');
-    } catch {
-      showToast(`Couldn't copy it. Your code is ${myFriendCode}.`, 'error');
-    }
-  }, [myFriendCode, showToast]);
-
-  const startQrScanner = useCallback(async () => {
-    const session = qrSessionRef.current + 1;
-    qrSessionRef.current = session;
-    const stillOpen = () => qrSessionRef.current === session;
-    setShowQrScanner(true);
-    setQrScanError('');
-    // Small delay to let the DOM render the scanner div
-    setTimeout(async () => {
-      if (!stillOpen()) return;
-      try {
-        // Fetched on the tap, not at launch. This library carries its own
-        // barcode decoding engine, and holding it as a static import put the
-        // whole thing in the startup chunk for every user on every launch,
-        // including the overwhelming majority who never open this screen.
-        //
-        // Safe to await here where it would NOT be safe in front of a
-        // permission prompt: the camera prompt is raised by scanner.start()
-        // below, and that is a getUserMedia call, which does not require the
-        // synchronous user activation that Notification.requestPermission
-        // does. The load is also already behind a 300ms setTimeout that waits
-        // for the scanner div to render, so this adds no gesture boundary that
-        // was not there before.
-        //
-        // A failed load lands in the catch below and is reported as a scanner
-        // failure rather than a camera failure, because telling somebody to
-        // check their camera permissions when the real problem was the network
-        // sends them to the wrong settings screen.
-        const { Html5Qrcode } = await import('html5-qrcode');
-        if (!stillOpen()) return;
-        const scanner = new Html5Qrcode(qrScannerDivId);
-        qrScannerRef.current = scanner;
-        await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          async (decodedText) => {
-            // Successfully scanned
-            try {
-              const parsed = JSON.parse(decodedText);
-              if (parsed.type === 'flock_friend' && parsed.code) {
-                // Stop scanner first
-                try { await scanner.stop(); } catch {}
-                qrScannerRef.current = null;
-                setShowQrScanner(false);
-                // Add friend by code
-                setFriendCodeInput(parsed.code);
-                // Own guard: a server refusal is not a bad QR code.
-                try {
-                  const data = await addFriendByCode(parsed.code);
-                  showToast(data.message || 'Friend request sent!');
-                  if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
-                } catch (err) {
-                  if (needsEmailVerification(err, 'add friends')) return;
-                  showToast(userMessage(err, 'Could not add that friend. Try again.'), 'error');
-                }
-              } else {
-                setQrScanError('Not a Flock QR code');
-              }
-            } catch {
-              setQrScanError('Not a valid Flock QR code');
-            }
-          },
-          () => {} // ignore scan failures (no QR in frame)
-        );
-        // Closed while the camera was coming up: turn it straight back off.
-        if (!stillOpen()) {
-          try { await scanner.stop(); } catch {}
-          if (qrScannerRef.current === scanner) qrScannerRef.current = null;
-        }
-      } catch (err) {
-        if (!stillOpen()) return;
-        console.error('[QR Scanner] Start error:', err);
-        // A chunk that fails to load is a network problem, not a camera one.
-        // Naming the camera here would send somebody into their permission
-        // settings to fix something that is not broken.
-        const failedToLoad = err?.name === 'ChunkLoadError'
-          || /Loading chunk|dynamically imported module/i.test(err?.message || '');
-        setQrScanError(
-          failedToLoad
-            ? "Couldn't load the scanner. Check your connection and try again."
-            // The chat camera's sentences, not the library's text.
-            : cameraErrorCopy(err, isNativeShell())
-        );
+      const result = await sendFriendCode(code);
+      if (!result.ok) return { ok: false, message: result.message };
+      hapticSuccess();
+      // Said again here, so it is still on screen after the scanner closes.
+      showToast(result.message);
+      return { ok: true, message: result.message };
+    } catch (err) {
+      // The confirm-your-email sheet sits under the scanner, so the scanner
+      // goes, and the code waits for the confirmation (openFriendLink below
+      // offers it again once the address is confirmed).
+      if (needsEmailVerification(err, 'add friends')) {
+        rememberFriendCode(code);
+        return { ok: false, close: true };
       }
-    }, 300);
-  }, [showToast, needsEmailVerification]);
-
-  const stopQrScanner = useCallback(async () => {
-    // Moving the number on is what reaches a start still in flight.
-    qrSessionRef.current += 1;
-    if (qrScannerRef.current) {
-      try { await qrScannerRef.current.stop(); } catch {}
-      qrScannerRef.current = null;
+      return { ok: false, message: userMessage(err, 'Could not add that friend. Try again.') };
     }
-    setShowQrScanner(false);
-    setQrScanError('');
-  }, []);
+  }, [sendFriendCode, showToast, needsEmailVerification]);
   // Leaving Add Friends any way at all (a push tap, the back gesture, a deep
-  // link) turns the camera off; Close was the only way that used to.
+  // link) closes the scanner, and closing it turns the camera off (QrScanner's
+  // unmount); Close was the only way that used to.
   useEffect(() => {
-    if (currentScreen !== 'addFriends' && (showQrScanner || qrScannerRef.current)) stopQrScanner();
-  }, [currentScreen]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (currentScreen !== 'addFriends') setQrScannerOpen(false);
+  }, [currentScreen]);
+
+  /* A FRIEND'S LINK, /add/<code>: WHO IT IS, THEN ONE BUTTON.
+     The code arrives from a universal link (the push router's 'addFriend'
+     intent), from the website's page through a sign-in (the code it kept), or
+     from a scan or a typed code the server refused for an unconfirmed email.
+     It is kept for a day (lib/friendCode.js) and the sheet at the root says
+     whose it is before anything is sent: GET /api/friends/by-code/:code is a
+     read, charged to the same probe budget as an add. Only the sheet's button
+     sends. The code is forgotten on an answer, on Not now, and on a code that
+     names nobody; it is kept through a dropped connection and through the
+     email confirmation, after which it is offered again. */
+  const friendLinkSeqRef = useRef(0);
+  // The code the sheet is up for, set the moment it opens. The same link can
+  // arrive twice a moment apart (the code kept through a sign-in, read on the
+  // way in, and the link's own intent from the queue), and each read is
+  // charged to the probe budget, so the second is the same sheet, not a
+  // second read. Try again asks again on purpose (`again`).
+  const friendLinkCodeRef = useRef(null);
+  const friendLinkSheetRef = useRef(friendLinkSheet);
+  friendLinkSheetRef.current = friendLinkSheet;
+  const openFriendLink = useCallback((raw, { again = false } = {}) => {
+    const code = friendCodeFrom(String(raw || ''));
+    if (!code) return;
+    rememberFriendCode(code);
+    // The sheet would be under the scanner.
+    setQrScannerOpen(false);
+    if (!again && friendLinkCodeRef.current === code) return;
+    friendLinkCodeRef.current = code;
+    const mine = ++friendLinkSeqRef.current;
+    const settle = (patch) => setFriendLinkSheet(prev => (prev && prev.code === code && mine === friendLinkSeqRef.current ? { ...prev, ...patch } : prev));
+    if (myFriendCodeRef.current && code === myFriendCodeRef.current) {
+      setFriendLinkSheet({ code, phase: 'ready', user: null, status: 'self', busy: false });
+      return;
+    }
+    setFriendLinkSheet({ code, phase: 'loading', user: null, status: null, busy: false });
+    getFriendByCode(code)
+      .then((d) => {
+        const status = ['none', 'outgoing', 'incoming', 'accepted', 'self'].includes(d?.status) ? d.status : 'none';
+        settle({ phase: 'ready', user: d?.user || null, status });
+      })
+      .catch((err) => {
+        if (err?.status === 404 || err?.status === 400) {
+          forgetFriendCode();
+          settle({ phase: 'missing' });
+          return;
+        }
+        // An unconfirmed address can be refused the read too. The sheet goes,
+        // the confirm sheet comes, and the code waits for it.
+        if (needsEmailVerification(err, 'add friends')) {
+          if (mine === friendLinkSeqRef.current) {
+            friendLinkCodeRef.current = null;
+            setFriendLinkSheet(null);
+          }
+          return;
+        }
+        settle({ phase: 'error' });
+      });
+  }, [needsEmailVerification]);
+  // For the push router, whose subscription is keyed on the account alone.
+  const openFriendLinkRef = useRef(openFriendLink);
+  openFriendLinkRef.current = openFriendLink;
+  const closeFriendLink = useCallback(() => {
+    friendLinkSeqRef.current += 1;
+    friendLinkCodeRef.current = null;
+    forgetFriendCode();
+    setFriendLinkSheet(null);
+  }, []);
+  const retryFriendLink = useCallback(() => {
+    const sheet = friendLinkSheetRef.current;
+    if (sheet) openFriendLink(sheet.code, { again: true });
+  }, [openFriendLink]);
+  const sendFriendLink = useCallback(async () => {
+    const sheet = friendLinkSheetRef.current;
+    if (!sheet || sheet.busy || sheet.phase !== 'ready') return;
+    setFriendLinkSheet(prev => (prev ? { ...prev, busy: true } : prev));
+    try {
+      const result = await sendFriendCode(sheet.code);
+      forgetFriendCode();
+      friendLinkCodeRef.current = null;
+      setFriendLinkSheet(null);
+      if (result.ok) {
+        hapticSuccess();
+        showToast(result.message);
+      } else {
+        showToast(result.message, 'error');
+      }
+    } catch (err) {
+      setFriendLinkSheet(prev => (prev ? { ...prev, busy: false } : prev));
+      // Kept, sheet and code both: the confirm sheet opens over this one, and
+      // once the address is confirmed the same button works.
+      if (needsEmailVerification(err, 'add friends')) return;
+      if (err?.status === 404 || err?.status === 400) {
+        forgetFriendCode();
+        setFriendLinkSheet(prev => (prev ? { ...prev, phase: 'missing' } : prev));
+        return;
+      }
+      if (!err?.sessionExpired) showToast(userMessage(err, "That friend request didn't send. Try again."), 'error');
+    }
+  }, [sendFriendCode, showToast, needsEmailVerification]);
+  // A code kept for this account through a sign-in, or by the website's page.
+  useEffect(() => {
+    const code = pendingFriendCode();
+    if (code) openFriendLink(code);
+  }, [openFriendLink]);
+  // And again the moment an unconfirmed address is confirmed, for a code
+  // whose add was refused for it.
+  const wasUnconfirmedRef = useRef(emailUnconfirmed);
+  useEffect(() => {
+    const was = wasUnconfirmedRef.current;
+    wasUnconfirmedRef.current = emailUnconfirmed;
+    if (!was || emailUnconfirmed || friendLinkSheetRef.current) return;
+    const code = pendingFriendCode();
+    if (code) openFriendLink(code);
+  }, [emailUnconfirmed, openFriendLink]);
 
   // Flock invites
   const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
@@ -7475,6 +8129,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     addFriendsOpenedFromNest.current = true;
     setCurrentScreen('addFriends');
   };
+
+  // WHICH TAB ADD FRIENDS OPENS ON, whichever door it was opened through: the
+  // Nest's (above), the You row, Discover's See all, a push. Somebody waiting
+  // on an answer comes first: with a request in, it opens on Requests, ahead
+  // of the Nest's one-time Contacts and of the tab used last. A layout effect,
+  // so the first frame of the screen is already the right tab. Tab ids from
+  // before the rebuild map onto the ones that exist now: Quick Add's became
+  // Search, and Contacts where there is no address book is Search too.
+  const addFriendsOnScreenRef = useRef(false);
+  React.useLayoutEffect(() => {
+    const onScreen = currentScreen === 'addFriends';
+    const entering = onScreen && !addFriendsOnScreenRef.current;
+    addFriendsOnScreenRef.current = onScreen;
+    if (!entering) return;
+    if (requestsTabBadge > 0) setAddFriendsTab('requests');
+    else if (addFriendsTab === 'suggestions' || (addFriendsTab === 'contacts' && !contactsSupported)) setAddFriendsTab('username');
+  }, [currentScreen, requestsTabBadge, addFriendsTab, contactsSupported]);
+
+  // THE CONTACTS PERMISSION, READ AND NEVER ASKED. checkPermissions reads iOS's
+  // answer without raising anything (services/contacts.js), so this is safe on
+  // a screen nobody tapped: when Add Friends opens, when its Contacts tab does,
+  // and on each return to the app while it is open. Somebody who refused and
+  // then turned Contacts on in Settings used to come back to "turned off" and
+  // nothing to tap until they force-quit the app; a refusal read here is the
+  // same refusal the tab already draws.
+  useEffect(() => {
+    if (currentScreen !== 'addFriends' || !contactsSupported) return undefined;
+    let live = true;
+    const read = () => {
+      contactsPermissionState()
+        .then((state) => {
+          if (!live) return;
+          setContactsPermissionRead(state);
+          if (state === 'denied') setContactsDenied(true);
+          else if (state === 'granted' || state === 'limited' || state === 'prompt') setContactsDenied(false);
+        })
+        .catch(() => { /* left as it was */ });
+    };
+    read();
+    const onVisible = () => { if (document.visibilityState === 'visible') read(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { live = false; document.removeEventListener('visibilitychange', onVisible); };
+  }, [currentScreen, addFriendsTab, contactsSupported]);
+
+  // The scanner's chunk and its decoder, asked for while the QR tab is on
+  // screen, so the tap on Scan opens a camera rather than a download. Not on a
+  // metered connection, where it waits for the tap like everything else.
+  useEffect(() => {
+    if (currentScreen !== 'addFriends' || addFriendsTab !== 'qr' || onMeteredConnection()) return;
+    import('./components/QrScanner').then((m) => m.warmQrDecoder && m.warmQrDecoder()).catch(() => {});
+  }, [currentScreen, addFriendsTab]);
 
   // Availability Pulse — 3-tap status: down / maybe / not (or null = unset)
   const [myPulse, setMyPulse] = useState(null);
@@ -9064,7 +9769,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [connectResults, setConnectResults] = useState([]);
   const [connectSearching, setConnectSearching] = useState(false);
   const [connectSearchError, setConnectSearchError] = useState('');
-  const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
+  const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'incoming' | 'accepted' | 'none' }, see applyRelationship
   // For the request handlers declared above this line, which read it when
   // tapped and cannot list it as a dependency without reading it before it
   // exists.
@@ -9329,6 +10034,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } else if (intent.screen === 'friends') {
       setCurrentTab('profile');
       setCurrentScreen('main');
+    } else if (intent.screen === 'addFriends') {
+      // "X wants to be friends", tapped: Add Friends on the request itself,
+      // reached from You, which is where Back then goes. Entering the screen
+      // reads both request lists, so a request the socket never delivered is
+      // there too.
+      setCurrentTab('profile');
+      setAddFriendsTab(intent.tab === 'requests' ? 'requests' : 'username');
+      setCurrentScreen('addFriends');
+    } else if (intent.screen === 'addFriend' && intent.code) {
+      // A friend's /add/ link opened the app. Add Friends behind a sheet that
+      // says whose code it is; nothing is sent until its button is pressed.
+      setCurrentTab('profile');
+      setCurrentScreen('addFriends');
+      openFriendLinkRef.current(intent.code);
     } else if (intent.screen === 'home') {
       setCurrentTab('home');
       setCurrentScreen('main');
@@ -9725,6 +10444,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (url.startsWith('/uploads/')) return `${BASE_URL}${url}`;
     return url;
   });
+  // The name and face on the account's own QR card (Add Friends), so a friend
+  // looking at the screen can see whose code it is. Read from the same state
+  // the profile card is, so an edit shows on both.
+  const myName = profileName || authUser?.name || '';
+  const myPhotoUrl = profilePic || null;
   const [showPicModal, setShowPicModal] = useState(false);
   // Stays an array, because every consumer counts it and the SOS sheet is
   // handed the count. What is null-until-loaded here is the KNOWLEDGE: an
@@ -13657,28 +14381,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => { unsubInvite(); unsubResponse(); };
   }, [showToast]);
 
-  // Listen for real-time friend request notifications
+  // Listen for real-time friend request notifications. Both go through the one
+  // writer (applyRelationship), so a request that arrives is on Requests and
+  // reads Accept wherever its sender appears, and an accept takes the person
+  // off Sent and moves the count. The live request carries the sender's
+  // photo now (capped like every other list's); a face, not an initial.
   useEffect(() => {
     const unsubReq = onFriendRequestReceived((data) => {
-      setPendingRequests(prev => {
-        if (prev.some(r => r.id === data.fromUserId)) return prev;
-        return [{ id: data.fromUserId, name: data.fromUserName, profile_image_url: null, created_at: new Date().toISOString() }, ...prev];
-      });
+      if (!data || data.fromUserId === undefined || data.fromUserId === null) return;
+      const photo = data.fromUserImage ?? data.fromUserPhoto ?? data.profile_image_url ?? null;
+      applyRelationship({ id: data.fromUserId, name: data.fromUserName, profile_image_url: typeof photo === 'string' ? photo : null }, 'incoming');
       showToast(`${data.fromUserName} sent you a friend request`);
     });
 
     const unsubResp = onFriendRequestResponded((data) => {
       if (data.action === 'accepted') {
-        setOutgoingRequests(prev => prev.filter(r => r.id !== data.fromUserId));
-        setFriendStatuses(prev => ({ ...prev, [data.fromUserId]: 'accepted' }));
-        showToast(`${data.fromUserName} accepted your friend request!`);
-        // The header count only ever moved on boot.
-        getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
+        applyRelationship({ id: data.fromUserId, name: data.fromUserName }, 'accepted');
+        showToast(`${data.fromUserName} accepted your friend request.`);
       }
     });
 
     return () => { unsubReq(); unsubResp(); };
-  }, [showToast]);
+  }, [showToast, applyRelationship]);
+
+  // AND READ AGAIN, BECAUSE A SOCKET IS NOT ALWAYS THERE TO HEAR THEM. An app
+  // in the background has no socket and the server keeps no missed events, so
+  // whatever happened to a request meanwhile is read on the way back: on a
+  // return to the app (at most every 30 seconds) and when the socket comes
+  // back after a drop (reconnectTick).
+  useEffect(() => {
+    let lastReadAt = Date.now();
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - lastReadAt < FRIEND_REQUESTS_REREAD_MS) return;
+      lastReadAt = Date.now();
+      refreshFriendRequests();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refreshFriendRequests]);
+  useEffect(() => {
+    if (reconnectTick) refreshFriendRequests();
+  }, [reconnectTick, refreshFriendRequests]);
 
   // Guest RSVPs arrive from the public share link, not from a member's client,
   // so the socket is the only path they reach us on. Without this the host
@@ -15740,6 +16483,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The stored number, mirrored here because `authUser` is a prop that never
   // refreshes and Edit Profile has to seed its field from something current.
   const [profilePhone, setProfilePhone] = useState(authUser?.phone || '');
+  // Whether there is a number to be found by at all, for Add Friends' "Let
+  // friends find you" card, which sends somebody to Edit profile when not.
+  const phoneOnFile = Boolean(profilePhone);
 
   const loadPhoneDiscovery = useCallback(async () => {
     try {
@@ -15754,10 +16500,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => { loadPhoneDiscovery(); }, [loadPhoneDiscovery]);
 
   const phoneDiscoveryBusyRef = useRef(false);
-  const handleTogglePhoneDiscovery = useCallback(async () => {
+  // `want` is where the caller wants the switch: Add Friends' card says so
+  // (true, to turn it on), and the settings row passes nothing, which flips
+  // it. Asking for the state it is already in sends nothing.
+  const handleTogglePhoneDiscovery = useCallback(async (want) => {
     if (phoneDiscoveryBusyRef.current) return;
+    if (typeof want === 'boolean' && phoneDiscoverable !== null && want === phoneDiscoverable) return;
     phoneDiscoveryBusyRef.current = true;
-    const next = !phoneDiscoverable;
+    const next = typeof want === 'boolean' ? want : !phoneDiscoverable;
     // The switch moves on the tap, except where the server is certain to say
     // no: turning it on with no number on the account. That one waits, dimmed,
     // for the server's sentence, and the Edit Profile door stays under it.
@@ -15780,6 +16530,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setPhoneDiscoveryTo(null);
     }
   }, [phoneDiscoverable, profilePhone, showToast]);
+
+  // Edit profile, from outside the You tab: the one place a phone number is
+  // added, for Add Friends' "Let friends find you" when there is none on the
+  // account. The working idiom for reaching a You sub-screen (the SOS sheet's
+  // "Add contacts" uses it too): the tab, the sub-screen, and the screen back
+  // to 'main'.
+  const openEditProfile = useCallback(() => {
+    setProfileScreen('edit');
+    setCurrentTab('profile');
+    setCurrentScreen('main');
+  }, []);
+  // The app's page in Settings, in the iPhone app only: on the web there is no
+  // such page, and the screen hides the button when this is undefined.
+  const handleOpenAppSettings = isNativeShell() ? openAppSettings : undefined;
 
   // Where each server-backed switch on the settings screen is heading while
   // its write is out, keyed by the label the screen draws it with. Toggle
@@ -20706,11 +21470,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the old declaration because several of these are declared further down
       // this component, and reading them any earlier is a temporal dead zone
       // throw.
+      // No BottomNav: Add Friends is a drill-in, like Chat and Plan, and its
+      // back arrow and the edge swipe are the way out. The scanner is not here
+      // either: it is a screen of its own at the root (openQrScanner).
       const addFriendsProps = {
         DialogBehavior,
+        EmailConfirmLine,
         ListSkeleton,
         SearchInputLocal,
-        BottomNav,
         addFriendsError,
         addFriendsResults,
         addFriendsSearch,
@@ -20720,10 +21487,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         confirmClick,
         contactsDenied,
         contactsLoading,
+        contactsPermission,
         contactsResult,
+        contactsRetryAt,
         contactsSupported,
         contactsUnavailable,
         contactsUsers,
+        decliningRequests,
+        emailUnconfirmed,
+        focusCodeFieldRequest,
         friendCodeInput,
         friendCodeLoading,
         friendStatuses,
@@ -20736,21 +21508,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         handleDeclineFriendRequest,
         handleInviteFriend,
         handleLookupByNumber,
+        handleOpenAppSettings,
         handleSendFriendRequest,
+        handleShareMyCode,
         handleSyncContacts,
+        handleTogglePhoneDiscovery,
+        handleUndoDecline,
         loadAddFriendsData,
         myFriendCode,
         myFriendCodeFailed,
+        myFriendCodeQr,
+        myName,
+        myPhotoUrl,
+        openEditProfile,
+        openQrScanner,
         openUserProfile,
         outgoingRequests,
+        outgoingRequestsLoaded,
         pendingRequests,
         pendingRequestsError,
+        phoneDiscoverable,
         phoneLookupError,
         phoneLookupInput,
         phoneLookupLoading,
         phoneLookupUsers,
-        qrScanError,
-        qrScannerDivId,
+        phoneOnFile,
+        requestsTabBadge,
         setAddFriendsResults,
         setAddFriendsSearch,
         setAddFriendsTab,
@@ -20759,16 +21542,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setPhoneLookupError,
         setPhoneLookupInput,
         setPhoneLookupUsers,
-        showQrScanner,
         showToast,
         startNewDmWithUser,
-        startQrScanner,
-        stopQrScanner,
         styles,
       };
       return (
         <React.Suspense fallback={<ScreenChunkFallback />}>
-          <AddFriends {...addFriendsProps} />
+          {/* The confirm line's resend and re-check, for the component the
+              screen is handed (EmailConfirmLine at module scope). */}
+          <EmailConfirmContext.Provider value={emailConfirmBound}>
+            <AddFriends {...addFriendsProps} />
+          </EmailConfirmContext.Provider>
         </React.Suspense>
       );
     }
@@ -22467,7 +23251,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           ToastRegion is that wrapper and the toast in it, and owns the
           toast's state, so a toast renders the region alone. */}
       <ToastRegion colors={colors} apiRef={toastApiRef} earlyRef={toastEarlyRef} />
+      {/* A friend's /add/ link: who the code is for, before anything is sent
+          (openFriendLink). Under the confirm-your-email sheet, which a refusal
+          for an unconfirmed address raises over it. */}
+      <FriendCodeSheet
+        DialogBehavior={DialogBehavior}
+        sheet={friendLinkSheet}
+        isDark={isDark}
+        onSend={sendFriendLink}
+        onDone={closeFriendLink}
+        onNotNow={closeFriendLink}
+        onRetry={retryFriendLink}
+      />
       <VerifyEmailSheet {...verifyEmailSheetProps} />
+
+      {/* The friend-code scanner, a full screen of its own beside the chat
+          camera below, never inside the QR tab. FETCHED on the first Scan,
+          and the gate is what makes that true: a mounted lazy asks for its
+          chunk on first paint. Closing it, or leaving Add Friends, unmounts
+          it, and its unmount is what turns the camera off. */}
+      {qrScannerOpen && (
+        <React.Suspense fallback={<QrScannerLoading onClose={closeQrScanner} />}>
+          <QrScanner
+            DialogBehavior={DialogBehavior}
+            myFriendCode={myFriendCode}
+            native={isNativeShell()}
+            onAdd={addFromScanner}
+            onClose={closeQrScanner}
+            onOpenSettings={handleOpenAppSettings}
+            onTypeCode={typeCodeInstead}
+          />
+        </React.Suspense>
+      )}
 
       {/* Camera Viewfinder */}
       {showCameraViewfinder && (
@@ -23044,6 +23859,9 @@ function sessionEndCopy(reason) {
 const SIGNED_OUT_LINK_NOTES = {
   checkin: 'Sign in and this check-in is saved to your account.',
   invite: 'Sign in and you will be taken straight into the plan you were invited to.',
+  // A friend's /add/ link, from the universal link's queue or from the code
+  // the website's page kept. Shown in the invite note's place.
+  addFriend: 'Sign in and you can add the friend who sent this.',
 };
 
 // WHAT THE CONFIRMATION LINK IN THE SIGNUP EMAIL COMES BACK WITH.
@@ -23179,7 +23997,7 @@ const FlockApp = () => {
   const [inviteNote, setInviteNote] = useState(() => (
     (typeof window !== 'undefined' && /^\/i\//.test(window.location?.pathname || ''))
       ? SIGNED_OUT_LINK_NOTES.invite
-      : ''
+      : (pendingFriendCode() ? SIGNED_OUT_LINK_NOTES.addFriend : '')
   ));
   // THE iOS SHELL NEVER HAS THOSE PATHS. Both notes above read the address
   // bar, which is right on the web and never true in the app: the WebView
@@ -23194,6 +24012,11 @@ const FlockApp = () => {
     const screen = waiting ? waiting.screen : null;
     setCheckinNote(screen === 'checkin' ? SIGNED_OUT_LINK_NOTES.checkin : '');
     setInviteNote(screen === 'invite' ? SIGNED_OUT_LINK_NOTES.invite : '');
+    // A friend's link waiting in the queue is kept on the device as well
+    // (lib/friendCode.js), so a sign-in the app is killed in the middle of
+    // still ends on the sheet that asks. Either one is the same promise.
+    if (screen === 'addFriend' && waiting.code) rememberFriendCode(waiting.code);
+    if (screen !== 'invite' && (screen === 'addFriend' || pendingFriendCode())) setInviteNote(SIGNED_OUT_LINK_NOTES.addFriend);
   }), []);
   // What the confirmation link in the signup email came back with, if this boot
   // is the one that followed it. See EMAIL_VERIFIED_COPY.
@@ -23250,6 +24073,10 @@ const FlockApp = () => {
     // clear auth state itself: a second half-clearing path is how the leak
     // survived. api.js clearLocalSession() is the single answer.
     logout().catch(() => {});
+    // The sign-out swept a friend's kept code with the rest of the account
+    // (the sweep runs before logout's first wait), and the note that promised
+    // it goes with it. A boot that found the session already dead keeps both.
+    setInviteNote((note) => (note === SIGNED_OUT_LINK_NOTES.addFriend && !pendingFriendCode() ? '' : note));
     setAuthUser(null);
     // Back to sign-in after a session that ran here: that person was signed
     // in, and signing in again is what they will want. Not at a boot that

@@ -412,9 +412,12 @@ function deepLinkPath(data = {}) {
   const senderId = data.senderId != null ? String(data.senderId) : '';
 
   if (type === 'dm_message' && /^\d+$/.test(senderId)) return `/?dm=${senderId}`;
-  // A friend request and its answer both land where friend requests are: the
-  // You tab.
-  if (type === 'friend_request' || type === 'friend_accepted') return '/?tab=you';
+  // A friend request lands where it is answered: Add Friends, on its Requests
+  // tab (services/pushNavigation.js reads ?tab=requests). It used to stop at
+  // the You tab, two taps short of the request. Its answer lands on You, where
+  // the friend now is.
+  if (type === 'friend_request') return '/?tab=requests';
+  if (type === 'friend_accepted') return '/?tab=you';
   // The score this names is the recipient's own, and it is printed on their
   // profile. The flock is only the occasion.
   if (type === 'attendance_marked') return '/?tab=you';

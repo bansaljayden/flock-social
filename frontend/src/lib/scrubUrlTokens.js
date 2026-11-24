@@ -40,6 +40,12 @@
 // bug report or a pasted breadcrumb is not where it should be read from.
 // `/static/js/main.js` and `/static/auto/` have no numbers and are untouched.
 //
+// AND FRIEND CODES. A friend's link is /add/<code> (website/FriendLink.js) and
+// the app previews the person behind it at /api/friends/by-code/<code>. A code
+// is not a credential, but it is the one thing that lets a stranger send its
+// owner a request, so it does not ride out inside a page view or a fetch
+// breadcrumb either. Both shapes become :code.
+//
 // It lives here rather than in index.js so the crash report
 // (services/crashReport.js, reached from components/ErrorBoundary.js) can use
 // the same rules without importing the entry module that imports it. index.js
@@ -49,6 +55,7 @@ export const scrubUrlTokens = (v) =>
   (typeof v === 'string'
     ? v
       .replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token')
+      .replace(/\/(add|by-code)\/[^/?#\s"']+/gi, '/$1/:code')
       .replace(/([?#&]token=)[^&#\s"']*/gi, '$1redacted')
       .replace(/([?#&](?:lat|lon|lng|latitude|longitude)=)[^&#\s"']*/gi, '$1redacted')
       .replace(

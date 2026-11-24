@@ -59,10 +59,23 @@ const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');
 
 // The Contacts tab, on its own. Several assertions below are about what this
 // screen may not render, and the rest of the app has legitimate uses of the
-// same words on screens that have nothing to do with the address book.
+// same words on screens that have nothing to do with the address book. It
+// runs to the QR code tab, which follows it; the app's tab bar, which used to
+// end it, left the screen in the rebuild of 2026-11-23.
 const contactsTab = (() => {
   const start = screen.indexOf('{/* TAB: Contacts */}');
-  const end = screen.indexOf('{BottomNav()}', start);
+  const end = screen.indexOf('{/* TAB: QR code */}', start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return screen.slice(start, end);
+})();
+
+// Since the same rebuild one row shape draws every person on the screen,
+// contacts matches included, so the row and what it offers are read where they
+// are declared: personRow and relationActions, up to the invite button.
+const personRow = (() => {
+  const start = screen.indexOf('const personRow = (');
+  const end = screen.indexOf('// INVITE A FRIEND', start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return screen.slice(start, end);
@@ -98,7 +111,14 @@ describe('the permission prompt fires only after the screen that explains it', (
   test('that one call sits inside the button handler, not an effect', () => {
     const handler = app.slice(app.indexOf('const handleSyncContacts'));
     const body = handler.slice(0, handler.indexOf('\n  const handleLookupByNumber'));
-    expect(body).toMatch(/await syncContacts\(findFriendsByPhone\)/);
+    // With where the last check stopped in a big book (the cursor), and with
+    // nothing else that could reach the address book.
+    expect(body).toMatch(/await syncContacts\(findFriendsByPhone, \{ cursor \}\)/);
+    // An unconfirmed address is told before the prompt, not after the book
+    // was read and the server refused it.
+    expect(body.indexOf("if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }"))
+      .toBeLessThan(body.indexOf('await syncContacts('));
+    expect(body.indexOf("if (emailUnconfirmed) {")).toBeGreaterThan(-1);
     // Both of these are the shapes a prompt-on-mount would take.
     expect(both).not.toMatch(/useEffect\([^)]*handleSyncContacts/);
     expect(both).not.toMatch(/readContactPhoneNumbers/);
@@ -146,22 +166,36 @@ describe('the four states of the Contacts tab', () => {
   });
 
   test('a match shows the Flock name only, never the contact card it came from', () => {
-    expect(contactsTab).toContain('From your contacts');
-    // Scoped to the tab, because trusted contacts (a different feature, on a
-    // different screen) legitimately renders a contact_name of its own.
-    expect(contactsTab).not.toMatch(/contact_name|contactName|matched_number|matchedNumber/);
+    // Worded as what the server knows: numbers on profiles are not verified,
+    // so a match is someone using that number, not the contact itself.
+    expect(contactsTab).toContain('Uses a number from your contacts');
+    expect(contactsTab).toMatch(/matches\.map\(\(user, i\) => personRow\(user, \{/);
+    // Scoped to the tab and its row, because trusted contacts (a different
+    // feature, on a different screen) legitimately renders a contact_name of
+    // its own.
+    expect(`${contactsTab}\n${personRow}`).not.toMatch(/contact_name|contactName|matched_number|matchedNumber/);
     // The row is name and photo. Anything else about the person came from the
     // phone, not from the server.
-    expect(contactsTab).toMatch(/\{user\.name\}/);
-    expect(contactsTab).toMatch(/user\.profile_image_url/);
+    expect(personRow).toMatch(/\{user\.name\}/);
+    expect(personRow).toMatch(/user\.profile_image_url/);
   });
 
   test('an empty result uses the counts and never claims to have checked everything', () => {
     // "No Flock users found" is a claim about every number on the phone, and a
     // throttled run only looked at some of them.
     expect(both).not.toContain('No Flock users found');
-    expect(screen).toContain('numbers we checked are on Flock yet');
-    expect(screen).toContain('and none of them are on Flock yet. Try the rest in an hour.');
+    // Nobody matched is said as what the server knows: only people who turned
+    // on being found by their number can be found. "None of them are on Flock"
+    // was a false claim about friends who have accounts and the switch off.
+    expect(screen).toContain('None of these numbers belong to someone who turned on being found by their number.');
+    expect(contactsTab).not.toMatch(/are on Flock yet|is not on Flock yet/);
+    // The counts: how far through the book the checks have got, and numbers
+    // the server could not read counted apart from numbers not reached, which
+    // used to be "try the rest in an hour" for numbers that would never be
+    // checked.
+    expect(screen).toContain('`Checked ${count(reached)} of ${count(total)}');
+    expect(screen).toContain("couldn't be read as");
+    expect(screen).not.toContain('Try the rest in an hour');
   });
 });
 
@@ -178,16 +212,16 @@ describe('the half that needs no permission', () => {
   });
 
   test('the invite control is never per contact', () => {
-    // Two copies of the button now, and neither is per contact: the card at
-    // the foot of the Contacts tab, and one on the Search tab, which is the
-    // only place a browser without an address book gets one at all
-    // (addFriendsInviteOnSearch.test.js renders it). What this pins is the
+    // Three ways in since the rebuild of 2026-11-23, and none is per contact:
+    // Invite in the header, on every tab; the button under a search that
+    // found nobody (addFriendsInviteOnSearch.test.js renders it), which is the
+    // only one a browser without an address book had before the header got
+    // one; and the link at the foot of the Contacts tab. What this pins is the
     // thing that matters here: no invite hangs off a person row, and the
     // handler takes no contact, so nothing can tell it which number matched.
-    const invites = both.match(/Invite a friend/g) || [];
-    expect(invites).toHaveLength(2);
-    expect(contactsTab.slice(contactsTab.indexOf('const personRow = '), contactsTab.indexOf('const checkAgainButton = ')))
-      .not.toMatch(/Invite|handleInviteFriend/);
+    const invites = screen.match(/Invite a friend/g) || [];
+    expect(invites).toHaveLength(3);
+    expect(personRow).not.toMatch(/Invite|handleInviteFriend/);
     expect(app).toMatch(/const handleInviteFriend = useCallback\(async \(\) => \{/);
     const calls = both.match(/handleInviteFriend\([^)]*\)/g) || [];
     expect(calls.length).toBeGreaterThan(0);
@@ -367,6 +401,43 @@ describe('services/contacts, run against a stand-in address book', () => {
     expect(JSON.stringify(out)).not.toMatch(/Should Not Travel/);
   });
 
+  test("a number saved under the iPhone label ranks with mobile, and a fax or pager is never sent", async () => {
+    // The plugin calls the iPhone label 'iphone', which used to rank below
+    // home, work and custom, so a card with three numbers dropped the one its
+    // owner signed up with.
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({
+      contacts: [
+        { phones: [{ type: 'home', number: '5552220001' }, { type: 'work', number: '5552220002' }, { type: 'iphone', number: '5552220003' }] },
+        { phones: [{ type: 'fax_work', number: '5552220004' }, { type: 'pager', number: '5552220005' }] },
+      ],
+    });
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toEqual(['5552220003', '5552220001']);
+  });
+
+  test('two numbers that only share their last ten digits are two numbers', async () => {
+    // Keyed on the last ten digits, a London number and an American one that
+    // happened to end the same way were merged, and one was never checked.
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({
+      contacts: [
+        { phones: [{ type: 'mobile', number: '+44 7911 123456' }] },
+        { phones: [{ type: 'mobile', number: '(791) 112-3456' }] },
+      ],
+    });
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toHaveLength(2);
+  });
+
+  test('a plugin that cannot be reached is unavailable, not a refusal', async () => {
+    // A refusal sends somebody to a Settings switch; a broken plugin is not
+    // something that switch can fix.
+    mockPlugin.checkPermissions.mockRejectedValue(new Error('plugin not implemented'));
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'unavailable' });
+    expect(mockPlugin.requestPermissions).not.toHaveBeenCalled();
+  });
+
   test('the same number in three punctuations leaves the phone once', async () => {
     mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
     mockPlugin.getContacts.mockResolvedValue({
@@ -414,9 +485,81 @@ describe('syncContacts stops where the server said it would', () => {
     const out = await service.syncContacts(lookup);
     expect(lookup).toHaveBeenCalledTimes(service.MAX_BATCHES);
     lookup.mock.calls.forEach(([batch]) => expect(batch.length).toBeLessThanOrEqual(service.CONTACT_BATCH_SIZE));
-    // And it must SAY it did not look at everything, or the empty state lies.
-    expect(out.throttled).toBe(true);
+    // And it must SAY it did not look at everything, or the empty state lies:
+    // the numbers not reached are counted, and the next run knows where to
+    // start. A book bigger than one run is not a spent allowance, so it is
+    // not called throttled (that is a 429, with a time to come back).
     expect(out.total).toBe(service.CONTACT_BATCH_SIZE * 5);
+    expect(out.sent).toBe(service.CONTACT_BATCH_SIZE * service.MAX_BATCHES);
+    expect(out.notReached).toBe(service.CONTACT_BATCH_SIZE * 2);
+    expect(out.nextBatch).toBe(service.MAX_BATCHES);
+    expect(out.throttled).toBe(false);
+  });
+
+  test('the next run carries on where the last one stopped, so a big book is checked in full', async () => {
+    // Every run used to send the first 600 numbers again, so the rest of a
+    // book of 1,000 was never checked however long anybody waited.
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 5));
+    const first = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+    const one = await service.syncContacts(first);
+
+    const second = jest.fn().mockResolvedValue({ users: [{ id: 9, name: 'Tobias' }], checked: service.CONTACT_BATCH_SIZE });
+    const two = await service.syncContacts(second, { cursor: { nextBatch: one.nextBatch, total: one.total } });
+    expect(two.startBatch).toBe(service.MAX_BATCHES);
+    expect(second).toHaveBeenCalledTimes(2);
+    // Not one number the first run sent goes out again.
+    const sentFirst = new Set(first.mock.calls.flatMap(([batch]) => batch));
+    second.mock.calls.flatMap(([batch]) => batch).forEach((n) => expect(sentFirst.has(n)).toBe(false));
+    expect(two.notReached).toBe(0);
+    expect(two.nextBatch).toBeNull();
+    expect(two.users).toEqual([{ id: 9, name: 'Tobias' }]);
+
+    // A book that changed size since is a different book, and starts over.
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 4));
+    const third = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+    const three = await service.syncContacts(third, { cursor: { nextBatch: 3, total: service.CONTACT_BATCH_SIZE * 5 } });
+    expect(three.startBatch).toBe(0);
+  });
+
+  test('numbers the server could not read are counted apart from numbers not reached', async () => {
+    // A number saved without its area code, or a foreign one without + and its
+    // country code, used to read as "not checked yet, try the rest in an hour"
+    // for ever.
+    mockPlugin.getContacts.mockResolvedValue(book(10));
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: 7 });
+    const out = await service.syncContacts(lookup);
+    expect(out.sent).toBe(10);
+    expect(out.checked).toBe(7);
+    expect(out.unreadable).toBe(3);
+    expect(out.notReached).toBe(0);
+    expect(out.throttled).toBe(false);
+  });
+
+  test('a 429 says when the next run can go, from the server when it says', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(10));
+    const said = Object.assign(new Error('slow down'), { status: 429, data: { retryAfterSeconds: 600 } });
+    const before = Date.now();
+    const out = await service.syncContacts(jest.fn().mockRejectedValue(said));
+    expect(out.throttled).toBe(true);
+    expect(out.answered).toBe(0);
+    const at = Date.parse(out.retryAt);
+    expect(at).toBeGreaterThanOrEqual(before + 600000);
+    expect(at).toBeLessThan(before + 600000 + 5000);
+    // A server that does not say is read as the hour the allowance counts.
+    const silent = await service.syncContacts(jest.fn().mockRejectedValue(Object.assign(new Error('x'), { status: 429 })));
+    expect(Date.parse(silent.retryAt) - Date.now()).toBeGreaterThan(3500 * 1000);
+  });
+
+  test('a failure after earlier batches answered keeps what they found', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 2));
+    const lookup = jest.fn()
+      .mockResolvedValueOnce({ users: [{ id: 4, name: 'Ali' }], checked: service.CONTACT_BATCH_SIZE })
+      .mockRejectedValueOnce(Object.assign(new Error('nope'), { status: 500 }));
+    const out = await service.syncContacts(lookup);
+    expect(out.failed).toBe(true);
+    expect(out.users).toEqual([{ id: 4, name: 'Ali' }]);
+    // The next run starts at the batch that failed.
+    expect(out.nextBatch).toBe(1);
   });
 
   test('a whole book that fits reports throttled false', async () => {

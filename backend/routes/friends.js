@@ -20,6 +20,17 @@ const { createUserBudget } = require('../utils/probeBudget');
 const { normalizePhoneList, discoveryDigest } = require('../utils/phone');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
+// The sender's own photo for the live "wants to be friends" row. req.user
+// never carries it; see utils/ownAvatar.js.
+const { ownAvatar } = require('../utils/ownAvatar');
+// The host a friend code's link is minted on, the same one a plan's invite
+// link uses.
+const { inviteBase } = require('../utils/inviteBase');
+// Reads a friend code out of a link, the old QR JSON, a pasted sentence or a
+// code typed any which way. See utils/friendCode.js.
+const { createFriendCodeReader } = require('../utils/friendCode');
+// Says when a spent contact allowance lifts. See utils/retryAfter.js.
+const { refusalBody, waitPhrase } = require('../utils/retryAfter');
 
 const router = express.Router();
 router.use(authenticate);
@@ -52,6 +63,54 @@ router.use(authenticate);
 // cannot burn a user's budget on double-taps.
 // ---------------------------------------------------------------------------
 const friendProbeBudget = createUserBudget({ name: 'friend-probe', hourly: 20, daily: 60 });
+
+// A LOOK, THEN A YES, IS ONE PROBE (Add Friends rebuild, 2026-11-23).
+//
+// A friend's link opens a sheet that shows who it belongs to before anything
+// is sent (GET /by-code/:code), and only the tap on Send request adds them.
+// The look is charged to the budget above, because it answers the same
+// question add-by-code does. Charging the tap again would make every link
+// cost two of somebody's twenty, so a look that WAS charged and DID show a
+// person leaves a pass for that one pair: the request that follows within ten
+// minutes, through either door, rides on it once.
+//
+// It cannot be turned into free probes. A pass is written only after a 200
+// that already handed the caller this person's name, so the request it pays
+// for answers nothing they were not told. It is never written for a miss
+// (nobody, a ban, a block, a spent budget), which keeps those four answers
+// alike in what they cost as well as in what they say: a pass after a banned
+// code would make the next add free, and a free add is a difference the
+// caller can count. It is spent on first use, and the key is the caller's own
+// id beside an id the server read, so nothing in it is chosen by the caller.
+const PREVIEW_PASS_MS = 10 * 60 * 1000;
+const PREVIEW_PASS_MAX = 20000;
+const previewPasses = new Map(); // `${viewerId}:${targetId}` -> expiry (ms)
+
+function grantPreviewPass(viewerId, targetId) {
+  const key = `${Number(viewerId)}:${Number(targetId)}`;
+  const now = Date.now();
+  // Delete-then-set, so insertion order stays oldest-written first.
+  previewPasses.delete(key);
+  previewPasses.set(key, now + PREVIEW_PASS_MS);
+  if (previewPasses.size > PREVIEW_PASS_MAX) {
+    for (const [k, expires] of previewPasses) {
+      if (expires <= now) previewPasses.delete(k);
+    }
+    // Dropping a live pass costs its holder one probe on their next add,
+    // nothing more, so oldest-first is enough here.
+    while (previewPasses.size > PREVIEW_PASS_MAX) {
+      previewPasses.delete(previewPasses.keys().next().value);
+    }
+  }
+}
+
+function takePreviewPass(viewerId, targetId) {
+  const key = `${Number(viewerId)}:${Number(targetId)}`;
+  const expires = previewPasses.get(key);
+  if (expires === undefined) return false;
+  previewPasses.delete(key);
+  return expires > Date.now();
+}
 
 // Postgres INTEGER ceiling. An id past this reaches the query as an out-of-range
 // value and comes back a 500 (which is itself a signal); it is a malformed id,
@@ -145,6 +204,39 @@ async function acceptPending(rowId) {
     [rowId]
   );
   return r.rows.length > 0;
+}
+
+// THEY ASKED, THE CALLER SAID NO, AND NOW THE CALLER IS ASKING THEM (Add
+// Friends rebuild, 2026-11-23). That is a yes to the request already on the
+// table. Over a declined row this door used to revive the request in the
+// caller's direction instead. Inside a day of the original request the
+// one-a-day cooldown refused that, so the tap answered 200 with a status of
+// 'declined', changed nothing and spent a probe; after the day it sent a
+// fresh request back to somebody who had asked first. The person who declined
+// is the one person a decline is never hidden from, so accepting it tells
+// nobody anything they did not know.
+//
+// Guarded by the status it read AND by whose request it is. The row can only
+// leave 'declined' through its requester (a cancel withdraws it, a revive
+// flips it back to pending), and a write that matched on the id alone could
+// land on a row that had since become the caller's own request.
+async function acceptDeclined(rowId, requesterId) {
+  const r = await pool.query(
+    "UPDATE friendships SET status = 'accepted' WHERE id = $1 AND status = 'declined' AND requester_id = $2 RETURNING id",
+    [rowId, requesterId]
+  );
+  return r.rows.length > 0;
+}
+
+// The request the other person made, still answerable: pending, or declined
+// by the caller (see acceptDeclined). Either way a request back is a yes.
+function theirRequest(row, otherId) {
+  return !!row && Number(row.requester_id) === Number(otherId)
+    && (row.status === 'pending' || row.status === 'declined');
+}
+
+function acceptTheirRequest(row) {
+  return row.status === 'pending' ? acceptPending(row.id) : acceptDeclined(row.id, row.requester_id);
 }
 
 // REQUEST-THEN-BLOCK, CLOSED FROM THE WRITE SIDE (reliability pass 2026-08-14).
@@ -361,7 +453,16 @@ router.post('/request',
       // exception: reviving a DECLINED row is a fresh request to somebody who
       // said no, and it is metered like any other (friends audit, 2026-09-05).
       const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined' || r.status === 'withdrawn');
-      const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
+      // Two more taps that are not probes (Add Friends rebuild, 2026-11-23): a
+      // yes to a request the caller declined, whose sender the caller has known
+      // since it arrived (acceptDeclined), and the request that follows a
+      // charged look at this person's link, which was the probe
+      // (takePreviewPass). Short-circuited, so a pass is spent only by a tap
+      // that would otherwise have been charged.
+      const withinBudget = untouched
+        || theirRequest(existing.rows[0], user_id)
+        || takePreviewPass(req.user.id, user_id)
+        || friendProbeBudget.allow(req.user.id);
 
       // Deliberately queried even when the budget is spent, so the exhausted
       // path does the same work as a genuine miss and cannot be separated from
@@ -390,35 +491,36 @@ router.post('/request',
         if (row.status === 'accepted') {
           return res.json({ message: 'Already friends', status: 'accepted' });
         }
-        if (row.status === 'pending') {
-          // If the OTHER person sent us a request, auto-accept. Guarded by the
-          // status it read: if they withdrew it in the meantime this must not
-          // resurrect a relationship neither side is currently asking for.
-          if (row.requester_id === user_id) {
-            if (!await acceptPending(row.id)) {
-              return res.json(await currentState(req.user.id, user_id));
-            }
-            if (await severedByFreshBlock(req.user.id, user_id)) {
-              return res.status(403).json({ error: 'You can no longer connect with this user.' });
-            }
-            await collapseToOneFriendship(req.user.id, user_id);
-            // Notify both sides
-            if (io) {
-              io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
-            }
-            // A mutual request that accepted itself told the other side over the
-            // socket only; an explicit accept also pushes. Same words, same type.
-            pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
-              .catch((e) => console.error('Friend accepted push error:', e.message));
-            return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
+        // If the OTHER person sent us a request, auto-accept, whether it is
+        // still waiting or the caller declined it (acceptDeclined). Guarded by
+        // the status it read: if they withdrew it in the meantime this must not
+        // resurrect a relationship neither side is currently asking for.
+        if (theirRequest(row, user_id)) {
+          if (!await acceptTheirRequest(row)) {
+            return res.json(await currentState(req.user.id, user_id));
           }
+          if (await severedByFreshBlock(req.user.id, user_id)) {
+            return res.status(403).json({ error: 'You can no longer connect with this user.' });
+          }
+          await collapseToOneFriendship(req.user.id, user_id);
+          // Notify both sides
+          if (io) {
+            io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+          }
+          // A mutual request that accepted itself told the other side over the
+          // socket only; an explicit accept also pushes. Same words, same type.
+          pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend accepted push error:', e.message));
+          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends.`, status: 'accepted' });
+        }
+        if (row.status === 'pending') {
           return res.json({ message: 'Friend request already sent', status: 'pending' });
         }
         // If declined, allow re-request — but only over a row that is STILL
         // declined. See reRequestDeclined() for what the unguarded version did.
         const revived = await reRequestDeclined(row.id, req.user.id, user_id);
         if (!revived) return res.json(await currentState(req.user.id, user_id));
-        if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+        if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
         // The same sentence a pending row gets: "sent to <name>" here and
         // "already sent" there told the requester which one they were.
         return res.json({ message: 'Friend request already sent', status: 'pending' });
@@ -470,7 +572,7 @@ router.post('/request',
       if (seen && seen.status === 'accepted') {
         // An accept landed between our insert and this read.
         await collapseToOneFriendship(req.user.id, user_id);
-        return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
+        return res.json({ message: `You and ${userCheck.rows[0].name} are now friends.`, status: 'accepted' });
       }
       if (seen && seen.status === 'pending' && seen.requester_id === user_id) {
         if (await acceptPending(seen.id)) {
@@ -482,13 +584,17 @@ router.post('/request',
           // socket only; an explicit accept also pushes. Same words, same type.
           pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
             .catch((e) => console.error('Friend accepted push error:', e.message));
-          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
+          return res.json({ message: `You and ${userCheck.rows[0].name} are now friends.`, status: 'accepted' });
         }
         return res.json(await currentState(req.user.id, user_id));
       }
 
-      // Notify target user
-      if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+      // Notify target user. The live row on their screen draws the sender's
+      // face, so the event carries it, capped like every list (utils/
+      // ownAvatar.js); it used to arrive as a letter until the next refetch.
+      // Every place this event leaves from sends the same three fields, the
+      // socket relay in sockets/handlers.js included.
+      if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
 
       // Push notification. // FIRE AND FORGET, on purpose. See POST /accept below for the long version:
       // the push is post-response, nothing in the body depends on it, and a
@@ -553,9 +659,17 @@ router.post('/accept',
       // it is invisible rather than lingering, and it comes back intact if the
       // account is restored. Deleting would destroy a real request over a
       // decision that is reversible.
+      //
+      // A request the caller DECLINED is accepted too (Add Friends rebuild,
+      // 2026-11-23). It is still their request, and the caller is the one
+      // person a decline was never hidden from, so this changes what the
+      // requester sees only the way any accept does: Sent becomes friends.
+      // It is what Undo on a decline calls, and the yes the request door
+      // gives the same row (acceptDeclined). A withdrawn row is not: its
+      // requester took the request back.
       const result = await pool.query(
         `UPDATE friendships SET status = 'accepted'
-         WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
+         WHERE requester_id = $1 AND addressee_id = $2 AND status IN ('pending', 'declined')
            AND EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND ${NOT_BANNED_SQL})
          RETURNING *`,
         [user_id, req.user.id]
@@ -789,6 +903,75 @@ router.get('/outgoing', async (req, res) => {
   }
 });
 
+// DELETE /api/friends/request/:userId - Take back a request the caller sent
+//
+// CANCEL TAKES BACK A REQUEST AND NOTHING ELSE (Add Friends rebuild,
+// 2026-11-23). Sent requests used to cancel through DELETE /:userId, which
+// removes whatever rows the pair has. That list is read when Add Friends opens
+// and corrected by a socket event a suspended phone never receives, so a row
+// still reading Pending could stand for a request accepted while the phone was
+// locked, and Cancel on it ended the friendship without telling either person.
+// This route can only ever remove the caller's own unanswered request; DELETE
+// /:userId is left as it was.
+//
+// ITS ANSWERS NEVER SHOW A DECLINE. A declined request reads as pending to the
+// person who sent it, so cancelling one answers exactly as cancelling a
+// pending one does and leaves Sent requests the same way: it becomes
+// 'withdrawn' (migration 113), which /outgoing does not list and which keeps
+// the one-a-day revive cooldown, as on DELETE /:userId. A second cancel of
+// either finds nothing. Both writes run on every call, in the same order, so
+// the two cases do not differ in the work done either.
+//
+//   200 { status: 'none' }      the request is gone
+//   409 { status: 'accepted' }  they said yes first, and the friendship stands
+//   404                         the caller had no request to them to take back
+//
+// The 409 is read after the writes, so an accept that lands between the tap
+// and the delete is reported rather than lost. A banned counterpart reads as
+// no friendship here, as it does on GET /status, so the answer is the 404.
+router.delete('/request/:userId', async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    // Bounded to INT4, as on DELETE /:userId.
+    if (!Number.isInteger(userId) || userId < 1 || userId > MAX_USER_ID) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    const cancelled = await pool.query(
+      `DELETE FROM friendships
+        WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
+        RETURNING id`,
+      [req.user.id, userId]
+    );
+    const withdrawn = await pool.query(
+      `UPDATE friendships SET status = 'withdrawn'
+        WHERE requester_id = $1 AND addressee_id = $2 AND status = 'declined'
+        RETURNING id`,
+      [req.user.id, userId]
+    );
+    const friendsNow = await pool.query(
+      `SELECT 1 FROM friendships f
+         JOIN users u ON u.id = $2
+        WHERE ((f.requester_id = $1 AND f.addressee_id = $2) OR (f.requester_id = $2 AND f.addressee_id = $1))
+          AND f.status = 'accepted'
+          AND ${NOT_BANNED_SQL}
+        LIMIT 1`,
+      [req.user.id, userId]
+    );
+
+    if (friendsNow.rows.length > 0) {
+      return res.status(409).json({ error: "You're already friends.", status: 'accepted' });
+    }
+    if (cancelled.rows.length > 0 || withdrawn.rows.length > 0) {
+      return res.json({ status: 'none' });
+    }
+    return res.status(404).json({ error: 'There is no request to cancel.' });
+  } catch (err) {
+    console.error('Cancel friend request error:', err);
+    res.status(500).json({ error: 'Failed to cancel friend request' });
+  }
+});
+
 // GET /api/friends/suggestions - Mutual friend suggestions (friends of friends)
 //
 // The app calls this Quick Add. An account that has turned off "Show me in
@@ -796,6 +979,12 @@ router.get('/outgoing', async (req, res) => {
 // (SUGGESTABLE_SQL); an account that never chose is in them, whatever its age.
 // It is filtered, like a block, so the list reads as if the person were not a
 // friend of a friend at all.
+//
+// The photo is capped the way every other list here caps it: a stored avatar
+// can be a data URL of hundreds of kilobytes (routes/users.js), this list is
+// read on every visit to Add Friends, and twenty uncapped faces were megabytes
+// on a bar's signal. Over 12,000 characters reads as null, which every client
+// draws as the letter.
 router.get('/suggestions', async (req, res) => {
   try {
     const result = await pool.query(
@@ -813,7 +1002,7 @@ router.get('/suggestions', async (req, res) => {
              ON f2.status = 'accepted'
             AND (f2.requester_id = m.friend_id OR f2.addressee_id = m.friend_id)
        )
-       SELECT u.id, u.name, u.profile_image_url, COUNT(*) AS mutual_count
+       SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, COUNT(*) AS mutual_count
        FROM theirs t
        JOIN users u ON u.id = t.candidate
        WHERE NOT EXISTS (
@@ -841,7 +1030,7 @@ router.get('/suggestions', async (req, res) => {
         // Shared FLOCKS, not mutual friends. Returned under its own name and
         // labelled by `source` so the row cannot print "3 mutual friends" about
         // somebody the caller has no mutual friends with.
-        `SELECT u.id, u.name, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
+        `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
          FROM flock_members fm1
          JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
          JOIN users u ON u.id = fm2.user_id
@@ -889,7 +1078,46 @@ function newFriendCode() {
   return 'FLOCK-' + body;
 }
 
+// One reading of a code for both doors below, whatever shape it arrived in:
+// typed, pasted, the old QR JSON or the /add/ link (utils/friendCode.js). A
+// link is read on Flock's own hosts and on the one this deployment mints its
+// links on, which is the host GET /my-code hands out, so every link this
+// server mints reads back here. Nothing unreadable is guessed at: it comes
+// back as '', which the format check at each door refuses.
+const friendCodeFrom = createFriendCodeReader({ alphabet: FRIEND_CODE_ALPHABET, length: FRIEND_CODE_LENGTH });
+const readFriendCode = (text) => friendCodeFrom(text, { origins: [inviteBase()] }) || '';
+
+// What the code's owner is to the caller, as GET /by-code/:code reports it.
+// A request the caller sent reads 'outgoing' even when it was declined, the
+// mask every read here keeps (maskedStatus). A request they sent reads
+// 'incoming' even when the caller declined it, because a yes to it still
+// lands (acceptDeclined). A withdrawn request is no request either way.
+function previewStatus(row, callerId) {
+  if (!row) return 'none';
+  if (row.status === 'accepted') return 'accepted';
+  if (row.status === 'pending' || row.status === 'declined') {
+    return Number(row.requester_id) === Number(callerId) ? 'outgoing' : 'incoming';
+  }
+  return 'none';
+}
+
 // GET /api/friends/my-code - the caller's friend code, issued on first ask.
+//
+// With its link (Add Friends rebuild, 2026-11-23), minted on the host the plan
+// invite links use (utils/inviteBase.js). The share sheet sends the link, and
+// a phone's own camera opens it to Flock, or to the page that gets somebody
+// without Flock there, instead of offering a web search for a line of text.
+//
+// AND WHAT THE QR CODE CARRIES (qr), which is not the link yet. The iPhone app
+// ships its own copy of the web build, and the scanner in the builds already
+// on phones (1.0.3 and older) reads a scan with JSON.parse and nothing else:
+// a link in the QR is "Not a valid Flock QR code" on every phone that has not
+// updated, whichever side drew it. So the QR carries the JSON every build
+// reads until FRIEND_QR_LINK is "true", which is set once the build that reads
+// links is the one in the App Store, at the same moment /add/* is claimed in
+// the association file. The app draws whatever this says, so the switch needs
+// no new build of its own.
+const qrCarriesLink = () => process.env.FRIEND_QR_LINK === 'true';
 router.get('/my-code', async (req, res) => {
   try {
     const held = await pool.query('SELECT friend_code FROM users WHERE id = $1', [req.user.id]);
@@ -911,24 +1139,104 @@ router.get('/my-code', async (req, res) => {
       }
     }
     if (!code) return res.status(500).json({ error: 'Failed to get friend code' });
-    res.json({ code, userId: req.user.id, name: req.user.name });
+    const url = `${inviteBase()}/add/${encodeURIComponent(code)}`;
+    const qr = qrCarriesLink() ? url : JSON.stringify({ type: 'flock_friend', code });
+    res.json({ code, url, qr, userId: req.user.id, name: req.user.name });
   } catch (err) {
     console.error('Friend code error:', err);
     res.status(500).json({ error: 'Failed to get friend code' });
   }
 });
 
+// GET /api/friends/by-code/:code - who a friend code belongs to, before
+// anything is sent
+//
+// A FRIEND'S LINK NEVER SENDS BY ITSELF (Add Friends rebuild, 2026-11-23).
+// Opening /add/<code> shows a sheet with the person's name and face and the
+// one thing a tap would do: send a request, accept the one they sent, or
+// nothing, because the two are friends already or the code is the caller's
+// own. Only that tap reaches POST /add-by-code, which accepts a pending
+// request from the code's owner, so a link that added on open could make two
+// people friends without either of them having looked.
+//
+// It answers what add-by-code would, through the same doors:
+//   * charged to the same probe budget, and free for a pair that already has
+//     a friendship row, which is not a probe;
+//   * one identical 404 for a code nobody holds, a banned account, a block
+//     either way and a spent budget. A code nobody holds, a banned account
+//     and a spent budget also run the same statements, so they match in the
+//     work done as well as in the words; the block is asked last, as on POST
+//     /request, and only of an account that is there to be blocked;
+//   * the other account as an id, a name and a capped photo, nothing more.
+// A charged look that did show somebody leaves a pass for the request that
+// follows (previewPasses, at the top of this file).
+//
+//   { user: { id, name, profile_image_url },
+//     status: 'none' | 'outgoing' | 'incoming' | 'accepted' | 'self' }
+//
+// Read-only, so the unconfirmed-email gate (middleware/auth.js) does not
+// stand in front of it: a new account sees whose link it opened, and the
+// confirmation is asked for at the tap that would add them.
+router.get('/by-code/:code', async (req, res) => {
+  try {
+    // The same 512-character bound add-by-code puts on its body.
+    const code = req.params.code.length <= 512 ? readFriendCode(req.params.code) : '';
+    if (!/^FLOCK-[A-Z0-9]+$/.test(code)) {
+      return res.status(400).json({ error: "That isn't a Flock code." });
+    }
+
+    // Byte for byte add-by-code's miss, so the two doors cannot be compared.
+    const miss = () => res.status(404).json({ error: 'No user found with this code' });
+
+    // users.friend_code is the only way from a code to a person (migration
+    // 079), so the directory read comes first, as it does in add-by-code. The
+    // photo rides in the same statement, capped like every list.
+    const found = await pool.query(
+      `SELECT id, name, is_banned,
+              CASE WHEN LENGTH(profile_image_url) > 12000 THEN NULL ELSE profile_image_url END AS profile_image_url
+         FROM users WHERE friend_code = $1`,
+      [code]
+    );
+    const target = found.rows[0] || null;
+    const who = target ? { id: target.id, name: target.name, profile_image_url: target.profile_image_url || null } : null;
+    if (target && target.id === req.user.id) {
+      return res.json({ user: who, status: 'self' });
+    }
+
+    // Asked even when the code names nobody (no account has id 0), so a code
+    // nobody holds runs the same statements as a real one the budget refuses.
+    const existing = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, target ? target.id : 0]);
+    const charged = existing.rows.length === 0;
+    const withinBudget = !charged || friendProbeBudget.allow(req.user.id);
+    if (!withinBudget || !target || target.is_banned) {
+      return miss();
+    }
+    if (await isBlockedBetween(req.user.id, target.id)) {
+      return miss();
+    }
+
+    if (charged) grantPreviewPass(req.user.id, target.id);
+    res.json({ user: who, status: previewStatus(existing.rows[0], req.user.id) });
+  } catch (err) {
+    console.error('Friend code preview error:', err);
+    res.status(500).json({ error: 'Failed to look up that code' });
+  }
+});
+
 // POST /api/friends/add-by-code - Add friend by their friend code
 router.post('/add-by-code',
-  // Bounded: a code is 'FLOCK-' plus eight characters, so anything long is not
-  // a typo, it is someone feeding a megabyte to a regex and a toUpperCase().
+  // Bounded. The longest thing a code arrives in is a pasted invite, a
+  // sentence and a link (utils/friendCode.js reads it), which is well under
+  // this; past it is not a person pasting, it is someone feeding a megabyte to
+  // the reader's patterns. Raised from 64 (Add Friends rebuild, 2026-11-23),
+  // when a code stopped having to arrive bare.
   //
   // Shape first (round 20): `{"code": ["FLOCK-1"]}` satisfies isLength — the
   // array is stringified before the rule sees it — and stays an array, so
   // `code.toUpperCase()` below threw a TypeError and the route answered 500 for
   // a body the caller picked. An empty array satisfied isLength({ min: 1 })
   // vacuously for the same reason, which is a "required" field that was not.
-  scalarOnly(body('code'), 'friend code').trim().isLength({ min: 1, max: 64 }).withMessage('Friend code is required'),
+  scalarOnly(body('code'), 'friend code').trim().isLength({ min: 1, max: 512 }).withMessage('Friend code is required'),
   async (req, res) => {
     try {
       const errors = validationResult(req);
@@ -936,9 +1244,14 @@ router.post('/add-by-code',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const code = req.body.code.toUpperCase();
+      // Read in whatever shape it came (Add Friends rebuild, 2026-11-23): the
+      // eight characters without FLOCK-, a space after the prefix, a full stop
+      // after the code, a pasted invite, the QR's link or its old JSON all
+      // used to be 'Invalid friend code format'. The format check stays as the
+      // last word on what reaches the lookup.
+      const code = readFriendCode(req.body.code);
       if (!/^FLOCK-[A-Z0-9]+$/.test(code)) {
-        return res.status(400).json({ error: 'Invalid friend code format' });
+        return res.status(400).json({ error: "That isn't a Flock code." });
       }
 
       // The single "no such code" response. Budget exhaustion answers with this
@@ -953,7 +1266,7 @@ router.post('/add-by-code',
       const userCheck = await pool.query('SELECT id, name, is_banned FROM users WHERE friend_code = $1', [code]);
       const target = userCheck.rows[0] || null;
       if (target && target.id === req.user.id) {
-        return res.status(400).json({ error: "That's your own code!" });
+        return res.status(400).json({ error: "That's your own code." });
       }
       const targetUserId = target ? target.id : null;
 
@@ -965,7 +1278,14 @@ router.post('/add-by-code',
       // exception: reviving a DECLINED row is a fresh request to somebody who
       // said no, and it is metered like any other (friends audit, 2026-09-05).
       const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined' || r.status === 'withdrawn');
-      const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
+      // The same two exceptions as POST /request: a yes to a request the
+      // caller declined, and the add that follows a charged look at this
+      // code's owner through GET /by-code (takePreviewPass), which was the
+      // probe. A code that names nobody has no pair to hold a pass for.
+      const withinBudget = untouched
+        || theirRequest(existing.rows[0], targetUserId)
+        || (target !== null && takePreviewPass(req.user.id, targetUserId))
+        || friendProbeBudget.allow(req.user.id);
 
       // Same single miss for no code, a banned account and a spent budget. See
       // NOT_BANNED_SQL.
@@ -997,9 +1317,10 @@ router.post('/add-by-code',
         // Every write below carries the status it was decided on, and every
         // race answers with the state the row actually reached. Same rules as
         // POST /request — the two paths are the same operation reached through
-        // two different front doors, and they must not drift apart.
-        if (row.status === 'pending' && row.requester_id === targetUserId) {
-          if (!await acceptPending(row.id)) {
+        // two different front doors, and they must not drift apart. That
+        // includes a request of theirs the caller declined (acceptDeclined).
+        if (theirRequest(row, targetUserId)) {
+          if (!await acceptTheirRequest(row)) {
             return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
           }
           if (await severedByFreshBlock(req.user.id, targetUserId)) {
@@ -1009,7 +1330,7 @@ router.post('/add-by-code',
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
             .catch((e) => console.error('Friend accepted push error:', e.message));
-          return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
+          return res.json({ message: `You and ${who.name} are now friends.`, status: 'accepted', user: who });
         }
         if (row.status === 'pending') {
           return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
@@ -1017,7 +1338,7 @@ router.post('/add-by-code',
         if (!await reRequestDeclined(row.id, req.user.id, targetUserId)) {
           return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
         }
-        if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+        if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
         // Same sentence as a pending row; see POST /request.
         return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
       }
@@ -1043,7 +1364,7 @@ router.post('/add-by-code',
       const seen = after.rows[0];
       if (seen && seen.status === 'accepted') {
         await collapseToOneFriendship(req.user.id, targetUserId);
-        return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
+        return res.json({ message: `You and ${who.name} are now friends.`, status: 'accepted', user: who });
       }
       if (seen && seen.status === 'pending' && seen.requester_id === targetUserId) {
         if (await acceptPending(seen.id)) {
@@ -1051,12 +1372,13 @@ router.post('/add-by-code',
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) })
             .catch((e) => console.error('Friend accepted push error:', e.message));
-          return res.json({ message: `You and ${who.name} are now friends!`, status: 'accepted', user: who });
+          return res.json({ message: `You and ${who.name} are now friends.`, status: 'accepted', user: who });
         }
         return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
       }
 
-      if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+      // With the sender's capped photo, as on POST /request.
+      if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
       // The push /request sends. This door emitted the socket event only, so
       // a code scanned while its owner was offline reached them never.
       //
@@ -1174,11 +1496,17 @@ router.post('/find-by-phone',
 
       const budget = numbers.length === 1 ? phoneLookupBudget : contactSyncBudget;
       if (!budget.allow(req.user.id)) {
-        return res.status(429).json({
-          error: numbers.length === 1
-            ? 'You have looked up several numbers already. Try again later.'
-            : 'You have synced your contacts a few times already. Try again later.',
-        });
+        // WHEN, not "later" (Add Friends rebuild, 2026-11-23). Both windows are
+        // knowable exactly (utils/probeBudget.js retryAfterMs), so the body
+        // carries retryAfterSeconds and resetsAt and the header carries
+        // Retry-After, and the screen can say "after 9:40 PM" and keep the
+        // button off until then. Without it the app guessed an hour, which is
+        // wrong once the day's ten are spent. This says nothing about anybody:
+        // it is the caller's own allowance, the same whatever numbers they sent.
+        const wait = budget.retryAfterMs(req.user.id);
+        return res.status(429).json(refusalBody(res, wait, numbers.length === 1
+          ? `You have looked up several numbers already. Try again ${waitPhrase(wait)}.`
+          : `You have synced your contacts a few times already. Try again ${waitPhrase(wait)}.`));
       }
 
       // A null digest means the server holds no key at all, which disables the
@@ -1193,8 +1521,12 @@ router.post('/find-by-phone',
       // rediscover each other through this path (round 5), and a banned account
       // is not somebody to hand anyone. ORDER BY id, never input order, so the
       // response cannot be lined up against the list that produced it.
+      //
+      // The photo is capped at 12,000 characters like every other list here
+      // (over that it reads as null and the app draws the letter): up to 200
+      // matches of full-size avatars was megabytes on a phone's signal.
       const result = await pool.query(
-        `SELECT id, name, profile_image_url FROM users
+        `SELECT id, name, CASE WHEN LENGTH(profile_image_url) > 12000 THEN NULL ELSE profile_image_url END AS profile_image_url FROM users
           WHERE phone_hash = ANY($2::text[])
             AND phone_discoverable
             AND id != $1
@@ -1226,9 +1558,21 @@ router.post('/find-by-phone',
         // maskedStatus.
         // A row that reads as no relationship is left out, so it answers
         // null exactly like a person with no row.
-        friendships.rows.forEach(f => {
+        //
+        // A request THEY sent reads 'incoming' (Add Friends rebuild,
+        // 2026-11-23), so the row offers Accept rather than a Pending pill
+        // that read as if the caller had asked. That includes one the caller
+        // declined, which an accept still answers (acceptDeclined). It is the
+        // caller's own relationship, so it tells them nothing new.
+        //
+        // Two rows for one person (a crossed pair, or a friendship beside a
+        // leftover request) are applied weakest first, so the map keeps the
+        // strongest, in the order PAIR_LOOKUP_SQL ranks them.
+        const rank = (f) => (f.status === 'accepted' ? 3 : theirRequest(f, f.friend_id) ? 2 : f.status === 'withdrawn' ? 0 : 1);
+        friendships.rows.slice().sort((a, b) => rank(a) - rank(b)).forEach(f => {
           const status = maskedStatus(f, req.user.id);
           if (status !== 'none') friendshipMap[f.friend_id] = status;
+          if (theirRequest(f, f.friend_id)) friendshipMap[f.friend_id] = 'incoming';
         });
       }
 
@@ -1303,6 +1647,8 @@ module.exports.__resetBudgets = () => {
   friendProbeBudget.reset();
   contactSyncBudget.reset();
   phoneLookupBudget.reset();
+  // A pass is spent budget held over, so it starts clean with the budgets.
+  previewPasses.clear();
 };
 
 // Test hook only. The relationship between the two contact-discovery lanes is
@@ -1315,4 +1661,8 @@ module.exports.__budgetLimits = () => ({
   phoneLookup: phoneLookupBudget.limits,
 });
 
-module.exports.__test = { maskedStatus, newFriendCode };
+module.exports.__test = {
+  maskedStatus, newFriendCode, readFriendCode, previewStatus,
+  previewPassCount: () => previewPasses.size,
+  PREVIEW_PASS_MS,
+};

@@ -1042,6 +1042,16 @@ const PAGES = [
     Loading: GuestInviteLoading,
   },
   {
+    // A friend's code, /add/FLOCK-XXXXXXXX: what the QR and the share sheet
+    // carry. The page offers the App Store and the web app and keeps the code
+    // through the sign-in (website/FriendLink.js). The native shell never
+    // sits on this path, and must never render a website page if it did.
+    id: 'friend-link',
+    test: (p) => p.startsWith('/add/') && !isNativeShell,
+    load: () => import('./website/FriendLink'),
+    Loading: PaperLoading,
+  },
+  {
     id: 'moderation',
     test: (p) => p === '/admin/moderation',
     load: () => import('./website/ModerationDashboard'),

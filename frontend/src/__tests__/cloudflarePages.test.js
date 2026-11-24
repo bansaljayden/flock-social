@@ -146,7 +146,7 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     // index.html. Which paths they cover is held to src/index.js in
     // cloudflarePagesFunctions.test.js.
     expect(lines.slice(moves.length)).toEqual([
-      '/app/* / 200', '/checkin/* / 200', '/f/* / 200', '/flock/* / 200', '/dm/* / 200',
+      '/app/* / 200', '/checkin/* / 200', '/f/* / 200', '/flock/* / 200', '/dm/* / 200', '/add/* / 200',
     ]);
     expect([...build.parseRedirects(text).staticRules.keys()]).toEqual([
       '/research/flock-research-paper.pdf', '/papers/flock-research-paper-full.pdf',
@@ -176,6 +176,12 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     for (const name of [...written, '_headers', '_redirects', '_routes.json', '_worker.js']) {
       expect([name, fs.existsSync(path.join(ROOT, 'public', name))]).toEqual([name, false]);
     }
+  });
+
+  test("a friend's /add/<code> page carries an invite link's headers: not indexed, no referrer, not cached", () => {
+    // website/FriendLink.js. The code is one person's, like an invite token.
+    const byPath = new Map(headerBlocks(read('cloudflare/_headers')).map((b) => [b.path, b.headers]));
+    expect(byPath.get('/add/*')).toEqual(byPath.get('/i/*'));
   });
 
   test('/i and /i/* carry the same headers, since /i/<token> is answered with the /i file', () => {

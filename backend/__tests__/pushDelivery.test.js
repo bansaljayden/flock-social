@@ -89,7 +89,9 @@ test('every notification type resolves to the screen it is about', () => {
   assert.strictEqual(deepLinkPath({ type: 'flock_rsvp', flockId: '12' }), '/?flock=12');
   assert.strictEqual(deepLinkPath({ type: 'guest_rsvp', flockId: '12' }), '/?flock=12');
   assert.strictEqual(deepLinkPath({ type: 'dm_message', senderId: '4' }), '/?dm=4');
-  assert.strictEqual(deepLinkPath({ type: 'friend_request', fromUserId: '4' }), '/?tab=you');
+  // A friend request opens Add Friends on Requests, where it is answered, not
+  // the You tab two taps short of it (Add Friends rebuild, 2026-11-23).
+  assert.strictEqual(deepLinkPath({ type: 'friend_request', fromUserId: '4' }), '/?tab=requests');
 });
 
 // ---------------------------------------------------------------------------
@@ -935,7 +937,7 @@ test('the type map still routes a notification sent before data.link existed', a
   for (const [data, expected] of [
     [{ type: 'flock_invite', flockId: '3' }, 'https://flockcorp.com/?invite=3'],
     [{ type: 'dm_message', senderId: '8' }, 'https://flockcorp.com/?dm=8'],
-    [{ type: 'friend_request' }, 'https://flockcorp.com/?tab=you'],
+    [{ type: 'friend_request' }, 'https://flockcorp.com/?tab=requests'],
     [{ type: 'friend_accepted' }, 'https://flockcorp.com/?tab=you'],
     [{ type: 'availability_pulse' }, 'https://flockcorp.com/?tab=home'],
     [{ type: 'attendance_marked', flockId: '3' }, 'https://flockcorp.com/?tab=you'],

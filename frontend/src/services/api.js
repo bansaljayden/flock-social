@@ -624,6 +624,15 @@ function storeSession(data) {
  *     flock_sos_stand_downs      which senders' SOS alarms were called off
  *                                (services/pushNavigation.js)
  *     flock_pending_invite       an invite stashed for whoever redeems it
+ *     flock_pending_friend_code  a friend's code from an /add/ link, waiting
+ *                                for somebody to say yes to it
+ *                                (lib/friendCode.js). Held like the invite
+ *                                through a boot that finds a dead session
+ *     flock_friend_code          this account's own friend code and link, so
+ *                                the QR draws with no network (App.js)
+ *     flock_contacts_cursor_<id> where the last contacts check stopped in a
+ *                                big address book, and the Flock accounts it
+ *                                had found (App.js)
  *     flock_avatar_refit         which oversized avatar the server refused a
  *                                smaller copy of (lib/avatarImage.js)
  *     flock_guest_<token>        a guest identity from an invite page. These
@@ -818,19 +827,31 @@ export const RESET_DONE_KEY = 'flock_password_reset_done';
  * flock_guest_* key is an answer from some other visit and goes as before.
  */
 const INVITE_HANDOFF_KEY = 'flock_pending_invite';
+// A friend's code from the /add/ page, waiting for the same sign-in
+// (lib/friendCode.js). It is held on the same rule, for the same reason: the
+// page stores it and opens /app, and a browser still holding a token that ran
+// out days ago answers the boot's first request with a 401.
+const FRIEND_CODE_HANDOFF_KEY = 'flock_pending_friend_code';
 
 function holdInviteHandoff() {
   const held = [];
   try {
     const store = window.localStorage;
+    // exp is in seconds, a stash's `at` in milliseconds. A missing or
+    // unreadable `at` is not after anything, so against a readable exp it goes.
+    const exp = Number(storedTokenClaims()?.exp);
+    const writtenAfterExpiry = (stash) => !Number.isFinite(exp) || Number(stash?.at) > exp * 1000;
+    const friendRaw = store.getItem(FRIEND_CODE_HANDOFF_KEY);
+    if (friendRaw !== null) {
+      let friend = null;
+      try { friend = JSON.parse(friendRaw); } catch (_) { /* unreadable: friendCode.js forgets it on read */ }
+      if (writtenAfterExpiry(friend)) held.push([FRIEND_CODE_HANDOFF_KEY, friendRaw]);
+    }
     const raw = store.getItem(INVITE_HANDOFF_KEY);
     if (raw === null) return held;
     let stash = null;
     try { stash = JSON.parse(raw); } catch (_) { /* unreadable: inviteHandoff forgets it on read */ }
-    // exp is in seconds, the stash's `at` in milliseconds. A missing or
-    // unreadable `at` is not after anything, so against a readable exp it goes.
-    const exp = Number(storedTokenClaims()?.exp);
-    if (Number.isFinite(exp) && !(Number(stash?.at) > exp * 1000)) return held;
+    if (!writtenAfterExpiry(stash)) return held;
     held.push([INVITE_HANDOFF_KEY, raw]);
     const linkToken = stash?.token;
     // The same length bounds inviteHandoff.js and the guest routes put on a
@@ -3512,6 +3533,36 @@ export async function removeFriend(userId) {
   return request(`/api/friends/${userId}`, { method: 'DELETE' });
 }
 
+// Cancel on a Sent request. Only ever a request still pending: the server
+// answers 404 when there is none and 409 with { status: 'accepted' } when the
+// other person accepted it while this list was stale. removeFriend above
+// deleted whatever the pair had, so a Cancel tapped on a row that still read
+// Pending after a night with the phone locked unfriended them.
+export async function cancelFriendRequest(userId) {
+  return request(`/api/friends/request/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+}
+
+// Where the caller stands with one person: { status, requester_id }, the
+// declined row masked as the server always masks it. For a Sent row that left
+// the list between two reads, to tell an accept from a withdrawal.
+export async function getFriendshipStatus(userId) {
+  return request(`/api/friends/status/${encodeURIComponent(userId)}`);
+}
+
+// Who a friend's code belongs to, before anything is sent:
+// { user: { id, name, profile_image_url }, status }, status one of none,
+// outgoing, incoming, accepted or self. Read-only and charged to the same
+// probe budget as add-by-code, with the same single 404 for a code that names
+// nobody (routes/friends.js).
+//
+// retry: false. A GET, but every attempt that reaches the route is charged to
+// the caller's twenty friend probes an hour, so a gateway 504 or an answer lost
+// on the way back would cost up to three for one look. The sheet has its own
+// Try again, which asks again on purpose.
+export async function getFriendByCode(code) {
+  return request(`/api/friends/by-code/${encodeURIComponent(code)}`, { retry: false });
+}
+
 export async function getPendingRequests() {
   return request('/api/friends/pending');
 }
@@ -3524,6 +3575,9 @@ export async function getFriendSuggestions() {
   return request('/api/friends/suggestions');
 }
 
+// { code, url, qr }: the account's code, its link for the share sheet, and
+// what the QR carries, which the server decides (lib/friendCode.js
+// friendQrText).
 export async function getMyFriendCode() {
   return request('/api/friends/my-code');
 }
@@ -4282,7 +4336,7 @@ export function trackPurchaseCompleted(store, plan) {
    payload is server-authored data reaching a clamp for the same reason
    nfc_tap's source is clamped. A tap that resolved to no screen is 'none'; a
    screen the allowlist does not know is 'unknown'. */
-const PUSH_DESTINATIONS = ['flock', 'flockInvite', 'flocks', 'dm', 'friends', 'home', 'admin', 'venueTables'];
+const PUSH_DESTINATIONS = ['flock', 'flockInvite', 'flocks', 'dm', 'friends', 'addFriends', 'home', 'admin', 'venueTables'];
 function pushDestination(screen) {
   if (!screen) return 'none';
   return PUSH_DESTINATIONS.includes(screen) ? screen : 'unknown';

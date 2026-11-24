@@ -1034,7 +1034,17 @@ export default function ProfileSettings({
                   ships to, so the line names all three ways in. */}
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Find people, scan a QR code, check your contacts</span>
             </div>
-            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: 'var(--r-md)', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
+            {/* The requests waiting, in the badge the tab bar and Add Friends'
+                Requests tab use: white figures on #B91C1C, 6.47:1 in both
+                themes. It was navy on amber, and navy is cream in the dark
+                theme, which measured about 1.8:1 (Add Friends audit,
+                2026-11-23). The count is said in words for a screen reader. */}
+            {pendingRequests.length > 0 && (
+              <>
+                <span aria-hidden="true" style={{ minWidth: '18px', height: '18px', padding: '0 5px', boxSizing: 'border-box', flexShrink: 0, borderRadius: 'var(--r-pill)', backgroundColor: '#B91C1C', color: '#ffffff', fontSize: 'var(--t-micro)', fontWeight: '700', lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{pendingRequests.length > 99 ? '99+' : pendingRequests.length}</span>
+                <span className="sr-only">{`, ${pendingRequests.length} ${pendingRequests.length === 1 ? 'friend request' : 'friend requests'}`}</span>
+              </>
+            )}
             <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 14)}</span>
           </button>
 

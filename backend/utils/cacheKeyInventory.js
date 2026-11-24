@@ -318,6 +318,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Split out of contact-sync because one number is the friend probe question asked with a phone number, and it carries the friend probe limits for that reason. It adds NO capacity to an enumerator: 60 single lookups a day is far under the 2,000 numbers a day the bulk lane already permits, so splitting a list into singles is strictly worse for the attacker than sending it as a list.',
   },
+  {
+    file: 'routes/friends.js', name: 'previewPasses', kind: 'cache',
+    key: '`${req.user.id}:${target.id}`: the authenticated caller, and the id of the account a friend code resolved to, read from users.friend_code',
+    callerControls: 'which code they looked at, and only through a GET /by-code/:code that was charged to friendProbeBudget and answered 200 with that person',
+    protects: 'one friendProbeBudget unit: the request that follows a charged look at a friend link is not charged a second time',
+    denominator: 'one pass per charged, successful preview; spent on first use by POST /request or POST /add-by-code; 10 minute expiry',
+    bound: 'PREVIEW_PASS_MAX 20k, expired first, then oldest-written first (delete-before-set)',
+    verdict: 'SAFE',
+    why: 'A pass can only be bought with a probe that already returned this person by name, so the request it pays for answers nothing new, and it is spent once. It is never written for a miss (no holder, banned, blocked, budget spent), so those four stay alike in cost as well as in body: a pass after a banned code would make the next add free, a difference the caller could count. Evicting a live pass costs its holder one probe, never a free one; flooding the table costs a charged probe per entry, 60 a day per account.',
+  },
 
   // ── routes/moderation.js ──────────────────────────────────────────────────
   {

@@ -39,13 +39,21 @@ test('the guest page ranks by the same weighting members see', () => {
 });
 
 test('the invite URL uses the hardened base, not a preview domain', () => {
-  expect(flocks).toMatch(/const \{ baseWebUrl \} = require\('\.\.\/services\/emailService'\);/);
+  // The base moved to utils/inviteBase.js on 2026-11-23, when a friend code's
+  // /add/ link started being minted on the same host as a plan's /i/ link.
+  // flocks.js takes it from there and nowhere else.
+  const inviteBaseSrc = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'utils', 'inviteBase.js'), 'utf8');
+  expect(flocks).toMatch(/const \{ inviteBase \} = require\('\.\.\/utils\/inviteBase'\);/);
+  expect(flocks).not.toMatch(/function inviteBase\(/);
+  expect(inviteBaseSrc).toMatch(/const \{ baseWebUrl \} = require\('\.\.\/services\/emailService'\);/);
   // inviteBase: baseWebUrl in production, and a local http origin honoured
   // outside it so a local deployment does not mint flockcorp.com links.
   expect(flocks).toMatch(/const base = inviteBase\(\);/);
-  expect(flocks).toMatch(/function inviteBase\(\) \{/);
-  expect(flocks).toMatch(/if \(process\.env\.NODE_ENV !== 'production' && \/\^https\?:/);
+  expect(inviteBaseSrc).toMatch(/function inviteBase\(\) \{/);
+  expect(inviteBaseSrc).toMatch(/if \(process\.env\.NODE_ENV !== 'production' && \/\^https\?:/);
+  expect(inviteBaseSrc).toMatch(/return baseWebUrl\(\);/);
   expect(flocks).not.toMatch(/flock-app-w65m\.vercel\.app/);
+  expect(inviteBaseSrc).not.toMatch(/flock-app-w65m\.vercel\.app/);
 });
 
 test('a signed-out install says what the invite tap was for', () => {

@@ -124,15 +124,16 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { KEYBOARD_EASE, KEYBOARD_SHOW_MS, KEYBOARD_HIDE_MS } from '../lib/keyboardMotion';
 
 /* The curve and the two durations are Snapchat's, measured off the capture and
-   written down in CHAT-REBUILD-PLAN.md. They live here as JS constants and
-   deliberately are NOT mirrored as CSS tokens: the transform is set inline, so
-   a second copy in a stylesheet could only ever drift out of agreement with
-   this one. */
-export const KEYBOARD_EASE = 'cubic-bezier(0.38, 0.7, 0.125, 1)';
-export const KEYBOARD_SHOW_MS = 250;
-export const KEYBOARD_HIDE_MS = 200;
+   written down in CHAT-REBUILD-PLAN.md. They are JS constants and deliberately
+   NOT mirrored as CSS tokens: the transform is set inline, so a second copy in
+   a stylesheet could only ever drift out of agreement with this one. They are
+   declared in lib/keyboardMotion.js, which Add Friends' scroll box reads too
+   without loading this hook, and re-exported here so every import of them
+   from this file keeps working. */
+export { KEYBOARD_EASE, KEYBOARD_SHOW_MS, KEYBOARD_HIDE_MS };
 
 /* The list counts as "at the bottom" inside 2px. Anything looser and a thread
    resting one subpixel short of the end refuses to dismiss. */

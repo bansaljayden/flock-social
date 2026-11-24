@@ -65,7 +65,8 @@ var FLOCK_TYPES = [
 // The types whose destination is a tab rather than a flock. Same map as
 // deepLinkPath in backend/services/firebaseService.js.
 var TAB_TYPES = {
-  friend_request: '/?tab=you',
+  // Add Friends, on Requests, where a request is answered.
+  friend_request: '/?tab=requests',
   friend_accepted: '/?tab=you',
   attendance_marked: '/?tab=you',
   availability_pulse: '/?tab=home',

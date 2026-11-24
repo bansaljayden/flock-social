@@ -71,24 +71,11 @@ const {
 // so these three readers get both gates from one call.
 const { settledCeiling } = require('./budget');
 
-const { baseWebUrl } = require('../services/emailService');
-
-// The base an invite link is minted on.
-//
-// In production this is baseWebUrl(), which refuses anything that is not a
-// public https URL and falls back to the canonical host. That is the fix this
-// replaced: a raw env read whose fallback was a preview domain the iOS
-// entitlement does not claim and the link preview does not use.
-//
-// Outside production the whole app can legitimately live on http://127.0.0.1,
-// and it does (tools/e2e/stack.js). Handing that deployment a flockcorp.com
-// link would point every tester at somebody else's data, so a local http
-// origin is honoured there and nowhere else.
-function inviteBase() {
-  const raw = (process.env.PUBLIC_WEB_URL || '').trim().replace(/\/+$/, '');
-  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/[^\s/]+/.test(raw)) return raw;
-  return baseWebUrl();
-}
+// The base an invite link is minted on. It lives in utils/inviteBase.js since
+// a friend code's /add/ link is minted on the same one (GET
+// /api/friends/my-code): the two links have to agree on the host, and the
+// reasons for its rules are written there.
+const { inviteBase } = require('../utils/inviteBase');
 const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
 const { ownAvatar } = require('../utils/ownAvatar');
 

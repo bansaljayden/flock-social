@@ -59,22 +59,31 @@ describe('which auth screen a session ending leaves', () => {
   const fnEnd = src.indexOf('\n  }, []);', fnStart);
   const fnText = src.slice(fnStart, fnEnd + '\n  }'.length);
 
-  const run = (ranHere) => {
+  // The note a friend's /add/ link puts over the sign-in form, and the code it
+  // promises, which the sign-out sweeps with the rest of the account
+  // (lib/friendCode.js). Stubbed like every other collaborator.
+  const ADD_FRIEND_NOTE = 'friend link note';
+  const run = (ranHere, { codeKept = null, noteBefore = '' } = {}) => {
     const screens = [];
+    let note = noteBefore;
     const ref = (current) => ({ current });
     // eslint-disable-next-line no-new-func
     const make = new Function(
       'sessionEndedRef', 'sessionEndedByRevokeRef', 'sessionLiveRef',
       'unregisterPushToken', 'forgetDeliveredNotifications', 'disconnectSocket', 'logout',
       'setAuthUser', 'setAuthScreen', 'setVenueLoginFlag', 'setSessionNote',
+      'setInviteNote', 'SIGNED_OUT_LINK_NOTES', 'pendingFriendCode',
       `return ${fnText};`,
     );
     const endSession = make(
       ref(false), ref(false), ref(ranHere),
       () => Promise.resolve(), () => {}, () => {}, () => Promise.resolve(),
       () => {}, (s) => screens.push(s), () => {}, () => {},
+      (next) => { note = typeof next === 'function' ? next(note) : next; },
+      { addFriend: ADD_FRIEND_NOTE }, () => codeKept,
     );
     endSession('Your session expired. Sign in again to pick up where you left off.');
+    run.lastNote = note;
     return screens;
   };
 
@@ -90,6 +99,19 @@ describe('which auth screen a session ending leaves', () => {
 
   test('at a boot that finds the stored session already dead, the screen the page opened on stays', () => {
     expect(run(false)).toEqual([]);
+  });
+
+  // A friend's link note says a code is waiting for the sign-in. When the
+  // sign-out swept that code, the note goes with it; when the code is still
+  // on the device (a boot that found the session dead keeps it), so is the
+  // note; and a note about something else is never touched.
+  test('the friend-link note goes only with the code it promised', () => {
+    run(true, { codeKept: null, noteBefore: ADD_FRIEND_NOTE });
+    expect(run.lastNote).toBe('');
+    run(false, { codeKept: 'FLOCK-ABCDEFGH', noteBefore: ADD_FRIEND_NOTE });
+    expect(run.lastNote).toBe(ADD_FRIEND_NOTE);
+    run(true, { codeKept: null, noteBefore: 'an invite note' });
+    expect(run.lastNote).toBe('an invite note');
   });
 });
 

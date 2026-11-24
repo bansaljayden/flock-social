@@ -43,12 +43,20 @@ export const CONTACT_BATCH_SIZE = 200;
 // The server allows three bulk syncs an hour. An address book bigger than
 // CONTACT_BATCH_SIZE * MAX_BATCHES cannot be checked in one go, and the honest
 // thing is to say so rather than to silently check the first 600 numbers and
-// report "nobody in your contacts uses Flock".
+// report "nobody in your contacts uses Flock". The next run carries on from
+// where this one stopped (syncContacts's cursor), so a big book is checked in
+// full over a few runs instead of its first 600 numbers every time.
 export const MAX_BATCHES = 3;
 
-// Phone labels a person is likely to be reachable on, best first. Everything
-// else on the card (fax, pager, company main) is skipped entirely.
-const PREFERRED_PHONE_TYPES = ['mobile', 'main', 'home', 'work', 'other', 'custom'];
+// Phone labels a person is likely to be reachable on, best first. 'iphone' is
+// what the plugin calls a number saved under the iPhone label, which is the
+// one somebody signed up with as often as 'mobile' is; it used to rank below
+// home, work and custom, so a card with three numbers dropped exactly that
+// one. Work is last of the kept ones: it is the least likely to be the number
+// on somebody's Flock account.
+const PREFERRED_PHONE_TYPES = ['mobile', 'iphone', 'main', 'home', 'other', 'custom', 'work'];
+// Never sent at all: nobody signs up to Flock with a fax or a pager.
+const SKIPPED_PHONE_TYPES = /^(fax_|pager$)/;
 const NUMBERS_PER_CONTACT = 2;
 
 function isNative() {
@@ -98,6 +106,7 @@ function phonesFromContact(contact) {
   const phones = Array.isArray(contact?.phones) ? contact.phones : [];
   const ranked = phones
     .filter((p) => typeof p?.number === 'string' && p.number.trim().length > 0)
+    .filter((p) => !SKIPPED_PHONE_TYPES.test(String(p?.type || '')))
     .sort((a, b) => {
       const ai = PREFERRED_PHONE_TYPES.indexOf(a?.type);
       const bi = PREFERRED_PHONE_TYPES.indexOf(b?.type);
@@ -109,7 +118,8 @@ function phonesFromContact(contact) {
 /**
  * Reads phone numbers out of the address book. Throws with a `code` a caller can
  * branch on rather than a string it would have to match:
- *   'unavailable'  no contacts API on this platform
+ *   'unavailable'  no contacts API on this platform, or the plugin could not
+ *                  be reached
  *   'denied'       the person said no, or said no earlier
  *   'cancelled'    the picker was dismissed without choosing anybody
  *
@@ -150,6 +160,13 @@ export async function readContactPhoneNumbers() {
   // Settings, which is why nothing in the app may call this on launch or on a
   // screen the user did not ask for.
   let state = await contactsPermissionState();
+  // The plugin could not be reached at all. That is not a refusal, and the
+  // screen must not send somebody to a Settings switch that is already on.
+  if (state === 'unavailable') {
+    const err = new Error('Contacts could not be opened');
+    err.code = 'unavailable';
+    throw err;
+  }
   if (state === 'prompt') {
     try {
       const Contacts = await loadContactsPlugin();
@@ -179,16 +196,35 @@ export async function readContactPhoneNumbers() {
 // Same digits, different punctuation, is one number. Deduping on the digits
 // before anything is sent cuts a real address book down by a third or more, and
 // every number removed here is one that never leaves the phone.
+//
+// THE WHOLE NUMBER, with a North American leading 1 taken off, never its last
+// ten digits: keying on the last ten merged a London number with an American
+// one that happened to end the same way, and one of them was never checked.
+// Fewer than ten digits is an extension or a short code, which no Flock
+// account can be reached on, and it is not sent.
+const dedupeKey = (raw) => {
+  const digits = raw.replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+};
+
 function dedupe(numbers) {
   const seen = new Map();
   for (const raw of numbers) {
     if (typeof raw !== 'string') continue;
-    const key = raw.replace(/\D/g, '').slice(-10);
+    const key = dedupeKey(raw);
     if (key.length < 10) continue;
     if (!seen.has(key)) seen.set(key, raw.trim());
   }
   return [...seen.values()];
 }
+
+// The book in one fixed order, so batch 3 is the same 200 numbers on every
+// run and a run that carries on from the last one checks the numbers it has
+// not checked yet rather than a reshuffled set.
+const inStableOrder = (numbers) => numbers
+  .map((raw) => ({ raw, key: dedupeKey(raw) }))
+  .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+  .map((n) => n.raw);
 
 export function chunkNumbers(numbers, size = CONTACT_BATCH_SIZE) {
   const out = [];
@@ -196,52 +232,108 @@ export function chunkNumbers(numbers, size = CONTACT_BATCH_SIZE) {
   return out;
 }
 
+// When a refused run can run again. The server says how long in the 429's
+// body (retryAfterSeconds); a server that does not say is read as the hour the
+// allowance is counted over.
+const ONE_HOUR_S = 3600;
+function retryAtFrom(err) {
+  const seconds = Number(err?.data?.retryAfterSeconds);
+  const wait = Number.isFinite(seconds) && seconds > 0 ? seconds : ONE_HOUR_S;
+  return new Date(Date.now() + wait * 1000).toISOString();
+}
+
 /**
- * Runs the whole sync: read the book, chunk it, look each chunk up, stop when
- * the server says the allowance is spent.
+ * Runs one check of the book: read it, put it in a fixed order, look up at most
+ * MAX_BATCHES batches starting where the last run stopped, and stop when the
+ * server says the allowance is spent.
  *
  * `lookup` is injected rather than imported so this file has no opinion about
  * the API layer and can be exercised without one. Pass `findFriendsByPhone`
  * from services/api.js.
  *
- * The return value is deliberately enough to write an HONEST empty state with:
- * `checked` is how many numbers were actually looked up and `total` is how many
- * the phone had, so a screen can say "none of the 240 numbers we checked are on
- * Flock" instead of "none of your contacts use Flock" when it only looked at
- * some of them.
+ * `cursor` is where the last run stopped, { nextBatch, total }, which the
+ * caller keeps between runs. It is used only while the book still has the
+ * size it had then; a book that changed, a finished one, or no cursor at all
+ * starts from the first batch.
  *
- * @returns {Promise<{ users: object[], checked: number, total: number, contactCount: number, throttled: boolean, permission: string }>}
+ * The return value is enough to write an HONEST summary with, and it keeps
+ * apart the three things the screen used to fold into one "try the rest in an
+ * hour":
+ *   sent        numbers in the batches the server answered
+ *   checked     the server's count of those it could read and looked up, so
+ *               sent - checked is `unreadable` (a number saved without its
+ *               area code, or a foreign one without its + and country code)
+ *   notReached  numbers no batch of this run carried, because the book is
+ *               bigger than one run or the allowance ran out
+ *   throttled   only a 429, with `retryAt` saying when the next run can go
+ *   failed      a lookup failed after earlier batches had answered; what they
+ *               found is kept and the next run starts at the batch that failed
+ *
+ * @returns {Promise<{ users: object[], sent: number, checked: number, unreadable: number,
+ *   total: number, notReached: number, startBatch: number, nextBatch: (number|null),
+ *   answered: number, throttled: boolean, retryAt: (string|null), failed: boolean,
+ *   contactCount: number, permission: string }>}
  */
-export async function syncContacts(lookup) {
-  const { numbers, contactCount, permission } = await readContactPhoneNumbers();
-  const batches = chunkNumbers(numbers).slice(0, MAX_BATCHES);
+export async function syncContacts(lookup, { cursor } = {}) {
+  const read = await readContactPhoneNumbers();
+  const numbers = inStableOrder(read.numbers);
+  const all = chunkNumbers(numbers);
+  const resumable = cursor
+    && Number(cursor.total) === numbers.length
+    && Number.isInteger(cursor.nextBatch)
+    && cursor.nextBatch > 0
+    && cursor.nextBatch < all.length;
+  const startBatch = resumable ? cursor.nextBatch : 0;
+  const batches = all.slice(startBatch, startBatch + MAX_BATCHES);
   const byId = new Map();
+  let sent = 0;
   let checked = 0;
+  let answered = 0;
   let throttled = false;
+  let retryAt = null;
+  let failed = false;
 
   for (const batch of batches) {
     try {
       const data = await lookup(batch);
-      checked += typeof data?.checked === 'number' ? data.checked : batch.length;
+      answered += 1;
+      sent += batch.length;
+      checked += typeof data?.checked === 'number' ? Math.min(data.checked, batch.length) : batch.length;
       for (const user of data?.users || []) byId.set(user.id, user);
     } catch (err) {
       // 429 is "your allowance is spent", which is a partial result rather than
       // a failure: whatever the earlier batches found is still true and still
-      // worth showing. Anything else is a real error and belongs to the caller.
-      if (err?.status === 429) { throttled = true; break; }
-      throw err;
+      // worth showing. Anything else is a real error and belongs to the
+      // caller, unless earlier batches had already answered: then what they
+      // found is not thrown away for the one that did not.
+      if (err?.status === 429) { throttled = true; retryAt = retryAtFrom(err); break; }
+      if (answered === 0) throw err;
+      failed = true;
+      break;
     }
   }
 
+  const stoppedAt = startBatch + answered;
   return {
     users: [...byId.values()],
+    sent,
     checked,
+    unreadable: Math.max(0, sent - checked),
     total: numbers.length,
-    contactCount,
-    // True when the phone held more numbers than this run could look at, for
-    // either reason: the allowance ran out, or the book is bigger than
-    // CONTACT_BATCH_SIZE * MAX_BATCHES.
-    throttled: throttled || numbers.length > CONTACT_BATCH_SIZE * MAX_BATCHES,
-    permission,
+    // Everything after the last batch answered. The batches before
+    // startBatch were answered by the runs this one carries on from, so over
+    // a pass through the book this is exactly what is left. `sent` and
+    // `checked` are this run's alone; the caller adds the earlier runs.
+    notReached: Math.max(0, numbers.length - (startBatch * CONTACT_BATCH_SIZE) - sent),
+    startBatch,
+    nextBatch: stoppedAt < all.length ? stoppedAt : null,
+    answered,
+    throttled,
+    retryAt,
+    failed,
+    contactCount: read.contactCount,
+    // The browser's picker asks every time it opens, so there is no lasting
+    // grant to report there.
+    permission: contactsMode() === 'web' ? 'web' : read.permission,
   };
 }

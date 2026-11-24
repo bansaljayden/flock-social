@@ -221,9 +221,12 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
   });
 
   test('a camera string is present exactly while something opens the camera', () => {
-    // Two independent call sites, both getUserMedia inside the web view.
+    // Two independent call sites, both getUserMedia inside the web view. The
+    // friend-code scanner is components/QrScanner.js since 2026-11-23, which
+    // App.js mounts at the root (and fetches, as its own chunk).
+    const scannerSource = read('frontend', 'src', 'components', 'QrScanner.js');
     const viewfinder = /navigator\.mediaDevices\.getUserMedia\(/.test(app);
-    const qrScanner = /new Html5Qrcode\(/.test(app) && /startQrScanner/.test(app);
+    const qrScanner = /new Html5Qrcode\(/.test(scannerSource) && /<QrScanner\b/.test(app);
     const opensCamera = viewfinder || qrScanner;
 
     expect(opensCamera).toBe(hasKey(infoPlist, 'NSCameraUsageDescription'));
@@ -338,8 +341,13 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
     expect(app).toContain("openCameraViewfinder('flock')");
     expect(app).toContain("openCameraViewfinder('dm')");
     // The scanner decodes straight into a friend request, which is what lets
-    // the camera string say "to add them".
-    expect(app).toMatch(/parsed\.type === 'flock_friend'[\s\S]{0,600}addFriendByCode\(/);
+    // the camera string say "to add them": a read code goes to App.js's
+    // addFromScanner, which sends it through add-by-code.
+    const scannerSource = read('frontend', 'src', 'components', 'QrScanner.js');
+    expect(scannerSource).toMatch(/const code = friendCodeFrom\([\s\S]{0,600}latest\.current\.onAdd\(code\)/);
+    expect(app).toMatch(/onAdd=\{addFromScanner\}/);
+    expect(app).toMatch(/const addFromScanner = useCallback\(async \(code\) => \{[\s\S]{0,200}await sendFriendCode\(code\)/);
+    expect(app).toMatch(/const sendFriendCode = useCallback\(async \(code\) => \{\s*const data = await addFriendByCode\(code\);/);
 
     for (const s of [camera, photos]) {
       expect(s).toMatch(/flock chat/i);

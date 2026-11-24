@@ -42,6 +42,9 @@ const INVITE_RELAY_OPEN_SQL = acceptsInvitesFromSql('iu', '$3');
 // attention, and a laptop tab left open would otherwise report a person as
 // reading their messages for as long as the tab lived.
 const { pushIfOfflineDebounced, isUserOnline } = require('../services/pushHelper');
+// The sender's own capped photo, for friend_request_received below, which
+// routes/friends.js sends with the same three fields.
+const { ownAvatar } = require('../utils/ownAvatar');
 // Round 17: the session revalidator re-verifies the handshake token, so it must
 // accept the same (and only the same) algorithms the handshake did. Without the
 // pin, a future change to how JWT_SECRET is loaded (a PEM/KeyObject) could
@@ -2731,9 +2734,14 @@ function registerHandlers(io, socket) {
       [user.id, toUserId]
     );
     if (row.rows.length === 0) return;
+    // One event, one shape, whichever transport sent it: the REST doors in
+    // routes/friends.js carry the sender's photo (Add Friends rebuild,
+    // 2026-11-23), so the relay does too. ownAvatar answers null rather than
+    // throwing, so a failed read never drops the event.
     io.to(`user:${toUserId}`).emit('friend_request_received', {
       fromUserId: user.id,
       fromUserName: user.name,
+      fromUserImage: await ownAvatar(user.id),
     });
   });
 

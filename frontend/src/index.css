@@ -1189,6 +1189,34 @@ code {
   height: var(--kb-inset, 0px);
 }
 
+/* ADD FRIENDS' HEADER (screens/AddFriends.js, 2026-11-23). It is navy in both
+   themes, and two things on it need a selector rather than an inline style.
+
+   The segmented control. The chosen segment is the thumb of an iOS segmented
+   control on a navy bar: white in light and cream in dark, with navy words
+   (14.6:1 and 12.5:1). The others are white words at 86% on the bar's 14%
+   white track, 7.5:1 in light and 6.1:1 in dark. The theme switches it here,
+   so the inline style never names a colour per state.
+
+   The keyboard ring. The steel ring of the light theme measures 1.9:1 on the
+   navy, under the 3:1 WCAG 1.4.11 asks of a focus indicator, so the header's
+   controls draw it in near-white, as the plan header's do
+   (.plan-head-control). */
+.af-seg-tab {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.86);
+}
+.af-seg-tab[aria-selected="true"] {
+  background: #ffffff;
+  color: #1e293b;
+}
+[data-theme="dark"] .af-seg-tab[aria-selected="true"] {
+  background: #f1ede0;
+}
+.af-on-navy:focus-visible {
+  outline-color: rgba(255, 255, 255, 0.9);
+}
+
 /* Smooth fade + slide in */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }

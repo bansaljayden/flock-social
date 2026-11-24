@@ -489,11 +489,14 @@ describe('declining a plan moves its card to Declined on the tap', () => {
 describe('answering a friend request moves the row on the tap', () => {
   const person = (id, name) => ({ id, name, profile_image_url: null });
 
+  // Accept, Cancel and every other answer land through applyRelationship, the
+  // one writer of where you stand with somebody, so the real one is lifted
+  // with them (and refreshFriendCount, which it calls on an accept).
   function setup({ answer = () => Promise.resolve({}), verify = () => false } = {}) {
     const pending = [person(1, 'Ava'), person(2, 'Bo'), person(3, 'Cy')];
     const outgoing = [person(7, 'Dee'), person(8, 'Eli')];
-    const state = { pending, outgoing, statuses: { 7: 'pending', 8: 'pending' }, friendCount: 4 };
-    const calls = { api: [], toasts: [], verify: [] };
+    const state = { pending, outgoing, statuses: { 7: 'pending', 8: 'pending' }, friendCount: 4, declining: [] };
+    const calls = { api: [], toasts: [], verify: [], stats: 0 };
     const call = (name) => (id) => { calls.api.push([name, id]); return answer(name, id); };
     const scope = {
       useCallback: (fn) => fn,
@@ -504,23 +507,30 @@ describe('answering a friend request moves the row on the tap', () => {
       setOutgoingRequests: setterOn(state, 'outgoing'),
       setFriendStatuses: setterOn(state, 'statuses'),
       friendStatusesRef: { current: state.statuses },
+      setDecliningRequests: setterOn(state, 'declining'),
       acceptFriendRequest: call('accept'),
       declineFriendRequest: call('decline'),
-      removeFriend: call('remove'),
-      getUserStats: () => Promise.resolve({ friendCount: 5 }),
+      cancelFriendRequest: call('cancel'),
+      getUserStats: () => { calls.stats += 1; return Promise.resolve({ friendCount: 5 }); },
       setFriendCount: (n) => { state.friendCount = n; },
       needsEmailVerification: (err, what) => { calls.verify.push(what); return verify(err); },
-      showToast: (message, type) => calls.toasts.push([message, type]),
+      showToast: (message, type, options) => calls.toasts.push(options ? [message, type, options] : [message, type]),
       userMessage,
+      DECLINE_UNDO_MS: 5000,
       withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
     };
     const src = [
+      statementAt(APP, 'const refreshFriendCount = useCallback('),
+      statementAt(APP, 'const relationshipWrittenRef = useRef('),
+      statementAt(APP, 'const applyRelationship = useCallback('),
       statementAt(APP, 'const friendRequestBusyRef = useRef('),
+      statementAt(APP, 'const decliningRef = useRef('),
       statementAt(APP, 'const handleAcceptFriendRequest = useCallback('),
       statementAt(APP, 'const handleDeclineFriendRequest = useCallback('),
+      statementAt(APP, 'const handleUndoDecline = useCallback('),
       statementAt(APP, 'const handleCancelOutgoingRequest = useCallback('),
     ].join('\n');
-    const handlers = lift(src, '{ accept: handleAcceptFriendRequest, decline: handleDeclineFriendRequest, cancel: handleCancelOutgoingRequest }', scope);
+    const handlers = lift(src, '{ accept: handleAcceptFriendRequest, decline: handleDeclineFriendRequest, undo: handleUndoDecline, cancel: handleCancelOutgoingRequest, declining: decliningRef }', scope);
     return { state, calls, ...handlers };
   }
 
@@ -535,6 +545,10 @@ describe('answering a friend request moves the row on the tap', () => {
     await done;
     expect(state.statuses[2]).toBe('accepted');
     expect(calls.toasts).toEqual([['Friend request accepted.', undefined]]);
+    // And the header count is read again, which only ever moved on boot.
+    await Promise.resolve();
+    expect(calls.stats).toBe(1);
+    expect(state.friendCount).toBe(5);
   });
 
   test('a refused Accept puts the request back where it was, and the email sheet still gets its turn', async () => {
@@ -557,20 +571,91 @@ describe('answering a friend request moves the row on the tap', () => {
     expect(calls.toasts).toEqual([['That request was withdrawn.', undefined]]);
   });
 
-  test('Decline takes the row off on the tap and puts it back on a refusal', async () => {
-    const wait = held();
-    const ok = setup({ answer: () => wait.promise });
-    const done = ok.decline(1);
-    expect(ok.state.pending.map((r) => r.id)).toEqual([2, 3]);
-    wait.resolve({});
-    await done;
-    expect(ok.state.pending.map((r) => r.id)).toEqual([2, 3]);
-    expect(ok.calls.toasts).toEqual([]);
+  describe('Decline, with five seconds to take it back', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
 
-    const refused = setup({ answer: () => Promise.reject(refusal('Slow down a moment.', { status: 429 })) });
-    await refused.decline(1);
-    expect(refused.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
-    expect(refused.calls.toasts).toEqual([['Slow down a moment.', 'error']]);
+    test('the request leaves the list on the tap, its row says Declined in its place, and the decline goes out when the window ends', async () => {
+      const ok = setup();
+      ok.decline(2);
+      expect(ok.state.pending.map((r) => r.id)).toEqual([1, 3]);
+      // Drawn where it was, with its own Undo, for the window (the Requests tab).
+      expect(ok.state.declining).toEqual([{ ...person(2, 'Bo'), at: 1 }]);
+      expect(ok.calls.api).toEqual([]);
+      // No toast: one that came after it used to take its Undo away.
+      expect(ok.calls.toasts).toEqual([]);
+      jest.advanceTimersByTime(4999);
+      expect(ok.calls.api).toEqual([]);
+      jest.advanceTimersByTime(1);
+      await Promise.resolve();
+      expect(ok.calls.api).toEqual([['decline', 2]]);
+      expect(ok.state.declining).toEqual([]);
+      await Promise.resolve();
+      expect(ok.state.pending.map((r) => r.id)).toEqual([1, 3]);
+      expect(ok.declining.current.size).toBe(0);
+    });
+
+    test('Undo inside the window puts the row back where it was, and nothing reaches the server', () => {
+      const ok = setup();
+      ok.decline(2);
+      ok.undo(2);
+      expect(ok.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
+      expect(ok.state.declining).toEqual([]);
+      jest.advanceTimersByTime(6000);
+      expect(ok.calls.api).toEqual([]);
+      expect(ok.declining.current.size).toBe(0);
+      // Once the window is over there is nothing left to undo.
+      ok.decline(1);
+      jest.advanceTimersByTime(5000);
+      ok.undo(1);
+      expect(ok.state.pending.map((r) => r.id)).toEqual([2, 3]);
+    });
+
+    test('several declined in a row each keep their own Undo, whatever is said in between', () => {
+      // Clearing a list is exactly when the old toast's single slot lost all
+      // but the last Undo, while every decline still went out.
+      const ok = setup();
+      ok.decline(1);
+      ok.decline(2);
+      ok.decline(3);
+      expect(ok.state.declining.map((r) => r.id)).toEqual([1, 2, 3]);
+      expect(ok.state.pending).toEqual([]);
+      ok.undo(1);
+      jest.advanceTimersByTime(5000);
+      expect(ok.calls.api).toEqual([['decline', 2], ['decline', 3]]);
+      expect(ok.state.pending.map((r) => r.id)).toEqual([1]);
+      expect(ok.state.declining).toEqual([]);
+    });
+
+    test('a decline the server refuses puts the row back with its sentence', async () => {
+      const refused = setup({ answer: () => Promise.reject(refusal('Slow down a moment.', { status: 429 })) });
+      refused.decline(1);
+      jest.advanceTimersByTime(5000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      expect(refused.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
+      expect(refused.state.declining).toEqual([]);
+      expect(refused.calls.toasts).toEqual([['Slow down a moment.', 'error']]);
+    });
+
+    test('a request that is already gone stays gone', async () => {
+      const gone = setup({ answer: () => Promise.reject(refusal('No pending request from this user', { status: 404 })) });
+      gone.decline(3);
+      jest.advanceTimersByTime(5000);
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+      expect(gone.state.pending.map((r) => r.id)).toEqual([1, 2]);
+      expect(gone.calls.toasts).toEqual([]);
+    });
+  });
+
+  test('Cancel on a request they accepted while the list was stale keeps the friendship and moves the row', async () => {
+    const accepted = Object.assign(refusal('You are already friends.', { status: 409 }), { data: { status: 'accepted' } });
+    const { state, calls, cancel } = setup({ answer: () => Promise.reject(accepted) });
+    await cancel(8);
+    // It goes through the cancel-only route; nothing that could unfriend.
+    expect(calls.api).toEqual([['cancel', 8]]);
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(state.statuses[8]).toBe('accepted');
+    expect(calls.toasts).toEqual([["Eli already accepted. You're friends now.", undefined]]);
   });
 
   test('Cancel takes the sent request off and its Pending mark with it, and a refusal puts both back', async () => {
@@ -578,10 +663,13 @@ describe('answering a friend request moves the row on the tap', () => {
     const ok = setup({ answer: () => wait.promise });
     const done = ok.cancel(8);
     expect(ok.state.outgoing.map((r) => r.id)).toEqual([7]);
-    expect(ok.state.statuses[8]).toBeUndefined();
+    // Said as nothing between you, not left as a gap that a contacts row's
+    // older word (friendship_status 'pending') would show through.
+    expect(ok.state.statuses[8]).toBe('none');
     wait.resolve({ message: 'Removed' });
     await done;
     expect(ok.state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(ok.state.statuses[8]).toBe('none');
 
     const refused = setup({ answer: () => Promise.reject(crash()) });
     await refused.cancel(7);
@@ -609,7 +697,7 @@ describe('answering a friend request moves the row on the tap', () => {
     sent.resolve({ message: 'Removed' });
     await cancelled;
     expect(out.state.outgoing.map((r) => r.id)).toEqual([7]);
-    expect(out.state.statuses[8]).toBeUndefined();
+    expect(out.state.statuses[8]).toBe('none');
   });
 
   test('a double tap sends one answer', async () => {

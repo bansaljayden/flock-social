@@ -781,4 +781,62 @@ describe('a stored session that was already dead when the page loaded', () => {
       expect(localStorage.getItem('flock_guest_abcdefgh12')).toBeNull();
     });
   });
+
+  // A FRIEND'S CODE FROM THE /add/ PAGE (website/FriendLink.js) is kept the
+  // same way and for the same reason: the page keeps it and opens /app, and a
+  // browser holding a token that ran out days ago answers that boot with a 401.
+  // Held on the same date rule as the invite, and taken by a session that ran.
+  describe("a friend's code waiting through the sign-in", () => {
+    const nowSec = () => Math.floor(Date.now() / 1000);
+    const jwtExpiring = (exp) => {
+      const b64url = (o) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+      return `${b64url({ alg: 'HS256', typ: 'JWT' })}.${b64url({ userId: 42, tv: 0, iat: exp - 86400, exp })}.sig`;
+    };
+    const keepCode = (at) => localStorage.setItem('flock_pending_friend_code', JSON.stringify({ code: 'FLOCK-NJQXUGUM', at }));
+
+    it('survives a boot that finds the session already dead, when it was kept after the token ran out', async () => {
+      const api = freshApi();
+      seedDevice();
+      localStorage.setItem('flockToken', jwtExpiring(nowSec() - 2 * 86400));
+      keepCode(Date.now() - 60 * 1000);
+      global.fetch.mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+
+      await expect(api.getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+      await api.logout();
+
+      // eslint-disable-next-line global-require
+      const { pendingFriendCode } = require('../lib/friendCode');
+      expect(pendingFriendCode()).toBe('FLOCK-NJQXUGUM');
+      expect(localStorage.getItem('flockToken')).toBeNull();
+    });
+
+    it('goes with a session that was still good when it was kept', async () => {
+      const api = freshApi();
+      seedDevice();
+      localStorage.setItem('flockToken', jwtExpiring(nowSec() - 3600));
+      keepCode(Date.now() - 3 * 3600 * 1000);
+      global.fetch.mockResolvedValue(jsonRes({ error: 'Token expired' }, 401));
+
+      await expect(api.getCurrentUser()).rejects.toMatchObject({ sessionExpired: true });
+      await api.logout();
+
+      expect(localStorage.getItem('flock_pending_friend_code')).toBeNull();
+    });
+
+    it('goes with a sign-out, like everything else the account left on the device', async () => {
+      const api = freshApi();
+      seedDevice();
+      keepCode(Date.now());
+      localStorage.setItem('flock_friend_code', JSON.stringify({ userId: 42, code: 'FLOCK-KP5ETGZF', url: 'https://www.flockcorp.com/add/FLOCK-KP5ETGZF', qr: '{"type":"flock_friend","code":"FLOCK-KP5ETGZF"}' }));
+      // With the people the contacts checks had found, who go with it.
+      localStorage.setItem('flock_contacts_cursor_42', JSON.stringify({ nextBatch: 3, total: 1240, sent: 600, checked: 600, users: [{ id: 9, name: 'Tobias', profile_image_url: null }] }));
+      global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+      await api.logout();
+
+      expect(localStorage.getItem('flock_pending_friend_code')).toBeNull();
+      expect(localStorage.getItem('flock_friend_code')).toBeNull();
+      expect(localStorage.getItem('flock_contacts_cursor_42')).toBeNull();
+    });
+  });
 });

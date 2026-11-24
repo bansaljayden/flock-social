@@ -8,10 +8,16 @@ const path = require('path');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('a QR scan routes a server refusal to the sheet instead of calling the code invalid', () => {
+  // The scanner is components/QrScanner.js since 2026-11-23; a code it reads
+  // comes back to App.js's addFromScanner, which owns the refusal. The confirm
+  // sheet would be under the full-screen scanner, so the scanner is told to
+  // close, and the code is kept to offer again once the address is confirmed.
   const app = read('App.js');
-  const scan = app.slice(app.indexOf("if (parsed.type === 'flock_friend' && parsed.code) {"), app.indexOf("setQrScanError('Not a valid Flock QR code')"));
-  expect(scan).toMatch(/const data = await addFriendByCode\(parsed\.code\);/);
-  expect(scan).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) return;/);
+  const at = app.indexOf('const addFromScanner = useCallback(');
+  expect(at).toBeGreaterThan(-1);
+  const scan = app.slice(at, app.indexOf('}, [sendFriendCode, showToast, needsEmailVerification]);', at));
+  expect(scan).toMatch(/const result = await sendFriendCode\(code\);/);
+  expect(scan).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) \{\s*rememberFriendCode\(code\);\s*return \{ ok: false, close: true \};/);
   expect(scan).toMatch(/Could not add that friend\. Try again\./);
 });
 

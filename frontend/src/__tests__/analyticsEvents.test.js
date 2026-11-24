@@ -729,6 +729,8 @@ describe('push_opened is an allowlist destination, never the id the tap carried'
     ['flocks', 'flocks'],
     ['dm', 'dm'],
     ['friends', 'friends'],
+    // A friend request's tap, which opens Add Friends on Requests (2026-11-23).
+    ['addFriends', 'addFriends'],
     ['home', 'home'],
     ['admin', 'admin'],
     ['venueTables', 'venueTables'],

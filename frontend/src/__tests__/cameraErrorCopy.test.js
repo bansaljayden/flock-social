@@ -52,7 +52,15 @@ test('App.js says these and nothing of the error\'s own, for the chat camera and
   const open = app.slice(app.indexOf('const openCameraViewfinder = useCallback('), app.indexOf('const closeCameraViewfinder = useCallback('));
   expect(open).toContain("showToast(cameraErrorCopy(err, isNativeShell()), 'error');");
   expect(open).not.toMatch(/err\.message/);
-  const scanner = app.slice(app.indexOf('const startQrScanner = useCallback('), app.indexOf('const stopQrScanner = useCallback('));
-  expect(scanner).toContain(': cameraErrorCopy(err, isNativeShell())');
-  expect(scanner).not.toMatch(/err\.message \|\| 'Could not access camera'/);
+  // The friend-code scanner is components/QrScanner.js since 2026-11-23. It
+  // reads the failure's name with the same reader, and says one of its own
+  // fixed lines with a button beside it (Open Settings, Try again), never the
+  // library's or the browser's text.
+  const scanner = fs.readFileSync(path.join(__dirname, '..', 'components', 'QrScanner.js'), 'utf8').replace(/\r\n/g, '\n');
+  expect(scanner).toContain("import { cameraErrorName } from '../lib/cameraErrorCopy';");
+  expect(scanner).toMatch(/const name = cameraErrorName\(failure\);/);
+  expect(scanner).not.toMatch(/failure\.message|err\.message \|\|/);
+  for (const s of ["Flock can't use the camera.", "The camera didn't start.", 'No camera was found on this device.']) {
+    expect(scanner).toContain(s);
+  }
 });

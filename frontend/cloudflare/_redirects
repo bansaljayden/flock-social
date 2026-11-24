@@ -30,8 +30,12 @@
 # pages are files, and /i/<token> is answered by functions/_middleware.js.
 # Pages does not apply this file to "requests served by Pages Functions",
 # so no route that runs one may depend on it.
+#
+# /add/<code> is a friend's code (website/FriendLink.js, a page of src/index.js
+# rather than an app route): the shell serves it and the page reads the path.
 /app/* / 200
 /checkin/* / 200
 /f/* / 200
 /flock/* / 200
 /dm/* / 200
+/add/* / 200

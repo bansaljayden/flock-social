@@ -266,12 +266,37 @@ const DERIVATIONS = [
   [/\.toString\(36\)\.toUpperCase\(\)/, 'an id spelled in upper-case base36'],
 ];
 
+// THE ONE CLIENT FILE THAT WRITES THE PREFIX, AND WHY IT MAY (Add Friends
+// rebuild, 2026-11-23). A code reaches the app as a link, the old QR JSON, a
+// pasted invite or eight characters typed without the FLOCK-, and
+// lib/friendCode.js reads every one of them back to the spelling the server
+// issued. Putting FLOCK- in front of characters read out of that text is
+// spelling a code somebody was given, not working one out, so that file is
+// exempt from the sweep by name and held to the half of the rule that
+// matters instead: nothing about an account goes into it. Every other file is
+// still swept, so a second place that builds a code still fails here.
+const CODE_READER = path.join('src', 'lib', 'friendCode.js');
+const ACCOUNT_INPUTS = [
+  [/toString\(36\)/, 'base36'],
+  [/parseInt\([^)]*,\s*36\)/, 'base36'],
+  [/\bauthUser\b/, 'the signed-in account'],
+  [/\buserId\b/, 'an account id'],
+  [/\buser\.id\b/, 'an account id'],
+  [/\bfriend_code\b/, 'a stored code'],
+];
+
 test('no frontend file builds a friend code; the app asks the server for it', () => {
   const files = frontendSources();
   assert.ok(files.some((f) => f.endsWith(path.join('src', 'App.js'))), 'the sweep lost App.js; fix frontendSources');
   const offenders = [];
   for (const file of files) {
     const src = fs.readFileSync(file, 'utf8');
+    if (file.endsWith(CODE_READER)) {
+      for (const [re, what] of ACCOUNT_INPUTS) {
+        if (re.test(src)) offenders.push(`${path.relative(REPO, file)}: reads ${what}`);
+      }
+      continue;
+    }
     for (const [re, what] of DERIVATIONS) {
       if (re.test(src)) offenders.push(`${path.relative(REPO, file)}: ${what}`);
     }
@@ -280,12 +305,16 @@ test('no frontend file builds a friend code; the app asks the server for it', ()
     'a friend code is being built on the client again. The server is the only issuer (migration 079): a code '
     + 'worked out here is one no lookup can find, and if it matched the old scheme it would be the user id.');
 
+  // Wherever the read lives (it left loadAddFriendsData for a quiet, cached
+  // read of its own in the Add Friends rebuild, 2026-11-23), the code the app
+  // shows is the server's answer: the call to GET /my-code is followed, inside
+  // the same few lines, by the answer's code going into state.
   const app = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
-  const at = app.indexOf('const loadAddFriendsData = useCallback(');
-  assert.notStrictEqual(at, -1, 'loadAddFriendsData moved; find where the Add Friends screen loads and repoint this');
-  const load = app.slice(at, app.indexOf('\n  }, [', at));
-  assert.match(load, /getMyFriendCode\(\)/, 'Add Friends no longer asks GET /api/friends/my-code for the code');
-  assert.match(load, /setMyFriendCode\(d\.code\)/, 'the code shown is not the one the server answered with');
+  const at = app.indexOf('getMyFriendCode()');
+  assert.notStrictEqual(at, -1, 'Add Friends no longer asks GET /api/friends/my-code for the code');
+  const answer = app.slice(at, at + 700);
+  assert.match(answer, /\.code\b/, 'the answer to GET /my-code is not where the code comes from');
+  assert.match(answer, /setMyFriendCode\(/, 'the code shown is not the one the server answered with');
 
   const api = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'services', 'api.js'), 'utf8');
   assert.match(api, /export async function getMyFriendCode\(\) \{\s*return request\('\/api\/friends\/my-code'\);/,
@@ -295,6 +324,11 @@ test('no frontend file builds a friend code; the app asks the server for it', ()
 test('the server builds a code in one place, and never out of an id', () => {
   assert.doesNotMatch(ROUTE, /toString\(36\)|parseInt\([^)]*,\s*36\)/,
     'routes/friends.js turns ids and base36 into each other again. That is the old code, and the directory walk with it.');
+  // The reader the two code doors share spells a code it read out of text,
+  // and reads nothing else: no account, no id, no stored code.
+  const reader = read('utils', 'friendCode.js');
+  assert.doesNotMatch(reader, /toString\(36\)|parseInt\(|require\('\.\.\/config\/database'\)|friend_code|req\.user/,
+    'utils/friendCode.js reads something other than the text it was given');
   const concatenations = ROUTE.match(/'FLOCK-'\s*\+/g) || [];
   assert.strictEqual(concatenations.length, 1, 'a second place builds a FLOCK- code');
   // No parameter, so there is nothing about the account for it to read.
@@ -478,7 +512,8 @@ test('your own code is recognised as yours, and adds nobody', async () => {
   // id in a code any more, so it is the person the lookup found.
   const res = await call('POST', '/api/friends/add-by-code', BO, { code: BO_CODE });
   assert.strictEqual(res.status, 400, res.text);
-  assert.deepStrictEqual(res.body, { error: "That's your own code!" });
+  // Plain, no exclamation mark: the app shows the server's sentence as it is.
+  assert.deepStrictEqual(res.body, { error: "That's your own code." });
   assert.strictEqual(friendships.length, 0);
   assertModelled();
 });

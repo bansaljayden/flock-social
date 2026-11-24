@@ -224,7 +224,16 @@ describe('bundle weight: components/ui holds only components something imports',
 // differently, so nobody would notice until somebody measured again. Hence a
 // test rather than a comment.
 describe('the QR scanner library is loaded on demand', () => {
-  const appSource = fs.readFileSync(path.join(SRC, 'App.js'), 'utf8');
+  // The scanner left App.js on 2026-11-23 for components/QrScanner.js, a lazy
+  // chunk of its own that App.js mounts at the root, and the dynamic import
+  // and its failure copy went with it.
+  const appSource = fs.readFileSync(path.join(SRC, 'components', 'QrScanner.js'), 'utf8');
+  const shell = fs.readFileSync(path.join(SRC, 'App.js'), 'utf8');
+
+  test('App.js fetches the scanner itself as a chunk, never as a static import', () => {
+    expect(shell).toMatch(/import\('\.\/components\/QrScanner'\)/);
+    expect(shell).not.toMatch(/(?:^|\n)\s*import\s+[^;'"]*\s+from\s+['"]\.\/components\/QrScanner['"]/);
+  });
 
   test('nothing in src/ statically imports html5-qrcode', () => {
     const offenders = [];
@@ -243,7 +252,7 @@ describe('the QR scanner library is loaded on demand', () => {
     expect(offenders).toEqual([]);
   });
 
-  test('App.js loads it with a dynamic import instead', () => {
+  test('the scanner loads it with a dynamic import instead', () => {
     expect(appSource).toMatch(/await\s+import\(\s*['"]html5-qrcode['"]\s*\)/);
   });
 

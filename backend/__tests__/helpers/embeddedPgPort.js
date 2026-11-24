@@ -219,6 +219,11 @@ const SUITE_SLOTS = {
   googleSignInRealDb: 83,        // new in 2026-11-23; an iPhone Google sign-in
                                  // through the real token check and the real
                                  // route, onto a migrated schema.
+  addFriendsRealDb: 44,          // new in 2026-11-23; the Add Friends rebuild's
+                                 // server half (code links and previews, the
+                                 // cancel that only cancels, a yes to a
+                                 // declined request, contact and Quick Add
+                                 // photos) through the real friends router.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

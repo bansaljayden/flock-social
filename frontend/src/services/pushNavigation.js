@@ -44,6 +44,10 @@
 // (firebase.js, which loads this module, imports it too), and api.js pulls in
 // nothing at module scope, so there is no cycle and no new weight.
 import { trackPushOpened } from './api';
+// The one reader for a friend's code, shared with the scanner, the code field
+// and the website page (lib/friendCode.js). A dependency-free module, so it
+// adds nothing to what this chunk already loads.
+import { normalizeFriendCode } from '../lib/friendCode';
 
 const FLOCK_TYPES = new Set([
   'flock_invite', 'flock_message', 'flock_rsvp', 'flock_confirmed', 'flock_updated',
@@ -99,9 +103,16 @@ export function intentFromData(data) {
     const userId = asId(data.senderId);
     return userId ? { screen: 'dm', userId, type } : null;
   }
-  if (type === 'friend_request' || type === 'friend_accepted') {
-    // 'profile' is the tab id behind the "You" label in App.js. Both halves of
-    // a friend request are answered from the same list, so both land there.
+  if (type === 'friend_request') {
+    // "X wants to be friends" is answered on Add Friends' Requests tab, which
+    // is where the tap lands. It used to stop at the You page, two taps short
+    // of the request, behind an Add friends row that opened whichever tab was
+    // used last.
+    return { screen: 'addFriends', tab: 'requests', type };
+  }
+  if (type === 'friend_accepted') {
+    // 'profile' is the tab id behind the "You" label in App.js. There is
+    // nothing left to answer, and the friend count it changed is printed there.
     return { screen: 'friends', tab: 'profile', type };
   }
   if (type === 'attendance_marked') {
@@ -341,6 +352,23 @@ export function intentFromUrl(rawUrl) {
   // redeemed by the app's existing handoff (App.js on the intent).
   const inviteMatch = url.pathname.match(/^\/i\/([^/?#]+)/);
   if (inviteMatch) return { screen: 'invite', token: inviteMatch[1], type: 'link' };
+  // /add/<code>, the link a friend's share sheet carries (and their QR, once
+  // the server switches it from the JSON older builds read). App.js keeps
+  // the code and shows who it belongs to with a button; nothing is sent until
+  // that button is pressed. A link whose code cannot be read opens nothing.
+  //
+  // NOT CLAIMED YET. The association file (frontend/api/
+  // apple-app-site-association.js) claims /checkin/* and /i/* only, so on an
+  // iPhone this link opens the website's page (website/FriendLink.js) until
+  // /add/* is claimed, which waits for the app build that routes it to be on
+  // the App Store: claimed earlier, an older build would open to nothing.
+  const addMatch = url.pathname.match(/^\/add\/([^/?#]+)\/?$/i);
+  if (addMatch) {
+    let raw = addMatch[1];
+    try { raw = decodeURIComponent(raw); } catch (err) { /* keep raw */ }
+    const code = normalizeFriendCode(raw);
+    return code ? { screen: 'addFriend', code, type: 'link' } : null;
+  }
   const checkinMatch = url.pathname.match(/^\/checkin\/([^/?#]+)/);
   if (checkinMatch) {
     let placeId = checkinMatch[1];
@@ -370,6 +398,10 @@ export function intentFromUrl(rawUrl) {
   // (moderation_report), so the URL form belongs to the console again.
   const tab = q.get('tab');
   if (tab === 'you' || tab === 'profile') return { screen: 'friends', tab: 'profile', type: 'link' };
+  // The link form of a friend request's push, for a web tap with no Flock tab
+  // open (deepLinkPath in backend/services/firebaseService.js and the service
+  // worker's type map both send it here).
+  if (tab === 'requests') return { screen: 'addFriends', tab: 'requests', type: 'link' };
   if (tab === 'home') return { screen: 'home', type: 'link' };
   if (tab === 'chat') return { screen: 'flocks', type: 'link' };
   // The link form of a table alert, for a web tap with no Flock tab open

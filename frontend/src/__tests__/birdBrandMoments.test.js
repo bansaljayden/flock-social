@@ -425,7 +425,8 @@ describe('the 2026-09-01 sweep: every remaining empty or error state has a bird'
       ['venue detail: no reviews', 'body="No reviews yet. Be the first!"'],
       // Add friends
       ['add friends: search failed', 'body={addFriendsError}'],
-      ['add friends: search found nobody', 'No users found for "${addFriendsSearch}"'],
+      // "No one called ... yet" since the Add Friends rebuild (2026-11-23).
+      ['add friends: search found nobody', 'No one called "${query}" yet'],
       ['add friends: number matched nobody', 'Nobody on Flock has that number'],
       // Flock chat
       ['flock chat: no venue yet strip', 'No venue yet</p>'],

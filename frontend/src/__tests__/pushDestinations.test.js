@@ -306,9 +306,38 @@ describe('every type the app declares has somewhere to go', () => {
     expect(FIREBASE_SERVICE).toContain("if (type === 'moderation_report') return '/admin/moderation';");
   });
 
-  test('both halves of a friend request answer to the same tab', () => {
+  test('an accepted request opens You, where the friend count it changed is printed', () => {
     expect(intentFromData({ type: 'friend_accepted', fromUserId: '4' }))
       .toEqual({ screen: 'friends', tab: 'profile', type: 'friend_accepted' });
+  });
+
+  test('a friend request opens Add Friends on the request itself', () => {
+    // It used to stop at the You page, two taps short of the request.
+    expect(intentFromData({ type: 'friend_request', fromUserId: '4' }))
+      .toEqual({ screen: 'addFriends', tab: 'requests', type: 'friend_request' });
+    // The link form, for a web tap with no Flock tab open. The server's link
+    // and the service worker's fallback for a push with no link both send it
+    // there, so the cold tap lands on the request too.
+    expect(intentFromUrl('/?tab=requests')).toEqual({ screen: 'addFriends', tab: 'requests', type: 'link' });
+    expect(FIREBASE_SERVICE).toContain("if (type === 'friend_request') return '/?tab=requests';");
+    expect(readSource('frontend', 'public', 'firebase-messaging-sw.js')).toContain("friend_request: '/?tab=requests',");
+    expect(APP).toMatch(/\} else if \(intent\.screen === 'addFriends'\) \{[\s\S]{0,400}setAddFriendsTab\(intent\.tab === 'requests' \? 'requests' : 'username'\);\s*setCurrentScreen\('addFriends'\);/);
+  });
+
+  test("a friend's /add/ link is a code to ask about, never a request on its own", () => {
+    expect(intentFromUrl('https://www.flockcorp.com/add/FLOCK-NJQXUGUM'))
+      .toEqual({ screen: 'addFriend', code: 'FLOCK-NJQXUGUM', type: 'link' });
+    // Any case, without the prefix, with a trailing slash: the one reader.
+    expect(intentFromUrl('https://flockcorp.com/add/flock-njqxugum/')).toEqual({ screen: 'addFriend', code: 'FLOCK-NJQXUGUM', type: 'link' });
+    expect(intentFromUrl('/add/NJQXUGUM')).toEqual({ screen: 'addFriend', code: 'FLOCK-NJQXUGUM', type: 'link' });
+    // A link whose code cannot be read opens nothing.
+    expect(intentFromUrl('/add/not-a-code')).toBeNull();
+    expect(intentFromUrl('/add/')).toBeNull();
+    // App.js keeps the code and raises the sheet that asks; the branch itself
+    // sends nothing.
+    const branch = APP.slice(APP.indexOf("} else if (intent.screen === 'addFriend' && intent.code) {"), APP.indexOf("} else if (intent.screen === 'home') {"));
+    expect(branch).toMatch(/openFriendLinkRef\.current\(intent\.code\);/);
+    expect(branch).not.toMatch(/addFriendByCode|sendFriendCode|sendFriendRequest/);
   });
 
   test('a free-tonight pulse opens the Nest, where the answer is', () => {
@@ -352,7 +381,7 @@ describe('every type the app declares has somewhere to go', () => {
   });
 
   test('App.js has a branch for every screen the intent parser can produce', () => {
-    for (const screen of ['flockInvite', 'flocks', 'home', 'admin', 'safety', 'venueTables']) {
+    for (const screen of ['flockInvite', 'flocks', 'home', 'admin', 'safety', 'venueTables', 'addFriends', 'addFriend']) {
       expect(APP).toContain(`intent.screen === '${screen}'`);
     }
   });
