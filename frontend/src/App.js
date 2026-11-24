@@ -5539,26 +5539,29 @@ const openAppSettings = () => {
 // sign-out sweep (services/api.js) takes it with the account.
 const FRIEND_CODE_CACHE_KEY = 'flock_friend_code';
 
-// Where the last contacts check stopped in a big address book, per account,
-// and who the checks so far had found: { nextBatch, total, book, sent,
-// checked, users }, book being the print of the book it stopped in
-// (services/contacts.js). A finished pass leaves { total, book, users }: no
-// place to carry on from, and the print that tells the next check whether the
-// people in it are still in the book. See handleSyncContacts. The people go with the cursor because the
-// list on screen does not outlive the app: a pass carried on after a relaunch
-// used to show none of the matches its earlier runs had found, and say that
-// nobody matched. Kept as a Flock id, name and photo only, never where you
-// stood with them, which is read fresh (friendStatuses) and would be stale.
+// The contacts pass, per account: where the last check stopped in a big
+// address book, and who the checks had found. Part way through a pass:
+// { nextBatch, total, book, sent, checked, users, previous? }, users being
+// this pass's people and previous the last finished pass's over the same book.
+// A finished pass leaves { total, book, users }: no place to carry on from,
+// and the print (services/contacts.js) that tells the next check whether its
+// people are still in the book. See handleSyncContacts.
+// The people go with the cursor because the list on screen does not outlive
+// the app: a pass carried on after a relaunch used to show none of the
+// matches its earlier runs had found, and say that nobody matched. Kept as a
+// Flock id, name and photo only, never where you stood with them, which is
+// read fresh (friendStatuses) and would be stale.
 const contactsCursorKey = (userId) => `flock_contacts_cursor_${userId}`;
 const cursorPerson = (u) => (u && (typeof u.id === 'number' || typeof u.id === 'string')
   ? { id: u.id, name: typeof u.name === 'string' ? u.name : '', profile_image_url: typeof u.profile_image_url === 'string' ? u.profile_image_url : null }
   : null);
+const cursorPeople = (list) => (Array.isArray(list) ? list.map(cursorPerson).filter(Boolean) : []);
 const readContactsCursor = (userId) => {
   if (!userId) return null;
   try {
     const saved = JSON.parse(localStorage.getItem(contactsCursorKey(userId)) || 'null');
     if (!saved || typeof saved !== 'object') return null;
-    return { ...saved, users: Array.isArray(saved.users) ? saved.users.map(cursorPerson).filter(Boolean) : [] };
+    return { ...saved, users: cursorPeople(saved.users), ...(Array.isArray(saved.previous) ? { previous: cursorPeople(saved.previous) } : {}) };
   } catch {
     return null;
   }
@@ -5567,14 +5570,17 @@ const writeContactsCursor = (userId, cursor) => {
   if (!userId) return;
   try {
     if (!cursor) { localStorage.removeItem(contactsCursorKey(userId)); return; }
-    const users = (cursor.users || []).map(cursorPerson).filter(Boolean);
+    const people = (strip) => {
+      const plain = (list) => cursorPeople(list).map(u => (strip ? { ...u, profile_image_url: null } : u));
+      return { users: plain(cursor.users), ...(cursor.previous ? { previous: plain(cursor.previous) } : {}) };
+    };
     try {
-      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, users }));
+      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, ...people(false) }));
     } catch {
       // Too much for what this site may keep, which the photos are nearly all
       // of: kept without them, and those rows draw an initial until a check
       // finds them again.
-      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, users: users.map(u => ({ ...u, profile_image_url: null })) }));
+      localStorage.setItem(contactsCursorKey(userId), JSON.stringify({ ...cursor, ...people(true) }));
     }
   } catch { /* storage blocked: the next check starts at the top of the book */ }
 };
@@ -5583,8 +5589,9 @@ const writeContactsCursor = (userId, cursor) => {
 // which leaves them out of its own answers from now on, could not stop that.
 const forgetContactsMatch = (userId, personId) => {
   const cursor = readContactsCursor(userId);
-  if (!cursor || !cursor.users.some(u => String(u.id) === String(personId))) return;
-  writeContactsCursor(userId, { ...cursor, users: cursor.users.filter(u => String(u.id) !== String(personId)) });
+  const other = (u) => String(u.id) !== String(personId);
+  if (!cursor || (cursor.users.every(other) && (cursor.previous || []).every(other))) return;
+  writeContactsCursor(userId, { ...cursor, users: cursor.users.filter(other), ...(cursor.previous ? { previous: cursor.previous.filter(other) } : {}) });
 };
 
 // How long a decline waits before it is sent, which is how long its Undo is
@@ -7416,9 +7423,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     friendRequestBusyRef.current.add(userId);
     const at = pendingRequests.findIndex(r => r.id === userId);
     const request = at === -1 ? null : pendingRequests[at];
+    // A block either way while the Accept is out is newer news: the server has
+    // removed the request with it (routes/moderation.js), so the answer, or a
+    // failure, puts nothing back and says nothing.
+    const tappedAt = relationshipWrittenRef.current.now;
+    const movedSince = () => (relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt;
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await acceptFriendRequest(userId);
+      if (movedSince()) return;
       // Friends now, through the one writer: off Requests and Sent both (a
       // list reload that landed during the wait can have drawn it back), every
       // row reads Friends, and the header count, which only ever moved on boot
@@ -7434,6 +7447,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast('That request was withdrawn.');
         return;
       }
+      if (movedSince()) return;
       setPendingRequests(prev => withRowAt(prev, at, request));
       // The server's "confirm your email" refusal used to land here as a red
       // toast with no resend, beside a request that stayed on screen.
@@ -7463,6 +7477,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (friendRequestBusyRef.current.has(userId) || decliningRef.current.has(userId)) return;
     const at = pendingRequests.findIndex(r => r.id === userId);
     const request = at === -1 ? null : pendingRequests[at];
+    // As for Accept: a block since the tap took the request away for good.
+    const tappedAt = relationshipWrittenRef.current.now;
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     // `at` goes with the row so the tab can draw it where it was.
     setDecliningRequests(prev => [...prev.filter(r => r.id !== userId), { ...(request || { id: userId, name: '', profile_image_url: null }), at }]);
@@ -7479,6 +7495,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Nothing pending from them any more (withdrawn, or answered on another
         // device): the row stays gone, which is what the tap asked for.
         if (err?.status === 404) return;
+        if ((relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt) return;
         setPendingRequests(prev => withRowAt(prev, at, request));
         if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
       } finally {
@@ -7587,8 +7604,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the box publishes friendCodeInput on a pause and a Return inside that
   // pause would otherwise send the code one character short; a tap on Add
   // passes nothing and reads friendCodeInput. Any shape friendCodeFrom reads
-  // works here (a pasted invite, a link, no prefix, a space, a full stop),
-  // and the box itself is left alone: the screen puts the keys away.
+  // works here (a pasted invite, a link, no prefix, a space, a full stop).
+  // The box itself is the screen's: it puts the keys away, and empties the box
+  // with the code this answers with.
   const friendCodeBusyRef = useRef(false);
   const handleAddByCode = useCallback(async (typed) => {
     const raw = typeof typed === 'string' ? typed : friendCodeInput;
@@ -7612,12 +7630,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const result = await sendFriendCode(code);
       if (result.ok) {
         showToast(result.message);
-        // Emptied only while it still holds this code: one typed after it, as
-        // its answer was on its way, stays.
-        setFriendCodeInput(cur => (friendCodeFrom(cur) === code ? '' : cur));
-      } else {
-        showToast(result.message, 'error');
+        // The code that went, for the screen to empty its box with, and only
+        // while the box still shows it: a code typed or pasted after it, while
+        // its answer was on its way, stays (screens/AddFriends.js addCode).
+        return code;
       }
+      showToast(result.message, 'error');
     } catch (err) {
       // Kept for after the confirmation: the sheet that follows it offers the
       // same person again, so the code is not typed twice.
@@ -7701,6 +7719,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         retryAt: data.retryAt,
         contactCount: data.contactCount,
         permission: data.permission,
+        // Which book this is about, so a refused run can tell it from a book
+        // that has changed since.
+        book: data.book,
         matched,
       });
       // The same book the last pass went through, finished or not, by its
@@ -7708,49 +7729,63 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // still in it. A run that carries a pass on is over the same book by
       // definition: syncContacts carries on only then.
       const sameBook = Boolean(carried) || Boolean(cursor && cursor.book && cursor.book === data.book);
-      // Everyone found so far, once each, in name order: by the earlier runs
-      // over this book (the cursor's, and this session's on screen), and by
-      // this one. A book that changed (a contact gone, fewer shared under
-      // limited access) starts again from what this run found, so nobody from
-      // a book that is no longer there stays on the list, and the matches can
-      // never outnumber the numbers checked.
+      // WHO IS ON THE LIST. This pass's people, and, until this pass has been
+      // through the whole book, the last finished pass's over the same book.
+      // The server never says which number found whom (on purpose:
+      // routes/friends.js find-by-phone), so somebody the last pass found
+      // cannot be checked off batch by batch; once the pass has been through
+      // every number, the list is exactly what it found, and somebody who has
+      // turned off being found, or whose account is gone, leaves it. A book
+      // that changed (a contact gone, fewer shared under limited access) has
+      // no last pass, so nobody from the old book stays.
       // Nobody blocked: by you, from here or from another device since the
       // cursor was written (blockedIdsRef, declared further down), or blocking
       // you in this session (contactsBlockedRef).
-      const everyone = (found) => {
-        const byId = new Map();
-        const before = sameBook ? [...(cursor.users || []), ...contactsUsersRef.current] : [];
-        for (const u of [...before, ...found]) byId.set(u.id, u);
-        return [...byId.values()]
-          .filter(u => !blockedIdsRef.current.has(String(u.id)) && !contactsBlockedRef.current.has(String(u.id)))
-          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      const passSoFar = carried ? (carried.users || []) : [];
+      const lastPass = !sameBook ? [] : (carried ? (carried.previous || []) : (cursor.users || []));
+      const clean = (list) => list.filter(u => !blockedIdsRef.current.has(String(u.id)) && !contactsBlockedRef.current.has(String(u.id)));
+      const once = (list) => [...new Map(list.map(u => [u.id, u])).values()];
+      const byName = (a, b) => String(a.name || '').localeCompare(String(b.name || ''));
+      const lists = (found, done) => {
+        const pass = clean(once([...passSoFar, ...found])).sort(byName);
+        return { pass, shown: done ? pass : clean(once([...lastPass, ...pass])).sort(byName) };
       };
       if (data.throttled && data.answered === 0) {
-        if (contactsResultRef.current) {
-          // What is on screen stays, with when the next run can go.
+        const onScreen = contactsResultRef.current;
+        if (onScreen && onScreen.book === data.book) {
+          // What is on screen is about this book, and stays, with when the
+          // next run can go.
           setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt } : prev));
         } else if (carried) {
           // Nothing on screen yet (the app was closed part way through a
           // pass): what the pass's earlier runs checked and found.
-          const merged = everyone([]);
-          setContactsUsers(merged);
-          setContactsResult(summary(merged.length));
+          const { shown } = lists([], false);
+          setContactsUsers(shown);
+          setContactsResult(summary(shown.length));
           setContactsRetryAt(null);
         } else {
-          // Nothing checked, so nothing to say about anybody.
+          // Nothing checked, so nothing to say about anybody; and what was on
+          // screen was about a book that has changed since.
+          if (onScreen) {
+            setContactsUsers([]);
+            setContactsResult(null);
+          }
           setContactsRetryAt(data.retryAt);
         }
         return;
       }
-      const merged = everyone(data.users);
+      const done = data.nextBatch === null;
+      const { pass, shown } = lists(data.users, done);
       // A finished pass keeps no place to carry on from, so the next check
       // starts at the top; it keeps the book's print and its people, so that
-      // check can tell the same book from one that changed.
-      writeContactsCursor(userId, data.nextBatch === null
-        ? { total: data.total, book: data.book, users: merged }
-        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: merged });
-      setContactsUsers(merged);
-      setContactsResult(summary(merged.length));
+      // check can tell the same book from one that changed. One part way
+      // through keeps the last pass's people with it, for after a relaunch.
+      const keptLast = clean(lastPass);
+      writeContactsCursor(userId, done
+        ? { total: data.total, book: data.book, users: pass }
+        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}) });
+      setContactsUsers(shown);
+      setContactsResult(summary(shown.length));
       setContactsRetryAt(null);
       if (data.failed) showToast("Some of your contacts couldn't be checked. Try again in a moment.", 'error');
     } catch (err) {
@@ -9344,9 +9379,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Load real user stats on mount (streak, friends)
   useEffect(() => {
+    // The count takes its turn with every later read of it (refreshFriendCount):
+    // a slow first read landing after an accept's read put the count a friend
+    // back.
+    const countRead = ++friendCountSeqRef.current;
     (takeBootRead('userStats') || getUserStats()).then(d => {
       setStreak(typeof d.streak === 'number' ? d.streak : null);
-      setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
+      if (countRead === friendCountSeqRef.current) setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(readReliability(d.reliabilityScore));
     }).catch(() => {}).finally(() => setUserStatsLoaded(true));
     // Requests that arrived while the app was closed. These used to load only
@@ -16831,6 +16870,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // before the block, would put them back on Sent.
     relationshipWrittenRef.current.now += 1;
     relationshipWrittenRef.current.at.set(id, relationshipWrittenRef.current.now);
+    // A Decline of theirs still in its Undo window ends here, unsent: the
+    // block removed the request with it (routes/moderation.js), and Undo would
+    // have put it back on Requests.
+    decliningRef.current.forEach((waiting, key) => {
+      if (String(key) !== id) return;
+      clearTimeout(waiting.timer);
+      decliningRef.current.delete(key);
+    });
+    setDecliningRequests(prev => prev.filter(r => String(r.id) !== id));
     // The contacts and phone-lookup rows render the same avatar and Add button.
     // And the contacts pass's own copy, which its next run would merge back,
     // and a run already out when the block landed (contactsBlockedRef).
@@ -18664,6 +18712,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     return onUnblockedBy(({ userId }) => {
       if (userId == null) return;
+      // Within reach of a contacts check again (contactsBlockedRef).
+      contactsBlockedRef.current.delete(String(userId));
       setDmBlocked(prev => {
         if (!prev[String(userId)]) return prev;
         const next = { ...prev };

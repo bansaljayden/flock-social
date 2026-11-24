@@ -598,6 +598,29 @@ describe('QR code', () => {
     expect(document.activeElement).not.toBe(box);
   });
 
+  test('the box is emptied once its code is added', async () => {
+    const { p } = draw({ addFriendsTab: 'qr', friendCodeInput: 'FLOCK-ZZ99' });
+    p.handleAddByCode.mockResolvedValue('FLOCK-ZZ99YY88');
+    const box = screen.getByLabelText('Friend code');
+    fireEvent.change(box, { target: { value: 'flock-zz99yy88' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add' })); });
+    expect(p.setFriendCodeInput).toHaveBeenCalledWith('');
+  });
+
+  test('a code typed or pasted while the last one was on its way stays in the box', async () => {
+    // Read from the box itself, keystrokes it has not published yet included:
+    // the parent's copy can still hold the code that went.
+    const { p } = draw({ addFriendsTab: 'qr', friendCodeInput: 'FLOCK-ZZ99YY88' });
+    let answer;
+    p.handleAddByCode.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const box = screen.getByLabelText('Friend code');
+    fireEvent.change(box, { target: { value: 'FLOCK-ZZ99YY88' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.change(box, { target: { value: 'FLOCK-KH7WQTRZ' } });
+    await act(async () => { answer('FLOCK-ZZ99YY88'); });
+    expect(p.setFriendCodeInput).not.toHaveBeenCalledWith('');
+  });
+
   test('the scanner\'s Type the code instead puts the caret in the code box', () => {
     const p = props({ addFriendsTab: 'qr' });
     const { rerender } = render(React.createElement(AddFriends, p));

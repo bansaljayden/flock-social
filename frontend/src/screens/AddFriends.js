@@ -72,7 +72,7 @@ import { SkeletonBar, SkeletonBlock, SkeletonRow, SkeletonStatus } from '../comp
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useScrollBoxKeyboard, { revealInBox } from '../hooks/useScrollBoxKeyboard';
 import { localeTime } from '../lib/localeFormat';
-import { friendQrText, qrTextIsLink } from '../lib/friendCode';
+import { friendCodeFrom, friendQrText, qrTextIsLink } from '../lib/friendCode';
 // How many numbers one contacts check sends, for the "Check the next N" button.
 import { CONTACT_BATCH_SIZE, MAX_BATCHES } from '../services/contacts';
 
@@ -499,12 +499,17 @@ export default function AddFriends({
     // THE FIELDS' OWN BUTTONS. Each one hands over the value the box shows, so
     // a tap that lands inside the box's short publish delay still sends every
     // character, and each puts the keys away first so the answer is seen.
-    const addCode = (typed) => {
+    const addCode = async (typed) => {
       if (friendCodeLoading) return;
       const value = typeof typed === 'string' ? typed : (codeRef.current ? codeRef.current.value : friendCodeInput);
       if (!String(value || '').trim()) return;
       if (codeRef.current) codeRef.current.blur();
-      handleAddByCode(String(value).trim());
+      const added = await handleAddByCode(String(value).trim());
+      // Emptied once the code is added, and only while the box still shows
+      // it: read from the box itself, which also holds keystrokes it has not
+      // published yet, so a code typed or pasted while the answer was on its
+      // way stays.
+      if (added && codeRef.current && friendCodeFrom(codeRef.current.value) === added) setFriendCodeInput('');
     };
     const lookUp = (typed) => {
       if (phoneLookupLoading) return;

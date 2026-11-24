@@ -337,14 +337,21 @@ describe('3. the code box', () => {
     }
   });
 
-  test('a tap on Add reads the box, the answer lands on Sent, and the box is emptied', async () => {
+  test('a tap on Add reads the box, the answer lands on Sent, and the code is handed back for the box', async () => {
     const { state, calls, ui, add } = box({ input: 'FLOCK-NJQXUGUM' });
-    await add();
+    // The screen empties its own box with it (screens/AddFriends.js addCode),
+    // reading what the box shows at that moment.
+    await expect(add()).resolves.toBe('FLOCK-NJQXUGUM');
     expect(calls.api).toEqual(['FLOCK-NJQXUGUM']);
     expect(calls.toasts).toEqual([['Friend request sent to Casey', 'success']]);
-    expect(ui.field).toBe('');
+    expect(ui.field).toBe('FLOCK-NJQXUGUM');
     expect(ui.loading).toEqual([true, false]);
     expect(state.outgoing.map((r) => r.id)).toEqual([5, 7]);
+  });
+
+  test('a code the server did not take hands nothing back, so the box keeps it', async () => {
+    const { add } = box({ input: 'FLOCK-NJQXUGUM', answer: () => Promise.resolve({ status: 'declined', message: 'That friend request did not send.' }) });
+    await expect(add()).resolves.toBeUndefined();
   });
 
   test('something that is not a code is said without a request', async () => {
@@ -369,16 +376,6 @@ describe('3. the code box', () => {
     expect(calls.remembered).toEqual(['FLOCK-NJQXUGUM']);
     expect(calls.toasts).toEqual([]);
     expect(ui.field).toBe('FLOCK-NJQXUGUM');
-  });
-
-  test('a code typed while the last one was on its way stays in the box when that one lands', async () => {
-    let answer;
-    const { ui, add } = box({ input: 'FLOCK-NJQXUGUM', answer: () => new Promise((resolve) => { answer = resolve; }) });
-    const adding = add();
-    ui.field = 'FLOCK-KH7WQTRZ';
-    answer({ status: 'pending', message: 'Friend request sent to Casey', user: person(5, 'Casey') });
-    await adding;
-    expect(ui.field).toBe('FLOCK-KH7WQTRZ');
   });
 
   test("an unconfirmed email does not keep this code over a link's code opened while it was out", async () => {
@@ -641,6 +638,7 @@ describe('5. contacts', () => {
     const src = [
       statementAt(APP, 'const contactsCursorKey = (userId) =>'),
       statementAt(APP, 'const cursorPerson = (u) =>'),
+      statementAt(APP, 'const cursorPeople = (list) =>'),
       statementAt(APP, 'const readContactsCursor = (userId) =>'),
       statementAt(APP, 'const writeContactsCursor = (userId, cursor) =>'),
       statementAt(APP, 'const forgetContactsMatch = (userId, personId) =>'),
@@ -840,6 +838,66 @@ describe('5. contacts', () => {
     expect(state.users.map((u) => u.name)).toEqual(['Ana', 'Maya', 'Tobias']);
   });
 
+  test('the same book checked through again: somebody no longer found leaves once every number has been checked', async () => {
+    // Ana has turned off being found since the last pass. A book one run can
+    // check whole: the list is what that run found.
+    const small = sync({
+      cursor: { total: 7, book: 'b1', users: [person(1, 'Ana'), person(2, 'Bo')] },
+      runs: [result({ users: [person(2, 'Bo')], book: 'b1', total: 7, sent: 7, checked: 7, notReached: 0, startBatch: 0, nextBatch: null })],
+    });
+    await small.go();
+    expect(small.state.users.map((u) => u.name)).toEqual(['Bo']);
+    expect(saved()).toEqual({ total: 7, book: 'b1', users: [person(2, 'Bo')] });
+    localStorage.clear();
+
+    // A book checked over two runs: Ana stays while the pass is part way
+    // through (nobody can say yet whether her number has been checked), and
+    // goes when it has been through the whole book.
+    const big = sync({
+      cursor: { total: 1240, book: 'b1', users: [person(1, 'Ana'), person(2, 'Bo')] },
+      runs: [
+        result({ users: [person(2, 'Bo')], book: 'b1', startBatch: 0, nextBatch: 3 }),
+        result({ users: [], book: 'b1', startBatch: 3, nextBatch: null, notReached: 0 }),
+      ],
+    });
+    await big.go();
+    expect(big.state.users.map((u) => u.name)).toEqual(['Ana', 'Bo']);
+    expect(saved()).toEqual({ nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(2, 'Bo')], previous: [person(1, 'Ana'), person(2, 'Bo')] });
+    await big.go();
+    expect(big.state.users.map((u) => u.name)).toEqual(['Bo']);
+    expect(saved()).toEqual({ total: 1240, book: 'b1', users: [person(2, 'Bo')] });
+  });
+
+  test("refused before anything was checked, in a book that changed since: the old book's list goes, and only when to try is said", async () => {
+    const { state, go } = sync({
+      users: [person(1, 'Ana')],
+      result: { checked: 7, total: 7, sent: 7, unreadable: 0, notReached: 0, throttled: false, retryAt: null, book: 'old', matched: 1 },
+      runs: [result({ users: [], book: 'new', total: 6, sent: 0, checked: 0, answered: 0, throttled: true, retryAt: '2026-11-24T10:40:00.000Z', notReached: 6, nextBatch: 0 })],
+    });
+    await go();
+    expect(state.users).toEqual([]);
+    expect(state.result).toBeNull();
+    expect(state.retryAt).toBe('2026-11-24T10:40:00.000Z');
+  });
+
+  test('refused before anything was checked, in the same book: the list on screen stays', async () => {
+    const { state, go } = sync({
+      users: [person(1, 'Ana')],
+      result: { checked: 7, total: 7, sent: 7, unreadable: 0, notReached: 0, throttled: false, retryAt: null, book: 'b1', matched: 1 },
+      runs: [result({ users: [], book: 'b1', total: 7, sent: 0, checked: 0, answered: 0, throttled: true, retryAt: '2026-11-24T10:40:00.000Z', notReached: 7, nextBatch: 0 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1, throttled: true, retryAt: '2026-11-24T10:40:00.000Z' }));
+  });
+
+  test("a block takes them out of the last pass's people in the cursor too", () => {
+    const { writeCursor, readCursor, forget } = sync({ runs: [] });
+    writeCursor(42, { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(2, 'Bo')], previous: [person(1, 'Ana'), person(2, 'Bo')] });
+    forget(42, 1);
+    expect(readCursor(42)).toEqual({ nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(2, 'Bo')], previous: [person(2, 'Bo')] });
+  });
+
   test('blocked by them while a run was out: neither the run nor the cursor it carries brings them back', async () => {
     let answer;
     const { state, go, blockedHere } = sync({
@@ -1002,6 +1060,14 @@ describe('6. the wiring that is only source', () => {
   test('Open Settings is the app\'s own page there, and only in the app', () => {
     expect(APP).toContain("try { window.location.href = 'app-settings:'; } catch { /* nothing to open */ }");
     expect(APP).toContain('const handleOpenAppSettings = isNativeShell() ? openAppSettings : undefined;');
+  });
+
+  test("the first read of the count takes its turn with later ones, and an unblock lets a contacts check find them again", () => {
+    const boot = APP.slice(APP.indexOf('// Load real user stats on mount (streak, friends)'), APP.indexOf('// Availability pulse: load my current'));
+    expect(boot).toMatch(/const countRead = \+\+friendCountSeqRef\.current;/);
+    expect(boot).toMatch(/if \(countRead === friendCountSeqRef\.current\) setFriendCount\(/);
+    const unblocked = APP.slice(APP.indexOf('return onUnblockedBy(({ userId }) => {'), APP.indexOf('}, [selectedDmId, loadDmMessages]);'));
+    expect(unblocked).toMatch(/contactsBlockedRef\.current\.delete\(String\(userId\)\);/);
   });
 
   test("a camera this browser cannot open is a warning, and a warning never wears the success tick", () => {
@@ -1209,10 +1275,18 @@ describe('8. a block, and what was still on its way about them', () => {
   // The block's other work (chats, rosters, pins) is not under test here.
   function blocking() {
     const r = relationshipScope();
-    const held = { send: [] };
+    const held = { send: [], accept: [], decline: [] };
     const noop = () => {};
+    const hold = (into) => new Promise((resolve, reject) => { into.push({ resolve, reject }); });
+    r.state.declining = [];
     Object.assign(r.scope, {
-      sendFriendRequest: (id) => { r.calls.api.push(['send', id]); return new Promise((resolve, reject) => { held.send.push({ resolve, reject }); }); },
+      sendFriendRequest: (id) => { r.calls.api.push(['send', id]); return hold(held.send); },
+      acceptFriendRequest: (id) => { r.calls.api.push(['accept', id]); return hold(held.accept); },
+      declineFriendRequest: (id) => { r.calls.api.push(['decline', id]); return hold(held.decline); },
+      pendingRequests: r.state.pending,
+      withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
+      setDecliningRequests: setterOn(r.state, 'declining'),
+      DECLINE_UNDO_MS: 5000,
       selectedDmId: null,
       selectedFlockId: null,
       setDirectMessages: noop,
@@ -1242,11 +1316,71 @@ describe('8. a block, and what was still on its way about them', () => {
     const fns = lift([
       r.src,
       statementAt(APP, 'const friendRequestBusyRef = useRef('),
+      statementAt(APP, 'const decliningRef = useRef('),
       statementAt(APP, 'const handleSendFriendRequest = useCallback('),
+      statementAt(APP, 'const handleAcceptFriendRequest = useCallback('),
+      statementAt(APP, 'const handleDeclineFriendRequest = useCallback('),
+      statementAt(APP, 'const handleUndoDecline = useCallback('),
       statementAt(APP, 'const handleUserBlocked = useCallback('),
-    ].join('\n'), '{ add: handleSendFriendRequest, block: handleUserBlocked, apply: applyRelationship }', r.scope);
+    ].join('\n'), '{ add: handleSendFriendRequest, accept: handleAcceptFriendRequest, decline: handleDeclineFriendRequest, undo: handleUndoDecline, block: handleUserBlocked, apply: applyRelationship, declining: decliningRef }', r.scope);
     return { ...r, held, ...fns };
   }
+
+  test("an Accept that fails after a block does not put the request back on Requests, or say anything", async () => {
+    // Ava asked you; you tap Accept, then block her from her photo.
+    const { state, calls, held, accept, block } = blocking();
+    const accepting = accept(1);
+    expect(state.pending).toEqual([]);
+    block(1);
+    held.accept[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await accepting;
+    expect(state.pending).toEqual([]);
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('nor does one that succeeds after it call her a friend', async () => {
+    const { state, calls, held, accept, block } = blocking();
+    const accepting = accept(1);
+    block(1);
+    held.accept[0].resolve({});
+    await accepting;
+    expect(state.statuses[1]).toBeUndefined();
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('a Decline still in its Undo window ends with the block: no Undo row, nothing sent, nothing to put back', () => {
+    jest.useFakeTimers();
+    try {
+      const { state, calls, decline, undo, block, declining } = blocking();
+      decline(1);
+      expect(state.declining.map((r) => r.id)).toEqual([1]);
+      block(1);
+      expect(state.declining).toEqual([]);
+      expect(declining.current.size).toBe(0);
+      undo(1);
+      expect(state.pending).toEqual([]);
+      jest.advanceTimersByTime(6000);
+      expect(calls.api).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('a Decline that fails after a block does not put the request back', async () => {
+    jest.useFakeTimers();
+    try {
+      const { state, held, decline, block } = blocking();
+      decline(1);
+      jest.advanceTimersByTime(5000);
+      expect(held.decline).toHaveLength(1);
+      block(1);
+      held.decline[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+      await tick();
+      expect(state.pending).toEqual([]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
 
   test("a block while an Add is out: the Add's late Pending does not put them back on Sent", async () => {
     const { state, held, add, block } = blocking();
