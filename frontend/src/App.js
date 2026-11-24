@@ -7544,7 +7544,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       await cancelFriendRequest(userId);
       // Nothing between you now, through the one writer: off again on
       // success, for the same reload as Accept, and its Pending mark with it.
-      applyRelationship(request || { id: userId }, 'none');
+      // Unless news landed while the answer was on its way: a request of
+      // theirs that came over the socket since is newer than this Cancel, and
+      // 'none' drawn over it took it off Requests.
+      if (!movedSince()) applyRelationship(request || { id: userId }, 'none');
     } catch (err) {
       // They accepted it while this list was stale. The friendship stays, and
       // the row goes where a friend's row goes.

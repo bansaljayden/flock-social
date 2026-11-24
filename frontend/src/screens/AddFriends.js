@@ -505,11 +505,17 @@ export default function AddFriends({
       if (!String(value || '').trim()) return;
       if (codeRef.current) codeRef.current.blur();
       const added = await handleAddByCode(String(value).trim());
+      if (!added) return;
       // Emptied once the code is added, and only while the box still shows
       // it: read from the box itself, which also holds keystrokes it has not
       // published yet, so a code typed or pasted while the answer was on its
-      // way stays.
-      if (added && codeRef.current && friendCodeFrom(codeRef.current.value) === added) setFriendCodeInput('');
+      // way stays. With the QR tab left meanwhile there is no box, and what it
+      // last published is what it would come back with.
+      if (codeRef.current) {
+        if (friendCodeFrom(codeRef.current.value) === added) setFriendCodeInput('');
+      } else {
+        setFriendCodeInput(cur => (friendCodeFrom(cur) === added ? '' : cur));
+      }
     };
     const lookUp = (typed) => {
       if (phoneLookupLoading) return;

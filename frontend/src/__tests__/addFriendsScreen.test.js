@@ -621,6 +621,22 @@ describe('QR code', () => {
     expect(p.setFriendCodeInput).not.toHaveBeenCalledWith('');
   });
 
+  test('a code added after the QR tab was left is not waiting in the box on the way back', async () => {
+    const p = props({ addFriendsTab: 'qr', friendCodeInput: 'FLOCK-ZZ99YY88' });
+    let answer;
+    p.handleAddByCode.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const { rerender } = render(React.createElement(AddFriends, p));
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    rerender(React.createElement(AddFriends, { ...p, addFriendsTab: 'search' }));
+    expect(screen.queryByLabelText('Friend code')).toBeNull();
+    await act(async () => { answer('FLOCK-ZZ99YY88'); });
+    // Cleared from what the box last published, while it still holds that code.
+    const update = p.setFriendCodeInput.mock.calls.map(([v]) => v).find((v) => typeof v === 'function');
+    expect(update).toBeDefined();
+    expect(update('FLOCK-ZZ99YY88')).toBe('');
+    expect(update('FLOCK-KH7WQTRZ')).toBe('FLOCK-KH7WQTRZ');
+  });
+
   test('the scanner\'s Type the code instead puts the caret in the code box', () => {
     const p = props({ addFriendsTab: 'qr' });
     const { rerender } = render(React.createElement(AddFriends, p));

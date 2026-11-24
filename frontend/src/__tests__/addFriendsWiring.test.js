@@ -1220,6 +1220,17 @@ describe('7. the request lists, read again', () => {
     expect(calls.toasts).toEqual([]);
   });
 
+  test('a Cancel answered after their new request came over the socket leaves that request on Requests', async () => {
+    const { state, held, cancel, apply } = lists();
+    const cancelling = cancel(7);
+    // The server deleted the old request; Dee, not knowing, asks you.
+    apply(person(7, 'Dee'), 'incoming');
+    held.cancel[0].resolve({ status: 'none' });
+    await cancelling;
+    expect(state.pending.map((r) => r.id)).toEqual([7, 1]);
+    expect(state.statuses[7]).toBe('incoming');
+  });
+
   test('a Cancel that fails with nothing newer puts the row back, and says so', async () => {
     const { state, calls, held, cancel } = lists();
     const cancelling = cancel(7);
@@ -1264,7 +1275,7 @@ describe('7. the request lists, read again', () => {
     expect(state.outgoing.map((r) => r.id)).toEqual([7]);
     expect(state.statuses[8]).toBe('none');
     expect(state.statuses[1]).toBe('none');
-    expect(APP).toMatch(/await cancelFriendRequest\(userId\);[\s\S]{0,240}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
+    expect(APP).toMatch(/await cancelFriendRequest\(userId\);[\s\S]{0,600}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
     expect(APP).toMatch(/await declineFriendRequest\(userId\);[\s\S]{0,240}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
   });
 });

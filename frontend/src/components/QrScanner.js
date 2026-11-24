@@ -96,6 +96,9 @@ export default function QrScanner({
   // 'starting' | 'live' | 'wrong' | 'own' | 'adding' | 'done' | 'refused'
   // | 'denied' | 'noCamera' | 'failed' | 'loadFailed' | 'paused'
   const [phase, setPhase] = useState('starting');
+  // For the return from Settings below, which reads it from a listener.
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
   const [answer, setAnswer] = useState('');
   // The decode box's side as drawn, once the library has measured the
   // viewfinder; the guide square follows it so the two always agree.
@@ -289,7 +292,14 @@ export default function QrScanner({
       if (resumeOnVisibleRef.current && mountedRef.current) {
         resumeOnVisibleRef.current = false;
         startCamera();
+        return;
       }
+      // Back from Settings (Open Settings, on the refused screen): asked
+      // again, so a camera allowed there starts without closing the scanner.
+      // iOS usually relaunches an app whose camera access was changed, which
+      // closes it anyway; this is for when it does not, and a camera still
+      // refused only says so again.
+      if (phaseRef.current === 'denied' && mountedRef.current) startCamera();
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);

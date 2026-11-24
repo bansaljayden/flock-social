@@ -277,6 +277,23 @@ describe('a camera that does not start says why, with somewhere to go', () => {
     expect(props.onOpenSettings).toHaveBeenCalledTimes(1);
   });
 
+  test('back from Settings, the camera is asked for again, and starts if it was allowed there', async () => {
+    mount();
+    await flush();
+    await act(async () => { lastStart().reject('Error getting userMedia, error = NotAllowedError: Permission denied'); });
+    await flush();
+    expect(lib.starts.length).toBe(1);
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    await flush();
+    expect(lib.starts.length).toBe(2);
+    await act(async () => { lastStart().resolve(); });
+    await flush();
+    expect(screen.getByRole('status').textContent).toBe("Point your camera at a friend's Flock code.");
+  });
+
   test('any other failure is tried once more, then says so with Try again', async () => {
     mount();
     await flush();
