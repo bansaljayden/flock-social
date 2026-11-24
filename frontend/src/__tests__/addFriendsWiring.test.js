@@ -893,6 +893,11 @@ describe('6. the wiring that is only source', () => {
     expect(APP).toContain('const handleOpenAppSettings = isNativeShell() ? openAppSettings : undefined;');
   });
 
+  test("a camera this browser cannot open is a warning, and a warning never wears the success tick", () => {
+    expect(APP).toMatch(/showToast\("This browser can't open the camera\. Type your friend's code instead\.", 'warning'\);/);
+    expect(APP).toMatch(/\{toast\.type === 'error' \|\| toast\.type === 'warning' \? Icons\.alertCircle\('white', 15\) : Icons\.check\('white', 15\)\}/);
+  });
+
   test('the reader the app uses is the shared one', () => {
     expect(friendCodeFrom('njqx ugum')).toBe('FLOCK-NJQXUGUM');
   });

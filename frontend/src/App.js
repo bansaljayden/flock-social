@@ -5446,8 +5446,11 @@ const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }
         willChange: 'transform, opacity',
       }}
     >
+      {/* A warning is something that did not fully happen (invites that did
+          not go out, a camera this browser cannot open), so it never wears the
+          success tick; it keeps the navy panel, and red stays for errors. */}
       <span aria-hidden style={{ display: 'inline-flex', flexShrink: 0, marginTop: '2px' }}>
-        {toast.type === 'error' ? Icons.alertCircle('white', 15) : Icons.check('white', 15)}
+        {toast.type === 'error' || toast.type === 'warning' ? Icons.alertCircle('white', 15) : Icons.check('white', 15)}
       </span>
       <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{toast.message}</span>
       <button
