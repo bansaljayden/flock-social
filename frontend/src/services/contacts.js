@@ -197,22 +197,31 @@ export async function readContactPhoneNumbers() {
 // before anything is sent cuts a real address book down by a third or more, and
 // every number removed here is one that never leaves the phone.
 //
-// THE WHOLE NUMBER, with a North American leading 1 taken off, never its last
-// ten digits: keying on the last ten merged a London number with an American
-// one that happened to end the same way, and one of them was never checked.
-// Fewer than ten digits is an extension or a short code, which no Flock
-// account can be reached on, and it is not sent.
+// THE WHOLE NUMBER AS THE SERVER READS IT (backend/utils/phone.js toE164),
+// never its last ten digits: keying on the last ten merged a London number
+// with an American one that happened to end the same way, and one of them was
+// never checked. A number with a + is taken as written, 011 is the way out of
+// North America, and a bare one is North American, with or without its 1. So
+// +2025550101 (Egypt) and +1 202 555 0101 are two numbers, and 202-555-0101
+// and +1 202 555 0101 are one. A bare number of any other length is one the
+// server cannot read, kept apart under its digits so it is still sent and
+// counted. Fewer than ten digits is an extension or a short code, which no
+// Flock account can be reached on, and it is not sent.
+const digitsOf = (raw) => raw.replace(/\D/g, '');
 const dedupeKey = (raw) => {
-  const digits = raw.replace(/\D/g, '');
-  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  const digits = digitsOf(raw);
+  if (raw.trim().startsWith('+')) return `+${digits}`;
+  if (digits.startsWith('011') && digits.length > 11) return `+${digits.slice(3)}`;
+  const national = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  return national.length === 10 ? `+1${national}` : `?${digits}`;
 };
 
 function dedupe(numbers) {
   const seen = new Map();
   for (const raw of numbers) {
     if (typeof raw !== 'string') continue;
+    if (digitsOf(raw).length < 10) continue;
     const key = dedupeKey(raw);
-    if (key.length < 10) continue;
     if (!seen.has(key)) seen.set(key, raw.trim());
   }
   return [...seen.values()];
@@ -230,14 +239,14 @@ const inStableOrder = (numbers) => numbers
 // one only over the same book. The size alone let a number replaced by another
 // land before the cursor, where no run of the pass would ever check it while
 // the pass said nothing was left. A 32-bit FNV-1a hash of the keys: it names
-// the book without holding a single number of it. With each key, whether the
-// number starts with a +, because the server reads 442079460018 and
-// +442079460018 differently: a number saved without its + and then corrected
-// is a number no run has looked up, so the book is another book.
+// the book without holding a single number of it. The keys are the numbers as
+// the server reads them, so a number corrected between two runs (442079460018
+// given its +, +2025550101 given its 1) is a number no run has looked up, and
+// the book is another book.
 const bookPrint = (ordered) => {
   let h = 0x811c9dc5;
   for (const raw of ordered) {
-    const key = `${raw.trim().startsWith('+') ? '+' : ''}${dedupeKey(raw)},`;
+    const key = `${dedupeKey(raw)},`;
     for (let i = 0; i < key.length; i += 1) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
   }
   return h.toString(36);

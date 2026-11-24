@@ -570,9 +570,43 @@ describe('syncContacts stops where the server said it would', () => {
     mockPlugin.getContacts.mockResolvedValue(after);
     const lookup = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
     const again = await service.syncContacts(lookup, { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
+    // A pass from the top, which reaches the corrected number in its turn.
     expect(again.book).not.toBe(one.book);
     expect(again.startBatch).toBe(0);
-    expect(lookup.mock.calls.flatMap(([batch]) => batch)).toContain('+442079460018');
+  });
+
+  test('a number given its 1 since the last run makes the book another book: +20 is Egypt, +1 202 is Washington', async () => {
+    const size = service.CONTACT_BATCH_SIZE * 5;
+    const before = book(size);
+    before.contacts[0] = { phones: [{ type: 'mobile', number: '+2025550101' }] };
+    mockPlugin.getContacts.mockResolvedValue(before);
+    const one = await service.syncContacts(jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE }));
+
+    const after = book(size);
+    after.contacts[0] = { phones: [{ type: 'mobile', number: '+12025550101' }] };
+    mockPlugin.getContacts.mockResolvedValue(after);
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+    const again = await service.syncContacts(lookup, { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
+    expect(again.book).not.toBe(one.book);
+    expect(again.startBatch).toBe(0);
+    expect(lookup.mock.calls.flatMap(([batch]) => batch)).toContain('+12025550101');
+  });
+
+  test('one number is sent once however it was written, and two numbers the server reads apart are both sent', async () => {
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [
+      { phones: [{ type: 'mobile', number: '(202) 555-0101' }] },
+      { phones: [{ type: 'mobile', number: '+1 202 555 0101' }] },
+      { phones: [{ type: 'mobile', number: '1-202-555-0101' }] },
+      { phones: [{ type: 'mobile', number: '+2025550101' }] },
+      { phones: [{ type: 'mobile', number: '011 44 20 7946 0958' }] },
+      { phones: [{ type: 'mobile', number: '+44 20 7946 0958' }] },
+    ] });
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: 3 });
+    const out = await service.syncContacts(lookup);
+    const sent = lookup.mock.calls.flatMap(([batch]) => batch);
+    expect(sent).toHaveLength(3);
+    expect(sent).toEqual(expect.arrayContaining(['(202) 555-0101', '+2025550101', '011 44 20 7946 0958']));
+    expect(out.sent).toBe(3);
   });
 
   test('numbers the server could not read are counted apart from numbers not reached', async () => {
