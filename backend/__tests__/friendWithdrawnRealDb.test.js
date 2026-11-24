@@ -163,6 +163,24 @@ test('after the cooldown a withdrawn request revives like a declined one', async
   assert.strictEqual((await rowOf(ada, bo)).status, 'pending');
 });
 
+test('the person who declined, asking back after it was withdrawn, sends their request the same day', async () => {
+  const ada = await user('Ada');
+  const bo = await user('Bo');
+  // Ada asked, Bo declined, Ada cancelled: withdrawn, inside the day.
+  await pool.query("INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'declined')", [ada.id, bo.id]);
+  await call('DELETE', `/api/friends/${bo.id}`, ada);
+  assert.strictEqual((await rowOf(ada, bo)).status, 'withdrawn');
+
+  const res = await call('POST', '/api/friends/request', bo, { user_id: ada.id });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.status, 'pending');
+  assert.strictEqual(await rowOf(ada, bo), undefined, 'the old direction is gone');
+  assert.strictEqual((await rowOf(bo, ada)).status, 'pending');
+  const incoming = await call('GET', '/api/friends/pending', ada);
+  const asked = Array.isArray(incoming.body) ? incoming.body : (incoming.body.requests || []);
+  assert.ok(asked.some((r) => Number(r.id) === bo.id), 'Ada was not asked');
+});
+
 test('a block keeps a withdrawn record, as it keeps a declined one', async () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'routes', 'moderation.js'), 'utf8');
   assert.match(source, /AND status NOT IN \('declined', 'withdrawn'\)/);

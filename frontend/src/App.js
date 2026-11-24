@@ -5584,21 +5584,40 @@ const writeContactsCursor = (userId, cursor) => {
     }
   } catch { /* storage blocked: the next check starts at the top of the book */ }
 };
-// This launch of the app. The cursor is stamped with the launch that wrote
-// it, and the people a run in an earlier launch saved are checked again before
-// they are drawn (handleSyncContacts).
-const CONTACTS_LAUNCH = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// The stretch of time the app has been in front of the person: a launch, or
+// a return from the background (contactsEpochRef). The cursor is stamped with
+// the one that wrote it, and the people a run in an earlier one saved are
+// checked again before they are drawn (handleSyncContacts): an app that was
+// closed, or asleep in the background, heard no blocked_by event.
+const newContactsEpoch = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+// The cursor without the given people, in this pass and the last.
+const dropPeople = (cursor, gone) => (gone.size
+  ? { ...cursor, users: (cursor.users || []).filter(u => !gone.has(String(u.id))), ...(cursor.previous ? { previous: cursor.previous.filter(u => !gone.has(String(u.id))) } : {}) }
+  : cursor);
 // Who among the cursor's people this account can no longer see: blocked
-// either way, banned or deleted since that earlier launch, none of which
-// reaches a device that was closed at the time. The card read
-// (GET /api/users/:id/card) answers one 404 for all of those and for an id
-// that never existed, so it shows nothing a tap on their row would not; a
-// read that fails any other way (no connection, a 500) keeps the person.
+// either way, banned or deleted since. The card read (GET /api/users/:id/card)
+// answers one 404 for all of those and for an id that never existed, so it
+// shows nothing a tap on their row would not, and a read that fails any other
+// way (no connection, a 500) keeps the person. It answers that same 404 once
+// the account's card budget is spent, on purpose (routes/users.js), so a 404
+// counts only if the budget was still there after the last of these reads:
+// somebody whose card did answer is asked again, and must answer again. With
+// nobody answering, nothing is known, and nobody is dropped.
 const peopleGoneSince = async (cursor) => {
   const ids = [...new Set([...(cursor.users || []), ...(cursor.previous || [])].map(u => String(u.id)))];
-  const gone = new Set();
-  await Promise.all(ids.map(id => getUserCard(id).catch((err) => { if (err?.status === 404) gone.add(id); })));
-  return gone;
+  const answered = [];
+  const notFound = new Set();
+  await Promise.all(ids.map(id => getUserCard(id).then(
+    () => { answered.push(id); },
+    (err) => { if (err?.status === 404) notFound.add(id); },
+  )));
+  if (!notFound.size || !answered.length) return new Set();
+  try {
+    await getUserCard(answered[0]);
+    return notFound;
+  } catch {
+    return new Set();
+  }
 };
 // Somebody blocked leaves the pass's people as well as the list on screen: the
 // next run of the pass merges the cursor's people back in, and the server,
@@ -7799,6 +7818,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // pass's cursor it carries, would have put them back. Unblocking somebody
   // takes them out of it.
   const contactsBlockedRef = useRef(new Set());
+  // Which stretch in front of the person this is (newContactsEpoch): a new
+  // one at every return from the background, when a block made meanwhile
+  // could have been missed. Made once, not on every render.
+  const contactsEpochRef = useRef(null);
+  if (contactsEpochRef.current === null) contactsEpochRef.current = newContactsEpoch();
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') contactsEpochRef.current = newContactsEpoch(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, []);
   const handleSyncContacts = useCallback(async () => {
     if (contactsRunRef.current) return;
     if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
@@ -7807,24 +7836,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setContactsDenied(false);
     setContactsUnavailable(false);
     const userId = authUser?.id;
+    const epoch = contactsEpochRef.current;
     const saved = readContactsCursor(userId);
-    // People a run in an earlier launch of the app saved are checked again,
-    // while the book is read, before any of them is drawn: a block either way,
-    // or a ban, since then reached this device through no event, and
-    // handleUserBlocked only hears the live ones (peopleGoneSince).
-    const fromEarlierLaunch = Boolean(saved && saved.launch !== CONTACTS_LAUNCH);
-    const recheck = fromEarlierLaunch && ((saved.users || []).length || (saved.previous || []).length)
+    // People a run in an earlier launch, or before the app last went to the
+    // background, saved are checked again, while the book is read, before any
+    // of them is drawn: a block either way, or a ban, since then reached this
+    // device through no event, and handleUserBlocked only hears the live ones
+    // (peopleGoneSince). What it finds is written back the moment it is
+    // known, stamped with this stretch, whatever the run itself does: a run
+    // that throws (a refused permission, a dropped connection) does not leave
+    // it to be asked again on the next tap. Written over the cursor as it is
+    // then, not as it was read.
+    const fromEarlier = Boolean(saved && saved.launch !== epoch);
+    const recheck = (fromEarlier && ((saved.users || []).length || (saved.previous || []).length)
       ? peopleGoneSince(saved)
-      : Promise.resolve(new Set());
+      : Promise.resolve(new Set()))
+      .then((gone) => {
+        if (fromEarlier) {
+          const current = readContactsCursor(userId);
+          if (current) writeContactsCursor(userId, { ...dropPeople(current, gone), launch: epoch });
+        }
+        return gone;
+      });
     try {
       const [data, gone] = await Promise.all([syncContacts(findFriendsByPhone, { cursor: saved }), recheck]);
-      const kept = (u) => !gone.has(String(u.id));
-      const cursor = saved && gone.size
-        ? { ...saved, users: (saved.users || []).filter(kept), ...(saved.previous ? { previous: saved.previous.filter(kept) } : {}) }
-        : saved;
-      // Checked for this launch, and written back at once, so a run refused
-      // before it checked anything does not ask about them again.
-      if (fromEarlierLaunch) writeContactsCursor(userId, { ...cursor, launch: CONTACTS_LAUNCH });
+      const cursor = saved ? dropPeople(saved, gone) : saved;
       if (data.permission === 'granted' || data.permission === 'limited') setContactsPermissionRead(data.permission);
       // The runs this one carried on from, when it did: their counts, and the
       // people they found.
@@ -7904,8 +7940,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // through keeps the last pass's people with it, for after a relaunch.
       const keptLast = clean(lastPass);
       writeContactsCursor(userId, done
-        ? { total: data.total, book: data.book, users: pass, launch: CONTACTS_LAUNCH }
-        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}), launch: CONTACTS_LAUNCH });
+        ? { total: data.total, book: data.book, users: pass, launch: epoch }
+        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: pass, ...(keptLast.length ? { previous: keptLast } : {}), launch: epoch });
       setContactsUsers(shown);
       setContactsResult(summary(shown.length));
       setContactsRetryAt(null);

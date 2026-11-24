@@ -62,8 +62,10 @@ test('a decline is masked on every read the requester can make, and a revive is 
     at += 1;
   }
   assert.strictEqual(revives, 2, 'both revive sites (request and add-by-code)');
-  // One revive a day, on the naive column read the way the codebase reads them.
-  assert.match(src, /AND created_at < \(NOW\(\) AT TIME ZONE 'UTC'\) - INTERVAL '24 hours'/);
+  // One revive a day for whoever is asking again, on the naive column read the
+  // way the codebase reads them. The person who declined, asking back after the
+  // request was withdrawn, is not asking again (friendWithdrawnRealDb).
+  assert.match(src, /AND \(requester_id <> \$1 OR created_at < \(NOW\(\) AT TIME ZONE 'UTC'\) - INTERVAL '24 hours'\)/);
   assert.match(src, /SET status = 'pending', requester_id = \$1, addressee_id = \$2, created_at = NOW\(\)/);
   // And it is charged like a probe.
   // A withdrawn row (migration 113) revives on the same terms and is charged

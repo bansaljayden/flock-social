@@ -173,10 +173,18 @@ async function reRequestDeclined(rowId, requesterId, addresseeId) {
     // the pending request they just sent, the answer a cancelled-then-resent
     // pending request gets. Left withdrawn it would read as no request at all
     // straight after "sent", which is its own tell.
+    //
+    // THE DAY IS THE ASKER'S. It holds back the person whose request was
+    // declined, asking again; a withdrawn row whose requester is the OTHER
+    // person (they asked, the caller declined, they took it back) is the
+    // decliner asking now, for the first time, and a request from them is
+    // sent at once, in their direction. Held to the day, it answered
+    // 'declined' to a tap on Add, on a code or on a link's sheet, and changed
+    // nothing (Add Friends review, 2026-11-24).
     const r = await pool.query(
       `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2, created_at = NOW()
         WHERE id = $3 AND status IN ('declined', 'withdrawn')
-          AND created_at < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'
+          AND (requester_id <> $1 OR created_at < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours')
         RETURNING id`,
       [requesterId, addresseeId, rowId]
     );
