@@ -21,11 +21,15 @@ test('the declined requester cannot remove the record to start over', () => {
   assert.match(remove, /SET status = 'withdrawn' WHERE requester_id = \$1 AND addressee_id = \$2 AND status = 'declined' RETURNING id/);
 });
 
-test('reviving a declined request never pushes', () => {
+test('reviving a declined request never pushes; the decliner asking back after a withdrawal does, as a first request', () => {
   const request = src.slice(src.indexOf("router.post('/request'"), src.indexOf("router.post('/accept'"));
   const revive = request.slice(request.indexOf('const revived = await reRequestDeclined('), request.indexOf('ON CONFLICT DO NOTHING, because'));
-  assert.doesNotMatch(revive, /pushIfOffline/);
   assert.match(revive, /emit\('friend_request_received'/);
+  // One push in the revive, and only when the row's requester was the OTHER
+  // person: the caller is the one who declined, asking for the first time. A
+  // requester asking again never rings the person who said no.
+  assert.strictEqual((revive.match(/pushIfOffline\(/g) || []).length, 1);
+  assert.match(revive, /if \(Number\(row\.requester_id\) === Number\(user_id\)\) \{\s*pushIfOffline\(io, user_id, 'New friend request'/);
 });
 
 test('suggestions walk both directions of a friend\'s friendships', () => {
@@ -56,7 +60,7 @@ test('a decline is masked on every read the requester can make, and a revive is 
   let revives = 0;
   while ((at = src.indexOf('reRequestDeclined(row.id', at)) !== -1) {
     revives += 1;
-    const after = src.slice(at, at + 700);
+    const after = src.slice(at, at + 1400);
     assert.ok(!/Friend request sent to/.test(after), 'a revive must not word its answer differently from a pending row');
     assert.ok(/message: 'Friend request already sent', status: 'pending'/.test(after), 'a revive answers as a pending row does');
     at += 1;

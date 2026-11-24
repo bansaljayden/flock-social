@@ -660,6 +660,37 @@ test('asking someone whose request you declined accepts their request, through b
   }
 });
 
+test('asking back after they withdrew a request you declined sends yours the same day, and rings like a first request, through both doors', async () => {
+  for (const door of ['request', 'add-by-code']) {
+    // eslint-disable-next-line no-await-in-loop
+    const ada = await user('Ada');
+    // eslint-disable-next-line no-await-in-loop
+    const bo = await user('Bo');
+    // eslint-disable-next-line no-await-in-loop
+    await row(ada, bo, 'pending');
+    // eslint-disable-next-line no-await-in-loop
+    assert.strictEqual((await call('POST', '/api/friends/decline', bo, { user_id: ada.id })).status, 200);
+    // Ada, to whom it still reads as sent, takes it back.
+    // eslint-disable-next-line no-await-in-loop
+    assert.strictEqual((await call('DELETE', `/api/friends/request/${bo.id}`, ada)).status, 200);
+    emitted.length = 0;
+    pushes.length = 0;
+
+    const res = door === 'request'
+      // eslint-disable-next-line no-await-in-loop
+      ? await call('POST', '/api/friends/request', bo, { user_id: ada.id })
+      // eslint-disable-next-line no-await-in-loop
+      : await call('POST', '/api/friends/add-by-code', bo, { code: await codeOf(ada) });
+    assert.strictEqual(res.status, 200, `${door}: ${res.text}`);
+    assert.strictEqual(res.body.status, 'pending', door);
+    // eslint-disable-next-line no-await-in-loop
+    assert.deepStrictEqual((await pairRows(ada, bo)).map((r) => [r.requester_id, r.status]), [[bo.id, 'pending']], door);
+    assert.ok(emitted.some((e) => e.room === `user:${ada.id}` && e.event === 'friend_request_received'), door);
+    assert.ok(pushes.some((p) => p.userId === ada.id && p.data.type === 'friend_request'), door);
+    friendsRouter.__resetBudgets();
+  }
+});
+
 test('/accept takes a request the caller declined (the Undo), and nothing else it should not', async () => {
   const ada = await user('Ada');
   const cy = await user('Cy');

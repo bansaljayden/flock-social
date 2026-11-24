@@ -650,9 +650,10 @@ describe('5. contacts', () => {
   // deleted since the stretch that saved them), `cardFails` the ids whose card
   // read fails some other way, and after `budgetAfter` reads every card
   // answers 404, as a spent card budget does.
-  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null, gone = [], cardFails = [], budgetAfter = Infinity }) {
+  function sync({ runs, unconfirmed = false, cursor = null, users = [], result = null, gone = [], cardFails = [], budgetAfter = Infinity, holdCards = false }) {
     const state = { users, result, loading: [], denied: [], unavailable: [], permission: null, retryAt: null };
     const calls = { syncs: [], verifyPrompt: [], toasts: [], cards: [] };
+    const heldCards = [];
     let run = 0;
     const scope = {
       useCallback: (fn) => fn,
@@ -677,8 +678,14 @@ describe('5. contacts', () => {
       userMessage,
       blockedIdsRef: { current: new Set() },
       contactsEpochRef: { current: 'epoch-1' },
+      // The real sizes, for which finished books one run checks whole.
+      CONTACT_BATCH_SIZE: require('../services/contacts').CONTACT_BATCH_SIZE,
+      MAX_BATCHES: require('../services/contacts').MAX_BATCHES,
+      // Who is signed in; a test signs out by setting it to null.
+      contactsAccountRef: { current: 42 },
       getUserCard: (id) => {
         calls.cards.push(String(id));
+        if (holdCards) return new Promise((resolve) => { heldCards.push(() => resolve({ id })); });
         if (calls.cards.length > budgetAfter) return Promise.reject(Object.assign(new Error('User not found'), { status: 404, userFacing: true }));
         if (gone.includes(String(id))) return Promise.reject(Object.assign(new Error('User not found'), { status: 404, userFacing: true }));
         if (cardFails.includes(String(id))) return Promise.reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
@@ -693,12 +700,14 @@ describe('5. contacts', () => {
       statementAt(APP, 'const writeContactsCursor = (userId, cursor) =>'),
       statementAt(APP, 'const newContactsEpoch = '),
       statementAt(APP, 'const dropPeople = '),
+      statementAt(APP, 'const RECHECK_MOST = '),
       statementAt(APP, 'const peopleGoneSince = async (cursor) =>'),
       statementAt(APP, 'const forgetContactsMatch = (userId, personId) =>'),
       statementAt(APP, 'const contactsRunRef = useRef('),
       statementAt(APP, 'const contactsUsersRef = useRef('),
       statementAt(APP, 'const contactsResultRef = useRef('),
       statementAt(APP, 'const contactsBlockedRef = useRef('),
+      statementAt(APP, 'const contactsRecheckRef = useRef('),
       statementAt(APP, 'const handleSyncContacts = useCallback('),
     ].join('\n');
     const lifted = lift(src, '{ handleSyncContacts, contactsUsersRef, contactsResultRef, contactsBlockedRef, readContactsCursor, writeContactsCursor, forgetContactsMatch }', scope);
@@ -710,7 +719,12 @@ describe('5. contacts', () => {
       lifted.contactsResultRef.current = state.result;
       await lifted.handleSyncContacts();
     };
-    return { state, calls, go, scope, readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor, forget: lifted.forgetContactsMatch, blockedHere: lifted.contactsBlockedRef, epoch: scope.contactsEpochRef };
+    return {
+      state, calls, go, scope,
+      readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor, forget: lifted.forgetContactsMatch,
+      blockedHere: lifted.contactsBlockedRef, epoch: scope.contactsEpochRef, account: scope.contactsAccountRef,
+      releaseCards: () => heldCards.splice(0).forEach((answer) => answer()),
+    };
   }
   const result = (over) => ({
     users: [], sent: 600, checked: 600, unreadable: 0, total: 1240, notReached: 640, startBatch: 0, nextBatch: 3,
@@ -770,6 +784,69 @@ describe('5. contacts', () => {
     expect(calls.cards).toEqual(['1']);
     await go();
     expect(calls.cards).toEqual(['1']);
+  });
+
+  test('a run refused before it checked anything still takes somebody the re-check found gone off the list on screen', async () => {
+    const { state, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo')] },
+      users: [person(1, 'Ana'), person(2, 'Bo')],
+      result: { checked: 600, total: 1240, sent: 600, unreadable: 0, notReached: 640, throttled: false, retryAt: null, book: 'b1', matched: 2 },
+      gone: ['2'],
+      runs: [result({ users: [], book: 'b1', sent: 0, checked: 0, answered: 0, throttled: true, retryAt: '2026-11-24T10:40:00.000Z', startBatch: 3, nextBatch: 3 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1, throttled: true }));
+  });
+
+  test('a second tap while the first re-check is still out waits for it rather than asking every card again', async () => {
+    const failed = Object.assign(new Error('Something went wrong'), { status: 500, userFacing: true });
+    const { state, calls, go, releaseCards } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana')] },
+      holdCards: true,
+      runs: [() => Promise.reject(failed), result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(calls.cards).toEqual(['1']);
+    const second = go();
+    await tick();
+    expect(calls.cards).toEqual(['1']);
+    releaseCards();
+    await second;
+    expect(calls.cards).toEqual(['1']);
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+  });
+
+  test('a run that lands after a sign-out writes no cursor back', async () => {
+    let answer;
+    const { go, account } = sync({ runs: [() => new Promise((resolve) => { answer = resolve; })] });
+    const running = go();
+    await tick();
+    // Signed out: the sweep took every flock* key with the account.
+    account.current = null;
+    localStorage.clear();
+    answer(result({ users: [person(1, 'Ana')], book: 'b1' }));
+    await running;
+    expect(saved()).toBeNull();
+  });
+
+  test('a finished book one run checks whole asks no card: its saved people are never drawn', async () => {
+    const { calls, go } = sync({
+      cursor: { total: 7, book: 'b1', users: [person(1, 'Ana')] },
+      runs: [result({ users: [person(1, 'Ana')], book: 'b1', total: 7, sent: 7, checked: 7, notReached: 0, startBatch: 0, nextBatch: null })],
+    });
+    await go();
+    expect(calls.cards).toEqual([]);
+  });
+
+  test('at most forty cards are asked, a third of the hour\'s card budget', async () => {
+    const many = Array.from({ length: 45 }, (_, i) => person(100 + i, `P${100 + i}`));
+    const { calls, go } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: many },
+      runs: [result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(calls.cards).toHaveLength(40);
   });
 
   test('a return from the background is a new stretch: the people saved before it are checked again', async () => {

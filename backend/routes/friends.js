@@ -529,6 +529,13 @@ router.post('/request',
         const revived = await reRequestDeclined(row.id, req.user.id, user_id);
         if (!revived) return res.json(await currentState(req.user.id, user_id));
         if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
+        // The person who declined, asking back after the request was withdrawn,
+        // is making a first request, and it rings like one. A requester asking
+        // again does not ring (see reRequestDeclined).
+        if (Number(row.requester_id) === Number(user_id)) {
+          pushIfOffline(io, user_id, 'New friend request', `${req.user.name} wants to be friends`, { type: 'friend_request', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend request push error:', e.message));
+        }
         // The same sentence a pending row gets: "sent to <name>" here and
         // "already sent" there told the requester which one they were.
         return res.json({ message: 'Friend request already sent', status: 'pending' });
@@ -1347,6 +1354,11 @@ router.post('/add-by-code',
           return res.json({ ...await currentState(req.user.id, targetUserId), user: who });
         }
         if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name, fromUserImage: await ownAvatar(req.user.id) });
+        // A first request from the person who declined rings; see POST /request.
+        if (Number(row.requester_id) === Number(targetUserId)) {
+          pushIfOffline(io, targetUserId, 'New friend request', `${req.user.name} wants to be friends`, { type: 'friend_request', fromUserId: String(req.user.id) })
+            .catch((e) => console.error('Friend request push error:', e.message));
+        }
         // Same sentence as a pending row; see POST /request.
         return res.json({ message: 'Friend request already sent', status: 'pending', user: who });
       }
