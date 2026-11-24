@@ -504,7 +504,7 @@ describe('syncContacts stops where the server said it would', () => {
     const one = await service.syncContacts(first);
 
     const second = jest.fn().mockResolvedValue({ users: [{ id: 9, name: 'Tobias' }], checked: service.CONTACT_BATCH_SIZE });
-    const two = await service.syncContacts(second, { cursor: { nextBatch: one.nextBatch, total: one.total } });
+    const two = await service.syncContacts(second, { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
     expect(two.startBatch).toBe(service.MAX_BATCHES);
     expect(second).toHaveBeenCalledTimes(2);
     // Not one number the first run sent goes out again.
@@ -517,8 +517,38 @@ describe('syncContacts stops where the server said it would', () => {
     // A book that changed size since is a different book, and starts over.
     mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 4));
     const third = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
-    const three = await service.syncContacts(third, { cursor: { nextBatch: 3, total: service.CONTACT_BATCH_SIZE * 5 } });
+    const three = await service.syncContacts(third, { cursor: { nextBatch: 3, total: service.CONTACT_BATCH_SIZE * 5, book: one.book } });
     expect(three.startBatch).toBe(0);
+  });
+
+  test('a book the same size but not the same book starts over, so a number put in its place is checked', async () => {
+    // One number replaced by another the same run sorted before the cursor:
+    // carried on by size, no run of the pass would ever have sent it, and the
+    // pass ended saying nothing was left.
+    const size = service.CONTACT_BATCH_SIZE * 5;
+    mockPlugin.getContacts.mockResolvedValue(book(size));
+    const one = await service.syncContacts(jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE }));
+    expect(typeof one.book).toBe('string');
+    expect(one.book).not.toMatch(/\d{7}/);
+
+    // The same book again: carried on.
+    const same = await service.syncContacts(jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE }), { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
+    expect(same.startBatch).toBe(service.MAX_BATCHES);
+    expect(same.book).toBe(one.book);
+
+    const changed = book(size);
+    changed.contacts[size - 1] = { phones: [{ type: 'mobile', number: '5550000001' }] };
+    mockPlugin.getContacts.mockResolvedValue(changed);
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+    const again = await service.syncContacts(lookup, { cursor: { nextBatch: one.nextBatch, total: one.total, book: one.book } });
+    expect(again.total).toBe(size);
+    expect(again.book).not.toBe(one.book);
+    expect(again.startBatch).toBe(0);
+    expect(lookup.mock.calls[0][0]).toContain('5550000001');
+
+    // A cursor with no print at all is a fresh pass too.
+    const bare = await service.syncContacts(jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE }), { cursor: { nextBatch: 3, total: size } });
+    expect(bare.startBatch).toBe(0);
   });
 
   test('numbers the server could not read are counted apart from numbers not reached', async () => {

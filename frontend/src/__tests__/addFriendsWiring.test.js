@@ -223,7 +223,7 @@ describe('1. one writer for where you stand with somebody', () => {
   test('every answer and both socket events go through it', () => {
     expect(APP).toMatch(/applyRelationship\(\{ id: data\.fromUserId, name: data\.fromUserName, profile_image_url: typeof photo === 'string' \? photo : null \}, 'incoming'\);/);
     expect(APP).toMatch(/applyRelationship\(\{ id: data\.fromUserId, name: data\.fromUserName \}, 'accepted'\);/);
-    expect(APP).toMatch(/if \(data\?\.user\) applyRelationship\(data\.user, status === 'accepted' \|\| status === 'pending' \? status : 'none'\);/);
+    expect(APP).toMatch(/if \(status === 'accepted'\) applyRelationship\(data\.user, 'accepted'\);\s*else if \(!movedSince\) applyRelationship\(data\.user, status === 'pending' \? 'pending' : 'none'\);/);
     // A received request seeds 'incoming' from the list, whichever way the list changed.
     expect(APP).toMatch(/if \(prev\[r\.id\] !== 'incoming' && prev\[r\.id\] !== 'accepted'\) edit\(\)\[r\.id\] = 'incoming';/);
   });
@@ -292,8 +292,20 @@ describe('3. the code box', () => {
       statementAt(APP, 'const friendCodeBusyRef = useRef('),
       statementAt(APP, 'const handleAddByCode = useCallback('),
     ].join('\n');
-    return { ...r, ui, add: lift(src, 'handleAddByCode', r.scope) };
+    return { ...r, ui, ...lift(src, '{ add: handleAddByCode, apply: applyRelationship }', r.scope) };
   }
+
+  test("their accept on the socket, landing before the code's own answer, is not drawn over with Pending", async () => {
+    let answer;
+    const { state, apply, add } = box({ input: 'FLOCK-NJQXUGUM', answer: () => new Promise((resolve) => { answer = resolve; }) });
+    const adding = add();
+    await tick();
+    apply(person(5, 'Casey'), 'accepted');
+    answer({ status: 'pending', message: 'Friend request sent to Casey', user: person(5, 'Casey') });
+    await adding;
+    expect(state.statuses[5]).toBe('accepted');
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+  });
 
   test("Return's own value wins over the one the box published a moment ago", async () => {
     const { calls, add } = box({ input: 'FLOCK-NJQXUGU' });
@@ -351,28 +363,42 @@ describe('3. the code box', () => {
 });
 
 describe("4. a friend's link", () => {
-  function link({ mine = 'FLOCK-KP5ETGZF', preview = () => Promise.resolve({ user: person(5, 'Casey'), status: 'none' }), verify = false } = {}) {
-    const state = { sheet: null, scanner: true };
-    const calls = { remembered: [], forgot: 0, verify: [] };
+  // The kept code is one slot, as in lib/friendCode.js: a link remembers its
+  // code over the last one's.
+  function link({ mine = 'FLOCK-KP5ETGZF', preview = () => Promise.resolve({ user: person(5, 'Casey'), status: 'none' }), verify = false, add = () => Promise.resolve({ ok: true, status: 'pending', message: 'Friend request sent to Casey' }) } = {}) {
+    const state = { sheet: null, scanner: true, kept: null };
+    const calls = { remembered: [], forgot: 0, verify: [], sent: [], toasts: [] };
     const scope = {
       useCallback: (fn) => fn,
       useRef: (v) => ({ current: v }),
       friendCodeFrom,
-      rememberFriendCode: (code) => calls.remembered.push(code),
-      forgetFriendCode: () => { calls.forgot += 1; },
+      rememberFriendCode: (code) => { calls.remembered.push(code); state.kept = code; },
+      pendingFriendCode: () => state.kept,
+      forgetFriendCode: () => { calls.forgot += 1; state.kept = null; },
       setQrScannerOpen: (v) => { state.scanner = v; },
       setFriendLinkSheet: setterOn(state, 'sheet'),
+      friendLinkSheetRef: { get current() { return state.sheet; } },
       myFriendCodeRef: { current: mine },
       getFriendByCode: preview,
+      // The real one forgets the kept code when its answer is for it.
+      sendFriendCode: (code) => { calls.sent.push(code); return add(code).then((r) => { if (state.kept === code) { calls.forgot += 1; state.kept = null; } return r; }); },
+      hapticSuccess: () => {},
+      showToast: (message, type) => calls.toasts.push([message, type || 'success']),
+      userMessage,
       needsEmailVerification: (err, what) => { calls.verify.push(what); return verify; },
     };
-    const open = lift([
+    const fns = lift([
       statementAt(APP, 'const friendLinkSeqRef = useRef('),
       statementAt(APP, 'const friendLinkCodeRef = useRef('),
       statementAt(APP, 'const openFriendLink = useCallback('),
-    ].join('\n'), 'openFriendLink', scope);
-    return { state, calls, open };
+      statementAt(APP, 'const sendFriendLink = useCallback('),
+    ].join('\n'), '{ open: openFriendLink, send: sendFriendLink }', scope);
+    return { state, calls, ...fns };
   }
+  const held = () => {
+    const out = [];
+    return { out, fn: () => new Promise((resolve, reject) => { out.push({ resolve, reject }); }) };
+  };
 
   test('the same link arriving twice is one sheet and one read; Try again asks again', async () => {
     const preview = jest.fn(() => Promise.resolve({ user: person(5, 'Casey'), status: 'none' }));
@@ -435,10 +461,79 @@ describe("4. a friend's link", () => {
     expect(calls.remembered).toEqual([]);
   });
 
-  test('only the button sends; it forgets the code and says the answer', () => {
-    const send = APP.slice(APP.indexOf('const sendFriendLink = useCallback('), APP.indexOf('// A code kept for this account through a sign-in'));
-    expect(send).toMatch(/const result = await sendFriendCode\(sheet\.code\);\s*forgetFriendCode\(\);\s*friendLinkCodeRef\.current = null;\s*setFriendLinkSheet\(null\);/);
-    expect(send).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) return;/);
+  test('only the button sends; its answer forgets the code, takes the sheet down and says it', async () => {
+    const { state, calls, open, send } = link();
+    open('FLOCK-NJQXUGUM');
+    await tick();
+    expect(calls.sent).toEqual([]);
+    await send();
+    expect(calls.sent).toEqual(['FLOCK-NJQXUGUM']);
+    expect(state.sheet).toBeNull();
+    expect(state.kept).toBeNull();
+    expect(calls.toasts).toEqual([['Friend request sent to Casey', 'success']]);
+  });
+
+  test("a link opened while another's add is out keeps its own sheet and its own code", async () => {
+    const adds = held();
+    const { state, calls, open, send } = link({ add: adds.fn });
+    open('FLOCK-NJQXUGUM');
+    await tick();
+    const sending = send();
+    open('FLOCK-KH7WQTRZ');
+    await tick();
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-KH7WQTRZ', phase: 'ready' }));
+    adds.out[0].resolve({ ok: true, status: 'pending', message: 'Friend request sent to Casey' });
+    await sending;
+    // The first one's answer is said; the second one's sheet is still up, and
+    // its code still kept for it.
+    expect(calls.toasts).toEqual([['Friend request sent to Casey', 'success']]);
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-KH7WQTRZ', phase: 'ready', busy: false }));
+    expect(state.kept).toBe('FLOCK-KH7WQTRZ');
+    expect(calls.forgot).toBe(0);
+    // And a second arrival of that link is still the same sheet, not a second read.
+    open('FLOCK-KH7WQTRZ');
+    expect(state.sheet.code).toBe('FLOCK-KH7WQTRZ');
+  });
+
+  test("a refusal for the first link does not call the second one missing, nor forget its code", async () => {
+    const adds = held();
+    const { state, calls, open, send } = link({ add: adds.fn });
+    open('FLOCK-NJQXUGUM');
+    await tick();
+    const sending = send();
+    open('FLOCK-KH7WQTRZ');
+    await tick();
+    adds.out[0].reject(refusal('No user found with this code', { status: 404 }));
+    await sending;
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-KH7WQTRZ', phase: 'ready' }));
+    expect(state.kept).toBe('FLOCK-KH7WQTRZ');
+    expect(calls.forgot).toBe(0);
+  });
+
+  test("a preview that names nobody, landing after another link opened, leaves that link's code kept", async () => {
+    const previews = held();
+    const { state, calls, open } = link({ preview: previews.fn });
+    open('FLOCK-NJQXUGUM');
+    open('FLOCK-KH7WQTRZ');
+    previews.out[0].reject(refusal('No user found with this code', { status: 404 }));
+    await tick();
+    expect(state.kept).toBe('FLOCK-KH7WQTRZ');
+    expect(calls.forgot).toBe(0);
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-KH7WQTRZ', phase: 'loading' }));
+  });
+
+  test('an unconfirmed address keeps the sheet and the code for after the confirmation', async () => {
+    const unverified = Object.assign(refusal('Confirm your email to do this.', { status: 403 }), { data: { emailVerificationRequired: true } });
+    const { state, calls, open, send } = link({ verify: true, add: () => Promise.reject(unverified) });
+    open('FLOCK-NJQXUGUM');
+    await tick();
+    await send();
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-NJQXUGUM', phase: 'ready', busy: false }));
+    expect(state.kept).toBe('FLOCK-NJQXUGUM');
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('the link path reaches add-by-code only through the button', () => {
     // Nothing else in the link's path reaches add-by-code.
     const openSrc = statementAt(APP, 'const openFriendLink = useCallback(');
     expect(openSrc).not.toMatch(/addFriendByCode|sendFriendCode/);
@@ -480,18 +575,20 @@ describe('5. contacts', () => {
       showToast: (m, t) => calls.toasts.push([m, t]),
       needsEmailVerification: () => false,
       userMessage,
+      blockedIdsRef: { current: new Set() },
     };
     const src = [
       statementAt(APP, 'const contactsCursorKey = (userId) =>'),
       statementAt(APP, 'const cursorPerson = (u) =>'),
       statementAt(APP, 'const readContactsCursor = (userId) =>'),
       statementAt(APP, 'const writeContactsCursor = (userId, cursor) =>'),
+      statementAt(APP, 'const forgetContactsMatch = (userId, personId) =>'),
       statementAt(APP, 'const contactsRunRef = useRef('),
       statementAt(APP, 'const contactsUsersRef = useRef('),
       statementAt(APP, 'const contactsResultRef = useRef('),
       statementAt(APP, 'const handleSyncContacts = useCallback('),
     ].join('\n');
-    const lifted = lift(src, '{ handleSyncContacts, contactsUsersRef, contactsResultRef, readContactsCursor, writeContactsCursor }', scope);
+    const lifted = lift(src, '{ handleSyncContacts, contactsUsersRef, contactsResultRef, readContactsCursor, writeContactsCursor, forgetContactsMatch }', scope);
     if (cursor) lifted.writeContactsCursor(42, cursor);
     // The list and the result as the last render drew them, which is what
     // each render writes into the refs in the app.
@@ -500,7 +597,7 @@ describe('5. contacts', () => {
       lifted.contactsResultRef.current = state.result;
       await lifted.handleSyncContacts();
     };
-    return { state, calls, go, scope, readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor };
+    return { state, calls, go, scope, readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor, forget: lifted.forgetContactsMatch };
   }
   const result = (over) => ({
     users: [], sent: 600, checked: 600, unreadable: 0, total: 1240, notReached: 640, startBatch: 0, nextBatch: 3,
@@ -586,6 +683,48 @@ describe('5. contacts', () => {
     expect(state.retryAt).toBeNull();
     // Left as it was, for the next run to carry on from.
     expect(saved()).toEqual(cursor);
+  });
+
+  test('somebody blocked is not brought back by the next run of the pass', async () => {
+    const { state, scope, go, forget } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo'), person(3, 'Cy')] },
+      users: [person(1, 'Ana'), person(2, 'Bo'), person(3, 'Cy')],
+      runs: [result({ users: [], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    // Bo blocked here: off the list on screen (handleUserBlocked) and out of
+    // the pass's cursor. Cy blocked from another device: known from the
+    // blocked list only.
+    state.users = state.users.filter((u) => u.id !== 2);
+    forget(42, 2);
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana', 'Cy']);
+    scope.blockedIdsRef.current.add('2');
+    scope.blockedIdsRef.current.add('3');
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1 }));
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana']);
+    // The block itself takes them out of the cursor.
+    expect(statementAt(APP, 'const handleUserBlocked = useCallback(')).toMatch(/forgetContactsMatch\(authUser\?\.id, id\);/);
+  });
+
+  test("forgetting somebody the cursor does not hold leaves it as it was, and no cursor is not made one", () => {
+    const { writeCursor, readCursor, forget } = sync({ runs: [] });
+    forget(42, 2);
+    expect(readCursor(42)).toBeNull();
+    const cursor = { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana')] };
+    writeCursor(42, cursor);
+    forget(42, 2);
+    expect(readCursor(42)).toEqual(cursor);
+  });
+
+  test("the cursor keeps the book's print, which is what lets the next run carry on", async () => {
+    const { calls, go } = sync({
+      runs: [result({ users: [], book: 'k3x9' }), result({ users: [], book: 'k3x9', startBatch: 3, nextBatch: 6, notReached: 40 })],
+    });
+    await go();
+    expect(saved()).toEqual(expect.objectContaining({ nextBatch: 3, total: 1240, book: 'k3x9' }));
+    await go();
+    expect(calls.syncs[1].cursor).toEqual(expect.objectContaining({ nextBatch: 3, book: 'k3x9' }));
   });
 
   test('a cursor too big for what this site may keep is kept without the photos', () => {
@@ -860,6 +999,36 @@ describe('7. the request lists, read again', () => {
     held.outgoing[0].resolve({ requests: [person(7, 'Dee'), person(2, 'Bo')] });
     await tick();
     expect(state.statuses[2]).toBe('pending');
+  });
+
+  test("their accept on the socket, landing before the Add's own answer, stands: a friend is not put back on Sent", async () => {
+    const { state, held, add, apply } = lists();
+    const adding = add(person(2, 'Bo'));
+    apply(person(2, 'Bo'), 'accepted');
+    held.send[0].resolve(sentToBo);
+    await adding;
+    expect(state.statuses[2]).toBe('accepted');
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+  });
+
+  test('an Add that fails after their accept landed leaves the accept standing, and says nothing about a request not sent', async () => {
+    const { state, calls, held, add, apply } = lists();
+    const adding = add(person(2, 'Bo'));
+    apply(person(2, 'Bo'), 'accepted');
+    held.send[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await adding;
+    expect(state.statuses[2]).toBe('accepted');
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('news about somebody else does not hold back an Add\'s own answer', async () => {
+    const { state, held, add, apply } = lists();
+    const adding = add(person(2, 'Bo'));
+    apply(person(3, 'Cy'), 'incoming');
+    held.send[0].resolve(sentToBo);
+    await adding;
+    expect(state.statuses[2]).toBe('pending');
+    expect(state.outgoing.map((r) => r.id)).toEqual([2, 7]);
   });
 
   test('a request that arrives live while the lists are out is not wiped by them', async () => {

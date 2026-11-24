@@ -347,7 +347,7 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
     expect(scannerSource).toMatch(/const code = friendCodeFrom\([\s\S]{0,600}latest\.current\.onAdd\(code\)/);
     expect(app).toMatch(/onAdd=\{addFromScanner\}/);
     expect(app).toMatch(/const addFromScanner = useCallback\(async \(code\) => \{[\s\S]{0,200}await sendFriendCode\(code\)/);
-    expect(app).toMatch(/const sendFriendCode = useCallback\(async \(code\) => \{\s*const data = await addFriendByCode\(code\);/);
+    expect(app).toMatch(/const sendFriendCode = useCallback\(async \(code\) => \{[^}]{0,600}?const data = await addFriendByCode\(code\);/);
 
     for (const s of [camera, photos]) {
       expect(s).toMatch(/flock chat/i);

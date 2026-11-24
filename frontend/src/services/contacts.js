@@ -226,6 +226,20 @@ const inStableOrder = (numbers) => numbers
   .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
   .map((n) => n.raw);
 
+// A short print of the book in that order, so a run carries on from the last
+// one only over the same book. The size alone let a number replaced by another
+// land before the cursor, where no run of the pass would ever check it while
+// the pass said nothing was left. A 32-bit FNV-1a hash of the keys: it names
+// the book without holding a single number of it.
+const bookPrint = (ordered) => {
+  let h = 0x811c9dc5;
+  for (const raw of ordered) {
+    const key = `${dedupeKey(raw)},`;
+    for (let i = 0; i < key.length; i += 1) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+};
+
 export function chunkNumbers(numbers, size = CONTACT_BATCH_SIZE) {
   const out = [];
   for (let i = 0; i < numbers.length; i += size) out.push(numbers.slice(i, i + size));
@@ -251,10 +265,10 @@ function retryAtFrom(err) {
  * the API layer and can be exercised without one. Pass `findFriendsByPhone`
  * from services/api.js.
  *
- * `cursor` is where the last run stopped, { nextBatch, total }, which the
- * caller keeps between runs. It is used only while the book still has the
- * size it had then; a book that changed, a finished one, or no cursor at all
- * starts from the first batch.
+ * `cursor` is where the last run stopped, { nextBatch, total, book }, which
+ * the caller keeps between runs. It is used only while the book is the one it
+ * was then (`book`, the print this returns); a book that changed in any way, a
+ * finished one, or no cursor at all starts from the first batch.
  *
  * The return value is enough to write an HONEST summary with, and it keeps
  * apart the three things the screen used to fold into one "try the rest in an
@@ -271,14 +285,16 @@ function retryAtFrom(err) {
  *
  * @returns {Promise<{ users: object[], sent: number, checked: number, unreadable: number,
  *   total: number, notReached: number, startBatch: number, nextBatch: (number|null),
- *   answered: number, throttled: boolean, retryAt: (string|null), failed: boolean,
+ *   book: string, answered: number, throttled: boolean, retryAt: (string|null), failed: boolean,
  *   contactCount: number, permission: string }>}
  */
 export async function syncContacts(lookup, { cursor } = {}) {
   const read = await readContactPhoneNumbers();
   const numbers = inStableOrder(read.numbers);
   const all = chunkNumbers(numbers);
+  const book = bookPrint(numbers);
   const resumable = cursor
+    && cursor.book === book
     && Number(cursor.total) === numbers.length
     && Number.isInteger(cursor.nextBatch)
     && cursor.nextBatch > 0
@@ -327,6 +343,7 @@ export async function syncContacts(lookup, { cursor } = {}) {
     notReached: Math.max(0, numbers.length - (startBatch * CONTACT_BATCH_SIZE) - sent),
     startBatch,
     nextBatch: stoppedAt < all.length ? stoppedAt : null,
+    book,
     answered,
     throttled,
     retryAt,
