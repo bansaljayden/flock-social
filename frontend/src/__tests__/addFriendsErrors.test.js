@@ -25,7 +25,7 @@ test('the two list reads keep their own error, cleared on a landed read', () => 
   // answer is still out, or written here since the read was asked for
   // (refreshFriendRequests), and clears its error.
   expect(app).toContain('.filter(r => !settling(r));');
-  expect(app).toMatch(/setPendingRequests\(prev => \{\s*const kept = prev\.filter\(r => writtenSince\(r\.id\)\);\s*return kept\.length \? \[\.\.\.kept, \.\.\.rows\] : rows;\s*\}\);\s*setPendingRequestsError\(''\);/);
+  expect(app).toMatch(/setPendingRequests\(prev => \{\s*const kept = prev\.filter\(r => writtenSince\(r\.id\)\)[^;]*;\s*return kept\.length \? \[\.\.\.kept, \.\.\.rows\] : rows;\s*\}\);\s*setPendingRequestsError\(''\);/);
   expect(app).toContain("setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError('');");
   // In the server's words when api.js wrote them for people (userMessage),
   // in the screen's own otherwise; never an error's raw text.

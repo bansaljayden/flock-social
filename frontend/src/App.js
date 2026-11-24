@@ -6979,6 +6979,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [pendingRequestsError, setPendingRequestsError] = useState('');
   const [friendSuggestionsError, setFriendSuggestionsError] = useState('');
   const [outgoingRequests, setOutgoingRequests] = useState([]);
+  // The Sent rows as last drawn, for a read of somebody who left the list to
+  // carry their name and photo (refreshFriendRequests).
+  const outgoingRequestsRef = useRef(outgoingRequests);
+  outgoingRequestsRef.current = outgoingRequests;
   // Whether the Sent list has been read at least once, so the Requests tab can
   // draw rows still on their way as skeletons instead of as "no requests".
   const [outgoingRequestsLoaded, setOutgoingRequestsLoaded] = useState(false);
@@ -7117,7 +7121,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the request lists asked after it supersedes it (refreshFriendRequests).
   // Asks move the clock too, so no two are ever the same moment.
   const relationshipWrittenRef = useRef({ now: 0, at: new Map(), settling: new Map(), settlingAt: new Map() });
-  const applyRelationship = useCallback((user, status) => {
+  // `infoAt`, when given, is when the information was asked for (a read of
+  // their standing: settleFromServer), and is what the write is stamped with:
+  // stamped with when it landed instead, an older read landing after a newer
+  // list was asked for looked newer than that list, which then left out the
+  // row it named. Without it the news is this moment's (a socket event, a
+  // tap's answer).
+  const applyRelationship = useCallback((user, status, infoAt) => {
     if (!user || user.id === undefined || user.id === null) return;
     const id = user.id;
     // Nobody you have blocked is written anywhere. An answer that lands after
@@ -7126,8 +7136,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // further down; only read here, when an answer lands.
     if (blockedIdsRef.current.has(String(id))) return;
     const written = relationshipWrittenRef.current;
-    written.now += 1;
-    written.at.set(String(id), written.now);
+    // Never older than what is already written about them.
+    if (infoAt !== undefined && (written.at.get(String(id)) || 0) > infoAt) return;
+    written.at.set(String(id), infoAt !== undefined ? infoAt : ++written.now);
     const row = { id, name: user.name || '', profile_image_url: user.profile_image_url || null, created_at: user.created_at || new Date().toISOString() };
     setFriendStatuses(prev => ({ ...prev, [id]: status }));
     setPendingRequests(prev => (status === 'incoming'
@@ -7165,7 +7176,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const status = s?.status === 'accepted' ? 'accepted'
           : s?.status === 'pending' ? (s.requester_id != null && String(s.requester_id) === String(user.id) ? 'incoming' : 'pending')
           : 'none';
-        applyRelationship(user, status);
+        // Stamped with when it was asked, which is how old its word is.
+        applyRelationship(user, status, askedAt);
       })
       .catch(() => { /* the next list read settles it */ });
   }, [applyRelationship]);
@@ -7353,10 +7365,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .then(d => {
         if (p !== pendingReadSeqRef.current) return;
         const settling = (r) => friendRequestBusyRef.current.has(r.id) || decliningRef.current.has(r.id) || writtenSince(r.id);
-        const rows = (Array.isArray(d) ? d : (d?.requests || [])).filter(r => !settling(r));
+        const listed = Array.isArray(d) ? d : (d?.requests || []);
+        const rows = listed.filter(r => !settling(r));
         supersedeOlderReads(rows);
+        // A row kept for newer news keeps its place but takes this list's
+        // name and photo when it has none (one a read of their standing drew
+        // knowing only who it was).
+        const named = new Map(listed.map(r => [String(r.id), r]));
         setPendingRequests(prev => {
-          const kept = prev.filter(r => writtenSince(r.id));
+          const kept = prev.filter(r => writtenSince(r.id)).map(r => (r.name ? r : { ...r, ...(named.get(String(r.id)) || {}) }));
           return kept.length ? [...kept, ...rows] : rows;
         });
         setPendingRequestsError('');
@@ -7372,8 +7389,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const unsettled = (id) => friendRequestBusyRef.current.has(`out:${id}`) || friendRequestBusyRef.current.has(`add:${id}`) || writtenSince(id);
       const requests = listed.filter(r => !unsettled(r.id));
       supersedeOlderReads(requests);
+      // The rows as drawn before this list, for the names of those who left it.
+      const drawnBefore = outgoingRequestsRef.current;
+      const named = new Map(listed.map(r => [String(r.id), r]));
       setOutgoingRequests(prev => {
-        const kept = prev.filter(r => writtenSince(r.id));
+        const kept = prev.filter(r => writtenSince(r.id)).map(r => (r.name ? r : { ...r, ...(named.get(String(r.id)) || {}) }));
         return kept.length ? [...kept, ...requests] : requests;
       });
       setOutgoingRequestsLoaded(true);
@@ -7398,7 +7418,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       Object.keys(before)
         .filter(id => before[id] === 'pending' && !sent.has(id) && !unsettled(id))
         .slice(0, 5)
-        .forEach((id) => settleFromServer({ id: Number(id) || id }));
+        .forEach((id) => settleFromServer(drawnBefore.find(r => String(r.id) === id) || { id: Number(id) || id }));
     }).catch(e => {
       console.error('[AddFriends] Outgoing:', e.message);
       // The wait is over either way: the list stays as it was rather than
