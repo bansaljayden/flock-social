@@ -518,8 +518,10 @@ describe('answering a friend request moves the row on the tap', () => {
       userMessage,
       DECLINE_UNDO_MS: 5000,
       withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
+      blockedIdsRef: { current: new Set() },
     };
     const src = [
+      statementAt(APP, 'const friendCountSeqRef = useRef('),
       statementAt(APP, 'const refreshFriendCount = useCallback('),
       statementAt(APP, 'const relationshipWrittenRef = useRef('),
       statementAt(APP, 'const applyRelationship = useCallback('),

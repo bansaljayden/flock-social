@@ -17,7 +17,9 @@ test('a QR scan routes a server refusal to the sheet instead of calling the code
   expect(at).toBeGreaterThan(-1);
   const scan = app.slice(at, app.indexOf('}, [sendFriendCode, showToast, needsEmailVerification]);', at));
   expect(scan).toMatch(/const result = await sendFriendCode\(code\);/);
-  expect(scan).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) \{\s*rememberFriendCode\(code\);\s*return \{ ok: false, close: true \};/);
+  // Kept unless a link opened while the add was out kept a code of its own.
+  expect(scan).toMatch(/const keptBefore = pendingFriendCode\(\);/);
+  expect(scan).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) \{\s*if \(pendingFriendCode\(\) === keptBefore\) rememberFriendCode\(code\);\s*return \{ ok: false, close: true \};/);
   expect(scan).toMatch(/Could not add that friend\. Try again\./);
 });
 

@@ -103,9 +103,11 @@ function relationshipScope(over = {}) {
     showToast: (message, type) => calls.toasts.push([message, type || 'success']),
     needsEmailVerification: (err, what) => { calls.verify.push(what); return Boolean(err && err.data && err.data.emailVerificationRequired); },
     userMessage,
+    blockedIdsRef: { current: new Set() },
     ...over.scope,
   };
   const src = [
+    statementAt(APP, 'const friendCountSeqRef = useRef('),
     statementAt(APP, 'const refreshFriendCount = useCallback('),
     statementAt(APP, 'const relationshipWrittenRef = useRef('),
     statementAt(APP, 'const applyRelationship = useCallback('),
@@ -149,6 +151,20 @@ describe('1. one writer for where you stand with somebody', () => {
     await tick();
     expect(calls.stats).toBe(2);
     expect(state.friendCount).toBe(5);
+  });
+
+  test('two reads of the count answering out of order: the later read is the count', async () => {
+    const r = relationshipScope();
+    const reads = [];
+    r.scope.getUserStats = () => new Promise((resolve) => { reads.push(resolve); });
+    const refresh = lift(r.src, 'refreshFriendCount', r.scope);
+    refresh();
+    refresh();
+    reads[1]({ friendCount: 6 });
+    await tick();
+    reads[0]({ friendCount: 5 });
+    await tick();
+    expect(r.state.friendCount).toBe(6);
   });
 
   test('nothing between you: off both lists, and said as none, not left as a gap', () => {
@@ -283,7 +299,7 @@ describe('3. the code box', () => {
       rememberFriendCode: (code) => { r.calls.remembered.push(code); },
       friendCodeInput: input,
       myFriendCode: mine,
-      setFriendCodeInput: (v) => { ui.field = v; },
+      setFriendCodeInput: (v) => { ui.field = typeof v === 'function' ? v(ui.field) : v; },
       setFriendCodeLoading: (v) => ui.loading.push(v),
     });
     const src = [
@@ -355,6 +371,30 @@ describe('3. the code box', () => {
     expect(ui.field).toBe('FLOCK-NJQXUGUM');
   });
 
+  test('a code typed while the last one was on its way stays in the box when that one lands', async () => {
+    let answer;
+    const { ui, add } = box({ input: 'FLOCK-NJQXUGUM', answer: () => new Promise((resolve) => { answer = resolve; }) });
+    const adding = add();
+    ui.field = 'FLOCK-KH7WQTRZ';
+    answer({ status: 'pending', message: 'Friend request sent to Casey', user: person(5, 'Casey') });
+    await adding;
+    expect(ui.field).toBe('FLOCK-KH7WQTRZ');
+  });
+
+  test("an unconfirmed email does not keep this code over a link's code opened while it was out", async () => {
+    let refuse;
+    const unverified = Object.assign(refusal('Confirm your email to do this.', { status: 403 }), { data: { emailVerificationRequired: true } });
+    const { calls, add } = box({ input: 'FLOCK-NJQXUGUM', answer: () => new Promise((resolve, reject) => { refuse = () => reject(unverified); }) });
+    const adding = add();
+    // A link arrives and keeps its own code.
+    calls.pendingNow = 'FLOCK-KH7WQTRZ';
+    refuse();
+    await adding;
+    expect(calls.verify).toEqual(['add friends']);
+    expect(calls.remembered).toEqual([]);
+    expect(calls.pendingNow).toBe('FLOCK-KH7WQTRZ');
+  });
+
   test("the same code waiting from a link is forgotten once it is added", async () => {
     const { calls, add } = box({ pending: 'FLOCK-NJQXUGUM' });
     await add('FLOCK-NJQXUGUM');
@@ -391,8 +431,9 @@ describe("4. a friend's link", () => {
       statementAt(APP, 'const friendLinkSeqRef = useRef('),
       statementAt(APP, 'const friendLinkCodeRef = useRef('),
       statementAt(APP, 'const openFriendLink = useCallback('),
+      statementAt(APP, 'const closeFriendLink = useCallback('),
       statementAt(APP, 'const sendFriendLink = useCallback('),
-    ].join('\n'), '{ open: openFriendLink, send: sendFriendLink }', scope);
+    ].join('\n'), '{ open: openFriendLink, close: closeFriendLink, send: sendFriendLink }', scope);
     return { state, calls, ...fns };
   }
   const held = () => {
@@ -522,6 +563,26 @@ describe("4. a friend's link", () => {
     expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-KH7WQTRZ', phase: 'loading' }));
   });
 
+  test("closed and opened again while its first read was out: that read's late 404 leaves the code to the new read", async () => {
+    const previews = held();
+    const { state, calls, open, close } = link({ preview: previews.fn });
+    open('FLOCK-NJQXUGUM');
+    close();
+    expect(calls.forgot).toBe(1);
+    open('FLOCK-NJQXUGUM');
+    expect(state.kept).toBe('FLOCK-NJQXUGUM');
+    previews.out[0].reject(refusal('No user found with this code', { status: 404 }));
+    await tick();
+    expect(state.kept).toBe('FLOCK-NJQXUGUM');
+    expect(calls.forgot).toBe(1);
+    expect(state.sheet).toEqual(expect.objectContaining({ code: 'FLOCK-NJQXUGUM', phase: 'loading' }));
+    // Its own read is the one that decides.
+    previews.out[1].reject(refusal('No user found with this code', { status: 404 }));
+    await tick();
+    expect(state.kept).toBeNull();
+    expect(state.sheet.phase).toBe('missing');
+  });
+
   test('an unconfirmed address keeps the sheet and the code for after the confirmation', async () => {
     const unverified = Object.assign(refusal('Confirm your email to do this.', { status: 403 }), { data: { emailVerificationRequired: true } });
     const { state, calls, open, send } = link({ verify: true, add: () => Promise.reject(unverified) });
@@ -586,9 +647,10 @@ describe('5. contacts', () => {
       statementAt(APP, 'const contactsRunRef = useRef('),
       statementAt(APP, 'const contactsUsersRef = useRef('),
       statementAt(APP, 'const contactsResultRef = useRef('),
+      statementAt(APP, 'const contactsBlockedRef = useRef('),
       statementAt(APP, 'const handleSyncContacts = useCallback('),
     ].join('\n');
-    const lifted = lift(src, '{ handleSyncContacts, contactsUsersRef, contactsResultRef, readContactsCursor, writeContactsCursor, forgetContactsMatch }', scope);
+    const lifted = lift(src, '{ handleSyncContacts, contactsUsersRef, contactsResultRef, contactsBlockedRef, readContactsCursor, writeContactsCursor, forgetContactsMatch }', scope);
     if (cursor) lifted.writeContactsCursor(42, cursor);
     // The list and the result as the last render drew them, which is what
     // each render writes into the refs in the app.
@@ -597,7 +659,7 @@ describe('5. contacts', () => {
       lifted.contactsResultRef.current = state.result;
       await lifted.handleSyncContacts();
     };
-    return { state, calls, go, scope, readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor, forget: lifted.forgetContactsMatch };
+    return { state, calls, go, scope, readCursor: lifted.readContactsCursor, writeCursor: lifted.writeContactsCursor, forget: lifted.forgetContactsMatch, blockedHere: lifted.contactsBlockedRef };
   }
   const result = (over) => ({
     users: [], sent: 600, checked: 600, unreadable: 0, total: 1240, notReached: 640, startBatch: 0, nextBatch: 3,
@@ -744,13 +806,62 @@ describe('5. contacts', () => {
     expect(readCursor(42)).toEqual({ nextBatch: 3, total: 1240, sent: 600, checked: 600, users: [{ id: 1, name: 'Ana', profile_image_url: null }] });
   });
 
-  test('a finished book clears the cursor, so the next check starts from the top', async () => {
+  test('a finished book keeps no place to carry on from, so the next check starts from the top', async () => {
     const { go } = sync({
-      cursor: { nextBatch: 1, total: 300, sent: 200, checked: 200, users: [] },
-      runs: [result({ total: 300, sent: 100, checked: 100, startBatch: 1, notReached: 0, nextBatch: null })],
+      cursor: { nextBatch: 1, total: 300, book: 'b1', sent: 200, checked: 200, users: [person(1, 'Ana')] },
+      runs: [result({ total: 300, book: 'b1', sent: 100, checked: 100, startBatch: 1, notReached: 0, nextBatch: null })],
     });
     await go();
-    expect(saved()).toBeNull();
+    // Only the book's print and its people, for the next check to compare.
+    expect(saved()).toEqual({ total: 300, book: 'b1', users: [person(1, 'Ana')] });
+  });
+
+  test('a book that changed starts again from what its first run found: nobody from the old book stays', async () => {
+    // Ana was found in the book as it was; she has since left it (or iOS's
+    // limited access now shares fewer contacts). The check starts a fresh pass.
+    const { state, go } = sync({
+      cursor: { total: 7, book: 'old', users: [person(1, 'Ana'), person(2, 'Bo')] },
+      users: [person(1, 'Ana'), person(2, 'Bo')],
+      result: { checked: 7, total: 7, sent: 7, unreadable: 0, notReached: 0, throttled: false, retryAt: null, matched: 2 },
+      runs: [result({ users: [person(2, 'Bo')], book: 'new', total: 3, sent: 3, checked: 3, notReached: 0, startBatch: 0, nextBatch: null })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Bo']);
+    expect(state.result).toEqual(expect.objectContaining({ matched: 1, total: 3 }));
+    expect(saved()).toEqual({ total: 3, book: 'new', users: [person(2, 'Bo')] });
+  });
+
+  test('the same book checked again keeps everyone found in it while the new pass gets round to them', async () => {
+    const { state, go } = sync({
+      cursor: { total: 1240, book: 'b1', users: [person(1, 'Ana'), person(4, 'Maya')] },
+      runs: [result({ users: [person(9, 'Tobias')], book: 'b1', startBatch: 0, nextBatch: 3 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana', 'Maya', 'Tobias']);
+  });
+
+  test('blocked by them while a run was out: neither the run nor the cursor it carries brings them back', async () => {
+    let answer;
+    const { state, go, blockedHere } = sync({
+      cursor: { nextBatch: 3, total: 1240, book: 'b1', sent: 600, checked: 600, users: [person(1, 'Ana'), person(2, 'Bo')] },
+      users: [person(1, 'Ana'), person(2, 'Bo')],
+      runs: [() => new Promise((resolve) => { answer = resolve; })],
+    });
+    const running = go();
+    await tick();
+    // Bo blocks you: handleUserBlocked takes Bo off the list and out of the
+    // stored cursor, and the server's block list (yours) never holds Bo.
+    state.users = state.users.filter((u) => u.id !== 2);
+    blockedHere.current.add('2');
+    answer(result({ users: [person(2, 'Bo'), person(3, 'Cy')], book: 'b1', startBatch: 3, nextBatch: 6, notReached: 40 }));
+    await running;
+    expect(state.users.map((u) => u.name)).toEqual(['Ana', 'Cy']);
+    expect(saved().users.map((u) => u.name)).toEqual(['Ana', 'Cy']);
+    // Filled by the block, either way round, and emptied by an unblock.
+    const blocked = statementAt(APP, 'const handleUserBlocked = useCallback(');
+    expect(blocked).toMatch(/contactsBlockedRef\.current\.add\(id\);/);
+    const unblock = statementAt(APP, 'const handleUnblock = useCallback(');
+    expect(unblock.match(/contactsBlockedRef\.current\.delete\(id\);/g)).toHaveLength(2);
   });
 
   test('iOS 18 limited access is kept, so the tab can say how many were shared', async () => {
@@ -911,11 +1022,15 @@ describe('7. the request lists, read again', () => {
     const r = relationshipScope(over);
     const held = { outgoing: [], status: [], send: [] };
     const hold = (into) => new Promise((resolve, reject) => { into.push({ resolve, reject }); });
+    held.cancel = [];
     Object.assign(r.scope, {
       getPendingRequests: () => Promise.resolve({ requests: [person(1, 'Ava')] }),
       getOutgoingRequests: () => hold(held.outgoing),
       getFriendshipStatus: (id) => { r.calls.api.push(['status', id]); return hold(held.status); },
       sendFriendRequest: (id) => { r.calls.api.push(['send', id]); return hold(held.send); },
+      cancelFriendRequest: (id) => { r.calls.api.push(['cancel', id]); return hold(held.cancel); },
+      outgoingRequests: r.state.outgoing,
+      withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
       setPendingRequestsError: () => {},
       setOutgoingRequestsLoaded: () => {},
     });
@@ -924,10 +1039,11 @@ describe('7. the request lists, read again', () => {
       statementAt(APP, 'const friendRequestBusyRef = useRef('),
       statementAt(APP, 'const decliningRef = useRef('),
       statementAt(APP, 'const handleSendFriendRequest = useCallback('),
+      statementAt(APP, 'const handleCancelOutgoingRequest = useCallback('),
       statementAt(APP, 'const pendingReadSeqRef = useRef('),
       statementAt(APP, 'const outgoingReadSeqRef = useRef('),
       statementAt(APP, 'const refreshFriendRequests = useCallback('),
-    ].join('\n'), '{ refresh: refreshFriendRequests, add: handleSendFriendRequest, apply: applyRelationship }', r.scope);
+    ].join('\n'), '{ refresh: refreshFriendRequests, add: handleSendFriendRequest, cancel: handleCancelOutgoingRequest, apply: applyRelationship }', r.scope);
     return { ...r, held, ...fns };
   }
   const sentToBo = { status: 'pending', message: 'Friend request sent to Bo' };
@@ -1026,6 +1142,28 @@ describe('7. the request lists, read again', () => {
     expect(calls.toasts).toEqual([]);
   });
 
+  test('a Cancel that fails after their accept landed does not put them back on Sent', async () => {
+    const { state, calls, held, cancel, apply } = lists();
+    const cancelling = cancel(7);
+    expect(state.outgoing).toEqual([]);
+    apply(person(7, 'Dee'), 'accepted');
+    held.cancel[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await cancelling;
+    expect(state.outgoing).toEqual([]);
+    expect(state.statuses[7]).toBe('accepted');
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('a Cancel that fails with nothing newer puts the row back, and says so', async () => {
+    const { state, calls, held, cancel } = lists();
+    const cancelling = cancel(7);
+    held.cancel[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await cancelling;
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(state.statuses[7]).toBe('pending');
+    expect(calls.toasts).toEqual([['The connection dropped.', 'error']]);
+  });
+
   test('news about somebody else does not hold back an Add\'s own answer', async () => {
     const { state, held, add, apply } = lists();
     const adding = add(person(2, 'Bo'));
@@ -1062,5 +1200,169 @@ describe('7. the request lists, read again', () => {
     expect(state.statuses[1]).toBe('none');
     expect(APP).toMatch(/await cancelFriendRequest\(userId\);[\s\S]{0,240}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
     expect(APP).toMatch(/await declineFriendRequest\(userId\);[\s\S]{0,240}?applyRelationship\(request \|\| \{ id: userId \}, 'none'\);/);
+  });
+});
+
+
+describe('8. a block, and what was still on its way about them', () => {
+  // The real Add, the real block handler and the real writer, lifted together.
+  // The block's other work (chats, rosters, pins) is not under test here.
+  function blocking() {
+    const r = relationshipScope();
+    const held = { send: [] };
+    const noop = () => {};
+    Object.assign(r.scope, {
+      sendFriendRequest: (id) => { r.calls.api.push(['send', id]); return new Promise((resolve, reject) => { held.send.push({ resolve, reject }); }); },
+      selectedDmId: null,
+      selectedFlockId: null,
+      setDirectMessages: noop,
+      setSelectedDmId: noop,
+      setCurrentScreen: noop,
+      noteRetraction: noop,
+      retractionsRef: { current: null },
+      setFlocks: noop,
+      saidByAny: () => false,
+      setFlockReplyingTo: noop,
+      setFriendsPulses: noop,
+      setAddFriendsResults: noop,
+      setFriendSuggestions: noop,
+      setConnectResults: noop,
+      setContactsUsers: noop,
+      forgetContactsMatch: noop,
+      authUser: { id: 42 },
+      contactsBlockedRef: { current: new Set() },
+      setPhoneLookupUsers: noop,
+      setFlockMemberLocations: noop,
+      withoutPersonPin: (pins) => pins,
+      setDmMemberLocation: noop,
+      refreshFlockRoster: noop,
+      loadFlockMessages: noop,
+      loadBlockedUsers: noop,
+    });
+    const fns = lift([
+      r.src,
+      statementAt(APP, 'const friendRequestBusyRef = useRef('),
+      statementAt(APP, 'const handleSendFriendRequest = useCallback('),
+      statementAt(APP, 'const handleUserBlocked = useCallback('),
+    ].join('\n'), '{ add: handleSendFriendRequest, block: handleUserBlocked, apply: applyRelationship }', r.scope);
+    return { ...r, held, ...fns };
+  }
+
+  test("a block while an Add is out: the Add's late Pending does not put them back on Sent", async () => {
+    const { state, held, add, block } = blocking();
+    const adding = add(person(2, 'Bo'));
+    block(2);
+    expect(state.statuses[2]).toBeUndefined();
+    held.send[0].resolve({ status: 'pending', message: 'Friend request sent to Bo' });
+    await adding;
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(state.statuses[2]).toBeUndefined();
+  });
+
+  test('blocked BY them while an Add is out: once your block list is read again without them, the late Pending still stays off Sent', async () => {
+    const { state, scope, held, add, block } = blocking();
+    const adding = add(person(2, 'Bo'));
+    block(2, { keepDmOpen: true });
+    // loadBlockedUsers re-reads the server's list, which holds only whom YOU
+    // blocked.
+    scope.blockedIdsRef.current.delete('2');
+    held.send[0].resolve({ status: 'pending', message: 'Friend request sent to Bo' });
+    await adding;
+    expect(state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(state.statuses[2]).toBeUndefined();
+  });
+
+  test('nor does a late accept, or one on the socket, make somebody you blocked a friend, or say so', async () => {
+    // Ava had asked you, so the Add is an accept.
+    const { state, calls, held, add, block, apply } = blocking();
+    const adding = add(person(1, 'Ava'));
+    block(1);
+    held.send[0].resolve({ status: 'accepted', message: 'You and Ava are now friends!' });
+    await adding;
+    apply(person(1, 'Ava'), 'accepted');
+    expect(state.statuses[1]).toBeUndefined();
+    expect(state.pending).toEqual([]);
+    expect(calls.toasts).toEqual([]);
+    await tick();
+    expect(calls.stats).toBe(0);
+  });
+
+  test('a failed Add after a block does not put back what the row said', async () => {
+    const { state, calls, held, add, block } = blocking();
+    const adding = add(person(1, 'Ava'));
+    block(1);
+    held.send[0].reject(Object.assign(new Error('The connection dropped.'), { isNetworkError: true }));
+    await adding;
+    expect(state.statuses[1]).toBeUndefined();
+    expect(calls.toasts).toEqual([]);
+  });
+});
+
+describe('9. a number looked up', () => {
+  // The real lookup. The box publishes each edit to phoneLookupInput, and
+  // clears the last answer as it does (screens/AddFriends.js onCommit).
+  function lookup() {
+    const state = { input: '4845550101', users: null, error: '', loading: [] };
+    const asks = [];
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      phoneLookupInput: state.input,
+      phoneLookupInputRef: { get current() { return state.input; } },
+      emailUnconfirmed: false,
+      setVerifyNote: () => {},
+      setVerifyPrompt: () => {},
+      setPhoneLookupLoading: (v) => state.loading.push(v),
+      setPhoneLookupError: (v) => { state.error = v; },
+      setPhoneLookupUsers: (v) => { state.users = v; },
+      findFriendsByPhone: (numbers) => new Promise((resolve, reject) => { asks.push({ numbers, resolve, reject }); }),
+      needsEmailVerification: () => false,
+      userMessage,
+    };
+    const look = lift([
+      statementAt(APP, 'const phoneLookupSeqRef = useRef('),
+      statementAt(APP, 'const handleLookupByNumber = useCallback('),
+    ].join('\n'), 'handleLookupByNumber', scope);
+    return { state, asks, look };
+  }
+
+  test("a number edited while its lookup was out: the old number's match is not shown under the new one", async () => {
+    const { state, asks, look } = lookup();
+    const looking = look('4845550101');
+    state.input = '4845550199';
+    asks[0].resolve({ checked: 1, users: [person(2, 'Bo')] });
+    await looking;
+    expect(state.users).toBeNull();
+    expect(state.loading).toEqual([true, false]);
+  });
+
+  test('nor its refusal', async () => {
+    const { state, asks, look } = lookup();
+    const looking = look('4845550101');
+    state.input = '4845550199';
+    asks[0].reject(Object.assign(new Error('You have looked up a lot of numbers. Try again in an hour.'), { userFacing: true, status: 429 }));
+    await looking;
+    expect(state.error).toBe('');
+  });
+
+  test('two lookups: only the newer answer lands, and the spinner waits for it', async () => {
+    const { state, asks, look } = lookup();
+    const first = look('4845550101');
+    const second = look('4845550101');
+    asks[1].resolve({ checked: 1, users: [person(3, 'Cy')] });
+    await second;
+    asks[0].resolve({ checked: 1, users: [person(2, 'Bo')] });
+    await first;
+    expect(state.users.map((u) => u.name)).toEqual(['Cy']);
+    expect(state.loading).toEqual([true, true, false]);
+  });
+
+  test('the answer for the number still in the box lands', async () => {
+    const { state, asks, look } = lookup();
+    const looking = look();
+    expect(asks[0].numbers).toEqual(['4845550101']);
+    asks[0].resolve({ checked: 1, users: [person(2, 'Bo')] });
+    await looking;
+    expect(state.users.map((u) => u.name)).toEqual(['Bo']);
   });
 });

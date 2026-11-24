@@ -5542,7 +5542,9 @@ const FRIEND_CODE_CACHE_KEY = 'flock_friend_code';
 // Where the last contacts check stopped in a big address book, per account,
 // and who the checks so far had found: { nextBatch, total, book, sent,
 // checked, users }, book being the print of the book it stopped in
-// (services/contacts.js). See handleSyncContacts. The people go with the cursor because the
+// (services/contacts.js). A finished pass leaves { total, book, users }: no
+// place to carry on from, and the print that tells the next check whether the
+// people in it are still in the book. See handleSyncContacts. The people go with the cursor because the
 // list on screen does not outlive the app: a pass carried on after a relaunch
 // used to show none of the matches its earlier runs had found, and say that
 // nobody matched. Kept as a Flock id, name and photo only, never where you
@@ -7068,8 +7070,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The header's friend count, read again after a change that moved it. The
   // count only ever moved on boot and on the other person's socket event, so
   // accepting here left it a friend behind.
+  // Only the latest read lands: two accepts a moment apart each read the
+  // count, and the first answer arriving last put the count a friend back.
+  const friendCountSeqRef = useRef(0);
   const refreshFriendCount = useCallback(() => {
-    getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
+    const mine = ++friendCountSeqRef.current;
+    getUserStats().then(d => { if (mine === friendCountSeqRef.current && typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
   }, []);
 
   /* ONE WRITER FOR WHERE YOU STAND WITH SOMEBODY.
@@ -7099,6 +7105,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const applyRelationship = useCallback((user, status) => {
     if (!user || user.id === undefined || user.id === null) return;
     const id = user.id;
+    // Nobody you have blocked is written anywhere. An answer that lands after
+    // the block (an Add's accept, a socket event already on its way) put them
+    // back on the lists the block took them off. blockedIdsRef is declared
+    // further down; only read here, when an answer lands.
+    if (blockedIdsRef.current.has(String(id))) return;
     const written = relationshipWrittenRef.current;
     written.now += 1;
     written.at.set(String(id), written.now);
@@ -7145,8 +7156,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const data = await sendFriendRequest(user.id);
       const status = data?.status || 'pending';
       if (status === 'accepted') {
+        // Said unless news landed first (read before this answer writes its
+        // own): their accept said so already, and after a block there is no
+        // friendship to announce.
+        const moved = movedSince();
         applyRelationship(user, 'accepted');
-        if (data?.message) showToast(data.message);
+        if (data?.message && !moved) showToast(data.message);
       } else if (status === 'pending') {
         if (!movedSince()) applyRelationship(user, 'pending');
       } else {
@@ -7497,6 +7512,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // Read through the ref: friendStatuses is declared further down this
     // component, so it cannot be one of this callback's dependencies.
     const statusBefore = friendStatusesRef.current[userId];
+    // As for an Add: news about them written while the Cancel is out (their
+    // accept on the socket) is newer than the tap, and a failed Cancel does
+    // not put the Sent row back over it.
+    const tappedAt = relationshipWrittenRef.current.now;
+    const movedSince = () => (relationshipWrittenRef.current.at.get(String(userId)) || 0) > tappedAt;
     setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
     setFriendStatuses(prev => ({ ...prev, [userId]: 'none' }));
     try {
@@ -7518,6 +7538,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       // Nothing left to cancel: the row stays gone.
       if (err?.status === 404) return;
+      // Their side moved meanwhile, and says where you stand better than a
+      // Cancel that did not go through.
+      if (movedSince()) return;
       setOutgoingRequests(prev => withRowAt(prev, at, request));
       // Back to what it said, unless something newer has been written since
       // the tap's 'none'.
@@ -7582,18 +7605,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     friendCodeBusyRef.current = true;
     setFriendCodeLoading(true);
+    // The code waiting from a link when this went, so a refusal below does not
+    // write over a link opened while it was out.
+    const keptBefore = pendingFriendCode();
     try {
       const result = await sendFriendCode(code);
       if (result.ok) {
         showToast(result.message);
-        setFriendCodeInput('');
+        // Emptied only while it still holds this code: one typed after it, as
+        // its answer was on its way, stays.
+        setFriendCodeInput(cur => (friendCodeFrom(cur) === code ? '' : cur));
       } else {
         showToast(result.message, 'error');
       }
     } catch (err) {
       // Kept for after the confirmation: the sheet that follows it offers the
       // same person again, so the code is not typed twice.
-      if (needsEmailVerification(err, 'add friends')) { rememberFriendCode(code); return; }
+      if (needsEmailVerification(err, 'add friends')) {
+        if (pendingFriendCode() === keptBefore) rememberFriendCode(code);
+        return;
+      }
       showToast(userMessage(err, "Couldn't add that friend. Try again."), 'error');
     } finally {
       friendCodeBusyRef.current = false;
@@ -7636,6 +7667,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   contactsUsersRef.current = contactsUsers;
   const contactsResultRef = useRef(contactsResult);
   contactsResultRef.current = contactsResult;
+  // Everyone a block took off this list in this session, either way round
+  // (handleUserBlocked). Somebody who blocked you is on no list the server
+  // sends back (blockedIdsRef is the list of whom YOU blocked, and its next
+  // read drops them), so a run already out when the block landed, or the
+  // pass's cursor it carries, would have put them back. Unblocking somebody
+  // takes them out of it.
+  const contactsBlockedRef = useRef(new Set());
   const handleSyncContacts = useCallback(async () => {
     if (contactsRunRef.current) return;
     if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
@@ -7665,15 +7703,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         permission: data.permission,
         matched,
       });
-      // Everyone found so far, once each, in name order: by the runs the
-      // cursor carries, by the runs earlier this session, and by this one.
-      // Nobody blocked, from here or from another device since the cursor
-      // was written (blockedIdsRef, declared further down, holds both).
+      // The same book the last pass went through, finished or not, by its
+      // print (services/contacts.js): only then are the people found before
+      // still in it. A run that carries a pass on is over the same book by
+      // definition: syncContacts carries on only then.
+      const sameBook = Boolean(carried) || Boolean(cursor && cursor.book && cursor.book === data.book);
+      // Everyone found so far, once each, in name order: by the earlier runs
+      // over this book (the cursor's, and this session's on screen), and by
+      // this one. A book that changed (a contact gone, fewer shared under
+      // limited access) starts again from what this run found, so nobody from
+      // a book that is no longer there stays on the list, and the matches can
+      // never outnumber the numbers checked.
+      // Nobody blocked: by you, from here or from another device since the
+      // cursor was written (blockedIdsRef, declared further down), or blocking
+      // you in this session (contactsBlockedRef).
       const everyone = (found) => {
         const byId = new Map();
-        for (const u of [...(carried ? carried.users || [] : []), ...contactsUsersRef.current, ...found]) byId.set(u.id, u);
+        const before = sameBook ? [...(cursor.users || []), ...contactsUsersRef.current] : [];
+        for (const u of [...before, ...found]) byId.set(u.id, u);
         return [...byId.values()]
-          .filter(u => !blockedIdsRef.current.has(String(u.id)))
+          .filter(u => !blockedIdsRef.current.has(String(u.id)) && !contactsBlockedRef.current.has(String(u.id)))
           .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
       };
       if (data.throttled && data.answered === 0) {
@@ -7694,7 +7743,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return;
       }
       const merged = everyone(data.users);
-      writeContactsCursor(userId, data.nextBatch === null ? null : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: merged });
+      // A finished pass keeps no place to carry on from, so the next check
+      // starts at the top; it keeps the book's print and its people, so that
+      // check can tell the same book from one that changed.
+      writeContactsCursor(userId, data.nextBatch === null
+        ? { total: data.total, book: data.book, users: merged }
+        : { nextBatch: data.nextBatch, total: data.total, book: data.book, sent, checked, users: merged });
       setContactsUsers(merged);
       setContactsResult(summary(merged.length));
       setContactsRetryAt(null);
@@ -7725,16 +7779,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // and publishes them here on a pause, so a Return pressed inside that pause
   // would otherwise look up the number one digit short. A tap on Look up has
   // no such gap: the box publishes on pointerdown, before the click.
+  // An answer lands only while it is the newest lookup and the box still
+  // shows its number: a number edited while the lookup was out put the old
+  // number's match under the new one, with an Add for the wrong person. The
+  // box clears the last answer itself whenever it publishes an edit.
+  const phoneLookupSeqRef = useRef(0);
+  const phoneLookupInputRef = useRef(phoneLookupInput);
+  phoneLookupInputRef.current = phoneLookupInput;
   const handleLookupByNumber = useCallback(async (typed) => {
     const value = (typeof typed === 'string' ? typed : phoneLookupInput).trim();
     if (!value) return;
     // Refused by the server until the email is confirmed, so it is said
     // before the request rather than after it.
     if (emailUnconfirmed) { setVerifyNote(''); setVerifyPrompt('add friends'); return; }
+    const mine = ++phoneLookupSeqRef.current;
+    const stillAsked = () => mine === phoneLookupSeqRef.current && phoneLookupInputRef.current.trim() === value;
     setPhoneLookupLoading(true);
     setPhoneLookupError('');
     try {
       const data = await findFriendsByPhone([value]);
+      if (!stillAsked()) return;
       // checked === 0 means the server could not read that as a phone number,
       // so it never looked. Saying "nobody on Flock has that number" would be
       // two false claims about a friend who may well be on Flock.
@@ -7745,12 +7809,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       setPhoneLookupUsers(data.users || []);
     } catch (err) {
-      setPhoneLookupUsers(null);
+      const current = stillAsked();
+      if (current) setPhoneLookupUsers(null);
+      // The confirm sheet is about the account, whichever number asked.
+      if (needsEmailVerification(err, 'add friends') || !current) return;
       // The server writes the refusal for a spent allowance, and it says how
       // long to wait. Show it as it came.
-      if (!needsEmailVerification(err, 'add friends')) setPhoneLookupError(userMessage(err, 'That lookup did not go through. Try again.'));
+      setPhoneLookupError(userMessage(err, 'That lookup did not go through. Try again.'));
     } finally {
-      setPhoneLookupLoading(false);
+      if (mine === phoneLookupSeqRef.current) setPhoneLookupLoading(false);
     }
   }, [phoneLookupInput, emailUnconfirmed, needsEmailVerification]);
 
@@ -7799,6 +7866,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // shows what the server said (QrScanner.js). Never written into the code
   // box: that left a filled box and a live Add behind a request already sent.
   const addFromScanner = useCallback(async (code) => {
+    // As for the code box: a link opened while this was out keeps its code.
+    const keptBefore = pendingFriendCode();
     try {
       const result = await sendFriendCode(code);
       if (!result.ok) return { ok: false, message: result.message };
@@ -7811,7 +7880,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // goes, and the code waits for the confirmation (openFriendLink below
       // offers it again once the address is confirmed).
       if (needsEmailVerification(err, 'add friends')) {
-        rememberFriendCode(code);
+        if (pendingFriendCode() === keptBefore) rememberFriendCode(code);
         return { ok: false, close: true };
       }
       return { ok: false, message: userMessage(err, 'Could not add that friend. Try again.') };
@@ -7865,8 +7934,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (err?.status === 404 || err?.status === 400) {
-          // This code only: a link opened since keeps the code it brought.
-          if (pendingFriendCode() === code) forgetFriendCode();
+          // This read only: a link opened since, this same one opened again
+          // included, keeps the code it brought, and its own read decides.
+          if (mine === friendLinkSeqRef.current && pendingFriendCode() === code) forgetFriendCode();
           settle({ phase: 'missing' });
           return;
         }
@@ -16630,6 +16700,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       await unblockUser(user.user_id);
       setBlockedUsers(prev => prev.filter(b => String(b.user_id) !== id));
       blockedIdsRef.current.delete(id);
+      // And back within reach of a contacts check.
+      contactsBlockedRef.current.delete(id);
       setUnblockTarget(null);
       showToast(who ? `${who} can contact you again` : 'Unblocked');
     } catch (err) {
@@ -16638,6 +16710,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // wrong state here: it would claim a block that no longer exists.
         setBlockedUsers(prev => prev.filter(b => String(b.user_id) !== id));
         blockedIdsRef.current.delete(id);
+        contactsBlockedRef.current.delete(id);
         setUnblockTarget(null);
         showToast(who ? `${who} was already unblocked` : 'Already unblocked');
       } else {
@@ -16753,10 +16826,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setAddFriendsResults(prev => prev.filter(u => String(u.id) !== id));
     setFriendSuggestions(prev => prev.filter(u => String(u.id) !== id));
     setConnectResults(prev => prev.filter(u => String(u.id) !== id));
+    // Newer than any answer or list read still on its way about them
+    // (relationshipWrittenRef): an Add's late Pending, or a Sent list read
+    // before the block, would put them back on Sent.
+    relationshipWrittenRef.current.now += 1;
+    relationshipWrittenRef.current.at.set(id, relationshipWrittenRef.current.now);
     // The contacts and phone-lookup rows render the same avatar and Add button.
-    // And the contacts pass's own copy, which its next run would merge back.
+    // And the contacts pass's own copy, which its next run would merge back,
+    // and a run already out when the block landed (contactsBlockedRef).
     setContactsUsers(prev => (Array.isArray(prev) ? prev.filter(u => String(u.id) !== id) : prev));
     forgetContactsMatch(authUser?.id, id);
+    contactsBlockedRef.current.add(id);
     setPhoneLookupUsers(prev => (Array.isArray(prev) ? prev.filter(u => String(u.id) !== id) : prev));
     // And the status pill, so the id cannot reappear wearing "Friends".
     setFriendStatuses(prev => { if (!prev || !(id in prev)) return prev; const next = { ...prev }; delete next[id]; return next; });

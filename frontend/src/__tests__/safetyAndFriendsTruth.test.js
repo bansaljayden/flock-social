@@ -93,7 +93,7 @@ test('the friend count moves when a request is accepted', () => {
   const writer = app.slice(app.indexOf('const applyRelationship = useCallback('), app.indexOf('}, [refreshFriendCount]);'));
   expect(writer).toMatch(/if \(status === 'accepted'\) refreshFriendCount\(\);/);
   const count = app.slice(app.indexOf('const refreshFriendCount = useCallback('), app.indexOf('const applyRelationship = useCallback('));
-  expect(count).toMatch(/getUserStats\(\)\.then\(d => \{ if \(typeof d\?\.friendCount === 'number'\) setFriendCount\(d\.friendCount\); \}\)/);
+  expect(count).toMatch(/getUserStats\(\)\.then\(d => \{ if \(mine === friendCountSeqRef\.current && typeof d\?\.friendCount === 'number'\) setFriendCount\(d\.friendCount\); \}\)/);
 });
 
 test('clearing the name search clears its error and its queued request', () => {
