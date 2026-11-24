@@ -7873,8 +7873,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const onScreen = contactsResultRef.current;
         if (onScreen && onScreen.book === data.book) {
           // What is on screen is about this book, and stays, with when the
-          // next run can go.
-          setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt } : prev));
+          // next run can go; less anybody the block list read beside the book
+          // names now, a block made on another device since it was drawn.
+          const onList = contactsUsersRef.current || [];
+          const kept = clean(onList);
+          if (kept.length !== onList.length) setContactsUsers(kept);
+          setContactsResult(prev => (prev ? { ...prev, throttled: true, retryAt: data.retryAt, matched: kept.length } : prev));
         } else if (carried) {
           // Nothing on screen yet (the app was closed part way through a
           // pass): what the pass's earlier runs checked and found.

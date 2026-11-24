@@ -213,6 +213,37 @@ describe('the camera goes off on every way out', () => {
     expect(lib.clears.length).toBe(clearsBefore);
   });
 
+  test('closed while starting and opened again: the closed one, landing last, does not blank the reopened viewfinder', async () => {
+    const closed = mount();
+    await flush();
+    const pending = lastStart();
+    // Closed before its camera answered, then Scan is tapped again.
+    closed.unmount();
+    await flush();
+    mount();
+    await flush();
+    expect(lib.starts.length).toBe(2);
+    await act(async () => { lib.starts[1].resolve(); });
+    await flush();
+    expect(screen.getByRole('status').textContent).toBe("Point your camera at a friend's Flock code.");
+    const clearsBefore = lib.clears.length;
+    // The closed screen's start lands now, and so does its refusal.
+    await act(async () => { pending.reject(new Error('Could not start video source')); });
+    await flush();
+    expect(lib.instances[1].running).toBe(true);
+    expect(lib.clears.length).toBe(clearsBefore);
+  });
+
+  test('closing a live scanner still empties the element', async () => {
+    const { unmount } = mount();
+    await flush();
+    await act(async () => { lastStart().resolve(); });
+    await flush();
+    unmount();
+    await flush();
+    expect(lib.clears).toEqual([lib.instances[0]]);
+  });
+
   test('a browser with no camera API goes straight to the code field', async () => {
     delete window.navigator.mediaDevices;
     const { props } = mount();

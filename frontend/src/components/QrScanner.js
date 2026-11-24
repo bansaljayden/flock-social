@@ -43,6 +43,18 @@ import { cameraErrorName } from '../lib/cameraErrorCopy';
 // nothing React renders may live inside it.
 export const QR_READER_ID = 'flock-qr-reader';
 
+// The scanner that last took that element, whichever scanner screen made it.
+// The id is one for every screen, so a scanner closed while its camera was
+// still coming up can finish after a reopened screen's camera is live, and
+// that screen's own refs say nothing about it. clear() empties the element, so
+// it is only for the scanner still named here.
+let readerHolder = null;
+const releaseReader = (scanner) => {
+  if (readerHolder !== scanner) return;
+  readerHolder = null;
+  try { scanner.clear(); } catch { /* already empty */ }
+};
+
 // The decode canvas is the box's size in layout pixels, so laying the
 // viewfinder out at twice its size and drawing it at half doubles what the
 // decoder sees without changing what the person sees.
@@ -129,8 +141,9 @@ export default function QrScanner({
     if (!scanner) return;
     try { await scanner.stop(); } catch { /* not running yet, or already stopped */ }
     // stop() takes this scanner's own picture away; clear() empties the whole
-    // element, so it waits for no newer start to have the element by now.
-    if (!scannerRef.current) { try { scanner.clear(); } catch { /* already empty */ } }
+    // element, so it waits for no newer start, on this screen or a reopened
+    // one, to have the element by now.
+    releaseReader(scanner);
   }, []);
 
   const passing = useCallback((kind) => {
@@ -220,6 +233,7 @@ export default function QrScanner({
       return;
     }
     scannerRef.current = scanner;
+    readerHolder = scanner;
 
     const config = (withVideo) => ({
       fps: FPS,
@@ -251,12 +265,13 @@ export default function QrScanner({
 
     if (!stillOpen()) {
       // Closed while the camera was coming up: turn it straight back off. Its
-      // own picture only: a newer start (the page hidden and shown again) can
-      // be drawing into the same element by now, and clear() empties the whole
-      // element, which left a blank viewfinder under "Point your camera".
+      // own picture only: a newer start (the page hidden and shown again, or
+      // the scanner closed and opened again) can be drawing into the same
+      // element by now, and clear() empties the whole element, which left a
+      // blank viewfinder under "Point your camera".
       try { await scanner.stop(); } catch { /* it never got going */ }
       if (scannerRef.current === scanner) scannerRef.current = null;
-      if (!scannerRef.current) { try { scanner.clear(); } catch { /* already empty */ } }
+      releaseReader(scanner);
       return;
     }
     if (failure) {

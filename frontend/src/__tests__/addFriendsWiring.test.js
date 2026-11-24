@@ -787,6 +787,18 @@ describe('5. contacts', () => {
     expect(saved()).toBeNull();
   });
 
+  test('refused before it checked anything, after a block made on another device: the list on screen loses them', async () => {
+    const { state, go } = sync({
+      users: [person(1, 'Ana'), person(2, 'Bo')],
+      result: { checked: 600, total: 1240, sent: 600, unreadable: 0, notReached: 640, throttled: false, retryAt: null, matched: 2, book: 'b1' },
+      serverBlocks: ['2'],
+      runs: [result({ users: [], book: 'b1', sent: 0, checked: 0, answered: 0, throttled: true, retryAt: '2026-11-23T21:40:00.000Z', notReached: 1240, nextBatch: 0 })],
+    });
+    await go();
+    expect(state.users.map((u) => u.name)).toEqual(['Ana']);
+    expect(state.result).toEqual(expect.objectContaining({ checked: 600, matched: 1, throttled: true, retryAt: '2026-11-23T21:40:00.000Z' }));
+  });
+
   test('refused before anything was checked, with nothing found before it: no result at all, only when to try', async () => {
     // "None of these numbers belong to someone..." over "Checked 0 of 500"
     // was a claim about numbers nobody had looked at.
