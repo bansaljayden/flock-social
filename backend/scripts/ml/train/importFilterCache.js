@@ -7,12 +7,30 @@
 //        --cache-root=<the cache's filter-cache folder> --plan=<its tools/cities_1123.json>
 //        [--harvest-cache=<its harvest-cache folder>]        the training cities' peak hours
 //        [--identity-snapshot=<ml_venues.csv>]                identity rules and the 2 km rule
+//        [--export-dir=<the harvest-inclusive export's folder>] checked against the snapshot
 //        [--report-json=<file>] [--only=<key,...>]
 //   node scripts/ml/train/importFilterCache.js --write --out-dir=<dir> (the same inputs; the
-//        snapshot and --harvest-cache are required) [--accept-peak-flags=<key,...>]
+//        snapshot, --export-dir and --harvest-cache are required) [--accept-peak-flags=<key,...>]
 //   node scripts/ml/train/importFilterCache.js --parity --cache-dir=<one harvest-cache run folder>
 //        --cities=<the run's --city keys> --radius-km=<its radius> --identity-snapshot=<csv>
 //        --export-csv=<the harvest-inclusive training_data.csv> [--expect-misses=<n>]
+//
+// THE SNAPSHOT (plan step C.4), one read-only query, as CSV with a header:
+//   SELECT id, besttime_venue_id, google_place_id, name, latitude, longitude, city, besttime_status,
+//          to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at
+//     FROM ml_venues ORDER BY id
+// The import reads the first seven columns; --parity needs the last two as
+// well and refuses a snapshot without them. Take it after the
+// harvest-inclusive export has finished: --write refuses a snapshot that
+// lacks any venue the export holds.
+//
+// MEMORY. A full dry run over the 185 folders holds every city's venues until
+// the global pass, then about 330k kept weeks of 168 bytes each. Measured
+// 2026-11-25 with --harvest-cache, under Node 25's default 4,288 MB heap:
+// 143 s, peak resident 1,890 MB, 371 MB of heap at the end. The first version
+// kept 168 cell objects per venue and ran out of that heap; if a run ever does
+// again, `node --max-old-space-size=12288` is the stopgap, never a smaller
+// cache.
 //
 // WHAT THIS IS. BestTime's subscription ended on 2026-11-25. Before it did, a
 // read-only cacher (tools/cacheEverything.cjs, kept beside the cache, outside
@@ -42,7 +60,13 @@
 //   * the replay's misses equal progress.json's notFound (the cacher never
 //     kept a 404, so only that many questions may lack an answer: Macau, cut
 //     by the 402 with 17 questions unasked, is refused here);
-//   * no record named a day other than the one asked (checkMarketDays);
+//   * no record named a day other than the one asked, and no weekday's
+//     records all left the day out (checkMarketDays): refused as dayCheck;
+//   * the replay ran to its end (an answer with no venue list stops it):
+//     refused as replayAbort, with the harvester's message;
+//   * no record was malformed (no venue id, or no 24-hour curve) and no box
+//     reached the 500 cap at the smallest tile (venues there were never
+//     listed): the counts are printed for every city, accepted or not;
 //   * the month is the same in every time zone at every fetchedAt.
 //
 // ONE GLOBAL PASS, so a venue inside two cities' circles is one venue. Every
@@ -50,16 +74,35 @@
 // the nearest centroid within MAX_KM) among every training city, the refused
 // four (the holdouts and beijing) and every cache city, accepted or not. A
 // venue placed in a training city, a holdout, beijing or a refused cache city
-// is dropped, by name. The rest go through harvestVenueFilter.planVenues with
-// each city's own radius: with --identity-snapshot its identity rules 1 to 4
-// against ml_venues (a venue the corpus already holds, by BestTime id, by
-// Google place id or as a near-duplicate, is dropped: the corpus has it), then
-// the radius, the type map, the name, the signal and the twin rule, as a
-// harvest's new venues. With the snapshot, a venue within CORPUS_KEEP_AWAY_KM
-// of any ml_venues row is dropped too: these rows never reach serving, so a
-// cache venue must never sit in a corpus venue's neighbour box (+-0.0075
-// degrees, corners about 1.2 km away). Without the snapshot both rules are
-// reported as pending, never as passed, and --write refuses.
+// is dropped, by name, and so is one within MAX_KM of a holdout's or
+// beijing's centroid wherever it was placed (the plan's rule reads "nearest
+// centroid within 80 km"; a cache city near a holdout would otherwise keep
+// the venues between them). The rest go through harvestVenueFilter.planVenues:
+// with --identity-snapshot its identity rules 1 to 4 against ml_venues (a
+// venue the corpus already holds, by BestTime id, by Google place id or as a
+// near-duplicate, is dropped: the corpus has it), then the radius, the type
+// map, the name, the signal and the twin rule, as a harvest's new venues. The
+// radius is every accepted circle's: a venue inside any accepted city's
+// circle passes, placed in its nearest city, even when that city's own
+// circle is smaller and does not reach it (814 venues of the November cache,
+// placed in eight smaller neighbours, 299 of them San Francisco's nearer San
+// Jose). With the snapshot, a venue within CORPUS_KEEP_AWAY_KM of any
+// ml_venues row, or of any venue the export holds (--export-dir), is dropped
+// too: these rows never reach serving, so a cache venue must never sit in a
+// corpus venue's neighbour box (+-0.0075 degrees, corners about 1.2 km away).
+// Without the snapshot both rules are reported as pending, never as passed,
+// and --write refuses.
+//
+// THE EXPORT (--export-dir, the folder holding the harvest-inclusive
+// training_data.csv and holdout_data.csv these rows are appended to). The
+// identity rules and the 2 km rule are only as good as the snapshot, and
+// nothing in a CSV says it is the whole of ml_venues, current, from the right
+// database. So every venue id either export file holds must be a snapshot
+// row (a WHERE clause, a truncated copy or a snapshot older than the export
+// is refused), neither file may hold a cache row already (an id from
+// SYNTHETIC_ID_BASE, or city world_cache), and the 2 km rule also reads the
+// export's own coordinates, which are what the neighbour box is built from.
+// Both files' SHA-256s go into the manifest.
 //
 // THE ROWS (rowToCsv, given a row shaped as the export's query returns one,
 // so the format cannot drift from it): one per held cell of the venue's week
@@ -82,18 +125,34 @@
 // --accept-peak-flags names it; the dry run says which and how far.
 //
 // --parity (plan step C.5): one harvest-cache run folder replayed with the
-// harvest's own tiling (config.js centroids, its cities and radius), its
-// venues the snapshot holds by BestTime id (only 'harvested' ones when the
-// snapshot carries besttime_status) emitted under their stored ids and cities
-// by the same row builder, and compared field by field, city aside, with
-// those venues' rows in the export. Exit 0 only when every row matches and
-// neither side has a row the other lacks.
+// harvest's own tiling (config.js centroids, its cities and radius), and the
+// venues THIS FOLDER'S RUNS WROTE emitted under their stored ids and cities
+// by the same row builder and compared field by field, city aside, with those
+// venues' weekly rows in the export (is_realtime 0, label_provenance weekly;
+// a live row of the same venue is skipped and counted). Every November
+// harvest ran --new-only, so a venue's rows were written once, by the pass
+// that inserted it, from that pass's answers: the 20 km and 40 km passes
+// answered the same venue with different review counts and ratings on 3,557
+// of 22,975 venue-days in austin alone, so comparing a venue another pass
+// wrote would fail a correct generator. Which venues this folder wrote is
+// read from the snapshot's created_at: the replay is planned against the
+// corpus as it stood before the folder's first answer (rows created before
+// that fetchedAt, and rows with no created_at), and a venue is compared when
+// that plan calls it new, its row is 'harvested', and the row was created
+// after every answer of this folder that lists the venue. The rest are
+// counted apart, by why, never as mismatches. Exit 0 only when every compared
+// row matches and neither side has a weekly row the other lacks. What
+// created_at cannot show: a row another writer (the other pass, a venue
+// search) created after this folder's last answer for the venue and before
+// this folder's own commit. The November passes ran one city at a time, 20 km
+// then 40 km, so prove parity on a folder no other writer overlapped.
 //
 // OUTPUTS (--write; each refused if it exists): cache_rows.csv (HEADER, then
 // the rows; append it to training_data.csv without its first line),
 // cache_venues.csv (synthetic id -> city key, BestTime and Google ids, name,
-// position, category, days, rows) and cache_manifest.json (inputs and outputs
-// with SHA-256s, the git commit, every count).
+// position, category, days, rows) and cache_manifest.json (inputs, the
+// export's files included, and outputs with SHA-256s, the git commit, every
+// count).
 // ---------------------------------------------------------------------------
 
 const crypto = require('crypto');
@@ -130,14 +189,29 @@ const CACHE_FILE_RE = /^[0-9a-f]{64}\.json$/;
 const UTC_OFFSET_MIN_MS = -12 * 3600 * 1000;
 const UTC_OFFSET_MAX_MS = 14 * 3600 * 1000;
 const SNAPSHOT_COLUMNS = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city'];
-const CITY_COLUMN = HEADER.split(',').indexOf('city');
+// What --parity needs besides: which venues a harvest wrote, and when.
+const PARITY_SNAPSHOT_COLUMNS = ['besttime_status', 'created_at'];
+const HEADER_FIELDS = HEADER.split(',');
+const CITY_COLUMN = HEADER_FIELDS.indexOf('city');
+const EXPORT_COLUMNS = Object.freeze({
+  latitude: HEADER_FIELDS.indexOf('latitude'),
+  longitude: HEADER_FIELDS.indexOf('longitude'),
+  isRealtime: HEADER_FIELDS.indexOf('is_realtime'),
+  labelProvenance: HEADER_FIELDS.indexOf('label_provenance'),
+});
+// The harvest-inclusive export's two files (export_training_data.runExport).
+const EXPORT_FILES = Object.freeze(['training_data.csv', 'holdout_data.csv']);
 const OUTPUT_FILES = Object.freeze({ rows: 'cache_rows.csv', venues: 'cache_venues.csv', manifest: 'cache_manifest.json' });
+// A kept venue's week: day_of_week * 24 + hour, ABSENT where it holds no cell.
+const WEEK_SLOTS = 168;
+const ABSENT = 255;
+// The holdout cities and beijing: no kept venue within MAX_KM of one.
+const FAR_FROM = Object.freeze([...HOLDOUT_CITIES, 'beijing'].map((key) => Object.freeze({ key, lat: CITIES[key].lat, lon: CITIES[key].lon })));
 
 // Drop reasons this script adds to planVenues' own (its `skipped` keys).
-const PLACEMENT_DROPS = ['noCoordinates', 'outsideMarkets', 'placedInTrainingCity', 'placedInHoldoutCity',
-  'placedInBeijing', 'placedInRefusedCacheCity'];
 const IDENTITY_DROPS = { known_bt: 'knownByBesttimeId', known_place: 'knownByPlaceId', known_near: 'knownNearDuplicate' };
 const KEEP_AWAY_DROP = 'within2kmOfCorpusVenue';
+const NEAR_HOLDOUT_DROP = `within${MAX_KM}kmOfHoldoutOrBeijing`;
 
 // ---------------------------------------------------------------------------
 // Arguments.
@@ -147,7 +221,7 @@ function parseImportArgs(argv) {
   const flags = ['--dry-run', '--write', '--parity'];
   const valued = ['--cache-root=', '--plan=', '--progress=', '--harvest-cache=', '--identity-snapshot=', '--report-json=',
     '--out-dir=', '--accept-peak-flags=', '--only=', '--cache-dir=', '--cities=', '--radius-km=', '--export-csv=',
-    '--expect-misses='];
+    '--expect-misses=', '--export-dir='];
   for (const a of args) {
     if (!flags.includes(a) && !valued.some((p) => a.startsWith(p))) return { error: `Unknown argument "${a}".` };
   }
@@ -163,7 +237,7 @@ function parseImportArgs(argv) {
   const filePath = (name) => (val(name) ? path.resolve(val(name)) : null);
   const list = (name) => (val(name) ? [...new Set(val(name).split(',').map((s) => s.trim()).filter(Boolean))] : []);
   for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'identity-snapshot', 'report-json', 'out-dir',
-    'cache-dir', 'export-csv']) {
+    'cache-dir', 'export-csv', 'export-dir']) {
     if (val(name) === '') return { error: `--${name} takes a path.` };
   }
   const opts = {
@@ -182,6 +256,7 @@ function parseImportArgs(argv) {
     radiusKm: null,
     exportCsv: filePath('export-csv'),
     expectMisses: null,
+    exportDir: filePath('export-dir'),
   };
   if (mode === 'parity') {
     for (const [name, v] of [['cache-dir', opts.cacheDir], ['identity-snapshot', opts.identitySnapshot],
@@ -211,7 +286,7 @@ function parseImportArgs(argv) {
       if (!/^\d+$/.test(m)) return { error: '--expect-misses takes a whole number.' };
       opts.expectMisses = Number(m);
     }
-    for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only']) {
+    for (const name of ['cache-root', 'plan', 'progress', 'harvest-cache', 'out-dir', 'accept-peak-flags', 'only', 'export-dir']) {
       if (val(name) !== null) return { error: `--${name} belongs to --dry-run and --write, not --parity.` };
     }
     return opts;
@@ -221,10 +296,16 @@ function parseImportArgs(argv) {
   }
   if (!opts.cacheRoot || !opts.plan) return { error: `--${mode} needs --cache-root and --plan.` };
   if (!opts.progress) opts.progress = path.join(opts.cacheRoot, 'progress.json');
+  if (opts.exportDir && !opts.identitySnapshot) {
+    return { error: '--export-dir is checked against --identity-snapshot; name both.' };
+  }
   if (mode === 'write') {
     if (!opts.outDir) return { error: '--write needs --out-dir.' };
     if (!opts.identitySnapshot) {
       return { error: '--write needs --identity-snapshot: the identity rules and the 2 km rule are not optional for rows that train.' };
+    }
+    if (!opts.exportDir) {
+      return { error: '--write needs --export-dir: the export these rows join is what proves the snapshot is whole and current.' };
     }
     if (!opts.harvestCache) return { error: '--write needs --harvest-cache: the peak-hour check stands in for the commit gate.' };
     if (opts.only.length) return { error: '--only is for a look at a few cities; --write takes every city or none.' };
@@ -369,8 +450,11 @@ function replayOptions({ dir, cities, radiusKm, days = CACHER.days, tileKm = CAC
 // `dir` through the harvester's own functions. `centroids` overrides
 // CENTROIDS (the import's plan centroid), null for config.js's own. Returns
 // the merged venues and what the folder answered; an abort the harvester
-// throws (a record for another day) is returned as `abort`, not thrown.
-async function replayFolder({ dir, cities, radiusKm, centroids = null }) {
+// throws is returned as `abort` (its message) and `abortDayCheck` (true for a
+// record naming another day or a weekday that named none), not thrown. With
+// `venueAnswered`, also the latest fetchedAt (ms) of an answer listing each
+// venue, by BestTime id (--parity).
+async function replayFolder({ dir, cities, radiusKm, centroids = null, venueAnswered = false }) {
   const opts = replayOptions({ dir, cities, radiusKm });
   const tilePlan = centroids
     ? H.planTiles(cities, opts.tileKm, radiusKm, centroids)
@@ -379,6 +463,7 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null }) {
   const stray = fs.readdirSync(dir).filter((f) => !CACHE_FILE_RE.test(f));
   const read = new Set();
   const fetched = { min: Infinity, max: -Infinity, bad: 0 };
+  const answered = venueAnswered ? new Map() : null;
   const ctx = {
     key: H.OFFLINE_KEY, opts, stats: H.emptyStats(), sleep: async () => {}, pace: async () => {},
     city: H.emptyCityStats(tilePlan.length), area: null, dayTally: new Map(), otherDays: new Map(), secrets: [],
@@ -389,10 +474,17 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null }) {
       if (!Number.isFinite(at)) { fetched.bad++; return; }
       fetched.min = Math.min(fetched.min, at);
       fetched.max = Math.max(fetched.max, at);
+      if (answered && Array.isArray(entry.data.venues)) {
+        for (const raw of entry.data.venues) {
+          const id = raw && typeof raw.venue_id === 'string' ? raw.venue_id.trim() : '';
+          if (id && !(answered.get(id) >= at)) answered.set(id, at);
+        }
+      }
     },
   };
   const venues = new Map();
   let abort = null;
+  let abortDayCheck = false;
   try {
     for (const { area, tile } of tilePlan) {
       ctx.area = area;
@@ -402,6 +494,7 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null }) {
   } catch (err) {
     if (!err || !err.abort) throw err;
     abort = err.message;
+    abortDayCheck = err.dayCheck === true;
   }
   const s = ctx.stats;
   const heldSet = new Set(held);
@@ -428,7 +521,18 @@ async function replayFolder({ dir, cities, radiusKm, centroids = null }) {
       unreadable: fetched.bad,
     },
     month: Number.isFinite(fetched.min) && fetched.bad === 0 ? monthAcrossZones(fetched.min, fetched.max) : null,
+    venueAnswered: answered,
     abort,
+    abortDayCheck,
+  };
+}
+
+// What the import reads of a merged venue (planVenues, the rows, the
+// sidecar), without the address, the alternate curves or the answered days.
+function slimVenue(v) {
+  return {
+    venueId: v.venueId, name: v.name, placeId: v.placeId, rawPlaceId: v.rawPlaceId, lat: v.lat, lng: v.lng, type: v.type,
+    rating: v.rating, reviews: v.reviews, days: v.days,
   };
 }
 
@@ -437,18 +541,35 @@ async function replayCity(city) {
   const centroids = Object.freeze({ [city.key]: Object.freeze({ lat: city.lat, lon: city.lon }) });
   const r = await replayFolder({ dir: city.dir, cities: [city.key], radiusKm: city.radiusKm, centroids });
   city.replay = r;
-  if (r.abort) refuse(city, 'dayCheck', r.abort);
+  if (r.abort) refuse(city, r.abortDayCheck ? 'dayCheck' : 'replayAbort', r.abort);
   if (r.filesUnread.length > 0) {
     refuse(city, 'unusedFiles', `${r.filesUnread.length} of ${r.filesHeld} answer files answered no question of the replay `
       + `(first: ${r.filesUnread.slice(0, 3).join(', ')})`);
   }
-  if (city.notFound !== null && r.misses !== city.notFound) {
-    refuse(city, 'missesNotNotFound', `${r.misses} questions have no answer file, and progress.json recorded ${city.notFound} `
-      + '404s: a miss that was not a 404 is a box whose venues would be lost');
+  // No notFound in progress.json is refused here too, not only when the
+  // cities are classified: nothing a miss could be checked against.
+  if (r.misses !== city.notFound) {
+    refuse(city, 'missesNotNotFound', `${r.misses} questions have no answer file, and progress.json recorded `
+      + `${city.notFound === null ? 'no' : city.notFound} 404s: a miss that was not a 404 is a box whose venues would be lost`);
+  }
+  if (r.malformed > 0) {
+    refuse(city, 'malformedRecords', `${r.malformed} records had no venue id or no 24-hour curve: what else the answer `
+      + 'left out cannot be told from the file');
+  }
+  if (r.truncatedTiles > 0) {
+    refuse(city, 'truncatedTiles', `${r.truncatedTiles} boxes reached the ${CACHER.resultCap} cap at the smallest tile: `
+      + 'venues there were never listed');
   }
   if (r.month === null) {
     refuse(city, 'monthUnknown', `the answers' fetchedAt (${r.fetchedAt.min} to ${r.fetchedAt.max}, ${r.fetchedAt.unreadable} `
       + 'unreadable) does not fix one month in every time zone, and no zone is known');
+  }
+  // A refused city's venues are never read again; an accepted one's are held,
+  // slimmed, until the global pass.
+  if (city.refused.length > 0) {
+    r.venues = null;
+  } else {
+    for (const [id, v] of r.venues) r.venues.set(id, slimVenue(v));
   }
   return r;
 }
@@ -530,6 +651,31 @@ function keepAwayIndex(rows) {
   };
 }
 
+// A timestamp as the snapshot's SELECT writes it (ISO 8601, UTC), or as
+// Postgres prints a timestamptz ("2026-11-18 23:45:12.123456+00"); ms, or
+// NaN. Microseconds are cut to milliseconds, as fetchedAt holds them.
+const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(\.\d+)?(Z|[+-]\d{2}(?::?\d{2})?)$/;
+function parseTimestamp(text) {
+  const m = TIMESTAMP_RE.exec(String(text).trim());
+  if (!m) return NaN;
+  const frac = m[3] ? m[3].slice(0, 4) : '';
+  let zone = m[4];
+  if (zone !== 'Z') zone = zone.length === 3 ? `${zone}:00` : zone.includes(':') ? zone : `${zone.slice(0, 3)}:${zone.slice(3)}`;
+  return Date.parse(`${m[1]}T${m[2]}${frac}${zone}`);
+}
+
+// planVenues' identities over `rows`: by BestTime id, by Google place id, and
+// every row for rule 4.
+function identitiesOf(rows) {
+  const byBtId = new Map();
+  const byPlaceId = new Map();
+  for (const r of rows) {
+    if (r.besttime_venue_id) byBtId.set(r.besttime_venue_id, r);
+    if (r.google_place_id) byPlaceId.set(r.google_place_id, r);
+  }
+  return { byBtId, byPlaceId, nearby: rows };
+}
+
 function loadIdentitySnapshot(file) {
   const records = parseCsv(fs.readFileSync(file, 'utf8'));
   if (records.length === 0) throw new Error(`${file}: empty`);
@@ -538,6 +684,7 @@ function loadIdentitySnapshot(file) {
   if (missing.length) throw new Error(`${file}: the snapshot lacks ${missing.join(', ')} (plan step C.4's SELECT)`);
   const at = Object.fromEntries(head.map((h, i) => [h, i]));
   const hasStatus = head.includes('besttime_status');
+  const hasCreatedAt = head.includes('created_at');
   const rows = [];
   const ids = new Set();
   let noPosition = 0;
@@ -552,6 +699,11 @@ function loadIdentitySnapshot(file) {
     const lat = f[at.latitude] === '' ? NaN : Number(f[at.latitude]);
     const lng = f[at.longitude] === '' ? NaN : Number(f[at.longitude]);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) noPosition++;
+    let createdAtMs;
+    if (hasCreatedAt) {
+      createdAtMs = f[at.created_at] === '' ? null : parseTimestamp(f[at.created_at]);
+      if (Number.isNaN(createdAtMs)) throw new Error(`${file}: record ${k + 1} has created_at "${f[at.created_at]}", not a timestamp`);
+    }
     rows.push({
       id,
       besttime_venue_id: f[at.besttime_venue_id] || null,
@@ -561,23 +713,98 @@ function loadIdentitySnapshot(file) {
       longitude: lng,
       city: f[at.city],
       besttime_status: hasStatus ? (f[at.besttime_status] || null) : undefined,
+      createdAtMs,
     });
   }
   const maxId = rows.reduce((m, r) => Math.max(m, r.id), 0);
   if (maxId >= SYNTHETIC_ID_BASE) {
     throw new Error(`${file}: ml_venues ids reach ${maxId}, into the synthetic range from ${SYNTHETIC_ID_BASE}`);
   }
-  const byBtId = new Map();
-  const byPlaceId = new Map();
-  for (const r of rows) {
-    if (r.besttime_venue_id) byBtId.set(r.besttime_venue_id, r);
-    if (r.google_place_id) byPlaceId.set(r.google_place_id, r);
-  }
   return {
-    file, sha256: sha256File(file), rows: rows.length, maxId, noPosition, hasStatus,
-    identities: { byBtId, byPlaceId, nearby: rows },
+    file, sha256: sha256File(file), rows: rows.length, maxId, noPosition, hasStatus, hasCreatedAt, columns: head,
+    list: rows, ids,
+    identities: identitiesOf(rows),
     nearestCorpus: keepAwayIndex(rows),
   };
+}
+
+// ---------------------------------------------------------------------------
+// The harvest-inclusive export (--export-dir), read once, streamed.
+// ---------------------------------------------------------------------------
+
+// Each export file's lines as CSV records' text: a quoted field may hold a
+// line break, so a line with an odd count of quotes is joined to the next.
+async function* exportRecords(file, onBytes = null) {
+  const input = fs.createReadStream(file);
+  if (onBytes) input.on('data', onBytes);
+  const lines = readline.createInterface({ input, crlfDelay: Infinity });
+  let pending = '';
+  try {
+    for await (const line of lines) {
+      const text = pending ? `${pending}\n${line}` : line;
+      if (text.includes('"') && (text.match(/"/g) || []).length % 2 === 1) { pending = text; continue; }
+      pending = '';
+      yield text;
+    }
+  } finally {
+    input.destroy();
+  }
+  if (pending) throw new Error(`${file}: a quoted field never closes`);
+}
+
+// Every venue either file holds, by id, with the first row's position and
+// city; each file's SHA-256 (of the bytes read) and data rows.
+async function readExportVenues(dir) {
+  const venues = new Map();
+  const files = [];
+  for (const name of EXPORT_FILES) {
+    const file = path.join(dir, name);
+    const hash = crypto.createHash('sha256');
+    let rows = 0;
+    let headerSeen = false;
+    for await (const text of exportRecords(file, (chunk) => hash.update(chunk))) {
+      if (!headerSeen) {
+        if (text !== HEADER) throw new Error(`${file} does not open with the export's HEADER`);
+        headerSeen = true;
+        continue;
+      }
+      rows++;
+      const id = Number(text.slice(0, text.indexOf(',')));
+      if (!Number.isInteger(id) || id <= 0) throw new Error(`${file}: data row ${rows} has no venue id`);
+      if (venues.has(id)) continue;
+      const f = parseCsv(text)[0];
+      if (f.length !== HEADER_FIELDS.length) throw new Error(`${file}: data row ${rows} has ${f.length} fields, not ${HEADER_FIELDS.length}`);
+      venues.set(id, {
+        latitude: f[EXPORT_COLUMNS.latitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.latitude]),
+        longitude: f[EXPORT_COLUMNS.longitude] === '' ? NaN : Number(f[EXPORT_COLUMNS.longitude]),
+        city: f[CITY_COLUMN],
+      });
+    }
+    if (!headerSeen) throw new Error(`${file} is empty`);
+    files.push({ file, sha256: hash.digest('hex'), rows });
+  }
+  return { dir, files, venues };
+}
+
+// What the export says about the snapshot: null when every venue it holds is
+// a snapshot row and none is a cache row, else why not.
+function exportAgainstSnapshot(exp, snapshot) {
+  const absent = [];
+  const cacheRows = [];
+  for (const [id, v] of exp.venues) {
+    if (id >= SYNTHETIC_ID_BASE || v.city === WORLD_CACHE_CITY) cacheRows.push(id);
+    else if (!snapshot.ids.has(id)) absent.push(id);
+  }
+  if (cacheRows.length) {
+    return `the export already holds cache rows (${cacheRows.length} venues with an id from ${SYNTHETIC_ID_BASE} or city `
+      + `${WORLD_CACHE_CITY}, first ${cacheRows.slice(0, 3).join(', ')}): append to the export as written, once.`;
+  }
+  if (absent.length) {
+    return `${absent.length} of the ${exp.venues.size} venues the export holds are not in the snapshot (first ids `
+      + `${absent.sort((a, b) => a - b).slice(0, 5).join(', ')}): it is partial, older than the export or from another `
+      + 'database, and the identity rules and the 2 km rule would miss what it lacks. Take it again (plan step C.4).';
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -769,10 +996,56 @@ function weeklyRow({ venue, category, month }, cell, { venueId, city }) {
   };
 }
 
-// A venue's cells in the export's order (day of week, then hour).
-function sortedCells(venue) {
-  return H.weekCells([...venue.days.entries()].sort((a, b) => a[0] - b[0]))
-    .sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.hour - b.hour);
+// A venue's week as weekCells reads its days (BestTime day order, the first
+// answer for a cell kept), in WEEK_SLOTS bytes: day_of_week * 24 + hour,
+// ABSENT where there is no cell. readHours rounds every value to 0..100, so
+// a byte holds it exactly. A full run keeps about 330k of these: as 168 cell
+// objects each, the first version ran out of a 4 GB heap.
+function weekOf(days) {
+  const week = new Uint8Array(WEEK_SLOTS).fill(ABSENT);
+  let rows = 0;
+  for (const c of H.weekCells([...days.entries()].sort((a, b) => a[0] - b[0]))) {
+    if (!Number.isInteger(c.busyness) || c.busyness < 0 || c.busyness > 100) {
+      throw new Error(`busyness ${c.busyness} at day ${c.dayOfWeek} hour ${c.hour} is not a whole 0..100`);
+    }
+    week[c.dayOfWeek * 24 + c.hour] = c.busyness;
+    rows++;
+  }
+  return { week, rows };
+}
+
+// A week's cells in the export's order (day of week, then hour).
+function cellsOfWeek(week) {
+  const cells = [];
+  for (let i = 0; i < WEEK_SLOTS; i++) {
+    if (week[i] !== ABSENT) cells.push({ dayOfWeek: Math.floor(i / 24), hour: i % 24, busyness: week[i] });
+  }
+  return cells;
+}
+
+const sortedCells = (venue) => cellsOfWeek(weekOf(venue.days).week);
+
+// harvestVenueFilter.peakHourHistogram over kept venues' weeks: each venue's
+// week-averaged busiest venue-local hour (peakFromSums, pinned equal to it
+// by the tests), counted by category.
+function peakHistogramOfWeeks(kept) {
+  const byCategory = new Map();
+  const sum = new Float64Array(24);
+  const cnt = new Uint16Array(24);
+  for (const k of kept) {
+    sum.fill(0);
+    cnt.fill(0);
+    for (let i = 0; i < WEEK_SLOTS; i++) {
+      if (k.week[i] === ABSENT) continue;
+      sum[i % 24] += k.week[i];
+      cnt[i % 24]++;
+    }
+    const peak = peakFromSums(sum, cnt);
+    if (peak < 0) continue;
+    if (!byCategory.has(k.category)) byCategory.set(k.category, new Int32Array(24));
+    byCategory.get(k.category)[peak]++;
+  }
+  return byCategory;
 }
 
 // ---------------------------------------------------------------------------
@@ -795,22 +1068,34 @@ function globalMarkets(cacheCities) {
   return markets;
 }
 
+// Why a venue placed in `cityKey` is dropped, or null. A config.js key is
+// judged before the accepted set, so a training city's key can never pass as
+// a cache city (classifyCities refuses one; this does not rely on it).
 function placementDrop(cityKey, accepted) {
   if (!cityKey) return 'outsideMarkets';
-  if (accepted.has(cityKey)) return null;
   if (HOLDOUT_CITIES.includes(cityKey)) return 'placedInHoldoutCity';
   if (cityKey === 'beijing') return 'placedInBeijing';
   if (PA_CITIES[cityKey] || CITIES[cityKey]) return 'placedInTrainingCity';
+  if (accepted.has(cityKey)) return null;
   return 'placedInRefusedCacheCity';
 }
 
-function globalPass({ cacheCities, accepted, snapshot }) {
+// The holdout city or beijing within MAX_KM of a point, or null.
+const nearHoldout = (lat, lng) => FAR_FROM.find((c) => kmBetween(lat, lng, c.lat, c.lon) <= MAX_KM) || null;
+
+// `nearestCorpus` (the 2 km rule) is the snapshot's own index, or one over
+// the snapshot and the export's positions when --export-dir is given.
+function globalPass({ cacheCities, accepted, snapshot, nearestCorpus = snapshot ? snapshot.nearestCorpus : null }) {
   const acceptedKeys = new Set(accepted.map((c) => c.key));
   const byKey = new Map(accepted.map((c) => [c.key, c]));
   const markets = globalMarkets(cacheCities);
   const drops = new Map(accepted.map((c) => [c.key, newDropCounter()]));
   const home = new Map(); // venueId -> the city its counts go to
   const trainingPlaced = {};
+  // Inside a circle the cacher asked: the city it is placed in first, then
+  // any other accepted one (see the header).
+  const insideRadius = (v, where) => where.km <= byKey.get(where.cityKey).radiusKm
+    || accepted.some((c) => kmBetween(v.lat, v.lng, c.lat, c.lon) <= c.radiusKm);
 
   // One record per venue: the city it is placed in's own, when that city
   // found it, else the first city (by key) that did; days the record lacks
@@ -845,6 +1130,10 @@ function globalPass({ cacheCities, accepted, snapshot }) {
       continue;
     }
     home.set(venueId, where.cityKey);
+    if (nearHoldout(lat, lng)) {
+      countDrop(drops.get(where.cityKey), NEAR_HOLDOUT_DROP);
+      continue;
+    }
     const primary = records.find((r) => r.city === where.cityKey) || first;
     const venue = { ...primary.v, days: new Map(primary.v.days) };
     for (const r of records) {
@@ -860,7 +1149,7 @@ function globalPass({ cacheCities, accepted, snapshot }) {
   const identities = snapshot ? snapshot.identities : { byBtId: new Map(), byPlaceId: new Map(), nearby: [] };
   const { plan, skipped } = H.planVenues(candidates.map((c) => c.venue), identities, [...acceptedKeys], {
     markets,
-    radiusKmOf: (key) => byKey.get(key).radiusKm,
+    insideRadius,
     onSkip: (v, reason) => countDrop(drops.get(home.get(v.venueId)), reason),
   });
   for (const reason of ['outsideMarkets', 'otherMarket', 'noCoordinates']) {
@@ -873,14 +1162,18 @@ function globalPass({ cacheCities, accepted, snapshot }) {
       countDrop(drops.get(item.city), IDENTITY_DROPS[item.kind]);
       continue;
     }
-    if (snapshot) {
-      const near = snapshot.nearestCorpus(item.venue.lat, item.venue.lng);
-      if (near) { countDrop(drops.get(item.city), KEEP_AWAY_DROP); continue; }
+    if (nearestCorpus && nearestCorpus(item.venue.lat, item.venue.lng)) {
+      countDrop(drops.get(item.city), KEEP_AWAY_DROP);
+      continue;
     }
     const src = sourceOf.get(item.venue.venueId);
     const month = byKey.get(src.sourceCity).replay.month;
-    const cells = sortedCells(item.venue);
-    kept.push({ venue: item.venue, city: item.city, category: item.category, month, cells, foundIn: src.foundIn });
+    const v = item.venue;
+    const { week, rows } = weekOf(v.days);
+    kept.push({
+      venue: { venueId: v.venueId, name: v.name, placeId: v.placeId, lat: v.lat, lng: v.lng, rating: v.rating, reviews: v.reviews },
+      city: item.city, category: item.category, month, week, rows, daysHeld: v.days.size, foundIn: src.foundIn,
+    });
   }
   const homeCount = new Map();
   for (const key of home.values()) homeCount.set(key, (homeCount.get(key) || 0) + 1);
@@ -946,23 +1239,45 @@ async function runImport(opts, { log }) {
     + `${cities.cacheCities.length} the cacher reached, ${cities.replay.length} folders to replay from ${opts.cacheRoot}. `
     + `Folders never opened: ${cities.foldersNotRead.join(', ') || 'none'}. No database, no network.`);
 
+  // The snapshot and the export first: a snapshot the export shows is not
+  // the whole of ml_venues stops the run before any folder is replayed.
+  let snapshot = null;
+  let exported = null;
+  let nearestCorpus = null;
+  if (opts.identitySnapshot) {
+    snapshot = loadIdentitySnapshot(opts.identitySnapshot);
+    log(`${TAG} IDENTITY SNAPSHOT: ${opts.identitySnapshot}, ${num(snapshot.rows)} ml_venues rows (highest id `
+      + `${num(snapshot.maxId)}, ${snapshot.noPosition} without a position), sha256 ${snapshot.sha256}.`);
+    nearestCorpus = snapshot.nearestCorpus;
+  } else {
+    log(`${TAG} IDENTITY SNAPSHOT: none given. Identity rules 1-4 and the ${CORPUS_KEEP_AWAY_KM} km rule are PENDING SNAPSHOT: `
+      + 'every count below is before them, and --write refuses until they run.');
+  }
+  if (opts.exportDir) {
+    exported = await readExportVenues(opts.exportDir);
+    log(`${TAG} EXPORT: ${exported.files.map((f) => `${path.basename(f.file)} ${num(f.rows)} rows (sha256 ${f.sha256})`).join(', ')}; `
+      + `${num(exported.venues.size)} venues, every one checked against the snapshot.`);
+    const why = exportAgainstSnapshot(exported, snapshot);
+    if (why) {
+      log(`${TAG} REFUSED: ${why} Nothing was replayed${opts.mode === 'write' ? ' or written' : ''}.`);
+      return { exitCode: 1, refused: why };
+    }
+    const points = [...exported.venues].map(([id, v]) => ({ id, latitude: v.latitude, longitude: v.longitude }));
+    nearestCorpus = keepAwayIndex([...snapshot.list, ...points]);
+  } else if (snapshot) {
+    log(`${TAG} EXPORT: none given, so the snapshot is not checked against it and the ${CORPUS_KEEP_AWAY_KM} km rule reads `
+      + 'the snapshot alone; --write refuses without it.');
+  }
+
   for (const city of cities.replay) {
     await replayCity(city);
   }
   const accepted = cities.replay.filter((c) => c.refused.length === 0);
   const refusedWithData = cities.cacheCities.filter((c) => c.refused.length > 0);
 
-  let snapshot = null;
-  if (opts.identitySnapshot) {
-    snapshot = loadIdentitySnapshot(opts.identitySnapshot);
-    log(`${TAG} IDENTITY SNAPSHOT: ${opts.identitySnapshot}, ${num(snapshot.rows)} ml_venues rows (highest id `
-      + `${num(snapshot.maxId)}, ${snapshot.noPosition} without a position), sha256 ${snapshot.sha256}.`);
-  } else {
-    log(`${TAG} IDENTITY SNAPSHOT: none given. Identity rules 1-4 and the ${CORPUS_KEEP_AWAY_KM} km rule are PENDING SNAPSHOT: `
-      + 'every count below is before them, and --write refuses until they run.');
-  }
-
-  const pass = globalPass({ cacheCities: cities.cacheCities, accepted, snapshot });
+  const pass = globalPass({ cacheCities: cities.cacheCities, accepted, snapshot, nearestCorpus });
+  // Everything the rows need is in pass.kept now.
+  for (const city of accepted) city.replay.venues = null;
 
   let reference = null;
   if (opts.harvestCache) {
@@ -978,25 +1293,28 @@ async function runImport(opts, { log }) {
   const report = { cities: {}, totals: {} };
   const flagged = [];
   log(`${TAG} BY CITY: files read of held; misses against progress.json's 404s; venues found by the city's replay; `
-    + 'home venues (placed here, or found here and dropped); kept; weekly rows; drops; peak hour per category '
+    + 'home venues (placed here, or found here and dropped); kept; weekly rows; records malformed and without a day, '
+    + 'boxes cut at the cap, stray files; drops; peak hour per category '
     + `(mode, venues, hours from the training mode${reference ? '' : ': not run'}).`);
+  const records = (r) => ({ malformed: r.malformed, unverifiable: r.unverifiable, truncatedTiles: r.truncatedTiles, strayFiles: r.strayFiles });
+  const recordText = (r) => `malformed ${r.malformed}  no day ${num(r.unverifiable)}  cut ${r.truncatedTiles}  stray ${r.strayFiles}`;
   for (const city of [...accepted].sort((a, b) => a.key.localeCompare(b.key))) {
     const r = city.replay;
     const kept = keptByCity.get(city.key);
-    const rows = kept.reduce((n, k) => n + k.cells.length, 0);
-    const hist = H.peakHourHistogram(kept);
+    const rows = kept.reduce((n, k) => n + k.rows, 0);
+    const hist = peakHistogramOfWeeks(kept);
     const peaks = comparePeaks(hist, reference);
     if (peaks.flagged) flagged.push(city.key);
     const drops = pass.drops.get(city.key);
     report.cities[city.key] = {
       state: 'accepted', radiusKm: city.radiusKm, filesHeld: r.filesHeld, filesRead: r.filesRead, misses: r.misses,
       notFound: city.notFound, venuesFound: r.venuesFound, homeVenues: pass.homeCount.get(city.key) || 0, kept: kept.length,
-      incompleteWeeks: kept.filter((k) => k.venue.days.size < 7).length, rows, drops, month: r.month,
+      incompleteWeeks: kept.filter((k) => k.daysHeld < 7).length, rows, drops, month: r.month, ...records(r),
       fetchedAt: r.fetchedAt, peaks: reference ? peaks.categories : null, peakFlag: reference ? peaks.flagged : null,
     };
     log(`  ${city.key.padEnd(16)} files ${r.filesRead}/${r.filesHeld}  misses ${r.misses} = notFound ${city.notFound}  `
-      + `found ${num(r.venuesFound)}  home ${num(pass.homeCount.get(city.key) || 0)}  kept ${num(kept.length)}  rows ${num(rows)}`
-      + `${peaks.flagged ? '  PEAK FLAG' : ''}`);
+      + `found ${num(r.venuesFound)}  home ${num(pass.homeCount.get(city.key) || 0)}  kept ${num(kept.length)}  rows ${num(rows)}  `
+      + `${recordText(r)}${peaks.flagged ? '  PEAK FLAG' : ''}`);
     log(`      drops: ${dropText(drops) || 'none'}`);
     if (reference) log(`      peak: ${peakText(peaks)}`);
   }
@@ -1007,7 +1325,7 @@ async function runImport(opts, { log }) {
       state: 'refused', opened: city.opened, reasons: city.refused,
       ...(city.replay ? {
         filesHeld: city.replay.filesHeld, filesRead: city.replay.filesRead, misses: city.replay.misses,
-        notFound: city.notFound, venuesFound: city.replay.venuesFound,
+        notFound: city.notFound, venuesFound: city.replay.venuesFound, ...records(city.replay),
       } : {}),
     };
   }
@@ -1015,7 +1333,8 @@ async function runImport(opts, { log }) {
   for (const key of refusedList) {
     const c = report.cities[key];
     const ev = c.filesHeld !== undefined
-      ? ` [replayed: files ${c.filesRead}/${c.filesHeld}, misses ${c.misses} vs notFound ${c.notFound}, ${num(c.venuesFound)} venues]`
+      ? ` [replayed: files ${c.filesRead}/${c.filesHeld}, misses ${c.misses} vs notFound ${c.notFound}, ${num(c.venuesFound)} venues, `
+        + `${recordText(c)}]`
       : ' [never opened]';
     log(`  ${key.padEnd(16)} ${c.reasons.map((x) => `${x.reason}: ${x.detail}`).join('; ')}${ev}`);
   }
@@ -1023,20 +1342,25 @@ async function runImport(opts, { log }) {
 
   const totalDrops = {};
   for (const counter of pass.drops.values()) for (const [k, n] of Object.entries(counter)) countDrop(totalDrops, k, n);
-  const rowsAll = pass.kept.reduce((n, k) => n + k.cells.length, 0);
+  const rowsAll = pass.kept.reduce((n, k) => n + k.rows, 0);
   const flaggedSet = new Set(flagged);
   const keptUnflagged = pass.kept.filter((k) => !flaggedSet.has(k.city));
-  const rowsUnflagged = keptUnflagged.reduce((n, k) => n + k.cells.length, 0);
-  const nearHoldout = pass.kept.filter((k) => HOLDOUT_CITIES.some((h) => (
-    kmBetween(k.venue.lat, k.venue.lng, CITIES[h].lat, CITIES[h].lon) <= MAX_KM))).length;
+  const rowsUnflagged = keptUnflagged.reduce((n, k) => n + k.rows, 0);
+  // Counted again from the kept venues themselves: the drop above makes it 0,
+  // and --write refuses if it ever is not.
+  const keptNearHoldout = pass.kept.filter((k) => nearHoldout(k.venue.lat, k.venue.lng)).length;
+  const recordTotals = { malformed: 0, unverifiable: 0, truncatedTiles: 0, strayFiles: 0 };
+  for (const city of accepted) for (const k of Object.keys(recordTotals)) recordTotals[k] += city.replay[k];
   report.totals = {
     citiesInPlan: plan.length, cacheCities: cities.cacheCities.length, accepted: accepted.length,
     refused: refusedList.length, refusedCacheCities: refusedWithData.length, unreached: unreached.length,
     distinctVenues: pass.distinct, venuesInTwoCircles: pass.inTwoCircles, daysFilledFromAnotherCity: pass.daysFilled,
     kept: pass.kept.length, rows: rowsAll, drops: totalDrops, placedInTrainingCity: pass.trainingPlaced,
-    keptWithin80kmOfAHoldout: nearHoldout,
+    keptWithin80kmOfHoldoutOrBeijing: keptNearHoldout,
+    acceptedRecords: recordTotals,
     identityRules: snapshot ? 'applied' : 'pending snapshot',
-    keepAwayRule: snapshot ? 'applied' : 'pending snapshot',
+    keepAwayRule: snapshot ? (exported ? 'applied (snapshot and export)' : 'applied (snapshot only)') : 'pending snapshot',
+    exportChecked: exported ? exported.files.map((f) => ({ file: f.file, sha256: f.sha256, rows: f.rows })) : null,
     peakCheck: reference ? 'run' : 'not run',
     peakFlagged: flagged,
     keptIfFlaggedRefused: keptUnflagged.length,
@@ -1047,10 +1371,11 @@ async function runImport(opts, { log }) {
     + `reached, the rest config or refused keys), ${t.unreached} plan cities the cacher never reached. ${num(t.distinctVenues)} distinct venues `
     + `(${num(t.venuesInTwoCircles)} in two circles, counted once; ${num(t.daysFilledFromAnotherCity)} venue-days filled from `
     + `the other circle), ${num(t.kept)} kept, ${num(t.rows)} weekly rows. Identity rules: ${t.identityRules}; `
-    + `${CORPUS_KEEP_AWAY_KM} km rule: ${t.keepAwayRule}; peak check: ${t.peakCheck}.`);
+    + `${CORPUS_KEEP_AWAY_KM} km rule: ${t.keepAwayRule}; peak check: ${t.peakCheck}. Accepted cities' records: `
+    + `${recordText(recordTotals)}.`);
   log(`${TAG} DROPS: ${dropText(totalDrops) || 'none'}.`);
   log(`${TAG} Placed in a training city, by city: ${dropText(pass.trainingPlaced) || 'none'}. `
-    + `Kept venues within ${MAX_KM} km of a holdout centroid (placed nearer a cache city): ${nearHoldout}.`);
+    + `Kept venues within ${MAX_KM} km of a holdout or beijing centroid: ${keptNearHoldout}.`);
   if (reference) {
     // n under PEAK_FEW_VENUES is marked: a mode of a handful of venues says
     // little about the city's axis.
@@ -1062,7 +1387,7 @@ async function runImport(opts, { log }) {
       }).join('; ') || 'none'}. Refusing them all keeps ${num(t.keptIfFlaggedRefused)} venues, ${num(t.rowsIfFlaggedRefused)} rows.`);
   }
 
-  const result = { exitCode: 0, report, kept: pass.kept, flagged, snapshot, reference, started };
+  const result = { exitCode: 0, report, kept: pass.kept, flagged, snapshot, exported, reference, started };
   if (opts.reportJson) {
     fs.writeFileSync(opts.reportJson, JSON.stringify(report, null, 1));
     log(`${TAG} Report written to ${opts.reportJson}.`);
@@ -1090,6 +1415,12 @@ async function writeOutputs(opts, result, { log }) {
     log(`${TAG} REFUSED: ${why} Nothing was written.`);
     return { ...result, exitCode: 1, refusedWrite: why };
   };
+  if (!result.snapshot || !result.exported) return fail('--write needs the snapshot checked against the export.');
+  const nearHoldoutKept = result.report.totals.keptWithin80kmOfHoldoutOrBeijing;
+  if (nearHoldoutKept !== 0) {
+    return fail(`${nearHoldoutKept} kept venues are within ${MAX_KM} km of a holdout or beijing centroid; the drop that `
+      + 'keeps them out did not run.');
+  }
   const unknownAccepts = opts.acceptPeakFlags.filter((k) => !result.flagged.includes(k));
   if (unknownAccepts.length) return fail(`--accept-peak-flags names cities that are not flagged: ${unknownAccepts.join(', ')}.`);
   const refusedFlags = result.flagged.filter((k) => !opts.acceptPeakFlags.includes(k));
@@ -1120,13 +1451,15 @@ async function writeOutputs(opts, result, { log }) {
     const k = keep[i];
     const venueId = SYNTHETIC_ID_BASE + i;
     let chunk = '';
-    for (const cell of k.cells) {
+    const cells = cellsOfWeek(k.week);
+    if (cells.length !== k.rows) throw new Error(`${k.venue.venueId}: ${cells.length} cells, ${k.rows} counted`);
+    for (const cell of cells) {
       chunk += `${rowToCsv(weeklyRow(k, cell, { venueId, city: WORLD_CACHE_CITY }))}\n`;
       rows++;
     }
     await writeChunk(rowsOut, chunk);
     await writeChunk(venuesOut, `${csv([venueId, k.city, k.venue.venueId, k.venue.placeId, k.venue.name, k.venue.lat,
-      k.venue.lng, k.category, k.venue.days.size, k.cells.length, k.foundIn.join(' ')])}\n`);
+      k.venue.lng, k.category, k.daysHeld, k.rows, k.foundIn.join(' ')])}\n`);
   }
   await finished(rowsOut);
   await finished(venuesOut);
@@ -1148,6 +1481,12 @@ async function writeOutputs(opts, result, { log }) {
       plan: { file: opts.plan, sha256: sha256File(opts.plan) },
       progress: { file: opts.progress, sha256: sha256File(opts.progress) },
       identitySnapshot: { file: result.snapshot.file, sha256: result.snapshot.sha256, rows: result.snapshot.rows },
+      export: {
+        dir: result.exported.dir,
+        files: result.exported.files.map((f) => ({ file: path.basename(f.file), sha256: f.sha256, rows: f.rows })),
+        venues: result.exported.venues.size,
+        note: 'every venue id here is a snapshot row; the 2 km rule read these positions too',
+      },
       harvestCache: { dir: result.reference.dir, files: result.reference.files },
     },
     outputs: {
@@ -1169,51 +1508,88 @@ async function writeOutputs(opts, result, { log }) {
 // ---------------------------------------------------------------------------
 // --parity (plan step C.5).
 // ---------------------------------------------------------------------------
+// Which venues of a parity replay this folder's runs wrote (see the header):
+// `expected` by stored id, and every other venue the replay found, counted by
+// why it is left out.
+function parityVenues(r, snapshot, cities, radiusKm) {
+  const t0 = Date.parse(r.fetchedAt.min);
+  // The corpus as the folder's first answer found it. A row with no
+  // created_at is taken as older: it can only make a venue known, never new.
+  const before = snapshot.list.filter((row) => row.createdAtMs === null || row.createdAtMs < t0);
+  const all = [...r.venues.values()].filter((v) => v.days.size > 0);
+  const { plan } = H.planVenues(all, identitiesOf(before), cities, { radiusKm });
+  const expected = new Map();
+  const left = {
+    heldBeforeFirstAnswer: 0, // known by BestTime id, place id or a near duplicate before T0
+    neverWritten: 0, // planned new, and no row carries its BestTime id
+    storedUnderAnotherStatus: 0, // its row is not 'harvested'
+    writtenBeforeItsAnswerHere: 0, // its row is older than an answer here that lists it: another pass wrote it
+    noCreatedAt: 0,
+    notPlannedNew: 0, // skipped by the replay's own rules (radius, type, name, signal, twins, claims)
+  };
+  const planned = new Set();
+  for (const item of plan) {
+    planned.add(item.venue.venueId);
+    if (item.kind !== 'new') { left.heldBeforeFirstAnswer++; continue; }
+    const stored = snapshot.identities.byBtId.get(item.venue.venueId);
+    if (!stored) { left.neverWritten++; continue; }
+    if (stored.besttime_status !== H.HARVEST_STATUS) { left.storedUnderAnotherStatus++; continue; }
+    if (stored.createdAtMs === null) { left.noCreatedAt++; continue; }
+    const lastAnswer = r.venueAnswered.get(item.venue.venueId);
+    if (!(stored.createdAtMs >= lastAnswer)) { left.writtenBeforeItsAnswerHere++; continue; }
+    expected.set(stored.id, {
+      item: { venue: item.venue, category: item.category, month: r.month }, city: stored.city,
+      cells: sortedCells(item.venue), seen: new Set(),
+    });
+  }
+  // A venue the corpus holds as harvested that this folder did not write:
+  // the other pass's, or a venue search's. Its rows are someone else's
+  // answers, so it is counted here and never compared.
+  let harvestedElsewhere = 0;
+  for (const v of all) {
+    if (!planned.has(v.venueId)) left.notPlannedNew++;
+    const stored = snapshot.identities.byBtId.get(v.venueId);
+    if (stored && stored.besttime_status === H.HARVEST_STATUS && !expected.has(stored.id)) harvestedElsewhere++;
+  }
+  return { expected, left, harvestedElsewhere, t0 };
+}
+
 async function runParity(opts, { log }) {
   const snapshot = loadIdentitySnapshot(opts.identitySnapshot);
-  const r = await replayFolder({ dir: opts.cacheDir, cities: opts.cities, radiusKm: opts.radiusKm });
+  const lacking = PARITY_SNAPSHOT_COLUMNS.filter((c) => !snapshot.columns.includes(c));
+  if (lacking.length) {
+    log(`${TAG} PARITY REFUSED: the snapshot lacks ${lacking.join(' and ')}, so which venues this folder's runs wrote `
+      + 'cannot be told from those another pass wrote (see THE SNAPSHOT in the header).');
+    return { exitCode: 1 };
+  }
+  const r = await replayFolder({ dir: opts.cacheDir, cities: opts.cities, radiusKm: opts.radiusKm, venueAnswered: true });
   log(`${TAG} PARITY: replayed ${opts.cities.join(' + ')} within ${opts.radiusKm} km from ${opts.cacheDir}: files `
     + `${r.filesRead}/${r.filesHeld} read, ${r.misses} misses${opts.expectMisses === null ? '' : ` (expected ${opts.expectMisses})`}, `
-    + `${num(r.venuesFound)} venues, month ${r.month === null ? 'UNKNOWN' : r.month}.`);
+    + `${num(r.venuesFound)} venues, month ${r.month === null ? 'UNKNOWN' : r.month}, answers fetched ${r.fetchedAt.min} to `
+    + `${r.fetchedAt.max}.`);
   if (r.abort) { log(`${TAG} PARITY REFUSED: ${r.abort}`); return { exitCode: 1, abort: r.abort }; }
   if (r.month === null) { log(`${TAG} PARITY REFUSED: the answers do not fix one month.`); return { exitCode: 1 }; }
   if (opts.expectMisses !== null && r.misses !== opts.expectMisses) {
     log(`${TAG} PARITY REFUSED: ${r.misses} misses, ${opts.expectMisses} expected.`);
     return { exitCode: 1 };
   }
-  const all = [...r.venues.values()].filter((v) => v.days.size > 0);
-  const { plan } = H.planVenues(all, snapshot.identities, opts.cities, { radiusKm: opts.radiusKm });
-  const expected = new Map();
-  let notHarvested = 0;
-  for (const item of plan) {
-    if (item.kind !== 'known_bt') continue;
-    if (snapshot.hasStatus && item.row.besttime_status !== H.HARVEST_STATUS) { notHarvested++; continue; }
-    const category = item.venue.type ? H.TYPE_TO_CATEGORY[item.venue.type] : undefined;
-    if (!category) continue;
-    expected.set(item.row.id, {
-      item: { venue: item.venue, category, month: r.month }, city: item.row.city, cells: sortedCells(item.venue), seen: new Set(),
-    });
-  }
-  log(`${TAG} PARITY: ${num(expected.size)} venues held by BestTime id to compare`
-    + `${snapshot.hasStatus ? ` (besttime_status 'harvested'; ${notHarvested} others left out)` : ' (the snapshot has no besttime_status, so every one)'}.`);
-  const header = HEADER.split(',');
+  const { expected, left, harvestedElsewhere } = parityVenues(r, snapshot, opts.cities, opts.radiusKm);
+  log(`${TAG} PARITY: ${num(expected.size)} venues this folder's runs wrote to compare (planned new against the corpus `
+    + `before ${r.fetchedAt.min}, stored 'harvested', created after every answer here that lists them). Left out: `
+    + `${dropText(left) || 'none'}. Of those, ${num(harvestedElsewhere)} are stored 'harvested' from another pass's answers, `
+    + 'never compared.');
+  const header = HEADER_FIELDS;
   const mismatches = Object.fromEntries(header.map((h) => [h, 0]));
   const examples = [];
   let rowsCompared = 0;
   let rowsEqual = 0;
   let extra = 0;
+  let nonWeeklySkipped = 0;
   let headerSeen = false;
-  const input = fs.createReadStream(opts.exportCsv, { encoding: 'utf8' });
-  const lines = readline.createInterface({ input, crlfDelay: Infinity });
-  let pending = '';
-  for await (const line of lines) {
-    const text = pending ? `${pending}\n${line}` : line;
-    if ((text.match(/"/g) || []).length % 2 === 1) { pending = text; continue; }
-    pending = '';
+  for await (const text of exportRecords(opts.exportCsv)) {
     if (!headerSeen) {
       if (text !== HEADER) {
         log(`${TAG} PARITY REFUSED: ${opts.exportCsv} does not open with the export's HEADER.`);
-        lines.close();
         return { exitCode: 1 };
       }
       headerSeen = true;
@@ -1224,6 +1600,12 @@ async function runParity(opts, { log }) {
     const exp = expected.get(id);
     if (!exp) continue;
     const got = parseCsv(text)[0];
+    // A live reading (or a user report) of the same venue and slot is no
+    // weekly cell: the generator writes weekly rows only.
+    if (got[EXPORT_COLUMNS.isRealtime] !== '0' || got[EXPORT_COLUMNS.labelProvenance] !== 'weekly') {
+      nonWeeklySkipped++;
+      continue;
+    }
     const dow = Number(got[1]);
     const hour = Number(got[2]);
     const cell = exp.cells.find((c) => c.dayOfWeek === dow && c.hour === hour);
@@ -1251,13 +1633,15 @@ async function runParity(opts, { log }) {
   const columns = Object.entries(mismatches).filter(([, n]) => n > 0);
   log(`${TAG} PARITY: ${num(rowsCompared)} rows compared, ${num(rowsEqual)} equal in every column but city; `
     + `${num(missing)} generated rows absent from the export (${venuesAbsent} venues with none there), `
-    + `${num(extra)} export rows of these venues not generated.`);
+    + `${num(extra)} weekly export rows of these venues not generated; ${num(nonWeeklySkipped)} live or reported rows of `
+    + 'theirs skipped.');
   log(`${TAG} PARITY mismatches by column: ${columns.map(([k, n]) => `${k} ${num(n)}`).join(', ') || 'none'}.`);
   for (const e of examples) log(`  ${e}`);
   const pass = expected.size > 0 && rowsCompared > 0 && rowsEqual === rowsCompared && missing === 0 && extra === 0;
   log(`${TAG} PARITY ${pass ? 'PASS' : 'FAIL'}.`);
   return {
-    exitCode: pass ? 0 : 1, venues: expected.size, rowsCompared, rowsEqual, missing, extra, mismatches, examples,
+    exitCode: pass ? 0 : 1, venues: expected.size, rowsCompared, rowsEqual, missing, extra, nonWeeklySkipped, mismatches,
+    examples, left, harvestedElsewhere,
   };
 }
 
@@ -1282,7 +1666,9 @@ module.exports = {
   replayCity,
   monthAcrossZones,
   parseCsv,
+  parseTimestamp,
   loadIdentitySnapshot,
+  readExportVenues,
   keepAwayIndex,
   peakFromSums,
   histogramMode,
@@ -1292,6 +1678,8 @@ module.exports = {
   numeric21,
   weeklyRow,
   sortedCells,
+  weekOf,
+  cellsOfWeek,
   globalMarkets,
   globalPass,
   WORLD_CACHE_CITY,

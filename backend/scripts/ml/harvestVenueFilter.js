@@ -1196,9 +1196,13 @@ function nearIndex(rows) {
 // ---------------------------------------------------------------------------
 // The HTTP side.
 // ---------------------------------------------------------------------------
-function abortError(message) {
+// `extra` marks what kind of abort it is: { dayCheck: true } on the three
+// refusals of a record for another day or a day that named none, so a reader
+// of the error (train/importFilterCache.js) can tell them from the rest.
+function abortError(message, extra = null) {
   const err = new Error(message);
   err.abort = true;
+  if (extra) Object.assign(err, extra);
   return err;
 }
 
@@ -1579,7 +1583,7 @@ async function harvestDay(ctx, tiles, day, onLeaf = null) {
   // would file one weekday's curve under another. Refuse the whole day.
   if (mismatched > 0) {
     throw abortError(`BestTime answered ${mismatched} venues for a different day than ${BT_DAY_NAMES[day]} (day_int=${day}). `
-      + 'The day parameter is not being honoured; nothing from this run is written.');
+      + 'The day parameter is not being honoured; nothing from this run is written.', { dayCheck: true });
   }
   if (unverifiable > 0) ctx.stats.unverifiable += unverifiable;
   return { leaves, byVenue };
@@ -1606,14 +1610,14 @@ function checkMarketDays(ctx, city) {
     const asked = [...ctx.otherDays.entries()].sort((a, b) => a[0] - b[0])
       .map(([day, n]) => `${n} when ${BT_DAY_NAMES[day]} was asked`).join(', ');
     throw abortError(`BestTime answered ${ctx.stats.otherDay} venues for a different day than the one asked (${asked}). `
-      + 'The day parameter is not being honoured; nothing from this run is written.');
+      + 'The day parameter is not being honoured; nothing from this run is written.', { dayCheck: true });
   }
   const tally = ctx.dayTally || new Map();
   ctx.dayTally = new Map();
   for (const [day, t] of [...tally.entries()].sort((a, b) => a[0] - b[0])) {
     if (t.unverifiable > 0 && t.verified === 0) {
       throw abortError(`none of the ${t.unverifiable} venues for ${BT_DAY_NAMES[day]} in ${city} said which day they are for; `
-        + 'nothing is written.');
+        + 'nothing is written.', { dayCheck: true });
     }
   }
 }
@@ -1774,14 +1778,19 @@ function placeVenue(lat, lng, markets) {
 // Three options a harvest run never passes, for train/importFilterCache.js,
 // which plans hundreds of cities config.js does not list in one pass:
 // `markets` replaces otherMarkets(cities) as the centroids placeVenue reads
-// (PA still first), `radiusKmOf(cityKey)` gives each city its own radius in
-// place of `radiusKm`, and `onSkip(venue, reason)` hears every skip as it is
-// counted, under the same name `skipped` counts it by.
+// (PA still first), `insideRadius(venue, where)` replaces the radius rule
+// (where.km within `radiusKm` of the city it is placed in) with the caller's
+// own, at the same step, and `onSkip(venue, reason)` hears every skip as it
+// is counted, under the same name `skipped` counts it by. The import's
+// cities each have their own radius, and a venue inside a large circle can
+// sit nearer a small neighbour's centroid than its own: placed in the
+// neighbour, it is still inside a circle that was asked, which one radius
+// for every city can never produce (|PB| < |PA| <= r gives |PB| < r).
 function planVenues(venues, identities, cities, {
   radiusKm = DEFAULT_RADIUS_KM,
   categoryOf = (v) => (v.type ? TYPE_TO_CATEGORY[v.type] : undefined),
   markets = null,
-  radiusKmOf = null,
+  insideRadius = null,
   onSkip = null,
 } = {}) {
   const plan = [];
@@ -1798,7 +1807,6 @@ function planVenues(venues, identities, cities, {
   const claimedRows = new Set();
   const nearRows = nearIndex(identities.nearby || []);
   const placeAmong = markets || otherMarkets(cities);
-  const radiusOf = radiusKmOf || (() => radiusKm);
   const placed = new Map();
   const rest = [];
   // Pass one: placement, and every venue this corpus already holds by its
@@ -1865,7 +1873,7 @@ function planVenues(venues, identities, cities, {
       plan.push({ kind: 'known_near', venue: v, row, city: where.cityKey, meters: near.meters });
       continue;
     }
-    if (where.km > radiusOf(where.cityKey)) { skip(v, 'outsideRadius'); continue; }
+    if (insideRadius ? !insideRadius(v, where) : where.km > radiusKm) { skip(v, 'outsideRadius'); continue; }
     const category = categoryOf(v);
     if (!category) { skip(v, 'unmappedType'); continue; }
     if (!v.name) { skip(v, 'noName'); continue; }

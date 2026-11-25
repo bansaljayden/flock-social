@@ -10,22 +10,37 @@
 //     not the 404s the filling run recorded;
 //   * the import replays a city from its folder alone, around the plan's own
 //     centroid, and refuses a city whose files are not all read, whose misses
-//     are not progress.json's notFound (a partial city), that the plan marks
-//     config:true or whose key is a holdout, beijing or a training city (those
-//     folders are never opened);
-//   * one global placement: a venue nearer a training city or a holdout is
-//     dropped, one inside two cities' circles is one venue;
-//   * with an identity snapshot, a venue ml_venues holds is dropped, and so is
-//     one within 2 km of any ml_venues row; without one, both are "pending";
+//     are not progress.json's notFound (a partial city, or one with no count),
+//     whose replay stopped (a record for another day, a weekday that named
+//     none, an answer with no venue list, each by its own name), with a
+//     malformed record, whose month is not one, whose progress record
+//     disagrees with the plan, that the plan marks config:true or whose key is
+//     a holdout, beijing or a training city (those folders are never opened);
+//   * one global placement: a venue nearer a training city, a holdout, beijing
+//     or a refused cache city is dropped, and so is one within 80 km of a
+//     holdout or beijing wherever it is placed; one inside two cities' circles
+//     is one venue, its record the city it is placed in's, its missing days
+//     filled from the other; one inside a large circle but nearer a small
+//     neighbour is kept, under the neighbour;
+//   * with an identity snapshot, a venue ml_venues holds (by BestTime id,
+//     place id or as a near-duplicate) is dropped, and so is one within 2 km
+//     of any ml_venues row or of any venue the export holds; the 2 km search
+//     reaches every grid cell 2 km spans, at any latitude; without the
+//     snapshot both are "pending"; an export holding a venue the snapshot
+//     lacks, or cache rows already, is refused;
 //   * the rows: the export's 48-column HEADER, city world_cache, synthetic ids
 //     from 1,000,000,000, no Google types or price, month 11 and fall, the
 //     venue's own value as its baseline, rating as NUMERIC(2,1) stores it;
-//     the sidecar and the manifest's SHA-256s;
-//   * the peak-hour check flags a city whose bar mode moves 3 h or more from
-//     the training cities', and --write leaves it out unless named;
+//     the sidecar and the manifest's SHA-256s, the export's among them;
+//   * the peak-hour check flags a city whose bar or nightclub mode moves 3 h
+//     or more from the training cities' (3 h flags, 2 h does not, in both
+//     directions and for nightclubs too), and --write leaves it out unless
+//     named;
 //   * END TO END: fixture answers written by the harvester's own --offline
 //     --commit into a real migrated Postgres, exported by the real exporter,
-//     and --parity finds every exported row equal to the generator's.
+//     and --parity finds every exported weekly row of the venues this folder
+//     wrote equal to the generator's, leaving out live rows and the venues
+//     another pass wrote (by the snapshot's created_at), never as mismatches.
 //
 // HOW TO RUN
 //   cd backend && node --test __tests__/importFilterCache.test.js
@@ -100,27 +115,36 @@ function record(v, day) {
 }
 
 // A fake Venue Filter answering by box, day and page; `notFoundWhen` makes a
-// question 404, which the harvest (and the cacher) never cache.
-function fakeFilter(venues, { notFoundWhen = () => false } = {}) {
+// question 404, which the harvest (and the cacher) never cache; `omit` leaves
+// a venue out of one day's answers; `mutate` rewrites a record; `asked`
+// collects every filter URL in the order it was asked.
+function fakeFilter(venues, { notFoundWhen = () => false, omit = () => false, mutate = null, asked = null } = {}) {
   return async (input) => {
     const url = new URL(String(input));
     if (url.pathname !== '/api/v1/venues/filter') return jsonResponse(404, {});
+    if (asked) asked.push(String(input));
     const p = url.searchParams;
     const day = Number(p.get('day_int'));
     const box = { s: Number(p.get('lat_min')), n: Number(p.get('lat_max')), w: Number(p.get('lng_min')), e: Number(p.get('lng_max')) };
     const page = Number(p.get('page'));
     const limit = Number(p.get('limit'));
-    const inBox = venues.filter((v) => v.lat >= box.s && v.lat <= box.n && v.lng >= box.w && v.lng <= box.e);
+    const inBox = venues.filter((v) => v.lat >= box.s && v.lat <= box.n && v.lng >= box.w && v.lng <= box.e && !omit({ day, v }));
     if (notFoundWhen({ day, box, page, inBox })) return jsonResponse(404, {});
     const slice = inBox.slice(page * limit, page * limit + limit);
-    return jsonResponse(200, { status: 'OK', venues: slice.map((v) => record(v, day)), venues_n: slice.length });
+    const recs = slice.map((v) => (mutate ? mutate({ day, page, v }, record(v, day)) : record(v, day)));
+    return jsonResponse(200, { status: 'OK', venues: recs, venues_n: recs.length });
   };
 }
 
+const answerFile = (url) => H.cacheFileName(H.cacheKeyUrl(url));
+
 // Fills `dir` the way the cacher did: the harvester's own questions, asked
 // online against the fake with --cache-dir, every answer kept. Returns the
-// 404 count, which is what progress.json records as notFound.
-async function fillCache(dir, { cities, radiusKm, centroids = null, venues, notFoundWhen }) {
+// 404 count, which is what progress.json records as notFound, and the files
+// of the first and last questions asked.
+async function fillCache(dir, {
+  cities, radiusKm, centroids = null, venues, notFoundWhen, omit, mutate, fetchedAt = FETCHED_AT,
+}) {
   fs.mkdirSync(dir, { recursive: true });
   const opts = {
     cacheDir: dir, offline: false, cities, days: [0, 1, 2, 3, 4, 5, 6], tileKm: 20, radiusKm, resultCap: 500, pageSize: 100,
@@ -132,8 +156,9 @@ async function fillCache(dir, { cities, radiusKm, centroids = null, venues, notF
     city: H.emptyCityStats(tilePlan.length), area: null, dayTally: new Map(), otherDays: new Map(), secrets: [FIXTURE_KEY],
     centroids: centroids || undefined, quiet: true,
   };
+  const asked = [];
   const saved = globalThis.fetch;
-  globalThis.fetch = fakeFilter(venues, { notFoundWhen });
+  globalThis.fetch = fakeFilter(venues, { notFoundWhen, omit, mutate, asked });
   try {
     for (const { area, tile } of tilePlan) {
       ctx.area = area;
@@ -145,16 +170,25 @@ async function fillCache(dir, { cities, radiusKm, centroids = null, venues, notF
   for (const f of fs.readdirSync(dir)) {
     const file = path.join(dir, f);
     const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
-    entry.fetchedAt = FETCHED_AT;
+    entry.fetchedAt = fetchedAt;
     fs.writeFileSync(file, JSON.stringify(entry));
   }
-  return { notFound: ctx.stats.notFound, files: fs.readdirSync(dir).length };
+  return {
+    notFound: ctx.stats.notFound, files: fs.readdirSync(dir).length,
+    firstFile: path.join(dir, answerFile(asked[0])), lastFile: path.join(dir, answerFile(asked[asked.length - 1])),
+  };
 }
 
 const progressRecord = (c, notFound, state = 'done') => ({
   name: c.key, lat: c.lat, lon: c.lon, radiusKm: c.radiusKm, config: false, note: '', dir: `${c.key}-2026-11-r${c.radiusKm}`,
   state, notFound, refusedQuestions: 0, oddAnswers: 0, otherDay: 0, truncated: 0,
 });
+
+const rewriteAnswer = (file, change) => {
+  const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
+  change(entry);
+  fs.writeFileSync(file, JSON.stringify(entry));
+};
 
 // ---------------------------------------------------------------------------
 // The fixture cache: a plan, its progress, its folders, a training reference.
@@ -164,9 +198,23 @@ const C = {
   twintown: { key: 'twintown', lat: 10.0, lon: 10.16, radiusKm: 10 },
   nearphilly: { key: 'nearphilly', lat: 40.05, lon: -75.0, radiusKm: 10 },
   nearmiami: { key: 'nearmiami', lat: 25.86, lon: -80.36, radiusKm: 12 },
+  nearbeijing: { key: 'nearbeijing', lat: 40.05, lon: 116.55, radiusKm: 10 },
+  peaktown: { key: 'peaktown', lat: -24.0, lon: -30.0, radiusKm: 10 },
+  // 44 km apart; bigcity's circle reaches past the point nearer smallcity.
+  bigcity: { key: 'bigcity', lat: -30.0, lon: -20.0, radiusKm: 30 },
+  smallcity: { key: 'smallcity', lat: -30.0, lon: -19.5436, radiusKm: 5 },
   partialtown: { key: 'partialtown', lat: 12.0, lon: 12.0, radiusKm: 10 },
   missytown: { key: 'missytown', lat: 14.0, lon: 14.0, radiusKm: 10 },
   extratown: { key: 'extratown', lat: 16.0, lon: 16.0, radiusKm: 10 },
+  nocounttown: { key: 'nocounttown', lat: -22.0, lon: -30.0, radiusKm: 5 },
+  wrongdaytown: { key: 'wrongdaytown', lat: -10.0, lon: -30.0, radiusKm: 5 },
+  nodaytown: { key: 'nodaytown', lat: -12.0, lon: -30.0, radiusKm: 5 },
+  brokentown: { key: 'brokentown', lat: -14.0, lon: -30.0, radiusKm: 5 },
+  malformtown: { key: 'malformtown', lat: -16.0, lon: -30.0, radiusKm: 5 },
+  movedtown: { key: 'movedtown', lat: -18.0, lon: -30.0, radiusKm: 5 },
+  decembertown: { key: 'decembertown', lat: -20.0, lon: -30.0, radiusKm: 5 },
+  // Refused (the cacher stopped it, no folder), 18.9 km north of testville.
+  haltedtown: { key: 'haltedtown', lat: 10.17, lon: 10.0, radiusKm: 10 },
 };
 const T = {
   bar: vn('ven_t_a_bar', 10.0, 10.0, 'BAR', 'ChIJtestvilleBarA00001', peakWeek(18), { name: 'Copper Kettle' }),
@@ -180,60 +228,148 @@ const T = {
   knownBt: vn('ven_t_h_knownbt', 9.96, 10.0, 'RESTAURANT', 'ChIJtestvilleKnownBtH1', weekFor(33)),
   knownPlace: vn('ven_t_i_knownpl', 10.0, 9.96, 'RESTAURANT', 'ChIJtestvilleKnownPlI1', weekFor(39)),
   near: vn('ven_t_j_near', 9.96, 10.04, 'RESTAURANT', 'ChIJtestvilleNearJ0001', weekFor(45)),
-  // Inside both testville's and twintown's boxes, nearer testville.
+  // Inside both testville's and twintown's boxes, nearer testville. Testville's
+  // answers leave it out on Thursday (day 3); twintown's hold every day.
   shared: vn('ven_t_k_shared', 10.0, 10.075, 'RESTAURANT', 'ChIJtestvilleSharedK01', weekFor(51)),
+  // 11 m from snapshot row 105, "The Brass Lantern": identity rule 4.
+  nearDup: vn('ven_t_l_neardup', 10.03, 10.03, 'RESTAURANT', 'ChIJtestvilleNearDupL1', weekFor(87), { name: 'Brass Lantern' }),
+  // In testville's box, 9.8 km from it and 9.1 km from haltedtown.
+  edge: vn('ven_t_m_edge', 10.088, 10.0, 'RESTAURANT', 'ChIJtestvilleEdgeM0001', weekFor(93)),
 };
-const W = { bar: vn('ven_w_a_bar', 10.0, 10.2, 'BAR', 'ChIJtwintownBarA00001', peakWeek(22)) };
+const W = {
+  // Two hours off the training bars (22h) and nightclubs (23h): no flag.
+  bar: vn('ven_w_a_bar', 10.0, 10.2, 'BAR', 'ChIJtwintownBarA00001', peakWeek(0)),
+  // In both boxes, nearer twintown; testville's answers say 100 reviews,
+  // twintown's (the city it is placed in) 200.
+  both: vn('ven_w_b_both', 10.0, 10.09, 'RESTAURANT', 'ChIJtwintownBothB0001', weekFor(5), { reviews: 200 }),
+  club: vn('ven_w_c_club', 10.01, 10.2, 'CLUBS', 'ChIJtwintownClubC0001', peakWeek(1)),
+  // 1.1 km from the export's row for venue 104 (not from the snapshot's).
+  exportNear: vn('ven_w_d_exportnear', 10.02, 10.2, 'RESTAURANT', 'ChIJtwintownExportD001', weekFor(11)),
+};
 const NP = { venue: vn('ven_np_a', 40.05, -75.0, 'BAR', 'ChIJnearphillyA000001', weekFor(57)) };
 const NM = {
   holdout: vn('ven_nm_a_holdout', 25.80, -80.25, 'BAR', 'ChIJnearmiamiHoldout01', weekFor(63)),
+  // Placed in nearmiami, 21 km from Miami's centroid.
   club: vn('ven_nm_b_club', 25.87, -80.37, 'CLUBS', 'ChIJnearmiamiClubB0001', peakWeek(1)),
 };
+const NB = {
+  beijing: vn('ven_nb_a_beijing', 39.97, 116.47, 'BAR', 'ChIJnearbeijingA00001', weekFor(61)),
+  near: vn('ven_nb_b_near', 40.10, 116.60, 'BAR', 'ChIJnearbeijingB00001', weekFor(67)),
+};
+const P = {
+  // Three hours off, each way: both flag.
+  bar: vn('ven_p_a_bar', -24.0, -30.0, 'BAR', 'ChIJpeaktownBarA00001', peakWeek(19)),
+  club: vn('ven_p_b_club', -24.01, -30.0, 'CLUBS', 'ChIJpeaktownClubB0001', peakWeek(2)),
+};
+const BC = {
+  home: vn('ven_bc_a_home', -30.0, -20.0, 'RESTAURANT', 'ChIJbigcityHomeA00001', weekFor(13)),
+  // 27 km from bigcity (inside its 30 km), 17 km from smallcity (outside its 5).
+  edge: vn('ven_bc_b_edge', -30.0, -19.7199, 'RESTAURANT', 'ChIJbigcityEdgeB00001', weekFor(17)),
+  // In bigcity's box, inside neither circle.
+  beyond: vn('ven_bc_c_beyond', -29.75, -19.75, 'RESTAURANT', 'ChIJbigcityBeyondC001', weekFor(19)),
+};
+const SC = { home: vn('ven_sc_a_home', -30.0, -19.5436, 'RESTAURANT', 'ChIJsmallcityHomeA0001', weekFor(23)) };
 const PT = { venue: vn('ven_pt_a', 12.0, 12.0, 'BAR', 'ChIJpartialtownA00001', weekFor(69)) };
 const MT = { venue: vn('ven_mt_a', 14.0, 14.0, 'BAR', 'ChIJmissytownA0000001', weekFor(75)) };
 const XT = { venue: vn('ven_xt_a', 16.0, 16.0, 'BAR', 'ChIJextratownA0000001', weekFor(81)) };
+const one = (key, seed) => vn(`ven_${key}_a`, C[key].lat, C[key].lon, 'BAR', `ChIJ${key}A`.padEnd(21, '0'), weekFor(seed));
 
 let root;
 let planFile;
 let refDir;
 let snapshotFile;
+let exportDir;
+let absentExportDir;
+let cacheExportDir;
 const plan = [
   { key: 'miami', config: true, radiusKm: 40, note: 'HOLDOUT city' },
   ...Object.values(C).map((c) => ({ key: c.key, name: c.key, lat: c.lat, lon: c.lon, radiusKm: c.radiusKm })),
+  { key: 'lehigh', name: 'Lehigh, a training city, not marked config', lat: 18.5, lon: 18.5, radiusKm: 10 },
   { key: 'tokyo', name: 'Tokyo, not marked config', lat: 35.6762, lon: 139.6503, radiusKm: 20 },
   { key: 'unreachedville', name: 'never cached', lat: 18.0, lon: 18.0, radiusKm: 10 },
 ];
 
+// An export file: the HEADER, then one weekly row per [id, lat, lng, city].
+function writeExportDir(train, holdout) {
+  const dir = tmp('flock-import-export-fixture-');
+  const line = ([id, lat, lng, city]) => exporter.rowToCsv(I.weeklyRow(
+    { venue: { lat, lng, rating: 4.2, reviews: 30 }, category: 'bar', month: 11 },
+    { dayOfWeek: 1, hour: 20, busyness: 50 }, { venueId: id, city }
+  ));
+  fs.writeFileSync(path.join(dir, 'training_data.csv'), `${[exporter.HEADER, ...train.map(line)].join('\n')}\n`);
+  fs.writeFileSync(path.join(dir, 'holdout_data.csv'), `${[exporter.HEADER, ...holdout.map(line)].join('\n')}\n`);
+  return dir;
+}
+
 async function buildFixture() {
   root = tmp('flock-import-cache-');
   const progress = { cities: {} };
-  const one = async (c, venues, opts = {}) => {
+  const fill = async (c, venues, opts = {}) => {
     const dir = path.join(root, `${c.key}-2026-11-r${c.radiusKm}`);
     const centroids = { [c.key]: { lat: c.lat, lon: c.lon } };
-    const r = await fillCache(dir, { cities: [c.key], radiusKm: c.radiusKm, centroids, venues, notFoundWhen: opts.notFoundWhen });
-    progress.cities[c.key] = progressRecord(c, opts.recordNotFound ?? r.notFound, opts.state);
+    const r = await fillCache(dir, {
+      cities: [c.key], radiusKm: c.radiusKm, centroids, venues,
+      notFoundWhen: opts.notFoundWhen, omit: opts.omit, mutate: opts.mutate, fetchedAt: opts.fetchedAt,
+    });
+    progress.cities[c.key] = { ...progressRecord(c, opts.recordNotFound ?? r.notFound, opts.state), ...(opts.progress || {}) };
     return { dir, ...r };
   };
   // testville 404s one empty question, so its misses are real and recorded.
   const emptyDay3 = ({ day, inBox, page }) => day === 3 && page === 0 && inBox.length === 0;
-  const tv = await one(C.testville, Object.values(T), { notFoundWhen: emptyDay3 });
+  const tv = await fill(C.testville, [...Object.values(T), { ...W.both, reviews: 100 }], {
+    notFoundWhen: emptyDay3, omit: ({ day, v }) => day === 3 && v.id === T.shared.id,
+  });
   assert.ok(tv.notFound >= 0);
-  await one(C.twintown, [W.bar, T.shared]);
-  await one(C.nearphilly, [NP.venue]);
-  await one(C.nearmiami, [NM.holdout, NM.club]);
+  await fill(C.twintown, [...Object.values(W), T.shared]);
+  await fill(C.nearphilly, [NP.venue]);
+  await fill(C.nearmiami, [NM.holdout, NM.club]);
+  await fill(C.nearbeijing, [NB.beijing, NB.near]);
+  await fill(C.peaktown, [P.bar, P.club]);
+  await fill(C.bigcity, [...Object.values(BC), SC.home]);
+  await fill(C.smallcity, [...Object.values(BC), SC.home]);
   // partialtown: stopped by the cacher, and one question it never answered.
-  await one(C.partialtown, [PT.venue], { state: 'stopped', recordNotFound: 0, notFoundWhen: ({ day, page }) => day === 5 && page === 0 });
+  await fill(C.partialtown, [PT.venue], { state: 'stopped', recordNotFound: 0, notFoundWhen: ({ day, page }) => day === 5 && page === 0 });
   // missytown: a cache file lost after the fact, so misses exceed notFound.
-  const mt = await one(C.missytown, [MT.venue]);
+  const mt = await fill(C.missytown, [MT.venue]);
   fs.unlinkSync(path.join(mt.dir, fs.readdirSync(mt.dir)[0]));
   // extratown: one answer no question of the replay asks.
-  const xt = await one(C.extratown, [XT.venue]);
+  const xt = await fill(C.extratown, [XT.venue]);
   const stray = 'https://besttime.app/api/v1/venues/filter?lat_min=1.000&page=99';
   fs.writeFileSync(path.join(xt.dir, H.cacheFileName(stray)), JSON.stringify({ url: stray, fetchedAt: FETCHED_AT, data: { venues: [] } }));
-  // The holdout's folder holds something no reader could parse: opening it at
-  // all would show.
-  fs.mkdirSync(path.join(root, 'miami-2026-11-r40'));
-  fs.writeFileSync(path.join(root, 'miami-2026-11-r40', `${'0'.repeat(64)}.json`), 'not json');
+  // nocounttown: progress.json kept no notFound.
+  await fill(C.nocounttown, [one('nocounttown', 71)], { progress: { notFound: undefined } });
+  // wrongdaytown: the LAST question's answer also lists a venue for another
+  // day, so the day check is all that stands between it and acceptance.
+  const wd = await fill(C.wrongdaytown, [one('wrongdaytown', 73)]);
+  rewriteAnswer(wd.lastFile, (entry) => {
+    const asked = Number(new URL(entry.url).searchParams.get('day_int'));
+    entry.data.venues.push(record(vn('ven_wd_z_otherday', -10.0, -30.0, 'BAR', 'ChIJwrongdaytownZ0001', weekFor(1)), (asked + 1) % 7));
+  });
+  // nodaytown: on Friday (day 4) no record says which day it is for.
+  await fill(C.nodaytown, [one('nodaytown', 77)], {
+    mutate: ({ day }, rec) => { if (day === 4) { delete rec.day_int; delete rec.day_info; } return rec; },
+  });
+  // brokentown: the first answer has no venue list.
+  const bk = await fill(C.brokentown, [one('brokentown', 79)]);
+  rewriteAnswer(bk.firstFile, (entry) => { entry.data = { status: 'error', message: 'Internal failure' }; });
+  // malformtown: Wednesday's record has no curve.
+  await fill(C.malformtown, [one('malformtown', 83)], {
+    mutate: ({ day }, rec) => { if (day === 2) delete rec.day_raw_whole; return rec; },
+  });
+  // movedtown: cached around another centroid than the plan's.
+  await fill(C.movedtown, [one('movedtown', 85)], { progress: { lat: -18.5 } });
+  // decembertown: fetched on 30 November, already December east of UTC+12.
+  await fill(C.decembertown, [one('decembertown', 89)], { fetchedAt: '2026-11-30T12:00:00.000Z' });
+  // haltedtown: the cacher stopped it before it made a folder.
+  progress.cities.haltedtown = progressRecord(C.haltedtown, 0, 'stopped');
+  // A training city's key on a plan entry the plan forgot to mark config,
+  // and the holdout's folder: each holds something no reader could parse, so
+  // opening it at all would show.
+  for (const [key, dir] of [['lehigh', 'lehigh-2026-11-r10'], ['miami', 'miami-2026-11-r40']]) {
+    fs.mkdirSync(path.join(root, dir));
+    fs.writeFileSync(path.join(root, dir, `${'0'.repeat(64)}.json`), 'not json');
+    progress.cities[key] = progressRecord({ key, lat: 18.5, lon: 18.5, radiusKm: Number(dir.slice(-2)) }, 0);
+  }
   progress.cities.miami = { ...progressRecord({ key: 'miami', lat: 25.7617, lon: -80.1918, radiusKm: 40 }, 0), config: true };
   fs.writeFileSync(path.join(root, 'progress.json'), JSON.stringify(progress));
   planFile = path.join(root, 'cities.json');
@@ -264,8 +400,15 @@ async function buildFixture() {
     '103,ven_unrelated,ChIJsnapshotUnrelated1,Unrelated Row,9.9735,10.04,philly,harvested',
     // 2.5 km north of ven_t_d_cafe: outside the 2 km rule.
     '104,ven_far_row,ChIJsnapshotFarRow0001,Far Row,10.0625,10.0,philly,',
+    '105,,ChIJsnapshotNearDup01,The Brass Lantern,10.0301,10.03,philly,',
     '',
   ].join('\n'));
+  // The export the rows join: 104 sits 1.1 km from ven_w_d_exportnear there,
+  // wherever the snapshot puts it.
+  exportDir = writeExportDir([[101, 9.96, 10.0, 'philly'], [104, 10.03, 10.2, 'philly'], [103, 9.9735, 10.04, 'philly']],
+    [[102, 10.0, 9.96, 'miami']]);
+  absentExportDir = writeExportDir([[101, 9.96, 10.0, 'philly'], [999, 50.0, 50.0, 'philly']], []);
+  cacheExportDir = writeExportDir([[101, 9.96, 10.0, 'philly'], [1000000000, 50.0, 50.0, 'world_cache']], []);
 }
 
 async function runImport(args) {
@@ -275,6 +418,8 @@ async function runImport(args) {
 }
 
 const baseArgs = () => [`--cache-root=${root}`, `--plan=${planFile}`];
+const keptOf = (result, id) => result.kept.filter((k) => k.venue.venueId === id);
+const reasons = (c) => c.reasons.map((r) => r.reason).sort();
 
 // ---------------------------------------------------------------------------
 // Postgres, for the --offline harvest and the parity proof.
@@ -336,6 +481,11 @@ test('the reference peak is harvestVenueFilter.peakHourHistogram\'s, and shifts 
     const hist = H.peakHourHistogram([{ category: 'bar', cells }]);
     const want = hist.has('bar') ? hist.get('bar').indexOf(1) : -1;
     assert.equal(I.peakFromSums(sum, cnt), want, `trial ${k}`);
+    // The compact week holds exactly the cells, in the export's order.
+    const { week, rows } = I.weekOf(new Map(days));
+    const sorted = [...cells].sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.hour - b.hour);
+    assert.equal(rows, cells.length);
+    assert.deepEqual(I.cellsOfWeek(week), sorted, `trial ${k}`);
   }
   assert.equal(I.hourShift(22, 18), -4);
   assert.equal(I.hourShift(23, 1), 2);
@@ -348,9 +498,28 @@ test('the cache\'s categories are the export\'s categories, so the category enco
   for (const category of new Set(Object.values(H.TYPE_TO_CATEGORY))) assert.ok(corpus.has(category), category);
 });
 
-test('a CSV field may hold commas, doubled quotes and line breaks', () => {
+test('a CSV field may hold commas, doubled quotes and line breaks; created_at reads as ISO or as Postgres prints it', () => {
   assert.deepEqual(I.parseCsv('a,b,c\n1,"x, ""y""\nz",\r\n'), [['a', 'b', 'c'], ['1', 'x, "y"\nz', '']]);
   assert.throws(() => I.parseCsv('a,"b\n'), /never closes/);
+  const at = Date.parse('2026-11-18T23:45:12.123Z');
+  for (const s of ['2026-11-18T23:45:12.123456Z', '2026-11-18 23:45:12.123456+00', '2026-11-18 18:45:12.123-05:00',
+    '2026-11-18 18:45:12.123-0500']) {
+    assert.equal(I.parseTimestamp(s), at, s);
+  }
+  assert.ok(Number.isNaN(I.parseTimestamp('Tue Nov 18 2026')));
+});
+
+test('the 2 km rule searches every grid cell 2 km reaches, east and west, at any latitude', () => {
+  // At 10 degrees a 0.02 degree cell is 2.2 km wide: a row 1.5 km due east
+  // across a cell edge is one cell over, and so is one due west.
+  const east = I.keepAwayIndex([{ id: 1, latitude: 10.0, longitude: 10.033 }])(10.0, 10.0195);
+  assert.ok(east && east.row.id === 1 && east.km > 1.4 && east.km < 1.6, JSON.stringify(east));
+  const west = I.keepAwayIndex([{ id: 2, latitude: 10.0, longitude: 10.006 }])(10.0, 10.0201);
+  assert.ok(west && west.row.id === 2 && west.km > 1.4 && west.km < 1.6, JSON.stringify(west));
+  // At 60 degrees it is 1.1 km wide: 1.5 km east is two cells over.
+  const north = I.keepAwayIndex([{ id: 3, latitude: 60.0, longitude: 10.0469 }])(60.0, 10.0199);
+  assert.ok(north && north.row.id === 3 && north.km > 1.4 && north.km < 1.6, JSON.stringify(north));
+  assert.equal(I.keepAwayIndex([{ id: 4, latitude: 60.0, longitude: 10.065 }])(60.0, 10.0199), null, '2.5 km is outside');
 });
 
 test('a weekly row is the export\'s 48 columns, field for field', () => {
@@ -366,15 +535,21 @@ test('a weekly row is the export\'s 48 columns, field for field', () => {
 
 test('the arguments refuse what would make an import unsafe', () => {
   const p = (...a) => I.parseImportArgs(['node', 'x', ...a]);
+  const write = ['--write', '--cache-root=a', '--plan=b', '--out-dir=o'];
   assert.match(p().error, /exactly one/);
   assert.match(p('--dry-run', '--write', '--cache-root=a', '--plan=b').error, /exactly one/);
   assert.match(p('--dry-run').error, /--cache-root and --plan/);
-  assert.match(p('--write', '--cache-root=a', '--plan=b', '--out-dir=o', '--harvest-cache=h').error, /--identity-snapshot/);
-  assert.match(p('--write', '--cache-root=a', '--plan=b', '--out-dir=o', '--identity-snapshot=s').error, /--harvest-cache/);
-  assert.match(p('--write', '--cache-root=a', '--plan=b', '--out-dir=o', '--identity-snapshot=s', '--harvest-cache=h', '--only=x').error, /--only/);
+  assert.match(p(...write, '--harvest-cache=h', '--export-dir=e').error, /--identity-snapshot/);
+  assert.match(p(...write, '--identity-snapshot=s', '--harvest-cache=h').error, /--export-dir/);
+  assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e').error, /--harvest-cache/);
+  assert.match(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h', '--only=x').error, /--only/);
+  assert.equal(p(...write, '--identity-snapshot=s', '--export-dir=e', '--harvest-cache=h').error, undefined);
+  assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--export-dir=e').error, /checked against --identity-snapshot/);
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--accept-peak-flags=x').error, /--write/);
   assert.match(p('--parity', '--cache-dir=a', '--identity-snapshot=s', '--export-csv=e', '--cities=miami', '--radius-km=20').error, /training-city/);
   assert.match(p('--parity', '--cache-dir=a', '--identity-snapshot=s', '--export-csv=e', '--cities=philly').error, /--radius-km/);
+  assert.match(p('--parity', '--cache-dir=a', '--identity-snapshot=s', '--export-csv=e', '--cities=philly', '--radius-km=20',
+    '--export-dir=d').error, /not --parity/);
   assert.match(p('--dry-run', '--cache-root=a', '--plan=b', '--bogus').error, /Unknown/);
   assert.equal(p('--dry-run', '--cache-root=a', '--plan=b').progress, path.join(path.resolve('a'), 'progress.json'));
   // A harvest-cache run folder names its run; --parity reads it, and refuses
@@ -391,56 +566,105 @@ test('the arguments refuse what would make an import unsafe', () => {
 // ---------------------------------------------------------------------------
 // The dry run over the fixture cache.
 // ---------------------------------------------------------------------------
-test('a dry run refuses holdout, config, partial and incomplete cities, and never opens a holdout folder', async () => {
+test('a dry run refuses every city that fails a rule, by that rule, and never opens a holdout or training city\'s folder', async () => {
   const { result, out } = await runImport(['--dry-run', ...baseArgs()]);
   assert.equal(result.exitCode, 0, out);
   const c = result.report.cities;
-  assert.deepEqual(c.miami.reasons.map((r) => r.reason), ['configCity']);
+  assert.deepEqual(reasons(c.miami), ['configCity']);
   assert.equal(c.miami.opened, false);
-  assert.match(out, /Folders never opened: miami-2026-11-r40/);
-  assert.deepEqual(c.tokyo.reasons.map((r) => r.reason), ['refusedCity']);
+  assert.match(out, /Folders never opened: lehigh-2026-11-r10, miami-2026-11-r40\./);
+  assert.deepEqual(reasons(c.tokyo), ['refusedCity']);
   assert.equal(c.tokyo.opened, false);
+  // A training city's key on an entry the plan did not mark config.
+  assert.deepEqual(reasons(c.lehigh), ['trainingCityKey']);
+  assert.equal(c.lehigh.opened, false);
   // The partial city: stopped, and a question it never answered.
-  assert.deepEqual(c.partialtown.reasons.map((r) => r.reason).sort(), ['cacherNotDone', 'missesNotNotFound']);
+  assert.deepEqual(reasons(c.partialtown), ['cacherNotDone', 'missesNotNotFound']);
   assert.equal(c.partialtown.misses, 1);
   assert.equal(c.partialtown.notFound, 0);
   // A lost file is a miss that was not a 404.
-  assert.deepEqual(c.missytown.reasons.map((r) => r.reason), ['missesNotNotFound']);
+  assert.deepEqual(reasons(c.missytown), ['missesNotNotFound']);
   assert.equal(c.missytown.misses, c.missytown.notFound + 1);
   // An answer the replay never asks for.
-  assert.deepEqual(c.extratown.reasons.map((r) => r.reason), ['unusedFiles']);
+  assert.deepEqual(reasons(c.extratown), ['unusedFiles']);
   assert.equal(c.extratown.filesRead, c.extratown.filesHeld - 1);
+  // No notFound to check misses against: refused twice over, by each check.
+  assert.deepEqual(reasons(c.nocounttown), ['missesNotNotFound', 'noNotFoundCount']);
+  assert.equal(c.nocounttown.notFound, null);
+  // A record for another day in the very last answer, and a weekday whose
+  // records all left the day out: every file read, the day check alone.
+  for (const key of ['wrongdaytown', 'nodaytown']) {
+    assert.deepEqual(reasons(c[key]), ['dayCheck'], key);
+    assert.equal(c[key].filesRead, c[key].filesHeld, key);
+    assert.equal(c[key].misses, c[key].notFound, key);
+  }
+  assert.match(c.wrongdaytown.reasons[0].detail, /for a different day/);
+  assert.match(c.nodaytown.reasons[0].detail, /said which day/);
+  assert.ok(c.nodaytown.unverifiable > 0);
+  // An answer with no venue list stops the replay: named for what it is.
+  assert.ok(reasons(c.brokentown).includes('replayAbort'), JSON.stringify(c.brokentown.reasons));
+  assert.ok(!reasons(c.brokentown).includes('dayCheck'));
+  assert.match(c.brokentown.reasons.find((r) => r.reason === 'replayAbort').detail, /without a venue list/);
+  assert.deepEqual(reasons(c.malformtown), ['malformedRecords']);
+  assert.equal(c.malformtown.malformed, 1);
+  assert.deepEqual(reasons(c.movedtown), ['progressDisagrees']);
+  assert.deepEqual(reasons(c.decembertown), ['monthUnknown']);
+  assert.deepEqual(reasons(c.haltedtown), ['cacherNotDone', 'noFolder']);
+  assert.equal(c.haltedtown.opened, false);
   assert.equal(c.unreachedville, undefined, 'a city the cacher never reached is neither accepted nor refused');
   assert.equal(result.report.totals.unreached, 1);
-  for (const key of ['testville', 'twintown', 'nearphilly', 'nearmiami']) {
+  const accepted = ['testville', 'twintown', 'nearphilly', 'nearmiami', 'nearbeijing', 'peaktown', 'bigcity', 'smallcity'];
+  for (const key of accepted) {
     assert.equal(c[key].state, 'accepted', key);
     assert.equal(c[key].filesRead, c[key].filesHeld, `${key} left a file unread`);
     assert.equal(c[key].misses, c[key].notFound, key);
+    assert.deepEqual([c[key].malformed, c[key].truncatedTiles, c[key].strayFiles], [0, 0, 0], key);
   }
-  assert.equal(result.report.totals.accepted, 4);
+  assert.equal(result.report.totals.accepted, accepted.length);
+  assert.match(out, /malformed 0 {2}no day 0 {2}cut 0 {2}stray 0/);
 });
 
-test('one global placement: training-city and holdout venues are dropped, a venue in two circles counts once', async () => {
+test('one global placement: training-city, holdout and beijing venues are dropped, a venue in two circles counts once', async () => {
   const { result } = await runImport(['--dry-run', ...baseArgs()]);
   const c = result.report.cities;
   const t = result.report.totals;
   assert.deepEqual(c.nearphilly.drops, { placedInTrainingCity: 1 });
   assert.equal(c.nearphilly.kept, 0);
   assert.deepEqual(t.placedInTrainingCity, { philly: 1 });
-  assert.deepEqual(c.nearmiami.drops, { placedInHoldoutCity: 1 });
-  assert.equal(c.nearmiami.kept, 1);
-  assert.equal(t.keptWithin80kmOfAHoldout, 1);
-  // The shared venue was found by both replays and is testville's alone.
-  assert.equal(t.venuesInTwoCircles, 1);
-  assert.equal(c.twintown.venuesFound, 2);
-  assert.equal(c.twintown.homeVenues, 1);
-  assert.equal(c.twintown.kept, 1);
-  const kept = result.kept.map((k) => k.venue.venueId).sort();
-  assert.ok(kept.includes(T.shared.id));
-  assert.equal(kept.filter((id) => id === T.shared.id).length, 1);
+  // Nearer Miami; and nearer nearmiami but 21 km from Miami.
+  assert.deepEqual(c.nearmiami.drops, { placedInHoldoutCity: 1, within80kmOfHoldoutOrBeijing: 1 });
+  assert.equal(c.nearmiami.kept, 0);
+  assert.deepEqual(c.nearbeijing.drops, { placedInBeijing: 1, within80kmOfHoldoutOrBeijing: 1 });
+  assert.equal(c.nearbeijing.kept, 0);
+  assert.equal(t.keptWithin80kmOfHoldoutOrBeijing, 0);
+  // Placed nearer the refused haltedtown, a market though it is refused.
+  assert.equal(c.testville.drops.placedInRefusedCacheCity, 1);
+  assert.equal(keptOf(result, T.edge.id).length, 0);
+  // The two venues in both circles are each one venue, and each takes its
+  // record from the city it is placed in, filling only the days that lacks.
+  assert.equal(t.venuesInTwoCircles, 2);
+  assert.equal(t.daysFilledFromAnotherCity, 1);
+  assert.equal(c.twintown.venuesFound, 5);
+  assert.equal(c.twintown.homeVenues, 4);
+  assert.equal(c.twintown.kept, 4);
+  const [shared] = keptOf(result, T.shared.id);
+  assert.equal(keptOf(result, T.shared.id).length, 1);
+  assert.deepEqual([shared.city, shared.daysHeld, shared.rows], ['testville', 7, 168]);
+  const [both] = keptOf(result, W.both.id);
+  assert.equal(keptOf(result, W.both.id).length, 1);
+  assert.deepEqual([both.city, both.venue.reviews, both.foundIn], ['twintown', 200, ['testville', 'twintown']]);
   // testville before the snapshot: the harvest's own new-venue rules only.
-  assert.deepEqual(c.testville.drops, { outsideRadius: 1, noPlaceId: 1, noName: 1, nearDuplicateInRun: 1 });
-  assert.equal(c.testville.kept, 7);
+  assert.deepEqual(c.testville.drops, {
+    outsideRadius: 1, noPlaceId: 1, noName: 1, nearDuplicateInRun: 1, placedInRefusedCacheCity: 1,
+  });
+  assert.equal(c.testville.kept, 8);
+  // Inside bigcity's 30 km circle, nearer smallcity, outside its 5 km: kept,
+  // in smallcity. In bigcity's box but inside neither circle: dropped.
+  const [edge] = keptOf(result, BC.edge.id);
+  assert.equal(edge && edge.city, 'smallcity');
+  assert.deepEqual(c.smallcity.drops, { outsideRadius: 1 });
+  assert.deepEqual([c.bigcity.kept, c.smallcity.kept], [1, 2]);
+  assert.equal(keptOf(result, BC.beyond.id).length, 0);
   assert.equal(t.identityRules, 'pending snapshot');
   assert.equal(t.keepAwayRule, 'pending snapshot');
   assert.equal(t.distinctVenues, t.kept + Object.values(t.drops).reduce((a, b) => a + b, 0));
@@ -452,70 +676,114 @@ test('with the snapshot, a venue the corpus holds and one within 2 km of a corpu
   const d = result.report.cities.testville.drops;
   assert.equal(d.knownByBesttimeId, 1);
   assert.equal(d.knownByPlaceId, 1);
+  assert.equal(d.knownNearDuplicate, 1);
   assert.equal(d.within2kmOfCorpusVenue, 1);
   const kept = new Set(result.kept.map((k) => k.venue.venueId));
-  for (const v of [T.knownBt, T.knownPlace, T.near]) assert.ok(!kept.has(v.id), v.id);
-  // 2.5 km from a corpus row is kept.
+  for (const v of [T.knownBt, T.knownPlace, T.near, T.nearDup]) assert.ok(!kept.has(v.id), v.id);
+  // 2.5 km from a corpus row is kept, and so is a venue only the export
+  // would show near one, when no export is given.
   assert.ok(kept.has(T.cafe.id));
+  assert.ok(kept.has(W.exportNear.id));
   assert.equal(result.report.totals.identityRules, 'applied');
-  assert.match(out, /4 ml_venues rows/);
+  assert.equal(result.report.totals.keepAwayRule, 'applied (snapshot only)');
+  assert.match(out, /5 ml_venues rows/);
 });
 
-test('the peak-hour check flags a city whose bar mode moves 3 hours or more, and only that', async () => {
+test('with the export, its positions join the 2 km rule, and an export the snapshot does not cover is refused', async () => {
+  const { result, out } = await runImport(['--dry-run', ...baseArgs(), `--identity-snapshot=${snapshotFile}`,
+    `--export-dir=${exportDir}`]);
+  assert.equal(result.exitCode, 0, out);
+  assert.deepEqual(result.report.cities.twintown.drops, { within2kmOfCorpusVenue: 1 });
+  assert.equal(keptOf(result, W.exportNear.id).length, 0);
+  assert.equal(result.report.totals.keepAwayRule, 'applied (snapshot and export)');
+  assert.equal(result.report.totals.exportChecked.length, 2);
+  // A venue the export holds and the snapshot lacks: a partial or stale
+  // snapshot. Refused before any folder is replayed.
+  const absent = await runImport(['--dry-run', ...baseArgs(), `--identity-snapshot=${snapshotFile}`, `--export-dir=${absentExportDir}`]);
+  assert.equal(absent.result.exitCode, 1);
+  assert.match(absent.out, /1 of the 2 venues the export holds are not in the snapshot \(first ids 999\)/);
+  assert.doesNotMatch(absent.out, /BY CITY/);
+  const twice = await runImport(['--dry-run', ...baseArgs(), `--identity-snapshot=${snapshotFile}`, `--export-dir=${cacheExportDir}`]);
+  assert.equal(twice.result.exitCode, 1);
+  assert.match(twice.out, /already holds cache rows/);
+});
+
+test('the peak-hour check flags a bar or nightclub mode 3 hours or more off, either way, and nothing 2 hours off', async () => {
   const { result, out } = await runImport(['--dry-run', ...baseArgs(), `--harvest-cache=${refDir}`]);
   assert.equal(result.exitCode, 0, out);
-  assert.deepEqual(result.flagged, ['testville']);
-  const p = result.report.cities.testville.peaks;
-  assert.deepEqual([p.bar.mode, p.bar.reference, p.bar.shift, p.bar.flag], [18, 22, -4, true]);
-  const club = result.report.cities.nearmiami.peaks.nightclub;
-  assert.deepEqual([club.mode, club.reference, club.shift, club.flag], [1, 23, 2, false]);
+  assert.deepEqual(result.flagged, ['peaktown', 'testville']);
+  const peaks = (key, category) => {
+    const p = result.report.cities[key].peaks[category];
+    return [p.mode, p.reference, p.shift, p.flag];
+  };
+  assert.deepEqual(peaks('testville', 'bar'), [18, 22, -4, true]);
+  assert.deepEqual(peaks('peaktown', 'bar'), [19, 22, -3, true]);
+  assert.deepEqual(peaks('peaktown', 'nightclub'), [2, 23, 3, true]);
+  assert.deepEqual(peaks('twintown', 'bar'), [0, 22, 2, false]);
+  assert.deepEqual(peaks('twintown', 'nightclub'), [1, 23, 2, false]);
   assert.equal(result.report.cities.twintown.peakFlag, false);
-  assert.match(out, /PEAK FLAGS \(1/);
+  assert.match(out, /PEAK FLAGS \(2/);
 });
 
 // ---------------------------------------------------------------------------
 // --write.
 // ---------------------------------------------------------------------------
+const writeArgs = (outDir) => ['--write', ...baseArgs(), `--identity-snapshot=${snapshotFile}`, `--export-dir=${exportDir}`,
+  `--harvest-cache=${refDir}`, `--out-dir=${outDir}`];
+const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+
 test('--write writes the export\'s rows under world_cache, a sidecar and a manifest, leaving flagged cities out', async () => {
   const outDir = tmp('flock-import-out-');
-  const args = ['--write', ...baseArgs(), `--identity-snapshot=${snapshotFile}`, `--harvest-cache=${refDir}`, `--out-dir=${outDir}`];
+  const args = writeArgs(outDir);
   const { result, out } = await runImport(args);
   assert.equal(result.exitCode, 0, out);
-  assert.deepEqual(result.manifest.rules.refusedForPeakFlags, ['testville']);
+  assert.deepEqual(result.manifest.rules.refusedForPeakFlags, ['peaktown', 'testville']);
   const sidecar = I.parseCsv(fs.readFileSync(path.join(outDir, 'cache_venues.csv'), 'utf8')).filter((r) => r.length > 1);
   assert.deepEqual(sidecar.slice(1).map((r) => [r[0], r[1], r[2]]), [
-    ['1000000000', 'nearmiami', NM.club.id],
-    ['1000000001', 'twintown', W.bar.id],
+    ['1000000000', 'bigcity', BC.home.id],
+    ['1000000001', 'smallcity', BC.edge.id],
+    ['1000000002', 'smallcity', SC.home.id],
+    ['1000000003', 'twintown', W.bar.id],
+    ['1000000004', 'twintown', W.both.id],
+    ['1000000005', 'twintown', W.club.id],
   ]);
+  // The export's two files, by hash.
+  const files = result.manifest.inputs.export.files;
+  assert.deepEqual(files.map((f) => [f.file, f.sha256]), ['training_data.csv', 'holdout_data.csv']
+    .map((f) => [f, sha(path.join(exportDir, f))]));
   // A second write into the same folder is refused, and so is accepting a
   // city that was never flagged.
   const again = await runImport(args);
   assert.equal(again.result.exitCode, 1);
   assert.match(again.out, /already holds cache_rows\.csv/);
-  const wrongAccept = await runImport([...args.slice(0, -1), `--out-dir=${tmp('flock-import-out-')}`, '--accept-peak-flags=twintown']);
+  const wrongAccept = await runImport([...writeArgs(tmp('flock-import-out-')), '--accept-peak-flags=twintown']);
   assert.equal(wrongAccept.result.exitCode, 1);
   assert.match(wrongAccept.out, /not flagged: twintown/);
 });
 
-test('--write with the flag accepted: every row is the export\'s, ids from 1,000,000,000, hashes in the manifest', async () => {
+test('--write with a flag accepted: every row is the export\'s, ids from 1,000,000,000, hashes in the manifest', async () => {
   const outDir = tmp('flock-import-out-');
-  const { result, out } = await runImport(['--write', ...baseArgs(), `--identity-snapshot=${snapshotFile}`,
-    `--harvest-cache=${refDir}`, `--out-dir=${outDir}`, '--accept-peak-flags=testville']);
+  const { result, out } = await runImport([...writeArgs(outDir), '--accept-peak-flags=testville']);
   assert.equal(result.exitCode, 0, out);
+  assert.deepEqual(result.manifest.rules.refusedForPeakFlags, ['peaktown']);
   const rowsFile = path.join(outDir, 'cache_rows.csv');
   const text = fs.readFileSync(rowsFile, 'utf8');
   const lines = text.split('\n').filter(Boolean);
   assert.equal(lines[0], exporter.HEADER);
   const rows = lines.slice(1).map((l) => I.parseCsv(l)[0]);
   const sidecar = I.parseCsv(fs.readFileSync(path.join(outDir, 'cache_venues.csv'), 'utf8')).filter((r) => r.length > 1).slice(1);
-  // nearmiami, then testville's four by BestTime id, then twintown.
+  // By city, then BestTime id within it.
   assert.deepEqual(sidecar.map((r) => [Number(r[0]), r[1], r[2]]), [
-    [1000000000, 'nearmiami', NM.club.id],
-    [1000000001, 'testville', T.bar.id],
-    [1000000002, 'testville', T.restaurant.id],
-    [1000000003, 'testville', T.cafe.id],
-    [1000000004, 'testville', T.shared.id],
-    [1000000005, 'twintown', W.bar.id],
+    [1000000000, 'bigcity', BC.home.id],
+    [1000000001, 'smallcity', BC.edge.id],
+    [1000000002, 'smallcity', SC.home.id],
+    [1000000003, 'testville', T.bar.id],
+    [1000000004, 'testville', T.restaurant.id],
+    [1000000005, 'testville', T.cafe.id],
+    [1000000006, 'testville', T.shared.id],
+    [1000000007, 'twintown', W.bar.id],
+    [1000000008, 'twintown', W.both.id],
+    [1000000009, 'twintown', W.club.id],
   ]);
   assert.equal(sidecar.find((r) => r[2] === T.restaurant.id)[3], T.restaurant.placeId);
   const ids = new Set();
@@ -537,28 +805,32 @@ test('--write with the flag accepted: every row is the export\'s, ids from 1,000
     assert.equal(r[col('label_provenance')], 'weekly');
     assert.deepEqual([r[col('avg_user_crowd')], r[col('user_feedback_count')], r[col('avg_prediction_error')]], ['0', '0', '0']);
   }
-  assert.deepEqual([...ids].sort((a, b) => a - b), [0, 1, 2, 3, 4, 5].map((n) => 1000000000 + n));
+  assert.deepEqual([...ids].sort((a, b) => a - b), Array.from({ length: 10 }, (_, n) => 1000000000 + n));
   const of = (id) => rows.filter((r) => r[col('venue_id')] === String(id));
-  assert.equal(of(1000000001).length, 168);
-  assert.deepEqual([of(1000000002)[0][col('rating')], of(1000000002)[0][col('review_count')]], ['4.4', '120']);
-  assert.deepEqual([of(1000000003)[0][col('rating')], of(1000000003)[0][col('review_count')]], ['4.0', '']);
-  assert.equal(of(1000000005)[0][col('venue_category')], 'bar');
+  assert.equal(of(1000000003).length, 168);
+  assert.deepEqual([of(1000000004)[0][col('rating')], of(1000000004)[0][col('review_count')]], ['4.4', '120']);
+  assert.deepEqual([of(1000000005)[0][col('rating')], of(1000000005)[0][col('review_count')]], ['4.0', '']);
+  assert.equal(of(1000000007)[0][col('venue_category')], 'bar');
+  // The shared venue's Thursday came from twintown's answers.
+  assert.equal(of(1000000006).length, 168);
+  // The venue placed in twintown carries twintown's answer.
+  assert.equal(of(1000000008)[0][col('review_count')], '200');
   // Monday 6 AM is BestTime Monday slot 0.
-  const cafeMon6 = of(1000000003).find((r) => r[col('day_of_week')] === '1' && r[col('hour')] === '6');
+  const cafeMon6 = of(1000000005).find((r) => r[col('day_of_week')] === '1' && r[col('hour')] === '6');
   assert.equal(Number(cafeMon6[col('busyness_pct')]), T.cafe.week[0][0]);
   const local = bestTimeSlotToLocal(20, bestTimeDayToJsDay(5));
-  const cafeSat20 = of(1000000003).find((r) => r[col('day_of_week')] === String(local.dayOfWeek) && r[col('hour')] === String(local.hour));
+  const cafeSat20 = of(1000000005).find((r) => r[col('day_of_week')] === String(local.dayOfWeek) && r[col('hour')] === String(local.hour));
   assert.equal(Number(cafeSat20[col('busyness_pct')]), T.cafe.week[5][20]);
   // The manifest's hashes are the files'.
   const manifest = JSON.parse(fs.readFileSync(path.join(outDir, 'cache_manifest.json'), 'utf8'));
-  const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
   assert.equal(manifest.outputs.rows.sha256, sha(rowsFile));
   assert.equal(manifest.outputs.venues.sha256, sha(path.join(outDir, 'cache_venues.csv')));
   assert.equal(manifest.outputs.rows.dataRows, rows.length);
   assert.equal(manifest.inputs.identitySnapshot.sha256, sha(snapshotFile));
   assert.equal(manifest.inputs.plan.sha256, sha(planFile));
+  assert.equal(manifest.inputs.export.files[0].sha256, sha(path.join(exportDir, 'training_data.csv')));
   assert.ok(manifest.git.commit === null || /^[0-9a-f]{40}$/.test(manifest.git.commit), String(manifest.git.commit));
-  assert.deepEqual(manifest.outputs.syntheticIds, { first: 1000000000, last: 1000000005 });
+  assert.deepEqual(manifest.outputs.syntheticIds, { first: 1000000000, last: 1000000009 });
 });
 
 // ---------------------------------------------------------------------------
@@ -677,28 +949,38 @@ test('--offline answers from the cache alone: no fetch, no key, misses counted a
   await assert.rejects(H.withNoNetwork(() => fetch('https://besttime.app/api/v1/keys/x')), /REFUSED: an --offline run makes no request/);
 });
 
-test('--parity: every exported row of the harvested venues equals the generator\'s, and a changed field is caught', async () => {
+test('--parity: every exported weekly row of the venues this folder wrote equals the generator\'s, another pass\'s venues are left out, and a changed field is caught', async () => {
   assert.ok(phillyDir, 'the --offline test runs first');
   // The harvest stamps the month at write time; these were written by this
   // test, today, and the parity fixture's answers say November. The real
-  // harvest wrote November's rows in November.
+  // harvest wrote November's rows in November. Likewise when: the corpus
+  // rows long before the answers, the harvested ones an hour after.
   await pool.query(`UPDATE ml_training_data t SET month = 11, season = 'fall' FROM ml_venues v
                      WHERE v.id = t.venue_id AND v.besttime_status = $1`, [H.HARVEST_STATUS]);
+  await pool.query(`UPDATE ml_venues SET created_at = CASE WHEN besttime_status = $1
+                      THEN TIMESTAMPTZ '2026-11-24T13:00:00Z' ELSE TIMESTAMPTZ '2026-10-01T00:00:00Z' END`, [H.HARVEST_STATUS]);
   const outDir = tmp('flock-import-export-');
   const exported = await exporter.runExport({ pool: roPool, outDir, includeHarvested: true, log: () => {} });
-  // The snapshot, as plan step C.4 takes it (plus besttime_status).
+  // The snapshot, as THE SNAPSHOT in the importer's header takes it.
   const { rows } = await pool.query(
-    'SELECT id, besttime_venue_id, google_place_id, name, latitude, longitude, city, besttime_status FROM ml_venues ORDER BY id'
+    'SELECT id, besttime_venue_id, google_place_id, name, latitude, longitude, city, besttime_status, created_at FROM ml_venues ORDER BY id'
   );
   const csv = (v) => (v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
-  const snap = path.join(outDir, 'snapshot.csv');
-  fs.writeFileSync(snap, ['id,besttime_venue_id,google_place_id,name,latitude,longitude,city,besttime_status',
-    ...rows.map((r) => [r.id, r.besttime_venue_id, r.google_place_id, r.name, r.latitude, r.longitude, r.city, r.besttime_status].map(csv).join(','))]
-    .join('\n') + '\n');
-  const parity = (exportCsv, extra = []) => runImport(['--parity', `--cache-dir=${phillyDir}`, '--cities=philly', '--radius-km=20',
-    `--identity-snapshot=${snap}`, `--export-csv=${exportCsv}`, ...extra]);
+  const snapshot = (name, { createdAt = {}, columns = 'all' } = {}) => {
+    const file = path.join(outDir, name);
+    const head = ['id', 'besttime_venue_id', 'google_place_id', 'name', 'latitude', 'longitude', 'city',
+      ...(columns === 'all' ? ['besttime_status', 'created_at'] : [])];
+    fs.writeFileSync(file, `${[head.join(','), ...rows.map((r) => head.map((h) => {
+      if (h === 'created_at') return createdAt[r.besttime_venue_id] || r.created_at.toISOString();
+      return csv(r[h]);
+    }).join(','))].join('\n')}\n`);
+    return file;
+  };
+  const snap = snapshot('snapshot.csv');
+  const parity = (exportCsv, { dir = phillyDir, snapFile = snap, extra = [] } = {}) => runImport(['--parity', `--cache-dir=${dir}`,
+    '--cities=philly', '--radius-km=20', `--identity-snapshot=${snapFile}`, `--export-csv=${exportCsv}`, ...extra]);
 
-  const ok = await parity(exported.trainPath, [`--expect-misses=${phillyNotFound}`]);
+  const ok = await parity(exported.trainPath, { extra: [`--expect-misses=${phillyNotFound}`] });
   assert.equal(ok.result.exitCode, 0, ok.out);
   assert.equal(ok.result.venues, 2);
   const harvestedRows = (await pool.query(
@@ -707,24 +989,75 @@ test('--parity: every exported row of the harvested venues equals the generator\
   )).rows[0].n;
   assert.equal(ok.result.rowsCompared, harvestedRows);
   assert.equal(ok.result.rowsEqual, harvestedRows);
-  assert.match(ok.out, /24 others left out/);
+  // The 24 corpus venues were held before the folder's first answer.
+  assert.equal(ok.result.left.heldBeforeFirstAnswer, 24);
+  assert.equal(ok.result.harvestedElsewhere, 0);
+
+  // A snapshot without besttime_status and created_at cannot tell which
+  // venues this folder wrote: refused.
+  const bare = await parity(exported.trainPath, { snapFile: snapshot('bare.csv', { columns: 'seven' }) });
+  assert.equal(bare.result.exitCode, 1);
+  assert.match(bare.out, /lacks besttime_status and created_at/);
+
+  const { rows: [one] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW1.id]);
+  const { rows: [two] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW2.id]);
+  const lines = fs.readFileSync(exported.trainPath, 'utf8').split('\n');
+  const linesOf = (id) => lines.map((l, i) => [l, i]).filter(([l]) => l.startsWith(`${id},`)).map(([, i]) => i);
+  const writeLines = (name, ls) => { const f = path.join(outDir, name); fs.writeFileSync(f, ls.join('\n')); return f; };
+
+  // A live reading of the same venue and slot is no weekly row: skipped.
+  const live = I.parseCsv(lines[linesOf(one.id)[0]])[0];
+  live[col('is_realtime')] = '1';
+  live[col('label_provenance')] = 'live';
+  live[col('busyness_pct')] = '99';
+  const withLive = await parity(writeLines('live.csv', [...lines.slice(0, -1), live.join(','), '']));
+  assert.equal(withLive.result.exitCode, 0, withLive.out);
+  assert.equal(withLive.result.nonWeeklySkipped, 1);
 
   // One rating changed, and one row gone.
-  const { rows: [one] } = await pool.query('SELECT id FROM ml_venues WHERE besttime_venue_id = $1', [NEW1.id]);
-  const lines = fs.readFileSync(exported.trainPath, 'utf8').split('\n');
-  const mine = lines.map((l, i) => [l, i]).filter(([l]) => l.startsWith(`${one.id},`)).map(([, i]) => i);
+  const mine = linesOf(one.id);
   assert.ok(mine.length > 2);
-  const f = I.parseCsv(lines[mine[0]])[0];
+  const tamperedLines = [...lines];
+  const f = I.parseCsv(tamperedLines[mine[0]])[0];
   assert.equal(f[col('rating')], '4.4');
   f[col('rating')] = '4.3';
-  lines[mine[0]] = f.join(',');
-  lines.splice(mine[1], 1);
-  const tampered = path.join(outDir, 'tampered.csv');
-  fs.writeFileSync(tampered, lines.join('\n'));
-  const bad = await parity(tampered);
+  tamperedLines[mine[0]] = f.join(',');
+  tamperedLines.splice(mine[1], 1);
+  const bad = await parity(writeLines('tampered.csv', tamperedLines));
   assert.equal(bad.result.exitCode, 1);
   assert.equal(bad.result.mismatches.rating, 1);
   assert.equal(Object.values(bad.result.mismatches).reduce((a, b) => a + b, 0), 1);
   assert.equal(bad.result.missing, 1);
   assert.match(bad.out, /PARITY FAIL/);
+
+  // Another pass wrote NEW2, from its own answers (another review count),
+  // before this folder's first answer: left out, never a mismatch.
+  const otherPass = [...lines];
+  for (const i of linesOf(two.id)) {
+    const g = I.parseCsv(otherPass[i])[0];
+    g[col('review_count')] = '7';
+    otherPass[i] = g.join(',');
+  }
+  const otherPassCsv = writeLines('other_pass.csv', otherPass);
+  assert.equal((await parity(otherPassCsv)).result.exitCode, 1, 'compared as this folder\'s, NEW2 must fail');
+  const early = await parity(otherPassCsv, { snapFile: snapshot('early.csv', { createdAt: { [NEW2.id]: '2026-11-20T00:00:00.000Z' } }) });
+  assert.equal(early.result.exitCode, 0, early.out);
+  assert.equal(early.result.venues, 1);
+  assert.deepEqual([early.result.left.heldBeforeFirstAnswer, early.result.harvestedElsewhere], [25, 1]);
+
+  // Or after the folder's first answer but before its answers for NEW2 here
+  // (fetched at 14:00; NEW2's row is from 13:00, NEW1's from 15:00).
+  const laterDir = path.join(tmp('flock-import-philly-later-'), 'philly-2026-11');
+  fs.cpSync(phillyDir, laterDir, { recursive: true });
+  for (const name of fs.readdirSync(laterDir)) {
+    rewriteAnswer(path.join(laterDir, name), (entry) => {
+      if (entry.data.venues.some((v) => v.venue_id === NEW2.id)) entry.fetchedAt = '2026-11-24T14:00:00.000Z';
+    });
+  }
+  const mid = await parity(otherPassCsv, {
+    dir: laterDir, snapFile: snapshot('mid.csv', { createdAt: { [NEW1.id]: '2026-11-24T15:00:00.000Z' } }),
+  });
+  assert.equal(mid.result.exitCode, 0, mid.out);
+  assert.equal(mid.result.venues, 1);
+  assert.deepEqual([mid.result.left.writtenBeforeItsAnswerHere, mid.result.harvestedElsewhere], [1, 1]);
 });
