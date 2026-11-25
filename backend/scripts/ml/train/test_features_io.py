@@ -2,6 +2,7 @@
 
 Run: python test_features_io.py     (no pytest needed)
 """
+import gc
 import pickle
 import sys
 import tempfile
@@ -45,6 +46,7 @@ def test_an_external_x_round_trips_every_value_and_the_layout():
         for start in range(0, len(X), 7):          # written in chunks, as step 8 does
             arr[start:start + 7] = X[start:start + 7]
         keys = fio.finish_x(p, arr)
+        del arr
         with open(p, 'wb') as f:
             pickle.dump({**rest, **keys}, f)
         for mmap in (True, False):
@@ -52,8 +54,11 @@ def test_an_external_x_round_trips_every_value_and_the_layout():
             assert np.array_equal(got['X'], X)
             assert got['X'].dtype == np.float32 and got['X'].flags.f_contiguous
             assert got['feature_cols'] == rest['feature_cols']
-        assert fio.x_is_external(fio.load_features(p))
-        assert isinstance(fio.load_features(p)['X'], np.memmap)
+            del got
+        got = fio.load_features(p)
+        assert fio.x_is_external(got) and isinstance(got['X'], np.memmap)
+        del got
+        gc.collect()  # Windows keeps a mapped file locked until the map is gone
 
 
 def test_a_changed_file_or_a_wrong_shape_is_refused():
@@ -63,6 +68,7 @@ def test_a_changed_file_or_a_wrong_shape_is_refused():
         path, arr = fio.open_x_memmap(p, *X.shape)
         arr[:] = X
         keys = fio.finish_x(p, arr)
+        del arr
         with open(p, 'wb') as f:
             pickle.dump({**rest, **keys, fio.X_SHAPE_KEY: [49, 4]}, f)
         for verify in (False, True):
@@ -78,6 +84,7 @@ def test_a_changed_file_or_a_wrong_shape_is_refused():
         m[0, 0] += 1
         m.flush()
         del m
+        gc.collect()
         try:
             fio.load_features(p, verify=True)
         except ValueError:

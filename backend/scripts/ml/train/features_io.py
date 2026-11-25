@@ -54,11 +54,14 @@ def sha256_file(path, chunk: int = 1 << 24) -> str:
 
 
 def finish_x(pickle_path, arr) -> dict:
-    """Flush the map and return the keys that stand in for X in the pickle."""
+    """Flush the map and return the keys that stand in for X in the pickle.
+
+    The caller still holds `arr`; on Windows an open map keeps the file locked
+    (no rename, no delete) until every reference to it is dropped.
+    """
     arr.flush()
     path = x_file_for(pickle_path)
     shape = [int(arr.shape[0]), int(arr.shape[1])]
-    del arr
     return {X_FILE_KEY: path.name, X_SHAPE_KEY: shape, X_SHA_KEY: sha256_file(path)}
 
 
