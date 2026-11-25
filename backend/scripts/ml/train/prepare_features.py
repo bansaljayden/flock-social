@@ -247,11 +247,24 @@ def unknown_provenance_admitted(env=os.environ) -> bool:
 
 def exclude_unknown_provenance(df: pd.DataFrame, label: str) -> Tuple[pd.DataFrame, Dict]:
     """Drop realtime rows whose provenance is 'unknown', unless admitted."""
+    unknown, n_rt = unknown_provenance_rows(df)
+    record = unknown_provenance_report(n_rt, int(unknown.sum()), label)
+    if record['rows_excluded'] == 0:
+        return df, record
+    return df[~unknown], record
+
+
+def unknown_provenance_rows(df: pd.DataFrame) -> Tuple[np.ndarray, int]:
+    """(the realtime rows whose provenance is 'unknown', how many realtime rows)."""
     prov = df['label_provenance'].fillna('unknown')
     unknown = ((pd.to_numeric(df['is_realtime'], errors='coerce') == 1)
                & (prov == 'unknown')).to_numpy()
-    n_unknown = int(unknown.sum())
     n_rt = int((pd.to_numeric(df['is_realtime'], errors='coerce') == 1).sum())
+    return unknown, n_rt
+
+
+def unknown_provenance_report(n_rt: int, n_unknown: int, label: str) -> Dict:
+    """exclude_unknown_provenance's record (and its warning) from the two counts."""
     admitted = unknown_provenance_admitted()
     record = {
         'realtime_rows': n_rt,
@@ -260,21 +273,21 @@ def exclude_unknown_provenance(df: pd.DataFrame, label: str) -> Tuple[pd.DataFra
         'rows_excluded': 0 if admitted else n_unknown,
     }
     if n_unknown == 0:
-        return df, record
+        return record
     if admitted:
         logger.warning(
             'POLICY OVERRIDE %s=true: [%s] %d of %d realtime rows have '
             'label_provenance="unknown" and are ADMITTED at the live weight. Migration '
             '025 records that an unknown share of them are the vendor forecast. This is '
             'recorded in model_metadata.json.', UNKNOWN_PROVENANCE_ENV, label, n_unknown, n_rt)
-        return df, record
+        return record
     logger.warning(
         '[%s] EXCLUDING %d of %d realtime rows whose label_provenance is "unknown": they '
         'predate label_source and cannot be told from a vendor forecast, so they may not '
         'sit at the live weight beside the %d rows that proved they are live. Set '
         '%s=true to admit them anyway.', label, n_unknown, n_rt, n_rt - n_unknown,
         UNKNOWN_PROVENANCE_ENV)
-    return df[~unknown], record
+    return record
 
 # ---------------------------------------------------------------------------
 # THE TIME HOLDOUT (2026-09-25): the live readings the band gate scores.
@@ -318,6 +331,11 @@ def resolve_time_holdout(frames: List[pd.DataFrame], env=os.environ) -> Dict:
     """Decide the first held-out date. An explicit date wins over a day count."""
     all_live = pd.concat([_live_dates(f) for f in frames], ignore_index=True)
     last_live = str(all_live.max()) if len(all_live) else None
+    return time_holdout_from_last_live(last_live, env)
+
+
+def time_holdout_from_last_live(last_live, env=os.environ) -> Dict:
+    """resolve_time_holdout, given the newest live date of every frame (None if none)."""
     explicit = str(env.get(TIME_HOLDOUT_FROM_ENV, '')).strip()
     if explicit:
         try:
@@ -405,10 +423,7 @@ def split_time_holdout(df: pd.DataFrame, from_date) -> Tuple[pd.DataFrame, Dict]
     if not from_date:
         record['training_live_through'] = str(_live_dates(df).max()) if len(_live_dates(df)) else None
         return df, record
-    is_rt = (pd.to_numeric(df['is_realtime'], errors='coerce') == 1).to_numpy()
-    dates = df['observed_date'].astype('string').fillna('').str.strip()
-    held = is_rt & (dates != '').to_numpy() & (dates >= from_date).fillna(False).to_numpy()
-    live = held & (df['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy()
+    held, live = time_holdout_masks(df, from_date)
     kept = df[~held]
     record['realtime_rows_held_out'] = int(held.sum())
     record['live_rows_held_out'] = int(live.sum())
@@ -416,6 +431,15 @@ def split_time_holdout(df: pd.DataFrame, from_date) -> Tuple[pd.DataFrame, Dict]
     kept_live = _live_dates(kept)
     record['training_live_through'] = str(kept_live.max()) if len(kept_live) else None
     return kept, record
+
+
+def time_holdout_masks(df: pd.DataFrame, from_date: str) -> Tuple[np.ndarray, np.ndarray]:
+    """(held, held and live): the realtime rows observed on or after `from_date`."""
+    is_rt = (pd.to_numeric(df['is_realtime'], errors='coerce') == 1).to_numpy()
+    dates = df['observed_date'].astype('string').fillna('').str.strip()
+    held = is_rt & (dates != '').to_numpy() & (dates >= from_date).fillna(False).to_numpy()
+    live = held & (df['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy()
+    return held, live
 
 
 # ---------------------------------------------------------------------------
@@ -826,6 +850,14 @@ def recover_weather_codes(df: pd.DataFrame, label: str) -> Dict:
     "we have no weather reading" is a true statement about those rows and
     weather_unknown is the honest one-hot for them.
     """
+    counts, unmapped = recover_weather_code_rows(df)
+    return weather_code_stats(counts, unmapped.value_counts().to_dict(),
+                              float(df['weather_condition_code'].notna().mean()), label)
+
+
+def recover_weather_code_rows(df: pd.DataFrame) -> Tuple[Dict, pd.Series]:
+    """The row half of recover_weather_codes: fills the column in place and returns
+    the counts its report is made of, with the unmapped descriptions row by row."""
     code = pd.to_numeric(df['weather_condition_code'], errors='coerce')
     had_code = int(code.notna().sum())
 
@@ -841,22 +873,28 @@ def recover_weather_codes(df: pd.DataFrame, label: str) -> Dict:
     df['weather_condition_code'] = code
 
     unmapped = desc[need & mapped.isna() & desc.notna() & (desc != '')]
-    unmapped_counts = unmapped.value_counts().to_dict()
     no_reading = int((need & (desc.isna() | (desc == ''))).sum())
+    return {'rows': int(len(df)), 'code_present_in_export': had_code,
+            'recovered_from_description': int(recovered_mask.sum()),
+            'no_weather_reading': no_reading, 'code_notna': int(code.notna().sum())}, unmapped
 
+
+def weather_code_stats(counts: Dict, unmapped_counts: Dict, coverage_mean: float, label: str) -> Dict:
+    """recover_weather_codes' report from its counts; coverage_mean is the share of
+    rows that carry a code afterwards."""
     stats = {
-        'rows': int(len(df)),
-        'code_present_in_export': had_code,
-        'recovered_from_description': int(recovered_mask.sum()),
-        'no_weather_reading': no_reading,
+        'rows': counts['rows'],
+        'code_present_in_export': counts['code_present_in_export'],
+        'recovered_from_description': counts['recovered_from_description'],
+        'no_weather_reading': counts['no_weather_reading'],
         'unmapped_descriptions': {str(k): int(v) for k, v in unmapped_counts.items()},
-        'final_coverage_pct': round(float(code.notna().mean()) * 100, 2),
+        'final_coverage_pct': round(coverage_mean * 100, 2),
     }
     logger.info(
         '[%s] weather codes: %d in export, %d recovered from description text, '
         '%d rows with no weather reading at all -> %.2f%% coverage',
-        label, had_code, stats['recovered_from_description'], no_reading,
-        stats['final_coverage_pct'],
+        label, stats['code_present_in_export'], stats['recovered_from_description'],
+        stats['no_weather_reading'], stats['final_coverage_pct'],
     )
     if unmapped_counts:
         logger.error('[%s] %d UNMAPPED weather description(s): %s', label,
@@ -904,16 +942,25 @@ CALENDAR_FEATURES: List[str] = (
 
 def audit_calendar_coverage(df: pd.DataFrame, label: str) -> Dict:
     """Report how many rows carry a real month/season (audit finding 5)."""
+    return calendar_coverage_stats(*calendar_counts(df), label)
+
+
+def calendar_counts(df: pd.DataFrame) -> Tuple[int, int, int]:
+    """(rows, rows without a usable month, rows without a season)."""
     month = pd.to_numeric(df['month'], errors='coerce')
     good_month = month.between(1, 12)
     season = df['season'].astype('string').str.strip().str.lower()
     good_season = season.isin(SEASON_NAMES).fillna(False)
+    return int(len(df)), int((~good_month).sum()), int((~good_season).sum())
+
+
+def calendar_coverage_stats(rows: int, without_month: int, without_season: int, label: str) -> Dict:
     stats = {
-        'rows': int(len(df)),
-        'rows_without_month': int((~good_month).sum()),
-        'rows_without_season': int((~good_season).sum()),
+        'rows': rows,
+        'rows_without_month': without_month,
+        'rows_without_season': without_season,
     }
-    stats['pct_without_month'] = round(stats['rows_without_month'] / max(len(df), 1) * 100, 2)
+    stats['pct_without_month'] = round(stats['rows_without_month'] / max(rows, 1) * 100, 2)
     logger.info('[%s] calendar coverage: %d rows without a usable month (%.2f%%), '
                 '%d without a season',
                 label, stats['rows_without_month'], stats['pct_without_month'],
@@ -1165,6 +1212,12 @@ def derive_label_provenance(is_realtime: pd.Series, source: pd.Series) -> pd.Ser
 
 def audit_label_columns(df: pd.DataFrame, label: str) -> Dict:
     """Validate the carried provenance columns. Reports; never fills."""
+    return label_audit_stats(label_audit_counts(df), label)
+
+
+def label_audit_counts(df: pd.DataFrame) -> Dict:
+    """audit_label_columns' counts for one frame. They add across frames; the
+    out-of-domain values are a set, which unions."""
     raw_source = df['label_source']
     # NOT stripped, and not normalised in any other way. The exporter passes the
     # database column through verbatim, so ' live' reaching this frame means
@@ -1183,7 +1236,7 @@ def audit_label_columns(df: pd.DataFrame, label: str) -> Dict:
     unparsable = raw_vendor.notna() & vendor.isna()
     out_of_range = vendor.notna() & ~vendor.between(0, 100)
 
-    bad_source = sorted(set(source[~source.isin(LABEL_SOURCE_VALUES)].unique().tolist()))
+    bad_source = set(source[~source.isin(LABEL_SOURCE_VALUES)].unique().tolist())
 
     stated = df['label_provenance'].astype('string').fillna('unknown')
     expected = derive_label_provenance(df['is_realtime'], source)
@@ -1207,22 +1260,40 @@ def audit_label_columns(df: pd.DataFrame, label: str) -> Dict:
     # training reads them and the derived column is still correct.
     named = realtime & source.isin(['live', 'forecast'])
     has_vendor = realtime & vendor.notna()
-    n_rt = int(realtime.sum())
-    stats = {
+    return {
         'rows': int(len(df)),
-        'realtime_rows': n_rt,
+        'realtime_rows': int(realtime.sum()),
         'label_source_named': int(named.sum()),
         'label_source_empty_on_realtime': int((realtime & (source == '')).sum()),
         'label_source_on_non_realtime_rows': int((~realtime & (source != '')).sum()),
         'vendor_forecast_present': int(has_vendor.sum()),
         'vendor_forecast_on_non_realtime_rows': int((~realtime & vendor.notna()).sum()),
-        'vendor_forecast_present_pct_of_realtime': (
-            round(float(has_vendor.sum()) / n_rt * 100, 2) if n_rt else 0.0),
         'unexpected_label_source_values': bad_source,
         'unparsable_vendor_forecast': int(unparsable.sum()),
         'vendor_forecast_out_of_range': int(out_of_range.sum()),
         'label_provenance_mismatches': int(mismatch.sum()),
         'forecast_rows_disagreeing_with_vendor': int(fc_disagree.sum()),
+    }
+
+
+def label_audit_stats(counts: Dict, label: str) -> Dict:
+    """audit_label_columns' report from label_audit_counts."""
+    n_rt = counts['realtime_rows']
+    stats = {
+        'rows': counts['rows'],
+        'realtime_rows': n_rt,
+        'label_source_named': counts['label_source_named'],
+        'label_source_empty_on_realtime': counts['label_source_empty_on_realtime'],
+        'label_source_on_non_realtime_rows': counts['label_source_on_non_realtime_rows'],
+        'vendor_forecast_present': counts['vendor_forecast_present'],
+        'vendor_forecast_on_non_realtime_rows': counts['vendor_forecast_on_non_realtime_rows'],
+        'vendor_forecast_present_pct_of_realtime': (
+            round(float(counts['vendor_forecast_present']) / n_rt * 100, 2) if n_rt else 0.0),
+        'unexpected_label_source_values': sorted(counts['unexpected_label_source_values']),
+        'unparsable_vendor_forecast': counts['unparsable_vendor_forecast'],
+        'vendor_forecast_out_of_range': counts['vendor_forecast_out_of_range'],
+        'label_provenance_mismatches': counts['label_provenance_mismatches'],
+        'forecast_rows_disagreeing_with_vendor': counts['forecast_rows_disagreeing_with_vendor'],
     }
     logger.info(
         '[%s] label provenance: %d of %d realtime rows carry a named label_source, '
@@ -1265,13 +1336,18 @@ def report_event_provenance(df: pd.DataFrame, label: str) -> None:
     """
     if 'events_observed' not in df.columns:
         return
+    log_event_provenance(*event_provenance_counts(df), label)
+
+
+def event_provenance_counts(df: pd.DataFrame) -> Tuple[int, int, int, int]:
+    """(rows, observed, unavailable, unrecorded) of events_observed."""
     col = df['events_observed']
-    n = len(df)
+    return int(len(df)), int((col == 1).sum()), int((col == 0).sum()), int(col.isna().sum())
+
+
+def log_event_provenance(n: int, observed: int, unavailable: int, unrecorded: int, label: str) -> None:
     if n == 0:
         return
-    observed = int((col == 1).sum())
-    unavailable = int((col == 0).sum())
-    unrecorded = int(col.isna().sum())
     logger.info(
         '[%s] event provenance: %d of %d rows record a measured event state, '
         '%d record that no lookup could answer, %d record nothing either way.',
@@ -1484,12 +1560,21 @@ def require_coordinates(df: pd.DataFrame, csv_path: Path, label: str) -> None:
     trained it there, silently. No row in the corpus lacks coordinates, which
     is exactly why a hard contract costs nothing now and catches the first one.
     """
+    refuse_missing_coordinates(coordinate_failures(df), csv_path, label)
+
+
+def coordinate_failures(df: pd.DataFrame) -> int:
+    """How many rows lack a finite latitude or longitude (require_coordinates' test)."""
     lat = pd.to_numeric(df['latitude'], errors='coerce')
     lng = pd.to_numeric(df['longitude'], errors='coerce')
     bad = ~(np.isfinite(lat.to_numpy(dtype=float)) & np.isfinite(lng.to_numpy(dtype=float)))
-    if bad.any():
+    return int(bad.sum())
+
+
+def refuse_missing_coordinates(bad: int, csv_path: Path, label: str) -> None:
+    if bad:
         raise CorpusContractError(
-            f'{label} ({csv_path}) has {int(bad.sum())} row(s) without a finite latitude/'
+            f'{label} ({csv_path}) has {bad} row(s) without a finite latitude/'
             'longitude. Astronomy, the climate norm and the neighbour box are all derived '
             'from the coordinates, and filling them with 0 would train those rows at 0N 0E. '
             'Fix the venue in ml_venues; do not fill.'
@@ -1514,13 +1599,14 @@ def temp_norm_keys(band: pd.Series, month: pd.Series) -> pd.Series:
     return b + '_' + m
 
 
-def fit_temperature_norms(df: pd.DataFrame) -> pd.DataFrame:
+def fit_temperature_norms(df: pd.DataFrame, rows_without: int = None) -> pd.DataFrame:
     """(lat_band, month) mean temperature, over rows that CARRY a reading.
 
     Nothing imputed feeds this. When add_weather_features has already run on
     the frame it left `weather_observed` behind and that marker is used; before
     it, a reading is a non-null temperature. Either way the population is the
-    same rows.
+    same rows. rows_without, for the log line only: how many rows of the frame
+    the norms serve carry no reading, when `df` holds just the ones that do.
     """
     if 'weather_observed' in df.columns:
         observed = df['weather_observed'].to_numpy() == 1
@@ -1549,7 +1635,8 @@ def fit_temperature_norms(df: pd.DataFrame) -> pd.DataFrame:
     norms['temp_norm'] = [round(float(v), 2) for v in norms['temp_norm']]
     logger.info('Climate norms: %d (lat_band, month) cells fitted from %d rows that carry a '
                 'temperature reading (%d rows carry none and will take the norm).',
-                len(norms), int(observed.sum()), int((~observed).sum()))
+                len(norms), int(observed.sum()),
+                int((~observed).sum()) if rows_without is None else rows_without)
     return norms
 
 
@@ -1561,14 +1648,19 @@ def temperature_norm_lookup(df: pd.DataFrame, norms: pd.DataFrame) -> pd.Series:
     own columns, and a merge that reset the index here would be an invitation
     to a positional mistake later.
     """
+    table, global_mean = temperature_norm_table(norms)
+    keys = temp_norm_keys(latitude_band(df['latitude']), df['month'])
+    return keys.map(table).astype(float).fillna(global_mean)
+
+
+def temperature_norm_table(norms: pd.DataFrame) -> Tuple[Dict[str, float], float]:
+    """(each temp_norm_keys key's norm, the table mean every other key takes)."""
     table = {
         f'{int(b)}_{int(m)}': float(v)
         for b, m, v in zip(norms['lat_band'], norms['month'], norms['temp_norm'])
         if np.isfinite(v)
     }
-    global_mean = float(norms['temp_norm'].mean())
-    keys = temp_norm_keys(latitude_band(df['latitude']), df['month'])
-    return keys.map(table).astype(float).fillna(global_mean)
+    return table, float(norms['temp_norm'].mean())
 
 
 def add_climate_anomaly(df: pd.DataFrame, norms: pd.DataFrame = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -1673,47 +1765,80 @@ def build_neighbor_table(frames: List[pd.DataFrame]) -> Dict:
     exporter takes from the same aggregate buildBaselines writes. This is the
     table bandEval.js readCorpus builds from the same files.
     """
-    cols = ['venue_id', 'latitude', 'longitude', 'day_of_week', 'hour',
-            'baseline_busyness', 'is_realtime']
-    raw = pd.concat([f[cols] for f in frames], ignore_index=True)
-    vid = raw['venue_id'].astype(str).to_numpy()
-    first = ~pd.Series(vid).duplicated(keep='first').to_numpy()
-    venue_ids = vid[first]
-    index = {v: i for i, v in enumerate(venue_ids)}
-    lat = pd.to_numeric(raw['latitude'], errors='coerce').to_numpy(dtype=float)[first]
-    lng = pd.to_numeric(raw['longitude'], errors='coerce').to_numpy(dtype=float)[first]
+    raw = pd.concat([f[NEIGHBOR_TABLE_COLS] for f in frames], ignore_index=True)
+    builder = NeighborTableBuilder()
+    builder.add(raw)
+    return builder.finish()
 
-    dow = pd.to_numeric(raw['day_of_week'], errors='coerce').to_numpy(dtype=float)
-    hour = pd.to_numeric(raw['hour'], errors='coerce').to_numpy(dtype=float)
-    base = pd.to_numeric(raw['baseline_busyness'], errors='coerce').to_numpy(dtype=float)
-    weekly = pd.to_numeric(raw['is_realtime'], errors='coerce').fillna(0).to_numpy() != 1
-    on_grid = ((dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
-               & (np.floor(dow) == dow) & (np.floor(hour) == hour))
-    use = weekly & np.isfinite(base) & on_grid
 
-    curve = np.full((len(venue_ids), 168), -1, dtype=np.int16)
-    rows = np.fromiter((index[v] for v in vid[use]), dtype=np.int64, count=int(use.sum()))
-    slots = (dow[use] * 24 + hour[use]).astype(np.int64)
-    # Row order, so a later row for the same slot wins, as it does in the replay.
-    curve[rows, slots] = js_round(base[use]).astype(np.int16)
-    has_curve = np.zeros(len(venue_ids), dtype=bool)
-    has_curve[rows] = True
+NEIGHBOR_TABLE_COLS = ['venue_id', 'latitude', 'longitude', 'day_of_week', 'hour',
+                       'baseline_busyness', 'is_realtime']
 
-    member = has_curve & np.isfinite(lat) & np.isfinite(lng)
-    member_idx = np.flatnonzero(member)
-    order = member_idx[np.argsort(lat[member_idx], kind='stable')]
-    return {
-        'index': index,
-        'lat': lat,
-        'lng': lng,
-        'curve': curve,
-        'has_curve': has_curve,
-        'members_by_lat': order,
-        'members_lat_sorted': lat[order],
-        'box_deg': NEIGHBOR_BOX_DEG,
-        'venues': int(len(venue_ids)),
-        'venues_with_curve': int(has_curve.sum()),
-    }
+
+class NeighborTableBuilder:
+    """build_neighbor_table fed one slice of rows at a time, in frame order.
+
+    The first row of a venue places it and a later weekly row for a slot replaces
+    an earlier one, across slices as within one, so slices fed in frame order
+    build the table one concatenated frame builds.
+    """
+
+    def __init__(self):
+        self.index: Dict[str, int] = {}
+        self.lat: List[np.ndarray] = []
+        self.lng: List[np.ndarray] = []
+        self.curve = np.full((0, 168), -1, dtype=np.int16)
+        self.has_curve = np.zeros(0, dtype=bool)
+
+    def add(self, raw: pd.DataFrame) -> None:
+        vid = raw['venue_id'].astype(str).to_numpy()
+        first = np.flatnonzero(~pd.Series(vid).duplicated(keep='first').to_numpy())
+        new = first[np.fromiter((v not in self.index for v in vid[first]), dtype=bool, count=len(first))]
+        for v in vid[new]:
+            self.index[v] = len(self.index)
+        self.lat.append(pd.to_numeric(raw['latitude'], errors='coerce').to_numpy(dtype=float)[new])
+        self.lng.append(pd.to_numeric(raw['longitude'], errors='coerce').to_numpy(dtype=float)[new])
+        if len(self.index) > len(self.curve):
+            grown = np.full((max(len(self.index), 2 * len(self.curve)), 168), -1, dtype=np.int16)
+            grown[:len(self.curve)] = self.curve
+            self.curve = grown
+            self.has_curve = np.concatenate([self.has_curve, np.zeros(len(grown) - len(self.has_curve), dtype=bool)])
+
+        dow = pd.to_numeric(raw['day_of_week'], errors='coerce').to_numpy(dtype=float)
+        hour = pd.to_numeric(raw['hour'], errors='coerce').to_numpy(dtype=float)
+        base = pd.to_numeric(raw['baseline_busyness'], errors='coerce').to_numpy(dtype=float)
+        weekly = pd.to_numeric(raw['is_realtime'], errors='coerce').fillna(0).to_numpy() != 1
+        on_grid = ((dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
+                   & (np.floor(dow) == dow) & (np.floor(hour) == hour))
+        use = weekly & np.isfinite(base) & on_grid
+
+        rows = np.fromiter((self.index[v] for v in vid[use]), dtype=np.int64, count=int(use.sum()))
+        slots = (dow[use] * 24 + hour[use]).astype(np.int64)
+        # Row order, so a later row for the same slot wins, as it does in the replay.
+        self.curve[rows, slots] = js_round(base[use]).astype(np.int16)
+        self.has_curve[rows] = True
+
+    def finish(self) -> Dict:
+        n = len(self.index)
+        lat = np.concatenate(self.lat) if self.lat else np.zeros(0)
+        lng = np.concatenate(self.lng) if self.lng else np.zeros(0)
+        curve = self.curve[:n]
+        has_curve = self.has_curve[:n]
+        member = has_curve & np.isfinite(lat) & np.isfinite(lng)
+        member_idx = np.flatnonzero(member)
+        order = member_idx[np.argsort(lat[member_idx], kind='stable')]
+        return {
+            'index': self.index,
+            'lat': lat,
+            'lng': lng,
+            'curve': curve,
+            'has_curve': has_curve,
+            'members_by_lat': order,
+            'members_lat_sorted': lat[order],
+            'box_deg': NEIGHBOR_BOX_DEG,
+            'venues': int(n),
+            'venues_with_curve': int(has_curve.sum()),
+        }
 
 
 def _box_totals(table: Dict, b_lat: float, b_lng: float) -> Tuple[np.ndarray, np.ndarray]:
@@ -1902,11 +2027,17 @@ def served_curve_at(table: Dict, venue_ids: np.ndarray, dow: np.ndarray, hour: n
     return out
 
 
+LIVE_TABLE_COLS = ['venue_id', 'day_of_week', 'hour', 'busyness_pct', 'observed_date',
+                   'label_source', 'is_realtime']
+
+
 def build_live_reading_table(frames: List[pd.DataFrame], neighbor_table: Dict) -> Dict:
-    """Every live reading buildRecentDeviation.js would store, per venue, oldest first."""
-    cols = ['venue_id', 'day_of_week', 'hour', 'busyness_pct', 'observed_date',
-            'label_source', 'is_realtime']
-    raw = pd.concat([f[cols] for f in frames], ignore_index=True)
+    """Every live reading buildRecentDeviation.js would store, per venue, oldest first.
+
+    Only the rows whose is_realtime is 1 and label_source is live are read, so
+    frames holding just those rows (the streamed preparation's) build the same
+    table as the whole frames."""
+    raw = pd.concat([f[LIVE_TABLE_COLS] for f in frames], ignore_index=True)
     live = ((pd.to_numeric(raw['is_realtime'], errors='coerce') == 1).to_numpy()
             & (raw['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy())
     y = pd.to_numeric(raw['busyness_pct'], errors='coerce').to_numpy(dtype=float)
@@ -2175,24 +2306,46 @@ def add_sports_features(df: pd.DataFrame, path: Path = None) -> pd.DataFrame:
     return df
 
 
-def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
-    """Add venue-derived features and encode categories."""
+def add_venue_features(df: pd.DataFrame, metadata: Dict = None) -> Tuple[pd.DataFrame, Dict]:
+    """Add venue-derived features and encode categories.
+
+    `metadata` is the training frame's fit (fit_venue_features); None fits it
+    from `df`. The fills below are the fitted numbers either way.
+    """
+    if metadata is None:
+        metadata = fit_venue_features(df)
     # Category encoding
-    categories = sorted(df['venue_category'].dropna().unique().tolist())
-    cat_map = {cat: i for i, cat in enumerate(categories)}
+    cat_map = metadata['category_encoding']
     df['venue_category_encoded'] = df['venue_category'].map(cat_map).fillna(-1).astype(int)
 
-    # Price level — fill missing with median
-    median_price = df['price_level'].median()
-    if pd.isna(median_price):
-        median_price = 2
-    df['price_level'] = df['price_level'].fillna(median_price)
+    # Price level and rating — fill missing with the median
+    df['price_level'] = df['price_level'].fillna(metadata['median_price_level'])
+    df['rating'] = df['rating'].fillna(metadata['median_rating'])
 
-    # Rating — fill missing with median
+    # Review count — the median too (fit_venue_features says why it is not 0)
+    median_review_count = metadata['median_review_count']
+    df['review_count'] = df['review_count'].fillna(median_review_count)
+    df['log_review_count'] = np.log1p(df['review_count'])
+
+    # Google types one-hot (top N most common in the training frame)
+    type_cols = ['google_type_1', 'google_type_2', 'google_type_3']
+    for t in metadata['top_google_types']:
+        col_name = f'gtype_{t}'
+        df[col_name] = np.zeros(len(df), dtype=FLAG_DTYPE)
+        for tc in type_cols:
+            df.loc[df[tc] == t, col_name] = 1
+
+    return df, metadata
+
+
+def fit_venue_features(df: pd.DataFrame) -> Dict:
+    """The fills and encodings add_venue_features applies, fitted on `df`."""
+    # Category encoding
+    categories = sorted(df['venue_category'].dropna().unique().tolist())
+
+    # Price level and rating — the median
+    median_price = df['price_level'].median()
     median_rating = df['rating'].median()
-    if pd.isna(median_rating):
-        median_rating = 4.0
-    df['rating'] = df['rating'].fillna(median_rating)
 
     # Review count — filled with the MEDIAN, the same way rating is filled six
     # lines up, and stored so the holdout reuses the number rather than
@@ -2223,10 +2376,6 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     # become metadata.median_review_count (published below) in the same change
     # that retrains.
     median_review_count = df['review_count'].median()
-    if pd.isna(median_review_count):
-        median_review_count = 0.0
-    df['review_count'] = df['review_count'].fillna(median_review_count)
-    df['log_review_count'] = np.log1p(df['review_count'])
 
     # Google types one-hot (top N most common). The columns are part of the
     # export contract, so their absence is a contract error, not a skip.
@@ -2237,14 +2386,20 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
 
     type_counts = pd.Series(all_types).value_counts()
     top_types = type_counts.head(MAX_GOOGLE_TYPES).index.tolist()
+    return venue_feature_metadata(categories, median_price, median_rating, median_review_count, top_types)
 
-    for t in top_types:
-        col_name = f'gtype_{t}'
-        df[col_name] = np.zeros(len(df), dtype=FLAG_DTYPE)
-        for tc in type_cols:
-            df.loc[df[tc] == t, col_name] = 1
 
-    metadata = {
+def venue_feature_metadata(categories: List, median_price, median_rating, median_review_count,
+                           top_types: List) -> Dict:
+    """fit_venue_features' record from its pieces; a median of no rows takes its default."""
+    if pd.isna(median_price):
+        median_price = 2
+    if pd.isna(median_rating):
+        median_rating = 4.0
+    if pd.isna(median_review_count):
+        median_review_count = 0.0
+    cat_map = {cat: i for i, cat in enumerate(categories)}
+    return {
         'category_encoding': cat_map,
         'median_price_level': float(median_price),
         'median_rating': float(median_rating),
@@ -2254,7 +2409,8 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         'top_google_types': top_types,
     }
 
-    return df, metadata
+
+COLD_OUTDOOR_MAX_TEMP_F = 41.0  # 5C, in the imperial units the corpus is collected in (add_weather_features)
 
 
 def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.DataFrame:
@@ -2320,7 +2476,8 @@ def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.Dat
     # CHANGE BOTH SIDES IN THE SAME COMMIT. mlPredictor.js's cold_outdoor must
     # use the same number or training and serving disagree about what cold means,
     # and that disagreement is invisible to every test in the repo.
-    COLD_OUTDOOR_MAX_TEMP_F = 41.0  # 5C, in the imperial units the corpus is collected in
+    # (COLD_OUTDOOR_MAX_TEMP_F is defined above this function: the streamed
+    # preparation reads it too.)
     df['cold_outdoor'] = (
         (df['temperature'] < COLD_OUTDOOR_MAX_TEMP_F) & (df['weather_clear'] == 1)
     ).astype(FLAG_DTYPE)
@@ -2576,27 +2733,8 @@ def build_category_cell_aggregates(fit_df: pd.DataFrame,
     groups = d[group_col].fillna('__unknown__').astype(str)
     group_levels, group_idx = np.unique(groups.to_numpy(), return_inverse=True)
 
-    out: Dict = {
-        'version': CELL_STATS_VERSION,
-        'group_col': group_col,
-        'groups': [str(g) for g in group_levels],
-        'fit_population': 'pre_serving_filter',
-        'fit_population_note': (
-            'fitted on the same frame build_category_baseline_maps is fitted on, so '
-            'holding out no group reproduces the shipped category_baseline / '
-            'refined_category_baseline columns exactly. The only difference a fold '
-            'map carries is the held-out group.'),
-        'fit_rows': int(len(d)),
-        'global_sum': float(d['busyness_pct'].sum()),
-        'global_count': int(d['busyness_pct'].count()),
-        'recipe': (
-            'fold_map[cell] = round(sums[fold_train_groups].sum(0) / '
-            'counts[fold_train_groups].sum(0), 1); smooth the coarse map across '
-            'adjacent hours within (venue_category, day_of_week) with the '
-            '0.6/0.2/0.2 blend prepare_features._smooth_category_hours uses, then '
-            'index with row_cell. Cells with a zero fold count have no support '
-            'outside the held-out group — fall back to the fold global mean.'),
-    }
+    out: Dict = cell_stats_header(group_col, group_levels, int(len(d)),
+                                  float(d['busyness_pct'].sum()), int(d['busyness_pct'].count()))
 
     y = d['busyness_pct'].to_numpy(dtype=float)
     finite = np.isfinite(y)
@@ -2607,17 +2745,48 @@ def build_category_cell_aggregates(fit_df: pd.DataFrame,
         flat = group_idx * len(cell_levels) + cell_idx
         np.add.at(sums.reshape(-1), flat[finite], y[finite])
         np.add.at(counts.reshape(-1), flat[finite], 1)
-        out[name] = {
-            'keys': list(keys),
-            'cells': [tuple(c.split('\x1f')) for c in cell_levels],
-            'cell_levels': cell_levels,
-            'sums': sums,
-            'counts': counts,
-        }
+        out[name] = cell_block(keys, cell_levels, sums, counts)
         logger.info('Per-fold %s baseline aggregates: %d cells x %d %s groups, '
                     'fitted on %d pre-filter rows.',
                     name, len(cell_levels), len(group_levels), group_col, len(d))
     return out
+
+
+def cell_stats_header(group_col: str, group_levels, fit_rows: int, global_sum: float,
+                      global_count: int) -> Dict:
+    """The part of build_category_cell_aggregates' record that is not per cell."""
+    return {
+        'version': CELL_STATS_VERSION,
+        'group_col': group_col,
+        'groups': [str(g) for g in group_levels],
+        'fit_population': 'pre_serving_filter',
+        'fit_population_note': (
+            'fitted on the same frame build_category_baseline_maps is fitted on, so '
+            'holding out no group reproduces the shipped category_baseline / '
+            'refined_category_baseline columns exactly. The only difference a fold '
+            'map carries is the held-out group.'),
+        'fit_rows': fit_rows,
+        'global_sum': global_sum,
+        'global_count': global_count,
+        'recipe': (
+            'fold_map[cell] = round(sums[fold_train_groups].sum(0) / '
+            'counts[fold_train_groups].sum(0), 1); smooth the coarse map across '
+            'adjacent hours within (venue_category, day_of_week) with the '
+            '0.6/0.2/0.2 blend prepare_features._smooth_category_hours uses, then '
+            'index with row_cell. Cells with a zero fold count have no support '
+            'outside the held-out group — fall back to the fold global mean.'),
+    }
+
+
+def cell_block(keys: List[str], cell_levels: np.ndarray, sums: np.ndarray, counts: np.ndarray) -> Dict:
+    """One key's cells (sorted '\\x1f'-joined strings) with their per-group sums and counts."""
+    return {
+        'keys': list(keys),
+        'cells': [tuple(c.split('\x1f')) for c in cell_levels],
+        'cell_levels': cell_levels,
+        'sums': sums,
+        'counts': counts,
+    }
 
 
 def index_category_cells(rows_df: pd.DataFrame, agg: Dict) -> Dict:
@@ -2653,9 +2822,7 @@ def index_category_cells(rows_df: pd.DataFrame, agg: Dict) -> Dict:
             'subset of it, so this cannot happen unless the two came from '
             'different runs.')
 
-    out: Dict = {k: v for k, v in agg.items() if k not in ('category', 'refined')}
-    out['rows'] = int(len(d))
-    out['row_group'] = group_idx.astype(np.int32)
+    out: Dict = indexed_cell_stats(agg, int(len(d)), group_idx)
 
     y = d['busyness_pct'].to_numpy(dtype=float)
     finite = np.isfinite(y)
@@ -2676,25 +2843,39 @@ def index_category_cells(rows_df: pd.DataFrame, agg: Dict) -> Dict:
         rows_counts = np.zeros(len(group_levels) * n_cells, dtype=np.int64)
         np.add.at(rows_sums, flat[finite], y[finite])
         np.add.at(rows_counts, flat[finite], 1)
-        rows_counts = rows_counts.reshape(len(group_levels), n_cells)
-        if (rows_counts > block['counts']).any():
-            raise CorpusContractError(
-                f'the {name!r} cells of these rows are not a subset of the cells the '
-                'aggregates were fitted on. The aggregates must come from the '
-                'pre-filter frame these rows were filtered out of.')
-        out[name] = {
-            'keys': list(block['keys']),
-            'cells': block['cells'],
-            'sums': block['sums'],
-            'counts': block['counts'],
-            'row_cell': cell_idx.astype(np.int32),
-            'rows_sums': rows_sums.reshape(len(group_levels), n_cells),
-            'rows_counts': rows_counts,
-        }
+        out[name] = indexed_cell_block(name, block, cell_idx, rows_sums.reshape(len(group_levels), n_cells),
+                                       rows_counts.reshape(len(group_levels), n_cells))
     return out
 
 
-def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
+def indexed_cell_stats(agg: Dict, rows: int, group_idx: np.ndarray) -> Dict:
+    """index_category_cells' record before its two cell blocks."""
+    out: Dict = {k: v for k, v in agg.items() if k not in ('category', 'refined')}
+    out['rows'] = rows
+    out['row_group'] = group_idx.astype(np.int32)
+    return out
+
+
+def indexed_cell_block(name: str, block: Dict, cell_idx: np.ndarray, rows_sums: np.ndarray,
+                       rows_counts: np.ndarray) -> Dict:
+    """One fitted cell block with the indexed rows' cells and their sums and counts."""
+    if (rows_counts > block['counts']).any():
+        raise CorpusContractError(
+            f'the {name!r} cells of these rows are not a subset of the cells the '
+            'aggregates were fitted on. The aggregates must come from the '
+            'pre-filter frame these rows were filtered out of.')
+    return {
+        'keys': list(block['keys']),
+        'cells': block['cells'],
+        'sums': block['sums'],
+        'counts': block['counts'],
+        'row_cell': cell_idx.astype(np.int32),
+        'rows_sums': rows_sums,
+        'rows_counts': rows_counts,
+    }
+
+
+def smooth_baseline_hours(df: pd.DataFrame, grid: Dict = None) -> pd.DataFrame:
     """Blend each venue-hour's baseline with its true adjacent hours.
 
     Audit finding 3: this used to be `groupby(venue_id, dow).shift(1)`, i.e. the
@@ -2736,7 +2917,34 @@ def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
     (bandEval.js). A slot "has a row" when a weekly row exists for it, which is
     exactly when buildBaselines writes one; __tests__/mlSmoothingParity.test.js
     runs this function and blendBaselineRows over the same grid.
+
+    `grid` is a baseline grid fitted on a wider frame (the streamed preparation
+    fits it over the whole training frame and smooths each slice of rows
+    against it); None fits it from `df`, which is every other caller.
     """
+    if grid is None:
+        grid = fit_baseline_grid(df)
+        has_row = slot_has_baseline_row(df)
+    else:
+        has_row = grid_slot_has_row(df, grid)
+    prev_row, next_row = grid_neighbours(df, grid)
+    current = df['baseline_busyness'].to_numpy(dtype=float)
+    df['baseline_busyness'] = blend_baseline(current, prev_row, next_row, has_row)
+    return df
+
+
+def blend_baseline(current: np.ndarray, prev_row: np.ndarray, next_row: np.ndarray,
+                   has_row: np.ndarray) -> np.ndarray:
+    """blendBaselineRows on each row, given its adjacent hours' cell means (0 = none)."""
+    has_neighbour = (prev_row > 0) | (next_row > 0)
+    prev_eff = np.where(prev_row > 0, prev_row, current)
+    next_eff = np.where(next_row > 0, next_row, current)
+    blended = np.floor(current * 0.6 + prev_eff * 0.2 + next_eff * 0.2 + 0.5)
+    return np.where(has_row & has_neighbour, blended, current)
+
+
+def fit_baseline_grid(df: pd.DataFrame) -> Dict:
+    """The (venue, day_of_week, hour) cell means of `df`'s baselines, laid on 7x24."""
     cell = (df.groupby(['venue_id', 'day_of_week', 'hour'], as_index=False)
               ['baseline_busyness'].mean())
     cell['venue_id'] = cell['venue_id'].astype(str)
@@ -2759,43 +2967,52 @@ def smooth_baseline_hours(df: pd.DataFrame) -> pd.DataFrame:
     series = (cell.set_index(['venue_id', 'day_of_week', 'hour'])['baseline_busyness']
                   .reindex(grid_index))
     arr = series.to_numpy(dtype=float).reshape(len(venues), 7 * 24)
+    return baseline_grid_from_means(venues, arr)
 
+
+def baseline_grid_from_means(venues, arr: np.ndarray, weekly: np.ndarray = None) -> Dict:
+    """A baseline grid from each venue's 168 cell means (NaN = no cell).
+
+    weekly, when given, marks the slots that hold a weekly row (the streamed
+    preparation's slot_has_baseline_row); prev/next are each slot's two clock
+    neighbours, 0 where the neighbour has no cell.
+    """
     # np.roll over the flattened 168-slot week gives the true clock neighbour,
     # including the day-boundary and week-boundary wraps production uses.
     prev = np.nan_to_num(np.roll(arr, 1, axis=1), nan=0.0)
     nxt = np.nan_to_num(np.roll(arr, -1, axis=1), nan=0.0)
+    return {'venues': pd.Index(venues), 'prev': prev, 'next': nxt, 'weekly': weekly}
 
-    out = pd.DataFrame({
-        'venue_id': np.repeat(venues, 7 * 24),
-        'day_of_week': np.tile(np.repeat(np.arange(7), 24), len(venues)).astype('float64'),
-        'hour': np.tile(np.arange(24), 7 * len(venues)).astype('float64'),
-        '_bl_prev': prev.reshape(-1),
-        '_bl_next': nxt.reshape(-1),
-    })
 
-    keys = pd.DataFrame({
-        'venue_id': df['venue_id'].astype(str).values,
-        'day_of_week': pd.to_numeric(df['day_of_week'], errors='coerce').astype('float64').values,
-        'hour': pd.to_numeric(df['hour'], errors='coerce').astype('float64').values,
-    })
-    merged = keys.merge(out, on=['venue_id', 'day_of_week', 'hour'], how='left')
-    if len(merged) != len(df):
-        raise CorpusContractError(
-            'Baseline smoothing merge changed the row count '
-            f'({len(df)} -> {len(merged)}). The (venue_id, day_of_week, hour) '
-            'grid is not unique; refusing to continue with duplicated rows.'
-        )
+def _grid_rows(df: pd.DataFrame, grid: Dict) -> Tuple[np.ndarray, np.ndarray]:
+    """(row positions, their grid venue and slot) for the rows whose venue has a
+    grid and whose day_of_week and hour are a 7x24 slot."""
+    vidx = grid['venues'].get_indexer(df['venue_id'].astype(str).to_numpy())
+    dow = pd.to_numeric(df['day_of_week'], errors='coerce').to_numpy(dtype=float)
+    hour = pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)
+    ok = ((vidx >= 0) & (dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
+          & (np.floor(dow) == dow) & (np.floor(hour) == hour))
+    i = np.flatnonzero(ok)
+    return i, (vidx[i], (dow[i] * 24 + hour[i]).astype(np.int64))
 
-    current = df['baseline_busyness'].to_numpy(dtype=float)
-    prev_row = np.nan_to_num(merged['_bl_prev'].to_numpy(dtype=float), nan=0.0)
-    next_row = np.nan_to_num(merged['_bl_next'].to_numpy(dtype=float), nan=0.0)
 
-    has_neighbour = (prev_row > 0) | (next_row > 0)
-    prev_eff = np.where(prev_row > 0, prev_row, current)
-    next_eff = np.where(next_row > 0, next_row, current)
-    blended = np.floor(current * 0.6 + prev_eff * 0.2 + next_eff * 0.2 + 0.5)
-    df['baseline_busyness'] = np.where(slot_has_baseline_row(df) & has_neighbour, blended, current)
-    return df
+def grid_neighbours(df: pd.DataFrame, grid: Dict) -> Tuple[np.ndarray, np.ndarray]:
+    """Each row's two adjacent clock hours' cell means, 0 where there is none."""
+    prev_row = np.zeros(len(df))
+    next_row = np.zeros(len(df))
+    i, cell = _grid_rows(df, grid)
+    prev_row[i] = grid['prev'][cell]
+    next_row[i] = grid['next'][cell]
+    return prev_row, next_row
+
+
+def grid_slot_has_row(df: pd.DataFrame, grid: Dict) -> np.ndarray:
+    """slot_has_baseline_row from a grid's weekly-slot marks. A row off the grid
+    reads False, which changes nothing: it has no neighbour to blend with."""
+    has_row = np.zeros(len(df), dtype=bool)
+    i, cell = _grid_rows(df, grid)
+    has_row[i] = grid['weekly'][cell]
+    return has_row | (df['baseline_busyness'].to_numpy(dtype=float) > 0)
 
 
 def slot_has_baseline_row(df: pd.DataFrame) -> np.ndarray:
@@ -2824,12 +3041,14 @@ def slot_has_baseline_row(df: pd.DataFrame) -> np.ndarray:
     return has_row | (df['baseline_busyness'].to_numpy(dtype=float) > 0)
 
 
-def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.DataFrame, Dict]:
+def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None,
+                          baseline_grid: Dict = None) -> Tuple[pd.DataFrame, Dict]:
     """Add baseline busyness and data freshness features.
 
     cat_maps: category/refined baseline lookups. None means "fit them from this
     frame" (training); pass the training maps for holdout/eval so no held-out
-    label ever reaches a feature.
+    label ever reaches a feature. baseline_grid: the smoothing grid, None to fit
+    it from this frame (see smooth_baseline_hours).
 
     Round 14, stated plainly rather than left for someone to rediscover: when
     cat_maps is None this fits the maps on `df` and applies them to `df`, so a
@@ -2842,7 +3061,10 @@ def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.D
     """
     # Baseline busyness — smoothed against the TRUE neighbouring hours.
     df['baseline_busyness'] = df['baseline_busyness'].fillna(0)
-    df = smooth_baseline_hours(df)
+    if baseline_grid is None:
+        df = smooth_baseline_hours(df)
+    else:
+        df = smooth_baseline_hours(df, baseline_grid)
 
     if cat_maps is None:
         cat_maps = build_category_baseline_maps(df)
@@ -2917,6 +3139,17 @@ def normalise_event_types(df: pd.DataFrame, label: str) -> Dict:
     Idempotent, so add_event_features can call it on a frame main() already
     normalised without changing a row. Returns the counts for metadata.
     """
+    raw, present, hit, out, unknown = normalise_event_type_rows(df)
+    if len(unknown):
+        refuse_event_types(label, {str(k): int(v) for k, v in unknown.value_counts().items()})
+    return event_type_report(int(len(df)), int(present.sum()), int(hit.sum()),
+                             {str(k): int(v) for k, v in raw[hit].value_counts().items()},
+                             {str(k): int(v) for k, v in out[present].value_counts().items()}, label)
+
+
+def normalise_event_type_rows(df: pd.DataFrame):
+    """The row half of normalise_event_types: maps the column in place and returns
+    (raw, present, hit, out, unknown), the values its report and refusal count."""
     raw = df['nearest_event_type'].astype('string').str.strip().str.lower()
     present = (raw.notna() & (raw != '')).fillna(False).to_numpy()
     aliased = raw.map(LEGACY_EVENT_TYPE_ALIASES)
@@ -2924,31 +3157,37 @@ def normalise_event_types(df: pd.DataFrame, label: str) -> Dict:
     out = raw.where(~hit, aliased)
     in_vocab = out.isin(EVENT_TYPE_VOCABULARY).fillna(False).to_numpy()
     unknown = out[present & ~in_vocab]
-    if len(unknown):
-        counts = {str(k): int(v) for k, v in unknown.value_counts().items()}
-        raise CorpusContractError(
-            f'[{label}] nearest_event_type carries {len(counts)} value(s) outside the '
-            f'vocabulary {EVENT_TYPE_VOCABULARY} that no alias covers: {counts}.\n'
-            '  The etype_* one-hot cannot describe such a row: it would train as '
-            'has_nearby_event = 1 with every etype slot at 0, a combination serving never '
-            'produces. LEGACY_EVENT_TYPE_ALIASES maps the two values eventService.js used '
-            'to write (concert, film) because both have an exact reading in the fixed '
-            'function; a new value needs the writer fixed and its own reading added here, '
-            'not a silent bucket.'
-        )
-    aliased_counts = {str(k): int(v) for k, v in raw[hit].value_counts().items()}
     # Object dtype with NaN for the empty field, not the nullable string dtype:
     # the one-hot below compares with ==, and a <NA> there would poison the cast.
     df['nearest_event_type'] = np.where(present, out.astype(object), np.nan)
+    return raw, present, hit, out, unknown
+
+
+def refuse_event_types(label: str, counts: Dict) -> None:
+    """counts: the out-of-vocabulary values and their row counts, largest first."""
+    raise CorpusContractError(
+        f'[{label}] nearest_event_type carries {len(counts)} value(s) outside the '
+        f'vocabulary {EVENT_TYPE_VOCABULARY} that no alias covers: {counts}.\n'
+        '  The etype_* one-hot cannot describe such a row: it would train as '
+        'has_nearby_event = 1 with every etype slot at 0, a combination serving never '
+        'produces. LEGACY_EVENT_TYPE_ALIASES maps the two values eventService.js used '
+        'to write (concert, film) because both have an exact reading in the fixed '
+        'function; a new value needs the writer fixed and its own reading added here, '
+        'not a silent bucket.'
+    )
+
+
+def event_type_report(rows: int, rows_with_type: int, aliased_rows: int, aliased_counts: Dict,
+                      levels_after: Dict, label: str) -> Dict:
     stats = {
-        'rows': int(len(df)),
-        'rows_with_type': int(present.sum()),
+        'rows': rows,
+        'rows_with_type': rows_with_type,
         'legacy_values_aliased': aliased_counts,
-        'levels_after': {str(k): int(v) for k, v in out[present].value_counts().items()},
+        'levels_after': levels_after,
     }
     if aliased_counts:
         logger.warning('[%s] nearest_event_type: %d row(s) carried a legacy value and were '
-                       'mapped onto the vocabulary %s: %s', label, int(hit.sum()),
+                       'mapped onto the vocabulary %s: %s', label, aliased_rows,
                        LEGACY_EVENT_TYPE_ALIASES, aliased_counts)
     return stats
 
@@ -3103,7 +3342,7 @@ def finish_frame(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def feature_matrix(df: pd.DataFrame, feature_cols: List[str]) -> np.ndarray:
+def feature_matrix(df: pd.DataFrame, feature_cols: List[str], out: np.ndarray = None) -> np.ndarray:
     """`df[feature_cols].values.astype(np.float32)`, filled one column at a time.
 
     The one-line form first interleaves every column into one matrix of their
@@ -3113,12 +3352,18 @@ def feature_matrix(df: pd.DataFrame, feature_cols: List[str]) -> np.ndarray:
     which), so the values and the column-major layout are the same. Any other
     mix (bool, nullable, unsigned or narrower float columns) takes the one-line
     form itself, and finish_frame leaves such a frame's integers unnarrowed.
+
+    `out`, when given, is a float32 (len(df), len(feature_cols)) array to fill
+    instead (the streamed preparation passes rows of the memory-mapped X).
     """
     dtypes = [df[c].dtype for c in feature_cols]
     if not dtypes or not _plain_numeric(dtypes):
-        return df[feature_cols].values.astype(np.float32)
+        if out is None:
+            return df[feature_cols].values.astype(np.float32)
+        out[:] = df[feature_cols].values.astype(np.float32)
+        return out
     via = np.float64 if any(d.kind == 'f' for d in dtypes) else np.int64
-    X = np.empty((len(df), len(feature_cols)), dtype=np.float32, order='F')
+    X = np.empty((len(df), len(feature_cols)), dtype=np.float32, order='F') if out is None else out
     for j, c in enumerate(feature_cols):
         X[:, j] = df[c].to_numpy(dtype=via)
     return X
@@ -3136,7 +3381,11 @@ def refuse_unfilled_features(df: pd.DataFrame, feature_cols: List[str], label: s
     argument, and the one that arrives here without one stops the run and is
     named, rather than being trained as a measurement of nothing.
     """
-    missing = df[feature_cols].isna().sum()
+    refuse_missing_feature_values(df[feature_cols].isna().sum(), label)
+
+
+def refuse_missing_feature_values(missing: pd.Series, label: str) -> None:
+    """refuse_unfilled_features given the NaN count of each feature column."""
     missing = missing[missing > 0]
     if len(missing):
         detail = {str(k): int(v) for k, v in missing.items()}
@@ -3150,18 +3399,15 @@ def refuse_unfilled_features(df: pd.DataFrame, feature_cols: List[str], label: s
     logger.info('[%s] every feature column is fully populated by its own named fill.', label)
 
 
-def main():
-    logger.info('Loading training data...')
-    train_path = SCRIPT_DIR / 'training_data.csv'
-    if not train_path.exists():
-        raise CorpusContractError(
-            f'{train_path} does not exist. Run `node export_training_data.js` first — '
-            'the retrain starts at the export, not at this script.'
-        )
-    train_df = pd.read_csv(train_path)
-    logger.info(f'Training data: {len(train_df)} rows')
-    require_export_columns(train_df, train_path, 'training_data.csv')
-
+# ---------------------------------------------------------------------------
+# THE STEPS BOTH PREPARATIONS SHARE (2026-11-25). main() holds the training
+# export in one frame; main_streamed() (below main) holds it a slice at a time.
+# Everything that does not depend on which, from the holdout's whole treatment
+# to the metadata record, is one function called from both.
+# ---------------------------------------------------------------------------
+def read_holdout_csv() -> Tuple[Path, pd.DataFrame]:
+    """holdout_data.csv, read whole and contract-checked: the holdout is a few
+    hundred thousand rows in either preparation."""
     holdout_path = SCRIPT_DIR / 'holdout_data.csv'
     if not holdout_path.exists():
         raise CorpusContractError(
@@ -3172,38 +3418,28 @@ def main():
     holdout_df = pd.read_csv(holdout_path)
     logger.info(f'Holdout data: {len(holdout_df)} rows')
     require_export_columns(holdout_df, holdout_path, 'holdout_data.csv')
-    require_coordinates(train_df, train_path, 'training_data.csv')
     require_coordinates(holdout_df, holdout_path, 'holdout_data.csv')
+    return holdout_path, holdout_df
 
-    # The neighbour table serving's range scan reads, from BOTH raw frames and
-    # before any row is dropped (see the block above build_neighbor_table).
-    neighbor_table = build_neighbor_table([train_df, holdout_df])
+
+def log_raw_tables(neighbor_table: Dict, live_reading_table: Dict) -> None:
     logger.info('Neighbour table: %d venues, %d with a weekly curve (serving arithmetic, '
                 'box +/-%s degrees around toFixed(3) coordinates).',
                 neighbor_table['venues'], neighbor_table['venues_with_curve'], NEIGHBOR_BOX_DEG)
-    # The live readings serving's offset row stores, from both raw frames and
-    # before any row is dropped (see the block above add_live_features).
-    live_reading_table = build_live_reading_table([train_df, holdout_df], neighbor_table)
     logger.info('Live reading table: %d readings over %d venues (label_source live, a '
                 'positive curve at the reading\'s own slot).',
                 live_reading_table['readings'], live_reading_table['venues'])
-    if LIVE_FEATURE_POLICY == 'off':
-        drop_features(LIVE_FEATURE_NAMES, 'FLOCK_LIVE_FEATURES=off (ablation)')
 
-    # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
-    # Recover weather_condition_code from the description text, then decide the
-    # weather and calendar policies ONCE, before any feature is built, so the
-    # feature set that comes out of this run cannot contain a dead slot without
-    # model_metadata.json saying so.
-    weather_stats = recover_weather_codes(train_df, 'train')
-    holdout_weather_stats = recover_weather_codes(holdout_df, 'holdout')
+
+def enforce_weather_contracts(weather_stats: Dict, holdout_weather_stats: Dict) -> None:
+    """The weather contract on both frames' recovery stats, unmapped counts summed."""
     combined_unmapped = dict(weather_stats['unmapped_descriptions'])
     for k, v in holdout_weather_stats['unmapped_descriptions'].items():
         combined_unmapped[k] = combined_unmapped.get(k, 0) + v
     enforce_weather_contract({**weather_stats, 'unmapped_descriptions': combined_unmapped})
 
-    calendar_stats = audit_calendar_coverage(train_df, 'train')
-    holdout_calendar_stats = audit_calendar_coverage(holdout_df, 'holdout')
+
+def enforce_calendar_contracts(calendar_stats: Dict, holdout_calendar_stats: Dict) -> None:
     enforce_calendar_contract({
         'rows': calendar_stats['rows'] + holdout_calendar_stats['rows'],
         'rows_without_month': (calendar_stats['rows_without_month']
@@ -3213,85 +3449,75 @@ def main():
         'pct_without_month': calendar_stats['pct_without_month'],
     })
 
-    # Round 20: the carried provenance columns check each other and the
-    # exporter, on BOTH frames, before a single feature is built. Nothing here
-    # fills, coerces or repairs — see enforce_label_contract.
-    label_stats = audit_label_columns(train_df, 'train')
-    holdout_label_stats = audit_label_columns(holdout_df, 'holdout')
+
+def enforce_label_contracts(label_stats: Dict, holdout_label_stats: Dict) -> None:
     enforce_label_contract(label_stats, 'train')
     enforce_label_contract(holdout_label_stats, 'holdout')
 
-    # Round 25: the same treatment for event provenance, as a REPORT and never a
-    # gate. It is empty on the entire pre-045 corpus, so a refusal would block
-    # every retrain on a fact about the past that no run can change; what it can
-    # do is make the size of the unverifiable slice impossible to overlook.
-    report_event_provenance(train_df, 'train')
-    report_event_provenance(holdout_df, 'holdout')
 
-    # Round 26: the event-type vocabulary. The two legacy values are mapped by
-    # their exact reading and anything else stops the run here, before a
-    # two-hour feature build, on BOTH frames.
-    event_type_stats = {
-        'train': normalise_event_types(train_df, 'train'),
-        'holdout': normalise_event_types(holdout_df, 'holdout'),
+def event_type_record(train_stats: Dict, holdout_stats: Dict) -> Dict:
+    return {
+        'train': train_stats,
+        'holdout': holdout_stats,
         'vocabulary': list(EVENT_TYPE_VOCABULARY),
         'legacy_aliases': dict(LEGACY_EVENT_TYPE_ALIASES),
     }
 
-    # The time holdout, cut BEFORE anything is fitted (see the block above
-    # resolve_time_holdout). Only the training frame loses rows; the city
-    # holdout was never trained on.
-    final_refit = resolve_final_refit()
-    if final_refit:
-        # Everything trains: the holdout cities join the training frame and no
-        # live day is held back (the block above resolve_final_refit).
-        if holdout_df is None or len(holdout_df) == 0:
-            raise CorpusContractError(f'{FINAL_REFIT_ENV}: the export has no holdout cities to fold in.')
-        final_refit['holdout_city_rows_folded_in'] = int(len(holdout_df))
-        final_refit['holdout_cities_folded_in'] = sorted(holdout_df['city'].astype(str).unique().tolist())
-        train_df = pd.concat([train_df, holdout_df], ignore_index=True)
-        logger.warning('FINAL REFIT of %s: %d holdout-city rows %s folded into training, time holdout off. '
-                       'Do not run quick_eval.py on this artifact; run final_refit_gate.py.',
-                       final_refit['gated_metadata_path'], final_refit['holdout_city_rows_folded_in'],
-                       final_refit['holdout_cities_folded_in'])
-        live = _live_dates(train_df)
-        time_holdout = {'policy': 'final_refit', 'days': 0, 'from_date': None,
-                        'last_live_date': str(live.max()) if len(live) else None}
-    else:
-        time_holdout = resolve_time_holdout([train_df, holdout_df])
-    train_df, time_split = split_time_holdout(train_df, time_holdout['from_date'])
-    time_holdout.update(time_split)
+
+def fold_holdout_into_refit(final_refit: Dict, holdout_df: pd.DataFrame) -> None:
+    """Record (and say) which holdout cities a final refit trains on."""
+    # Everything trains: the holdout cities join the training frame and no
+    # live day is held back (the block above resolve_final_refit).
+    if holdout_df is None or len(holdout_df) == 0:
+        raise CorpusContractError(f'{FINAL_REFIT_ENV}: the export has no holdout cities to fold in.')
+    final_refit['holdout_city_rows_folded_in'] = int(len(holdout_df))
+    final_refit['holdout_cities_folded_in'] = sorted(holdout_df['city'].astype(str).unique().tolist())
+    logger.warning('FINAL REFIT of %s: %d holdout-city rows %s folded into training, time holdout off. '
+                   'Do not run quick_eval.py on this artifact; run final_refit_gate.py.',
+                   final_refit['gated_metadata_path'], final_refit['holdout_city_rows_folded_in'],
+                   final_refit['holdout_cities_folded_in'])
+
+
+def log_time_holdout(time_holdout: Dict) -> None:
     logger.info('Time holdout (%s): live readings from %s on are held out of training for the '
                 'band gate: %d realtime rows (%d live) %s; training live data runs through %s.',
                 time_holdout['policy'], time_holdout['from_date'], time_holdout['realtime_rows_held_out'],
                 time_holdout['live_rows_held_out'], time_holdout['held_out_by_city'],
                 time_holdout['training_live_through'])
 
-    # Drop rows with null label
-    train_df = train_df.dropna(subset=['busyness_pct'])
-    logger.info(f'After dropping null labels: {len(train_df)} rows')
 
-    # Drop rows where busyness_pct is 0 for suspiciously many hours (likely closed)
-    # We keep individual 0s but flag venues that are always 0
-    venue_means = train_df.groupby(['city', 'venue_category', 'latitude', 'longitude'])['busyness_pct'].mean()
-    always_zero = venue_means[venue_means == 0].index
-    if len(always_zero) > 0:
-        before = len(train_df)
-        train_df = train_df.set_index(['city', 'venue_category', 'latitude', 'longitude'])
-        train_df = train_df.drop(always_zero, errors='ignore')
-        train_df = train_df.reset_index()
-        logger.info(f'Dropped {before - len(train_df)} rows from always-zero venues')
+ALWAYS_ZERO_KEYS = ['city', 'venue_category', 'latitude', 'longitude']
 
-    # Feature engineering — training data
-    logger.info('Engineering features...')
+
+def drop_always_zero_venues(train_df: pd.DataFrame, always_zero) -> pd.DataFrame:
+    """Drop the rows of the (city, venue_category, latitude, longitude) keys in
+    `always_zero`; a key that is not in the frame is ignored."""
+    train_df = train_df.set_index(ALWAYS_ZERO_KEYS)
+    train_df = train_df.drop(always_zero, errors='ignore')
+    return train_df.reset_index()
+
+
+def add_training_features(train_df: pd.DataFrame, neighbor_table: Dict, live_reading_table: Dict,
+                          fits: Dict) -> pd.DataFrame:
+    """Every feature step of the training frame, in order.
+
+    `fits` holds the tables fitted on the whole training frame: venue_metadata,
+    temp_norms and cat_maps, and the streamed preparation's baseline_grid. A
+    missing one is fitted here, from `train_df`, and stored back, which is what
+    main() does with the whole frame; main_streamed() fits them all first and
+    hands each slice of rows the same tables.
+    """
     train_df = add_temporal_features(train_df)
-    train_df, venue_metadata = add_venue_features(train_df)
+    train_df, venue_metadata = add_venue_features(train_df, fits.get('venue_metadata'))
     # Round 26: the climate table is fitted ONCE, from the training rows that
     # carry a reading, and handed to every weather step on both frames. It is
     # the table serving imputes from, so it is fitted before anything is filled.
-    temp_norms = fit_temperature_norms(train_df)
+    temp_norms = fits.get('temp_norms')
+    if temp_norms is None:
+        temp_norms = fit_temperature_norms(train_df)
     train_df = add_weather_features(train_df, temp_norms)
-    train_df, cat_baseline_maps = add_baseline_features(train_df)
+    train_df, cat_maps = add_baseline_features(train_df, fits.get('cat_maps'), fits.get('baseline_grid'))
+    fits.update(venue_metadata=venue_metadata, temp_norms=temp_norms, cat_maps=cat_maps)
     train_df = add_user_feedback_features(train_df)
     train_df = add_event_features(train_df)
     # v2.4 features (sunset/anomaly/neighbors) — see function docstrings
@@ -3304,6 +3530,10 @@ def main():
     train_df = add_holiday_features(train_df)
     # 2026-08-30: game-night context, zeros unless sports_events.csv exists
     train_df = add_sports_features(train_df)
+    return train_df
+
+
+def add_temp_norm_metadata(venue_metadata: Dict, temp_norms: pd.DataFrame) -> None:
     venue_metadata['temp_norms'] = {
         f"{int(r.lat_band)}_{int(r.month)}": round(float(r.temp_norm), 2)
         for r in temp_norms.itertuples() if not pd.isna(r.month)
@@ -3315,132 +3545,74 @@ def main():
         f"{int(r.lat_band)}_{int(r.month)}": int(r.n_obs)
         for r in temp_norms.itertuples() if not pd.isna(r.month)
     }
-    weather_imputation = {
+
+
+def weather_imputation_record(temp_norms: pd.DataFrame, rows_with_reading: int, rows_imputed: int) -> Dict:
+    return {
         'temperature': ('temp_norms[(lat_band, month)], else the mean of that table: the '
                         'lookup mlPredictor.climateNorm performs for a missing reading'),
         'no_reading_fills': dict(WEATHER_NO_READING_FILLS),
         'norms_fit_population': 'rows carrying a temperature reading (weather_observed = 1)',
         'norms_fit_rows': int(temp_norms['n_obs'].sum()),
         'norms_cells': int(len(temp_norms)),
-        'train_rows_with_reading': int((train_df['weather_observed'] == 1).sum()),
-        'train_rows_imputed': int((train_df['weather_observed'] == 0).sum()),
+        'train_rows_with_reading': rows_with_reading,
+        'train_rows_imputed': rows_imputed,
     }
-    train_df = finish_frame(train_df)
 
-    # Feature engineering — holdout data (same transforms)
-    if holdout_df is not None:
-        holdout_df = holdout_df.dropna(subset=['busyness_pct'])
-        holdout_df = add_temporal_features(holdout_df)
 
-        # Apply same category encoding
-        cat_map = venue_metadata['category_encoding']
-        holdout_df['venue_category_encoded'] = holdout_df['venue_category'].map(cat_map).fillna(-1).astype(int)
-        holdout_df['price_level'] = holdout_df['price_level'].fillna(venue_metadata['median_price_level'])
-        holdout_df['rating'] = holdout_df['rating'].fillna(venue_metadata['median_rating'])
-        # The STORED median, not one recomputed from the holdout's own rows —
-        # recomputing is how a fill becomes a leak. Same rule the line above it
-        # has always followed; review_count was filled with a literal 0 here.
-        holdout_df['review_count'] = holdout_df['review_count'].fillna(venue_metadata['median_review_count'])
-        holdout_df['log_review_count'] = np.log1p(holdout_df['review_count'])
+def featurise_holdout(holdout_df: pd.DataFrame, venue_metadata: Dict, temp_norms: pd.DataFrame,
+                      cat_baseline_maps: Dict, neighbor_table: Dict, live_reading_table: Dict,
+                      weather_imputation: Dict) -> pd.DataFrame:
+    """The holdout's features, every one from the TRAINING frame's fits, finished
+    and with its delta label. Adds the holdout's weather counts to weather_imputation."""
+    holdout_df = holdout_df.dropna(subset=['busyness_pct'])
+    holdout_df = add_temporal_features(holdout_df)
 
-        # Google types one-hot
-        top_types = venue_metadata['top_google_types']
-        for t in top_types:
-            col_name = f'gtype_{t}'
-            holdout_df[col_name] = np.zeros(len(holdout_df), dtype=FLAG_DTYPE)
-            for tc in ['google_type_1', 'google_type_2', 'google_type_3']:
-                holdout_df.loc[holdout_df[tc] == t, col_name] = 1
+    # Apply same category encoding
+    cat_map = venue_metadata['category_encoding']
+    holdout_df['venue_category_encoded'] = holdout_df['venue_category'].map(cat_map).fillna(-1).astype(int)
+    holdout_df['price_level'] = holdout_df['price_level'].fillna(venue_metadata['median_price_level'])
+    holdout_df['rating'] = holdout_df['rating'].fillna(venue_metadata['median_rating'])
+    # The STORED median, not one recomputed from the holdout's own rows —
+    # recomputing is how a fill becomes a leak. Same rule the line above it
+    # has always followed; review_count was filled with a literal 0 here.
+    holdout_df['review_count'] = holdout_df['review_count'].fillna(venue_metadata['median_review_count'])
+    holdout_df['log_review_count'] = np.log1p(holdout_df['review_count'])
 
-        # TRAIN norms: a holdout reading never shapes a holdout feature, and the
-        # city-month median this used to fit on the holdout's own rows is gone.
-        holdout_df = add_weather_features(holdout_df, temp_norms)
-        weather_imputation['holdout_rows_with_reading'] = int((holdout_df['weather_observed'] == 1).sum())
-        weather_imputation['holdout_rows_imputed'] = int((holdout_df['weather_observed'] == 0).sum())
-        # TRAIN maps — holdout labels must never build holdout features (round 10)
-        holdout_df, _ = add_baseline_features(holdout_df, cat_maps=cat_baseline_maps)
-        holdout_df = add_user_feedback_features(holdout_df)
-        holdout_df = add_event_features(holdout_df)
-        holdout_df = add_astronomy_features(holdout_df)
-        holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
-        holdout_df = add_neighbor_features(holdout_df, neighbor_table)
-        holdout_df = add_live_features(holdout_df, live_reading_table, neighbor_table)
-        holdout_df = add_holiday_features(holdout_df)
-        holdout_df = add_sports_features(holdout_df)
-        holdout_df = finish_frame(holdout_df)
+    # Google types one-hot
+    top_types = venue_metadata['top_google_types']
+    for t in top_types:
+        col_name = f'gtype_{t}'
+        holdout_df[col_name] = np.zeros(len(holdout_df), dtype=FLAG_DTYPE)
+        for tc in ['google_type_1', 'google_type_2', 'google_type_3']:
+            holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
-    # Compute delta label: y_delta = busyness_pct - baseline_busyness
-    # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
-    # This removes the popular_times leakage (model can't trivially copy baseline as a feature).
-    train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
-    train_df['delta_label'] = (train_df['busyness_pct'] - train_df['baseline_busyness']).astype(float)
-    if holdout_df is not None:
-        holdout_df['baseline_busyness'] = holdout_df['baseline_busyness'].fillna(0)
-        holdout_df['delta_label'] = (holdout_df['busyness_pct'] - holdout_df['baseline_busyness']).astype(float)
+    # TRAIN norms: a holdout reading never shapes a holdout feature, and the
+    # city-month median this used to fit on the holdout's own rows is gone.
+    holdout_df = add_weather_features(holdout_df, temp_norms)
+    weather_imputation['holdout_rows_with_reading'] = int((holdout_df['weather_observed'] == 1).sum())
+    weather_imputation['holdout_rows_imputed'] = int((holdout_df['weather_observed'] == 0).sum())
+    # TRAIN maps — holdout labels must never build holdout features (round 10)
+    holdout_df, _ = add_baseline_features(holdout_df, cat_maps=cat_baseline_maps)
+    holdout_df = add_user_feedback_features(holdout_df)
+    holdout_df = add_event_features(holdout_df)
+    holdout_df = add_astronomy_features(holdout_df)
+    holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
+    holdout_df = add_neighbor_features(holdout_df, neighbor_table)
+    holdout_df = add_live_features(holdout_df, live_reading_table, neighbor_table)
+    holdout_df = add_holiday_features(holdout_df)
+    holdout_df = add_sports_features(holdout_df)
+    holdout_df = finish_frame(holdout_df)
 
-    # ── v2.3 TRAINING-POPULATION FIX (the realtime discrepancy) ──────────────
-    # 91% of rows are weekly popular_times snapshots where busyness_pct equals
-    # baseline_busyness BY CONSTRUCTION, so their delta label is exactly 0.
-    # Training on them teaches "predict 0" and drags every real deviation
-    # toward zero — this is why v2.2.1's realtime-only within-10 was 18%.
-    # Also: production only serves the delta model when baseline > 0 (the
-    # no-baseline guard falls back to the rule engine), so rows with
-    # baseline == 0 are a population we never serve.
-    # v2.3 trains on the exact serving population: realtime rows with a real
-    # baseline. The holdout FRAME is deliberately left unfiltered so overall
-    # diagnostics still see every row — but the SHIP GATE slice is filtered with
-    # the same serving_population_mask this filter uses (quick_eval.py imports
-    # it). Audit finding 6: it was not, so the gate was decided partly on rows
-    # production routes to the rule engine.
-    # Round 21. The per-fold category aggregates are fitted HERE, on the frame
-    # build_category_baseline_maps was fitted on, because the trainer's job is to
-    # rebuild THAT map minus one city. Doing it after the filter below made the
-    # confound fifty-four times the leak — see the round 21 paragraph above
-    # build_category_cell_aggregates. The positional row indexes are attached
-    # further down, once the frame is the one X will be built from.
-    cell_aggregates = build_category_cell_aggregates(train_df, LEAVE_OUT_COL)
+    # The delta label, as the training frame's (main(), above the v2.3 fix).
+    holdout_df['baseline_busyness'] = holdout_df['baseline_busyness'].fillna(0)
+    holdout_df['delta_label'] = (holdout_df['busyness_pct'] - holdout_df['baseline_busyness']).astype(float)
+    return holdout_df
 
-    # Runs of identical live readings are counted on every live reading of the
-    # training window, before the filter below removes any of them (see the
-    # block above live_run_lengths).
-    train_df['live_run_length'] = live_run_lengths(train_df)
 
-    before_filter = len(train_df)
-    # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
-    # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
-    # nothing taught it "most moments are typical". Keep the weekly rows but
-    # at 5% sample weight: enough anchor to calm typical nights, not enough
-    # to drown the real deviations like v2.2.1 (where they were 91% of the
-    # loss and taught delta=0 everywhere).
-    train_df = train_df[serving_population_mask(train_df['baseline_busyness'])]
-    # Round 10 (provenance): collection_mode='realtime' says WHEN a row was
-    # taken, not that the number was observed. collectRealtime.js falls back to
-    # BestTime's own forecast when live traffic is unavailable, and those rows
-    # were carrying weight 1.0 — a vendor's prediction outranking every other
-    # label in the corpus, and teaching the model to reproduce a competitor's
-    # model rather than reality. Forecast-derived labels now sit between weekly
-    # and live. Rows collected before label_provenance existed USED to stay at
-    # 1.0 on the argument that "silently demoting the whole historical corpus
-    # would be a bigger change than the bug"; that held while every realtime
-    # row was in that state and expired on 2026-09-01, when proven-live rows
-    # began landing beside them. Round 26 excludes them instead; see
-    # exclude_unknown_provenance.
-    # label_provenance is part of the export contract (require_export_columns
-    # already refused the file if it were absent). It used to be defaulted to
-    # 'unknown' here when missing, which silently weighted EVERY vendor-forecast
-    # label at 1.0 — the exact thing round 10 added the column to stop, and the
-    # regime the shipped v2.5 model was trained under without anyone noticing.
-    train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
-    # Round 26: an unknown-provenance realtime row is not a live label. Excluded
-    # from both frames unless ML_ALLOW_UNKNOWN_PROVENANCE=true admits it; see
-    # the block above exclude_unknown_provenance for why there is no tier for it.
-    # The holdout keeps its rows only under the same hatch: a gate scored on
-    # rows that may be the vendor's own forecast is not a gate on reality.
-    train_df, unknown_train = exclude_unknown_provenance(train_df, 'train')
-    holdout_df['label_provenance'] = holdout_df['label_provenance'].fillna('unknown')
-    holdout_df, unknown_holdout = exclude_unknown_provenance(holdout_df, 'holdout')
-    unknown_provenance_record = {'train': unknown_train, 'holdout': unknown_holdout,
-                                 'env': UNKNOWN_PROVENANCE_ENV}
-    weekly_weight_policy, run_divisor = assign_sample_weights(train_df, RUN_LENGTH_POLICY)
+def log_weight_blend(train_df: pd.DataFrame, before_filter: int, weekly_weight_policy: Dict) -> int:
+    """The v2.3.1 blend line. `train_df` needs is_realtime, label_provenance and
+    sample_weight. Returns the realtime row count."""
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
     is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
     n_rt = int((train_df['is_realtime'] == 1).sum())
@@ -3459,6 +3631,12 @@ def main():
         f'(runs {rl["live_rows_by_run_length"]}); '
         f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )
+    return n_rt
+
+
+def check_realtime_labels(train_df: pd.DataFrame, n_rt: int, unknown_train: Dict) -> None:
+    """What may train at the live weight, checked on the weighted frame (which
+    needs is_realtime and label_provenance)."""
     known_prov = sorted(train_df['label_provenance'].dropna().unique().tolist())
     logger.info(f'label_provenance levels present: {known_prov}')
     # ON THE REALTIME ROWS, because those are the only rows the weighting ladder
@@ -3503,9 +3681,9 @@ def main():
             'to admit the unprovable rows at the live weight, knowing what they contain.'
         )
 
-    # Get feature columns (excludes baseline_busyness — now in label)
-    feature_cols = get_feature_columns(train_df)
 
+def align_holdout(holdout_df: pd.DataFrame, feature_cols: List[str]) -> pd.DataFrame:
+    """The holdout cut to the training feature columns and the carried ones."""
     # Ensure holdout has same columns. Zero-filling a MISSING feature is only
     # defensible for a one-hot level that genuinely never occurs in the holdout
     # cities (no venue of that Google type, no snow in Miami). Anything else
@@ -3555,71 +3733,11 @@ def main():
                   'observed_date', 'weather_observed',
                   # no longer a feature (realtime_flags), so it must be kept by name
                   'is_realtime']
-    holdout_df = holdout_df[feature_cols + keep_extra]
+    return holdout_df[feature_cols + keep_extra]
 
-    logger.info(f'Feature count: {len(feature_cols)}')
-    logger.info(f'Features: {feature_cols}')
-    logger.info(f'Delta label distribution: mean={train_df["delta_label"].mean():.2f}, std={train_df["delta_label"].std():.2f}, min={train_df["delta_label"].min():.0f}, max={train_df["delta_label"].max():.0f}')
 
-    # Label distribution
-    logger.info(f'\nLabel (busyness_pct) distribution:')
-    logger.info(f'  Mean: {train_df["busyness_pct"].mean():.1f}')
-    logger.info(f'  Median: {train_df["busyness_pct"].median():.1f}')
-    logger.info(f'  Std: {train_df["busyness_pct"].std():.1f}')
-    logger.info(f'  Min: {train_df["busyness_pct"].min()}, Max: {train_df["busyness_pct"].max()}')
-
-    # Round 26: no blanket fill. Every feature column arrives here populated by
-    # its own named fill, or the run stops and names the column. The
-    # `fillna(0)` that stood here caught nothing on the last run and would have
-    # turned the first forgotten fill into a measured zero.
-    refuse_unfilled_features(train_df, feature_cols, 'train')
-    refuse_unfilled_features(holdout_df, feature_cols, 'holdout')
-
-    # Dead-slot contract (round 22). This used to be a bare logger.warning that
-    # ended "some of these are legitimately sparse" without saying WHICH, so the
-    # eleven dead slots of the last run were indistinguishable from each other:
-    # ten were true statements about a young corpus and one (cold_outdoor) was a
-    # Celsius threshold on a Fahrenheit column that could never fire on either
-    # side of the parity gate. A warning that mixes those two is a warning nobody
-    # can act on. Now each constant column must be named and justified in
-    # EXPECTED_SPARSE_FEATURES or the run stops.
-    # cold_outdoor (decided 2026-10-15, before the November export). It may not be
-    # excused as sparse (mlPipelineContracts.test.js: it once hid a Celsius threshold
-    # on a Fahrenheit column), so a training window with no live reading under 41 F
-    # drops it and a window with one keeps it. The rule reads only whether the column
-    # varies, never a score, so it is fixed before the data exist.
-    if 'cold_outdoor' in feature_cols and train_df['cold_outdoor'].nunique(dropna=False) <= 1:
-        drop_features(['cold_outdoor'], 'constant in a training window with no live reading under 41 F')
-        feature_cols = [c for c in feature_cols if c != 'cold_outdoor']
-    constant_cols = [c for c in feature_cols if train_df[c].nunique(dropna=False) <= 1]
-    dead_slot_record = enforce_dead_slot_contract(constant_cols, feature_cols)
-
-    # Save
-    logger.info('\nSaving artifacts...')
-
-    # Save feature matrix as pickle
-    # y = delta label (training target). y_actual + baseline kept for evaluation/reconstruction.
-    # 'hour' and 'venue_category' are carried EXPLICITLY (audit finding 10):
-    # evaluate_model.py used to re-read the 3.57M-row raw CSV and truncate it to
-    # the length of the 2.07M-row filtered matrix, aligning unrelated rows — the
-    # MAE-by-hour plot, the one diagnostic that would have caught a six-hour
-    # clock skew, was drawn on scrambled pairs.
-    # Round 14. Indexed HERE, after every row filter, so row_cell / row_group
-    # are positionally aligned with X — the same alignment mistake audit finding
-    # 10 found in evaluate_model.py is the one thing that would make these
-    # statistics silently wrong. The SUMS were fitted earlier, before the
-    # serving-population filter, for the reason round 21 records; only the
-    # indexes belong here.
-    cell_stats = index_category_cells(train_df, cell_aggregates)
-    if (len(cell_stats['row_group']) != len(train_df)
-            or len(cell_stats['category']['row_cell']) != len(train_df)):
-        raise CorpusContractError(
-            'category_cell_stats row indexes do not match the training frame '
-            f'({len(cell_stats["row_group"])} / '
-            f'{len(cell_stats["category"]["row_cell"])} vs {len(train_df)}). They are '
-            'POSITIONAL indexes into X; a per-fold refit built from misaligned '
-            'indexes would score every row against the wrong category cell, silently.'
-        )
+def category_baseline_fit_record(cell_stats: Dict) -> Dict:
+    """Where the two category label-means were fitted and applied, for metadata."""
     category_baseline_fit = {
         'training_rows_fit': 'whole training frame (build_category_baseline_maps)',
         'training_rows_applied': 'whole training frame',
@@ -3665,17 +3783,16 @@ def main():
         cell_stats['version'], cell_stats['fit_rows'], cell_stats['rows'],
         len(cell_stats['category']['cells']), len(cell_stats['refined']['cells']),
         len(cell_stats['groups']), cell_stats['group_col'])
+    return category_baseline_fit
 
-    train_data = {
-        'X': feature_matrix(train_df, feature_cols),
+
+def train_pickle_columns(train_df: pd.DataFrame) -> Dict:
+    """The per-row keys of features_train.pkl, from the finished, filtered,
+    weighted training frame (or a slice of its rows)."""
+    return {
         'y': train_df['delta_label'].values.astype(np.float32),
         'y_actual': train_df['busyness_pct'].values.astype(np.float32),
         'baseline': train_df['baseline_busyness'].values.astype(np.float32),
-        'sample_weight': train_df['sample_weight'].values.astype(np.float32),
-        # What each row's tier weight was divided by: its live run length under
-        # FLOCK_RUN_LENGTH_WEIGHTS=on, else 1. train_model checks weight x this.
-        'run_length_divisor': run_divisor.astype(np.int16),
-        'feature_cols': feature_cols,
         'cities': train_df['city'].values,
         'hour': train_df['hour'].values.astype(np.int16),
         'venue_category': train_df['venue_category'].astype(str).values,
@@ -3686,16 +3803,12 @@ def main():
         'label_source': train_df['label_source'].astype('string').fillna('').values.astype(str),
         'vendor_forecast_pct': pd.to_numeric(
             train_df['vendor_forecast_pct'], errors='coerce').values.astype(np.float32),
-        'label_type': 'delta',
         # 2026-08-30: dates ride the TRAIN pickle too. The sports ablation
         # needs a forward-in-time split evaluated on PA rows, because the
         # geographic holdout (miami, tokyo, barcelona) is exactly where the
         # market-gated sports features are all zero by design; the holdout
         # has carried this key since GATE-B for the same class of reason.
         'observed_date': train_df['observed_date'].astype('string').fillna('').values.astype(str),
-        # Round 14: raw material for a per-fold refit of the two category
-        # label-means. Not features, not applied to any row here.
-        'category_cell_stats': cell_stats,
         # Round 26 carried columns. weather_observed: 1 where the six weather
         # slots are a reading, 0 where they are the outage vector. is_realtime
         # is the ONLY copy of that flag since 2026-09-25: PRE-RETRAIN-AUDIT finding 18
@@ -3705,10 +3818,41 @@ def main():
         'weather_observed': train_df['weather_observed'].values.astype(np.int8),
         'is_realtime': train_df['is_realtime'].values.astype(np.int8),
     }
-    with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
-        pickle.dump(train_data, f)
 
-    holdout_data = {
+
+def train_pickle_dict(cols: Dict, x_entry: Dict, sample_weight: np.ndarray, run_divisor: np.ndarray,
+                      feature_cols: List[str], cell_stats: Dict) -> Dict:
+    """features_train.pkl: x_entry is {'X': matrix}, or the three keys that name
+    the matrix's .npy file (features_io.finish_x)."""
+    return {
+        **x_entry,
+        # y = delta label (training target). y_actual + baseline kept for evaluation/reconstruction.
+        'y': cols['y'],
+        'y_actual': cols['y_actual'],
+        'baseline': cols['baseline'],
+        'sample_weight': sample_weight.astype(np.float32),
+        # What each row's tier weight was divided by: its live run length under
+        # FLOCK_RUN_LENGTH_WEIGHTS=on, else 1. train_model checks weight x this.
+        'run_length_divisor': run_divisor.astype(np.int16),
+        'feature_cols': feature_cols,
+        'cities': cols['cities'],
+        'hour': cols['hour'],
+        'venue_category': cols['venue_category'],
+        'label_provenance': cols['label_provenance'],
+        'label_source': cols['label_source'],
+        'vendor_forecast_pct': cols['vendor_forecast_pct'],
+        'label_type': 'delta',
+        'observed_date': cols['observed_date'],
+        # Round 14: raw material for a per-fold refit of the two category
+        # label-means. Not features, not applied to any row here.
+        'category_cell_stats': cell_stats,
+        'weather_observed': cols['weather_observed'],
+        'is_realtime': cols['is_realtime'],
+    }
+
+
+def holdout_pickle_dict(holdout_df: pd.DataFrame, feature_cols: List[str]) -> Dict:
+    return {
         'X': feature_matrix(holdout_df, feature_cols),
         'y': holdout_df['delta_label'].values.astype(np.float32),
         'y_actual': holdout_df['busyness_pct'].values.astype(np.float32),
@@ -3731,9 +3875,16 @@ def main():
         'weather_observed': holdout_df['weather_observed'].values.astype(np.int8),
         'is_realtime': holdout_df['is_realtime'].values.astype(np.int8),
     }
-    with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
-        pickle.dump(holdout_data, f)
 
+
+def write_model_metadata(*, time_holdout: Dict, final_refit, weekly_weight_policy: Dict,
+                         feature_cols: List[str], venue_metadata: Dict, cat_baseline_maps: Dict,
+                         training_rows: int, holdout_rows: int, weather_stats: Dict,
+                         holdout_weather_stats: Dict, calendar_stats: Dict, holdout_calendar_stats: Dict,
+                         label_stats: Dict, holdout_label_stats: Dict, weather_imputation: Dict,
+                         event_type_stats: Dict, unknown_provenance_record: Dict, constant_cols: List[str],
+                         dead_slot_record: Dict, category_baseline_fit: Dict) -> None:
+    """Merge this feature build into models/model_metadata.json."""
     # Category/refined baseline lookups shipped to Node for inference.
     # Round 10: these are now the EXACT maps used to build the training
     # features (see build_category_baseline_maps) instead of a second,
@@ -3794,8 +3945,8 @@ def main():
         'weather_code_groups': {k: str(v) for k, v in WEATHER_GROUPS.items()},
         'category_baselines': cat_baseline_dict,
         'refined_baselines': ref_baseline_dict,
-        'training_rows': len(train_df),
-        'holdout_rows': len(holdout_df),
+        'training_rows': training_rows,
+        'holdout_rows': holdout_rows,
         # Provenance of THIS feature build — an artifact can never hide which
         # policy produced it (audit findings 4 and 5).
         'corpus_contract': {
@@ -3861,11 +4012,1290 @@ def main():
     with open(meta_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
+
+def main():
+    logger.info('Loading training data...')
+    train_path = SCRIPT_DIR / 'training_data.csv'
+    if not train_path.exists():
+        raise CorpusContractError(
+            f'{train_path} does not exist. Run `node export_training_data.js` first — '
+            'the retrain starts at the export, not at this script.'
+        )
+    streamed, why = prep_stream_mode(train_path)
+    if streamed:
+        return main_streamed(train_path, why)
+    logger.info('Feature preparation in memory (%s).', why)
+    train_df = pd.read_csv(train_path)
+    logger.info(f'Training data: {len(train_df)} rows')
+    require_export_columns(train_df, train_path, 'training_data.csv')
+    _, holdout_df = read_holdout_csv()
+    require_coordinates(train_df, train_path, 'training_data.csv')
+
+    # The neighbour table serving's range scan reads, from BOTH raw frames and
+    # before any row is dropped (see the block above build_neighbor_table).
+    neighbor_table = build_neighbor_table([train_df, holdout_df])
+    # The live readings serving's offset row stores, from both raw frames and
+    # before any row is dropped (see the block above add_live_features).
+    live_reading_table = build_live_reading_table([train_df, holdout_df], neighbor_table)
+    log_raw_tables(neighbor_table, live_reading_table)
+    if LIVE_FEATURE_POLICY == 'off':
+        drop_features(LIVE_FEATURE_NAMES, 'FLOCK_LIVE_FEATURES=off (ablation)')
+
+    # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
+    # Recover weather_condition_code from the description text, then decide the
+    # weather and calendar policies ONCE, before any feature is built, so the
+    # feature set that comes out of this run cannot contain a dead slot without
+    # model_metadata.json saying so.
+    weather_stats = recover_weather_codes(train_df, 'train')
+    holdout_weather_stats = recover_weather_codes(holdout_df, 'holdout')
+    enforce_weather_contracts(weather_stats, holdout_weather_stats)
+
+    calendar_stats = audit_calendar_coverage(train_df, 'train')
+    holdout_calendar_stats = audit_calendar_coverage(holdout_df, 'holdout')
+    enforce_calendar_contracts(calendar_stats, holdout_calendar_stats)
+
+    # Round 20: the carried provenance columns check each other and the
+    # exporter, on BOTH frames, before a single feature is built. Nothing here
+    # fills, coerces or repairs — see enforce_label_contract.
+    label_stats = audit_label_columns(train_df, 'train')
+    holdout_label_stats = audit_label_columns(holdout_df, 'holdout')
+    enforce_label_contracts(label_stats, holdout_label_stats)
+
+    # Round 25: the same treatment for event provenance, as a REPORT and never a
+    # gate. It is empty on the entire pre-045 corpus, so a refusal would block
+    # every retrain on a fact about the past that no run can change; what it can
+    # do is make the size of the unverifiable slice impossible to overlook.
+    report_event_provenance(train_df, 'train')
+    report_event_provenance(holdout_df, 'holdout')
+
+    # Round 26: the event-type vocabulary. The two legacy values are mapped by
+    # their exact reading and anything else stops the run here, before a
+    # two-hour feature build, on BOTH frames.
+    event_type_stats = event_type_record(normalise_event_types(train_df, 'train'),
+                                         normalise_event_types(holdout_df, 'holdout'))
+
+    # The time holdout, cut BEFORE anything is fitted (see the block above
+    # resolve_time_holdout). Only the training frame loses rows; the city
+    # holdout was never trained on.
+    final_refit = resolve_final_refit()
+    if final_refit:
+        fold_holdout_into_refit(final_refit, holdout_df)
+        train_df = pd.concat([train_df, holdout_df], ignore_index=True)
+        live = _live_dates(train_df)
+        time_holdout = {'policy': 'final_refit', 'days': 0, 'from_date': None,
+                        'last_live_date': str(live.max()) if len(live) else None}
+    else:
+        time_holdout = resolve_time_holdout([train_df, holdout_df])
+    train_df, time_split = split_time_holdout(train_df, time_holdout['from_date'])
+    time_holdout.update(time_split)
+    log_time_holdout(time_holdout)
+
+    # Drop rows with null label
+    train_df = train_df.dropna(subset=['busyness_pct'])
+    logger.info(f'After dropping null labels: {len(train_df)} rows')
+
+    # Drop rows where busyness_pct is 0 for suspiciously many hours (likely closed)
+    # We keep individual 0s but flag venues that are always 0
+    venue_means = train_df.groupby(ALWAYS_ZERO_KEYS)['busyness_pct'].mean()
+    always_zero = venue_means[venue_means == 0].index
+    if len(always_zero) > 0:
+        before = len(train_df)
+        train_df = drop_always_zero_venues(train_df, always_zero)
+        logger.info(f'Dropped {before - len(train_df)} rows from always-zero venues')
+
+    # Feature engineering — training data
+    logger.info('Engineering features...')
+    fits: Dict = {}
+    train_df = add_training_features(train_df, neighbor_table, live_reading_table, fits)
+    venue_metadata, temp_norms, cat_baseline_maps = fits['venue_metadata'], fits['temp_norms'], fits['cat_maps']
+    add_temp_norm_metadata(venue_metadata, temp_norms)
+    weather_imputation = weather_imputation_record(
+        temp_norms, int((train_df['weather_observed'] == 1).sum()),
+        int((train_df['weather_observed'] == 0).sum()))
+    train_df = finish_frame(train_df)
+
+    # Feature engineering — holdout data (same transforms, the training fits)
+    holdout_df = featurise_holdout(holdout_df, venue_metadata, temp_norms, cat_baseline_maps,
+                                   neighbor_table, live_reading_table, weather_imputation)
+
+    # Compute delta label: y_delta = busyness_pct - baseline_busyness
+    # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
+    # This removes the popular_times leakage (model can't trivially copy baseline as a feature).
+    train_df['baseline_busyness'] = train_df['baseline_busyness'].fillna(0)
+    train_df['delta_label'] = (train_df['busyness_pct'] - train_df['baseline_busyness']).astype(float)
+
+    # ── v2.3 TRAINING-POPULATION FIX (the realtime discrepancy) ──────────────
+    # 91% of rows are weekly popular_times snapshots where busyness_pct equals
+    # baseline_busyness BY CONSTRUCTION, so their delta label is exactly 0.
+    # Training on them teaches "predict 0" and drags every real deviation
+    # toward zero — this is why v2.2.1's realtime-only within-10 was 18%.
+    # Also: production only serves the delta model when baseline > 0 (the
+    # no-baseline guard falls back to the rule engine), so rows with
+    # baseline == 0 are a population we never serve.
+    # v2.3 trains on the exact serving population: realtime rows with a real
+    # baseline. The holdout FRAME is deliberately left unfiltered so overall
+    # diagnostics still see every row — but the SHIP GATE slice is filtered with
+    # the same serving_population_mask this filter uses (quick_eval.py imports
+    # it). Audit finding 6: it was not, so the gate was decided partly on rows
+    # production routes to the rule engine.
+    # Round 21. The per-fold category aggregates are fitted HERE, on the frame
+    # build_category_baseline_maps was fitted on, because the trainer's job is to
+    # rebuild THAT map minus one city. Doing it after the filter below made the
+    # confound fifty-four times the leak — see the round 21 paragraph above
+    # build_category_cell_aggregates. The positional row indexes are attached
+    # further down, once the frame is the one X will be built from.
+    cell_aggregates = build_category_cell_aggregates(train_df, LEAVE_OUT_COL)
+
+    # Runs of identical live readings are counted on every live reading of the
+    # training window, before the filter below removes any of them (see the
+    # block above live_run_lengths).
+    train_df['live_run_length'] = live_run_lengths(train_df)
+
+    before_filter = len(train_df)
+    # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
+    # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
+    # nothing taught it "most moments are typical". Keep the weekly rows but
+    # at 5% sample weight: enough anchor to calm typical nights, not enough
+    # to drown the real deviations like v2.2.1 (where they were 91% of the
+    # loss and taught delta=0 everywhere).
+    train_df = train_df[serving_population_mask(train_df['baseline_busyness'])]
+    # Round 10 (provenance): collection_mode='realtime' says WHEN a row was
+    # taken, not that the number was observed. collectRealtime.js falls back to
+    # BestTime's own forecast when live traffic is unavailable, and those rows
+    # were carrying weight 1.0 — a vendor's prediction outranking every other
+    # label in the corpus, and teaching the model to reproduce a competitor's
+    # model rather than reality. Forecast-derived labels now sit between weekly
+    # and live. Rows collected before label_provenance existed USED to stay at
+    # 1.0 on the argument that "silently demoting the whole historical corpus
+    # would be a bigger change than the bug"; that held while every realtime
+    # row was in that state and expired on 2026-09-01, when proven-live rows
+    # began landing beside them. Round 26 excludes them instead; see
+    # exclude_unknown_provenance.
+    # label_provenance is part of the export contract (require_export_columns
+    # already refused the file if it were absent). It used to be defaulted to
+    # 'unknown' here when missing, which silently weighted EVERY vendor-forecast
+    # label at 1.0 — the exact thing round 10 added the column to stop, and the
+    # regime the shipped v2.5 model was trained under without anyone noticing.
+    train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
+    # Round 26: an unknown-provenance realtime row is not a live label. Excluded
+    # from both frames unless ML_ALLOW_UNKNOWN_PROVENANCE=true admits it; see
+    # the block above exclude_unknown_provenance for why there is no tier for it.
+    # The holdout keeps its rows only under the same hatch: a gate scored on
+    # rows that may be the vendor's own forecast is not a gate on reality.
+    train_df, unknown_train = exclude_unknown_provenance(train_df, 'train')
+    holdout_df['label_provenance'] = holdout_df['label_provenance'].fillna('unknown')
+    holdout_df, unknown_holdout = exclude_unknown_provenance(holdout_df, 'holdout')
+    unknown_provenance_record = {'train': unknown_train, 'holdout': unknown_holdout,
+                                 'env': UNKNOWN_PROVENANCE_ENV}
+    weekly_weight_policy, run_divisor = assign_sample_weights(train_df, RUN_LENGTH_POLICY)
+    n_rt = log_weight_blend(train_df, before_filter, weekly_weight_policy)
+    check_realtime_labels(train_df, n_rt, unknown_train)
+
+    # Get feature columns (excludes baseline_busyness — now in label)
+    feature_cols = get_feature_columns(train_df)
+    holdout_df = align_holdout(holdout_df, feature_cols)
+
+    logger.info(f'Feature count: {len(feature_cols)}')
+    logger.info(f'Features: {feature_cols}')
+    logger.info(f'Delta label distribution: mean={train_df["delta_label"].mean():.2f}, std={train_df["delta_label"].std():.2f}, min={train_df["delta_label"].min():.0f}, max={train_df["delta_label"].max():.0f}')
+
+    # Label distribution
+    logger.info(f'\nLabel (busyness_pct) distribution:')
+    logger.info(f'  Mean: {train_df["busyness_pct"].mean():.1f}')
+    logger.info(f'  Median: {train_df["busyness_pct"].median():.1f}')
+    logger.info(f'  Std: {train_df["busyness_pct"].std():.1f}')
+    logger.info(f'  Min: {train_df["busyness_pct"].min()}, Max: {train_df["busyness_pct"].max()}')
+
+    # Round 26: no blanket fill. Every feature column arrives here populated by
+    # its own named fill, or the run stops and names the column. The
+    # `fillna(0)` that stood here caught nothing on the last run and would have
+    # turned the first forgotten fill into a measured zero.
+    refuse_unfilled_features(train_df, feature_cols, 'train')
+    refuse_unfilled_features(holdout_df, feature_cols, 'holdout')
+
+    # Dead-slot contract (round 22). This used to be a bare logger.warning that
+    # ended "some of these are legitimately sparse" without saying WHICH, so the
+    # eleven dead slots of the last run were indistinguishable from each other:
+    # ten were true statements about a young corpus and one (cold_outdoor) was a
+    # Celsius threshold on a Fahrenheit column that could never fire on either
+    # side of the parity gate. A warning that mixes those two is a warning nobody
+    # can act on. Now each constant column must be named and justified in
+    # EXPECTED_SPARSE_FEATURES or the run stops.
+    # cold_outdoor (decided 2026-10-15, before the November export). It may not be
+    # excused as sparse (mlPipelineContracts.test.js: it once hid a Celsius threshold
+    # on a Fahrenheit column), so a training window with no live reading under 41 F
+    # drops it and a window with one keeps it. The rule reads only whether the column
+    # varies, never a score, so it is fixed before the data exist.
+    if 'cold_outdoor' in feature_cols and train_df['cold_outdoor'].nunique(dropna=False) <= 1:
+        drop_features(['cold_outdoor'], 'constant in a training window with no live reading under 41 F')
+        feature_cols = [c for c in feature_cols if c != 'cold_outdoor']
+    constant_cols = [c for c in feature_cols if train_df[c].nunique(dropna=False) <= 1]
+    dead_slot_record = enforce_dead_slot_contract(constant_cols, feature_cols)
+
+    # Save
+    logger.info('\nSaving artifacts...')
+
+    # Save feature matrix as pickle
+    # 'hour' and 'venue_category' are carried EXPLICITLY (audit finding 10):
+    # evaluate_model.py used to re-read the 3.57M-row raw CSV and truncate it to
+    # the length of the 2.07M-row filtered matrix, aligning unrelated rows — the
+    # MAE-by-hour plot, the one diagnostic that would have caught a six-hour
+    # clock skew, was drawn on scrambled pairs.
+    # Round 14. Indexed HERE, after every row filter, so row_cell / row_group
+    # are positionally aligned with X — the same alignment mistake audit finding
+    # 10 found in evaluate_model.py is the one thing that would make these
+    # statistics silently wrong. The SUMS were fitted earlier, before the
+    # serving-population filter, for the reason round 21 records; only the
+    # indexes belong here.
+    cell_stats = index_category_cells(train_df, cell_aggregates)
+    if (len(cell_stats['row_group']) != len(train_df)
+            or len(cell_stats['category']['row_cell']) != len(train_df)):
+        raise CorpusContractError(
+            'category_cell_stats row indexes do not match the training frame '
+            f'({len(cell_stats["row_group"])} / '
+            f'{len(cell_stats["category"]["row_cell"])} vs {len(train_df)}). They are '
+            'POSITIONAL indexes into X; a per-fold refit built from misaligned '
+            'indexes would score every row against the wrong category cell, silently.'
+        )
+    category_baseline_fit = category_baseline_fit_record(cell_stats)
+
+    train_data = train_pickle_dict(
+        train_pickle_columns(train_df), {'X': feature_matrix(train_df, feature_cols)},
+        train_df['sample_weight'].values, run_divisor, feature_cols, cell_stats)
+    with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
+        pickle.dump(train_data, f)
+
+    holdout_data = holdout_pickle_dict(holdout_df, feature_cols)
+    with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
+        pickle.dump(holdout_data, f)
+
+    write_model_metadata(
+        time_holdout=time_holdout, final_refit=final_refit, weekly_weight_policy=weekly_weight_policy,
+        feature_cols=feature_cols, venue_metadata=venue_metadata, cat_baseline_maps=cat_baseline_maps,
+        training_rows=len(train_df), holdout_rows=len(holdout_df), weather_stats=weather_stats,
+        holdout_weather_stats=holdout_weather_stats, calendar_stats=calendar_stats,
+        holdout_calendar_stats=holdout_calendar_stats, label_stats=label_stats,
+        holdout_label_stats=holdout_label_stats, weather_imputation=weather_imputation,
+        event_type_stats=event_type_stats, unknown_provenance_record=unknown_provenance_record,
+        constant_cols=constant_cols, dead_slot_record=dead_slot_record,
+        category_baseline_fit=category_baseline_fit)
+
     logger.info(f'Saved features_train.pkl ({len(train_df)} rows, {len(feature_cols)} features)')
-    if holdout_df is not None:
-        logger.info(f'Saved features_holdout.pkl ({len(holdout_df)} rows)')
+    logger.info(f'Saved features_holdout.pkl ({len(holdout_df)} rows)')
     logger.info(f'Saved model_metadata.json')
     logger.info('Done!')
+
+
+# ---------------------------------------------------------------------------
+# STREAMED PREPARATION (2026-11-25): a training export too large for one frame.
+#
+# The November third candidate is about 94 million rows. Read whole, this
+# script needs about 0.97 GB per million weekly rows and 0.62 GB per million
+# realtime rows (about 91 GB for that export) on a PC with 61.6 GB. So above
+# FLOCK_PREP_STREAM_MIN_ROWS training rows (default 15,000,000), or whenever
+# FLOCK_PREP_STREAM=1, main() hands the run to main_streamed(), which reads
+# training_data.csv three times and never holds more than a slice of it:
+#
+#   pass 1  the type each column takes in the whole read, the time holdout's
+#           cutoff and the always-zero venues;
+#   pass 2  every table main() fits on the whole training frame: the
+#           neighbour and live-reading tables, the audits, the venue fills
+#           and Google types, the climate norms, the smoothing grid, the
+#           category maps and the live run lengths, and which rows will
+#           reach X (so X can be sized before a row is written);
+#   pass 3  the features of FLOCK_PREP_CHUNK_ROWS rows at a time (default
+#           2,000,000), through the same functions main() runs on the whole
+#           frame with those tables handed in, each slice's rows written into
+#           X at their final positions.
+#
+# X is a float32 Fortran-order .npy beside features_train.pkl, which names it
+# (features_io); every other key of the pickle is what main() writes. The
+# holdout is read and featurised whole, by the functions main() uses, and
+# model_metadata.json is written by the same function.
+#
+# WHY THE NUMBERS ARE THE SAME. A slice can answer differently from the whole
+# frame in three ways, and each is closed here:
+#   * types: pd.read_csv infers a type per parser chunk (16,384 rows for this
+#     export's 48 columns) and then joins the chunks, so review_count is int64
+#     in one chunk and float64 in another, and a cell key reads '5' in one and
+#     '5.0' in another. TrainingCsv reads exactly those parser chunks and gives
+#     each column the type and the values the whole read gives it.
+#   * order: a fit that sums floats in row order (the climate norms, the
+#     sample-weight totals) runs the same function on the same rows in the
+#     same order; a fit that only adds whole numbers (cell sums, the smoothing
+#     grid, the always-zero test) is kept as integers, and pass 2 refuses a
+#     label or baseline that is not a whole number instead of summing it in a
+#     different order.
+#   * ties: value_counts breaks a tie by first appearance, so the tallies
+#     behind the Google types and the metadata counts (ValueTally) keep first
+#     appearance across slices and sort as value_counts sorts.
+# Pass 3 also checks every slice against what pass 2 predicted (which rows
+# reach X, and cold_outdoor on each) and stops at the first difference.
+# test_stream_prep.py runs both preparations on one synthetic export holding
+# each of those traps and requires equal outputs.
+# ---------------------------------------------------------------------------
+PREP_STREAM_ENV = 'FLOCK_PREP_STREAM'
+PREP_STREAM_MIN_ROWS_ENV = 'FLOCK_PREP_STREAM_MIN_ROWS'
+PREP_CHUNK_ROWS_ENV = 'FLOCK_PREP_CHUNK_ROWS'
+DEFAULT_PREP_STREAM_MIN_ROWS = 15_000_000
+DEFAULT_PREP_CHUNK_ROWS = 2_000_000
+
+
+def _env_count(name: str, default: int, env=os.environ) -> int:
+    raw = str(env.get(name, '')).strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise CorpusContractError(f'{name}={raw!r} is not a whole number.')
+    if value < 1:
+        raise CorpusContractError(f'{name} must be at least 1 (got {value}).')
+    return value
+
+
+def count_csv_rows(path) -> int:
+    """Data rows in a CSV, counted as line breaks. It only chooses the
+    preparation, so a quoted line break (the export writes none) cannot hurt."""
+    n, last = 0, b'\n'
+    with open(path, 'rb') as f:
+        while True:
+            block = f.read(1 << 24)
+            if not block:
+                break
+            n += block.count(b'\n')
+            last = block[-1:]
+    if last != b'\n':
+        n += 1
+    return max(n - 1, 0)
+
+
+def prep_stream_mode(train_path, env=os.environ) -> Tuple[bool, str]:
+    """(stream?, why). FLOCK_PREP_STREAM=1 or 0 decides; unset, the training
+    export streams when it has more than FLOCK_PREP_STREAM_MIN_ROWS rows."""
+    raw = str(env.get(PREP_STREAM_ENV, '')).strip()
+    if raw not in ('', '0', '1'):
+        raise CorpusContractError(f'{PREP_STREAM_ENV}={raw!r} must be 1, 0 or unset.')
+    if raw:
+        return raw == '1', f'{PREP_STREAM_ENV}={raw}'
+    threshold = _env_count(PREP_STREAM_MIN_ROWS_ENV, DEFAULT_PREP_STREAM_MIN_ROWS, env)
+    rows = count_csv_rows(train_path)
+    return rows > threshold, (f'{rows} training rows, {"over" if rows > threshold else "not over"} '
+                              f'{PREP_STREAM_MIN_ROWS_ENV}={threshold}')
+
+
+def parser_chunk_rows(path) -> int:
+    """The rows pandas' C parser converts at a time (TextReader.buffer_lines):
+    the largest power of two whose double is under 2**20 / the table's width."""
+    try:
+        with pd.read_csv(path, chunksize=1) as reader:
+            width = int(reader._engine._reader.table_width)
+    except AttributeError as err:
+        raise CorpusContractError(
+            f'the streamed preparation reads pandas\' C parser chunk by chunk and could not '
+            f'find its table width ({err}); this pandas ({pd.__version__}) is not the one it was '
+            f'written against. Set {PREP_STREAM_ENV}=0 on a machine that can hold the frame.')
+    heuristic = 2 ** 20 // max(width, 1)
+    rows = 1
+    while rows * 2 < heuristic:
+        rows *= 2
+    return rows
+
+
+def _same_dtype(a, b) -> bool:
+    return type(a) is type(b) and a == b
+
+
+def _empty_of(dtype):
+    return np.empty(0, dtype=dtype) if isinstance(dtype, np.dtype) else pd.array([], dtype=dtype)
+
+
+class TrainingCsv:
+    """training_data.csv as pd.read_csv reads it whole, a parser chunk at a time.
+
+    The whole read converts each parser chunk with its own inferred types, joins
+    the chunks with concat_compat, and builds the frame, where an object column
+    holding only strings and gaps becomes the str dtype. note() sees every chunk
+    once (pass 1); settle() works out each column's final type; frames() then
+    gives every chunk's column that type and the values the whole read holds.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.header = pd.read_csv(self.path, nrows=0)
+        self.parser_rows = parser_chunk_rows(self.path)
+        self.seen: Dict[str, List] = {c: [] for c in self.header.columns}
+        self.text_only: Dict[str, bool] = {c: True for c in self.header.columns}
+        self.final: Dict[str, object] = {}
+        self.rows = 0
+        self.first_row = None
+
+    def parser_chunks(self):
+        with pd.read_csv(self.path, chunksize=self.parser_rows) as reader:
+            yield from reader
+
+    def note(self, chunk: pd.DataFrame) -> None:
+        self.rows += len(chunk)
+        for c in chunk.columns:
+            d = chunk[c].dtype
+            if not any(_same_dtype(d, s) for s in self.seen[c]):
+                self.seen[c].append(d)
+            text = isinstance(d, pd.StringDtype) or (d == np.float64 and bool(chunk[c].isna().all()))
+            self.text_only[c] = self.text_only[c] and text
+
+    def settle(self) -> None:
+        from pandas.core.dtypes.concat import concat_compat
+        if not self.rows:
+            raise CorpusContractError(f'{self.path} has no rows.')
+        for c, seen in self.seen.items():
+            final = seen[0] if len(seen) == 1 else concat_compat([_empty_of(d) for d in seen]).dtype
+            if isinstance(final, np.dtype) and final == object and self.text_only[c]:
+                final = next(d for d in seen if isinstance(d, pd.StringDtype))
+            self.final[c] = final
+
+    def cast(self, chunk: pd.DataFrame) -> pd.DataFrame:
+        from pandas.core.dtypes.concat import concat_compat
+        cols = {}
+        for c in chunk.columns:
+            s, final = chunk[c], self.final[c]
+            if _same_dtype(s.dtype, final):
+                cols[c] = s
+            elif isinstance(final, pd.StringDtype):
+                cols[c] = s.astype(final)
+            else:
+                arr = s.to_numpy() if isinstance(s.dtype, np.dtype) else s.array
+                others = [_empty_of(d) for d in self.seen[c] if not _same_dtype(d, s.dtype)]
+                cols[c] = pd.Series(concat_compat([arr] + others), index=s.index, dtype=final)
+        return pd.DataFrame(cols)
+
+    def frames(self, chunk_rows: int, union_head: pd.DataFrame = None):
+        """The file in slices of chunk_rows rows (the last shorter), each as the whole
+        read holds it; with union_head (a final refit), as pd.concat with the holdout
+        holds it."""
+        pending, n = [], 0
+        for chunk in self.parser_chunks():
+            chunk = self.cast(chunk)
+            if union_head is not None:
+                chunk = pd.concat([chunk, union_head], ignore_index=True).iloc[:len(chunk)]
+            if self.first_row is None:
+                self.first_row = chunk.iloc[:1].reset_index(drop=True)
+            pending.append(chunk)
+            n += len(chunk)
+            while n >= chunk_rows:
+                frame = pd.concat(pending, ignore_index=True)
+                yield frame.iloc[:chunk_rows].reset_index(drop=True)
+                rest = frame.iloc[chunk_rows:]
+                pending, n = ([rest] if len(rest) else []), len(rest)
+        if n:
+            yield pd.concat(pending, ignore_index=True)
+
+
+def _unify_with(frame: pd.DataFrame, other_head: pd.DataFrame) -> pd.DataFrame:
+    """`frame` as pd.concat([frame, other]) holds it: each column in the common type."""
+    return pd.concat([frame, other_head], ignore_index=True).iloc[:len(frame)]
+
+
+class ValueTally:
+    """Row counts per value in order of first appearance across everything added,
+    which is what value_counts() of the concatenation counts and how it breaks ties."""
+
+    def __init__(self):
+        self.counts: Dict = {}
+
+    def add(self, values: pd.Series) -> None:
+        for k, v in values.value_counts(sort=False, dropna=True).items():
+            self.counts[k] = self.counts.get(k, 0) + int(v)
+
+    def extend(self, other: 'ValueTally') -> None:
+        for k, v in other.counts.items():
+            self.counts[k] = self.counts.get(k, 0) + v
+
+    def value_counts(self) -> pd.Series:
+        """value_counts() of everything added: by count, ties by first appearance."""
+        s = pd.Series(list(self.counts.values()), index=pd.Index(list(self.counts.keys()), dtype=object),
+                      dtype=np.int64)
+        return s.sort_values(ascending=False, kind='stable')
+
+    def as_dict(self) -> Dict:
+        return {str(k): int(v) for k, v in self.value_counts().items()}
+
+
+def _count_values(hist: Dict, values: pd.Series) -> None:
+    if len(values):
+        u, c = np.unique(values.to_numpy(dtype=float), return_counts=True)
+        for k, v in zip(u.tolist(), c.tolist()):
+            hist[k] = hist.get(k, 0) + v
+
+
+def median_of_counts(hist: Dict) -> float:
+    """Series.median() of the values `hist` counts: np.nanmedian of the one or
+    two middle values, as nanmedian takes them from the whole column."""
+    n = sum(hist.values())
+    if n == 0:
+        return np.nan
+    keys = sorted(hist)
+    cum = np.cumsum([hist[k] for k in keys])
+    at = lambda i: keys[int(np.searchsorted(cum, i, side='right'))]  # noqa: E731
+    middle = [at(n // 2)] if n % 2 else [at(n // 2 - 1), at(n // 2)]
+    return np.nanmedian(np.array(middle, dtype=np.float64))
+
+
+def _later(a, dates: pd.Series):
+    """The later of a date string and the newest of `dates` (string order, as max())."""
+    if not len(dates):
+        return a
+    b = str(dates.max())
+    return b if a is None or b > a else a
+
+
+def _whole_numbers(values: pd.Series, name: str) -> np.ndarray:
+    v = pd.to_numeric(values, errors='coerce').to_numpy(dtype=float)
+    bad = ~np.isfinite(v) | (np.floor(v) != v) | (np.abs(v) >= 2 ** 31)
+    if bad.any():
+        raise CorpusContractError(
+            f'{int(bad.sum())} training row(s) carry a {name} that is not a whole number '
+            f'(e.g. {v[bad][0]!r}). The streamed preparation sums labels and baselines as '
+            'integers so that a slice-by-slice sum equals the whole-frame one; it will not '
+            f'sum fractions in a different order. Set {PREP_STREAM_ENV}=0 on a machine that '
+            'can hold the frame, or find out why the export stopped writing whole numbers.')
+    return v
+
+
+class AlwaysZeroTally:
+    """main()'s always-zero venues, groupby(ALWAYS_ZERO_KEYS).busyness_pct.mean()
+    == 0 over the rows the time split keeps, from per-key counts and extremes.
+
+    The cutoff is not known while pass 1 runs, so the rows the split could hold
+    (realtime rows with a date) wait aside with their dates. A label below 0
+    stops the run: with none, a mean of 0 is exactly a minimum and maximum of 0.
+    """
+
+    def __init__(self):
+        self.keys: Dict[tuple, list] = {}
+        self.aside: List[pd.DataFrame] = []
+
+    def add(self, df: pd.DataFrame, aside_dated: bool) -> None:
+        d = df[ALWAYS_ZERO_KEYS + ['busyness_pct']]
+        if aside_dated:
+            is_rt = (pd.to_numeric(df['is_realtime'], errors='coerce') == 1).to_numpy()
+            dates = df['observed_date'].astype('string').fillna('').str.strip()
+            dated = is_rt & (dates != '').to_numpy()
+            if dated.any():
+                self.aside.append(d[dated].assign(_date=dates.to_numpy()[dated]))
+            d = d[~dated]
+        self._merge(d)
+
+    def _merge(self, d: pd.DataFrame) -> None:
+        d = d.dropna(subset=ALWAYS_ZERO_KEYS + ['busyness_pct'])
+        if not len(d):
+            return
+        y = pd.to_numeric(d['busyness_pct'], errors='coerce')
+        if (y < 0).any():
+            raise CorpusContractError(
+                f'{int((y < 0).sum())} training row(s) carry a negative busyness_pct. The '
+                'streamed preparation finds always-zero venues from each venue\'s lowest and '
+                f'highest label, which is exact only for labels of 0 and up. Set {PREP_STREAM_ENV}=0 '
+                'on a machine that can hold the frame, or fix the export.')
+        g = d.assign(busyness_pct=y).groupby(ALWAYS_ZERO_KEYS, sort=False)['busyness_pct'].agg(
+            ['count', 'min', 'max'])
+        for key, c, lo, hi in zip(g.index, g['count'].tolist(), g['min'].tolist(), g['max'].tolist()):
+            cur = self.keys.get(key)
+            if cur is None:
+                self.keys[key] = [c, lo, hi]
+            else:
+                cur[0] += c
+                cur[1] = min(cur[1], lo)
+                cur[2] = max(cur[2], hi)
+
+    def finish(self, from_date):
+        if self.aside:
+            a = pd.concat(self.aside, ignore_index=True)
+            self.aside = []
+            if from_date:
+                a = a[a['_date'].to_numpy() < from_date]
+            self._merge(a.drop(columns='_date'))
+        zero = [k for k, (c, lo, hi) in self.keys.items() if c > 0 and lo == 0 and hi == 0]
+        return pd.MultiIndex.from_tuples(zero, names=ALWAYS_ZERO_KEYS) if zero else []
+
+
+def _filter_training_rows(frame: pd.DataFrame, from_date, always_zero, split: Dict = None) -> pd.DataFrame:
+    """main()'s row filters on one slice: the time split, null labels, always-zero
+    venues. `split`, when given, collects the split's record and the row counts."""
+    if from_date:
+        held, live = time_holdout_masks(frame, from_date)
+        if split is not None:
+            split['held'] += int(held.sum())
+            split['held_live'] += int(live.sum())
+            split['held_city'].add(frame.loc[held, 'city'])
+        frame = frame[~held]
+    if split is not None:
+        split['kept_live'] = _later(split['kept_live'], _live_dates(frame))
+    frame = frame.dropna(subset=['busyness_pct'])
+    if split is not None:
+        split['after_null'] += len(frame)
+    if len(always_zero) > 0:
+        frame = drop_always_zero_venues(frame, always_zero)
+    return frame
+
+
+
+class StreamFits:
+    """Pass 2: the tables main() fits on the whole training frame, from its
+    filtered rows a slice at a time, and what pass 3 needs to size X.
+
+    Row positions count the training frame's rows after main()'s filters (time
+    split, null labels, always-zero venues), in frame order.
+    """
+
+    def __init__(self, capacity: int):
+        self.n = 0
+        self.categories = set()
+        self.hist: Dict[str, Dict] = {c: {} for c in ('price_level', 'rating', 'review_count')}
+        self.types = [ValueTally() for _ in range(3)]
+        self.observed: List[pd.DataFrame] = []
+        self.grid_ids: Dict[str, int] = {}
+        self.grid_sum = np.zeros((0, 168), dtype=np.int64)
+        self.grid_count = np.zeros((0, 168), dtype=np.int32)
+        self.grid_weekly = np.zeros((0, 168), dtype=bool)
+        self.cat_parts: List[pd.DataFrame] = []
+        self.cat_total = 0
+        self.cat_rows = 0
+        self.live: List[pd.DataFrame] = []
+        self.norm_keys: Dict[str, int] = {}
+        # Per row, what decides whether it reaches X and its cold_outdoor
+        # (predict): its baseline, grid cell, provenance and weather.
+        self.base = np.zeros(capacity, dtype=np.int32)
+        self.gv = np.full(capacity, -1, dtype=np.int32)
+        self.slot = np.full(capacity, -1, dtype=np.int16)
+        self.flags = np.zeros(capacity, dtype=np.uint8)
+        self.nkey = np.full(capacity, -1, dtype=np.int16)
+
+    def _grow(self, n_venues: int) -> None:
+        if n_venues <= len(self.grid_sum):
+            return
+        size = max(n_venues, 2 * len(self.grid_sum))
+        for name in ('grid_sum', 'grid_count', 'grid_weekly'):
+            old = getattr(self, name)
+            new = np.zeros((size, 168), dtype=old.dtype)
+            new[:len(old)] = old
+            setattr(self, name, new)
+
+    def add(self, df: pd.DataFrame) -> None:
+        n, p0 = len(df), self.n
+        self.n += n
+        if n == 0:
+            return
+        y = _whole_numbers(df['busyness_pct'], 'busyness_pct')
+        base = _whole_numbers(df['baseline_busyness'].fillna(0), 'baseline_busyness')
+
+        # Venue fills and encodings (fit_venue_features).
+        self.categories.update(df['venue_category'].dropna().unique().tolist())
+        for c, hist in self.hist.items():
+            _count_values(hist, df[c].dropna())
+        for k, tally in enumerate(self.types):
+            tally.add(df[f'google_type_{k + 1}'].dropna())
+
+        # Climate norms: the rows that carry a reading, in frame order (fit_temperature_norms).
+        self.observed.append(df.loc[df['temperature'].notna().to_numpy(), ['latitude', 'month', 'temperature']])
+
+        # The smoothing grid (fit_baseline_grid, slot_has_baseline_row): each
+        # (venue, slot) cell's baseline sum and row count, and the weekly slots.
+        dow = pd.to_numeric(df['day_of_week'], errors='coerce').to_numpy(dtype=float)
+        hour = pd.to_numeric(df['hour'], errors='coerce').to_numpy(dtype=float)
+        cell = df['venue_id'].notna().to_numpy() & ~np.isnan(dow) & ~np.isnan(hour)
+        on_grid = (dow >= 0) & (dow <= 6) & (hour >= 0) & (hour <= 23)
+        if (cell & ~on_grid).any():
+            raise CorpusContractError(
+                f'{int((cell & ~on_grid).sum())} rows fall outside the 7x24 week grid — '
+                'day_of_week must be 0-6 and hour 0-23.')
+        if (cell & ((np.floor(dow) != dow) | (np.floor(hour) != hour))).any():
+            raise CorpusContractError(
+                'a training row has a fractional day_of_week or hour; the streamed preparation '
+                f'smooths baselines on whole 7x24 slots only. Set {PREP_STREAM_ENV}=0 or fix the export.')
+        i = np.flatnonzero(cell)
+        codes, uniques = pd.factorize(df['venue_id'].astype(str).to_numpy()[i])
+        ids = np.fromiter((self.grid_ids.setdefault(u, len(self.grid_ids)) for u in uniques),
+                          dtype=np.int64, count=len(uniques))
+        g = ids[codes]
+        s = (dow[i] * 24 + hour[i]).astype(np.int64)
+        self._grow(len(self.grid_ids))
+        np.add.at(self.grid_sum, (g, s), base[i].astype(np.int64))
+        np.add.at(self.grid_count, (g, s), 1)
+        weekly = (pd.to_numeric(df['is_realtime'], errors='coerce').fillna(0).to_numpy() != 1)[i]
+        self.grid_weekly[g[weekly], s[weekly]] = True
+        self.gv[p0 + i] = g
+        self.slot[p0 + i] = s
+
+        # Category maps (build_category_baseline_maps): label sums per cell, with a
+        # missing price or rating in its own tier until the training median settles it.
+        vendor = vendor_provenance_mask(df)
+        d = df.loc[vendor, ['venue_category', 'day_of_week', 'hour']].copy()
+        price, rating = df.loc[vendor, 'price_level'], df.loc[vendor, 'rating']
+        d['_tier'] = np.where(price.isna().to_numpy(), 2, (price >= 2).to_numpy().astype(np.int64))
+        d['_pop'] = np.where(rating.isna().to_numpy(), 2, (rating >= 4.3).to_numpy().astype(np.int64))
+        d['busyness_pct'] = y[vendor].astype(np.int64)
+        self.cat_total += int(d['busyness_pct'].sum())
+        self.cat_rows += len(d)
+        self.cat_parts.append(d.groupby(['venue_category', 'day_of_week', 'hour', '_tier', '_pop'],
+                                        sort=False)['busyness_pct'].agg(['sum', 'count']).reset_index())
+
+        # Live run lengths (live_run_lengths): every live reading, with its position.
+        is_rt = (df['is_realtime'].fillna(0).astype(int) == 1).to_numpy()
+        live = is_rt & (df['label_provenance'].astype('string').fillna('').str.strip() == 'live').to_numpy()
+        if live.any():
+            rows = df.loc[live, ['venue_id', 'observed_date', 'hour', 'busyness_pct', 'label_provenance']].copy()
+            rows['is_realtime'] = 1
+            rows['_pos'] = p0 + np.flatnonzero(live)
+            self.live.append(rows)
+
+        # What predict() needs: the row's own baseline, whether exclude_unknown_provenance
+        # takes it, and add_weather_features' cold_outdoor inputs.
+        self.base[p0:p0 + n] = base.astype(np.int32)
+        excluded = is_rt & (df['label_provenance'].fillna('unknown') == 'unknown').to_numpy()
+        code = pd.to_numeric(df['weather_condition_code'], errors='coerce').to_numpy(dtype=float)
+        clear = (code >= 800) & (code < 801)  # group_weather_code: int(code) == 800
+        temp = pd.to_numeric(df['temperature'], errors='coerce').to_numpy(dtype=float)
+        observed = ~np.isnan(temp)
+        self.flags[p0:p0 + n] = (excluded.astype(np.uint8) | (clear.astype(np.uint8) << 1)
+                                 | (observed.astype(np.uint8) << 2)
+                                 | ((temp < COLD_OUTDOOR_MAX_TEMP_F).astype(np.uint8) << 3))
+        miss = np.flatnonzero(~observed)
+        if len(miss):
+            keys = temp_norm_keys(latitude_band(df['latitude']), df['month']).to_numpy()[miss]
+            codes, uniques = pd.factorize(keys)
+            ids = np.fromiter((self.norm_keys.setdefault(u, len(self.norm_keys)) for u in uniques),
+                              dtype=np.int64, count=len(uniques))
+            self.nkey[p0 + miss] = ids[codes]
+
+    def venue_metadata(self) -> Dict:
+        types = ValueTally()
+        for tally in self.types:
+            types.extend(tally)
+        top_types = types.value_counts().head(MAX_GOOGLE_TYPES).index.tolist()
+        return venue_feature_metadata(sorted(self.categories), median_of_counts(self.hist['price_level']),
+                                      median_of_counts(self.hist['rating']),
+                                      median_of_counts(self.hist['review_count']), top_types)
+
+    def temperature_norms(self) -> pd.DataFrame:
+        observed = pd.concat(self.observed, ignore_index=True)
+        self.observed = []
+        return fit_temperature_norms(observed, rows_without=self.n - len(observed))
+
+    def baseline_grid(self) -> Dict:
+        nv = len(self.grid_ids)
+        total, count = self.grid_sum[:nv], self.grid_count[:nv]
+        with np.errstate(invalid='ignore', divide='ignore'):
+            means = np.where(count > 0, total / count, np.nan)
+        grid = baseline_grid_from_means(list(self.grid_ids), means, self.grid_weekly[:nv].copy())
+        self.grid_sum = self.grid_count = self.grid_weekly = None
+        return grid
+
+    def category_maps(self, venue_metadata: Dict) -> Dict:
+        """build_category_baseline_maps from the per-slice sums."""
+        d = pd.concat(self.cat_parts, ignore_index=True)
+        self.cat_parts = []
+        price_tier = int(venue_metadata['median_price_level'] >= 2)
+        popularity = int(venue_metadata['median_rating'] >= 4.3)
+        d['_price_tier'] = np.where(d['_tier'] == 2, price_tier, d['_tier']).astype(np.int64)
+        d['_popularity'] = np.where(d['_pop'] == 2, popularity, d['_pop']).astype(np.int64)
+        coarse = d.groupby(CAT_KEYS)[['sum', 'count']].sum()
+        cat = (coarse['sum'] / coarse['count']).round(1).rename('category_baseline').reset_index()
+        cat = _smooth_category_hours(cat, ['venue_category', 'day_of_week'])
+        fine = d.groupby(REFINED_KEYS)[['sum', 'count']].sum()
+        refined = (fine['sum'] / fine['count']).round(1).rename('busyness_pct')
+        return {
+            'category': cat.set_index(CAT_KEYS)['smooth'],
+            'refined': refined,
+            'global_mean': round(self.cat_total / self.cat_rows, 1) if self.cat_rows else float('nan'),
+        }
+
+    def run_lengths(self, template: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+        """(positions, run lengths) of the live readings (live_run_lengths)."""
+        live = pd.concat(self.live, ignore_index=True) if self.live else template
+        self.live = []
+        if not len(live):
+            return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int32)
+        return live['_pos'].to_numpy(dtype=np.int64), live_run_lengths(live)
+
+    def predict(self, grid: Dict, temp_norms: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+        """(which rows reach X, cold_outdoor on each): smooth_baseline_hours, the
+        serving filter and exclude_unknown_provenance, and add_weather_features'
+        cold_outdoor, row by row from what add() kept."""
+        n = self.n
+        table, global_mean = temperature_norm_table(temp_norms)
+        norm = np.full(len(self.norm_keys), global_mean)
+        for key, i in self.norm_keys.items():
+            norm[i] = table.get(key, global_mean)
+        admitted = unknown_provenance_admitted()
+        final = np.zeros(n, dtype=bool)
+        cold = np.zeros(n, dtype=bool)
+        step = 4_000_000
+        for a in range(0, n, step):
+            b = min(n, a + step)
+            base = self.base[a:b].astype(float)
+            gv, slot = self.gv[a:b], self.slot[a:b].astype(np.int64)
+            ok = (gv >= 0) & (slot >= 0)
+            prev_row, next_row = np.zeros(b - a), np.zeros(b - a)
+            has_row = np.zeros(b - a, dtype=bool)
+            prev_row[ok] = grid['prev'][gv[ok], slot[ok]]
+            next_row[ok] = grid['next'][gv[ok], slot[ok]]
+            has_row[ok] = grid['weekly'][gv[ok], slot[ok]]
+            keep = serving_population_mask(blend_baseline(base, prev_row, next_row, has_row | (base > 0)))
+            flags = self.flags[a:b]
+            if not admitted:
+                keep &= (flags & 1) == 0
+            final[a:b] = keep
+            observed = (flags & 4) != 0
+            below = (flags & 8) != 0
+            imputed = np.flatnonzero(~observed)
+            below[imputed] = norm[self.nkey[a:b][imputed]] < COLD_OUTDOOR_MAX_TEMP_F
+            cold[a:b] = ((flags & 2) != 0) & below
+        self.base = self.gv = self.slot = self.flags = self.nkey = None
+        return final, cold
+
+
+class CellStatsStream:
+    """build_category_cell_aggregates over the pre-filter rows and
+    index_category_cells over X's rows, a slice of each at a time.
+
+    A key's id is its order of first appearance until finish(), which sorts the
+    fitted keys as np.unique sorts them and maps every id onto that order.
+    """
+
+    NAMES = (('category', CAT_KEYS), ('refined', REFINED_KEYS))
+
+    def __init__(self, group_col: str = LEAVE_OUT_COL):
+        self.group_col = group_col
+        self.ids: Dict[str, Dict[str, int]] = {'group': {}, 'category': {}, 'refined': {}}
+        self.fitted: Dict[str, set] = {'group': set(), 'category': set(), 'refined': set()}
+        self.fit_sums: Dict[str, Dict] = {'category': {}, 'refined': {}}
+        self.row_sums: Dict[str, Dict] = {'category': {}, 'refined': {}}
+        self.row_group: List[np.ndarray] = []
+        self.row_cell: Dict[str, List[np.ndarray]] = {'category': [], 'refined': []}
+        self.fit_rows = self.global_sum = self.global_count = self.rows = 0
+
+    @staticmethod
+    def _ids(table: Dict, values: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        codes, uniques = pd.factorize(values)
+        if (codes < 0).any():
+            raise CorpusContractError('a category cell key is missing (NaN) on a training row.')
+        ids = np.fromiter((table.setdefault(u, len(table)) for u in uniques), dtype=np.int64,
+                          count=len(uniques))
+        return ids[codes], ids
+
+    @staticmethod
+    def _add(acc: Dict, group: np.ndarray, cell: np.ndarray, y: np.ndarray) -> None:
+        finite = np.isfinite(y)
+        combo = (group[finite] << 32) | cell[finite]
+        if not len(combo):
+            return
+        keys, inv = np.unique(combo, return_inverse=True)
+        sums = np.bincount(inv, weights=y[finite])
+        counts = np.bincount(inv)
+        for k, s, c in zip(keys.tolist(), sums.tolist(), counts.tolist()):
+            cur = acc.get(k)
+            if cur is None:
+                acc[k] = [int(s), c]
+            else:
+                cur[0] += int(s)
+                cur[1] += c
+
+    def fit(self, frame: pd.DataFrame) -> None:
+        d = _cell_fit_frame(frame, vendor_provenance_mask(frame), (self.group_col,))
+        group, present = self._ids(self.ids['group'], d[self.group_col].fillna('__unknown__').astype(str).to_numpy())
+        self.fitted['group'].update(present.tolist())
+        y = d['busyness_pct'].to_numpy(dtype=float)
+        self.fit_rows += len(d)
+        self.global_sum += int(y[np.isfinite(y)].sum())
+        self.global_count += int(d['busyness_pct'].count())
+        for name, keys in self.NAMES:
+            cell, present = self._ids(self.ids[name], _cell_key_column(d, keys))
+            self.fitted[name].update(present.tolist())
+            self._add(self.fit_sums[name], group, cell, y)
+
+    def index(self, frame: pd.DataFrame) -> None:
+        d = _cell_fit_frame(frame, None, (self.group_col,))
+        group, _ = self._ids(self.ids['group'], d[self.group_col].fillna('__unknown__').astype(str).to_numpy())
+        self.row_group.append(group.astype(np.int32))
+        self.rows += len(d)
+        y = d['busyness_pct'].to_numpy(dtype=float)
+        for name, keys in self.NAMES:
+            cell, _ = self._ids(self.ids[name], _cell_key_column(d, keys))
+            self.row_cell[name].append(cell.astype(np.int32))
+            self._add(self.row_sums[name], group, cell, y)
+
+    @staticmethod
+    def _order(table: Dict[str, int], fitted: set) -> Tuple[np.ndarray, np.ndarray]:
+        """(the fitted keys sorted, each id's position among them or -1)."""
+        levels = np.array(sorted(k for k, i in table.items() if i in fitted), dtype=object)
+        position = np.full(len(table), -1, dtype=np.int64)
+        for p, k in enumerate(levels):
+            position[table[k]] = p
+        return levels, position
+
+    @staticmethod
+    def _dense(acc: Dict, gpos: np.ndarray, cpos: np.ndarray, shape) -> Tuple[np.ndarray, np.ndarray]:
+        sums = np.zeros(shape, dtype=np.float64)
+        counts = np.zeros(shape, dtype=np.int64)
+        for k, (s, c) in acc.items():
+            sums[gpos[k >> 32], cpos[k & 0xFFFFFFFF]] = s
+            counts[gpos[k >> 32], cpos[k & 0xFFFFFFFF]] = c
+        return sums, counts
+
+    def finish(self) -> Dict:
+        group_levels, gpos = self._order(self.ids['group'], self.fitted['group'])
+        row_group = gpos[np.concatenate(self.row_group)] if self.row_group else np.zeros(0, dtype=np.int64)
+        self.row_group = []
+        if (row_group < 0).any():
+            raise CorpusContractError(
+                f'{int((row_group < 0).sum())} rows carry a {self.group_col!r} the category '
+                'aggregates were never fitted on. The aggregates are fitted on the pre-filter '
+                'frame and these rows are a subset of it, so this cannot happen unless the two '
+                'came from different runs.')
+        agg = cell_stats_header(self.group_col, group_levels, self.fit_rows, float(self.global_sum),
+                                self.global_count)
+        out = indexed_cell_stats(agg, self.rows, row_group)
+        for name, keys in self.NAMES:
+            levels, cpos = self._order(self.ids[name], self.fitted[name])
+            shape = (len(group_levels), len(levels))
+            if any(gpos[k >> 32] < 0 or cpos[k & 0xFFFFFFFF] < 0 for k in self.row_sums[name]):
+                raise CorpusContractError(f'rows fall in a {name!r} cell the aggregates were never fitted on.')
+            sums, counts = self._dense(self.fit_sums[name], gpos, cpos, shape)
+            row_cell = cpos[np.concatenate(self.row_cell[name])] if self.row_cell[name] else np.zeros(0, np.int64)
+            self.row_cell[name] = []
+            rows_sums, rows_counts = self._dense(self.row_sums[name], gpos, cpos, shape)
+            out[name] = indexed_cell_block(name, cell_block(keys, levels, sums, counts), row_cell,
+                                           rows_sums, rows_counts)
+            logger.info('Per-fold %s baseline aggregates: %d cells x %d %s groups, '
+                        'fitted on %d pre-filter rows.',
+                        name, len(levels), len(group_levels), self.group_col, self.fit_rows)
+        return out
+
+
+def _concat_parts(parts: List):
+    """One array from per-slice pieces of a numpy array or a pandas extension array."""
+    if isinstance(parts[0], np.ndarray):
+        return np.concatenate(parts)
+    return type(parts[0])._concat_same_type(parts)
+
+
+def main_streamed(train_path: Path, why: str) -> None:
+    """main() for a training export too large for one frame (the block above)."""
+    import time
+    import features_io
+
+    chunk_rows = _env_count(PREP_CHUNK_ROWS_ENV, DEFAULT_PREP_CHUNK_ROWS)
+    pkl_path = SCRIPT_DIR / 'features_train.pkl'
+    logger.info('Feature preparation STREAMED (%s): training_data.csv in three passes of %d-row '
+                'slices; X is written to %s.', why, chunk_rows, features_io.x_file_for(pkl_path).name)
+    started = time.time()
+    csv = TrainingCsv(train_path)
+    require_export_columns(csv.header, train_path, 'training_data.csv')
+    _, holdout_df = read_holdout_csv()
+
+    # The holdout's own audits run first: a final refit trains on its rows as
+    # these leave them, exactly as main() concatenates them.
+    holdout_weather_stats = recover_weather_codes(holdout_df, 'holdout')
+    holdout_calendar_stats = audit_calendar_coverage(holdout_df, 'holdout')
+    holdout_label_stats = audit_label_columns(holdout_df, 'holdout')
+    holdout_event_types = normalise_event_types(holdout_df, 'holdout')
+    final_refit = resolve_final_refit()
+    if final_refit:
+        fold_holdout_into_refit(final_refit, holdout_df)
+
+    # ── PASS 1: types, the time holdout's cutoff, always-zero venues ─────────
+    zero = AlwaysZeroTally()
+    bad_coordinates, last_live = 0, None
+    for chunk in csv.parser_chunks():
+        csv.note(chunk)
+        bad_coordinates += coordinate_failures(chunk)
+        last_live = _later(last_live, _live_dates(chunk))
+        zero.add(chunk, aside_dated=not final_refit)
+    csv.settle()
+    logger.info(f'Training data: {csv.rows} rows')
+    refuse_missing_coordinates(bad_coordinates, train_path, 'training_data.csv')
+    last_live = _later(last_live, _live_dates(holdout_df))
+    if final_refit:
+        zero.add(holdout_df, aside_dated=False)
+        time_holdout = {'policy': 'final_refit', 'days': 0, 'from_date': None, 'last_live_date': last_live}
+    else:
+        time_holdout = time_holdout_from_last_live(last_live)
+    from_date = time_holdout['from_date']
+    always_zero = zero.finish(from_date)
+    logger.info('[stream] pass 1 done in %.0f s: %d parser chunks of %d rows, %d always-zero venues.',
+                time.time() - started, -(-csv.rows // csv.parser_rows), csv.parser_rows, len(always_zero))
+
+    holdout_head = holdout_df.iloc[:1]
+    capacity = csv.rows + (len(holdout_df) if final_refit else 0)
+
+    def training_frames():
+        """(slice, 'train' | 'holdout'): the training frame's rows in order."""
+        for frame in csv.frames(chunk_rows, holdout_head if final_refit else None):
+            yield frame, 'train'
+        if final_refit:
+            rows = pd.concat([csv.first_row, holdout_df], ignore_index=True).iloc[len(csv.first_row):]
+            rows = rows.reset_index(drop=True)
+            for a in range(0, len(rows), chunk_rows):
+                yield rows.iloc[a:a + chunk_rows].reset_index(drop=True), 'holdout'
+
+    # ── PASS 2: every whole-frame fit ─────────────────────────────────────────
+    neighbors = NeighborTableBuilder()
+    live_rows: List[pd.DataFrame] = []
+    weather = {'rows': 0, 'code_present_in_export': 0, 'recovered_from_description': 0,
+               'no_weather_reading': 0, 'code_notna': 0}
+    unmapped = ValueTally()
+    calendar = [0, 0, 0]
+    labels: Dict = {}
+    events = [0, 0, 0, 0]
+    event_rows = [0, 0, 0]
+    aliased, levels, unknown_types = ValueTally(), ValueTally(), ValueTally()
+    split = {'held': 0, 'held_live': 0, 'held_city': ValueTally(), 'kept_live': None, 'after_null': 0}
+    fits = StreamFits(capacity)
+    live_template = None
+    for frame, source in training_frames():
+        if source == 'train':
+            # The raw tables read every training row before any is dropped, as
+            # main() builds them from the raw frames.
+            neighbors.add(_unify_with(frame[NEIGHBOR_TABLE_COLS], holdout_head[NEIGHBOR_TABLE_COLS]))
+            live = ((pd.to_numeric(frame['is_realtime'], errors='coerce') == 1).to_numpy()
+                    & (frame['label_source'].astype('string').fillna('').str.strip() == 'live').to_numpy())
+            live_rows.append(frame.loc[live, LIVE_TABLE_COLS])
+            counts, rows_unmapped = recover_weather_code_rows(frame)
+            for k in weather:
+                weather[k] += counts[k]
+            unmapped.add(rows_unmapped)
+            calendar = [a + b for a, b in zip(calendar, calendar_counts(frame))]
+            for k, v in label_audit_counts(frame).items():
+                labels[k] = (labels.get(k, set()) | v) if isinstance(v, set) else labels.get(k, 0) + v
+            events = [a + b for a, b in zip(events, event_provenance_counts(frame))]
+            raw, present, hit, out, unknown = normalise_event_type_rows(frame)
+            event_rows = [event_rows[0] + len(frame), event_rows[1] + int(present.sum()),
+                          event_rows[2] + int(hit.sum())]
+            aliased.add(raw[hit])
+            levels.add(out[present])
+            unknown_types.add(unknown)
+        filtered = _filter_training_rows(frame, from_date, always_zero, split)
+        if live_template is None:
+            live_template = filtered.iloc[:0][['venue_id', 'observed_date', 'hour', 'busyness_pct',
+                                               'label_provenance']]
+        fits.add(filtered)
+    logger.info('[stream] pass 2 read %d training rows (%d after the filters) in %.0f s.',
+                capacity, fits.n, time.time() - started)
+
+    neighbors.add(_unify_with(holdout_df[NEIGHBOR_TABLE_COLS], csv.first_row[NEIGHBOR_TABLE_COLS]))
+    neighbor_table = neighbors.finish()
+    live_reading_table = build_live_reading_table([pd.concat(live_rows, ignore_index=True), holdout_df],
+                                                  neighbor_table)
+    live_rows = []
+    log_raw_tables(neighbor_table, live_reading_table)
+    if LIVE_FEATURE_POLICY == 'off':
+        drop_features(LIVE_FEATURE_NAMES, 'FLOCK_LIVE_FEATURES=off (ablation)')
+
+    weather_stats = weather_code_stats(weather, unmapped.value_counts().to_dict(),
+                                       weather['code_notna'] / weather['rows'], 'train')
+    enforce_weather_contracts(weather_stats, holdout_weather_stats)
+    calendar_stats = calendar_coverage_stats(*calendar, 'train')
+    enforce_calendar_contracts(calendar_stats, holdout_calendar_stats)
+    label_stats = label_audit_stats(labels, 'train')
+    enforce_label_contracts(label_stats, holdout_label_stats)
+    log_event_provenance(*events, 'train')
+    report_event_provenance(holdout_df, 'holdout')
+    if unknown_types.counts:
+        refuse_event_types('train', unknown_types.as_dict())
+    event_type_stats = event_type_record(
+        event_type_report(*event_rows, aliased.as_dict(), levels.as_dict(), 'train'),
+        holdout_event_types)
+
+    time_holdout.update({
+        'realtime_rows_held_out': split['held'], 'live_rows_held_out': split['held_live'],
+        'held_out_by_city': split['held_city'].as_dict(), 'training_live_through': split['kept_live'],
+    })
+    log_time_holdout(time_holdout)
+    logger.info(f'After dropping null labels: {split["after_null"]} rows')
+    if len(always_zero) > 0:
+        logger.info(f'Dropped {split["after_null"] - fits.n} rows from always-zero venues')
+
+    venue_metadata = fits.venue_metadata()
+    temp_norms = fits.temperature_norms()
+    baseline_grid = fits.baseline_grid()
+    cat_baseline_maps = fits.category_maps(venue_metadata)
+    run_pos, run_len = fits.run_lengths(live_template.assign(is_realtime=1, _pos=0).iloc[:0])
+    reaches_x, cold_pred = fits.predict(baseline_grid, temp_norms)
+    n_rows = int(reaches_x.sum())
+    cold_constant = n_rows == 0 or bool(cold_pred[reaches_x].min() == cold_pred[reaches_x].max())
+    logger.info('[stream] fits done in %.0f s: %d of %d filtered rows reach X.',
+                time.time() - started, n_rows, fits.n)
+    fit_tables = {'venue_metadata': venue_metadata, 'temp_norms': temp_norms,
+                  'cat_maps': cat_baseline_maps, 'baseline_grid': baseline_grid}
+
+    # ── PASS 3: features, a slice at a time, into X ───────────────────────────
+    admitted = unknown_provenance_admitted()
+    cells = CellStatsStream(LEAVE_OUT_COL)
+    carried: Dict[str, List] = {}
+    light: Dict[str, List] = {'is_realtime': [], 'label_provenance': [], 'live_run_length': []}
+    X = None
+    feature_cols_all: List[str] = []
+    feature_cols: List[str] = []
+    missing: pd.Series = None
+    lo: Dict[str, object] = {}
+    hi: Dict[str, object] = {}
+    with_reading = imputed = served_rt = served_unknown = 0
+    position = written = 0
+    for frame, source in training_frames():
+        if source == 'train':
+            recover_weather_code_rows(frame)
+            normalise_event_type_rows(frame)
+        frame = _filter_training_rows(frame, from_date, always_zero)
+        p0, n = position, len(frame)
+        position += n
+        if n == 0:
+            continue
+        frame = add_training_features(frame, neighbor_table, live_reading_table, fit_tables)
+        with_reading += int((frame['weather_observed'] == 1).sum())
+        imputed += int((frame['weather_observed'] == 0).sum())
+        frame = finish_frame(frame)
+        frame['baseline_busyness'] = frame['baseline_busyness'].fillna(0)
+        frame['delta_label'] = (frame['busyness_pct'] - frame['baseline_busyness']).astype(float)
+        cells.fit(frame)
+        run_length = np.ones(n, dtype=np.int32)
+        a, b = np.searchsorted(run_pos, [p0, p0 + n])
+        run_length[run_pos[a:b] - p0] = run_len[a:b]
+        frame['live_run_length'] = run_length
+
+        served = serving_population_mask(frame['baseline_busyness'])
+        frame = frame[served]
+        frame['label_provenance'] = frame['label_provenance'].fillna('unknown')
+        unknown, n_rt = unknown_provenance_rows(frame)
+        served_rt += n_rt
+        served_unknown += int(unknown.sum())
+        reached = served.copy()
+        if not admitted:
+            frame = frame[~unknown]
+            reached[np.flatnonzero(served)[unknown]] = False
+        if not np.array_equal(reached, reaches_x[p0:p0 + n]):
+            raise CorpusContractError(
+                f'the streamed preparation built rows {p0}..{p0 + n} of the filtered training frame '
+                f'and {int(reached.sum())} reached X where pass 2 predicted '
+                f'{int(reaches_x[p0:p0 + n].sum())}. Pass 2 repeats smooth_baseline_hours and '
+                'the serving filter row by row; a difference is a bug in that repetition, and '
+                f'nothing has been written. {PREP_STREAM_ENV}=0 is the in-memory path.')
+        if not len(frame):
+            continue
+        if X is None:
+            feature_cols_all = get_feature_columns(frame)
+            feature_cols = [c for c in feature_cols_all if not (c == 'cold_outdoor' and cold_constant)]
+            X = features_io.open_x_memmap(pkl_path, n_rows, len(feature_cols))[1]
+            missing = pd.Series(0, index=feature_cols_all, dtype=np.int64)
+        if 'cold_outdoor' in feature_cols_all and not np.array_equal(
+                frame['cold_outdoor'].to_numpy() == 1, cold_pred[p0:p0 + n][reached]):
+            raise CorpusContractError(
+                f'cold_outdoor on rows {p0}..{p0 + n} is not what pass 2 predicted from the '
+                'temperatures, climate norms and weather codes; a bug in that repetition.')
+        feature_matrix(frame, feature_cols, out=X[written:written + len(frame)])
+        written += len(frame)
+        for c in feature_cols_all:
+            column = frame[c]
+            missing[c] += int(column.isna().sum())
+            least, most = column.min(), column.max()
+            lo[c] = least if c not in lo else min(lo[c], least)
+            hi[c] = most if c not in hi else max(hi[c], most)
+        for k, v in train_pickle_columns(frame).items():
+            carried.setdefault(k, []).append(v)
+        light['is_realtime'].append(frame['is_realtime'].to_numpy().astype(np.int8))
+        light['label_provenance'].append(frame['label_provenance'].array)
+        light['live_run_length'].append(frame['live_run_length'].to_numpy())
+        cells.index(frame)
+    logger.info('[stream] pass 3 wrote %d rows of X in %.0f s.', written, time.time() - started)
+    if written != n_rows or position != fits.n:
+        raise CorpusContractError(
+            f'the streamed preparation wrote {written} rows of X over {position} filtered rows; pass 2 '
+            f'sized X at {n_rows} rows over {fits.n}. Nothing it wrote can be used.')
+    if X is None:
+        raise CorpusContractError('no training row survives the filters; there is nothing to train on.')
+
+    # The grid smoothed the training rows only; the holdout fits its own.
+    fit_tables['baseline_grid'] = baseline_grid = None
+    train = pd.DataFrame({k: _concat_parts(light.pop(k)) for k in list(light)}, copy=False)
+    unknown_train = unknown_provenance_report(served_rt, served_unknown, 'train')
+    weekly_weight_policy, run_divisor = assign_sample_weights(train, RUN_LENGTH_POLICY)
+    n_rt = log_weight_blend(train, fits.n, weekly_weight_policy)
+    check_realtime_labels(train, n_rt, unknown_train)
+
+    add_temp_norm_metadata(venue_metadata, temp_norms)
+    weather_imputation = weather_imputation_record(temp_norms, with_reading, imputed)
+    holdout_df = featurise_holdout(holdout_df, venue_metadata, temp_norms, cat_baseline_maps,
+                                   neighbor_table, live_reading_table, weather_imputation)
+    holdout_df['label_provenance'] = holdout_df['label_provenance'].fillna('unknown')
+    holdout_df, unknown_holdout = exclude_unknown_provenance(holdout_df, 'holdout')
+    unknown_provenance_record = {'train': unknown_train, 'holdout': unknown_holdout,
+                                  'env': UNKNOWN_PROVENANCE_ENV}
+    holdout_df = align_holdout(holdout_df, feature_cols_all)
+
+    # One key at a time, each key's slices freed as it is joined.
+    columns = {k: _concat_parts(carried.pop(k)) for k in list(carried)}
+    logger.info(f'Feature count: {len(feature_cols_all)}')
+    logger.info(f'Features: {feature_cols_all}')
+    delta = pd.Series(columns['y'], dtype=float)
+    label = pd.Series(columns['y_actual'], dtype=float)
+    logger.info(f'Delta label distribution: mean={delta.mean():.2f}, std={delta.std():.2f}, '
+                f'min={delta.min():.0f}, max={delta.max():.0f}')
+    logger.info(f'Label (busyness_pct) distribution: mean {label.mean():.1f}, median {label.median():.1f}, '
+                f'std {label.std():.1f}, min {label.min()}, max {label.max()}')
+    del delta, label
+
+    refuse_missing_feature_values(missing, 'train')
+    refuse_unfilled_features(holdout_df, feature_cols_all, 'holdout')
+
+    # The cold_outdoor rule and the dead-slot contract of main(), on each
+    # column's least and greatest value over X's rows (no NaN is left by now).
+    constant = {c: bool(lo[c] == hi[c]) for c in feature_cols_all}
+    final_cols = list(feature_cols_all)
+    if 'cold_outdoor' in final_cols and constant['cold_outdoor']:
+        drop_features(['cold_outdoor'], 'constant in a training window with no live reading under 41 F')
+        final_cols = [c for c in final_cols if c != 'cold_outdoor']
+    if final_cols != feature_cols:
+        raise CorpusContractError(
+            f'X was written with {len(feature_cols)} columns but the cold_outdoor rule leaves '
+            f'{len(final_cols)}; pass 2 predicted cold_outdoor wrongly.')
+    constant_cols = [c for c in feature_cols if constant[c]]
+    dead_slot_record = enforce_dead_slot_contract(constant_cols, feature_cols)
+
+    logger.info('\nSaving artifacts...')
+    cell_stats = cells.finish()
+    if len(cell_stats['row_group']) != n_rows or len(cell_stats['category']['row_cell']) != n_rows:
+        raise CorpusContractError(
+            'category_cell_stats row indexes do not match X '
+            f'({len(cell_stats["row_group"])} / {len(cell_stats["category"]["row_cell"])} vs {n_rows}).')
+    category_baseline_fit = category_baseline_fit_record(cell_stats)
+
+    x_keys = features_io.finish_x(pkl_path, X)
+    del X
+    train_data = train_pickle_dict(columns, x_keys, train['sample_weight'].values, run_divisor,
+                                   feature_cols, cell_stats)
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(train_data, f)
+    del train_data, columns
+
+    holdout_data = holdout_pickle_dict(holdout_df, feature_cols)
+    with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
+        pickle.dump(holdout_data, f)
+
+    write_model_metadata(
+        time_holdout=time_holdout, final_refit=final_refit, weekly_weight_policy=weekly_weight_policy,
+        feature_cols=feature_cols, venue_metadata=venue_metadata, cat_baseline_maps=cat_baseline_maps,
+        training_rows=n_rows, holdout_rows=len(holdout_df), weather_stats=weather_stats,
+        holdout_weather_stats=holdout_weather_stats, calendar_stats=calendar_stats,
+        holdout_calendar_stats=holdout_calendar_stats, label_stats=label_stats,
+        holdout_label_stats=holdout_label_stats, weather_imputation=weather_imputation,
+        event_type_stats=event_type_stats, unknown_provenance_record=unknown_provenance_record,
+        constant_cols=constant_cols, dead_slot_record=dead_slot_record,
+        category_baseline_fit=category_baseline_fit)
+
+    logger.info(f'Saved features_train.pkl ({n_rows} rows, {len(feature_cols)} features; X in '
+                f'{x_keys["X_file"]}, SHA-256 {x_keys["X_sha256"]})')
+    logger.info(f'Saved features_holdout.pkl ({len(holdout_df)} rows)')
+    logger.info('Saved model_metadata.json')
+    logger.info('Done! (streamed, %.0f s)', time.time() - started)
 
 
 if __name__ == '__main__':

@@ -286,22 +286,36 @@ def test_flags_built_a_byte_a_row_hold_the_values_the_int64_build_held():
 
 
 def test_every_column_main_reads_by_name_after_finishing_a_frame_is_kept():
-    src = inspect.getsource(pf.main)
+    # Since 2026-11-25 the steps after finish_frame are shared by main() and
+    # main_streamed(): the training frame's in main() and the helpers it hands
+    # the frame to, each streamed slice's in main_streamed(), and the holdout's
+    # in featurise_holdout, main(), align_holdout (keep_extra) and the pickle.
     made_later = {'delta_label', 'live_run_length', 'sample_weight'}
 
     def kept(name: str) -> bool:
         return (name in CARRIED_AFTER_FEATURES or name in made_later
                 or get_feature_columns(pd.DataFrame(columns=[name])) == [name])
 
-    for frame, marker in (('train_df', 'train_df = finish_frame(train_df)'),
-                          ('holdout_df', 'holdout_df = finish_frame(holdout_df)')):
+    def reads(frame: str, src: str) -> set:
+        return set(re.findall(frame + r"\[\s*'(\w+)'\s*\]", src))
+
+    def after(src: str, marker: str) -> str:
         assert src.count(marker) == 1, marker
-        tail = src[src.index(marker) + len(marker):]
-        names = set(re.findall(frame + r"\[\s*'(\w+)'\s*\]", tail))
-        if frame == 'holdout_df':
-            keep_extra = re.search(r'keep_extra = \[(.*?)\]', tail, re.S)
-            assert keep_extra, 'keep_extra not found after the holdout is finished'
-            names |= set(re.findall(r"'(\w+)'", keep_extra.group(1)))
+        return src[src.index(marker) + len(marker):]
+
+    main = inspect.getsource(pf.main)
+    train = reads('train_df', after(main, 'train_df = finish_frame(train_df)'))
+    for helper in (pf.train_pickle_columns, pf.log_weight_blend, pf.check_realtime_labels):
+        train |= reads('train_df', inspect.getsource(helper))
+    streamed = reads('frame', after(inspect.getsource(pf.main_streamed), 'frame = finish_frame(frame)'))
+    holdout = (reads('holdout_df', after(inspect.getsource(pf.featurise_holdout),
+                                         'holdout_df = finish_frame(holdout_df)'))
+               | reads('holdout_df', after(main, 'holdout_df = featurise_holdout('))
+               | reads('holdout_df', inspect.getsource(pf.holdout_pickle_dict)))
+    keep_extra = re.search(r'keep_extra = \[(.*?)\]', inspect.getsource(pf.align_holdout), re.S)
+    assert keep_extra, 'keep_extra not found where the holdout is cut to its columns'
+    holdout |= set(re.findall(r"'(\w+)'", keep_extra.group(1)))
+    for frame, names in (('train_df', train), ('frame', streamed), ('holdout_df', holdout)):
         assert names, frame
         missing = sorted(n for n in names if not kept(n))
         assert not missing, f'{frame} reads {missing} after finish_frame dropped them'

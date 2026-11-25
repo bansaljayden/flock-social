@@ -127,8 +127,10 @@ def _train_feature_steps(body):
 
 def test_the_rebuild_builds_every_feature_step_main_builds_in_the_same_order():
     here = Path(__file__).parent
+    # main() and main_streamed() both build the training frame's features
+    # through add_training_features (2026-11-25), so that is where the order is.
     main_src = _body((here / 'prepare_features.py').read_text(encoding='utf-8'),
-                     'def main():', "venue_metadata['temp_norms']")
+                     'def add_training_features(', 'def add_temp_norm_metadata(')
     rebuild_src = _body((here / 'within_city_eval.py').read_text(encoding='utf-8'),
                         'def rebuild_training_frame(', 'def verify_rebuild(')
     want = _train_feature_steps(main_src)
