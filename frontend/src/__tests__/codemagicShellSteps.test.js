@@ -277,7 +277,8 @@ describe('the step bodies come out of codemagic.yaml intact', () => {
   test('all four steps parse as runnable shell, not as an empty string', () => {
     expect(GOOGLE_STEP.body).toMatch(/^set -eu$/m);
     expect(GOOGLE_STEP.body).toMatch(/GOOGLE CHECK FAILED/);
-    expect(GOOGLE_STEP.body).toMatch(/^ {4}for s in t\.get\("CFBundleURLSchemes"\) or \[\]:$/m);
+    expect(GOOGLE_STEP.body).toMatch(/^schemes = \[s for t in d\.get\("CFBundleURLTypes"\) or \[\] for s in /m);
+    expect(GOOGLE_STEP.body).toMatch(/^ {4}d = plistlib\.load\(f\)$/m);
     expect(PLIST_STEP.body).toMatch(/^set -eu$/m);
     expect(PLIST_STEP.body).toMatch(/PUSH CHECK FAILED/);
     expect(PLIST_STEP.body.split('\n').length).toBeGreaterThan(40);
@@ -805,7 +806,7 @@ describe(s('the Google iOS client id step, run'), () => {
     .replace(/\r\n/g, '\n');
   const SCHEME = /<string>(com\.googleusercontent\.apps\.[^<]+)<\/string>/.exec(REAL_PLIST)[1];
   const IOS_ID = `${SCHEME.replace(/^com\.googleusercontent\.apps\./, '')}.apps.googleusercontent.com`;
-  const WEB_ID = 'web-client-123.apps.googleusercontent.com';
+  const WEB_ID = '1012360079798-0123456789abcdefghijklmnopqrstuv.apps.googleusercontent.com';
   const check = (env, plist = REAL_PLIST) => run(GOOGLE_STEP, {
     files: { 'Info.plist': plist },
     env,
@@ -856,10 +857,17 @@ describe(s('the Google iOS client id step, run'), () => {
 
   shellTest('something that is not a Google client id stops it', () => {
     for (const name of NAMES) {
-      for (const value of ['1012360079798-abc', '.apps.googleusercontent.com', 'appl_abc123']) {
+      // A stray character in front still ends in the suffix, and the app
+      // hands the value to GoogleSignIn exactly as it is.
+      for (const value of [
+        '1012360079798-abc', '.apps.googleusercontent.com', 'appl_abc123',
+        `"${BOTH[name]}`, `'${BOTH[name]}`, `x${BOTH[name]}`, 'web-client-123.apps.googleusercontent.com',
+        '-abc.apps.googleusercontent.com', '1012360079798-.apps.googleusercontent.com',
+        `${BOTH[name]}"`, `${BOTH[name].replace('.apps.', '.apps..')}`,
+      ]) {
         const r = check(withOne(name, value));
         expect({ name, value, code: r.code }).toEqual({ name, value, code: 1 });
-        expect(r.out).toContain(`GOOGLE CHECK FAILED: ${name} does not end in .apps.googleusercontent.com,`);
+        expect(r.out).toContain(`GOOGLE CHECK FAILED: ${name} is not a Google OAuth client id,`);
       }
     }
   });
@@ -875,7 +883,7 @@ describe(s('the Google iOS client id step, run'), () => {
     const r = check({ REACT_APP_GOOGLE_IOS_CLIENT_ID: other, REACT_APP_GOOGLE_CLIENT_ID: WEB_ID });
     expect(r.code).toBe(1);
     expect(r.out).toContain('GOOGLE CHECK FAILED: Info.plist does not declare com.googleusercontent.apps.999999999999-otherclient as a URL scheme.');
-    expect(r.out).toContain(`Declared: ${SCHEME}`);
+    expect(r.out).toContain(`Declared: '${SCHEME}'`);
     expect(r.out).not.toMatch(/^Google sign-in:/m);
   });
 
@@ -885,6 +893,29 @@ describe(s('the Google iOS client id step, run'), () => {
     const r = check(BOTH, bare);
     expect(r.code).toBe(1);
     expect(r.out).toContain('Declared: none');
+  });
+
+  shellTest('a plist scheme with a stray space is not the scheme, and the log shows the space', () => {
+    // The shell used to get the list back and split it on whitespace, so the
+    // word inside matched here while the phone looked for the exact entry.
+    for (const stray of [`${SCHEME} `, ` ${SCHEME}`, `${SCHEME} extra`]) {
+      const plist = REAL_PLIST.replace(`<string>${SCHEME}</string>`, `<string>${stray}</string>`);
+      expect(plist).not.toBe(REAL_PLIST);
+      const r = check(BOTH, plist);
+      expect({ stray, code: r.code }).toEqual({ stray, code: 1 });
+      expect(r.out).toContain(`Declared: '${stray}'`);
+    }
+  });
+
+  shellTest('a second scheme beside the right one does not hide it', () => {
+    const plist = REAL_PLIST.replace(
+      `<string>${SCHEME}</string>`,
+      `<string>com.example.other</string>\n\t\t\t\t<string>${SCHEME}</string>`,
+    );
+    expect(plist).not.toBe(REAL_PLIST);
+    const r = check(BOTH, plist);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`(${SCHEME})`);
   });
 
   shellTest('a plist that cannot be read stops it rather than passing', () => {

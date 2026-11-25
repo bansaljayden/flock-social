@@ -159,14 +159,15 @@ workflows:
                 exit 1
                 ;;
             esac
-            case "$VALUE" in
-              ?*"$SUFFIX") ;;
-              *)
-                echo "GOOGLE CHECK FAILED: $NAME does not end in $SUFFIX,"
-                echo "so it is not a Google OAuth client id."
-                exit 1
-                ;;
-            esac
+            # The whole id, not only its ending: a stray character pasted in
+            # front still ends in the suffix, and the app hands the value to
+            # GoogleSignIn exactly as it is.
+            if ! printf '%s\n' "$VALUE" | grep -Eq '^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$'; then
+              echo "GOOGLE CHECK FAILED: $NAME is not a Google OAuth client id,"
+              echo "which reads <project number>-<letters and digits>$SUFFIX."
+              echo "FIX: copy it again from Google Cloud, APIs and Services, Credentials."
+              exit 1
+            fi
           done
           ID="$REACT_APP_GOOGLE_IOS_CLIENT_ID"
           if [ "$ID" = "$REACT_APP_GOOGLE_CLIENT_ID" ]; then
@@ -176,24 +177,26 @@ workflows:
             exit 1
           fi
           WANT="com.googleusercontent.apps.${ID%"$SUFFIX"}"
-          if ! SCHEMES=$(python3 -c '
+          # Compared inside Python, entry against entry. Handing the list back to
+          # the shell split it on whitespace, so a scheme with a space in it
+          # matched here and not on the phone. The list comes back in repr form
+          # for the same reason: a stray space has to be visible in the log.
+          if ! VERDICT=$(python3 -c '
           import plistlib, sys
           with open(sys.argv[1], "rb") as f:
               d = plistlib.load(f)
-          for t in d.get("CFBundleURLTypes") or []:
-              for s in t.get("CFBundleURLSchemes") or []:
-                  print(s)
-          ' ios/App/App/Info.plist); then
+          schemes = [s for t in d.get("CFBundleURLTypes") or [] for s in t.get("CFBundleURLSchemes") or []]
+          print(1 if sys.argv[2] in schemes else 0)
+          print(", ".join(repr(s) for s in schemes) or "none")
+          ' ios/App/App/Info.plist "$WANT"); then
             echo "GOOGLE CHECK FAILED: ios/App/App/Info.plist could not be read as a plist."
             exit 1
           fi
-          FOUND=0
-          for s in $SCHEMES; do
-            if [ "$s" = "$WANT" ]; then FOUND=1; fi
-          done
-          if [ "$FOUND" -ne 1 ]; then
+          FOUND=$(printf '%s\n' "$VERDICT" | sed -n 1p)
+          DECLARED=$(printf '%s\n' "$VERDICT" | sed -n 2p)
+          if [ "$FOUND" != 1 ]; then
             echo "GOOGLE CHECK FAILED: Info.plist does not declare $WANT as a URL scheme."
-            echo "Declared: $(echo ${SCHEMES:-none})"
+            echo "Declared: $DECLARED"
             echo "A tap on Continue with Google would close the app."
             echo "FIX: REACT_APP_GOOGLE_IOS_CLIENT_ID and the CFBundleURLSchemes entry in"
             echo "     ios/App/App/Info.plist are one setting in two places. Set both from the same"
