@@ -211,6 +211,14 @@ describe('a fixed cost is rendered with its provenance, not just its number', ()
     expect(APP).toMatch(/in no monthly figure above/i);
   });
 
+  it('a cancelled subscription stays on the list, tagged, and is not counted as a bill that arrives', () => {
+    // BestTime's line carries endedOn since its cancellation on 2026-11-25. It
+    // stays as a $0 record, but "N bills that arrive every month" counted it.
+    expect(APP).toContain("(fixed.monthly || []).filter((e) => !e.endedOn)");
+    expect(APP).toMatch(/runningMonthly\.length\} \{runningMonthly\.length === 1 \? 'bill that arrives' : 'bills that arrive'\} every month/);
+    expect(APP).toContain('{e.endedOn && <span style={endedTag}>Cancelled {e.endedOn}</span>}');
+  });
+
   it('a watchlist entry keeps its severity and its unknown figure', () => {
     // The watchlist is rendered on each vendor's own inventory row rather than
     // as a second list of the same vendors. That is deliberate, and it dropped

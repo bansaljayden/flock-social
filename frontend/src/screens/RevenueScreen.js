@@ -3643,6 +3643,10 @@ export default function RevenueScreen({
             // the part that has to stay scannable, and a reader who takes the
             // number without the tag has still read a marked row.
             const unverifiedTag = hubTag('warn');
+            // A line whose subscription ended (endedOn, set in costModel.js:
+            // BestTime, cancelled 2026-11-25) stays on the list at $0 as a
+            // record, tagged, and is not counted among the bills that arrive.
+            const endedTag = hubTag('muted');
 
             // A FIXED BILL, WITH THE TWO FACTS THE OLD ROW THREW AWAY.
             //
@@ -3665,6 +3669,7 @@ export default function RevenueScreen({
                     <span className="hub-row-label">
                       {e.label}
                       {!e.verified && <span style={unverifiedTag}>Unverified</span>}
+                      {e.endedOn && <span style={endedTag}>Cancelled {e.endedOn}</span>}
                     </span>
                     <span className="hub-row-value" style={{ color: colors.navy }}>{moneyOr(e.usd, 'No figure')}{period}</span>
                     {hubChevron()}
@@ -3708,6 +3713,7 @@ export default function RevenueScreen({
             const obs = d.observed || {};
             const worst = d.worstCase || {};
             const fixed = d.fixed || {};
+            const runningMonthly = (fixed.monthly || []).filter((e) => !e.endedOn);
             const dep = d.dependencies || {};
 
             // THE INVENTORY RESOLVES, IT DOES NOT RESTATE. Every figure on an
@@ -4084,7 +4090,7 @@ export default function RevenueScreen({
                       <p style={kicker}>Recurring monthly</p>
                       <p style={big}>{moneyOr(fixed.monthlyUsd, 'None on file', 0)}</p>
                       <p className="hub-stat-note">
-                        {(fixed.monthly || []).length} {(fixed.monthly || []).length === 1 ? 'bill' : 'bills'} that arrive every month.
+                        {runningMonthly.length} {runningMonthly.length === 1 ? 'bill that arrives' : 'bills that arrive'} every month.
                       </p>
                     </div>
                     <div className="hub-stat">
