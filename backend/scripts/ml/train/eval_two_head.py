@@ -62,6 +62,7 @@ os.environ['CROWD_QMAP_ENABLED'] = 'false'
 import numpy as np  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 
+from features_io import load_features  # noqa: E402
 from prepare_features import serving_population_mask  # noqa: E402
 from quick_eval import metrics as gate_metrics, reconstruct as gate_reconstruct  # noqa: E402
 from quick_eval import apply_score_qmap, realtime_flags  # noqa: E402
@@ -338,8 +339,8 @@ HEADER = (f'{"candidate":52s} {"band ex":>8s} {"off-by-1":>9s} {"band MAE":>8s} 
 
 def main():
     logger.info('corpus: %s', CORPUS_LABEL)
-    with open(SCRIPT_DIR / 'features_holdout.pkl', 'rb') as f:
-        hold = pickle.load(f)
+    # The holdout is small: an X kept beside it (features_io) is read into memory.
+    hold = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False)
     X = hold['X']
     feature_cols = list(hold['feature_cols'])
     y_actual = np.asarray(hold['y_actual'], dtype=np.float64)

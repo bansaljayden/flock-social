@@ -27,6 +27,11 @@ except ImportError as _plot_err:  # pragma: no cover - environment dependent
     plt = None
     sns = None
 
+from features_io import load_features
+# An X kept beside features_train.pkl is refitted and predicted a row chunk at a
+# time, by the same code train_model.py fits it with.
+from train_model import RowChunks, city_codes, predict_rows, reads_in_chunks
+
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -236,9 +241,14 @@ def main():
     feature_cols = model_data['feature_cols']
     logger.info(f'Model: {model_name}, Features: {len(feature_cols)}')
 
-    # Load training features for city-based CV evaluation
-    with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
-        train_data = pickle.load(f)
+    # Load training features for city-based CV evaluation. An X kept beside the
+    # pickle (features_io) is memory-mapped and never loaded whole.
+    train_data = load_features(SCRIPT_DIR / 'features_train.pkl', verify=True)
+    # Only the keys read below stay in memory (several GB at the third
+    # candidate's size: label_source, observed_date, category_cell_stats, ...).
+    train_data = {k: v for k, v in train_data.items()
+                  if k in ('X', 'y', 'cities', 'baseline', 'y_actual', 'sample_weight',
+                           'label_type', 'hour', 'venue_category')}
     X_train_all, y_train_all = train_data['X'], train_data['y']
     train_cities = train_data.get('cities')
     train_baseline = train_data.get('baseline')
@@ -275,10 +285,21 @@ def main():
         raise SystemExit(1)
 
     val_pred_all = np.full(len(y_train_all), np.nan)
-    for train_idx, val_idx in cv.split(X_train_all, y_train_all, groups=train_cities):
+    chunked = reads_in_chunks(X_train_all)
+    # Split on integer city codes when X is beside the pickle: the same folds
+    # (city_codes sorts as np.unique does) without sorting the object city column.
+    split_groups = city_codes(train_cities)[1] if chunked else train_cities
+    for train_idx, val_idx in cv.split(X_train_all, y_train_all, groups=split_groups):
         m = clone(model)
         # The v2.3.1 blend (weekly rows at 0.05, vendor-forecast at 0.3) IS the
         # training regime. Refitting without it evaluated a different model.
+        if chunked:
+            # Same booster and predictions as the in-memory branch, without
+            # copying the fold's rows (train_model.RowChunks).
+            m.fit(RowChunks(X_train_all, train_idx, y_train_all, train_weight), None)
+            del train_idx
+            val_pred_all[val_idx] = predict_rows(m, X_train_all, val_idx)
+            continue
         m.fit(X_train_all[train_idx], y_train_all[train_idx],
               sample_weight=train_weight[train_idx])
         val_pred_all[val_idx] = m.predict(X_train_all[val_idx])
@@ -379,8 +400,9 @@ def main():
     holdout_baseline_metrics = None
     if holdout_path.exists():
         logger.info('\n=== Holdout Set Evaluation (Geographic Generalization) ===')
-        with open(holdout_path, 'rb') as f:
-            holdout_data = pickle.load(f)
+        # The holdout cities are a few hundred thousand rows: an X kept beside
+        # this pickle is read into memory, as an X inside it always was.
+        holdout_data = load_features(holdout_path, mmap=False)
         X_hold, y_hold = holdout_data['X'], holdout_data['y']
         hold_cities = holdout_data.get('cities', None)
         hold_baseline = holdout_data.get('baseline')

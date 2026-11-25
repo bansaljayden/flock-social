@@ -129,6 +129,7 @@ from sklearn.base import clone
 from sklearn.model_selection import GroupKFold
 from xgboost import XGBRegressor
 
+from features_io import load_features, x_is_external
 from prepare_features import MIN_REALTIME_ROWS, realtime_flags, serving_population_mask
 from train_model import (FIXED_PARAMS, PER_CITY_MIN_ROWS, RANDOM_STATE,
                          FoldCategoryBaselines, LabelContractError, LeakageError,
@@ -651,8 +652,13 @@ def main():
         raise FileNotFoundError(
             f'{features_path} does not exist. Run `node export_training_data.js` then '
             '`python prepare_features.py` first; a retrain starts at the export.')
-    with open(features_path, 'rb') as f:
-        data = pickle.load(f)
+    data = load_features(features_path)
+    if x_is_external(data):
+        # Both heads fit on in-memory slices of X; a frame whose X had to live
+        # beside the pickle (features_io) is the size this experiment cannot hold.
+        raise SystemExit(f'features_train.pkl keeps X beside it ({data.get("X_file")}): '
+                         'train_two_head.py fits in memory and does not support that '
+                         'layout. Run it on a frame that keeps X in the pickle.')
 
     X = data['X']
     feature_cols = list(data['feature_cols'])

@@ -41,6 +41,8 @@ for _v in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS',
 import numpy as np
 import pandas as pd
 
+from features_io import load_features
+
 SCRIPT_DIR = Path(__file__).parent
 ML_DIR = SCRIPT_DIR.parent
 INCUMBENT = ML_DIR / 'models' / 'incumbent'
@@ -120,8 +122,8 @@ def load_and_reproduce():
         if not p.exists():
             sys.exit(f'MISSING: {p}')
 
-    with open(hp, 'rb') as f:
-        hold = pickle.load(f)
+    # The holdout is small: an X kept beside it (features_io) is read into memory.
+    hold = load_features(hp, mmap=False)
     with open(mp, 'rb') as f:
         bundle = pickle.load(f)
 

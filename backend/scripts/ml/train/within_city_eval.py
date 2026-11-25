@@ -111,6 +111,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import prepare_features as pf  # noqa: E402
 from prepare_features import serving_population_mask  # noqa: E402
+from features_io import load_features  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -329,8 +330,8 @@ def rebuild_training_frame() -> pd.DataFrame:
     if cached is not None:
         if not cached.attrs.get('feature_cols'):
             # DataFrame.attrs does not survive every pandas pickle round-trip.
-            with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
-                cached.attrs['feature_cols'] = list(pickle.load(f)['feature_cols'])
+            cached.attrs['feature_cols'] = list(
+                load_features(SCRIPT_DIR / 'features_train.pkl')['feature_cols'])
         return cached
 
     logger.info('Rebuilding the training frame from training_data.csv '
@@ -416,8 +417,8 @@ def verify_rebuild(frame: pd.DataFrame) -> dict:
     venue_id / observed_date columns are aligned to X row for row.
     """
     logger.info('Verifying the rebuild against features_train.pkl...')
-    with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
-        ref = pickle.load(f)
+    # An X kept beside the pickle (features_io) is compared through its memory map.
+    ref = load_features(SCRIPT_DIR / 'features_train.pkl')
     feature_cols = frame.attrs['feature_cols']
     checks = {}
     checks['row_count_matches'] = (len(frame) == len(ref['y_actual']))

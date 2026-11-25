@@ -30,6 +30,7 @@ from pathlib import Path
 
 import numpy as np
 
+from features_io import load_features
 from prepare_features import serving_population_mask
 # realtime_flags is re-exported: eval_two_head.py imports it from here.
 from prepare_features import realtime_flags  # noqa: F401
@@ -311,8 +312,7 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
                     'challenger_feature_count': len(current_feature_cols),
                     'incumbent_version': inc_version}, False
 
-        with open(inc_hold_path, 'rb') as f:
-            inc_hold = pickle.load(f)
+        inc_hold = load_features(inc_hold_path, mmap=False)
         inc_y_actual = np.asarray(inc_hold['y_actual'], dtype=float)
         inc_baseline = np.asarray(inc_hold['baseline'], dtype=float)
         if len(inc_y_actual) != len(hold_y_actual):
@@ -503,15 +503,18 @@ def gate_b(y_true, pred_challenger, pred_incumbent, dates,
 
 def main():
     logger.info('Loading training features...')
-    with open(SCRIPT_DIR / 'features_train.pkl', 'rb') as f:
-        train_data = pickle.load(f)
+    # Only baseline, y_actual and feature_cols are read here: an X kept beside the
+    # pickle (features_io) is memory-mapped and never touched.
+    train_data = load_features(SCRIPT_DIR / 'features_train.pkl')
     train_baseline = train_data['baseline']
     train_y_actual = train_data['y_actual']
     feature_cols = train_data['feature_cols']
+    del train_data  # the rest of the training pickle is not read here
 
     logger.info('Loading holdout features + trained model...')
-    with open(SCRIPT_DIR / 'features_holdout.pkl', 'rb') as f:
-        hold_data = pickle.load(f)
+    # The holdout cities are a few hundred thousand rows: an X kept beside this
+    # pickle is read into memory, as an X inside it always was.
+    hold_data = load_features(SCRIPT_DIR / 'features_holdout.pkl', mmap=False)
     X_hold = hold_data['X']
     # The model consumes X BY POSITION. If the two pickles were written by
     # different runs, a position means something else and every holdout number

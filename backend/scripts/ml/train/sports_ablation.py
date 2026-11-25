@@ -38,7 +38,6 @@ reconstruction, same on both sides, is the honest comparison.
 """
 
 import os
-import pickle
 import sys
 
 os.environ['CROWD_QMAP_ENABLED'] = 'false'  # before quick_eval import, see docstring
@@ -47,6 +46,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from quick_eval import metrics, reconstruct, date_block_bootstrap, realtime_flags  # noqa: E402
+from features_io import load_features, x_is_external  # noqa: E402
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -88,10 +88,14 @@ def main():
         if var in os.environ:
             raise SystemExit(f'{var} is set, but {os.path.basename(__file__)} fits the '
                              'registered size only (800 trees, depth 8). Unset it to run.')
-    with open(os.path.join(SCRIPT_DIR, 'features_train.pkl'), 'rb') as f:
-        tr = pickle.load(f)
-    with open(os.path.join(SCRIPT_DIR, 'features_holdout.pkl'), 'rb') as f:
-        ho = pickle.load(f)
+    tr = load_features(os.path.join(SCRIPT_DIR, 'features_train.pkl'))
+    if x_is_external(tr):
+        # The two fits copy most of X into memory; a frame whose X had to live
+        # beside the pickle (features_io) is the size this experiment cannot hold.
+        raise SystemExit(f'features_train.pkl keeps X beside it ({tr.get("X_file")}): '
+                         'sports_ablation.py fits in memory and does not support that '
+                         'layout. Run it on a frame that keeps X in the pickle.')
+    ho = load_features(os.path.join(SCRIPT_DIR, 'features_holdout.pkl'), mmap=False)
 
     cols = list(tr['feature_cols'])
     missing = [c for c in SPORTS_COLS if c not in cols]
