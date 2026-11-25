@@ -2392,7 +2392,13 @@ function HubAccessKeys({ colors }) {
 // admissions used and left say Not reported instead of showing a number, and
 // the counters appear under BestTime's own names with what they are not. The
 // collector's rows are the Health card's read, shown here as well because they
-// are what the plan pays for.
+// are what the plan paid for.
+//
+// The plan ended on 2026-11-25, when the subscription was cancelled. A plan
+// the server sends with endedOn carries no allowance, cycle or reset date, so
+// the card says when it ended in place of the admission and cycle rows rather
+// than drawing a cap and a cycle for a plan that is not running. A server from
+// before endedOn sends a running plan, which the rows below still draw.
 const HUB_STATED_TAG = { tone: 'muted', text: 'Stated' };
 const HUB_WORKED_OUT_TAG = { tone: 'muted', text: 'Worked out' };
 
@@ -2402,6 +2408,7 @@ function HubCrowdData({ h, colors }) {
   if (!cd) return null;
   const b = cd.besttime || {};
   const plan = cd.plan || null;
+  const ended = !!(plan && plan.endedOn);
   const c = (h.health && h.health.collector) || {};
   const navy = colors.navy;
   const ready = b.status === 'ok';
@@ -2412,7 +2419,7 @@ function HubCrowdData({ h, colors }) {
   const holdMinutes = Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60);
   const counterValue = (n) => (Number.isFinite(n) ? hubCount(n) : 'Not reported');
   return (
-    <HubCard id={HUB_CARD.crowd.id} title="Crowd data" sub="BestTime, the paid feed behind Flock's crowd numbers. Only its key endpoint is asked, which admits no venue and spends nothing.">
+    <HubCard id={HUB_CARD.crowd.id} title="Crowd data" sub={`BestTime, the paid feed behind Flock's crowd numbers${ended ? ' until its subscription was cancelled' : ''}. Only its key endpoint is asked, which admits no venue and spends nothing.`}>
       {!ready && <HubNotice status={b.status} reason={b.reason} />}
       <div className="hub-halves">
       <div>
@@ -2428,7 +2435,26 @@ function HubCrowdData({ h, colors }) {
             : `BestTime says status ${key.status === null || key.status === undefined ? 'none' : key.status}, valid ${String(key.valid)}, active ${String(key.active)}.`}
         />
       )}
-      {plan && (
+      {plan && ended && (
+        <>
+          <HubRow
+            navy={navy}
+            label="Plan"
+            tag={HUB_STATED_TAG}
+            value={plan.name || 'Not recorded'}
+            note={`BestTime's key endpoint does not report the plan. This is the plan the cost model last recorded${plan.checked ? `, checked ${hubDay(plan.checked)}` : ''}.`}
+          />
+          <HubRow
+            navy={navy}
+            label="Subscription"
+            tag={HUB_STATED_TAG}
+            value={`Cancelled ${hubDay(plan.endedOn) || plan.endedOn}`}
+            tone="muted"
+            note="It ended the day it was cancelled, so it bills nothing and has no allowance or cycle to show. A new subscription would put them back here."
+          />
+        </>
+      )}
+      {plan && !ended && (
         <>
           <HubRow
             navy={navy}

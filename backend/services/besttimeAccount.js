@@ -31,15 +31,18 @@
 
 const KEY_STATUS_URL = 'https://besttime.app/api/v1/keys/';
 
-// THE PLAN'S TERMS, AS THE CODE RECORDS THEM, because the endpoint above
+// THE PLAN'S TERMS, AS THE CODE RECORDED THEM, because the endpoint above
 // reports none of them. services/costModel.js carries the plan's name, price
-// and checked date on its besttime-subscription line ("Package 100"). The code
-// counts the 100 as new venue admissions per calendar month, with by-id, live
-// and query calls on venues already admitted unlimited, as the pricing page
-// read in September 2026. The page read 2026-11-06 says the package
-// covers up to 100 different venues per calendar month (UTC), and whether that
-// applies to this subscription is not confirmed (the note on that same line).
-// Stated, never read: whatever shows these says so.
+// and checked date on its besttime-subscription line ("Package 100"), and the
+// day the subscription ended (endedOn): it was cancelled on 2026-11-25. While
+// it ran, the code counted the 100 as new venue admissions per calendar month,
+// with by-id, live and query calls on venues already admitted unlimited, as
+// the pricing page read in September 2026. The page read 2026-11-06 said the
+// package covers up to 100 different venues per calendar month (UTC), and
+// whether that applied to this subscription was never confirmed (the note on
+// that same line). An ended plan has no allowance or cycle, so the money hub
+// states neither for it (statedBestTimePlan). Stated, never read: whatever
+// shows these says so.
 const STATED_PLAN = Object.freeze({
   costLineId: 'besttime-subscription',
   newVenuesPerMonth: 100,

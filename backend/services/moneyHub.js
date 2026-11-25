@@ -19,8 +19,9 @@
 //            writes down (services/statedPrices.js), with each disagreement
 //            said in words.
 //   crowd    the BestTime key's own report (services/besttimeAccount.js) and
-//            the plan the code records beside it: what the paid crowd feed
-//            allows, and what BestTime will and will not say about it.
+//            the plan the code recorded beside it: what the paid crowd feed
+//            allowed until its cancellation on 2026-11-25, and what BestTime
+//            will and will not say about it.
 //   model    which crowd model is serving, and how many of its served
 //            forecasts landed within one crowd band of what the collector
 //            then measured, against the goal.
@@ -135,7 +136,9 @@ const RENEWAL_WINDOW_DAYS = 90;
 const RENEWAL_BUCKETS_DAYS = [7, 30, 90];
 
 // The collector runs hourly at :07 (collectRealtime.js on the Railway BESTTIME
-// cron). Two and a half hours without a row means at least one run is missing.
+// cron). Two and a half hours without a row means at least one run is missing
+// or, since the BestTime subscription was cancelled on 2026-11-25, that the
+// runs fire with every live call refused.
 const COLLECTOR_LATE_MINUTES = 150;
 const COLLECTOR_STOPPED_HOURS = 26;
 
@@ -1280,14 +1283,14 @@ const BIGGEST_BILLS_SHOWN = 5;
 // THE BURN ON A DAY TO COME (review 2026-10-06). The burn after a bill ends
 // is not the burn less that bill: a bill that stood in for a code line hands
 // the line back the day it ends. A $149 BestTime bill in place of the code's
-// $119 line, ending on the 20th, forecast the burn falling from $231.28 to
-// $82.28, when on the 20th it is $201.28. So the forecast runs the burn's own
-// rules again with only the bills still running: each code line counts unless
-// a running dollar bill (not a credit) stands in for it, and each running
-// dollar bill counts at its monthly share, a credit taken off. Unrounded, and
-// added in the order buildCostPicture adds them, so with every running bill
-// in it is the burn itself. `replaced` is the code lines stood in for, so a
-// step can say which line came back.
+// BestTime line (then $119), ending on the 20th, forecast the burn falling
+// from $231.28 to $82.28, when on the 20th it was $201.28. So the forecast
+// runs the burn's own rules again with only the bills still running: each
+// code line counts unless a running dollar bill (not a credit) stands in for
+// it, and each running dollar bill counts at its monthly share, a credit
+// taken off. Unrounded, and added in the order buildCostPicture adds them, so
+// with every running bill in it is the burn itself. `replaced` is the code
+// lines stood in for, so a step can say which line came back.
 function runRateWith(codeLines, expenses, running) {
   const replaced = new Set();
   for (const x of expenses) {
@@ -1507,14 +1510,15 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
 
   // MONTHLY BILLS THE RENEWAL TOTALS CANNOT DATE (2026-10-06). The totals
   // below count bills the hub can date: rows on the expense list with a
-  // renewal or last-charge date. The code's monthly lines (BestTime,
-  // TheSportsDB), the reconciled usage bills (Railway, Google Cloud), a usage
-  // row and a monthly row typed with no date are charged every month all the
-  // same, on days nothing here records, so "next 30 days" read as everything
-  // going out while the code's own monthly bills were in none of it. They are
-  // named beside the totals with what they come to a month, and never folded
-  // into a window they may or may not fall in. Dollar charges in the run rate
-  // only; a $0 line is not a charge.
+  // renewal or last-charge date. The code's monthly lines (TheSportsDB;
+  // BestTime's until its cancellation on 2026-11-25), the reconciled usage
+  // bills (Railway, Google Cloud), a usage row and a monthly row typed with no
+  // date are charged every month all the same, on days nothing here records,
+  // so "next 30 days" read as everything going out while the code's own
+  // monthly bills were in none of it. They are named beside the totals with
+  // what they come to a month, and never folded into a window they may or may
+  // not fall in. Dollar charges in the run rate only; a $0 line is not a
+  // charge.
   const undatedLines = lines
     .filter((l) => l.perMonthExact > 0 && !l.isCredit && (l.cadence === 'monthly' || l.cadence === 'usage')
       && (l.origin !== 'expense' || l.cadence === 'usage' || (!l.renewsOn && !l.lastChargedOn)))
@@ -2951,7 +2955,7 @@ async function readPeople(db = pool, now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
-// CROWD DATA: what BestTime's key endpoint says, and the plan the code records
+// CROWD DATA: what BestTime's key endpoint says, and the plan the code recorded
 // ---------------------------------------------------------------------------
 //
 // services/besttimeAccount.js makes the one read-only request, the same one
@@ -2969,6 +2973,13 @@ async function readPeople(db = pool, now = new Date()) {
 // numbers at all: nothing here can read them, and the besttime.app dashboard
 // can. The collector's own rows are the Health block's read, which the screen
 // shows beside this one rather than this block reading them a second time.
+//
+// THE PLAN ENDED ON 2026-11-25, when the subscription was cancelled and
+// BestTime began refusing the key. The cost line carries that day (endedOn),
+// and an ended plan goes out with it and with no allowance, cycle or reset
+// date: a cap and a cycle worked out from today would describe a plan that is
+// not running. A new subscription takes endedOn off the line and brings them
+// back.
 
 const BESTTIME_TIMEOUT_MS = 10000;
 const BESTTIME_REPORTED_MAX = 20;
@@ -3024,20 +3035,24 @@ async function readBestTime() {
 // services/besttimeAccount.js STATED_PLAN, and the dates are worked out from
 // the calendar month the allowance runs on, the rule the command-line check
 // prints too. None of it is read from BestTime, and the payload says where
-// each part came from.
+// each part came from. A plan whose line carries endedOn has ended, so it
+// carries that day and no allowance, cycle or reset date (THE PLAN ENDED,
+// above).
 function statedBestTimePlan(now = new Date()) {
   const terms = besttime.STATED_PLAN;
   const line = costModel.FIXED_MONTHLY.find((e) => e.id === terms.costLineId) || null;
   const label = line && typeof line.label === 'string' ? line.label : null;
+  const endedOn = line && isYmd(line.endedOn) ? line.endedOn : null;
   return {
     label,
     name: label ? label.replace(/^BestTime(\.app)?\s+/i, '') : null,
     usdPerMonth: line && Number.isFinite(line.usd) ? line.usd : null,
     checked: line && line.checked ? line.checked : null,
-    newVenuesPerMonth: terms.newVenuesPerMonth,
-    cycle: terms.cycle,
-    cycleEndsOn: besttime.calendarMonthEnd(now),
-    resetsOn: besttime.nextCalendarMonthStart(now),
+    endedOn,
+    newVenuesPerMonth: endedOn ? null : terms.newVenuesPerMonth,
+    cycle: endedOn ? null : terms.cycle,
+    cycleEndsOn: endedOn ? null : besttime.calendarMonthEnd(now),
+    resetsOn: endedOn ? null : besttime.nextCalendarMonthStart(now),
     source: 'backend/services/costModel.js',
   };
 }
@@ -3103,13 +3118,15 @@ function statedBestTimePlan(now = new Date()) {
 //
 // WHY HELD FOR AN HOUR RATHER THAN PRECOMPUTED. The join reads a month of
 // serves against the live readings, more than a dashboard should run on every
-// load, and the readings it needs land once an hour, from the collector on the
-// Railway BESTTIME service at :07. That collector is the existing hourly job,
-// and it is a separate service with its own deploys; the in-process heartbeat
-// (services/collectionHeartbeat.js) watches the rows, not the model. Either
-// would have to write the figure somewhere this process reads, so an hour's
-// hold in the hub's own cache gives the same freshness with no new table and
-// costs a query only when somebody opens the Overview.
+// load, and the readings it needs landed once an hour, from the collector on
+// the Railway BESTTIME service at :07, until the BestTime subscription was
+// cancelled on 2026-11-25; since then the cron fires and BestTime refuses
+// every live call, so no new readings land. That collector is the existing
+// hourly job, and it is a separate service with its own deploys; the
+// in-process heartbeat (services/collectionHeartbeat.js) watches the rows, not
+// the model. Either would have to write the figure somewhere this process
+// reads, so an hour's hold in the hub's own cache gives the same freshness
+// with no new table and costs a query only when somebody opens the Overview.
 
 const MODEL_TTL_MS = 60 * 60 * 1000;
 const MODEL_WINDOW_DAYS = 30;
@@ -4019,12 +4036,9 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat, maptiler = nul
       words: 'Moving the developer account to the company\'s organization account is a request to Apple Developer Support. Apple verifies the company through its D-U-N-S Number.',
       link: { href: 'https://developer.apple.com/contact/', text: 'Apple Developer Support' },
     },
-    {
-      id: 'besttime_admissions',
-      label: 'BestTime new-venue admissions this month',
-      words: `BestTime's key endpoint does not report them, so the server cannot count them. BestTime's settings page shows a count, though it has read 0 of ${besttime.STATED_PLAN.newVenuesPerMonth} even after ${besttime.STATED_PLAN.newVenuesPerMonth} lookups. BestTime's pricing page, read 2026-11-06, says the package covers up to ${besttime.STATED_PLAN.newVenuesPerMonth} different venues a calendar month, which would count every venue the hourly collector calls. That is not confirmed for this subscription: ask BestTime support whether it applies.`,
-      link: { href: 'https://besttime.app/settings', text: 'BestTime settings' },
-    },
+    // The BestTime admissions step left this list on 2026-11-25, when the
+    // subscription was cancelled: there is no allowance left to count and no
+    // term to confirm with BestTime.
     {
       id: 'app_privacy_crash_data',
       label: 'App Privacy: crash data',

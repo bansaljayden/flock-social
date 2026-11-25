@@ -857,6 +857,45 @@ describe('crowd data: what BestTime says, beside the plan the code records', () 
     // the rows above, which stay what the code can vouch for.
     expect(within(hubRow('Admissions left')).getByText('Not reported')).toBeInTheDocument();
   });
+
+  // The subscription was cancelled on 2026-11-25. The server sends the plan
+  // with endedOn and no allowance, cycle or reset date (statedBestTimePlan),
+  // and the card must not draw a cap or a cycle for a plan that is not running.
+  test('a cancelled plan says when it ended, and draws no cap, admission count or cycle', async () => {
+    await renderHub({
+      ...CONNECTED,
+      crowdData: {
+        ...CROWD_DATA,
+        plan: {
+          ...CROWD_DATA.plan,
+          usdPerMonth: 0,
+          checked: '2026-11-25',
+          endedOn: '2026-11-25',
+          newVenuesPerMonth: null,
+          cycle: null,
+          cycleEndsOn: null,
+          resetsOn: null,
+        },
+      },
+    });
+    const card = crowdCard();
+    const plan = figIn(card, 'Plan');
+    expect(within(plan).getByText('Pro, Package 100')).toBeInTheDocument();
+    expect(plan.textContent).toMatch(/This is the plan the cost model last recorded, checked Nov 25(, 2026)?\./);
+    expect(plan.textContent).not.toMatch(/\$0\.00 a month/);
+    const sub = figIn(card, 'Subscription');
+    expect(within(sub).getByText(/^Cancelled Nov 25(, 2026)?$/)).toBeInTheDocument();
+    expect(within(sub).getByText('Stated')).toBeInTheDocument();
+    expect(sub.textContent).toMatch(/It ended the day it was cancelled, so it bills nothing and has no allowance or cycle to show\./);
+    for (const label of ['New venues admitted this month', 'Admission cap', 'Admissions left', 'Cycle ends']) {
+      expect(within(card).queryByText(label)).toBeNull();
+    }
+    expect(card.textContent).not.toMatch(/100 a month|starts again on/);
+    expect(card.textContent).toMatch(/the paid feed behind Flock's crowd numbers until its subscription was cancelled\./);
+    // BestTime's own read of the key and the collector's rows still show.
+    expect(within(hubRow('BestTime key')).getByText('Working')).toBeInTheDocument();
+    expect(within(hubRow('Crowd readings, last 24 hours')).getByText('3,412')).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------

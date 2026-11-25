@@ -45,6 +45,10 @@ test('BestTime\'s line records the 2026-11-25 cancellation and states no allowan
   assert.strictEqual(line.checked, '2026-11-25');
   assert.strictEqual(line.usd, 0);
   assert.strictEqual(line.verified, true);
+  // The end is a field as well as a sentence, so the money hub can state no
+  // allowance or cycle for the plan without reading the note's prose.
+  assert.strictEqual(line.endedOn, '2026-11-25');
+  assert.ok(line.note.includes(`cancelled on ${line.endedOn}`), 'the note and the end date name the same day');
   assert.match(line.note, /cancelled on 2026-11-25 in Stripe's billing portal, and it ended at once/);
   assert.match(line.note, /BestTime has refused the key since/);
   assert.match(line.note, /the hourly collector writes no live rows/);
@@ -59,13 +63,21 @@ test('BestTime\'s line records the 2026-11-25 cancellation and states no allowan
   assert.doesNotMatch(line.note, /expected through early 2027/);
   const row = dep('besttime-subscription');
   assert.match(row.what, /cancelled on 2026-11-25/);
-  assert.match(row.what, /BestTime has refused the key since, so the collector writes nothing/);
+  // No live rows, which is narrower than nothing: a refused live call is a
+  // skipped venue (bestTimeService.js classifyHttpFailure answers null for a
+  // 409), so the run still completes and goes on to its after-sweep work,
+  // the TheSportsDB schedule refresh among it (collectRealtime.js run()).
+  assert.match(row.what, /BestTime has refused the key since, so the collector writes no live rows/);
   assert.match(row.usageNote, /Cancelled on 2026-11-25/);
+  assert.match(row.usageNote, /the collector writes no live rows/);
+  for (const text of [row.what, row.usageNote]) assert.doesNotMatch(text, /writes nothing/);
   assert.doesNotMatch(row.what, /The live subscription/);
   assert.doesNotMatch(row.what, /the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited/);
-  // The corpus line says how long the subscription that followed it ran.
+  // The corpus line says what restarted collection, and that the
+  // subscription's cancellation ended it.
   const corpus = find(cm.ONE_TIME, 'besttime-corpus');
-  assert.match(corpus.note, /ran from 2026-09-01 to 2026-11-25 \(collecting hourly from 2026-09-06\), when it was cancelled/);
+  assert.match(corpus.note, /stopped being true on 2026-09-01, when a new key on a \$119\/month Package 100 subscription restarted collection \(hourly from 2026-09-06\)\./);
+  assert.match(corpus.note, /That subscription was cancelled on 2026-11-25, which ended the live collection, and it is a FIXED_MONTHLY line/);
 });
 
 test('Railway volume and point-in-time recovery are priced the way Railway bills them', () => {

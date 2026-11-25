@@ -1930,9 +1930,17 @@ test('crowd data with no BestTime key says not connected, asks nothing, and stil
   assert.strictEqual(cd.plan.name, 'Pro, Package 100');
   assert.strictEqual(cd.plan.usdPerMonth, line.usd);
   assert.strictEqual(cd.plan.checked, line.checked);
-  assert.strictEqual(cd.plan.newVenuesPerMonth, 100);
-  assert.strictEqual(cd.plan.cycle, 'calendar_month');
   assert.strictEqual(cd.plan.source, 'backend/services/costModel.js');
+  // The subscription was cancelled on 2026-11-25, so the plan goes out as
+  // ended, at $0, with no allowance and no cycle or reset worked out from
+  // today: a 100-a-month cap that starts again on the 1st would describe a
+  // plan that is not running.
+  assert.strictEqual(cd.plan.endedOn, '2026-11-25');
+  assert.strictEqual(cd.plan.endedOn, line.endedOn);
+  assert.strictEqual(cd.plan.usdPerMonth, 0);
+  for (const field of ['newVenuesPerMonth', 'cycle', 'cycleEndsOn', 'resetsOn']) {
+    assert.strictEqual(cd.plan[field], null, `an ended plan must not carry ${field}`);
+  }
   // The collector's rows stay the Health block's one read, not a second one.
   assert.strictEqual(r.body.health.collector.rows24h, 3000);
   assert.strictEqual(log.filter((q) => /COUNT\(DISTINCT date_trunc/.test(q.sql)).length, 1);
@@ -1949,14 +1957,22 @@ test('the stated admission cap is the number in the plan name the cost model rec
 });
 
 test('the cycle dates are worked out from the calendar month, the rule the command-line check prints', () => {
-  const sep = moneyHub.statedBestTimePlan(new Date('2026-09-25T13:00:00Z'));
-  assert.strictEqual(sep.cycleEndsOn, '2026-09-30');
-  assert.strictEqual(sep.resetsOn, '2026-10-01');
-  const feb = moneyHub.statedBestTimePlan(new Date('2028-02-10T00:00:00Z'));
-  assert.strictEqual(feb.cycleEndsOn, '2028-02-29');
-  assert.strictEqual(feb.resetsOn, '2028-03-01');
-  const dec = moneyHub.statedBestTimePlan(new Date('2026-12-31T23:59:00Z'));
-  assert.strictEqual(dec.resetsOn, '2027-01-01');
+  // The rule a running plan's cycle rows use. The plan itself ended on
+  // 2026-11-25, so statedBestTimePlan works out no cycle for it on any day
+  // (below); the rule stays for a plan that runs again.
+  const { calendarMonthEnd, nextCalendarMonthStart } = require('../services/besttimeAccount');
+  const sep = new Date('2026-09-25T13:00:00Z');
+  assert.strictEqual(calendarMonthEnd(sep), '2026-09-30');
+  assert.strictEqual(nextCalendarMonthStart(sep), '2026-10-01');
+  const feb = new Date('2028-02-10T00:00:00Z');
+  assert.strictEqual(calendarMonthEnd(feb), '2028-02-29');
+  assert.strictEqual(nextCalendarMonthStart(feb), '2028-03-01');
+  assert.strictEqual(nextCalendarMonthStart(new Date('2026-12-31T23:59:00Z')), '2027-01-01');
+  for (const day of ['2026-09-25T13:00:00Z', '2026-11-30T12:00:00Z', '2026-12-31T23:59:00Z']) {
+    const plan = moneyHub.statedBestTimePlan(new Date(day));
+    assert.strictEqual(plan.endedOn, '2026-11-25', day);
+    assert.deepStrictEqual([plan.newVenuesPerMonth, plan.cycle, plan.cycleEndsOn, plan.resetsOn], [null, null, null, null], day);
+  }
 });
 
 test('crowd data reads the key endpoint once, carries the counters under BestTime\'s names, and never a key', async () => {
@@ -2455,7 +2471,7 @@ const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST
 const OWNER_STEP_IDS = [
   'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook',
   'expense_list', 'maptiler_service_token', 'error_reporting', 'sales_tax',
-  'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
+  'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account',
   'app_privacy_crash_data', 'eu_trader_status', 'maptiler_keys_locked',
 ];
 const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
@@ -2521,7 +2537,7 @@ test('with nothing set, every step the server checks reads to do, and the databa
   assert.strictEqual(mtCalls.length, 0, 'no token, so MapTiler was not asked');
   // Seven required steps to do and two optional ones (error reporting, sales
   // tax), counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 7, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(oa.counts, { todo: 7, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 7 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2564,7 +2580,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 8, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 8, unknown: 0, checkYourself: 7 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2792,7 +2808,6 @@ test('the steps the server cannot see carry no state, and each links to the page
     ['small_business_program', 'https://developer.apple.com/app-store/small-business-program/'],
     ['subscription_review_screenshot', 'https://appstoreconnect.apple.com/apps'],
     ['apple_organization_account', 'https://developer.apple.com/contact/'],
-    ['besttime_admissions', 'https://besttime.app/settings'],
     ['app_privacy_crash_data', 'https://appstoreconnect.apple.com/apps'],
     ['eu_trader_status', 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/'],
     ['maptiler_keys_locked', 'https://cloud.maptiler.com/account/keys/'],
@@ -2803,7 +2818,7 @@ test('the steps the server cannot see carry no state, and each links to the page
     assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
     assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
   }
-  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 8);
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 7);
   // The key step says which key goes where, and the one thing never to do.
   const keys = yours.find((s) => s.id === 'maptiler_keys_locked').words;
   assert.match(keys, /origins flockcorp\.com and \*\.flockcorp\.com/);
@@ -2821,14 +2836,9 @@ test('the steps the server cannot see carry no state, and each links to the page
   const sbp = yours.find((s) => s.id === 'small_business_program');
   assert.match(sbp.words, new RegExp(`^Enrolling takes Apple's cut from ${stores.appleStandardPct}% to ${stores.appleSmallBusinessPct}%\\. The App Store break-even on this page assumes ${stores.appleStandardPct}%`));
   assert.strictEqual(r.body.net.appleCommissionPct, stores.appleStandardPct);
-  assert.match(yours.find((s) => s.id === 'besttime_admissions').words, /key endpoint does not report them/);
-  // BestTime's pricing page (read 2026-11-06) words the allowance as different
-  // venues a month, where the code counts new admissions; the step says so and
-  // that it is not confirmed for this subscription.
-  const bt = yours.find((s) => s.id === 'besttime_admissions').words;
-  assert.match(bt, /covers up to 100 different venues a calendar month, which would count every venue the hourly collector calls/);
-  assert.match(bt, /not confirmed for this subscription: ask BestTime support whether it applies/);
-  assert.doesNotMatch(bt, /shows how many are left this month/, 'the settings counter read 0 even after 100 lookups');
+  // The BestTime subscription was cancelled on 2026-11-25, so no step counts
+  // its admissions or asks BestTime support about an allowance that has ended.
+  assert.ok(!yours.some((s) => /besttime/i.test(`${s.id} ${s.label} ${s.words} ${s.link.href}`)), 'a step still asks about the cancelled BestTime plan');
 
   // Plain sentences in the words this block sends: no em dash, and none of the
   // marketing words the copy rules ban.
@@ -3104,13 +3114,21 @@ test('stacked discounts apply in order: $20 off then 50% off a $100 plan is $40'
 });
 
 test('a row linked to the wrong code line is still flagged beside the line it doubles', () => {
-  // A $119 BestTime bill tied to the corpus line left the real BestTime line
-  // counted beside it, $119 twice, with no warning.
+  // A vendor's bill tied to the wrong code line leaves that vendor's own line
+  // counted beside it, the same money twice, and that has to warn. The case
+  // that found it was a $119 BestTime bill tied to the corpus line; the
+  // BestTime line is $0 since the subscription was cancelled on 2026-11-25,
+  // so nothing would double there now, and the example is TheSportsDB's line,
+  // which bills something.
+  const cm = require('../services/costModel');
+  const code = Math.round(cm.FIXED_MONTHLY.find((e) => e.id === 'sportsdb').usd * 100);
+  assert.ok(code > 0, 'the example needs a code line with a figure');
   const pic = moneyHub.buildCostPicture({
-    expenses: [expense({ id: 1, vendor: 'BestTime', product: 'Pro Package 100', kind: 'infrastructure', amountCents: 11900, replacesLine: 'besttime-corpus' })],
+    expenses: [expense({ id: 1, vendor: 'TheSportsDB', product: 'Single Developer', kind: 'infrastructure', amountCents: code, replacesLine: 'besttime-corpus' })],
     month: MONTH,
   });
-  assert.ok(pic.possibleDoubles.some((d) => d.codeLineId === 'besttime-subscription' && d.expenseId === 1), JSON.stringify(pic.possibleDoubles));
+  assert.ok(pic.lines.find((l) => l.id === 'sportsdb').counted, 'the line it doubles is still counted');
+  assert.ok(pic.possibleDoubles.some((d) => d.codeLineId === 'sportsdb' && d.expenseId === 1), JSON.stringify(pic.possibleDoubles));
 });
 
 test('a Railway plan that runs the BestTime cron service is Railway\'s bill, never the BestTime.app subscription', () => {
@@ -3136,21 +3154,28 @@ test('a Railway plan that runs the BestTime cron service is Railway\'s bill, nev
 });
 
 test('a real double still flags: the vendor\'s own bill beside its code line, and a product that names a line when the vendor names none', () => {
+  // The vendor's example is TheSportsDB, a code line that bills something: the
+  // BestTime line it used to be is $0 since the 2026-11-25 cancellation, so a
+  // BestTime bill beside it is not the same money twice.
+  const cm = require('../services/costModel');
+  const sportsdb = cm.FIXED_MONTHLY.find((e) => e.id === 'sportsdb');
+  const code = Math.round(sportsdb.usd * 100);
+  assert.ok(code > 0, 'the example needs a code line with a figure');
   const pic = moneyHub.buildCostPicture({
     expenses: [
-      expense({ id: 1, vendor: 'BestTime', product: 'Pro Package 100 (foot-traffic data)', kind: 'infrastructure', amountCents: 11900 }),
+      expense({ id: 1, vendor: 'TheSportsDB', product: 'Single Developer (game schedules)', kind: 'infrastructure', amountCents: code }),
       expense({ id: 2, vendor: 'Apple', product: 'Apple Developer Program', kind: 'infrastructure', cadence: 'yearly', amountCents: 9900, lastChargedOn: '2026-06-15', renewsOn: '2027-06-15' }),
     ],
     month: MONTH,
   });
   assert.deepStrictEqual(
     pic.possibleDoubles.map((d) => [d.codeLineId, d.expenseId]).sort(),
-    [['apple-developer', 2], ['besttime-subscription', 1]],
+    [['apple-developer', 2], ['sportsdb', 1]],
     JSON.stringify(pic.possibleDoubles),
   );
-  const besttime = pic.possibleDoubles.find((d) => d.expenseId === 1);
-  assert.strictEqual(besttime.codeLabel, 'BestTime.app Pro, Package 100');
-  assert.strictEqual(besttime.expenseLabel, 'BestTime, Pro Package 100 (foot-traffic data)');
+  const double = pic.possibleDoubles.find((d) => d.expenseId === 1);
+  assert.strictEqual(double.codeLabel, sportsdb.label);
+  assert.strictEqual(double.expenseLabel, 'TheSportsDB, Single Developer (game schedules)');
 });
 
 test('a yearly price behind the monthly variable is not used as a monthly price for break-even', async () => {

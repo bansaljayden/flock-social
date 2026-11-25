@@ -444,6 +444,12 @@ const FIXED_MONTHLY = [
     verified: true,
     kind: 'infrastructure',
     checked: '2026-11-25',
+    // The day the subscription ended. An ended plan has no allowance and no
+    // cycle, so the money hub's Crowd data card (statedBestTimePlan in
+    // services/moneyHub.js) states neither for it rather than working out a
+    // cycle that is not running. A new subscription takes this off again and
+    // puts its figure back on usd.
+    endedOn: '2026-11-25',
     source: 'https://besttime.app/subscription/pricing',
     note: 'Not a recurring cost since 2026-11-25. Package 100 was $119.00 a month and fed the live collection from 2026-09-01, when collection restarted after a 106-day freeze. The subscription was cancelled on 2026-11-25 in Stripe\'s billing portal, and it ended at once: the portal has listed no subscription since, and BestTime has refused the key since 16:08 UTC that day (Venue Filter answers 402, live queries 409), so the hourly collector writes no live rows. The last charge was $119.00 on 2026-10-30, and no invoice follows it. The collector is still a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js hourly at :07 (cron 7 * * * *), and it keeps firing, with every live call refused, until it is paused on that service. While it ran, the package was a fixed allowance rather than a meter. The code counted its 100 venues as new venue admissions a month, with by-id and live calls on admitted venues unlimited, which is how the pricing page read on 2026-09-05 and how the account behaved (the 1,395 by-id refreshes of 2026-10-06 met no quota error). The pricing page read 2026-11-06 worded the allowance as up to 100 different venues per calendar month (UTC), and whether that applied to this subscription was never confirmed. The same page capped Venue Filter results at 200,000 a month and Venue Search at 100 searches a month (on 2026-09-30 it said 5,000 searches by query). Resubscribing would put a monthly figure back on this line: the pricing page read 2026-11-06 lists 100 venues at $119.00 a month, 1,000 at $249, 5,000 at $399 and 20,000 at $999.',
   },
@@ -505,7 +511,7 @@ const ONE_TIME = [
     kind: 'infrastructure',
     checked: '2026-08-20',
     source: null,
-    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription ran from 2026-09-01 to 2026-11-25 (collecting hourly from 2026-09-06), when it was cancelled, and that subscription is a FIXED_MONTHLY line rather than an extension of this one.',
+    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01, when a new key on a $119/month Package 100 subscription restarted collection (hourly from 2026-09-06). That subscription was cancelled on 2026-11-25, which ended the live collection, and it is a FIXED_MONTHLY line rather than an extension of this one.',
   },
 ];
 
@@ -1269,13 +1275,13 @@ const DEPENDENCIES = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    what: 'The subscription that fed the hourly collection from 2026-09-01. It was cancelled on 2026-11-25 in Stripe\'s billing portal and ended at once; BestTime has refused the key since, so the collector writes nothing. While it ran it was a fixed allowance rather than a meter: the code counted the monthly cap as new venue admissions, with by-id and live calls on admitted venues unlimited, as the pricing page read in September 2026, and the page read 2026-11-06 worded it as up to 100 different venues per calendar month (UTC), which was never confirmed for this subscription (the fixed line\'s note). Venue Filter results were capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) ran on that filter allowance, about 3,200 queries for a whole city.',
+    what: 'The subscription that fed the hourly collection from 2026-09-01. It was cancelled on 2026-11-25 in Stripe\'s billing portal and ended at once; BestTime has refused the key since, so the collector writes no live rows. While it ran it was a fixed allowance rather than a meter: the code counted the monthly cap as new venue admissions, with by-id and live calls on admitted venues unlimited, as the pricing page read in September 2026, and the page read 2026-11-06 worded it as up to 100 different venues per calendar month (UTC), which was never confirmed for this subscription (the fixed line\'s note). Venue Filter results were capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) ran on that filter allowance, about 3,200 queries for a whole city.',
     where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *), which keeps firing until it is paused on that service; since 2026-11-25 every call it makes to BestTime is refused',
     group: 'fixed',
     fixedId: 'besttime-subscription',
     configuredEnv: ['BESTTIME_API_KEY'],
     observedLineId: null,
-    usageNote: 'Cancelled on 2026-11-25. BestTime refuses the key, so the collector writes nothing and there is no bill to meter. The line stays at $0 unless a new subscription puts a figure back on it.',
+    usageNote: 'Cancelled on 2026-11-25. BestTime refuses the key, so the collector writes no live rows and there is no bill to meter. The line stays at $0 unless a new subscription puts a figure back on it.',
   },
 ];
 
