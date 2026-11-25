@@ -1793,6 +1793,9 @@ function authFailureReason(err) {
   if (err.isCaptivePortal) return 'captive_portal';
   if (err.isNetworkError) return 'network';
   if (err.status >= 500) return 'server';
+  // The sign-in screen's "No Flock account yet" answer is a 409, but it means
+  // what a 404 means here: nobody has this account yet, not a clash with one.
+  if (err.data && err.data.noAccount) return 'no_account';
   return AUTH_FAILURE_BY_STATUS[err.status] || 'other';
 }
 

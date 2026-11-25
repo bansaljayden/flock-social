@@ -162,6 +162,18 @@ describe('signup and login failures', () => {
     ]);
   });
 
+  test('"No Flock account yet" counts as no_account, and a clash with another button stays conflict', async () => {
+    respondWith(409, { error: 'No Flock account uses this Google account yet.', noAccount: true, canCreate: true });
+    await expect(api.googleLogin('cred', undefined, { intent: 'signin' })).rejects.toThrow();
+    respondWith(409, { error: 'This email already has a Flock account that signs in with Google. Tap Continue with Google.', signInWith: 'google' });
+    await expect(api.appleLogin('apple-id-token', undefined, 'apple-code')).rejects.toThrow();
+    await flush();
+    expect(events('login_failed')).toEqual([
+      { method: 'google', reason: 'no_account' },
+      { method: 'apple', reason: 'conflict' },
+    ]);
+  });
+
   test('a dead connection is told apart from a refusal', async () => {
     global.fetch = jest.fn(() => Promise.reject(new TypeError('Failed to fetch')));
     await expect(api.login('a@b.com', 'pw')).rejects.toThrow();
