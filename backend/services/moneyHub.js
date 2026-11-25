@@ -1474,6 +1474,12 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     .filter((x) => running(x) && stopsOn(x, today))
     .sort((a, b) => (a.endsOn < b.endsOn ? -1 : a.endsOn > b.endsOn ? 1 : labelOf(a).localeCompare(labelOf(b)) || a.id - b.id));
   const gone = new Set();
+  // A code line whose subscription ended (endedOn, costModel.js) is a $0
+  // record, so the burn arithmetic is the same either way, but naming it as
+  // "counted again" when its stand-in ends would say a cancelled bill resumes
+  // (review 2026-11-25, the BestTime cancellation).
+  const endedCodeIds = new Set([...costModel.FIXED_MONTHLY, ...costModel.FIXED_ANNUAL, ...costModel.ONE_TIME]
+    .filter((e) => isYmd(e.endedOn)).map((e) => e.id));
   let step = runRateWith(codeLines, expenses, running);
   const steps = new Map();
   for (const x of endingRows) {
@@ -1482,7 +1488,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     steps.set(x.id, {
       burnChangeCents: x.currency === 'USD' ? r0(next.exact) - r0(step.exact) : null,
       // The code lines this bill was the last stand-in for.
-      restores: [...step.replaced].filter((id) => !next.replaced.has(id)).map((id) => codeLabel.get(id) || id),
+      restores: [...step.replaced].filter((id) => !next.replaced.has(id) && !endedCodeIds.has(id)).map((id) => codeLabel.get(id) || id),
     });
     step = next;
   }

@@ -4335,6 +4335,21 @@ test('a bill that stood in for a code line gives it back the day it ends, and th
   assert.deepStrictEqual(now.ending[0].restores, [line.label]);
 });
 
+test('a bill standing in for an ended code line never says the cancelled bill counts again', () => {
+  // The BestTime line ended on 2026-11-25 ($0, endedOn). A bill linked to it
+  // that ends gives nothing back, and the forecast must not name BestTime as a
+  // bill that returns (review 2026-11-25).
+  const cm = require('../services/costModel');
+  assert.ok(cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription').endedOn);
+  const stand = expense({
+    id: 1, vendor: 'BestTime.app', product: 'Package Pro 3', kind: 'infrastructure', amountCents: 11900,
+    lastChargedOn: '2026-09-20', renewsOn: '2026-10-20', endsOn: '2026-10-20', replacesLine: 'besttime-subscription',
+  });
+  const now = pictureOn('2026-10-06', [stand]);
+  assert.deepStrictEqual(now.ending[0].restores, [], JSON.stringify(now.ending[0]));
+  assert.strictEqual(now.ending[0].burnChangeCents, -11900, 'the burn falls by the whole bill, since the line it stood in for is $0');
+});
+
 test('a code line comes back only when the last bill standing in for it ends, and the changes add up', () => {
   const cm = require('../services/costModel');
   const railway = Math.round(cm.RECONCILED.lines.find((l) => l.id === 'railway').usdPerMonth * 100);

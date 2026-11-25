@@ -3677,9 +3677,11 @@ export default function RevenueScreen({
                 </summary>
                 <div className="hub-row-more">
                   <p className="hub-note">
-                    {e.verified
-                      ? `Seen on an invoice. Checked ${e.checked}.`
-                      : `Not seen on an invoice. This is a published price or an assumption, counted in the totals anyway. Checked ${e.checked}.`}
+                    {e.endedOn
+                      ? `Cancelled on ${e.endedOn}, so it bills nothing now; kept here as a record. Checked ${e.checked}.`
+                      : e.verified
+                        ? `Seen on an invoice. Checked ${e.checked}.`
+                        : `Not seen on an invoice. This is a published price or an assumption, counted in the totals anyway. Checked ${e.checked}.`}
                     {e.note ? ` ${e.note}` : ''}
                     {e.source ? ` ${e.source}` : ''}
                   </p>
@@ -4809,7 +4811,9 @@ export default function RevenueScreen({
                         The Costs tab carries the reason for each one; this tab
                         carries the mark, because a figure that is marked on one
                         screen and bare on the next is not marked. */}
-                    {(fixed.monthly || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/mo'))}
+                    {/* A cancelled subscription (endedOn) says so here as on the
+                        Costs tab, so its $0 never reads as a free plan. */}
+                    {(fixed.monthly || []).map((e) => row(e.endedOn ? `${e.label} (cancelled ${e.endedOn})` : e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/mo'))}
                     {(fixed.annual || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/yr'))}
                     {(fixed.oneTime || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd.toLocaleString()}`, ' once'))}
                     <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '4px 12px', padding: '8px 0 0', borderTop: '1px solid var(--border-default)' }}>
