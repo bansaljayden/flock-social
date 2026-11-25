@@ -689,12 +689,16 @@ test('the watchlist carries no invented numbers', () => {
   // BestTime left the watchlist on 2026-09-01 by being answered rather than by
   // being ignored. It sat here as "a subscription with no code path is money for
   // nothing" while that was true. It stopped being true when collection
-  // restarted on a Package 100 plan behind a nightly Railway cron, so it is now
+  // restarted on a Package 100 plan behind a nightly Railway cron, so it became
   // a known recurring bill with a figure, and a known bill on the watchlist
-  // would be the same category error in the other direction.
-  assert.ok(!ids.includes('besttime-subscription'), 'BestTime is a known recurring bill now, so it belongs on the fixed list rather than the watchlist');
+  // would be the same category error in the other direction. The subscription
+  // was cancelled on 2026-11-25, which is a known answer too: the line stays on
+  // the fixed list, verified, at $0, the way Vercel's does, and says why.
+  assert.ok(!ids.includes('besttime-subscription'), 'BestTime is a known bill, $0 since its cancellation, so it belongs on the fixed list rather than the watchlist');
   const besttime = cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription');
-  assert.ok(besttime && besttime.verified && besttime.usd > 0, 'the BestTime subscription must carry a verified figure on the fixed list');
+  assert.ok(besttime && besttime.verified, 'the BestTime subscription must stay a verified line on the fixed list');
+  assert.strictEqual(besttime.usd, 0, 'the subscription was cancelled on 2026-11-25, so the line bills nothing');
+  assert.match(besttime.note, /cancelled on 2026-11-25/);
 });
 
 // ===========================================================================
@@ -1024,9 +1028,10 @@ test('a free row says which kind of zero it is, and an unknown row does not say 
   // The ones the panel must never round down to free. MapTiler is usage-based
   // map tiles that nothing in this repo counts until its meter's token is set.
   const unknown = new Set(DEPS.unknownCostIds);
-  // BestTime came off this list on 2026-09-01: the plan and its price are known
-  // ($119 Package 100), so reading it as unknown would understate a real bill.
-  assert.ok(!unknown.has('besttime-subscription'), 'the BestTime plan has a known price now and must not read as unknown');
+  // BestTime came off this list on 2026-09-01, when the plan and its price
+  // were known ($119 Package 100). Since the 2026-11-25 cancellation its line
+  // is a known $0, which is still a figure and not an unknown.
+  assert.ok(!unknown.has('besttime-subscription'), 'the BestTime line has a known figure ($0 since its cancellation) and must not read as unknown');
   assert.ok(unknown.has('maptiler'), 'maptiler has no defensible figure without its meter and must read as unknown');
   // CARTO came off it on 2026-11-05: no release requests its keyless tiles
   // (frontend/src/components/map/keylessBasemap.js), so it is a free row that

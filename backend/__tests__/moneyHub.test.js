@@ -4238,19 +4238,24 @@ test('set to end Jan 31, a usage bill\'s last bill on Feb 28 ends it: February c
 // out by the burn's own rules on that day, not as the burn less the bill.
 test('a bill that stood in for a code line gives it back the day it ends, and the forecast counts it', () => {
   const cm = require('../services/costModel');
-  const code = Math.round(cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription').usd * 100);
-  // $149 a month in place of the code's BestTime line, ending Oct 20.
+  // A code line that bills something, so the burn falls by the difference and
+  // not by the whole bill. The BestTime line stood here until its subscription
+  // was cancelled on 2026-11-25 and its figure went to $0.
+  const line = cm.FIXED_MONTHLY.find((e) => e.id === 'sportsdb');
+  const code = Math.round(line.usd * 100);
+  assert.ok(code > 0, 'the example needs a code line with a figure');
+  // $14 a month in place of the code's TheSportsDB line, ending Oct 20.
   const stand = expense({
-    id: 1, vendor: 'BestTime', product: 'Package 100', kind: 'infrastructure', amountCents: 14900,
-    lastChargedOn: '2026-09-20', renewsOn: '2026-10-20', endsOn: '2026-10-20', replacesLine: 'besttime-subscription',
+    id: 1, vendor: 'TheSportsDB', product: 'Single Developer', kind: 'infrastructure', amountCents: 1400,
+    lastChargedOn: '2026-09-20', renewsOn: '2026-10-20', endsOn: '2026-10-20', replacesLine: 'sportsdb',
   });
   const now = pictureOn('2026-10-06', [stand]);
   // The forecast is the burn the hub shows on the day it ends.
   assert.strictEqual(now.afterEnding.burnCents, pictureOn('2026-10-20', [stand]).totals.perMonthCents);
-  assert.strictEqual(now.afterEnding.changeCents, code - 14900, 'the burn falls by $30, not by the whole $149');
-  assert.strictEqual(now.ending[0].burnChangeCents, code - 14900);
-  assert.strictEqual(now.ending[0].perMonthCents, 14900, 'the bill\'s own share is still its own');
-  assert.deepStrictEqual(now.ending[0].restores, ['BestTime.app Pro, Package 100']);
+  assert.strictEqual(now.afterEnding.changeCents, code - 1400, 'the burn falls by the difference, not by the whole $14');
+  assert.strictEqual(now.ending[0].burnChangeCents, code - 1400);
+  assert.strictEqual(now.ending[0].perMonthCents, 1400, 'the bill\'s own share is still its own');
+  assert.deepStrictEqual(now.ending[0].restores, [line.label]);
 });
 
 test('a code line comes back only when the last bill standing in for it ends, and the changes add up', () => {
@@ -4271,12 +4276,16 @@ test('a code line comes back only when the last bill standing in for it ends, an
   // On the same day, in label order: the second of the two gives the line back.
   const sameDay = pictureOn('2026-10-06', [a, { ...b, endsOn: '2026-10-15' }]);
   assert.deepStrictEqual(sameDay.ending.map((e) => [e.label, e.burnChangeCents]), [['Host, A', -5000], ['Host, B', railway - 3000]]);
-  // A free stand-in that ends raises the burn by the line it gives back.
-  const code = Math.round(cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription').usd * 100);
-  const free = pictureOn('2026-10-06', [expense({ id: 4, vendor: 'BestTime', product: 'Trial', kind: 'infrastructure', amountCents: 0, replacesLine: 'besttime-subscription', endsOn: '2026-10-20' })]);
+  // A free stand-in that ends raises the burn by the line it gives back. The
+  // line has to bill something for that to show, so it is TheSportsDB's: the
+  // BestTime line is $0 since the subscription was cancelled on 2026-11-25.
+  const code = Math.round(cm.FIXED_MONTHLY.find((e) => e.id === 'sportsdb').usd * 100);
+  assert.ok(code > 0, 'the example needs a code line with a figure');
+  const trial = expense({ id: 4, vendor: 'TheSportsDB', product: 'Trial', kind: 'infrastructure', amountCents: 0, replacesLine: 'sportsdb', endsOn: '2026-10-20' });
+  const free = pictureOn('2026-10-06', [trial]);
   assert.strictEqual(free.ending[0].burnChangeCents, code);
   assert.strictEqual(free.afterEnding.changeCents, code);
-  assert.strictEqual(free.afterEnding.burnCents, pictureOn('2026-10-20', [expense({ id: 4, vendor: 'BestTime', product: 'Trial', kind: 'infrastructure', amountCents: 0, replacesLine: 'besttime-subscription', endsOn: '2026-10-20' })]).totals.perMonthCents);
+  assert.strictEqual(free.afterEnding.burnCents, pictureOn('2026-10-20', [trial]).totals.perMonthCents);
 });
 
 test('the renewal totals count a bill set to end up to the day before it, and a credit set to end raises the burn', () => {

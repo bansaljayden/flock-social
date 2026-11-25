@@ -440,12 +440,12 @@ const FIXED_MONTHLY = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    usd: 119.00,
+    usd: 0,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-11-06',
+    checked: '2026-11-25',
     source: 'https://besttime.app/subscription/pricing',
-    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered. The pricing page read 2026-11-06 lists 100 venues at $119.00 a month and words the allowance this way: "Your package covers up to 100 different venues per calendar month (UTC). Reusing a venue within that month does not use another unique-venue slot", and "Unlimited venue week forecasts and queries for 100 unique venues per month". It also caps Venue Filter at 200,000 results a month and Venue Search at 100 searches a month, one search per 20 venues returned, and says new venues that Filter or Search return take venue slots (on 2026-09-30 it said 5,000 searches by query). Read plainly, every different venue called in a month takes a slot, and the hourly collector calls far more than 100. The code counts the 100 as new venue admissions a month instead, with by-id and live calls on venues already admitted unlimited, which is how the page read on 2026-09-05 (live data unlimited on every package tier, the monthly cap on new venues) and how the account has behaved since: the 1,395 by-id refreshes of 2026-10-06 met no quota error, and the hourly sweep writes thousands of live rows a run. besttime.app/settings reads 0 of 100 even after 100 by-name lookups, so its counter does not settle it. Whether the new wording applies to this subscription is NOT CONFIRMED; BestTime support can say. If it does, Package 100 does not cover the collector: the page lists 1,000 venues at $249, 5,000 at $399 and 20,000 at $999 a month. The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it while the plan meters new admissions and not calls.',
+    note: 'Not a recurring cost since 2026-11-25. Package 100 was $119.00 a month and fed the live collection from 2026-09-01, when collection restarted after a 106-day freeze. The subscription was cancelled on 2026-11-25 in Stripe\'s billing portal, and it ended at once: the portal has listed no subscription since, and BestTime has refused the key since 16:08 UTC that day (Venue Filter answers 402, live queries 409), so the hourly collector writes no live rows. The last charge was $119.00 on 2026-10-30, and no invoice follows it. The collector is still a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js hourly at :07 (cron 7 * * * *), and it keeps firing, with every live call refused, until it is paused on that service. While it ran, the package was a fixed allowance rather than a meter. The code counted its 100 venues as new venue admissions a month, with by-id and live calls on admitted venues unlimited, which is how the pricing page read on 2026-09-05 and how the account behaved (the 1,395 by-id refreshes of 2026-10-06 met no quota error). The pricing page read 2026-11-06 worded the allowance as up to 100 different venues per calendar month (UTC), and whether that applied to this subscription was never confirmed. The same page capped Venue Filter results at 200,000 a month and Venue Search at 100 searches a month (on 2026-09-30 it said 5,000 searches by query). Resubscribing would put a monthly figure back on this line: the pricing page read 2026-11-06 lists 100 venues at $119.00 a month, 1,000 at $249, 5,000 at $399 and 20,000 at $999.',
   },
   {
     id: 'sportsdb',
@@ -505,7 +505,7 @@ const ONE_TIME = [
     kind: 'infrastructure',
     checked: '2026-08-20',
     source: null,
-    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription restarted collection (hourly since 2026-09-06), and that cost is a FIXED_MONTHLY line rather than an extension of this one.',
+    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription ran from 2026-09-01 to 2026-11-25 (collecting hourly from 2026-09-06), when it was cancelled, and that subscription is a FIXED_MONTHLY line rather than an extension of this one.',
   },
 ];
 
@@ -988,7 +988,7 @@ const DEPENDENCIES = [
   {
     id: 'besttime-corpus',
     label: 'BestTime training data',
-    what: 'The original corpus the crowd model was trained on. Bought once, spent, finished. Collection since 2026-09-01 runs on a new key and a separate recurring line.',
+    what: 'The original corpus the crowd model was trained on. Bought once, spent, finished. Collection from 2026-09-01 ran on a new key and a separate subscription line until that subscription was cancelled on 2026-11-25.',
     where: 'backend/scripts/ml/',
     group: 'fixed',
     fixedId: 'besttime-corpus',
@@ -1269,13 +1269,13 @@ const DEPENDENCIES = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter: the code counts the monthly cap as new venue admissions, with by-id and live calls on admitted venues unlimited, as the pricing page read in September 2026. The page read 2026-11-06 says the package covers up to 100 different venues per calendar month (UTC), which would count every venue the collector calls; that is not confirmed for this subscription (the fixed line\'s note). Venue Filter results are capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on that filter allowance, about 3,200 queries for a whole city. A harvest measured on 2026-09-28 was billed in query credits and spent no admissions, but the pricing page read 2026-11-06 says each new venue a filter returns takes one of the monthly venue slots.',
-    where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *)',
+    what: 'The subscription that fed the hourly collection from 2026-09-01. It was cancelled on 2026-11-25 in Stripe\'s billing portal and ended at once; BestTime has refused the key since, so the collector writes nothing. While it ran it was a fixed allowance rather than a meter: the code counted the monthly cap as new venue admissions, with by-id and live calls on admitted venues unlimited, as the pricing page read in September 2026, and the page read 2026-11-06 worded it as up to 100 different venues per calendar month (UTC), which was never confirmed for this subscription (the fixed line\'s note). Venue Filter results were capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) ran on that filter allowance, about 3,200 queries for a whole city.',
+    where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *), which keeps firing until it is paused on that service; since 2026-11-25 every call it makes to BestTime is refused',
     group: 'fixed',
     fixedId: 'besttime-subscription',
     configuredEnv: ['BESTTIME_API_KEY'],
     observedLineId: null,
-    usageNote: 'Not metered, so no meter can estimate it. The bill is the tier price until the tier changes.',
+    usageNote: 'Cancelled on 2026-11-25. BestTime refuses the key, so the collector writes nothing and there is no bill to meter. The line stays at $0 unless a new subscription puts a figure back on it.',
   },
 ];
 

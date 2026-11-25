@@ -34,24 +34,38 @@ test('the domain keeps the date its price was last read, because its source stat
   assert.match(domain.note, /on 2026-11-06 the registrar page named no \.com price, so the date stays/);
 });
 
-test('BestTime\'s line quotes the pricing page\'s venue allowance and says it is unconfirmed for this account', () => {
-  // besttime.app/subscription/pricing, read 2026-11-06, words the 100 as
-  // different venues per calendar month. The code has counted it as new
-  // venue admissions, with by-id and live calls unlimited. A line checked that
-  // day must not state the old terms as the page's.
+test('BestTime\'s line records the 2026-11-25 cancellation and states no allowance terms as current', () => {
+  // The subscription was cancelled on 2026-11-25 in Stripe's billing portal
+  // and ended at once; BestTime has refused the key since, so the hourly
+  // collector writes no live rows. The line stays on the fixed list at $0,
+  // verified, the way Vercel's does. The admission-counting reading of the
+  // allowance, which the code used while the plan ran, is history now and
+  // must not read as a current term.
   const line = find(cm.FIXED_MONTHLY, 'besttime-subscription');
-  assert.strictEqual(line.checked, '2026-11-06');
-  assert.strictEqual(line.usd, 119);
-  assert.match(line.note, /"Your package covers up to 100 different venues per calendar month \(UTC\)\. Reusing a venue within that month does not use another unique-venue slot"/);
-  assert.match(line.note, /"Unlimited venue week forecasts and queries for 100 unique venues per month"/);
-  assert.match(line.note, /NOT CONFIRMED; BestTime support can say/);
-  assert.match(line.note, /1,000 venues at \$249, 5,000 at \$399 and 20,000 at \$999 a month/);
+  assert.strictEqual(line.checked, '2026-11-25');
+  assert.strictEqual(line.usd, 0);
+  assert.strictEqual(line.verified, true);
+  assert.match(line.note, /cancelled on 2026-11-25 in Stripe's billing portal, and it ended at once/);
+  assert.match(line.note, /BestTime has refused the key since/);
+  assert.match(line.note, /the hourly collector writes no live rows/);
+  assert.match(line.note, /The last charge was \$119\.00 on 2026-10-30/);
+  assert.match(line.note, /keeps firing, with every live call refused, until it is paused on that service/);
+  assert.match(line.note, /Resubscribing would put a monthly figure back on this line/);
+  assert.match(line.note, /up to 100 different venues per calendar month \(UTC\), and whether that applied to this subscription was never confirmed/);
+  assert.doesNotMatch(line.note, /Live recurring cost/);
+  assert.doesNotMatch(line.note, /The code counts the 100/);
   assert.doesNotMatch(line.note, /the 100 is the monthly cap on new venue admissions/);
   assert.doesNotMatch(line.note, /because Package 100 meters new admissions/);
+  assert.doesNotMatch(line.note, /expected through early 2027/);
   const row = dep('besttime-subscription');
-  assert.match(row.what, /up to 100 different venues per calendar month \(UTC\)/);
-  assert.match(row.what, /not confirmed for this subscription/);
+  assert.match(row.what, /cancelled on 2026-11-25/);
+  assert.match(row.what, /BestTime has refused the key since, so the collector writes nothing/);
+  assert.match(row.usageNote, /Cancelled on 2026-11-25/);
+  assert.doesNotMatch(row.what, /The live subscription/);
   assert.doesNotMatch(row.what, /the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited/);
+  // The corpus line says how long the subscription that followed it ran.
+  const corpus = find(cm.ONE_TIME, 'besttime-corpus');
+  assert.match(corpus.note, /ran from 2026-09-01 to 2026-11-25 \(collecting hourly from 2026-09-06\), when it was cancelled/);
 });
 
 test('Railway volume and point-in-time recovery are priced the way Railway bills them', () => {
